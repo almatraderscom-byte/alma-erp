@@ -59,11 +59,29 @@ final class AlmaIslandWatch {
     private var window: PassthroughWindow?
 
     func install() {
+        // IOSP-4: the 30s office-notification poll is scene-aware — suspended in the
+        // background (nothing to surface there; the Island window only shows on a
+        // foreground screen) and resumed on foreground. Removes idle background work.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(resumePoll),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(suspendPoll),
+            name: UIApplication.didEnterBackgroundNotification, object: nil)
+        resumePoll()
+        Task { await poll() } // seed immediately
+    }
+
+    @objc private func resumePoll() {
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { await self?.poll() }
         }
-        Task { await poll() } // seed immediately
+    }
+
+    @objc private func suspendPoll() {
+        timer?.invalidate()
+        timer = nil
     }
 
     private func poll() async {

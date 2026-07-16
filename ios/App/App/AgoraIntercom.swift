@@ -85,14 +85,22 @@ final class AgoraIntercom: NSObject {
     var recording = false             // PTT voice-note is capturing right now
     var callPeer = "স্টাফ"            // who we're talking to (shown on the call screen)
 
-    private var engine: AgoraRtcEngineKit?
-    private var appId: String?
-    private var channel: String?
-    private var callTimer: Timer?
-    private var ringTimer: Timer?
-    private var remoteUids = Set<UInt>()   // remote parties currently on the call channel
+    // IOSP-4 crash fix: `engine`'s type lives in the dynamically-linked
+    // AgoraRtcKit.framework. On an @Observable class, a stored property is read
+    // through generated keypath machinery — and the Swift runtime cannot demangle
+    // `AgoraRtcEngineKit?`'s keypath from that framework, so any tracked read
+    // (e.g. CallKitVoIP.providerDidReset → leave() reading `engine`) SIGTRAPs at
+    // launch when a stale CallKit reset fires (see docs/proofs/iosp0/launch-crash-
+    // diagnosis.md). These are private implementation handles that never drive the
+    // UI, so exclude them from Observation — no keypath codegen, no crash.
+    @ObservationIgnored private var engine: AgoraRtcEngineKit?
+    @ObservationIgnored private var appId: String?
+    @ObservationIgnored private var channel: String?
+    @ObservationIgnored private var callTimer: Timer?
+    @ObservationIgnored private var ringTimer: Timer?
+    @ObservationIgnored private var remoteUids = Set<UInt>()   // remote parties currently on the call channel
     private let ringtone = IntercomRingtone()   // ringback (caller) + incoming ring (callee)
-    private var handledCallIds = Set<String>()  // call broadcasts we've already surfaced
+    @ObservationIgnored private var handledCallIds = Set<String>()  // call broadcasts we've already surfaced
     // PTT persistent voice-note capture (separate from the ephemeral live channel).
     private var recorder: AVAudioRecorder?
     private var recordURL: URL?

@@ -1,0 +1,26 @@
+== IOSP-4 proof signposts (iPhone 17 Pro Max sim 9E51818A-…, iOS 26.5) ==
+
+--- 1. CallKit×Agora launch-crash FIX (ALMA_CRASH_REPRO=1) ---
+Before the fix, AgoraIntercom.leave() reading `engine` through Observation's
+keypath machinery SIGTRAP'd ("could not demangle keypath type AgoraRtcEngineKit?").
+With `engine` (+ other private Agora handles) now @ObservationIgnored, leave()
+completes and the process stays alive:
+
+2026-07-16 22:05:00.780 App[49581] callResetRepro.start
+2026-07-16 22:05:00.780 App[49581] callResetRepro.survived      ← no SIGTRAP, no crash report
+(ps: process alive after; ~/Library/Logs/DiagnosticReports has NO new App-*.ips)
+
+--- 2. Scene-aware intercom poll (suspend in background, resume on foreground) ---
+2026-07-16 22:04:55.300 App[49581] callWatch.resume    (launch, foreground)
+2026-07-16 22:05:34.668 App[49581] callWatch.suspend   (Safari brought forward → app backgrounded)
+2026-07-16 22:05:36.618 App[49581] callWatch.resume    (app foregrounded)
+2026-07-16 22:07:08.059 App[49581] callWatch.suspend   (backgrounded again)
+2026-07-16 22:08:43.317 App[51406] callWatch.resume    (foregrounded)
+→ backgrounded = 0 intercom polls; VoIP push (CallKitVoIP) covers background calls.
+
+--- 3. Foreground 3s intercom poll INTACT (call reliability preserved) ---
+2026-07-16 22:11:13.724 App[51406] api.request GET /api/assistant/office/intercom 200 404ms
+2026-07-16 22:11:16.829 App[51406] api.request GET /api/assistant/office/intercom 200 508ms
+2026-07-16 22:11:19.724 App[51406] api.request GET /api/assistant/office/intercom 200 403ms
+2026-07-16 22:11:22.723 App[51406] api.request GET /api/assistant/office/intercom 200 403ms
+→ ~3s cadence held foregrounded, by design (see report's evidence-backed exception).

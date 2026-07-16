@@ -14,6 +14,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         runNavSelfTestIfRequested()
         if #available(iOS 17.0, *) { runOverlaySelfTestIfRequested() }
         runCacheSelfTestIfRequested()
+        if #available(iOS 17.0, *) { runCallResetCrashReproIfRequested() }
         #endif
         // Home-screen quick action on COLD START: forward to the AppShortcuts
         // plugin (it retains the event until the JS listener attaches).
@@ -242,6 +243,23 @@ extension AppDelegate {
                 for _ in 0..<4 { _ = try? await AlmaAPI.shared.getCached(path, ttl: 60) as Probe }
                 AlmaPerfLog.event("cacheSelfTest.ttlDone")
             }
+        }
+    }
+
+    /// IOSP-4 crash-fix regression (DEBUG-only, env-gated). Before the fix, reading
+    /// AgoraIntercom.engine through Observation's keypath machinery SIGTRAP'd
+    /// (`could not demangle keypath type 'AgoraRtcEngineKit?'`). This is the exact
+    /// read CallKitVoIP.providerDidReset triggers via leave(). With `engine` now
+    /// @ObservationIgnored, this must complete and emit callResetRepro.survived.
+    ///
+    ///   SIMCTL_CHILD_ALMA_CRASH_REPRO=1 xcrun simctl launch <udid> com.almatraders.erp
+    @available(iOS 17.0, *)
+    func runCallResetCrashReproIfRequested() {
+        guard ProcessInfo.processInfo.environment["ALMA_CRASH_REPRO"] == "1" else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+            AlmaPerfLog.event("callResetRepro.start")
+            AgoraIntercom.shared.leave() // reads `engine` — the crashing keypath pre-fix
+            AlmaPerfLog.event("callResetRepro.survived")
         }
     }
 }

@@ -112,10 +112,36 @@ final class FloatingChatHead {
     // incoming call (native, loud) wherever they are — not only on the intercom tab.
 
     private func startCallWatch() {
+        // IOSP-4: the 3s intercom poll is scene-aware. Foregrounded it keeps 3s so a
+        // staff call rings promptly (owner's WhatsApp-style requirement); when the
+        // app is backgrounded there is no UI to ring and PushKit/CallKit VoIP
+        // (CallKitVoIP.start()) already delivers background calls — so the timer is
+        // SUSPENDED in the background and resumed on foreground. This removes the
+        // app-wide 3s polling whenever the related UI can't be active. (Full
+        // push-only replacement foreground is a server-realtime change tracked for
+        // a later phase — see the IOSP-4 report's evidence-backed exception.)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(resumeCallWatch),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(suspendCallWatch),
+            name: UIApplication.didEnterBackgroundNotification, object: nil)
+        resumeCallWatch()
+    }
+
+    @objc private func resumeCallWatch() {
         guard callWatch == nil else { return }
+        AlmaPerfLog.event("callWatch.resume")
         callWatch = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.pollIncoming() }
         }
+    }
+
+    @objc private func suspendCallWatch() {
+        guard callWatch != nil else { return }
+        AlmaPerfLog.event("callWatch.suspend")
+        callWatch?.invalidate()
+        callWatch = nil
     }
 
     @MainActor private func pollIncoming() async {
