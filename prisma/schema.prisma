@@ -2642,6 +2642,30 @@ model AgentGrowthBrief {
   @@map("agent_growth_briefs")
 }
 
+// Phase 43 — marketing event ledger. One row per logical event; eventId is the
+// deterministic dedup key shared with browser Pixel + Meta CAPI. A duplicate
+// arrival is stored as status=deduped (never re-sent, never double-counted).
+model AgentMarketingEvent {
+  id         String   @id @default(uuid())
+  eventName  String
+  eventId    String   @unique
+  source     String // browser | server | erp | import
+  occurredAt DateTime
+  currency   String   @default("BDT")
+  /// Whole taka.
+  valueBdt   Int?
+  orderId    String?
+  utm        Json?
+  status     String   @default("queued") // queued | sent | failed | deduped | test
+  detail     String?  @db.Text
+  createdAt  DateTime @default(now())
+
+  @@index([eventName, occurredAt])
+  @@index([orderId])
+  @@index([status, createdAt])
+  @@map("agent_marketing_events")
+}
+
 // Phase E (live browser companion) — a paired Chrome (the owner's own browser
 // running the ALMA Companion extension). The agent drives it live via the
 // command queue below. Token is stored hashed; pairing uses a short-lived code.

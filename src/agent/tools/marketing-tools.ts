@@ -11,6 +11,11 @@ import {
   type GrowthBriefContent,
 } from '@/agent/lib/marketing/growth-brief'
 import { recordOwnerDecision, runStrategyFlow } from '@/agent/lib/marketing/growth-strategy-graph'
+import { buildAttributionReport } from '@/agent/lib/marketing/attribution'
+import { buildUtm, validateUtm, applyUtmToUrl, buildCampaignSlug, type UtmParams } from '@/agent/lib/marketing/utm'
+import { capiHealth, sendCapiEvents } from '@/agent/lib/marketing/meta-capi'
+import { makeEvent, type CanonicalEventName } from '@/agent/lib/marketing/event-contract'
+import { fetchGa4EventCounts } from '@/agent/lib/ga4'
 import type { AgentTool } from './registry'
 
 const plan_marketing: AgentTool = {
@@ -239,6 +244,126 @@ const growth_strategy_run: AgentTool = {
   },
 }
 
+const marketing_attribution_report: AgentTool = {
+  name: 'marketing_attribution_report',
+  description:
+    'Profit-first attribution + cross-source reconciliation: spend vs delivered/confirmed revenue vs event ledger vs ' +
+    'GA4, every number labelled observed/modelled/unknown (never quote modelled as fact). Includes CAPI pipeline ' +
+    'health and count-mismatch issues with a confidence score. Read-only.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      windowDays: { type: 'number', description: 'Lookback 1–30 days (default 7)' },
+      fallbackMarginPct: { type: 'number', description: 'Gross margin %% from the growth brief when COGS truth is missing' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const days = Math.min(Math.max(Number(input.windowDays ?? 7), 1), 30)
+      const [ga4Counts, health] = await Promise.all([
+        fetchGa4EventCounts(['purchase', 'key_event'], days),
+        capiHealth(),
+      ])
+      const ga4KeyEvents = ga4Counts ? Object.values(ga4Counts).reduce((s, n) => s + n, 0) : null
+      const report = await buildAttributionReport({
+        windowDays: days,
+        fallbackMarginPct: input.fallbackMarginPct == null ? null : Number(input.fallbackMarginPct),
+        ga4KeyEvents,
+        metaPurchases: null,
+      })
+      return { success: true, data: { ...report, capi: health } }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const utm_build: AgentTool = {
+  name: 'utm_build',
+  description:
+    'Generate/validate convention-correct UTM parameters (alma_<objective>_<yyyymm> campaigns, ' +
+    'adset__ad__creative lineage in utm_content) and optionally apply them to a URL. Pure — no side effects. ' +
+    'EVERY paid/organic link must go through this before shipping.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      source: { type: 'string', description: 'meta | google | organic | referral | direct' },
+      medium: { type: 'string', description: 'paid_social | organic_social | cpc | email | sms | messenger' },
+      objective: { type: 'string', description: 'Campaign objective slug, e.g. "cod_orders"' },
+      yyyymm: { type: 'string', description: '6-digit month, e.g. 202607' },
+      campaignSlug: { type: 'string', description: 'Optional extra campaign slug' },
+      adsetKey: { type: 'string' },
+      adKey: { type: 'string' },
+      creativeKey: { type: 'string' },
+      url: { type: 'string', description: 'Optional destination URL to append the UTMs to' },
+    },
+    required: ['source', 'medium', 'objective', 'yyyymm'],
+  },
+  handler: async (input) => {
+    try {
+      const campaign = buildCampaignSlug({
+        objective: String(input.objective),
+        yyyymm: String(input.yyyymm),
+        slug: input.campaignSlug ? String(input.campaignSlug) : undefined,
+      })
+      const utm = buildUtm({
+        source: String(input.source) as UtmParams['utm_source'] & ('meta' | 'google' | 'organic' | 'referral' | 'direct'),
+        medium: String(input.medium) as 'paid_social' | 'organic_social' | 'cpc' | 'email' | 'sms' | 'messenger',
+        campaign,
+        adsetKey: input.adsetKey ? String(input.adsetKey) : undefined,
+        adKey: input.adKey ? String(input.adKey) : undefined,
+        creativeKey: input.creativeKey ? String(input.creativeKey) : undefined,
+      })
+      const validation = validateUtm(utm)
+      const url = input.url ? applyUtmToUrl(String(input.url), utm) : null
+      return { success: true, data: { utm, validation, url } }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const marketing_capi_test_event: AgentTool = {
+  name: 'marketing_capi_test_event',
+  description:
+    'Send a TEST event to the Meta Conversions API (requires testEventCode from Events Manager → Test Events — test ' +
+    'events never affect ad optimization or public data). Proves the Pixel/CAPI dedup pipeline end-to-end. Deterministic ' +
+    'event_id: retrying the same logical event dedupes instead of double-counting. Raw PII is hashed before sending.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      testEventCode: { type: 'string', description: 'REQUIRED — Events Manager test code (e.g. TEST12345)' },
+      name: { type: 'string', description: 'Canonical event: page_view|product_view|lead|messenger_conversation|order_draft|order_confirmed|order_delivered|refund|repeat_purchase' },
+      orderId: { type: 'string', description: 'Order id (required for order_* / refund)' },
+      dedupKey: { type: 'string', description: 'Stable identity for non-order events' },
+      valueBdt: { type: 'number', description: 'Whole-taka value (optional)' },
+    },
+    required: ['testEventCode', 'name'],
+  },
+  handler: async (input) => {
+    try {
+      const testEventCode = String(input.testEventCode ?? '').trim()
+      if (!testEventCode) {
+        return { success: false, error: 'testEventCode is required — this tool only sends Meta TEST events, never production traffic.' }
+      }
+      const event = makeEvent({
+        name: String(input.name) as CanonicalEventName,
+        source: 'server',
+        occurredAt: new Date(),
+        valueBdt: input.valueBdt == null ? null : Number(input.valueBdt),
+        orderId: input.orderId ? String(input.orderId) : null,
+        dedupKey: input.dedupKey ? String(input.dedupKey) : null,
+      })
+      const result = await sendCapiEvents([event], { testEventCode })
+      return result.ok
+        ? { success: true, data: { eventId: event.eventId, ...result, note: 'Check Events Manager → Test Events to see it arrive.' } }
+        : { success: false, error: result.error ?? 'send failed' }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
 export const MARKETING_TOOLS: AgentTool[] = [
   plan_marketing,
   marketing_report,
@@ -247,6 +372,9 @@ export const MARKETING_TOOLS: AgentTool[] = [
   growth_brief_draft,
   growth_brief_approve,
   growth_strategy_run,
+  marketing_attribution_report,
+  utm_build,
+  marketing_capi_test_event,
 ]
 
 export const MARKETING_ROLE_PROMPT = `
@@ -256,5 +384,7 @@ marketing_report: paid + Messenger + COD funnel report with 2–3 moves. Directi
 marketing_capability_audit: probe-proven capability matrix + measurement health. Run before big campaign/attribution claims.
 growth_strategy_run → proposal (bottleneck + options + forecast ranges) → owner decides → growth_brief_draft + growth_brief_approve freezes strategy.
 plan_marketing requires an approved Growth Brief (budget boundary, objective, segments) — kv growth.brief.enforce=false disables the gate.
+marketing_attribution_report: profit + reconciliation, observed/modelled/unknown labels — modelled ≠ fact.
+utm_build: every shipped link gets convention UTMs. marketing_capi_test_event: test-code-only CAPI pipeline proof.
 Do NOT duplicate general strategist (inventory/staff cross-domain) — use advisor_data_bundle topic=marketing if needed.
 `

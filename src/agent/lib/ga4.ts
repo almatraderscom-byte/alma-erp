@@ -119,3 +119,28 @@ export async function runGa4Report(params: {
     dimensionHeaders: (data.dimensionHeaders ?? []).map((h) => h.name ?? ''),
   }
 }
+
+/**
+ * Phase 43 — per-event counts for reconciliation (event ledger vs GA4).
+ * Returns null when GA4 is unreadable; never throws.
+ */
+export async function fetchGa4EventCounts(
+  eventNames: string[],
+  days: number,
+): Promise<Record<string, number> | null> {
+  const res = await runGa4Report({
+    startDate: `${Math.min(Math.max(days, 1), 90)}daysAgo`,
+    endDate: 'today',
+    dimensions: ['eventName'],
+    metrics: ['eventCount'],
+    limit: 100,
+  }).catch(() => null)
+  if (!res || !res.ok) return null
+  const wanted = new Set(eventNames)
+  const out: Record<string, number> = {}
+  for (const row of res.rows) {
+    const name = row.dimensions[0]
+    if (wanted.size === 0 || wanted.has(name)) out[name] = (out[name] ?? 0) + (row.metrics[0] ?? 0)
+  }
+  return out
+}

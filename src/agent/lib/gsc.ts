@@ -225,14 +225,26 @@ export type SearchAnalyticsRow = {
   position: number
 }
 
+/**
+ * Honest-data note (Phase 43): Search Analytics final data lags ~2–3 days;
+ * dataState='all' additionally returns fresh (still-changing) rows. The API
+ * caps rows per request (rowLimit ≤ 25000) — a truncated read must be
+ * labelled as partial, never presented as the whole truth.
+ */
+export const GSC_FRESHNESS_NOTE =
+  'GSC data: final numbers lag ~2–3 days; dataState=all includes fresh rows that can still change. Row-limited reads are partial.'
+
 export async function searchAnalyticsQuery(params: {
   siteUrl: string
   startDate: string
   endDate: string
   dimensions?: string[]
   rowLimit?: number
-}): Promise<{ rows: SearchAnalyticsRow[] }> {
-  const { siteUrl, startDate, endDate, dimensions, rowLimit } = params
+  /** 'final' (default) or 'all' — include fresh, still-changing data. */
+  dataState?: 'final' | 'all'
+}): Promise<{ rows: SearchAnalyticsRow[]; dataState: 'final' | 'all'; rowLimitHit: boolean }> {
+  const { siteUrl, startDate, endDate, dimensions, rowLimit, dataState } = params
+  const limit = rowLimit ?? 25
   const res = await gscFetch(
     `${WEBMASTERS_BASE}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
     {
@@ -241,13 +253,15 @@ export async function searchAnalyticsQuery(params: {
         startDate,
         endDate,
         dimensions: dimensions ?? [],
-        rowLimit: rowLimit ?? 25,
+        rowLimit: limit,
+        ...(dataState === 'all' ? { dataState: 'all' } : {}),
       }),
     },
   )
   if (!res.ok) throw new Error(`searchAnalytics failed: ${res.status} ${await res.text()}`)
   const data = (await res.json()) as { rows?: SearchAnalyticsRow[] }
-  return { rows: data.rows ?? [] }
+  const rows = data.rows ?? []
+  return { rows, dataState: dataState === 'all' ? 'all' : 'final', rowLimitHit: rows.length >= limit }
 }
 
 export type SitemapEntry = {
