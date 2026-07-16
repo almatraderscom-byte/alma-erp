@@ -216,7 +216,7 @@ Cost facts to surface in the UI, not hard-code without a model-price configurati
 | Phase | Branch | Purpose | Initial status |
 |---|---|---|---|
 | CS5 | `agent-phase-cs5` | Fal foundation, provider registry, flags, durable client | READY FOR OWNER |
-| CS6 | `agent-phase-cs6` | Selectable IDM-VTON and Fal FASHN single try-on | TODO |
+| CS6 | `agent-phase-cs6` | Selectable IDM-VTON and Fal FASHN single try-on | READY FOR OWNER |
 | CS7 | `agent-phase-cs7` | FLUX Fill precision editor and mask workflow | TODO |
 | CS8 | `agent-phase-cs8` | Professional single/product pipeline and localized repair | TODO |
 | CS9 | `agent-phase-cs9` | Family/couple/full-family protected compositing | TODO |
@@ -359,6 +359,22 @@ The roadmap file itself is allowed in every phase only for updating that phase's
 - Gallery displays correct provider lineage.
 - Real Chrome preview proof includes model/product selection, IDM choice, finished Gallery artifact, and metadata.
 - Update CS6 status to `READY FOR OWNER` and stop. Do not begin CS7.
+
+### CS6 verification notes (2026-07-16, branch `agent-phase-cs6`, tag `pre-agent-phase-cs6`, PR #406 — owner instructed merge + same-session continuation)
+
+**Status: READY FOR OWNER (merged to main at owner's instruction; live-verified on production)**
+
+- Engine picker (single Try-On ONLY): Direct FASHN Pro / Fal FASHN v1.6 (commercial) / IDM-VTON (research-only) / Gemini draft. Multi-person family presets hide the picker entirely (verified live — chain label returns). Research warning shown before Run.
+- cat-vton mapping per owner lock (overall/outer/lower/upper) with classifier auto + owner-visible গার্মেন্ট override; FASHN v1.6 categories derived (one-pieces/tops/bottoms/auto). Defaults: 30 steps, guidance 2.5, optional fixed seed.
+- Worker adapters on the durable client — node:test proves: one paid submit per fingerprint, restart resume with zero re-submit, result-download failure keeps state for retrieval-only retry, QC regens fingerprint-salted and bounded.
+- **Real production runs (owner's Chrome, alma-erp-six, VPS worker deployed at owner's "worker deploy koro"):**
+  - Fal FASHN v1.6: executed, request `019f6bde-9bb6-78e2-be3a-3401f6160ed1`, 16.2s, QC 3 bounded attempts, honestly flagged "weak garment fidelity 3/5", actual cost $0.225 (3×$0.075).
+  - IDM-VTON (fal-ai/cat-vton): executed, request `019f6be5-2e90-7030-afc0-c69cbb3560e6`, 9.7s final attempt, QC 3 attempts flagged 3/5, cost $0.15 (3×$0.05 kv-default `cs_idm_vton_cost_usd`).
+  - Gallery lineage verified in lightbox: engine chip, ⚠ পরীক্ষামূলক badge, latency, $, request id, QC flag. Grid badges FAL FASHN / IDM ⚠.
+  - Total real API spend this phase: **$0.375**.
+- Note: test product photo was a marketing composite (2 people + text) — low garment-fidelity scores expected; golden-set evaluation with clean garment shots is CS10 scope.
+- Checks: type-check PASS, build PASS, vitest 64/64, worker node:test 16/16 (`node --test worker/src/fal/__tests__/client.test.mjs worker/src/fal/__tests__/vton-adapters.test.mjs`).
+- Process deviations (owner-directed): CS6 ran in the same session as CS5; Claude merged PR #406 himself and deployed the VPS worker — both at the owner's explicit instruction.
 
 ---
 
