@@ -6076,14 +6076,21 @@ struct AgentThinkingRow: View {
                     .foregroundStyle(pal.muted)
                     .transition(.opacity)
             } else {
-                // Claude-Code-style live status beside the identity (owner spec
-                // 2026-07-16): verb tracks the phase, token count advances, and
-                // the whole label BLINKS — a slow breath between ~0.35 and 1.0
-                // opacity — with a soft fade whenever the verb changes.
+                // Claude-Code-style live status (owner iteration 2): token count
+                // FIRST and steady; the phase verb LAST — so a growing count
+                // never pushes the verb around — and ONLY the verb blinks (the
+                // slow eye-open/eye-close breath). Verb changes fade softly.
+                if tokenEstimate() > 0 {
+                    Text("· \(almaBnCompact(tokenEstimate())) টোকেন")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(pal.muted)
+                        .contentTransition(.numericText())
+                        .lineLimit(1)
+                }
                 TimelineView(.animation(minimumInterval: 1 / 12, paused: reduceMotion)) { tl in
                     let t = tl.date.timeIntervalSinceReferenceDate
                     let blink = reduceMotion ? 1.0 : 0.38 + 0.62 * (0.5 + 0.5 * sin(t * .pi * 2 / 1.7))
-                    Text(statusLine(now: tl.date))
+                    Text("· \(statusVerb(now: tl.date))")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(pal.muted)
                         .opacity(blink)
@@ -6104,17 +6111,22 @@ struct AgentThinkingRow: View {
         return max(0, ((message.thinking ?? "").count + message.text.count) / 4)
     }
 
-    /// The Claude-Code verb ladder. Thinking deepens with time ("thinking
-    /// more…", "still thinking…"); quiet thinking deltas near the handoff read
-    /// as "almost done thinking…"; prose = writing, tools = working.
+    /// The Claude-Code verb ladder — EVERY working phase escalates with time
+    /// and ends in its own "almost done …" (owner iteration 2: "যেখানে time
+    /// বেশি লাগবে সেখানে almost হবে"), thinking additionally treats a quiet
+    /// delta stream (≥3s) as the thought closing.
     private func statusVerb(now: Date) -> String {
         let inPhase = now.timeIntervalSince(phaseEnteredAt)
         switch mode {
         case "understanding":
             return "reading…"
         case "writing":
+            if inPhase > 30 { return "almost done writing…" }
+            if inPhase > 15 { return "still writing…" }
             return "writing…"
         case "searching", "researching":
+            if inPhase > 35 { return "almost done working…" }
+            if inPhase > 15 { return "still working…" }
             return "working…"
         default:
             // Thinking family. Quiet deltas for a beat ⇒ the thought is closing.
@@ -6122,16 +6134,11 @@ struct AgentThinkingRow: View {
                now.timeIntervalSince(lastThinkingGrowthAt) > 3.0 {
                 return "almost done thinking…"
             }
+            if inPhase > 40 { return "almost done thinking…" }
             if inPhase > 24 { return "still thinking…" }
             if inPhase > 10 { return "thinking more…" }
             return "thinking…"
         }
-    }
-
-    private func statusLine(now: Date) -> String {
-        let tok = tokenEstimate()
-        let verb = statusVerb(now: now)
-        return tok > 0 ? "· \(verb) · \(almaBnCompact(tok)) টোকেন" : "· \(verb)"
     }
 }
 
