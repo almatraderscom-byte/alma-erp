@@ -47,6 +47,9 @@ const WorkflowRunState = Annotation.Root({
   legal: Annotation<boolean>({ reducer: (_a, b) => b, default: () => true }),
   /** Owner-readable Bangla step label from the template. */
   labelBn: Annotation<string>({ reducer: (_a, b) => b, default: () => '' }),
+  // Post-node checkpoint marker (2026-07-16 dedupe fix) — see live-browser-graph.
+  stepCount: Annotation<number>({ reducer: (a, b) => a + b, default: () => 0 }),
+  appliedStep: Annotation<number>({ reducer: (_a, b) => b, default: () => -1 }),
 })
 
 function isTemplateLegal(kind: string, fromState: string, toState: string): boolean {
@@ -66,7 +69,7 @@ function buildGraph(checkpointer: NonNullable<ReturnType<typeof getGraphCheckpoi
       const status = e ? e.toStatus : s.status
       const legal = e ? isTemplateLegal(s.kind, e.fromState, e.toState) : true
       const step = getTemplateStep(s.kind, state)
-      return { state, status, legal, labelBn: step?.labelBn ?? '' }
+      return { state, status, legal, labelBn: step?.labelBn ?? '', stepCount: 1, appliedStep: s.stepCount + 1 }
     })
     .addEdge(START, 'apply_transition')
     .addEdge('apply_transition', END)
@@ -143,7 +146,12 @@ export async function getWorkflowRunGraphHistory(runId: string, limit = 50): Pro
     })) {
       const v = (snap.values ?? {}) as {
         state?: string; status?: string; labelBn?: string; legal?: boolean; event?: WorkflowRunGraphEvent | null
+        stepCount?: number; appliedStep?: number
       }
+      // Post-node checkpoints only (see live-browser-graph) — unstamped
+      // pre-fix checkpoints pass through for old threads.
+      const stamped = typeof v.appliedStep === 'number' && v.appliedStep >= 0
+      if (stamped && ((snap.metadata as { source?: string } | undefined)?.source !== 'loop' || v.appliedStep !== v.stepCount)) continue
       steps.push({
         state: v.state ?? '',
         status: v.status ?? '',
