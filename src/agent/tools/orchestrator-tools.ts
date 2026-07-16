@@ -617,4 +617,39 @@ const get_duty_day: AgentTool = {
   },
 }
 
-export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals, check_owner_silence, check_quiet_hours, get_action_cards, get_workflow_history, get_duty_day]
+const get_graph_health: AgentTool = {
+  name: 'get_graph_health',
+  description:
+    'LangGraph program health: routine-graph handled share (free turns), action-graph stagings, the ' +
+    'LG-4 shadow AGREE RATE with its canary-readiness verdict, and checkpoint-store size by thread ' +
+    'family. USE when the owner asks "graph কেমন চলছে", "canary ready?", "checkpoint কত জমেছে", or ' +
+    'for the weekly LangGraph health check. Read-only. `days` optional (default 7).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      days: { type: 'number', description: 'Look-back window in days (default 7).' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const { getTurnGraphHealth, getCheckpointStoreHealth } = await import('@/agent/lib/graph/graph-health')
+      const days = typeof input.days === 'number' && input.days > 0 ? Math.min(input.days, 30) : 7
+      const [turns, store] = await Promise.all([getTurnGraphHealth(days), getCheckpointStoreHealth()])
+      return {
+        success: true,
+        data: {
+          turns,
+          store,
+          note:
+            !turns && !store
+              ? 'Health data পড়া যায়নি (route spans/checkpoint schema unreachable) — deploy/log দেখতে হবে।'
+              : null,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals, check_owner_silence, check_quiet_hours, get_action_cards, get_workflow_history, get_duty_day, get_graph_health]
