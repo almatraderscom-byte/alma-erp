@@ -1689,6 +1689,9 @@ final class AssistantVM {
         }
         reconnecting = false
         justSettledId = messages.last(where: { $0.role == .assistant })?.id
+        if terminalStatus != "error" {
+            AlmaAgentTickHaptic.turnCompleted()
+        }
         recoverableTurn = nil            // terminal + reconciled (PR 5)
         AlmaTurnLog.event("turn.terminal", "recovery:\(terminalStatus)")
         if terminalStatus == "error" {
@@ -2144,7 +2147,7 @@ final class AssistantVM {
             messages[i].modelSwitch?.status = approve ? "approved" : "declined"
         }
         let fallback = messages.first(where: { $0.id == messageId })?.modelSwitch?.fallbackModelId
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        AlmaAgentTickHaptic.ownerSend()
         isStreaming = true
         thinkingLive = true
         beginUnderstanding()
@@ -2176,7 +2179,7 @@ final class AssistantVM {
             if case .ready(let ref) = $0.state { return ref } else { return nil }
         }
         guard !text.isEmpty || !readyFiles.isEmpty || structuredAutoContinue, !isStreaming else { return }
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        AlmaAgentTickHaptic.ownerSend()
 
         // A structured continuation is server control state, not a new owner
         // message. Rendering a bubble here was the native-only duplicate-turn bug.
@@ -2585,7 +2588,7 @@ final class AssistantVM {
                 sawTerminalEvent = true
                 thinkingLive = false
                 settleLiveMode()
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                AlmaAgentTickHaptic.turnCompleted()
             case .turnError(let message):
                 sawTerminalEvent = true
                 thinkingLive = false
@@ -4218,8 +4221,38 @@ struct AlmaShimmerText: View {
     let text: String
     var font: Font = .system(size: 12.5, weight: .semibold)
     var base: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var scheme
+
+    private static let period: Double = 1.8
+
     var body: some View {
-        Text(text).font(font).foregroundStyle(base)
+        if reduceMotion {
+            Text(text).font(font).foregroundStyle(base)
+        } else {
+            Text(text)
+                .font(font)
+                .foregroundStyle(base.opacity(0.35))
+                .overlay(
+                    GeometryReader { g in
+                        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                            let phase = context.date.timeIntervalSinceReferenceDate
+                                .truncatingRemainder(dividingBy: Self.period) / Self.period
+                            let band = max(56, g.size.width * 0.5)
+                            let travel = g.size.width + band * 2
+                            LinearGradient(
+                                colors: [.clear,
+                                         scheme == .dark ? .white : Color.black.opacity(0.9),
+                                         .clear],
+                                startPoint: .leading, endPoint: .trailing)
+                                .frame(width: band)
+                                .offset(x: -band + travel * phase)
+                        }
+                    }
+                    .mask(Text(text).font(font))
+                    .allowsHitTesting(false)
+                )
+        }
     }
 }
 
@@ -4233,9 +4266,32 @@ struct AlmaShimmerText: View {
 @available(iOS 17.0, *)
 struct AgentGlyphShimmerModifier: ViewModifier {
     let active: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let period: Double = 1.8
 
     func body(content: Content) -> some View {
-        content.opacity(active ? 0.82 : 1)
+        if active && !reduceMotion {
+            content
+                .overlay(
+                    GeometryReader { g in
+                        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                            let phase = context.date.timeIntervalSinceReferenceDate
+                                .truncatingRemainder(dividingBy: Self.period) / Self.period
+                            let band = max(44, g.size.width * 0.3)
+                            let travel = g.size.width + band * 2
+                            LinearGradient(colors: [.clear, .white.opacity(0.9), .clear],
+                                           startPoint: .leading, endPoint: .trailing)
+                                .frame(width: band)
+                                .offset(x: -band + travel * phase)
+                        }
+                    }
+                    .mask(content)
+                    .allowsHitTesting(false)
+                )
+        } else {
+            content
+        }
     }
 }
 
@@ -4788,7 +4844,6 @@ struct AgentBrandWordmark: View {
         .onAppear {
             if animateReveal {
                 withAnimation(.spring(response: 0.6, dampingFraction: 0.72)) { shown = true }
-                AlmaAgentTickHaptic.settleThud()
             } else {
                 var tx = Transaction(); tx.disablesAnimations = true
                 withTransaction(tx) { shown = true }
@@ -5782,22 +5837,28 @@ struct AgentTurnBlocksView: View {
 struct AgentLiveWorkSummaryRow: View {
     let message: AgentChatMessage
     let pal: AgentPalette
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let gold = Color(red: 0.831, green: 0.659, blue: 0.294)
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle()
-                .trim(from: 0, to: 0.72)
-                .stroke(Self.gold.opacity(0.85),
-                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-                .frame(width: 11, height: 11)
-                .rotationEffect(.degrees(-35))
+            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
+                let angle = context.date.timeIntervalSinceReferenceDate
+                    .truncatingRemainder(dividingBy: 0.8) / 0.8 * 360
+                Circle()
+                    .trim(from: 0, to: 0.72)
+                    .stroke(Self.gold.opacity(0.85),
+                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                    .frame(width: 11, height: 11)
+                    .rotationEffect(.degrees(reduceMotion ? -35 : angle))
+            }
             .frame(width: 12, height: 12)
             Text(liveSummary)
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(pal.muted)
                 .lineLimit(1)
+                .contentTransition(.numericText())
             Spacer(minLength: 0)
         }
         .padding(.bottom, 2)
@@ -9135,9 +9196,9 @@ struct AssistantScreen: View {
         scrollDebounceTask = Task { @MainActor in
             // Coalesce rapid SSE text_delta bursts — avoids SwiftUI
             // "onChange tried to update multiple times per frame" freeze.
-            // Ten scroll corrections per second matches the buffered text cadence
+            // Up to 20 scroll corrections per second matches the buffered text cadence
             // and avoids forcing a second layout pass for every SSE fragment.
-            try? await Task.sleep(for: .milliseconds(120))
+            try? await Task.sleep(for: .milliseconds(50))
             guard !Task.isCancelled else { return }
             proxy.scrollTo(Self.bottomID, anchor: .bottom)
         }

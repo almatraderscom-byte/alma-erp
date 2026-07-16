@@ -153,10 +153,11 @@ struct AlmaShimmerWordmark: View {
     var size: CGFloat = 13
     var weight: Font.Weight = .semibold
     var tracking: CGFloat = 2.1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let period: Double = 1.8
 
     var body: some View {
-        // A static aura wordmark keeps the premium colour identity without
-        // creating a second display-link beside the one active loader.
         Text("ALMA")
             .font(.system(size: size, weight: weight))
             .tracking(tracking)
@@ -165,6 +166,30 @@ struct AlmaShimmerWordmark: View {
                     colors: AlmaRayBurst.colors,
                     startPoint: .leading,
                     endPoint: .trailing))
+            .overlay {
+                if !reduceMotion {
+                    GeometryReader { g in
+                        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                            let phase = context.date.timeIntervalSinceReferenceDate
+                                .truncatingRemainder(dividingBy: Self.period) / Self.period
+                            let band = max(36, g.size.width * 0.48)
+                            let travel = g.size.width + band * 2
+                            LinearGradient(
+                                colors: [.clear, .white.opacity(0.95), .clear],
+                                startPoint: .leading,
+                                endPoint: .trailing)
+                                .frame(width: band)
+                                .offset(x: -band + travel * phase)
+                        }
+                    }
+                    .mask(
+                        Text("ALMA")
+                            .font(.system(size: size, weight: weight))
+                            .tracking(tracking)
+                    )
+                    .allowsHitTesting(false)
+                }
+            }
             .shadow(color: AlmaRayBurst.colors[2].opacity(0.20),
                     radius: max(1.5, size * 0.16))
         .accessibilityLabel("ALMA")
@@ -195,10 +220,24 @@ enum AlmaAgentTickHaptic {
         soft.prepare()
     }
 
+    /// Owner-initiated sends should feel immediate even after a long idle period.
+    static func ownerSend() {
+        medium.prepare()
+        medium.impactOccurred(intensity: 0.72)
+        medium.prepare()
+    }
+
+    static func turnCompleted() {
+        settleThud()
+    }
+
     static func settleThud() {
+        medium.prepare()
+        light.prepare()
         medium.impactOccurred(intensity: 0.65)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
             light.impactOccurred(intensity: 0.5)
+            light.prepare()
         }
     }
 }
@@ -324,7 +363,6 @@ struct AlmaStarburstLoader: View {
     var size: CGFloat = 22
     @State private var anim = StarburstAnimState()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
 
     private var box: CGFloat { (size * 1.48).rounded() }
 
@@ -344,13 +382,13 @@ struct AlmaStarburstLoader: View {
                 .frame(width: size * 1.08, height: size * 1.08)
                 .blur(radius: max(1.5, size * 0.12))
 
-            // Idle means truly idle: SwiftUI's TimelineView used to run this
-            // canvas at 60 FPS even for `.idle`, keeping every visible ALMA
-            // footer alive forever. One 24 FPS display link exists only while an
-            // explicit loader mode is active and the app is foregrounded.
+            // Idle means truly idle: only an explicit loader mode owns this
+            // display link. Do not gate on scenePhase here: this SwiftUI view is
+            // hosted inside UIKit and can transiently report inactive while the
+            // foreground chat remains visible, freezing the progress indicator.
             TimelineView(.animation(
-                minimumInterval: 1 / 24,
-                paused: mode == .idle || reduceMotion || scenePhase != .active
+                minimumInterval: 1 / 30,
+                paused: mode == .idle || reduceMotion
             )) { timeline in
                 Canvas { ctx, canvasSize in
                     anim.tick(mode: mode, now: timeline.date.timeIntervalSinceReferenceDate)
