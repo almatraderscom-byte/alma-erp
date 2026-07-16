@@ -725,6 +725,7 @@ private struct TodoEnvelope: Decodable { let todo: OwnerTodo }
 /// dashboard — only AssistantSwiftUI observes AlmaAPI.authExpiredNotification.
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 private final class OwnerTodoVM {
     var items: [OwnerTodo] = []
     var visible = false

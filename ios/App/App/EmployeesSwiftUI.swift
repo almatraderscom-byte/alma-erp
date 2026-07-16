@@ -468,6 +468,7 @@ private let employeesBusinessId = "ALMA_LIFESTYLE"
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class EmployeesVM {
     var employees: [EmployeeRosterItem] = []
     /// Full LinkableUser list from include_users=1 — add-employee picker + link flows.
@@ -567,6 +568,7 @@ final class EmployeesVM {
 /// Detail sheet data + actions — everything the web detail page fetches and writes.
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class EmployeeDetailVM {
     var wallet: EmployeeWalletDetail? = nil
     var attendance: EmployeeAttendanceDetail? = nil

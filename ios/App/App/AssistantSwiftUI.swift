@@ -2461,7 +2461,7 @@ final class AssistantVM {
         var rows: [AgentChatMessage] = []
         for i in 0..<38 {
             if i % 2 == 0 {
-                var u = AgentChatMessage(id: "fix-u-\(i)", role: .user,
+                let u = AgentChatMessage(id: "fix-u-\(i)", role: .user,
                                          text: i % 4 == 0 ? "আজকের sales koto holo? আর কালকের plan টা দাও" : bnShort)
                 rows.append(u)
             } else {
@@ -2725,7 +2725,7 @@ final class AssistantVM {
             var final = results
             final.append("\(ok ? "✅" : "❌") buffer coalesce+order")
             let passed = final.allSatisfy { $0.hasPrefix("✅") }
-            var m = AgentChatMessage(id: "unittest-\(UUID().uuidString)", role: .assistant,
+            let m = AgentChatMessage(id: "unittest-\(UUID().uuidString)", role: .assistant,
                                      text: (passed ? "প্রোটোকল ইউনিট টেস্ট: সব পাশ ✅" : "প্রোটোকল ইউনিট টেস্ট: FAIL ❌")
                                         + "\n\n" + final.joined(separator: "\n"))
             self.messages.append(m)
@@ -2883,7 +2883,7 @@ final class AssistantVM {
 
     func attachImage(_ image: UIImage) {
         guard let jpeg = image.jpegData(compressionQuality: 0.85) else { return }
-        var file = PendingFile(image: image)
+        let file = PendingFile(image: image)
         pendingFiles.append(file)
         let fileId = file.id
         Task { [weak self] in
@@ -7776,7 +7776,6 @@ extension AlmaTabBarController {
         }
         if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *) {
             let navRef = WeakRef<UINavigationController>()
-            let pool = contentPool
             let hooks = AssistantBarHooks()
             // IOSP-1: the Assistant screen's link-outs go through the same smartOpen
             // as every other tab root — its auth card's openWeb("/login") now lands
@@ -7831,7 +7830,7 @@ extension AlmaTabBarController {
         // Web fallback — the pre-S6b Assistant tab, unchanged.
         func agentURL(_ p: String) -> URL { URL(string: Self.base + p)! }
         let assistant = AlmaWebTabViewController(
-            url: agentURL("/agent"), processPool: contentPool,
+            url: agentURL("/agent"),
             tabTitle: "Assistant", systemImage: "sparkles",
             hideWebHeader: true,
             agentSegments: [

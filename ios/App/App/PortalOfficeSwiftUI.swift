@@ -531,6 +531,7 @@ enum PortalProof {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class PortalOfficeVM {
     var tasks: [PortalOfficeTask] = []
     var unread = 0

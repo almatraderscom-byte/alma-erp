@@ -1,0 +1,14 @@
+== IOSP-8 warning inventory ==
+Both CLEAN builds (fresh derivedData), Xcode 26.6 / iOS 26.5 sim SDK.
+Counts deduped by file:line:col. BEFORE = agent-phase-25 @ IOSP-7 tip (bbe6949d).
+
+category                          BEFORE   AFTER
+WKProcessPool deprecated               9       0
+async-not-awaited (Swift 6)           96       0
+allowBluetooth deprecated              1       0
+never-mutated var                      3       0
+non-Sendable capture                   3       3
+script-phase no outputs                5       5
+
+New warning kinds introduced: NONE (diffed unique warning texts, before vs after).
+Build result: ** BUILD SUCCEEDED **, 0 errors.

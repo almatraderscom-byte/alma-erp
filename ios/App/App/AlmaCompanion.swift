@@ -48,7 +48,6 @@ enum AlmaCompanionStore {
 // MARK: - The companion screen
 
 final class AlmaCompanionViewController: UIViewController, WKNavigationDelegate {
-    private let sharedPool: WKProcessPool
     private var webView: WKWebView!
     private var statusDot: UIView!
     private var statusLabel: UILabel!
@@ -58,8 +57,7 @@ final class AlmaCompanionViewController: UIViewController, WKNavigationDelegate 
     /// Set true by STOP mid-command; the in-flight verb reports failed.
     private var stopRequested = false
 
-    init(processPool: WKProcessPool) {
-        self.sharedPool = processPool
+    init() {
         super.init(nibName: nil, bundle: nil)
         title = "Agent Companion"
     }
@@ -104,9 +102,9 @@ final class AlmaCompanionViewController: UIViewController, WKNavigationDelegate 
         bar.addSubview(stopButton)
         view.addSubview(bar)
 
-        // Companion web surface — same cookie store as the app's webviews.
+        // Companion web surface — the default data store is what shares cookies
+        // (and therefore the login) with every other webview in the app.
         let config = WKWebViewConfiguration()
-        config.processPool = sharedPool
         config.websiteDataStore = .default()
         config.allowsInlineMediaPlayback = true
         webView = WKWebView(frame: .zero, configuration: config)

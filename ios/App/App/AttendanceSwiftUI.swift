@@ -382,6 +382,7 @@ struct AttendanceDashboardResponse: Decodable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class AttendanceVM {
     var kpis: AttendanceKpis? = nil
     var records: [AttendanceRecordRow] = []

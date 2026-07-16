@@ -214,7 +214,7 @@ extension AlmaTabBarController {
 
     /// Web fallback tab (the pre-S6 construction, verbatim).
     private func webTab(_ path: String, _ title: String, _ icon: String) -> UINavigationController {
-        let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!, processPool: contentPool,
+        let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!,
                                           tabTitle: title, systemImage: icon, hideWebHeader: true)
         return Self.darkNav(root: vc, tabTitle: title, icon: icon, largeTitles: false)
     }
@@ -223,7 +223,7 @@ extension AlmaTabBarController {
     /// hatch (create order, full drawer, login) and the More rows all go through here.
     private func pushWeb(on nav: UINavigationController?, path: String, title: String, icon: String) {
         AlmaPerfLog.event("route.pushWeb", path)
-        let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!, processPool: contentPool,
+        let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!,
                                           tabTitle: title, systemImage: icon, hideWebHeader: true)
         vc.hidesBottomBarWhenPushed = false
         nav?.pushViewController(vc, animated: true)
@@ -372,7 +372,7 @@ extension AlmaTabBarController {
                 openCompanion: { [weak self] in
                     guard let self else { return }
                     let host = AlmaHostingController(
-                        rootView: CompanionScreen(processPool: self.contentPool))
+                        rootView: CompanionScreen())
                     host.title = "Phone Companion"
                     host.hidesBottomBarWhenPushed = false
                     navRef.value?.pushViewController(host, animated: true)
@@ -423,7 +423,7 @@ extension AlmaTabBarController {
             navRef.value = nav
             return nav
         }
-        return Self.darkNav(root: MoreMenuViewController(processPool: contentPool),
+        return Self.darkNav(root: MoreMenuViewController(),
                             tabTitle: "More", icon: "ellipsis.circle", largeTitles: true)
     }
 

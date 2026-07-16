@@ -419,8 +419,10 @@ final class AgoraIntercom: NSObject {
 
     private func configureAudioSession() throws {
         let s = AVAudioSession.sharedInstance()
+        // `.allowBluetoothHFP` is the current spelling of `.allowBluetooth` — same
+        // raw option (0x4), available since iOS 1.0, so this is a rename only.
         try s.setCategory(.playAndRecord, mode: .voiceChat,
-                          options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
+                          options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP])
         // Under CallKit, the framework activates the session in `didActivate` — us
         // calling setActive(true) here races/​fights it, so skip when CallKit-managed.
         if !callKitManaged {

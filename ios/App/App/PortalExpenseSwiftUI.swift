@@ -121,6 +121,7 @@ struct PortalExpenseSubmitResponse: Decodable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class PortalExpenseVM {
     /// Same default the API route falls back to (LIFESTYLE_BUSINESS_ID).
     static let defaultBusinessId = "ALMA_LIFESTYLE"

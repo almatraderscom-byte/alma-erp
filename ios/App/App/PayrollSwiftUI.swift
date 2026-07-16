@@ -559,6 +559,7 @@ struct PayrollBusiness: Identifiable, Equatable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class PayrollVM {
     var businessId = "ALMA_LIFESTYLE"
 
@@ -1517,6 +1518,7 @@ struct PayrollScreen: View {
     /// with earned/withdrawn/balance/liability, business total footer).
     private func payrollPdfFile() -> URL? {
         let rows = vm.wallets
+        let businessId = vm.businessId
         let pageRect = CGRect(x: 0, y: 0, width: 595, height: 842)   // A4 @72dpi
         let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
         let margin: CGFloat = 36
@@ -1529,7 +1531,7 @@ struct PayrollScreen: View {
                 "Payroll wallet ledger".draw(at: CGPoint(x: margin, y: y),
                     withAttributes: [.font: UIFont.boldSystemFont(ofSize: 16)])
                 y += 22
-                vm.businessId.draw(at: CGPoint(x: margin, y: y),
+                businessId.draw(at: CGPoint(x: margin, y: y),
                     withAttributes: [.font: UIFont.systemFont(ofSize: 9), .foregroundColor: UIColor.darkGray])
                 y += 20
                 let headers = ["Employee", "Salary", "Earned", "Withdrawn", "Balance", "Liability"]

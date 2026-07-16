@@ -346,6 +346,7 @@ enum OrdIdentity {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class OrdersVM {
     /// The FULL window (all statuses), exactly as the server returns it — already
     /// archive-stripped. Every chip count + KPI is derived from THIS, so the numbers
