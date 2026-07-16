@@ -4667,12 +4667,15 @@ struct AgentMessageActions: View {
 @available(iOS 17.0, *)
 struct AgentPlayingBars: View {
     @State private var up = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion // IOSP-5
     var body: some View {
         HStack(spacing: 2.5) {
             Capsule().fill(AgentPalette.coral).frame(width: 3, height: up ? 13 : 6)
             Capsule().fill(AgentPalette.coral).frame(width: 3, height: up ? 6 : 13)
         }
         .onAppear {
+            // IOSP-5: Reduce Motion → hold the equalizer still (no perpetual loop).
+            guard !reduceMotion else { return }
             withAnimation(.easeInOut(duration: 0.35).repeatForever(autoreverses: true)) { up = true }
         }
     }
@@ -6578,6 +6581,7 @@ struct AgentEmptyStateView: View {
 /// (Owner rule 2026-07-07: every approval ask = 3 buttons, never 2 — everywhere.)
 @available(iOS 17.0, *)
 struct AgentOpenTasksChipView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion // IOSP-5
     @Bindable var vm: AssistantVM
     let pal: AgentPalette
     @State private var showSheet = false
@@ -6598,6 +6602,7 @@ struct AgentOpenTasksChipView: View {
                     Circle().fill(AgentPalette.coral).frame(width: 7, height: 7)
                 }
                 .onAppear {
+                    guard !reduceMotion else { return } // IOSP-5: no perpetual ping under Reduce Motion
                     withAnimation(.easeOut(duration: 1.1).repeatForever(autoreverses: false)) { ping = true }
                 }
                 Text("\(almaBn(vm.openTasks.count))টা কাজ বাকি")
@@ -6810,6 +6815,7 @@ struct AgentPendingTasksSheet: View {
 /// only while a plan exists — this is a chat surface, not a page.
 @available(iOS 17.0, *)
 private struct AgentPlanDriveCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion // IOSP-5
     @Bindable var vm: AssistantVM
     let pal: AgentPalette
     @State private var expanded: Set<String> = []
@@ -6867,6 +6873,7 @@ private struct AgentPlanDriveCard: View {
                     .frame(width: 7, height: 7)
             }
             .onAppear {
+                guard !reduceMotion else { return } // IOSP-5: no perpetual ping under Reduce Motion
                 withAnimation(.easeOut(duration: 1.2).repeatForever(autoreverses: false)) { ping = true }
             }
             Text("এজেন্ট লাইভ ডেস্ক")
@@ -7276,6 +7283,7 @@ struct AgentRowDebugOverlay: ViewModifier {
 struct AssistantScreen: View {
     @State private var vm = AssistantVM()
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion // IOSP-5
     @State private var nearBottom = true
     @State private var scrollViewportH: CGFloat = 0
     @State private var toolSheet: AgentChatMessage.Tool?
@@ -7367,16 +7375,20 @@ struct AssistantScreen: View {
                                 onToolTap: { tool in toolSheet = tool },
                                 onActivitySheet: { activitySheet = $0 })
                             .modifier(AgentRowDebugOverlay(message: msg))
-                            .transition(.asymmetric(
-                                insertion: .opacity.combined(with: .offset(y: 12)),
-                                removal: .opacity))
+                            // IOSP-5: Reduce Motion → new rows appear without the
+                            // slide/offset (a plain fade), calmer for motion-sensitive users.
+                            .transition(reduceMotion
+                                ? .opacity
+                                : .asymmetric(insertion: .opacity.combined(with: .offset(y: 12)),
+                                              removal: .opacity))
                         }
                         Color.clear.frame(height: 4).id(Self.bottomID)
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 10)
                     .background(scrollOffsetReader)
-                    .animation(.spring(response: 0.32, dampingFraction: 0.8), value: vm.messages.count)
+                    // IOSP-5: no spring on message-count change under Reduce Motion.
+                    .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.8), value: vm.messages.count)
                 }
                 .coordinateSpace(name: "agentscroll")
                 // Owner 2026-07-07: tap on any empty spot dismisses the keyboard
