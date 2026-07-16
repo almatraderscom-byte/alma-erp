@@ -7380,7 +7380,27 @@ private struct AgentBackgroundTasksAnchor: View {
     /// approval card appeared and the footer still said a sleepy "Background
     /// Tasks" — a decision waiting on the owner must light this label up, the
     /// sheet already lists it under "Needs attention" with its age).
-    private var attentionCount: Int { vm.backgroundAttention.count }
+    ///
+    /// UNION of the server list and the pending confirm cards visible in this
+    /// chat (same pendingActionId space, deduped): the server list refreshes on
+    /// a 12s poll, so alone it lags the card by up to a poll tick — the owner
+    /// hit exactly that gap (card on screen, label still asleep, round 2).
+    /// Local card status flips instantly on approve/reject, so the label also
+    /// falls back to sleep with zero lag.
+    private var attentionCount: Int {
+        var ids = Set(vm.backgroundAttention.map(\.id))
+        for message in vm.messages {
+            for card in message.confirmCards {
+                if card.status == "pending" {
+                    ids.insert(card.id)
+                } else {
+                    // Just decided locally — the server list may lag a poll tick.
+                    ids.remove(card.id)
+                }
+            }
+        }
+        return ids.count
+    }
 
     private var label: String {
         let total = runningCount + attentionCount

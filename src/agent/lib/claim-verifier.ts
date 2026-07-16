@@ -338,7 +338,12 @@ export function detectMissingCardViolation(replyText: string): ClaimViolation[] 
 /// style list markers at line starts.
 const PROSE_OPTIONS = /(?:\boption\s*[a-c১২৩]\s*[:।).]|অপশন\s*[কখগ১২৩ab]|(?:^|\n)\s*[•·▪-]?\s*\(?[কখগ]\)?\s*[).:।])/im
 /// A decision question aimed straight at the owner.
-const DECISION_ASK = /(?:কোন\s*(?:টা|টি|পথে?|দিকে?|অপশন|প্ল্যান)[^\n?।]{0,50}\?|কোনটা\s*(?:করব|আগে|চান|ভালো|নেব)|(?:যেতে|করতে|এগোতে|আগাতে|নিতে|চালাতে)\s+চান|আপনার\s*সিদ্ধান্ত\s*(?:চাই|দরকার|লাগবে)|সিদ্ধান্ত\s*(?:দিন|জানান|দেবেন)|(?:করব|পাঠাব|আগাব|এগোব|চালাব|বাড়াব)\s*কি(?:\s*না)?\s*\?|which\s+(?:one|option|path|plan)\b[^\n?]{0,50}\?)/i
+// Owner-hit round 2 (2026-07-16 late): "এটা পাঠাবো নাকি আরও ফার্ম/সফট/কোনো
+// পরিবর্তন চান?" slipped through — the ‑ো verb spellings (পাঠাবো/করবো…) and
+// the "X নাকি Y?" either-or shape weren't covered. Both are now first-class:
+// any question containing নাকি IS a choice, and the verb group accepts the
+// optional ‑ো. "পরিবর্তন চান" joins the direct decision-request phrases.
+const DECISION_ASK = /(?:কোন\s*(?:টা|টি|পথে?|দিকে?|অপশন|প্ল্যান)[^\n?।]{0,50}\?|কোনটা\s*(?:করব|আগে|চান|ভালো|নেব)|(?:যেতে|করতে|এগোতে|আগাতে|নিতে|চালাতে)\s+চান|আপনার\s*সিদ্ধান্ত\s*(?:চাই|দরকার|লাগবে)|সিদ্ধান্ত\s*(?:দিন|জানান|দেবেন)|(?:করব|পাঠাব|আগাব|এগোব|চালাব|বাড়াব|দেব|রাখব)ো?\s*কি(?:\s*না)?[^\n?।]{0,12}\?|নাকি\s+[^\n?]{0,60}\?|(?:কোনো\s*)?পরিবর্তন\s*(?:চান|লাগবে)|which\s+(?:one|option|path|plan)\b[^\n?]{0,50}\?)/i
 
 /**
  * Detects an owner-facing choice asked in prose while NO ask card was emitted

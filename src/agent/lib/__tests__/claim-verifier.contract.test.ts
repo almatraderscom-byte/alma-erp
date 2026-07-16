@@ -208,6 +208,31 @@ describe('detectProseChoiceViolation', () => {
     expect(v).toHaveLength(1)
   })
 
+  it('owner round-2 escape: "পাঠাবো নাকি …চান?" either-or → violation', () => {
+    const v = detectProseChoiceViolation(
+      'এটা পাঠাবো নাকি আরও ফার্ম/সফট/কোনো পরিবর্তন চান?',
+    )
+    expect(v).toHaveLength(1)
+    expect(v[0].category).toBe('prose_choice')
+  })
+
+  it('‑ো verb spelling "করবো কি?" → violation', () => {
+    const v = detectProseChoiceViolation('পোস্টটা এখনই করবো কি বস?')
+    expect(v).toHaveLength(1)
+  })
+
+  it('"কোনো পরিবর্তন লাগবে?" → violation', () => {
+    const v = detectProseChoiceViolation('ড্রাফট রেডি। কোনো পরিবর্তন লাগবে?')
+    expect(v).toHaveLength(1)
+  })
+
+  it('informational "নাকি" inside a statement (no question) → no violation', () => {
+    const v = detectProseChoiceViolation(
+      'কাস্টমার বলেছে সে নাকি গতকাল অর্ডার দিয়েছিল। রেকর্ডে সেটা পাওয়া গেছে।',
+    )
+    expect(v).toHaveLength(0)
+  })
+
   it('informational report with numbers and no ask → no violation', () => {
     const v = detectProseChoiceViolation(
       'আজ ১২টা অর্ডার এসেছে। ডেলিভারি রেট ২৯%। রিটার্ন ২টা — দুটোই সাইজ সমস্যা।',
