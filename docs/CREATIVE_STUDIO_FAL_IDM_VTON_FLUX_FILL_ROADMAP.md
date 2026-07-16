@@ -217,7 +217,7 @@ Cost facts to surface in the UI, not hard-code without a model-price configurati
 |---|---|---|---|
 | CS5 | `agent-phase-cs5` | Fal foundation, provider registry, flags, durable client | READY FOR OWNER |
 | CS6 | `agent-phase-cs6` | Selectable IDM-VTON and Fal FASHN single try-on | READY FOR OWNER |
-| CS7 | `agent-phase-cs7` | FLUX Fill precision editor and mask workflow | TODO |
+| CS7 | `agent-phase-cs7` | FLUX Fill precision editor and mask workflow | READY FOR OWNER |
 | CS8 | `agent-phase-cs8` | Professional single/product pipeline and localized repair | TODO |
 | CS9 | `agent-phase-cs9` | Family/couple/full-family protected compositing | TODO |
 | CS10 | `agent-phase-cs10` | QC 2.0, golden evaluation and model comparison | TODO |
@@ -435,6 +435,20 @@ The roadmap file itself is allowed in every phase only for updating that phase's
 - Retry/resume does not duplicate a paid request.
 - Chrome preview proof shows mask creation, submitted Fill job, finished artifact, and before/after comparison.
 - Update CS7 status to `READY FOR OWNER` and stop. Do not begin CS8.
+
+### CS7 verification notes (2026-07-17, branch `agent-phase-cs7`, tag `pre-agent-phase-cs7`, PR #411 — owner-directed same-session continuation + merge)
+
+**Status: READY FOR OWNER (merged to main at owner's instruction; live-verified on production)**
+
+- MaskEditor live: brush/erase/undo/clear/invert/size/feather/preview, pointer events (desktop+touch), natural-resolution PNG export. Presets: ব্যাকগ্রাউন্ড বদলাও / অবজেক্ট মুছাও / হাত ঠিক করো / কন্টাক্ট শ্যাডো / ক্যানভাস বাড়াও / নিজের প্রম্পট।
+- Mask polarity locked (white=edit, black=keep) — vitest fixtures + a REAL sharp composite fixture in worker node:test proving black pixels survive byte-identical and feather blends only in the band.
+- Protected composite in the worker (base×(1−m)+fill×m): unmasked pixels unchanged by construction; pixel-diff assertion (`protectedDiff` in result). enhance_prompt=false, num_images=1, PNG, safety_tolerance 2.
+- mask-upload route: dims-vs-base validation (same-aspect auto-resize for ≤2048 upload downscale), empty/covers-everything guards, MP cost estimate returned and shown before Run.
+- **Real production run (owner's Chrome, alma-erp-six; VPS worker deployed under owner's standing permission "onumoti dilam"):** background-replace on the CS6 Fal FASHN try-on image — executed, request `019f6c3a-508b-7ca0-b648-ffe14dab78d9`, 33.3s, actual cost **$0.10** (2MP × $0.05). Lightbox lineage chips verified (FLUX Fill · seed · latency · $ · request id); face/garment outside the mask pixel-identical (protected composite), only the masked sky band changed. Cost estimate shown pre-Run ($0.10) matched actual.
+- Durable: same resume-no-repay contract as CS6 adapters (single paid submit proven in adapter e2e test).
+- Checks: type-check PASS, build PASS, vitest 73/73, worker node:test 20/20.
+- Deviations (owner-directed): same-session continuation from CS6; Claude merged PR #411 and redeployed the VPS worker with the owner's explicit permission. Mobile-device mask UX check still owed to the owner (desktop pointer verified; the editor uses pointer events which cover touch).
+- Known follow-up for CS8: surface `protectedDiff` and mask preset in the Gallery lightbox (data already persisted in result JSON).
 
 ---
 
