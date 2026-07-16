@@ -12,10 +12,22 @@ export function getPdfFontFamily(): string {
   return activeFontFamily
 }
 
+/**
+ * No hyphenation for normal words, but a word longer than the page can hold
+ * MUST be chunkable — `word => [word]` on a 30+ char token (URLs, file names)
+ * sends react-pdf's line-breaker into an infinite loop and freezes the tab
+ * (2026-07-16 client-report incident). 16-char chunks give the layout legal
+ * break points; normal Bangla/English words stay whole.
+ */
+function safeHyphenation(word: string): string[] {
+  if (word.length <= 22) return [word]
+  return word.match(/.{1,16}/g) ?? [word]
+}
+
 function useBuiltInHelvetica(): void {
   activeFontFamily = 'Helvetica'
   try {
-    Font.registerHyphenationCallback(word => [word])
+    Font.registerHyphenationCallback(safeHyphenation)
   } catch {
     /* already registered */
   }
@@ -36,7 +48,7 @@ async function registerNotoIfAvailable(timeoutMs: number = PDF_FONT_TIMEOUT_MS):
           { src: `${origin}/fonts/NotoSansBengali-Bold.ttf`, fontWeight: 700 },
         ],
       })
-      Font.registerHyphenationCallback(word => [word])
+      Font.registerHyphenationCallback(safeHyphenation)
       activeFontFamily = FONT_STACK_PDF
       pdfDebug('fonts: AlmaPDF registered', regular)
       resolve()
