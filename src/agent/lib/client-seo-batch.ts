@@ -228,24 +228,33 @@ export async function guardClientSeoBatchTool(
     }
   }
 
-  if (toolName === 'live_browser_act' && String(input.action ?? '') === 'navigate' && target) {
+  // 2026-07-16 incident fix: the browse guard's job is keeping the agent ON
+  // the client's sites — not hard-locking it to ONE of them. When a listed
+  // domain 301s into another (gulshanspaone → queenspabd), the old
+  // current-target-only rule deadlocked every navigation. Any host that
+  // matches ANY batch target is legal; unrelated hosts stay blocked.
+  const isListedTargetHost = (raw: string): boolean => {
     try {
-      const wanted = new URL(String(input.url ?? '')).hostname.replace(/^www\./, '')
-      const current = new URL(target.url).hostname.replace(/^www\./, '')
-      if (wanted !== current) return { guard: 'client_seo_wrong_browser_target', error: `WORKFLOW_BLOCKED: 1-by-1 order অনুযায়ী এখন ${target.url} browse করতে হবে।` }
-    } catch { /* normal schema validation handles it */ }
+      const wanted = new URL(raw).hostname.replace(/^www\./, '')
+      return facts.targets.some((t) => {
+        try { return new URL(t.url).hostname.replace(/^www\./, '') === wanted } catch { return false }
+      })
+    } catch {
+      return true // malformed URL → normal schema validation reports it
+    }
+  }
+  if (toolName === 'live_browser_act' && String(input.action ?? '') === 'navigate' && target) {
+    if (!isListedTargetHost(String(input.url ?? ''))) {
+      return { guard: 'client_seo_wrong_browser_target', error: `WORKFLOW_BLOCKED: শুধু client-এর listed site গুলোই browse করা যাবে (${facts.targets.map((t) => t.url).join(', ')})।` }
+    }
   }
   if (toolName === 'live_browser_look' && typeof input.url === 'string' && target) {
-    try {
-      const wanted = new URL(input.url).hostname.replace(/^www\./, '')
-      const current = new URL(target.url).hostname.replace(/^www\./, '')
-      if (wanted !== current) {
-        return {
-          guard: 'client_seo_wrong_browser_target',
-          error: `WORKFLOW_BLOCKED: 1-by-1 order অনুযায়ী এখন ${target.url} browse করতে হবে; ${input.url} পরে।`,
-        }
+    if (!isListedTargetHost(input.url)) {
+      return {
+        guard: 'client_seo_wrong_browser_target',
+        error: `WORKFLOW_BLOCKED: শুধু client-এর listed site গুলোই browse করা যাবে (${facts.targets.map((t) => t.url).join(', ')})।`,
       }
-    } catch { /* normal schema validation handles it */ }
+    }
   }
   return null
 }

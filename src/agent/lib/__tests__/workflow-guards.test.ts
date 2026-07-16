@@ -230,7 +230,10 @@ describe('repeated_navigation guard (§H)', () => {
 })
 
 describe('ordered client SEO browser guard', () => {
-  it('blocks live_browser_look from jumping to the second target', async () => {
+  // 2026-07-16 incident: hard-locking to the CURRENT target deadlocked a real
+  // job when one listed domain 301'd into the other. The guard's contract is
+  // now: any LISTED target host is legal; unrelated hosts stay blocked.
+  it('allows browsing any listed target, blocks unrelated hosts', async () => {
     await createWorkflowRun({
       conversationId: 'conv1',
       kind: 'client_seo_batch',
@@ -242,13 +245,20 @@ describe('ordered client SEO browser guard', () => {
       }) as unknown as Record<string, unknown>,
       nextAllowedTools: ['live_browser_act'],
     })
-    const block = await checkWorkflowGuards(
+    const secondTarget = await checkWorkflowGuards(
       'live_browser_look',
       { url: 'https://two.com', want: 'both' },
       { ...ctx, driveClientSeoBatch: true },
     )
-    expect(block?.guard).toBe('client_seo_wrong_browser_target')
-    expect(block?.error).toContain('https://one.com')
+    expect(secondTarget).toBeNull()
+
+    const offList = await checkWorkflowGuards(
+      'live_browser_look',
+      { url: 'https://unrelated.com', want: 'both' },
+      { ...ctx, driveClientSeoBatch: true },
+    )
+    expect(offList?.guard).toBe('client_seo_wrong_browser_target')
+    expect(offList?.error).toContain('https://one.com')
   })
 })
 

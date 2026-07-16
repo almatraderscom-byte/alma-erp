@@ -84,6 +84,60 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
     URL.revokeObjectURL(url)
   }
 
+  // Client-report PDF export (owner ask 2026-07-16): the markdown artifact
+  // renders through the Aura design system into a designed A4 PDF — what the
+  // owner actually hands a client. Everything loads lazily so the chat bundle
+  // pays nothing until the first tap.
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const pdfable = Boolean(active?.content) && !previewable
+  async function downloadPdf() {
+    if (!active?.content || pdfBusy) return
+    setPdfBusy(true)
+    try {
+      const [{ pdf }, { ensurePdfFonts }, { parseMarkdownBlocks }, { ClientReportDocument }, React] =
+        await Promise.all([
+          import('@react-pdf/renderer'),
+          import('@/lib/pdf/fonts'),
+          import('@/lib/pdf/markdown-blocks'),
+          import('@/components/pdf/ClientReportDocument'),
+          import('react'),
+        ])
+      await ensurePdfFonts()
+      let blocks = parseMarkdownBlocks(active.content)
+      let title = active.title ?? 'Report'
+      const metaLines: string[] = []
+      // The document's own H1 becomes the PDF title; a leading "প্রস্তুত:" line
+      // becomes header meta — no duplicated headings in the designed output.
+      if (blocks[0]?.kind === 'heading' && blocks[0].level === 1) {
+        title = blocks[0].text
+        blocks = blocks.slice(1)
+      }
+      if (blocks[0]?.kind === 'paragraph') {
+        const first = blocks[0].spans.map((s) => s.text).join('')
+        if (/^(প্রস্তুত|Prepared|Date|তারিখ)/.test(first) && first.length < 120) {
+          metaLines.push(first)
+          blocks = blocks.slice(1)
+        }
+      }
+      const doc = React.createElement(ClientReportDocument, {
+        model: { title, metaLines, blocks },
+      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const blob = await pdf(doc as any).toBlob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(active.title ?? 'report').replace(/[\\/:*?"<>|]/g, '-')}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('[artifacts] PDF export failed:', err)
+      alert('PDF বানাতে সমস্যা হয়েছে — আবার চেষ্টা করুন।')
+    } finally {
+      setPdfBusy(false)
+    }
+  }
+
   const showPreview = previewable && mode === 'preview'
 
   const panel = (
@@ -166,6 +220,15 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
           <button onClick={downloadContent} className="flex-1 rounded-full border border-white/[0.06] bg-card/80 backdrop-blur-md py-2 text-xs font-semibold text-muted-hi transition-all hover:text-cream hover:border-gold-dim/30 hover:bg-gold/5 hover:shadow-[0_0_10px_rgba(201,168,76,0.1)]">
             ⬇️ ডাউনলোড
           </button>
+          {pdfable && (
+            <button
+              onClick={() => void downloadPdf()}
+              disabled={pdfBusy}
+              className="flex-1 rounded-full border border-white/[0.06] bg-card/80 backdrop-blur-md py-2 text-xs font-semibold text-muted-hi transition-all hover:text-cream hover:border-gold-dim/30 hover:bg-gold/5 hover:shadow-[0_0_10px_rgba(201,168,76,0.1)] disabled:opacity-50"
+            >
+              {pdfBusy ? '⏳ বানাচ্ছি…' : '📄 PDF'}
+            </button>
+          )}
         </div>
       )}
     </div>
