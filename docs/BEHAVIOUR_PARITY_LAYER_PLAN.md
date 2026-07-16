@@ -42,6 +42,24 @@ From the harness audit — these are HARD gates in the single `runAlternateProvi
 
 ---
 
+## 1.5 Deep-audit round 2 — additional findings (2026-07-16)
+
+A second, deeper pass over the adapters/loop found **more gaps the first audit missed** — several of which hit the owner's current Grok-4.20 head directly. Also confirmed strengths (no work needed): proactive memory injection every turn (semantic + rerank, automatic), tool-error surfacing + partial-work salvage + dead-path guard, uniform live thinking-stream UX.
+
+**New HIGH-impact gaps (now pillars P8–P11):**
+
+| # | Finding | Why it breaks parity |
+|---|---|---|
+| **G1** | **Malformed tool-args pass through as `{_raw}`** (`openai.ts` catch block) — no JSON repair, no re-ask; the tool silently fails schema validation | Weak models emit malformed JSON far more often → they feel "dumb" purely from harness leakage |
+| **G2** | **No `temperature`/`top_p`/seed set on ANY main-turn call** in any adapter — every head runs at its provider's accidental default | Same prompt behaves differently per model purely by accident; determinism impossible |
+| **G3** | **No `max_tokens` on OpenAI/OpenRouter/xAI/Gemini adapters** (only Anthropic 8192) and **no `finish_reason==='length'` continuation anywhere** | Long replies truncate mid-sentence at different lengths per provider; nothing detects or continues |
+| **G4** | **xAI-direct hard-caps tools at 200 and silently drops the tail** (`run-owner-turn.ts:691`) + **`:exacto` tool-quality routing is OpenRouter-only** — the xAI-direct Grok head gets neither | **The owner's own head (Grok 4.20 direct) literally sees a different, degraded toolset** than other models |
+| **G5** | **Personal mode is prompt-thin**: grounding/tool-discipline rules omitted; business-specific verifier categories don't cover it; anti-fabrication (e.g. hadith accuracy) is prompt-only | Weakest discipline exactly where fabrication is most sensitive (religious content) |
+| **G6** | **Thinking is never replayed into next-turn history** (display-only) | Weak models can't re-derive prior reasoning → cross-turn self-contradiction |
+| **G7** | **Clarify-vs-guess is prompt-only**: nothing forces a clarifying question on ambiguous+material requests; enforcement fires only if the model verbalizes a choice | A confident weak model silently guesses wrong |
+| **G8** | No loop-level bounded retry on transient tool failures; empty-response guard exists only for Gemini; cheap-head tool rounds uncapped | Inconsistent failure feel per provider |
+| **G9** | Compaction preservation is a prompt instruction to the summarizer LLM (Sonnet→Gemini fallback, 400–600 tokens) — confirms P5: rules/decisions CAN silently drop | Long threads silently lose mid-conversation constraints |
+
 ## 2. The gaps (SOFT / prompt-only today → target: HARD, model-agnostic)
 
 | Pillar | Today | Gap a weak model exploits |
@@ -86,6 +104,26 @@ The unifying principle (from the research): **a weak model will not self-discipl
 - When a turn executed ≥1 **write** tool and is about to end: a **deterministic check of write-tool result payloads** for error/unconfirmed flags; if any failed/unconfirmed → force disclosure ("X সেভ হয়েছে, কিন্তু Y confirm হয়নি")। Optionally one bounded extra model round: "verify your writes actually landed; report failures honestly."
 - Cheap, model-agnostic, catches the "claimed success but the tool errored" class the ledger check alone can miss. **Env:** `AGENT_REFLECT_GATE`.
 
+### P8 — Tool-call integrity & repair (G1; foundational — without this, every other gate leaks)
+- In `openai.ts` (and mirror in other adapters): on args `JSON.parse` failure → **(1) mechanical salvage** (trailing-comma/quote/bracket repair via a tiny deterministic fixer), **(2)** if still broken, return a synthetic `tool_result` error to the model: "your tool arguments were malformed JSON: <parse error> — re-issue the call correctly", bounded to 2 re-asks (rides the existing round loop), **never** pass `{_raw}` into a tool. Schema-validation failures from `validateToolInput` get the same treatment (they already surface, but the message becomes instructive).
+- **Env:** `AGENT_TOOLCALL_REPAIR`.
+
+### P9 — Uniform generation params (G2 + G3)
+- One shared `GENERATION_DEFAULTS` in `config.ts`: explicit `temperature` (proposal: 0.7 owner-chat), `top_p`, and `max_tokens` (8192) applied by **every** adapter; per-model overrides only via registry fields, never provider defaults.
+- **Length-continuation:** every adapter surfaces `finish_reason==='length'` as a `truncated` event; the loop then either auto-continues once ("চালিয়ে যাও — আগের বাক্য শেষ করো") or appends an honest "…(উত্তর কাটা পড়েছে — 'continue' বলুন)" marker. No more silent mid-sentence endings.
+- **Env:** `AGENT_UNIFORM_SAMPLING`.
+
+### P10 — Equal toolset & quality routing for the owner's head (G4)
+- Replace the xAI silent 200-tool truncation with the **state-router narrowing** (≤24 tools/turn is already the design goal — enforce it for xAI-direct too, so nothing is ever silently dropped; log when narrowing occurs).
+- Port the OpenRouter-only quality levers where the provider supports an equivalent (tool-call strictness flags for xAI direct; keep `:exacto` on OpenRouter slugs). Add the Gemini-style **empty-response guard + one bounded retry** to the OpenAI/xAI adapter path (G8).
+- **Env:** `AGENT_HEAD_PARITY`.
+
+### P11 — Personal-mode discipline parity (G5)
+- Extend the personal prompt assembly with the grounding/tool-discipline core (adapted wording), and add **personal-domain verifier rules** — most importantly: any Quran/hadith citation requires either a reference-tool call or an explicit "স্মৃতি থেকে — যাচাই করে নিন" hedge (rides the existing verifier retry).
+- **Env:** `AGENT_PERSONAL_PARITY`.
+
+**Also folded in:** P5 compaction guard now explicitly covers G9 (pin owner decisions/standing rules verbatim through tail-compact AND $25 compact); P3 gains a clarify-vs-guess arm (G7): the ambiguity classifier can bind `ask_user` instead of `make_plan` when the request is ambiguous + material; G6 (thinking replay) is **deliberately deferred** — replaying reasoning into history has cost + injection-surface downsides; revisit after BP1–BP4 land.
+
 ---
 
 ## 4. Proving parity (so it's real, not vibes)
@@ -97,11 +135,12 @@ The unifying principle (from the research): **a weak model will not self-discipl
 ## 5. Rollout (mirrors your existing state-router canary pattern)
 Each pillar ships behind its own `AGENT_*` env flag with `off | shadow | on | canaryPct`, exactly like `AGENT_STATE_ROUTER`. **Shadow mode** logs "what the gate WOULD have done" without changing behaviour, so you see impact before enforcing. Order = lowest-risk-first:
 
-| Phase | Pillars | Risk | Why first |
+| Phase | Pillars | Risk | Why |
 |---|---|---|---|
-| **BP1** | Constitution + re-inject + compaction guard (P6/P5) | Low | Pure prompt/context plumbing; biggest felt uplift |
-| **BP2** | Ground-before-answer + Plan-first (P2/P3) | Med | Reuses proven requirement-contract binding |
-| **BP3** | Factual-claim gate + Reflect-on-write (P1/P4) | Med | Extends the proven verifier retry |
+| **BP0** | **Tool-call repair + uniform sampling/max_tokens + head toolset parity (P8/P9/P10)** | Low–Med | **New first step** — plumbing fixes; without these the discipline gates leak, and G4 directly degrades the owner's current Grok head |
+| **BP1** | Constitution + re-inject + compaction guard (P6/P5/G9) | Low | Pure prompt/context plumbing; biggest felt uplift |
+| **BP2** | Ground-before-answer + Plan-first + clarify-vs-guess (P2/P3/G7) | Med | Reuses proven requirement-contract binding |
+| **BP3** | Factual-claim gate + Reflect-on-write + personal parity (P1/P4/P11) | Med | Extends the proven verifier retry |
 | **BP4** | Parity golden-set + canary tune | Low | Proof + safe ramp to 100% |
 
 Every phase: its own branch + pre-phase tag, typecheck+build+vitest green, `git diff --stat` scope check (only `src/agent/**` touched), and a before/after demo on the Vercel preview with Grok as head. One phase per session.
