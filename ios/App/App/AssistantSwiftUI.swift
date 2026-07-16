@@ -1065,6 +1065,9 @@ final class AssistantVM {
     /// EXISTING recovery path (durable replay), which was previously unreachable
     /// here because every trigger bailed on `isStreaming && !reconnecting`.
     private var lastLiveEventAt = Date()
+    /// Last thinking_delta arrival — quiet thinking drives the "almost done
+    /// thinking…" status verb (Claude-Code parity, owner spec 2026-07-16).
+    var lastThinkingGrowthAt = Date.distantPast
     /// No live event for this long while "streaming" ⇒ treat the socket as dead.
     /// Generous on purpose: real turns emit thinking/tool events far more often,
     /// and a false positive only costs one idempotent status GET + seq-deduped
@@ -1301,6 +1304,12 @@ final class AssistantVM {
                                               object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.backgroundedAt != nil else { return }   // skip launch activation
+                // Self-heal a stuck background flag: didBecomeActive fires in
+                // strictly more cases than willEnterForeground (which is the
+                // only other place clearing it) — a missed foreground event
+                // would otherwise silently disable the poll loop + stall
+                // watchdog for the rest of the session.
+                self.isInBackground = false
                 await self.recoverTurnState(trigger: "active")               // idempotent re-check
             }
         })
@@ -1508,8 +1517,17 @@ final class AssistantVM {
                 guard let self, !Task.isCancelled else { return }
                 // 4.2: nonessential polling pauses while backgrounded — the
                 // foreground observer runs recovery + one sync immediately anyway.
-                if self.isInBackground { continue }
+                if self.isInBackground {
+                    // Diagnostic breadcrumb (2026-07-16 no-reply hunt): a STUCK
+                    // isInBackground silently disables the stall watchdog and
+                    // every quiet poll — make that state observable.
+                    AlmaTurnLog.event("turn.pollTick", "SKIPPED-background streaming=\(self.isStreaming)")
+                    continue
+                }
                 tick += 1
+                AlmaTurnLog.event("turn.pollTick",
+                                  "streaming=\(self.isStreaming) reconnecting=\(self.reconnecting) "
+                                  + "silent=\(Int(Date().timeIntervalSince(self.lastLiveEventAt)))s")
                 if !self.isStreaming {
                     // 4.1: cheap delta poll; a full windowed refresh only when the
                     // delta reports news, or every 5th tick (~60s) to true-up card
@@ -2507,6 +2525,7 @@ final class AssistantVM {
             case .thinkingDelta(let chunk):
                 guard !chunk.isEmpty else { break }
                 if reconnecting { reconnecting = false }   // live content flows again
+                lastThinkingGrowthAt = Date()
                 requestLiveMode("thinking")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
@@ -4065,11 +4084,10 @@ struct AgentMessageRow: View {
                 let hasSettledMeta = !message.phases.isEmpty || !(message.thinking ?? "").isEmpty
                     || !message.tools.isEmpty
                 // LOCKED SPEC §1: NO glass card — plain on the aurora (Claude iOS).
-                    // Live pinned summary — running token estimate + step count
-                    // while the turn works (web parity; owner issue #3 build 69).
-                    if message.isStreaming {
-                        AgentLiveWorkSummaryRow(message: message, pal: pal)
-                    }
+                    // Owner iteration 2026-07-16: the separate "কাজ করছি…" pinned
+                    // row is gone — the live status (Claude-Code style verb +
+                    // token count, blinking) now lives beside the loader + ALMA
+                    // wordmark in AgentThinkingRow, like the Claude app.
                     if !message.blocks.isEmpty {
                         // Claude composition — chronological prose ↔ compact rows;
                         // rows persist after settle (tap → sheets), prose never moves.
@@ -4194,7 +4212,10 @@ struct AgentMessageRow: View {
 
                     // Single starburst — bottom-left INSIDE the card while the turn runs.
                     if showWorkingIndicator {
-                        AgentThinkingRow(mode: vm.liveMode, pal: pal, reconnecting: vm.reconnecting)
+                        AgentThinkingRow(mode: vm.liveMode, pal: pal,
+                                         message: message,
+                                         lastThinkingGrowthAt: vm.lastThinkingGrowthAt,
+                                         reconnecting: vm.reconnecting)
                             .padding(.top, 2)
                     }
 
@@ -5916,53 +5937,8 @@ struct AgentTurnBlocksView: View {
     }
 }
 
-/// Live pinned work summary while the turn streams (web ActivityTimeline parity,
-/// restored for iOS 2026-07-12): "কাজ করছি… · ~N টোকেন · N ধাপ" with the token
-/// estimate advancing live (thinking+text chars / 4), settling into the real
-/// ↑in ↓out counts on the message actions row once the turn finishes.
-@available(iOS 17.0, *)
-struct AgentLiveWorkSummaryRow: View {
-    let message: AgentChatMessage
-    let pal: AgentPalette
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private static let gold = Color(red: 0.831, green: 0.659, blue: 0.294)
-
-    var body: some View {
-        HStack(spacing: 6) {
-            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
-                let angle = context.date.timeIntervalSinceReferenceDate
-                    .truncatingRemainder(dividingBy: 0.8) / 0.8 * 360
-                Circle()
-                    .trim(from: 0, to: 0.72)
-                    .stroke(Self.gold.opacity(0.85),
-                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-                    .frame(width: 11, height: 11)
-                    .rotationEffect(.degrees(reduceMotion ? -35 : angle))
-            }
-            .frame(width: 12, height: 12)
-            Text(liveSummary)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(pal.muted)
-                .lineLimit(1)
-                .contentTransition(.numericText())
-            Spacer(minLength: 0)
-        }
-        .padding(.bottom, 2)
-    }
-
-    private var liveSummary: String {
-        let chars = (message.thinking ?? "").count + message.text.count
-        let tok = max(0, chars / 4)
-        let steps = message.blocks.reduce(into: 0) { n, b in
-            if case .activity = b { n += 1 }
-        }
-        var s = "কাজ করছি…"
-        if tok > 0 { s += " · ~\(almaBnCompact(tok)) টোকেন" }
-        if steps > 0 { s += " · \(almaBn(steps)) ধাপ" }
-        return s
-    }
-}
+// AgentLiveWorkSummaryRow ("কাজ করছি… · ~N টোকেন · N ধাপ") retired 2026-07-16 —
+// its job moved into AgentThinkingRow's Claude-Code-style live status.
 
 /// Compact Bangla token figure — web fmtTok parity: 36100 → "৩৬.১k", 681 → "৬৮১".
 func almaBnCompact(_ n: Int) -> String {
@@ -6080,25 +6056,82 @@ struct AgentModelSwitchCardView: View {
 struct AgentThinkingRow: View {
     let mode: String
     let pal: AgentPalette
+    /// The streaming tail — live token estimate for the status label.
+    var message: AgentChatMessage? = nil
+    /// Thinking-delta freshness from the VM: quiet thinking ⇒ "almost done".
+    var lastThinkingGrowthAt: Date = .distantPast
     /// Transport dropped but the server turn is still running (roadmap Phase 1.1) —
     /// truthful glyph/text-only state, never an error, never a background effect.
     var reconnecting: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var phaseEnteredAt = Date()
 
     var body: some View {
         HStack(spacing: 8) {
             AlmaSpinnerView(mode: mode, size: 28, showVerb: false, haptics: true)
+            AlmaShimmerWordmark(size: 12.5, weight: .semibold, tracking: 2.1)
             if reconnecting {
-                Text("কাজ চলছে — সংযোগ ফিরছে…")
+                Text("· কাজ চলছে — সংযোগ ফিরছে…")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(pal.muted)
                     .transition(.opacity)
             } else {
-                AlmaShimmerWordmark(size: 12.5, weight: .semibold, tracking: 2.1)
+                // Claude-Code-style live status beside the identity (owner spec
+                // 2026-07-16): verb tracks the phase, token count advances, and
+                // the whole label BLINKS — a slow breath between ~0.35 and 1.0
+                // opacity — with a soft fade whenever the verb changes.
+                TimelineView(.animation(minimumInterval: 1 / 12, paused: reduceMotion)) { tl in
+                    let t = tl.date.timeIntervalSinceReferenceDate
+                    let blink = reduceMotion ? 1.0 : 0.38 + 0.62 * (0.5 + 0.5 * sin(t * .pi * 2 / 1.7))
+                    Text(statusLine(now: tl.date))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(pal.muted)
+                        .opacity(blink)
+                        .contentTransition(.opacity)
+                        .animation(.easeInOut(duration: 0.35), value: statusVerb(now: tl.date))
+                        .lineLimit(1)
+                }
             }
             Spacer()
         }
         .padding(.leading, 0)
         .padding(.bottom, 8)
+        .onChange(of: mode) { _, _ in phaseEnteredAt = Date() }
+    }
+
+    private func tokenEstimate() -> Int {
+        guard let message else { return 0 }
+        return max(0, ((message.thinking ?? "").count + message.text.count) / 4)
+    }
+
+    /// The Claude-Code verb ladder. Thinking deepens with time ("thinking
+    /// more…", "still thinking…"); quiet thinking deltas near the handoff read
+    /// as "almost done thinking…"; prose = writing, tools = working.
+    private func statusVerb(now: Date) -> String {
+        let inPhase = now.timeIntervalSince(phaseEnteredAt)
+        switch mode {
+        case "understanding":
+            return "reading…"
+        case "writing":
+            return "writing…"
+        case "searching", "researching":
+            return "working…"
+        default:
+            // Thinking family. Quiet deltas for a beat ⇒ the thought is closing.
+            if lastThinkingGrowthAt != .distantPast,
+               now.timeIntervalSince(lastThinkingGrowthAt) > 3.0 {
+                return "almost done thinking…"
+            }
+            if inPhase > 24 { return "still thinking…" }
+            if inPhase > 10 { return "thinking more…" }
+            return "thinking…"
+        }
+    }
+
+    private func statusLine(now: Date) -> String {
+        let tok = tokenEstimate()
+        let verb = statusVerb(now: now)
+        return tok > 0 ? "· \(verb) · \(almaBnCompact(tok)) টোকেন" : "· \(verb)"
     }
 }
 
