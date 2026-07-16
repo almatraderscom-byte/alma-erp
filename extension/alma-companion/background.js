@@ -201,9 +201,27 @@ async function pickFollowTab(currentTab) {
 
 // ---- injected page functions (run in the page, not here) -------------------
 
-function pageReadText() {
+function pageReadText(arg) {
+  // Scroll blindness fix (owner report 2026-07-16): the old read returned the
+  // first 12k chars with NO hint that more existed below — the model believed
+  // it saw the whole page. Now every read carries scroll metrics + an explicit
+  // truncated flag, and `from` lets the server window through long documents.
   const t = document.body ? document.body.innerText : ''
-  return { url: location.href, title: document.title, text: t.slice(0, 12000) }
+  const from = Math.max(0, Number(arg && arg.from) || 0)
+  const doc = document.documentElement
+  return {
+    url: location.href,
+    title: document.title,
+    text: t.slice(from, from + 12000),
+    textLength: t.length,
+    truncated: t.length > from + 12000,
+    scroll: {
+      y: Math.round(window.scrollY),
+      viewport: Math.round(window.innerHeight),
+      pageHeight: Math.round(Math.max(doc ? doc.scrollHeight : 0, document.body ? document.body.scrollHeight : 0)),
+      atBottom: window.scrollY + window.innerHeight >= Math.max(doc ? doc.scrollHeight : 0, document.body ? document.body.scrollHeight : 0) - 4,
+    },
+  }
 }
 
 function pageReadDom() {
@@ -1095,8 +1113,21 @@ function pageScrollTo(arg) {
 
 function pageScroll(arg) {
   const by = Number(arg && arg.by) || 600
-  window.scrollBy({ top: by, behavior: 'smooth' })
-  return { ok: true, scrolledBy: by }
+  // 'instant' (not smooth): the server's sweep loop reads right after scrolling,
+  // and a smooth scroll is still mid-flight when the read fires.
+  window.scrollBy({ top: by, behavior: 'instant' })
+  const doc = document.documentElement
+  const pageHeight = Math.max(doc ? doc.scrollHeight : 0, document.body ? document.body.scrollHeight : 0)
+  return {
+    ok: true,
+    scrolledBy: by,
+    scroll: {
+      y: Math.round(window.scrollY),
+      viewport: Math.round(window.innerHeight),
+      pageHeight: Math.round(pageHeight),
+      atBottom: window.scrollY + window.innerHeight >= pageHeight - 4,
+    },
+  }
 }
 
 // Move the mouse over an element (by ref → selector → visible text) to reveal
@@ -1436,7 +1467,7 @@ async function executeCommand(cmd) {
       return { ok: false, error: `tab_not_readable: ${String(current && current.url || 'missing')}` }
     }
     await showOverlay(tab.id, 'পেজ পড়ছে…')
-    return { ok: true, data: await runInPage(tab.id, pageReadText) }
+    return { ok: true, data: await runInPage(tab.id, pageReadText, { from: cmd.from }) }
   }
   if (action === 'read_dom') {
     const current = await chrome.tabs.get(tab.id).catch(() => null)

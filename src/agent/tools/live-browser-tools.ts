@@ -17,6 +17,7 @@
  */
 import type { AgentTool } from './registry'
 import { isFinalSubmitText, FINAL_SUBMIT_BLOCK_MESSAGE } from '@/agent/lib/browser/final-submit'
+import { mirrorLiveBrowserStep } from '@/agent/lib/graph/live-browser-graph'
 import { agentStorageUpload, agentStorageSignedUrl } from '@/agent/lib/storage'
 import {
   isLiveBrowserEnabled,
@@ -318,8 +319,18 @@ const live_browser_look: AgentTool = {
     'live_browser_act — the same way a person clicks around — and LOOK again after each step to ' +
     'confirm before the next.\n' +
     '• If something is not visible, scroll and look again; never assume a URL exists.\n' +
+    'PAGE INTEL: the result may include `pageIntel` — the detected UI situation (cookie banner, login ' +
+    'wall, blocking modal, captcha, error page, search results, feed, checkout) with a Bangla hint each. ' +
+    'OBEY the hints FIRST (dismiss the banner/modal, report the login/captcha to Boss) BEFORE the task — ' +
+    'an overlay is not "the site is broken".\n' +
+    'SCROLL DISCIPLINE (important): the screenshot shows ONLY the current viewport and page text may be ' +
+    'TRUNCATED — check the returned `scrollInfo` (y / pageHeight / atBottom) before claiming you saw the ' +
+    'whole page. For a long article/feed/product list pass `sweep: true` — the tool then scrolls through ' +
+    'the page ITSELF and returns the merged full text (lazy-loading feeds included). When `readNote` says ' +
+    'the text was truncated, re-look with sweep instead of guessing.\n' +
     'Params: `url` (optional http(s) to open first — use the real HOME, not a guessed path), ' +
-    '`scrollBy` (optional pixels), `want` ("text" | "dom" | "both", default "both"), ' +
+    '`scrollBy` (optional pixels), `sweep` (boolean — auto-scroll through the whole page and merge its text), ' +
+    '`want` ("text" | "dom" | "both", default "both"), ' +
     '`screenshot` (default true — keep it on so you can SEE the page), ' +
     '`find` (optional text — big/crowded page হলে দাও: elements list শুধু ম্যাচ করা elementগুলোতে ছোট হয়ে আসবে, টোকেন বাঁচে ও টার্গেট নিখুঁত হয়).',
   input_schema: {
@@ -327,6 +338,12 @@ const live_browser_look: AgentTool = {
     properties: {
       url: { type: 'string', description: 'Optional http(s) URL to navigate to first.' },
       scrollBy: { type: 'number', description: 'Optional pixels to scroll down before reading.' },
+      sweep: {
+        type: 'boolean',
+        description:
+          'Auto-scroll through the WHOLE page and merge its text (handles lazy-loading feeds and long ' +
+          'documents). Use for articles, feeds, product lists — anything longer than one screen.',
+      },
       want: { type: 'string', enum: ['text', 'dom', 'both'], description: 'What to read back.' },
       screenshot: { type: 'boolean', description: 'Capture a screenshot (default true).' },
       find: {
@@ -391,9 +408,95 @@ const live_browser_look: AgentTool = {
         }
         if (r.ok) {
           textReadOk = true
-          const pageData = r.data as { url?: string; text?: string } | undefined
+          interface ReadTextData {
+            url?: string
+            title?: string
+            text?: string
+            textLength?: number
+            truncated?: boolean
+            scroll?: { y?: number; viewport?: number; pageHeight?: number; atBottom?: boolean }
+          }
+          let pageData = r.data as ReadTextData | undefined
           if (pageData?.url) pageUrl = pageData.url
-          const rawText = typeof pageData?.text === 'string' ? pageData.text : JSON.stringify(pageData ?? {})
+          let rawText = typeof pageData?.text === 'string' ? pageData.text : JSON.stringify(pageData ?? {})
+
+          // ── Scroll competence (owner report 2026-07-16: the model never
+          // scrolled and believed a 12k-char slice was the whole page) ──
+          // Extension ≥0.9.8 returns textLength/truncated/scroll; sweep uses
+          // `from`-windowing for already-rendered text and physical scrolling
+          // for lazy-loading pages, merging everything into one read.
+          const extHasScrollMeta = typeof pageData?.textLength === 'number'
+          if (input.sweep === true) {
+            if (!extHasScrollMeta) {
+              // Old extension: no windowing/metrics. Do two plain scroll+re-read
+              // rounds (at least lazy content becomes visible), and say why the
+              // full sweep didn't run.
+              for (let i = 0; i < 2; i++) {
+                await runCommand(dev.deviceId, 'scroll', { by: 900 })
+                await runCommand(dev.deviceId, 'wait', { ms: 800 })
+              }
+              const again = await runCommand(dev.deviceId, 'read_text')
+              if (again.ok) {
+                pageData = again.data as ReadTextData
+                rawText = typeof pageData?.text === 'string' ? pageData.text : rawText
+              }
+              out.sweepNote =
+                'Companion extension পুরনো (v0.9.8 দরকার) — পূর্ণ sweep চলেনি, শুধু ২ ধাপ scroll করে আবার পড়া হয়েছে। Boss-কে extension reload করতে বলো।'
+              steps.push('sweep:legacy')
+            } else {
+              const CAP = 30_000
+              const chunks: string[] = [rawText]
+              let total = rawText.length
+              // 1) Window through text that is ALREADY in the DOM.
+              for (let w = 0; w < 3 && pageData?.truncated && total < CAP; w++) {
+                const win = await runCommand(dev.deviceId, 'read_text', { from: total })
+                if (!win.ok) break
+                const wd = win.data as ReadTextData
+                const t = typeof wd?.text === 'string' ? wd.text : ''
+                if (!t) break
+                chunks.push(t)
+                total += t.length
+                pageData = { ...pageData, truncated: wd?.truncated, scroll: wd?.scroll ?? pageData?.scroll }
+                steps.push(`sweep-window:${w + 1}`)
+              }
+              // 2) Physically scroll for lazy-loading pages until the bottom.
+              let stagnant = 0
+              for (let i = 0; i < 6 && total < CAP && stagnant < 2; i++) {
+                if (pageData?.scroll?.atBottom && !pageData?.truncated) break
+                const vp = Number(pageData?.scroll?.viewport) || 800
+                await runCommand(dev.deviceId, 'scroll', { by: Math.round(vp * 0.9) })
+                await runCommand(dev.deviceId, 'wait', { ms: 750 })
+                const win = await runCommand(dev.deviceId, 'read_text', { from: total })
+                if (!win.ok) break
+                const wd = win.data as ReadTextData
+                const t = typeof wd?.text === 'string' ? wd.text : ''
+                if (t.length > 0) {
+                  chunks.push(t)
+                  total += t.length
+                  stagnant = 0
+                } else {
+                  stagnant++
+                }
+                pageData = { ...pageData, truncated: wd?.truncated, scroll: wd?.scroll ?? pageData?.scroll }
+                steps.push(`sweep-scroll:${i + 1}`)
+              }
+              rawText = chunks.join('')
+              out.sweep = {
+                totalChars: total,
+                reachedBottom: Boolean(pageData?.scroll?.atBottom),
+                capped: total >= CAP,
+              }
+            }
+          }
+          if (pageData?.scroll) {
+            out.scrollInfo = pageData.scroll
+          }
+          if (!input.sweep && (pageData?.truncated || (pageData?.scroll && !pageData.scroll.atBottom))) {
+            out.readNote =
+              'সতর্কতা: এটা পুরো পেজ নয় — নিচে আরো content আছে' +
+              (pageData?.truncated ? ' (টেক্সটও কাটা পড়েছে)' : '') +
+              '। পুরোটা দরকার হলে sweep:true দিয়ে আবার look করো।'
+          }
           const scan = scanForInjection(rawText)
           if (scan.flagged) {
             out.injectionAlert = injectionWarningBn(scan.hits)
@@ -450,6 +553,21 @@ const live_browser_look: AgentTool = {
       // data — weak heads lose track of where they are on long tasks and start
       // re-navigating from the main view (2026-07-12 carousel wandering).
       if (pageUrl) out.currentUrl = pageUrl
+      // Page intelligence (2026-07-16): recognise the UI situation (cookie
+      // wall, login gate, modal, captcha, error page, feed…) and hand the
+      // model the Bangla playbook hint — deterministic, free, every look.
+      try {
+        const { classifyPagePatterns } = await import('@/agent/lib/live-browser/page-patterns')
+        const rawPageText = typeof (out.page as { text?: unknown } | undefined)?.text === 'string'
+          ? ((out.page as { text: string }).text)
+          : ''
+        const verdict = classifyPagePatterns({
+          text: rawPageText,
+          elementsBlob: out.elements ? JSON.stringify(out.elements).slice(0, 40_000) : '',
+          url: pageUrl ?? '',
+        })
+        if (verdict.patterns.length) out.pageIntel = verdict
+      } catch { /* intel is best-effort */ }
       // §5.4 — tell the model which trust tier this page sits in, so it knows
       // lockdown pages are extraction-only BEFORE it tries to act.
       if (pageUrl) {
@@ -485,6 +603,25 @@ const live_browser_look: AgentTool = {
           ...(visionImage ? { image: visionImage } : {}),
         }
       }
+
+      // LG-6 slice 3: durable session checkpoint (fail-open inside).
+      const scrollInfo = out.scrollInfo as { y?: number; pageHeight?: number; atBottom?: boolean } | undefined
+      await mirrorLiveBrowserStep(conversationIdOf(input), {
+        action: 'look',
+        url: pageUrl ?? null,
+        detail: [
+          typeof input.url === 'string' ? `open:${input.url}` : null,
+          typeof input.find === 'string' ? `find:${input.find}` : null,
+          input.sweep === true ? 'sweep' : null,
+        ].filter(Boolean).join(' ') || null,
+        scrollY: scrollInfo?.y ?? null,
+        pageHeight: scrollInfo?.pageHeight ?? null,
+        atBottom: scrollInfo?.atBottom ?? null,
+        textRead: typeof (out.page as { text?: string } | undefined)?.text === 'string'
+          ? ((out.page as { text: string }).text.length)
+          : null,
+        ok: true,
+      })
 
       return { success: true, data: out, ...(visionImage ? { image: visionImage } : {}) }
     } catch (err) {
@@ -704,6 +841,14 @@ const live_browser_act: AgentTool = {
       if (res.data) out.result = res.data
       if (oscNote) out.loopWarning = oscNote
 
+      // Scroll telemetry (extension ≥0.9.8): after a scroll the model sees
+      // exactly where it is on the page — no more "scrolled into the void".
+      const resScroll = (res.data as { scroll?: { y?: number; viewport?: number; pageHeight?: number; atBottom?: boolean } } | null)?.scroll
+      if (resScroll) {
+        out.scrollInfo = resScroll
+        if (action === 'scroll' && resScroll.atBottom) out.scrollNote = 'পেজের একদম নিচে পৌঁছে গেছ — আর scroll করার কিছু নেই।'
+      }
+
       // Follow-up screenshot so BOTH the owner (link) and the head model (vision
       // image) see the effect of the action (skip for plain waits).
       let visionImage: { data: string; mediaType: 'image/jpeg' | 'image/png' } | null = null
@@ -714,6 +859,24 @@ const live_browser_act: AgentTool = {
           visionImage = splitDataUrl(shot.screenshot)
         }
       }
+
+      // LG-6 slice 3: durable session checkpoint (fail-open inside).
+      await mirrorLiveBrowserStep(conversationIdOf(input), {
+        action,
+        url: typeof input.url === 'string' ? input.url : null,
+        detail:
+          [input.text, input.ref, input.selector, input.option, input.key]
+            .filter((v) => typeof v === 'string' && v)
+            .map(String)
+            .join(' ')
+            .slice(0, 120) ||
+          (typeof input.by === 'number' ? `by:${input.by}` : null),
+        scrollY: resScroll?.y ?? null,
+        pageHeight: resScroll?.pageHeight ?? null,
+        atBottom: resScroll?.atBottom ?? null,
+        textRead: null,
+        ok: res.ok,
+      })
 
       return {
         success: res.ok,

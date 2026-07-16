@@ -50,6 +50,11 @@ export const WORKER_PRICING = {
   google_tts_per_million_chars: 16.0,
   twilio_per_minute: 0.014,
   whisper_per_minute: 0.006,
+  // CS5 — Fal advertised list prices (display/estimate only; owner-tunable
+  // overrides land with the engines in CS6/CS7). cat-vton has no reliable
+  // published price contract (research-only) — measure actual billed cost.
+  fal_fashn_v16_per_generation: 0.075,
+  fal_flux_fill_per_megapixel: 0.05,
 }
 
 /**
@@ -87,4 +92,18 @@ export function calcVeoCostUsd(durationSeconds = 6) {
 export function calcTwilioCostUsd(seconds = 60) {
   const minutes = Math.max(seconds / 60, 0.5)
   return Math.round(minutes * WORKER_PRICING.twilio_per_minute * 1e6) / 1e6
+}
+
+/** CS5 — Fal FASHN v1.6 flat per-generation list price. */
+export function calcFalFashnCostUsd(numImages = 1) {
+  const n = Math.max(1, Math.round(Number(numImages) || 1))
+  return Math.round(n * WORKER_PRICING.fal_fashn_v16_per_generation * 1e6) / 1e6
+}
+
+/** CS5 — FLUX Fill bills per megapixel, rounded UP to the next whole MP. */
+export function calcFluxFillCostUsd(widthPx, heightPx) {
+  const w = Math.max(1, Number(widthPx) || 0)
+  const h = Math.max(1, Number(heightPx) || 0)
+  const megapixels = Math.max(1, Math.ceil((w * h) / 1_000_000))
+  return Math.round(megapixels * WORKER_PRICING.fal_flux_fill_per_megapixel * 1e6) / 1e6
 }

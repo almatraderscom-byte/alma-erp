@@ -98,6 +98,27 @@ export async function GET(req: NextRequest) {
     await captureAgentEvent('error', 'agent.watchdog.failure_scan_failed', { error: String(err) })
   }
 
+  // LG-9 slice 2: the watchdog's verdict lands on the day's duty thread
+  // (fail-open inside). Healthy ticks checkpoint too — silence is a finding.
+  try {
+    const { mirrorDutyTick } = await import('@/agent/lib/graph/duty-run-graph')
+    const { todayYmdDhaka } = await import('@/lib/agent-api/dhaka-date')
+    await mirrorDutyTick('watchdog', todayYmdDhaka(), {
+      decision: stale.length > 0 ? 'alerted' : staffFailures.alerted ? 'staff_failures' : 'healthy',
+      outcome: stale.length > 0 || staffFailures.failed > 0 ? 'blocked' : 'active',
+      summary:
+        [
+          stale.length ? `stale: ${stale.join(',')}` : null,
+          reminderFallback.sent ? `reminder fallback sent: ${reminderFallback.sent}` : null,
+          staffFailures.failed ? `staff send failures: ${staffFailures.failed}` : null,
+        ]
+          .filter(Boolean)
+          .join(' | ') || null,
+      costUsd: 0,
+      conversationId: null,
+    })
+  } catch { /* mirror must never break the watchdog */ }
+
   return NextResponse.json({
     ok: stale.length === 0 && staffFailures.failed === 0,
     checkedAt: new Date().toISOString(),

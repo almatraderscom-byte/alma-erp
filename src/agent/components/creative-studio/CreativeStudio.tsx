@@ -18,6 +18,7 @@ import {
   type StudioProvider,
   type FamilyPresetId,
 } from '@/lib/creative-studio/constants'
+import { FAMILY_CHAIN_LABEL_BN, type StudioEngineId } from '@/lib/creative-studio/provider-registry'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 import {
   VIDEO_RECIPES,
@@ -29,6 +30,7 @@ import {
   type VideoAudioMode,
 } from '@/lib/creative-studio/video-recipes'
 import LifestyleEditor from '@/agent/components/creative-studio/LifestyleEditor'
+import MaskEditor, { type MaskEditorResult } from '@/agent/components/creative-studio/MaskEditor'
 import {
   DEFAULT_OFFER,
   LIFESTYLE_EST,
@@ -43,6 +45,7 @@ import {
   deleteModel,
   runAutoStudioJob,
   runStudioJob,
+  uploadFillMask,
   saveModel,
   uploadStudioFile,
   fetchBrandStatus,
@@ -720,6 +723,17 @@ function StudioWorkspace({
 }) {
   const [mode, setMode] = useState<StudioModeId>('product_to_model')
   const [provider, setProvider] = useState<StudioProvider>('fashn')
+  // CS6 — single Try-On engine choice + garment placement override
+  const [vtonEngine, setVtonEngine] = useState<StudioEngineId>('fashn')
+  const [clothType, setClothType] = useState<'auto' | 'overall' | 'upper' | 'lower' | 'outer'>('auto')
+  // CS7 — FLUX Fill precision edit
+  const [maskEditorOpen, setMaskEditorOpen] = useState(false)
+  const [maskRunning, setMaskRunning] = useState(false)
+  // CS8 — pipeline mode (bounded spend, shown under Run)
+  const [pipelineMode, setPipelineMode] = useState<'preview' | 'production'>('preview')
+  useEffect(() => {
+    void fetchStudioSettings().then((s) => setPipelineMode(s.pipelineMode)).catch(() => {})
+  }, [])
   const [familyPreset, setFamilyPreset] = useState<FamilyPresetId>('single')
   const [productPreview, setProductPreview] = useState<string | null>(null)
   const [modelPreview, setModelPreview] = useState<string | null>(null)
@@ -772,6 +786,35 @@ function StudioWorkspace({
   const isMultiPersonFamily =
     familyPreset !== 'single' && (mode === 'product_to_model' || mode === 'try_on')
   const effectiveProvider: StudioProvider = isMultiPersonFamily ? 'gemini' : provider
+
+  // CS6 — engine picker applies ONLY to single-person Try-On. IDM/Fal engines
+  // are hidden everywhere else (family, swap, face, edit, video) by design.
+  const isSingleTryOn = mode === 'try_on' && familyPreset === 'single'
+  const engineAvail = useMemo(() => {
+    const m = new Map<string, StudioConfig['engines'][number]>()
+    for (const e of config?.engines ?? []) m.set(e.id, e)
+    return m
+  }, [config])
+  const engineSelectable = useCallback(
+    (id: string) => {
+      const e = engineAvail.get(id)
+      return Boolean(e && e.configured && e.enabled && e.runnable)
+    },
+    [engineAvail],
+  )
+  // Owner default from settings; fall back to direct FASHN when it isn't selectable.
+  useEffect(() => {
+    if (!config) return
+    const def = config.singleVtonDefault ?? 'fashn'
+    setVtonEngine(def === 'fashn' || def === 'gemini' || engineSelectable(def) ? def : 'fashn')
+  }, [config, engineSelectable])
+  const idmWarning = engineAvail.get('fal_idm_vton')?.warningBn ?? null
+  const VTON_ENGINE_LABELS: Record<string, string> = {
+    fashn: 'FASHN Pro',
+    fal_fashn_v16: 'Fal FASHN v1.6',
+    fal_idm_vton: 'IDM-VTON ⚠',
+    gemini: 'Gemini',
+  }
 
   const defaultModel = useMemo(
     () => models.find((m) => m.isDefault) ?? models[0] ?? null,
@@ -905,6 +948,32 @@ function StudioWorkspace({
     return true
   }, [mode, modeDef, productPath, modelPath, modelId, sourcePath, isFamilyMerge, secondSourcePath, familyActive, familyPreset, models])
 
+  // CS7 — mask editor confirmed: upload the mask (server validates dims +
+  // coverage + gives the real cost estimate), then queue the FLUX Fill job.
+  const handleMaskRun = async (r: MaskEditorResult) => {
+    if (!sourcePath) return
+    setMaskRunning(true)
+    try {
+      const uploaded = await uploadFillMask(r.maskBlob, sourcePath)
+      const result = await runStudioJob({
+        mode: 'edit',
+        sourceImagePath: sourcePath,
+        maskPath: uploaded.maskPath,
+        maskPreset: r.preset,
+        prompt: r.detail,
+        baseWidth: uploaded.width,
+        baseHeight: uploaded.height,
+      })
+      toast.success(`${result.message} · আনুমানিক $${uploaded.estimatedCostUsd.toFixed(2)}`)
+      setMaskEditorOpen(false)
+      onOpenGallery()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Run failed')
+    } finally {
+      setMaskRunning(false)
+    }
+  }
+
   const handleRun = async () => {
     if (!canRun) {
       toast.error('Required images missing')
@@ -914,7 +983,11 @@ function StudioWorkspace({
     try {
       const result = await runStudioJob({
         mode,
-        provider,
+        // CS6: for single Try-On the engine picker is authoritative; the legacy
+        // provider field still drives every other mode.
+        provider: isSingleTryOn ? (vtonEngine === 'gemini' ? 'gemini' : 'fashn') : provider,
+        vtonEngine: isSingleTryOn ? vtonEngine : undefined,
+        clothType: isSingleTryOn && clothType !== 'auto' ? clothType : undefined,
         productImagePath: productPath ?? undefined,
         modelImagePath: modelPath ?? undefined,
         sourceImagePath: sourcePath ?? productPath ?? modelPath ?? undefined,
@@ -1037,6 +1110,16 @@ function StudioWorkspace({
               required
             />
           )}
+          {/* CS7 — masked precision edit (FLUX Fill): Edit mode + uploaded source */}
+          {mode === 'edit' && sourcePath && sourcePreview && engineSelectable('fal_flux_fill') && (
+            <button
+              type="button"
+              onClick={() => setMaskEditorOpen(true)}
+              className="mx-auto flex items-center gap-2 rounded-2xl border border-[#E07A5F]/40 bg-[#E07A5F]/10 px-4 py-2.5 text-[12.5px] font-bold text-[#E07A5F]"
+            >
+              🎯 Precision Edit — মাস্ক এঁকে শুধু সেই জায়গা বদলান (FLUX Fill)
+            </button>
+          )}
         </div>
       </div>
 
@@ -1046,6 +1129,17 @@ function StudioWorkspace({
             lockedRole={addRoleSheet}
             onClose={() => setAddRoleSheet(null)}
             onSaved={() => void reloadModels()}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {maskEditorOpen && sourcePreview && sourcePath && (
+          <MaskEditor
+            imageUrl={sourcePreview}
+            running={maskRunning}
+            onCancel={() => setMaskEditorOpen(false)}
+            onRun={(r) => void handleMaskRun(r)}
           />
         )}
       </AnimatePresence>
@@ -1119,18 +1213,52 @@ function StudioWorkspace({
             <div className="mb-2 flex flex-wrap gap-1.5">
               {mode !== 'image_to_video' && (
                 <>
-                  <select
-                    value={provider}
-                    onChange={(e) => setProvider(e.target.value as StudioProvider)}
-                    className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
-                  >
-                    <option value="fashn" disabled={!config?.fashnConfigured}>
-                      Pro (FASHN)
-                    </option>
-                    <option value="gemini" disabled={fashnOnly}>
-                      Draft (Gemini){fashnOnly ? ' — N/A' : ''}
-                    </option>
-                  </select>
+                  {isSingleTryOn ? (
+                    // CS6 — single Try-On: owner picks the exact VTON engine.
+                    <select
+                      value={vtonEngine}
+                      onChange={(e) => setVtonEngine(e.target.value as StudioEngineId)}
+                      className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
+                    >
+                      <option value="fashn" disabled={!config?.fashnConfigured}>
+                        FASHN Pro (direct)
+                      </option>
+                      <option value="fal_fashn_v16" disabled={!engineSelectable('fal_fashn_v16')}>
+                        Fal FASHN v1.6 · কমার্শিয়াল{engineSelectable('fal_fashn_v16') ? '' : ' — বন্ধ'}
+                      </option>
+                      <option value="fal_idm_vton" disabled={!engineSelectable('fal_idm_vton')}>
+                        IDM-VTON ⚠ পরীক্ষামূলক{engineSelectable('fal_idm_vton') ? '' : ' — বন্ধ'}
+                      </option>
+                      <option value="gemini">Draft (Gemini)</option>
+                    </select>
+                  ) : (
+                    <select
+                      value={provider}
+                      onChange={(e) => setProvider(e.target.value as StudioProvider)}
+                      className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
+                    >
+                      <option value="fashn" disabled={!config?.fashnConfigured}>
+                        Pro (FASHN)
+                      </option>
+                      <option value="gemini" disabled={fashnOnly}>
+                        Draft (Gemini){fashnOnly ? ' — N/A' : ''}
+                      </option>
+                    </select>
+                  )}
+                  {/* CS6 — garment placement override for the Fal VTON engines */}
+                  {isSingleTryOn && (vtonEngine === 'fal_idm_vton' || vtonEngine === 'fal_fashn_v16') && (
+                    <select
+                      value={clothType}
+                      onChange={(e) => setClothType(e.target.value as typeof clothType)}
+                      className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
+                    >
+                      <option value="auto">গার্মেন্ট: Auto</option>
+                      <option value="overall">পাঞ্জাবি/ফুল সেট (overall)</option>
+                      <option value="upper">শুধু টপ (upper)</option>
+                      <option value="lower">শুধু পাজামা (lower)</option>
+                      <option value="outer">কটি/ওয়েস্টকোট (outer)</option>
+                    </select>
+                  )}
                   <select
                     value={backgroundId}
                     onChange={(e) => setBackgroundId(e.target.value)}
@@ -1214,6 +1342,12 @@ function StudioWorkspace({
               )}
             </div>
 
+            {/* CS6 — research-only warning MUST be visible before Run (owner-locked) */}
+            {isSingleTryOn && vtonEngine === 'fal_idm_vton' && (
+              <div className="mb-2 rounded-xl border border-amber-400/50 bg-amber-50/10 px-3 py-2 text-[11px] leading-snug text-amber-700">
+                ⚠ {idmWarning ?? 'পরীক্ষামূলক (research-only) ইঞ্জিন — ফলাফল নিজে যাচাই না করে পাবলিশ করবেন না।'}
+              </div>
+            )}
             <motion.button
               type="button"
               disabled={!canRun || running}
@@ -1230,13 +1364,25 @@ function StudioWorkspace({
                   Generating…
                 </>
               ) : (
-                <>Run — {effectiveProvider === 'fashn' ? 'FASHN Pro' : 'Gemini'}</>
+                // CS5: multi-person family actually runs the accuracy chain
+                // (per-person FASHN try-on → Gemini merge) — label it honestly
+                // instead of claiming the whole job is Gemini.
+                // CS6: single Try-On names the exact engine the owner picked.
+                <>Run — {isMultiPersonFamily
+                  ? FAMILY_CHAIN_LABEL_BN
+                  : isSingleTryOn
+                    ? VTON_ENGINE_LABELS[vtonEngine] ?? vtonEngine
+                    : effectiveProvider === 'fashn' ? 'FASHN Pro' : 'Gemini'}</>
               )}
             </motion.button>
             <p className="mt-1.5 text-center text-[10px] text-muted">
-              {isMultiPersonFamily && provider === 'fashn'
-                ? 'একাধিক মানুষ — FASHN পারে না, Gemini দিয়ে হবে'
-                : 'No LLM cost — direct render queue'}
+              {isMultiPersonFamily
+                ? 'ফ্যামিলি ছবি: প্রতি জনের FASHN try-on, তারপর Gemini দিয়ে এক ফ্রেমে merge'
+                : isSingleTryOn
+                  ? pipelineMode === 'production'
+                    ? 'প্রোডাকশন মোড — কড়া QC (প্রতিটা ≥৪/৫), সর্বোচ্চ ৩টি পেইড রান'
+                    : 'প্রিভিউ মোড — ১টি সাশ্রয়ী রান, অটো-রিপেয়ার নেই (সেটিংসে বদলান)'
+                  : 'No LLM cost — direct render queue'}
             </p>
           </div>
         )}
@@ -1527,6 +1673,33 @@ function GalleryView() {
   const [showFinish, setShowFinish] = useState(false)
   const [themes, setThemes] = useState<string[]>(['default'])
   const [drive, setDrive] = useState<DriveStatus | null>(null)
+  // CS8 — masked rescue: owner paints the fix area on a flagged artifact and
+  // FLUX Fill repairs ONLY that region (never auto face/embroidery repaint).
+  const [rescueItem, setRescueItem] = useState<GalleryItem | null>(null)
+  const [rescueRunning, setRescueRunning] = useState(false)
+  const handleRescueRun = useCallback(async (r: MaskEditorResult) => {
+    if (!rescueItem?.storagePath) return
+    setRescueRunning(true)
+    try {
+      const uploaded = await uploadFillMask(r.maskBlob, rescueItem.storagePath)
+      const result = await runStudioJob({
+        mode: 'edit',
+        sourceImagePath: rescueItem.storagePath,
+        maskPath: uploaded.maskPath,
+        maskPreset: r.preset,
+        prompt: r.detail,
+        baseWidth: uploaded.width,
+        baseHeight: uploaded.height,
+      })
+      toast.success(`${result.message} · আনুমানিক $${uploaded.estimatedCostUsd.toFixed(2)}`)
+      setRescueItem(null)
+      setSelected(null)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Run failed')
+    } finally {
+      setRescueRunning(false)
+    }
+  }, [rescueItem])
   const openItem = useCallback((item: GalleryItem) => {
     setShowBranded(Boolean(item.brandedUrl))
     setShowFinish(false)
@@ -1710,7 +1883,8 @@ function GalleryView() {
                       item.status === 'executed' ? 'bg-[#81B29A]/90 text-white' : 'bg-black/50 text-white',
                     )}
                   >
-                    {item.provider}
+                    {/* CS6/CS7 — show the exact engine, not just the vendor */}
+                    {item.engine === 'fal_idm_vton' ? 'IDM ⚠' : item.engine === 'fal_fashn_v16' ? 'FAL FASHN' : item.engine === 'fal_flux_fill' ? 'FLUX FILL' : item.provider}
                   </span>
                   {item.brandedUrl && (
                     <span className="absolute right-1.5 top-1.5 rounded-md bg-[#E07A5F]/90 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
@@ -1787,6 +1961,41 @@ function GalleryView() {
               />
             )}
 
+            {/* CS6 — truthful engine lineage (fal VTON runs): engine, request id,
+                seed, latency, actual cost + research-only badge */}
+            {selected.engine && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute left-4 top-[calc(1rem+env(safe-area-inset-top))] flex max-w-[70vw] flex-wrap items-center gap-1.5"
+              >
+                <span className="rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-bold text-white ring-1 ring-white/25">
+                  {selected.engine === 'fal_idm_vton' ? 'IDM-VTON' : selected.engine === 'fal_fashn_v16' ? 'Fal FASHN v1.6' : selected.engine === 'fal_flux_fill' ? 'FLUX Fill' : selected.engine}
+                </span>
+                {selected.researchOnly && (
+                  <span className="rounded-full bg-amber-500/90 px-2.5 py-1 text-[10px] font-bold text-white">
+                    ⚠ পরীক্ষামূলক
+                  </span>
+                )}
+                {typeof selected.seed === 'number' && (
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/85">seed {selected.seed}</span>
+                )}
+                {typeof selected.latencyMs === 'number' && (
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/85">{Math.round(selected.latencyMs / 100) / 10}s</span>
+                )}
+                {typeof selected.costUsd === 'number' && selected.costUsd > 0 && (
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/85">${selected.costUsd.toFixed(3)}</span>
+                )}
+                {selected.requestId && (
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/60" title={selected.requestId}>
+                    req {selected.requestId.slice(0, 8)}
+                  </span>
+                )}
+                {selected.qc?.flagged && (
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-amber-300">{selected.qc.flagged}</span>
+                )}
+              </div>
+            )}
+
             {/* Original ↔ Branded toggle (only when a branded variant exists) */}
             {selected.brandedUrl && !(selected.storagePath?.endsWith('.mp4') || selected.type === 'video_gen') && (
               <div
@@ -1832,6 +2041,16 @@ function GalleryView() {
                 >
                   ডাউনলোড
                 </button>
+                {/* CS8 — masked rescue for finished images (owner paints, Fill repairs) */}
+                {selected.status === 'executed' && selected.storagePath && selected.type === 'image_gen' && (
+                  <button
+                    type="button"
+                    onClick={() => setRescueItem(selected)}
+                    className="rounded-full bg-white/15 px-4 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
+                  >
+                    🎯 মাস্ক এঁকে ঠিক করুন
+                  </button>
+                )}
                 {/* CS4: ভালো/বাদ → deterministic scene weighting */}
                 {selected.status === 'executed' && (
                   <div className="flex items-center gap-1.5 rounded-full bg-black/50 px-2 py-1 ring-1 ring-white/20 backdrop-blur-md">
@@ -1996,6 +2215,18 @@ function GalleryView() {
               </div>
             )}
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* CS8 — masked rescue editor on a finished artifact */}
+      <AnimatePresence>
+        {rescueItem?.previewUrl && (
+          <MaskEditor
+            imageUrl={rescueItem.previewUrl}
+            running={rescueRunning}
+            onCancel={() => setRescueItem(null)}
+            onRun={(r) => void handleRescueRun(r)}
+          />
         )}
       </AnimatePresence>
     </div>
@@ -2582,13 +2813,36 @@ function ModelCreatorCard({ models, onQueued }: { models: Array<{ role: string |
 /** CS4 — QC level + Telegram done-ping + child-garment cache management. */
 function StudioSettingsCard() {
   const [settings, setSettings] = useState<StudioSettings | null>(null)
+  const [config, setConfig] = useState<StudioConfig | null>(null)
   useEffect(() => {
     void fetchStudioSettings().then(setSettings).catch(() => {})
+    void fetchStudioConfig().then(setConfig).catch(() => {})
   }, [])
   if (!settings) return null
+
+  const saveFalFlag = (patch: Partial<Pick<StudioSettings, 'falEnabled' | 'idmVtonEnabled' | 'fluxFillEnabled'>> & { singleVtonDefault?: StudioEngineId }) => {
+    setSettings({ ...settings, ...patch })
+    void saveStudioSettings(patch).then(() => toast.success('সেভ হয়েছে')).catch(() => toast.error('হয়নি'))
+  }
   return (
     <div className="mt-3 space-y-2.5 st-card p-3">
       <p className="text-[12px] font-bold text-cream">⚙️ স্টুডিও সেটিংস</p>
+      {/* CS8 — Preview vs Production: bounded spend shown up front */}
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-muted">পাইপলাইন মোড</span>
+        <select
+          value={settings.pipelineMode}
+          onChange={(e) => {
+            const pipelineMode = e.target.value as StudioSettings['pipelineMode']
+            setSettings({ ...settings, pipelineMode })
+            void saveStudioSettings({ pipelineMode }).then(() => toast.success('সেভ হয়েছে — পরের রান থেকে কার্যকর')).catch(() => toast.error('হয়নি'))
+          }}
+          className="rounded-lg border border-border-subtle bg-bg-1 px-2 py-1 text-[11px] text-cream"
+        >
+          <option value="preview">প্রিভিউ — ১টি সাশ্রয়ী রান</option>
+          <option value="production">প্রোডাকশন — কড়া QC · সর্বোচ্চ ৩ পেইড রান</option>
+        </select>
+      </label>
       <label className="flex items-center justify-between gap-2">
         <span className="text-[11px] text-muted">ছবির QC (মান যাচাই)</span>
         <select
@@ -2634,6 +2888,69 @@ function StudioSettingsCard() {
           className="h-4 w-4 accent-[#E07A5F]"
         />
       </label>
+
+      {/* CS5 — Fal engine foundation: owner flags only. Engines become runnable
+          in CS6 (try-on) / CS7 (FLUX Fill); flipping these today changes nothing
+          in the Run tab, so the current defaults stay exactly as they were. */}
+      <div className="border-t border-border-subtle pt-2.5">
+        <div className="flex items-center justify-between">
+          <p className="text-[12px] font-bold text-cream">🧪 Fal ইঞ্জিন (নতুন — সামনের ফেজে চালু)</p>
+          {config && (
+            <span
+              className={cn(
+                'rounded-full px-2 py-0.5 text-[9px] font-semibold',
+                config.falConfigured ? 'bg-[#81B29A]/15 text-[#2d6a4f]' : 'bg-amber-100 text-amber-800',
+              )}
+            >
+              {config.falConfigured ? 'FAL_KEY আছে' : 'FAL_KEY নেই'}
+            </span>
+          )}
+        </div>
+        <p className="mb-2 mt-0.5 text-[10px] text-muted">
+          এখন শুধু প্রস্তুতি — Try-On ইঞ্জিন বাছাই (CS6) ও মাস্ক-এডিট (CS7) এলে এগুলো কাজে লাগবে। আজকের রেন্ডার আগের মতোই চলবে।
+        </p>
+        <label className="flex items-center justify-between gap-2 py-1">
+          <span className="text-[11px] text-muted">Fal ইঞ্জিন চালু (FASHN v1.6 · কমার্শিয়াল)</span>
+          <input
+            type="checkbox"
+            checked={settings.falEnabled}
+            onChange={(e) => saveFalFlag({ falEnabled: e.target.checked })}
+            className="h-4 w-4 accent-[#E07A5F]"
+          />
+        </label>
+        <label className="flex items-center justify-between gap-2 py-1">
+          <span className="text-[11px] text-muted">
+            IDM-VTON <span className="rounded bg-amber-100 px-1 py-px text-[9px] font-bold text-amber-800">পরীক্ষামূলক · research-only</span>
+          </span>
+          <input
+            type="checkbox"
+            checked={settings.idmVtonEnabled}
+            onChange={(e) => saveFalFlag({ idmVtonEnabled: e.target.checked })}
+            className="h-4 w-4 accent-[#E07A5F]"
+          />
+        </label>
+        <label className="flex items-center justify-between gap-2 py-1">
+          <span className="text-[11px] text-muted">FLUX Fill (মাস্ক-করা জায়গা এডিট)</span>
+          <input
+            type="checkbox"
+            checked={settings.fluxFillEnabled}
+            onChange={(e) => saveFalFlag({ fluxFillEnabled: e.target.checked })}
+            className="h-4 w-4 accent-[#E07A5F]"
+          />
+        </label>
+        <label className="flex items-center justify-between gap-2 py-1">
+          <span className="text-[11px] text-muted">সিঙ্গেল Try-On ডিফল্ট (CS6 থেকে কার্যকর)</span>
+          <select
+            value={settings.singleVtonDefault}
+            onChange={(e) => saveFalFlag({ singleVtonDefault: e.target.value as StudioEngineId })}
+            className="rounded-lg border border-border-subtle bg-bg-1 px-2 py-1 text-[11px] text-cream"
+          >
+            <option value="fashn">FASHN Pro (এখনকার)</option>
+            <option value="fal_fashn_v16">Fal FASHN v1.6</option>
+            <option value="fal_idm_vton">IDM-VTON (পরীক্ষামূলক)</option>
+          </select>
+        </label>
+      </div>
       {settings.childGarments.length > 0 && (
         <div>
           <p className="mb-1 text-[11px] font-semibold text-muted">বাচ্চার গার্মেন্ট ক্যাশ (খারাপ হলে মুছুন — পরের রানে নতুন হবে)</p>

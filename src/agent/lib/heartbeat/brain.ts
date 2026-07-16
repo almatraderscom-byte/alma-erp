@@ -37,6 +37,7 @@ import { isAgentEnabled } from '@/agent/config'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { isWithinOfficeHours } from '@/agent/lib/office-supervisor'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
+import { mirrorDutyTick } from '@/agent/lib/graph/duty-run-graph'
 import { getModel, isKnownModelId, DEFAULT_MODEL_ID } from '@/agent/lib/models/registry'
 import type { AgentEvent } from '@/agent/lib/core'
 import { getOwnerSessionPointer } from '@/agent/lib/owner-session'
@@ -358,15 +359,22 @@ export async function runHeartbeatTick(opts: { now?: Date; force?: boolean } = {
   const now = opts.now ?? new Date()
   const force = opts.force ?? false
 
-  const quiet = (reason: string): HeartbeatTickResult => ({
-    ran: false,
-    reason,
-    headWoke: false,
-    kind: null,
-    pulse: null,
-    costUsd: 0,
-    summary: '',
-  })
+  const quiet = (reason: string): HeartbeatTickResult => {
+    // LG-9 slice 1: every tick decision lands on the day's duty thread
+    // (fail-open inside; fire-and-forget so a quiet bail stays instant).
+    void mirrorDutyTick('heartbeat', ymdDhaka(now), {
+      decision: reason, outcome: null, summary: null, costUsd: 0, conversationId: null,
+    })
+    return {
+      ran: false,
+      reason,
+      headWoke: false,
+      kind: null,
+      pulse: null,
+      costUsd: 0,
+      summary: '',
+    }
+  }
 
   if (!isAgentEnabled()) return quiet('agent_disabled')
 
@@ -415,6 +423,9 @@ export async function runHeartbeatTick(opts: { now?: Date; force?: boolean } = {
 
     if (!shouldWake) {
       const reason = !actionable ? 'quiet' : !changed ? 'unchanged' : !underCap ? 'cap_reached' : 'quiet'
+      await mirrorDutyTick('heartbeat', ymdDhaka(now), {
+        decision: reason, outcome: null, summary: describePulse(pulse).slice(0, 200), costUsd: 0, conversationId: null,
+      })
       const entry = await recordHeartbeat({
         kind: 'idle',
         pulse,
@@ -444,6 +455,13 @@ export async function runHeartbeatTick(opts: { now?: Date; force?: boolean } = {
       costUsd: result.costUsd,
       conversationId: result.conversationId,
     })
+    await mirrorDutyTick('heartbeat', ymdDhaka(now), {
+      decision: 'wake',
+      outcome: result.kind,
+      summary: result.summary.slice(0, 200),
+      costUsd: result.costUsd,
+      conversationId: result.conversationId ?? null,
+    })
     return {
       ran: true,
       reason: force ? 'forced' : 'woke',
@@ -456,6 +474,9 @@ export async function runHeartbeatTick(opts: { now?: Date; force?: boolean } = {
   } catch (err) {
     await captureAgentError(err, 'heartbeat_brain', { route: 'heartbeat:tick' })
     await recordHeartbeat({ kind: 'error', pulse, headWoke: false, summary: 'হার্টবিট টিক ব্যর্থ হয়েছে।' }).catch(() => {})
+    void mirrorDutyTick('heartbeat', ymdDhaka(now), {
+      decision: 'error', outcome: 'error', summary: null, costUsd: 0, conversationId: null,
+    })
     return { ran: true, reason: 'error', headWoke: false, kind: 'error', pulse, costUsd: 0, summary: 'হার্টবিট টিক ব্যর্থ হয়েছে।' }
   }
 }

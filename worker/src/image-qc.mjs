@@ -4,6 +4,19 @@
 
 export const MAX_REGEN = 2
 
+// CS8 — production hard gate (mirrors src/lib/tryon/qc-gate.ts, keep in sync):
+// garment fidelity, model identity and anatomy must EACH be ≥4/5 in
+// production mode — a good overall can no longer carry a 2/5 axis.
+export const PRODUCTION_MIN_CORE_AXIS = 4
+
+export function productionCoreAxesPass(score) {
+  return (
+    Number(score?.garment_fidelity ?? 0) >= PRODUCTION_MIN_CORE_AXIS
+    && Number(score?.model_preserved ?? 0) >= PRODUCTION_MIN_CORE_AXIS
+    && Number(score?.anatomy ?? 0) >= PRODUCTION_MIN_CORE_AXIS
+  )
+}
+
 export async function fetchQcLevel(supabase) {
   const { data } = await supabase
     .from('agent_kv_settings')
@@ -13,6 +26,20 @@ export async function fetchQcLevel(supabase) {
   const v = data?.value?.trim()?.toLowerCase()
   if (v === 'off' || v === 'strict' || v === 'normal') return v
   return 'normal'
+}
+
+/** CS8 — owner-tunable Preview/Production pipeline mode (kv, default preview). */
+export async function fetchPipelineMode(supabase) {
+  try {
+    const { data } = await supabase
+      .from('agent_kv_settings')
+      .select('value')
+      .eq('key', 'cs_pipeline_mode')
+      .maybeSingle()
+    return data?.value?.trim()?.toLowerCase() === 'production' ? 'production' : 'preview'
+  } catch {
+    return 'preview'
+  }
 }
 
 export async function scoreImageViaApi({ appUrl, token, storagePath, productType, productImagePath }) {
@@ -53,7 +80,11 @@ export async function runImageQcLoop({
     }
   }
 
-  const maxGenerations = MAX_REGEN + 1
+  // CS8 — the pipeline mode bounds paid work for EVERY engine that runs this
+  // loop (FASHN, Gemini, fal VTON): preview = score once, NO paid regen;
+  // production = bounded regens + hard core-axis gate on pass/fail.
+  const pipelineMode = await fetchPipelineMode(supabase)
+  const maxGenerations = pipelineMode === 'preview' ? 1 : MAX_REGEN + 1
   const attempts = []
   let currentPath = initialPath
 
@@ -83,28 +114,34 @@ export async function runImageQcLoop({
         },
       }
     }
+    // CS8 — in production the hard core-axis gate overrides a lenient overall
+    // pass: any core axis below 4/5 fails the attempt.
+    const axisOk = pipelineMode === 'production' ? productionCoreAxesPass(qc.score) : true
     attempts.push({
       storagePath: currentPath,
-      pass: Boolean(qc.pass),
+      pass: Boolean(qc.pass) && axisOk,
       score: qc.score,
       attempt: i + 1,
     })
 
-    if (qc.pass) break
-    if (i >= MAX_REGEN) break
+    if (attempts[attempts.length - 1].pass) break
+    if (i >= maxGenerations - 1) break
 
     const fixHint = qc.score?.fix_hint ?? qc.score?.fail_reasons?.[0] ?? 'Improve garment fidelity and anatomy.'
     currentPath = await regenerate(fixHint, i + 2)
   }
 
-  const best = attempts.reduce((a, b) => {
-    const ao = a.score?.overall ?? 0
-    const bo = b.score?.overall ?? 0
-    return bo > ao ? b : a
-  })
+  // Best attempt by weighted core axes first, overall second — never "overall
+  // alone" (roadmap CS8: select best by weighted score).
+  const weightOf = (a) => {
+    const s = a.score ?? {}
+    const core = (Number(s.garment_fidelity ?? 0) + Number(s.model_preserved ?? 0) + Number(s.anatomy ?? 0)) * 2
+    return core + Number(s.overall ?? 0)
+  }
+  const best = attempts.reduce((a, b) => (weightOf(b) > weightOf(a) ? b : a))
 
   let flagged
-  if (!best.pass && attempts.length > 1) {
+  if (!best.pass) {
     const axes = [
       ['garment fidelity', best.score?.garment_fidelity],
       ['model', best.score?.model_preserved],
@@ -114,7 +151,9 @@ export async function runImageQcLoop({
       ['composition', best.score?.composition],
     ]
     axes.sort((x, y) => (x[1] ?? 5) - (y[1] ?? 5))
-    flagged = `QC: best of ${attempts.length} — weak ${axes[0]?.[0]} (overall ${best.score?.overall}/5)`
+    flagged = pipelineMode === 'preview' && attempts.length === 1
+      ? `প্রিভিউ মোড: QC ${best.score?.overall ?? '?'}/৫ — প্রোডাকশনে চালালে কড়া যাচাই হবে`
+      : `QC: best of ${attempts.length} — weak ${axes[0]?.[0]} (overall ${best.score?.overall}/5)`
   } else if (best.pass && attempts.length > 1) {
     flagged = `QC: passed on attempt ${best.attempt}`
   }
@@ -124,7 +163,13 @@ export async function runImageQcLoop({
     qc: {
       pass: best.pass,
       attempts: attempts.length,
+      pipelineMode,
       overall: best.score?.overall,
+      coreAxes: {
+        garment_fidelity: best.score?.garment_fidelity,
+        model_preserved: best.score?.model_preserved,
+        anatomy: best.score?.anatomy,
+      },
       scores: attempts.map((a) => ({
         attempt: a.attempt,
         overall: a.score?.overall,

@@ -157,6 +157,42 @@ export function pickSceneWeighted(
   }
 }
 
+/**
+ * CS8 — controlled diversity: like pickSceneWeighted but EXCLUDES recently used
+ * scenes (ring buffer in cs_recent_scenes) so batch runs stop producing
+ * near-identical compositions. Falls back to the full pool when exclusions
+ * would empty it. Pure — inject `rand` to unit-test.
+ */
+export function pickSceneDiverse(
+  weights: Record<string, number>,
+  recentSceneIds: string[],
+  rand: () => number = Math.random,
+): PickedScene {
+  const recent = new Set(recentSceneIds)
+  const available = BD_SCENES.filter((s) => !recent.has(s.id))
+  if (available.length === 0) return pickSceneWeighted(weights, rand)
+  const entries = available.map((scene) => {
+    const w = Number(weights[scene.id] ?? 0)
+    return { scene, mult: w <= -3 ? 0 : Math.pow(2, Math.max(-2, Math.min(5, w))) }
+  }).filter((e) => e.mult > 0)
+  const pool = entries.length > 0 ? entries : available.map((scene) => ({ scene, mult: 1 }))
+  const total = pool.reduce((sum, e) => sum + e.mult, 0)
+  let roll = rand() * total
+  let chosen = pool[pool.length - 1].scene
+  for (const e of pool) {
+    roll -= e.mult
+    if (roll <= 0) { chosen = e.scene; break }
+  }
+  const pickWith = <T,>(arr: readonly T[]): T => arr[Math.min(arr.length - 1, Math.floor(rand() * arr.length))]
+  return {
+    scene: chosen,
+    adultPose: pickWith(ADULT_POSES),
+    childPose: pickWith(CHILD_POSES),
+    pairPose: pickWith(PAIR_POSES),
+    groupPose: pickWith(GROUP_POSES),
+  }
+}
+
 /** Pick one random scene + poses for a run. Chains call this ONCE and carry the
  * result through every step so background/light stay consistent. */
 export function pickScene(): PickedScene {

@@ -2181,20 +2181,38 @@ model AgentTurnEvent {
 
 /// Rich output produced by the agent (code, markdown, HTML, images).
 model AgentArtifact {
-  id             String            @id @default(uuid())
+  id             String                 @id @default(uuid())
   conversationId String
-  conversation   AgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation   AgentConversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   messageId      String?
-  message        AgentMessage?     @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  message        AgentMessage?          @relation(fields: [messageId], references: [id], onDelete: SetNull)
   type           String?
   title          String?
-  content        String?           @db.Text
-  version        Int               @default(1)
-  createdAt      DateTime          @default(now())
+  content        String?                @db.Text
+  version        Int                    @default(1)
+  createdAt      DateTime               @default(now())
+  versions       AgentArtifactVersion[]
 
   @@index([conversationId])
   @@index([messageId])
   @@map("agent_artifacts")
+}
+
+/// Snapshot of an artifact body BEFORE an in-place update overwrote it —
+/// the artifacts panel's version history (Claude-app parity, 2026-07-16).
+model AgentArtifactVersion {
+  id         String        @id @default(uuid())
+  artifactId String
+  artifact   AgentArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  version    Int
+  type       String?
+  title      String?
+  content    String?       @db.Text
+  createdAt  DateTime      @default(now())
+
+  @@unique([artifactId, version])
+  @@index([artifactId])
+  @@map("agent_artifact_versions")
 }
 
 /// Owner's memory store. pgvector embedding column added in Phase 3.

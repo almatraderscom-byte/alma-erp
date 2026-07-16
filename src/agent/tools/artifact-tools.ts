@@ -33,14 +33,30 @@ export async function saveConversationArtifact(input: {
   const existing = await db.agentArtifact.findFirst({
     where: { conversationId: input.conversationId, title },
     orderBy: { createdAt: 'desc' },
-    select: { id: true, version: true },
+    select: { id: true, version: true, type: true, title: true, content: true },
   })
   if (existing) {
-    const row = await db.agentArtifact.update({
-      where: { id: existing.id },
-      data: { content: input.content, type, version: (existing.version ?? 1) + 1 },
-      select: { id: true, title: true, type: true, version: true },
-    })
+    // Snapshot the body we're about to overwrite, then bump — the panel's
+    // version history reads these (upsert: a replayed/raced save of the same
+    // version must not crash the tool on the unique index).
+    const [, row] = await db.$transaction([
+      db.agentArtifactVersion.upsert({
+        where: { artifactId_version: { artifactId: existing.id, version: existing.version ?? 1 } },
+        create: {
+          artifactId: existing.id,
+          version: existing.version ?? 1,
+          type: existing.type,
+          title: existing.title,
+          content: existing.content,
+        },
+        update: {},
+      }),
+      db.agentArtifact.update({
+        where: { id: existing.id },
+        data: { content: input.content, type, version: (existing.version ?? 1) + 1 },
+        select: { id: true, title: true, type: true, version: true },
+      }),
+    ])
     return { id: row.id, title: row.title ?? title, type: row.type ?? type, version: row.version }
   }
   const row = await db.agentArtifact.create({

@@ -1,4 +1,5 @@
 import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creative-studio/constants'
+import type { EngineAvailability, StudioEngineId } from '@/lib/creative-studio/provider-registry'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 import type { LifestyleLayoutOverrides } from '@/lib/content-engine/lifestyle-layout'
 
@@ -6,6 +7,14 @@ export type StudioConfig = {
   fashnConfigured: boolean
   geminiConfigured: boolean
   veoConfigured: boolean
+  /** CS5 — FAL_KEY present on the server (foundation; engines runnable from CS6/CS7) */
+  falConfigured: boolean
+  /** CS5 — registry availability snapshot (identity/status/flags, truthful when key missing) */
+  engines: EngineAvailability[]
+  /** CS5 — owner default for single-person Try-On (used from CS6) */
+  singleVtonDefault: StudioEngineId
+  /** honest label for multi-person family renders (FASHN + Gemini chain) */
+  familyChainLabelBn: string
   organization: string
 }
 
@@ -18,6 +27,15 @@ export type GalleryItem = {
   mode: string
   provider: string
   familyPreset: string | null
+  /** CS6 — truthful engine lineage (fal VTON runs) */
+  engine?: string | null
+  endpointId?: string | null
+  requestId?: string | null
+  seed?: number | null
+  latencyMs?: number | null
+  costUsd?: number | null
+  researchOnly?: boolean
+  qc?: { pass?: boolean; overall?: number; attempts?: number; flagged?: string } | null
   previewUrl: string | null
   /** small webp for the grid tile (falls back to previewUrl) */
   thumbUrl?: string | null
@@ -97,6 +115,15 @@ export async function finishImage(opts: FinishOptions): Promise<{ framedPath: st
 export type RunPayload = {
   mode: StudioModeId
   provider?: StudioProvider
+  /** CS6 — single Try-On engine choice (fashn / gemini / fal_fashn_v16 / fal_idm_vton) */
+  vtonEngine?: StudioEngineId
+  /** CS6 — owner override for garment placement when auto classification is uncertain */
+  clothType?: 'auto' | 'overall' | 'upper' | 'lower' | 'outer'
+  /** CS7 — FLUX Fill precision edit fields (Edit mode only) */
+  maskPath?: string
+  maskPreset?: string
+  baseWidth?: number
+  baseHeight?: number
   productImagePath?: string
   modelImagePath?: string
   sourceImagePath?: string
@@ -188,6 +215,23 @@ export async function uploadStudioFile(file: File, folder: string): Promise<stri
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error ?? 'upload_failed')
   return data.path as string
+}
+
+/** CS7 — upload a painted FLUX Fill mask; server validates dims vs base + coverage. */
+export async function uploadFillMask(maskBlob: Blob, basePath: string): Promise<{
+  maskPath: string
+  width: number
+  height: number
+  coveragePct: number
+  estimatedCostUsd: number
+}> {
+  const fd = new FormData()
+  fd.append('mask', new File([maskBlob], 'mask.png', { type: 'image/png' }))
+  fd.append('basePath', basePath)
+  const res = await fetch('/api/assistant/creative-studio/mask-upload', { method: 'POST', body: fd })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'mask_upload_failed')
+  return data
 }
 
 export async function runStudioJob(payload: RunPayload) {
@@ -501,6 +545,13 @@ export type StudioSettings = {
   imageEngine: 'gemini' | 'gpt' | 'seedream'
   sceneWeights: Record<string, number>
   childGarments: Array<{ key: string; role: string; productPath: string; garmentPath: string; url: string | null }>
+  /** CS5 — Fal foundation flags (default OFF; engines runnable from CS6/CS7) */
+  falEnabled: boolean
+  idmVtonEnabled: boolean
+  fluxFillEnabled: boolean
+  singleVtonDefault: StudioEngineId
+  /** CS8 — Preview (১টি সাশ্রয়ী রান) vs Production (কড়া QC + bounded repair) */
+  pipelineMode: 'preview' | 'production'
 }
 
 export async function fetchStudioSettings(): Promise<StudioSettings> {
@@ -509,7 +560,16 @@ export async function fetchStudioSettings(): Promise<StudioSettings> {
   return res.json()
 }
 
-export async function saveStudioSettings(patch: { qcLevel?: string; notifyOnDone?: boolean; imageEngine?: 'gemini' | 'gpt' | 'seedream' }) {
+export async function saveStudioSettings(patch: {
+  qcLevel?: string
+  notifyOnDone?: boolean
+  imageEngine?: 'gemini' | 'gpt' | 'seedream'
+  falEnabled?: boolean
+  idmVtonEnabled?: boolean
+  fluxFillEnabled?: boolean
+  singleVtonDefault?: StudioEngineId
+  pipelineMode?: 'preview' | 'production'
+}) {
   const res = await fetch('/api/assistant/creative-studio/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

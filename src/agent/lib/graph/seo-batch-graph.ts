@@ -49,6 +49,11 @@ const SeoBatchState = Annotation.Root({
   facts: Annotation<ClientSeoBatchFacts | null>({ reducer: (_a, b) => b, default: () => null }),
   event: Annotation<ClientSeoBatchEvent | null>({ reducer: (_a, b) => b, default: () => null }),
   stateLabel: Annotation<string>({ reducer: (_a, b) => b, default: () => '' }),
+  // Post-node checkpoint marker (2026-07-16 dedupe fix): every invoke leaves
+  // ~3 snapshots all carrying these channels; the node stamps appliedStep to
+  // the bumped counter so the history reader keeps exactly one per step.
+  stepCount: Annotation<number>({ reducer: (a, b) => a + b, default: () => 0 }),
+  appliedStep: Annotation<number>({ reducer: (_a, b) => b, default: () => -1 }),
 })
 
 function buildGraph(checkpointer: NonNullable<ReturnType<typeof getGraphCheckpointer>>) {
@@ -57,7 +62,12 @@ function buildGraph(checkpointer: NonNullable<ReturnType<typeof getGraphCheckpoi
       // No event = seed step (facts arrive verbatim). With an event, the SAME
       // reducer the legacy row uses computes the next facts — one truth.
       const facts = s.event && s.facts ? reduceClientSeoBatch(s.facts, s.event) : s.facts
-      return { facts, stateLabel: facts ? clientSeoBatchStateLabel(facts) : '' }
+      return {
+        facts,
+        stateLabel: facts ? clientSeoBatchStateLabel(facts) : '',
+        stepCount: 1,
+        appliedStep: s.stepCount + 1,
+      }
     })
     .addEdge(START, 'apply_event')
     .addEdge('apply_event', END)
@@ -133,7 +143,15 @@ export async function getSeoBatchGraphHistory(runId: string, limit = 50): Promis
     for await (const snap of graph.getStateHistory({
       configurable: { thread_id: `wfrun:${runId}` },
     })) {
-      const v = (snap.values ?? {}) as { stateLabel?: string; event?: ClientSeoBatchEvent | null; facts?: ClientSeoBatchFacts | null }
+      const v = (snap.values ?? {}) as {
+        stateLabel?: string; event?: ClientSeoBatchEvent | null; facts?: ClientSeoBatchFacts | null
+        stepCount?: number; appliedStep?: number
+      }
+      // Keep only post-node checkpoints (input/pre-node snapshots echo stale or
+      // half-applied state). Pre-fix checkpoints (no stamp) pass through so old
+      // threads keep their history, duplicates and all.
+      const stamped = typeof v.appliedStep === 'number' && v.appliedStep >= 0
+      if (stamped && ((snap.metadata as { source?: string } | undefined)?.source !== 'loop' || v.appliedStep !== v.stepCount)) continue
       steps.push({
         stateLabel: v.stateLabel ?? '',
         eventType: v.event?.type ?? null,

@@ -54,11 +54,32 @@ export async function GET(req: NextRequest) {
     console.warn('[health] heartbeat upsert failed (table may not exist yet):', err instanceof Error ? err.message : err)
   }
 
+  // LangGraph program health (fail-open): checkpoint-store size by thread
+  // family + turn-graph shares — gates are live in production, so unbounded
+  // growth or a silent mirror failure must show up HERE, not in an incident.
+  let graph: unknown = null
+  try {
+    const { getCheckpointStoreHealth, getTurnGraphHealth } = await import('@/agent/lib/graph/graph-health')
+    const [store, turns] = await Promise.all([getCheckpointStoreHealth(), getTurnGraphHealth(1)])
+    graph = {
+      store,
+      today: turns
+        ? {
+            turns: turns.turns,
+            routineHandledShare: turns.routine.handledShare,
+            shadowAgreeRate: turns.shadow.agreeRate,
+            scored: turns.shadow.scored,
+          }
+        : null,
+    }
+  } catch { /* health must never fail on the graph block */ }
+
   return NextResponse.json({
     ok: db,
     db,
     ...(dbError ? { dbError } : {}),
     agentEnabled: true,
+    graph,
     timestamp: now.toISOString(),
   })
 }

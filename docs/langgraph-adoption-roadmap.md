@@ -57,6 +57,60 @@ preview: routine lookups answered via the graph at Σ~333 tokens / ~$0.000 vs
   mirrored into a durable graph thread (`wfrun:<runId>`), same reducer = one
   truth, DRIFT logging; `getSeoBatchGraphHistory` replay reader. Gate
   `AGENT_LANGGRAPH_WORKFLOW`. Next slices: content pipeline, browser recipes.
+- **LG-6 slice 2 (SHIPPED 2026-07-16):** EVERY template workflow run (content
+  pipeline `product_post` first consumer, plus `ad_campaign`, …) mirrored from
+  the canonical `transitionWorkflowRun` choke point into thread
+  `wfstep:<runId>` (`workflow-run-graph.ts`); each transition re-checked
+  against the template step map — off-map jumps recorded `legal:false` (drift
+  signal, never blocking); `get_workflow_history` now replays template runs
+  too. Same gate `AGENT_LANGGRAPH_WORKFLOW`. Remaining slice: browser recipes.
+- **LG-6 slice 3 (SHIPPED 2026-07-16):** live-browser sessions on durable
+  threads (`lbrowse:<conversationId>`, `live-browser-graph.ts`) — every
+  look/act is a checkpoint with scroll telemetry. Root-caused the owner's
+  "model scrolls but doesn't understand" report: `read_text` silently
+  truncated at 12k chars with no scroll metrics. Companion 0.9.8 returns
+  textLength/truncated/scroll{y,viewport,pageHeight,atBottom} + `from`
+  windowing; the look tool gained `sweep:true` (auto-scroll + merge whole
+  page, lazy feeds included), truncation warnings, and scroll telemetry on
+  every read; act surfaces scrollInfo + at-bottom notes. History readers of
+  slices 1–3 dedupe to post-node checkpoints (appliedStep stamp).
+  **Owner action: reload the Companion extension (0.9.8) in Chrome.**
+- **LG-9 slice 1 (SHIPPED 2026-07-16):** scheduled duties on durable threads.
+  Finding first: every surface (web chat, voice console, heartbeat wakes,
+  approval continuations, plan driver) already funnels through
+  `runOwnerTurn`, so LG-1/2/3 graphs cover them by construction — the
+  Telegram Hermes bot lives on legacy `/api/agent/*` and stays out by design.
+  New: every heartbeat tick decision (off_hours / resting / quiet /
+  unchanged / cap_reached / wake+outcome+cost / error) checkpoints onto
+  thread `duty:heartbeat:<ymd>` (`duty-run-graph.ts`, generic dutyKey for
+  future day-shift/watchdog duties); `getDutyRunDay` replays a day with
+  wake + cost totals. Same `AGENT_LANGGRAPH_WORKFLOW` gate, fail-open.
+  Remaining LG-9: other duty keys + an owner-facing "আজ কী করলে" reader.
+- **LG-9 slice 2 (SHIPPED 2026-07-16):** duties + plans complete the map.
+  Day-shift (start/tick/morning-brief outcomes) and watchdog verdicts
+  (healthy/alerted/staff_failures — healthy ticks checkpoint too) mirror to
+  `duty:day_shift:<ymd>` / `duty:watchdog:<ymd>`; every plan-driver drive
+  tick (step-done/failed/blocked-approval/plan-done/escalations + cost)
+  checkpoints onto `plan:<planId>` (`plan-run-graph.ts`). New owner-facing
+  tool `get_duty_day` ("আজ নিজে থেকে কী করলে") replays a day's autonomous
+  ticks across all three duty keys — wired into prompt/capability/router.
+  Coverage audit: approval-card lifecycle already lands on WorkflowRun
+  transitions (mirrored since slice 2), so actions need no separate mirror.
+- **Graph health (SHIPPED 2026-07-16, same PR):** `graph-health.ts` reads the
+  route spans production already writes — routine handled share, action
+  stagings, LG-4 shadow agree rate per kind — and issues the machine-checked
+  canary verdict (READY at ≥200 scored @ ≥98% agree). Checkpoint-store size
+  by thread family on the same reader. Owner tool `get_graph_health`; the
+  internal health endpoint carries a fail-open graph block. LG-4 canary
+  flips when the tool says READY — not before.
+- **LG-10 (DECIDED 2026-07-16):** stay self-hosted. Vercel + Supabase
+  Postgres checkpointer + VPS worker serve every shipped slice; none of the
+  three revisit triggers has fired (checkpoint scale is monitored by
+  `get_graph_health` + the 14-day cleanup cron; VPS cron/queues suffice; the
+  app runs single-instance per region). LangGraph Platform brings a second
+  vendor, data egress and per-node pricing for capabilities already covered.
+  Revisit ONLY if a trigger fires — the health tool now measures the first
+  one continuously.
 - **LG-7 (SHIPPED 2026-07-16, PR #393):** `AlmaMemoryStore` BaseStore adapter
   over the existing pgvector `agent_memory` (search delegates to the head's
   own ranking; delete refused — owner-curated). Gate `AGENT_LANGGRAPH_STORE`.
