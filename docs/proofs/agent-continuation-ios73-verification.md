@@ -1,7 +1,24 @@
 # Agent Continuation Reliability — Server Integration + iOS Build-73 Verification
 
 Date: 2026-07-15/16 · Session: alma-erp-reliability (takeover)
-Status: **server fixes MERGED to main (PRs #376, #380, #382) · iOS branch simulator-verified through five live rounds · NO TestFlight.**
+Status: **SHIPPED — server fixes merged (PRs #376, #380, #382) and TestFlight build 73 uploaded 2026-07-16 from the GitHub Actions pipeline.** Owner device test pending.
+
+## Build 73 ship record (owner rule: the pipeline builds, never a Mac + Xcode)
+
+| Fact | Value |
+|---|---|
+| Upload | [run 29446901548](https://github.com/almatraderscom-byte/alma-erp/actions/runs/29446901548) — 16m43s, log: `Upload succeeded` → `Uploaded App` → `** EXPORT SUCCEEDED **` |
+| Built from | `main` @ `3cd76ec8`, on a GitHub macOS runner (no Mac archive) |
+| Build number | `CURRENT_PROJECT_VERSION = 73` committed on main **=** the number uploaded (PR #385 turned OFF `manageAppVersionAndBuildNumber`, so git is the source of truth) |
+| Forensic stamp | `ALMAGitCommit=3cd76ec8` written into Info.plist by the workflow (parity with `scripts/ios-build-preflight.sh`) |
+| Contents | continuation reliability (PR #384) + chat freeze/scroll/image fixes + PR #375 approvals (penalty-appeal box, photo avatars, native employee push) + #371 notifications + #373 chat parity — merged with zero conflicts, `test:agent` 96 files / 933 tests, sim sweep on iPhone 17 Pro Max (iOS 26.5) |
+
+**The CI path was broken before this session and nobody knew** — worth remembering, because it is why builds 71/72 came off a Mac:
+
+- last successful CI upload: 2026-07-13 18:37 UTC, project Release still `CODE_SIGN_IDENTITY = "iPhone Developer"`;
+- 20 minutes later `38fb5877` pinned `"Apple Distribution"`, which conflicts with `CODE_SIGN_STYLE = Automatic` — `xcodebuild archive` signs *development* and `-exportArchive` re-signs for distribution in the cloud, so a pinned distribution identity is refused ([run 29444190492](https://github.com/almatraderscom-byte/alma-erp/actions/runs/29444190492));
+- copying the Mac's `CODE_SIGN_IDENTITY="Apple Development"` override into CI fails differently: a command-line build setting hits **every** project in the workspace, so 13 Pods targets demand a dev certificate the runner has no keychain for ([run 29445470268](https://github.com/almatraderscom-byte/alma-erp/actions/runs/29445470268));
+- fix (PR #389): the App project's Release config carries `"Apple Development"`, no command-line override. Never pass `CODE_SIGN_IDENTITY` to `xcodebuild` in CI.
 
 ## 0. Final round-up (what the live simulator rounds found and fixed)
 

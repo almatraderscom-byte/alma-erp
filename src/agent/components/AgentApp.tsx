@@ -274,7 +274,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   // File-card focus: which artifact the panel should show (set when a tool files
   // a document mid-turn, or when the owner taps a file card in the thread).
-  const [artifactFocusId, setArtifactFocusId] = useState<string | null>(null)
+  // {id, n}: n bumps on every open request so re-tapping the SAME file card
+  // still deep-links the panel back into that document (list-first panel).
+  const [artifactFocus, setArtifactFocus] = useState<{ id: string; n: number } | null>(null)
   const refreshArtifacts = useCallback(async (convId?: string | null) => {
     if (!convId) return
     try {
@@ -1003,7 +1005,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             m.id === assistantMsgId ? { ...m, timeline: [...(m.timeline ?? []), fileEntry] } : m
           ))
           void refreshArtifacts(finalConvId)
-          setArtifactFocusId(evt.id as string)
+          setArtifactFocus((f) => ({ id: evt.id as string, n: (f?.n ?? 0) + 1 }))
           setArtifactsOpen(true)
         } else if (evt.type === 'subagent_start') {
           setStreamMode('searching')
@@ -1771,7 +1773,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             messages={messages}
             onArtifactSave={saveArtifact}
             conversationId={activeConvId}
-            onArtifactOpen={(id) => { if (id) setArtifactFocusId(id); setArtifactsOpen(true) }}
+            onArtifactOpen={(id) => { if (id) setArtifactFocus((f) => ({ id, n: (f?.n ?? 0) + 1 })); setArtifactsOpen(true) }}
             onActionApproved={() => { if (activeConvId) startResultPolling(activeConvId) }}
             onQuickSend={(text) => { if (!streaming) void handleSend(text, []) }}
             onModelSwitchResolve={(opts) => { if (!streaming) void handleSend('', [], opts) }}
@@ -1791,7 +1793,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             open={artifactsOpen}
             onClose={() => setArtifactsOpen(false)}
             isMobile={isMobile}
-            focusId={artifactFocusId}
+            focusId={artifactFocus?.id ?? null}
+            focusNonce={artifactFocus?.n ?? 0}
           />
         </div>
 

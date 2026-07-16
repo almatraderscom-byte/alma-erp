@@ -19,6 +19,7 @@ import {
 } from './workflow-run'
 import type { OwnerTurnRequirements } from './owner-turn-requirements'
 import { extractClientSeoBrowserEvidenceUrl } from './client-seo-browser-evidence'
+import { mirrorSeoBatchTransition } from '@/agent/lib/graph/seo-batch-graph'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -46,7 +47,7 @@ export async function ensureClientSeoBatchWorkflow(opts: {
     requireLiveBrowser: opts.requirements.liveBrowser,
     requireArtifact: opts.requirements.reportArtifact,
   })
-  return ensureActiveWorkflowRun({
+  const run = await ensureActiveWorkflowRun({
     conversationId: opts.conversationId,
     businessId: opts.businessId,
     kind: CLIENT_SEO_BATCH_KIND,
@@ -55,6 +56,10 @@ export async function ensureClientSeoBatchWorkflow(opts: {
     facts: facts as unknown as Record<string, unknown>,
     nextAllowedTools: [clientSeoBatchRequiredTool(facts)].filter((x): x is string => Boolean(x)),
   })
+  // LG-6 pilot: seed the run's durable graph thread (fail-open, no await-chain
+  // risk — the mirror never throws and the run row is already committed).
+  if (run) await mirrorSeoBatchTransition({ runId: run.id, facts, event: null })
+  return run
 }
 
 export async function getClientSeoBatchRequiredTool(conversationId: string): Promise<string | null> {
@@ -130,6 +135,15 @@ export async function recordClientSeoBatchTool(
         data: { workflowRunId: run.id },
       }).catch(() => {})
     }
+    // LG-6 pilot: mirror the SAME transition into the run's graph thread —
+    // node re-runs the reducer from the pre-transition facts, so drift between
+    // the engines surfaces in logs. Only after the legacy write succeeded.
+    await mirrorSeoBatchTransition({
+      runId: run.id,
+      facts,
+      event,
+      legacyStateLabel: done ? 'completed' : clientSeoBatchStateLabel(next),
+    })
   } catch (err) {
     if (!(err instanceof WorkflowVersionConflictError)) throw err
   }
@@ -155,6 +169,14 @@ export async function recordClientSeoAuditResult(
     pendingActionId: ok ? null : actionId,
     cause,
     detail: { actionId, ok },
+  })
+  // LG-6 pilot: worker-side transitions land on the thread too — the history
+  // must show the WHOLE run, not just the turn-driven steps.
+  await mirrorSeoBatchTransition({
+    runId: run.id,
+    facts,
+    event: { type: 'audit_finished', actionId, ok },
+    legacyStateLabel: clientSeoBatchStateLabel(next),
   })
 }
 
@@ -206,24 +228,33 @@ export async function guardClientSeoBatchTool(
     }
   }
 
-  if (toolName === 'live_browser_act' && String(input.action ?? '') === 'navigate' && target) {
+  // 2026-07-16 incident fix: the browse guard's job is keeping the agent ON
+  // the client's sites — not hard-locking it to ONE of them. When a listed
+  // domain 301s into another (gulshanspaone → queenspabd), the old
+  // current-target-only rule deadlocked every navigation. Any host that
+  // matches ANY batch target is legal; unrelated hosts stay blocked.
+  const isListedTargetHost = (raw: string): boolean => {
     try {
-      const wanted = new URL(String(input.url ?? '')).hostname.replace(/^www\./, '')
-      const current = new URL(target.url).hostname.replace(/^www\./, '')
-      if (wanted !== current) return { guard: 'client_seo_wrong_browser_target', error: `WORKFLOW_BLOCKED: 1-by-1 order অনুযায়ী এখন ${target.url} browse করতে হবে।` }
-    } catch { /* normal schema validation handles it */ }
+      const wanted = new URL(raw).hostname.replace(/^www\./, '')
+      return facts.targets.some((t) => {
+        try { return new URL(t.url).hostname.replace(/^www\./, '') === wanted } catch { return false }
+      })
+    } catch {
+      return true // malformed URL → normal schema validation reports it
+    }
+  }
+  if (toolName === 'live_browser_act' && String(input.action ?? '') === 'navigate' && target) {
+    if (!isListedTargetHost(String(input.url ?? ''))) {
+      return { guard: 'client_seo_wrong_browser_target', error: `WORKFLOW_BLOCKED: শুধু client-এর listed site গুলোই browse করা যাবে (${facts.targets.map((t) => t.url).join(', ')})।` }
+    }
   }
   if (toolName === 'live_browser_look' && typeof input.url === 'string' && target) {
-    try {
-      const wanted = new URL(input.url).hostname.replace(/^www\./, '')
-      const current = new URL(target.url).hostname.replace(/^www\./, '')
-      if (wanted !== current) {
-        return {
-          guard: 'client_seo_wrong_browser_target',
-          error: `WORKFLOW_BLOCKED: 1-by-1 order অনুযায়ী এখন ${target.url} browse করতে হবে; ${input.url} পরে।`,
-        }
+    if (!isListedTargetHost(input.url)) {
+      return {
+        guard: 'client_seo_wrong_browser_target',
+        error: `WORKFLOW_BLOCKED: শুধু client-এর listed site গুলোই browse করা যাবে (${facts.targets.map((t) => t.url).join(', ')})।`,
       }
-    } catch { /* normal schema validation handles it */ }
+    }
   }
   return null
 }

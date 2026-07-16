@@ -1282,8 +1282,11 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
             selectedIndex = i
             // The Capacitor Dashboard reparent can reset the selection right after the
             // first appearance — re-assert once the launch dust settles.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                self?.selectedIndex = i
+            // The reparent timing varies with launch load — assert twice more.
+            for delay in [1.2, 3.5] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.selectedIndex = i
+                }
             }
         }
         // DEBUG self-test hook: ALMA_NOTIF_TAP=/path simulates a notification-tap

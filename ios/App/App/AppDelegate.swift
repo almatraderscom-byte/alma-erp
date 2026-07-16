@@ -37,6 +37,39 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             CallKitVoIP.shared.start()
         }
 
+        // Dynamic Panel lifecycle (spec §14) — on every activation: reconcile
+        // duplicate activities, then restore the panel from the plugin's cache
+        // if nothing is live (survives app restarts; the web sync is throttled
+        // to 5 min and webview-dependent, so without this the lock screen sat
+        // empty after a relaunch — owner-hit 2026-07-16). Registered as a
+        // NotificationCenter observer because it provably fires in this app,
+        // while the AppDelegate method path was found NOT to (see the
+        // alma.diag.didBecomeActiveMethod marker in applicationDidBecomeActive).
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { _ in
+            // Badge reset moved from applicationDidBecomeActive(_:) — that
+            // method never fired on cold launch here, so the reset had been
+            // silently dead: server pushes use ios_badgeType "Increase"
+            // (src/lib/notifications.ts), so without this the icon count only
+            // ever grows. Notification Center items are untouched.
+            if #available(iOS 16.0, *) {
+                UNUserNotificationCenter.current().setBadgeCount(0)
+            } else {
+                UIApplication.shared.applicationIconBadgeNumber = 0
+            }
+            if #available(iOS 16.1, *) {
+                Task { @MainActor in
+                    #if DEBUG
+                    await PulseRestore.debugResetIfRequested()
+                    #endif
+                    PulseRestore.reconcile()
+                    PulseRestore.restartFromCache()
+                }
+            }
+        }
+
         // PHASE S1: wrap the app in a native tab bar. The storyboard already created
         // the Capacitor bridge VC as the window root; we REUSE that same instance as
         // tab 0 so Capacitor keeps running (push / Live Pulse / reminders / on-device
@@ -103,16 +136,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Called as part of the transition from the background to the active state; here you can undo many of the changes made on entering the background.
     }
 
-    func applicationDidBecomeActive(_ application: UIApplication) {
-        // Clear the app-icon badge on every open: server pushes use
-        // ios_badgeType "Increase" (src/lib/notifications.ts), so without a reset
-        // the count only ever grows. Notification Center items are untouched.
-        if #available(iOS 16.0, *) {
-            UNUserNotificationCenter.current().setBadgeCount(0)
-        } else {
-            application.applicationIconBadgeNumber = 0
-        }
-    }
+    // applicationDidBecomeActive(_:) was REMOVED on purpose (2026-07-16): the
+    // method was observed not to fire on cold launch in this app (proven by a
+    // UserDefaults marker that stayed empty while the equivalent
+    // NotificationCenter observer ran) — so the badge reset that lived here
+    // silently never worked. All did-become-active work now runs in the
+    // didBecomeActiveNotification observer registered in didFinishLaunching.
+    // Do not re-add lifecycle work here.
 
     func applicationWillTerminate(_ application: UIApplication) {
         // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.

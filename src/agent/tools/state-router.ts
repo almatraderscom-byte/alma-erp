@@ -154,7 +154,7 @@ export const DOMAIN_PACKS = {
     'set_reminder', 'list_reminders', 'cancel_reminder', 'snooze_reminder',
     'outbound_phone_call', 'place_agent_call', 'get_outbound_call_status', 'preview_call_voice', 'send_urgent_alert',
   ],
-  plan: ['make_plan', 'execute_plan', 'get_plan'],
+  plan: ['make_plan', 'execute_plan', 'get_plan', 'get_workflow_history', 'get_duty_day', 'get_graph_health'],
   workbench: ['run_workbench_task', 'check_workbench_task'],
   diag: ['run_health_scan', 'diagnose_issue', 'read_source_file', 'get_audit_summary'],
   cost: ['get_api_balances', 'set_api_credit', 'list_subscriptions', 'add_subscription'],

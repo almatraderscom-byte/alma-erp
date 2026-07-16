@@ -15,6 +15,8 @@ export interface PlanStep {
   status: 'pending' | 'running' | 'done' | 'failed' | 'skipped'
   result?: unknown
   error?: string
+  startedAt?: Date
+  doneAt?: Date
 }
 
 /**
@@ -71,6 +73,10 @@ export interface Plan {
   lastDrivenAt?: Date
   /** Whole-taka autodrive spend on this plan (daily cost-cap input). */
   costTaka: number
+  /** Durable timing used by the native Background Tasks live/history UI. */
+  createdAt?: Date
+  updatedAt?: Date
+  completedAt?: Date
 }
 
 /**
@@ -244,7 +250,12 @@ export async function resumeAutodrive(planId: string): Promise<void> {
 export async function abandonAutodrive(planId: string): Promise<void> {
   await db.agentPlan.update({
     where: { id: planId },
-    data: { autodriveState: 'abandoned', status: 'cancelled', nextTickAt: null },
+    data: {
+      autodriveState: 'abandoned',
+      status: 'cancelled',
+      nextTickAt: null,
+      completedAt: new Date(),
+    },
   })
 }
 
@@ -261,6 +272,7 @@ export async function setAutodriveState(
   const data: Record<string, unknown> = { autodriveState: state }
   if (TERMINAL_AUTODRIVE_STATES.has(state)) {
     data.nextTickAt = null
+    data.completedAt = new Date()
   } else if (opts.nextTickAt !== undefined) {
     data.nextTickAt = opts.nextTickAt
   }
@@ -384,6 +396,22 @@ export async function loadVisiblePlanDrives(opts?: { limit?: number }): Promise<
 }
 
 /**
+ * Recent terminal autonomous plans for the owner-facing Background Tasks history.
+ * This is deliberately separate from daily todos: a finished plan retains the
+ * original task input, step results, failure reason, and durable timestamps.
+ */
+export async function loadFinishedPlanDrives(opts?: { limit?: number }): Promise<Plan[]> {
+  const limit = opts?.limit ?? 20
+  const rows = await db.agentPlan.findMany({
+    where: { autodriveState: { in: ['done', 'failed', 'abandoned'] } },
+    include: { steps: { orderBy: { seq: 'asc' } } },
+    orderBy: [{ completedAt: 'desc' }, { updatedAt: 'desc' }],
+    take: limit,
+  })
+  return rows.map(dbPlanToDto)
+}
+
+/**
  * Format plan for display (Bangla).
  */
 export function formatPlanForDisplay(plan: Plan): string {
@@ -427,6 +455,9 @@ interface DbPlan {
   nextTickAt?: Date | null
   lastDrivenAt?: Date | null
   costTaka?: number | null
+  createdAt?: Date | null
+  updatedAt?: Date | null
+  completedAt?: Date | null
   steps: Array<{
     id: string
     action: string
@@ -435,6 +466,8 @@ interface DbPlan {
     status: string
     result?: unknown
     error?: string | null
+    startedAt?: Date | null
+    doneAt?: Date | null
   }>
 }
 
@@ -453,6 +486,9 @@ function dbPlanToDto(plan: DbPlan): Plan {
     nextTickAt: plan.nextTickAt ?? undefined,
     lastDrivenAt: plan.lastDrivenAt ?? undefined,
     costTaka: plan.costTaka ?? 0,
+    createdAt: plan.createdAt ?? undefined,
+    updatedAt: plan.updatedAt ?? undefined,
+    completedAt: plan.completedAt ?? undefined,
     steps: plan.steps.map(s => ({
       id: s.id,
       action: s.action,
@@ -461,6 +497,8 @@ function dbPlanToDto(plan: DbPlan): Plan {
       status: s.status as PlanStep['status'],
       result: s.result ?? undefined,
       error: s.error ?? undefined,
+      startedAt: s.startedAt ?? undefined,
+      doneAt: s.doneAt ?? undefined,
     })),
   }
 }

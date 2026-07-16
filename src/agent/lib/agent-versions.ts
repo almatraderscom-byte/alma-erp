@@ -20,7 +20,7 @@
  * by eye in telemetry.
  */
 export const AGENT_VERSIONS = {
-  prompt: 'p2026.07.14.3',
+  prompt: 'p2026.07.15.1',
   toolManifest: 't2026.07.15.1',
   router: 'r2026.07.15',
   workflow: 'w2026.07.15.2',

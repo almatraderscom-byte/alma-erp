@@ -106,8 +106,20 @@ export async function GET(req: NextRequest) {
       summary: row.summary,
       createdAt: row.createdAt.toISOString(),
       mode: payload.studioMode ?? payload.tryOnVariant ?? 'try_on',
-      provider: payload.provider ?? 'gemini',
+      // Truthful lineage: the RESULT'S provider/engine wins over what was
+      // requested — never claim the selected engine ran if something else did.
+      provider: (result.provider as string | undefined) ?? payload.provider ?? 'gemini',
       familyPreset: payload.familyPreset ?? null,
+      // CS6 — engine lineage metadata (fal VTON): engine id, request id, seed,
+      // latency and actual cost, straight from the worker's result.
+      engine: (result.falEngine as string | undefined) ?? (payload.falEngine as string | undefined) ?? null,
+      endpointId: (result.falEndpointId as string | undefined) ?? null,
+      requestId: (result.requestId as string | undefined) ?? null,
+      seed: (result.seed as number | undefined) ?? null,
+      latencyMs: (result.latencyMs as number | undefined) ?? null,
+      costUsd: (result.costUsd as number | undefined) ?? null,
+      researchOnly: Boolean(result.researchOnly ?? (payload.falEngine === 'fal_idm_vton')),
+      qc: (result.qc as Record<string, unknown> | undefined) ?? null,
       previewUrl,
       // small image for the grid tile — falls back to the full preview
       thumbUrl: (thumbPath && signed[thumbPath]) || previewUrl,

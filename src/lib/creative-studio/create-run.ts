@@ -12,6 +12,31 @@ import {
   type FamilyChainVariant,
 } from '@/lib/tryon/family-chain'
 import { pickScene } from '@/lib/tryon/scene-pool'
+import {
+  getOrClassifyGarment,
+  mapGarmentToVtonClothType,
+  mapGarmentToFashnCategory,
+} from '@/lib/tryon/art-director'
+import {
+  CS_FAL_ENABLED_KEY,
+  CS_FLUX_FILL_ENABLED_KEY,
+  CS_IDM_VTON_ENABLED_KEY,
+  getEngine,
+  isFalVtonEngine,
+  isVtonClothType,
+  type StudioEngineId,
+  type VtonClothType,
+} from '@/lib/creative-studio/provider-registry'
+import { buildFillPrompt, estimateFluxFillCostUsd, type MaskPresetId } from '@/lib/creative-studio/mask-contract'
+import {
+  buildRunPlan,
+  checkSingleInputReadiness,
+  readPipelineMode,
+  readRecentSceneIds,
+  recordSceneUse,
+} from '@/lib/creative-studio/single-pipeline'
+import { pickSceneDiverse, toSceneRef } from '@/lib/tryon/scene-pool'
+import { readKv, readSceneWeights } from '@/lib/creative-studio/taste'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -33,6 +58,19 @@ export type CreativeStudioRunInput = {
   resolution?: FashnResolution
   generationMode?: FashnGenerationMode
   numImages?: number
+  /** CS6 — single Try-On engine choice (fal_fashn_v16 / fal_idm_vton route to Fal; fashn/gemini keep legacy paths) */
+  vtonEngine?: StudioEngineId
+  /** CS6 — owner override for cat-vton garment placement when auto classification is uncertain */
+  clothType?: VtonClothType | 'auto'
+  /** CS6 — optional fixed seed for reproducible benchmark runs */
+  seed?: number
+  /** CS7 — FLUX Fill precision edit: mask object path (white=edit, black=keep) */
+  maskPath?: string
+  /** CS7 — mask preset id (replace_background / remove_object / …) */
+  maskPreset?: MaskPresetId
+  /** CS7 — base image dimensions from mask-upload (for the cost estimate) */
+  baseWidth?: number
+  baseHeight?: number
   /** Video only */
   durationSec?: number
   vibe?: 'premium' | 'festival' | 'offer' | 'lifestyle'
@@ -110,7 +148,8 @@ async function createApprovedAction(data: {
 
 export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<{
   jobs: CreativeStudioJobRef[]
-  provider: StudioProvider
+  /** engine that will actually run — legacy 'fashn'/'gemini' or a CS6 fal VTON engine id */
+  provider: StudioProvider | StudioEngineId
   fashnReady: boolean
 }> {
   const modeDef = STUDIO_MODES.find((m) => m.id === input.mode)
@@ -264,6 +303,122 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     return { jobs, provider: 'gemini', fashnReady }
   }
 
+  // ── CS7: FLUX Fill masked precision edit (Edit mode + a painted mask) ──────
+  // Edits ONLY the masked region; the worker composites the fill back onto the
+  // protected base so unmasked pixels survive by construction. Durable Fal
+  // queue — never a Vercel request waiting on the model.
+  if (input.mode === 'edit' && input.maskPath) {
+    const basePath = input.sourceImagePath
+    if (!basePath) throw new Error('source_image_required')
+    if (!process.env.FAL_KEY?.trim()) throw new Error('fal_not_configured')
+    if ((await readKv(CS_FLUX_FILL_ENABLED_KEY)) !== '1') throw new Error('flux_fill_disabled')
+
+    const engine = getEngine('fal_flux_fill')
+    // Throws custom_prompt_required when the custom preset has no text.
+    const fillPrompt = buildFillPrompt(input.maskPreset, input.prompt ?? '')
+    const costEstimate = estimateFluxFillCostUsd(input.baseWidth ?? 0, input.baseHeight ?? 0)
+    const seed = Number.isFinite(input.seed) ? Math.trunc(input.seed as number) : undefined
+
+    const id = await createApprovedAction({
+      type: 'image_gen',
+      payload: {
+        provider: 'fal',
+        falEngine: 'fal_flux_fill',
+        falEndpointId: engine.falEndpointId,
+        baseImagePath: basePath,
+        maskPath: input.maskPath,
+        fillPrompt,
+        maskPreset: input.maskPreset ?? 'custom',
+        ...(seed !== undefined ? { seed } : {}),
+        creativeStudio: true,
+        studioMode: 'edit',
+        familyPreset: input.familyPreset,
+      },
+      summary: `🎯 Precision Edit (FLUX Fill · ${input.maskPreset ?? 'custom'})`,
+      costEstimate,
+    })
+    jobs.push({ pendingActionId: id, label: 'Precision Edit · FLUX Fill', type: 'image_gen' })
+    return { jobs, provider: 'fal_flux_fill', fashnReady }
+  }
+
+  // ── CS6: Fal-backed single-person VTON (owner-selected engine) ─────────────
+  // Single Try-On ONLY — multi-person family presets never reach here (they're
+  // handled by the accuracy chain above), and the UI hides these engines for
+  // family/swap/face/edit/video. The worker runs the durable Fal queue client.
+  if (
+    isFalVtonEngine(input.vtonEngine)
+    && input.mode === 'try_on'
+    && (!input.familyPreset || input.familyPreset === 'single')
+  ) {
+    if (!input.productImagePath) throw new Error('product_image_required')
+    const vtonModelPath = input.modelImagePath ?? input.sourceImagePath
+    if (!vtonModelPath) throw new Error('model_image_required')
+    if (!process.env.FAL_KEY?.trim()) throw new Error('fal_not_configured')
+
+    // CS8 — readiness gate: stop unusable inputs BEFORE any paid call.
+    const readiness = await checkSingleInputReadiness({
+      modelImagePath: vtonModelPath,
+      productImagePath: input.productImagePath,
+    })
+    if (!readiness.ok) throw new Error(`input_not_ready:${readiness.errors.join(',')}`)
+
+    // CS8 — owner-tunable Preview/Production plan (bounded paid generations).
+    const plan = buildRunPlan(await readPipelineMode())
+
+    const engine = getEngine(input.vtonEngine)
+    // Owner flag gates: fal master switch for the commercial engine, the
+    // dedicated experimental switch for IDM.
+    if (input.vtonEngine === 'fal_fashn_v16' && (await readKv(CS_FAL_ENABLED_KEY)) !== '1') {
+      throw new Error('fal_engine_disabled')
+    }
+    if (input.vtonEngine === 'fal_idm_vton' && (await readKv(CS_IDM_VTON_ENABLED_KEY)) !== '1') {
+      throw new Error('idm_vton_disabled')
+    }
+
+    // Garment placement: honour the owner's manual override; otherwise classify
+    // (cached per product) and map via the owner-locked table.
+    const attrs = await getOrClassifyGarment(input.productImagePath)
+    const auto = mapGarmentToVtonClothType(attrs)
+    const clothType: VtonClothType = isVtonClothType(input.clothType) ? input.clothType : auto.clothType
+
+    const count = Math.min(Math.max(input.numImages ?? 1, 1), 4)
+    const seed = Number.isFinite(input.seed) ? Math.trunc(input.seed as number) : undefined
+    for (let i = 0; i < count; i++) {
+      const id = await createApprovedAction({
+        type: 'image_gen',
+        payload: {
+          provider: 'fal',
+          falEngine: input.vtonEngine,
+          falEndpointId: engine.falEndpointId,
+          productImagePath: input.productImagePath,
+          modelImagePath: vtonModelPath,
+          clothType,
+          clothTypeSource: isVtonClothType(input.clothType) ? 'owner' : 'auto',
+          clothTypeUncertain: auto.uncertain,
+          fashnCategory: mapGarmentToFashnCategory(attrs),
+          // CS6 defaults (roadmap): 30 steps, guidance 2.5, fixed seed when supplied.
+          numInferenceSteps: 30,
+          guidanceScale: 2.5,
+          ...(seed !== undefined ? { seed: seed + i } : {}),
+          prompt: extraPrompt || undefined,
+          // CS8 — preview mode renders economical; production keeps owner choice
+          generationMode: plan.economical ? 'performance' : (input.generationMode ?? 'balanced'),
+          aspectRatio: input.aspectRatio ?? '4:5',
+          // CS8 — bounded-spend plan travels with the job (worker QC honours it)
+          pipelineMode: plan.mode,
+          maxPaidGenerations: plan.maxPaidGenerations,
+          creativeStudio: true,
+          studioMode: input.mode,
+          familyPreset: 'single',
+        },
+        summary: `🎨 Studio Try-On${count > 1 ? ` #${i + 1}` : ''} (${engine.label} · ${plan.mode === 'production' ? 'প্রোডাকশন' : 'প্রিভিউ'})`,
+        costEstimate: (input.vtonEngine === 'fal_fashn_v16' ? 0.075 : 0.05) * plan.maxPaidGenerations,
+      })
+      jobs.push({ pendingActionId: id, label: `Try-On · ${engine.label}`, type: 'image_gen' })
+    }
+    return { jobs, provider: input.vtonEngine, fashnReady }
+  }
+
   if (provider === 'fashn' && modeDef.fashnModel) {
     if (!input.productImagePath && modeDef.needsProduct) throw new Error('product_image_required')
     if (!input.modelImagePath && modeDef.needsModel) throw new Error('model_image_required')
@@ -277,6 +432,14 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     // reuse the model photo's background every single time.
     const tryOnModelPath = input.modelImagePath ?? input.sourceImagePath
     if (input.mode === 'try_on' && input.productImagePath && tryOnModelPath) {
+      // CS8 — same readiness gate as the Fal engines (single-person only).
+      if (!input.familyPreset || input.familyPreset === 'single') {
+        const readiness = await checkSingleInputReadiness({
+          modelImagePath: tryOnModelPath,
+          productImagePath: input.productImagePath,
+        })
+        if (!readiness.ok) throw new Error(`input_not_ready:${readiness.errors.join(',')}`)
+      }
       for (let i = 0; i < count; i++) {
         const job = await startSingleRescueChain({
           productImagePath: input.productImagePath,
@@ -302,8 +465,17 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     // look per image with a random pose + fully-Bangladeshi scene in the prompt.
     // Owner-driven modes (edit / model_swap / face_to_model) keep the prompt as-is.
     const injectScene = input.mode === 'product_to_model'
+    // CS8 — controlled diversity: skip recently used scenes so a batch never
+    // returns near-identical compositions; every pick is recorded.
+    const [sceneWeights, recentScenes] = injectScene
+      ? await Promise.all([readSceneWeights(), readRecentSceneIds()])
+      : [{}, []]
     for (let i = 0; i < count; i++) {
-      const picked = injectScene ? pickScene() : null
+      const picked = injectScene ? pickSceneDiverse(sceneWeights, recentScenes) : null
+      if (picked) {
+        recentScenes.unshift(picked.scene.id)
+        await recordSceneUse(picked.scene.id)
+      }
       const sceneLine = picked ? `Pose: ${picked.adultPose}. ${picked.scene.prompt}` : ''
       const id = await createApprovedAction({
         type: 'image_gen',
@@ -324,6 +496,8 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           familyPreset: input.familyPreset,
           productImagePath: input.productImagePath,
           modelImagePath: input.modelImagePath,
+          // CS8 — scene/pose lineage for diversity control
+          sceneRef: picked ? toSceneRef(picked) : undefined,
         },
         summary: `🎨 Studio ${modeDef.label}${count > 1 ? ` #${i + 1}` : ''} (FASHN)`,
         costEstimate: 0.25,

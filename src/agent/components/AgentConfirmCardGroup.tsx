@@ -7,6 +7,7 @@ import AgentConfirmCard, { type PendingAction } from './AgentConfirmCard'
 import AgentSparkleLoader from './AgentSparkleLoader'
 import { notifyTodosChanged } from './AgentTodoContext'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
+import { approvalSuccess, showPulseSuccess } from '@/lib/live-pulse'
 
 interface AgentConfirmCardGroupProps {
   actions: PendingAction[]
@@ -28,6 +29,10 @@ async function postDecision(id: string, decision: 'approve' | 'reject'): Promise
     if (err.error && TERMINAL_NOTES[err.error]) return
     throw new Error(err.error || `HTTP ${res.status}`)
   }
+  // Flash the Dynamic Panel's success state — only here, where the server has
+  // actually confirmed (spec §6.6). It falls back to authoritative live state on
+  // the next sync.
+  if (decision === 'approve') void showPulseSuccess(approvalSuccess())
 }
 
 /**

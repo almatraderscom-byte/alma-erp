@@ -93,6 +93,7 @@ final class AgoraIntercom: NSObject {
     // launch when a stale CallKit reset fires (see docs/proofs/iosp0/launch-crash-
     // diagnosis.md). These are private implementation handles that never drive the
     // UI, so exclude them from Observation — no keypath codegen, no crash.
+    // (main's build-75 landed the same fix for `engine` only — this is the superset.)
     @ObservationIgnored private var engine: AgoraRtcEngineKit?
     @ObservationIgnored private var appId: String?
     @ObservationIgnored private var channel: String?

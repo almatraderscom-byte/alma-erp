@@ -23,6 +23,7 @@ import {
 } from './workflow-templates'
 import type { WorkflowStatus } from './workflow-run-types'
 import { TERMINAL_WORKFLOW_STATUSES } from './workflow-run-types'
+import { mirrorWorkflowRunTransition } from '@/agent/lib/graph/workflow-run-graph'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -106,6 +107,10 @@ export async function createWorkflowRun(input: {
     select: VIEW_SELECT,
   })
   await logEvent(row.id, null, row.status, null, row.state, row.stateVersion, input.cause ?? 'turn', { created: true })
+  // LG-6 slice 2: seed the run's durable graph thread (fail-open inside).
+  await mirrorWorkflowRunTransition({
+    runId: row.id, kind: row.kind, status: row.status, state: row.state, event: null,
+  })
   return toView(row)
 }
 
@@ -168,10 +173,92 @@ export async function transitionWorkflowRun(opts: {
     opts.detail,
   )
 
+  // LG-6 slice 2: mirror the transition into the run's durable graph thread —
+  // one super-step per transition, template-legality re-checked inside.
+  // Fail-open inside; must never affect the canonical row.
+  await mirrorWorkflowRunTransition({
+    runId: opts.runId,
+    kind: current.kind as string,
+    status: toStatus,
+    state: toState,
+    event: {
+      fromStatus: current.status as string,
+      toStatus,
+      fromState: current.state as string,
+      toState,
+      cause: opts.cause,
+      stateVersion: opts.expectedVersion + 1,
+    },
+  })
+
   if (terminal) await closeLinkedFragments(opts.runId, toStatus, opts.cause)
+  // Auto post-mortem (owner ask 2026-07-16: "ভুল থেকে নিজে শেখা"): a FAILED run
+  // leaves a lesson in the playbook (status 'proposed' — the owner reviews via
+  // list_learned / forget_rule, so the head stays the only unreviewed memory
+  // writer). Fail-open: a lesson problem never touches the transition.
+  if (toStatus === 'failed') {
+    await recordFailureLesson(opts.runId, current.kind as string, current.state as string, opts.cause).catch(() => {})
+  }
 
   const updated = await db.workflowRun.findUnique({ where: { id: opts.runId }, select: VIEW_SELECT })
   return toView(updated)
+}
+
+/**
+ * Auto post-mortem lesson (2026-07-16): distil a FAILED run into one playbook
+ * row so the same wall is not hit twice. Deterministic (no model call): the
+ * lesson carries WHERE it died (state), WHY (cause) and the last graph steps
+ * as evidence. Status 'proposed' — owner promotes/retires via list_learned.
+ * Deduped per kind+state per week so a flaky workflow can't spam the playbook.
+ */
+async function recordFailureLesson(runId: string, kind: string, state: string, cause: string): Promise<void> {
+  try {
+    const run = await db.workflowRun.findUnique({
+      where: { id: runId },
+      select: { goal: true, businessId: true },
+    })
+    if (!run) return
+    const weekAgo = new Date(Date.now() - 7 * 86_400_000)
+    const dupe = await db.agentPlaybook.findFirst({
+      where: {
+        businessId: run.businessId ?? 'ALMA_LIFESTYLE',
+        domain: `postmortem:${kind}`,
+        status: 'proposed',
+        createdAt: { gte: weekAgo },
+        heuristic: { contains: `ধাপ '${state}'` },
+      },
+      select: { id: true },
+    })
+    if (dupe) return
+    // Last graph steps = the honest evidence trail (fail-open if thread absent).
+    let trail = ''
+    try {
+      const { getWorkflowRunGraphHistory } = await import('@/agent/lib/graph/workflow-run-graph')
+      const steps = await getWorkflowRunGraphHistory(runId, 5)
+      trail = steps
+        .map((s) => `${s.state}${s.cause ? `(${s.cause})` : ''}`)
+        .reverse()
+        .join(' → ')
+    } catch { /* trail is optional */ }
+    await db.agentPlaybook.create({
+      data: {
+        businessId: run.businessId ?? 'ALMA_LIFESTYLE',
+        domain: `postmortem:${kind}`,
+        heuristic:
+          `'${kind}' কাজ ধাপ '${state}'-এ ব্যর্থ হয়েছিল (কারণ: ${cause.slice(0, 80)}). ` +
+          `পরেরবার এই ধাপে পৌঁছে আগে যাচাই করো কেন আগেরবার আটকেছিল — একই পথে অন্ধভাবে এগোবে না; ` +
+          `সমস্যা একই হলে শুরুতেই Boss-কে ask_user দিয়ে জানাও।`,
+        evidence:
+          `auto post-mortem · run ${runId} · goal: ${String(run.goal ?? '').slice(0, 140)}` +
+          (trail ? ` · trail: ${trail.slice(0, 300)}` : ''),
+        confidence: 1,
+        status: 'proposed',
+      },
+    })
+    console.log(`[workflow-run] auto-lesson recorded for failed run ${runId} (${kind}/${state})`)
+  } catch (err) {
+    console.warn('[workflow-run] auto-lesson failed open:', err instanceof Error ? err.message : err)
+  }
 }
 
 /**

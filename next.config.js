@@ -2,7 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
-    serverComponentsExternalPackages: ['@react-pdf/renderer', 'bullmq', 'ioredis'],
+    serverComponentsExternalPackages: ['@react-pdf/renderer', 'bullmq', 'ioredis', 'puppeteer-core', '@sparticuz/chromium'],
     // CRITICAL: static `public/` assets are CDN-served and are NOT included in the
     // serverless function filesystem by default. The brand/Bangla TTFs are read from
     // disk at runtime (sharp/librsvg only renders text with fonts fontconfig finds on
@@ -17,6 +17,11 @@ const nextConfig = {
       '/api/assistant/brand-models': ['./public/fonts/**'],
       '/api/assistant/brand-models/tryon': ['./public/fonts/**'],
       '/api/assistant/internal/ad-creative-gate': ['./public/fonts/**'],
+      // Client-report PDF (2026-07-16): Bangla TTFs for the report template.
+      // NOTE: do NOT try to trace @sparticuz/chromium/bin here — local
+      // nft.json picks it up but Vercel's bundler still drops it; the route
+      // downloads the browser pack remotely instead (see the route file).
+      '/api/assistant/artifacts/[id]/pdf': ['./public/fonts/**'],
     },
   },
   images: {
@@ -27,6 +32,15 @@ const nextConfig = {
     ],
   },
   poweredByHeader: false,
+  // 2026-07-16 build-hang fix: `next build`'s combined "Linting and checking
+  // validity of types" stage intermittently deadlocks on Vercel's 4-core box
+  // (three 30-45m hung deploys on 2026-07-15/16, one of them production, all
+  // wedged at exactly this stage; the same commit + same restored cache also
+  // built in 4-6m, so it is a worker hang, not our code). Correctness moved to
+  // CI: the Agent PR Gate runs `tsc --noEmit` + `next lint` on every PR, so
+  // the deploy build only builds. Do NOT remove without re-checking the hang.
+  eslint: { ignoreDuringBuilds: true },
+  typescript: { ignoreBuildErrors: true },
   compress: true,
   env: {
     /** Surfaced by /api/health + optional client reads */

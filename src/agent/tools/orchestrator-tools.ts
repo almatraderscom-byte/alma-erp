@@ -503,4 +503,153 @@ const get_action_cards: AgentTool = {
   },
 }
 
-export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals, check_owner_silence, check_quiet_hours, get_action_cards]
+const get_workflow_history: AgentTool = {
+  name: 'get_workflow_history',
+  description:
+    'Step-by-step history of a long workflow run (e.g. client SEO batch) — what happened, in order, ' +
+    'from its durable graph checkpoints (LG-8). USE when the owner asks "কী হয়েছিল", "কতদূর হলো", ' +
+    '"batch er ki obostha", or wants a post-mortem of a long job. Read-only. ' +
+    'Without runId it reports the conversation\'s most recent workflow run.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      runId: { type: 'string', description: 'WorkflowRun id (optional — defaults to the most recent run in this conversation)' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = prisma as any
+      const runId = input.runId ? String(input.runId) : null
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+      const row = runId
+        ? await db.workflowRun.findUnique({ where: { id: runId } })
+        : conversationId
+          ? await db.workflowRun.findFirst({ where: { conversationId }, orderBy: { updatedAt: 'desc' } })
+          : null
+      if (!row) {
+        return { success: true, data: { found: false, message: 'এই conversation-এ কোনো workflow run পাওয়া যায়নি।' } }
+      }
+      const { getSeoBatchGraphHistory } = await import('@/agent/lib/graph/seo-batch-graph')
+      let steps = await getSeoBatchGraphHistory(String(row.id))
+      if (!steps.length) {
+        // LG-6 slice 2: template runs (product_post, ad_campaign, …) live in
+        // their own graph threads — map onto the same step shape.
+        const { getWorkflowRunGraphHistory } = await import('@/agent/lib/graph/workflow-run-graph')
+        steps = (await getWorkflowRunGraphHistory(String(row.id))).map((s) => ({
+          stateLabel: s.labelBn || s.state,
+          eventType: s.cause,
+          currentIndex: null,
+          checkpointId: s.checkpointId,
+          createdAt: s.createdAt,
+        }))
+      }
+      return {
+        success: true,
+        data: {
+          found: true,
+          run: {
+            id: row.id,
+            kind: row.kind,
+            status: row.status,
+            state: row.state,
+            goal: String(row.goal ?? '').slice(0, 300),
+            updatedAt: row.updatedAt,
+          },
+          // Oldest-first for the owner's reading order; [] when the run predates
+          // the graph mirror (LG-6 gate off at the time) — say so honestly.
+          steps: [...steps].reverse(),
+          note: steps.length
+            ? null
+            : 'এই run-টার ধাপভিত্তিক checkpoint history নেই (পুরনো run বা graph mirror তখন বন্ধ ছিল) — শুধু বর্তমান অবস্থা দেখানো যাচ্ছে।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+const get_duty_day: AgentTool = {
+  name: 'get_duty_day',
+  description:
+    'What the agent did AUTONOMOUSLY on a given day — the heartbeat/day-shift/watchdog duty threads ' +
+    'replayed from durable checkpoints (LG-9). USE when the owner asks "আজ নিজে থেকে কী করলে", ' +
+    '"heartbeat কী করেছে", "সারাদিন কী চালালে", or wants to audit the autonomous scheduler. ' +
+    'Read-only. `date` optional (YYYY-MM-DD, defaults to today, Asia/Dhaka).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      date: { type: 'string', description: 'Day to report, YYYY-MM-DD (default: today Asia/Dhaka).' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const { todayYmdDhaka } = await import('@/lib/agent-api/dhaka-date')
+      const ymd = typeof input.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.date) ? input.date : todayYmdDhaka()
+      const { getDutyRunDay } = await import('@/agent/lib/graph/duty-run-graph')
+      const [heartbeat, dayShift, watchdog] = await Promise.all([
+        getDutyRunDay('heartbeat', ymd),
+        getDutyRunDay('day_shift', ymd),
+        getDutyRunDay('watchdog', ymd),
+      ])
+      const empty = !heartbeat.ticks.length && !dayShift.ticks.length && !watchdog.ticks.length
+      return {
+        success: true,
+        data: {
+          date: ymd,
+          heartbeat: {
+            ticks: [...heartbeat.ticks].reverse(), // oldest-first reading order
+            wakes: heartbeat.wakes,
+            totalCostUsd: heartbeat.totalCostUsd,
+          },
+          dayShift: { ticks: [...dayShift.ticks].reverse() },
+          watchdog: { ticks: [...watchdog.ticks].reverse() },
+          note: empty
+            ? 'এই দিনের duty checkpoint নেই (পুরনো দিন বা graph gate তখন বন্ধ ছিল)।'
+            : null,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+const get_graph_health: AgentTool = {
+  name: 'get_graph_health',
+  description:
+    'LangGraph program health: routine-graph handled share (free turns), action-graph stagings, the ' +
+    'LG-4 shadow AGREE RATE with its canary-readiness verdict, and checkpoint-store size by thread ' +
+    'family. USE when the owner asks "graph কেমন চলছে", "canary ready?", "checkpoint কত জমেছে", or ' +
+    'for the weekly LangGraph health check. Read-only. `days` optional (default 7).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      days: { type: 'number', description: 'Look-back window in days (default 7).' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const { getTurnGraphHealth, getCheckpointStoreHealth } = await import('@/agent/lib/graph/graph-health')
+      const days = typeof input.days === 'number' && input.days > 0 ? Math.min(input.days, 30) : 7
+      const [turns, store] = await Promise.all([getTurnGraphHealth(days), getCheckpointStoreHealth()])
+      return {
+        success: true,
+        data: {
+          turns,
+          store,
+          note:
+            !turns && !store
+              ? 'Health data পড়া যায়নি (route spans/checkpoint schema unreachable) — deploy/log দেখতে হবে।'
+              : null,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals, check_owner_silence, check_quiet_hours, get_action_cards, get_workflow_history, get_duty_day, get_graph_health]

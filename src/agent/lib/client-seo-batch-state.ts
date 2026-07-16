@@ -9,6 +9,13 @@ export interface ClientSeoTargetState {
   auditStatus: 'pending' | 'queued' | 'executed' | 'failed'
   reportDelivered: boolean
   linksDelivered: boolean
+  /**
+   * 2026-07-16 live incident: a target that 301s into ANOTHER listed target
+   * (gulshanspaone.com → queenspabd.com) can never produce its own browser
+   * pages — the old guard deadlocked the agent demanding them. When set, this
+   * target's browser requirement is satisfied by the redirect observation.
+   */
+  redirectsToHost?: string
 }
 
 export interface ClientSeoBatchFacts {
@@ -70,7 +77,13 @@ export function clientSeoBatchRequiredTool(facts: ClientSeoBatchFacts): string |
   if (facts.packCompleted) return null
   const target = facts.targets[facts.currentIndex]
   if (!target) return 'complete_skill_pack_run'
-  if (facts.requireLiveBrowser && target.browserPages.length < MIN_LIVE_BROWSER_PAGES) {
+  // A redirect-collapsed target has no pages of its own — the redirect IS the
+  // browser observation (2026-07-16 incident fix).
+  if (
+    facts.requireLiveBrowser
+    && !target.redirectsToHost
+    && target.browserPages.length < MIN_LIVE_BROWSER_PAGES
+  ) {
     return target.awaitingBrowserLook ? 'live_browser_look' : 'live_browser_act'
   }
   if (target.auditStatus === 'pending') return 'run_website_seo_audit'
@@ -109,6 +122,21 @@ export function reduceClientSeoBatch(
   } else if (event.type === 'browser_look') {
     if (sameHost(target.url, event.url) && !target.browserPages.some((p) => p.url === event.url)) {
       target.browserPages.push({ url: event.url, ...(event.screenshotUrl ? { screenshotUrl: event.screenshotUrl } : {}) })
+    } else if (!sameHost(target.url, event.url)) {
+      // 2026-07-16 incident: navigating the CURRENT target landed on ANOTHER
+      // listed target's host → the current domain redirects into it. Record
+      // the collapse (waives this target's browser requirement) and credit
+      // the observed page to the target it actually belongs to.
+      const ownerIdx = next.targets.findIndex((t) => sameHost(t.url, event.url))
+      if (ownerIdx >= 0) {
+        if (target.browserPages.length === 0 && ownerIdx !== idx) {
+          try { target.redirectsToHost = new URL(event.url).hostname.replace(/^www\./, '') } catch { /* keep unset */ }
+        }
+        const ownerTarget = next.targets[ownerIdx]
+        if (!ownerTarget.browserPages.some((p) => p.url === event.url)) {
+          ownerTarget.browserPages.push({ url: event.url, ...(event.screenshotUrl ? { screenshotUrl: event.screenshotUrl } : {}) })
+        }
+      }
     }
     target.awaitingBrowserLook = false
   } else if (event.type === 'audit_queued') {
@@ -129,7 +157,7 @@ export function reduceClientSeoBatch(
 
 export function clientSeoBatchIsReadyForPack(facts: ClientSeoBatchFacts): boolean {
   return facts.targets.length > 0 && facts.targets.every((t) =>
-    (!facts.requireLiveBrowser || t.browserPages.length >= MIN_LIVE_BROWSER_PAGES)
+    (!facts.requireLiveBrowser || Boolean(t.redirectsToHost) || t.browserPages.length >= MIN_LIVE_BROWSER_PAGES)
     && t.auditStatus === 'executed'
     && t.reportDelivered
     && t.linksDelivered,

@@ -32,6 +32,99 @@ preview: routine lookups answered via the graph at Σ~333 tokens / ~$0.000 vs
   `detect_intent → run_tool → format_reply` StateGraph for 4 read-only intents
   (sales today, attendance, stock, pending orders). Preview-gated
   (`AGENT_LANGGRAPH_ROUTINE`). Deps: `@langchain/langgraph`, `@langchain/core`.
+- **LG-1 (SHIPPED 2026-07-16, PR #381):** 9 intents (+ expense today, staff
+  tasks, salah times, pending approvals, order-status slot-fill), `retryPolicy`
+  on `run_tool` (transient codes only), route-span `routineGraph` telemetry,
+  `get_orders` orderNumber filter. **Live-verified on preview: Σ267 tokens /
+  $0.0000 vs Σ109k / $0.0858 on the pinned-Sonnet loop for the same question.**
+- **LG-2 (SHIPPED 2026-07-16, PR #383):** Postgres checkpointer on Supabase in
+  the dedicated `langgraph` schema (Prisma migration owns the DDL; library
+  ledger pre-seeded so setup() is a no-op). thread_id = conversationId,
+  durability `sync`, 14-day whole-thread TTL on the nudge cron. Gate
+  `AGENT_LANGGRAPH_CHECKPOINT`.
+- **LG-3 pilot (SHIPPED 2026-07-16, PR #386 + dupe fix):** `log_expense` card
+  staged by `interrupt()`, resumed by `Command({resume})` from the approve
+  route AFTER its guards (transport, not authorization); ONE claim-guarded
+  transactional executor shared with the legacy fallback (double-log
+  impossible). Incident fix: internal/continuation turns skip ALL graphs +
+  15-minute same-summary dedupe. Gate `AGENT_LANGGRAPH_INTERRUPT`.
+- **LG-4 shadow (SHIPPED 2026-07-16, PR #391):** `classifyHeadFastPath` +
+  `turn-graph-shadow.ts` — the decision pipeline replayed as a graph on every
+  turn, zero extra spend; record on the route span (`extras.turnGraph`),
+  mismatches warn. **Canary/cutover pending preview soak data.** Gate
+  `AGENT_LANGGRAPH_TURN`.
+- **LG-6 slice 1 (SHIPPED 2026-07-16, PR #392):** client SEO batch transitions
+  mirrored into a durable graph thread (`wfrun:<runId>`), same reducer = one
+  truth, DRIFT logging; `getSeoBatchGraphHistory` replay reader. Gate
+  `AGENT_LANGGRAPH_WORKFLOW`. Next slices: content pipeline, browser recipes.
+- **LG-6 slice 2 (SHIPPED 2026-07-16):** EVERY template workflow run (content
+  pipeline `product_post` first consumer, plus `ad_campaign`, …) mirrored from
+  the canonical `transitionWorkflowRun` choke point into thread
+  `wfstep:<runId>` (`workflow-run-graph.ts`); each transition re-checked
+  against the template step map — off-map jumps recorded `legal:false` (drift
+  signal, never blocking); `get_workflow_history` now replays template runs
+  too. Same gate `AGENT_LANGGRAPH_WORKFLOW`. Remaining slice: browser recipes.
+- **LG-6 slice 3 (SHIPPED 2026-07-16):** live-browser sessions on durable
+  threads (`lbrowse:<conversationId>`, `live-browser-graph.ts`) — every
+  look/act is a checkpoint with scroll telemetry. Root-caused the owner's
+  "model scrolls but doesn't understand" report: `read_text` silently
+  truncated at 12k chars with no scroll metrics. Companion 0.9.8 returns
+  textLength/truncated/scroll{y,viewport,pageHeight,atBottom} + `from`
+  windowing; the look tool gained `sweep:true` (auto-scroll + merge whole
+  page, lazy feeds included), truncation warnings, and scroll telemetry on
+  every read; act surfaces scrollInfo + at-bottom notes. History readers of
+  slices 1–3 dedupe to post-node checkpoints (appliedStep stamp).
+  **Owner action: reload the Companion extension (0.9.8) in Chrome.**
+- **LG-9 slice 1 (SHIPPED 2026-07-16):** scheduled duties on durable threads.
+  Finding first: every surface (web chat, voice console, heartbeat wakes,
+  approval continuations, plan driver) already funnels through
+  `runOwnerTurn`, so LG-1/2/3 graphs cover them by construction — the
+  Telegram Hermes bot lives on legacy `/api/agent/*` and stays out by design.
+  New: every heartbeat tick decision (off_hours / resting / quiet /
+  unchanged / cap_reached / wake+outcome+cost / error) checkpoints onto
+  thread `duty:heartbeat:<ymd>` (`duty-run-graph.ts`, generic dutyKey for
+  future day-shift/watchdog duties); `getDutyRunDay` replays a day with
+  wake + cost totals. Same `AGENT_LANGGRAPH_WORKFLOW` gate, fail-open.
+  Remaining LG-9: other duty keys + an owner-facing "আজ কী করলে" reader.
+- **LG-9 slice 2 (SHIPPED 2026-07-16):** duties + plans complete the map.
+  Day-shift (start/tick/morning-brief outcomes) and watchdog verdicts
+  (healthy/alerted/staff_failures — healthy ticks checkpoint too) mirror to
+  `duty:day_shift:<ymd>` / `duty:watchdog:<ymd>`; every plan-driver drive
+  tick (step-done/failed/blocked-approval/plan-done/escalations + cost)
+  checkpoints onto `plan:<planId>` (`plan-run-graph.ts`). New owner-facing
+  tool `get_duty_day` ("আজ নিজে থেকে কী করলে") replays a day's autonomous
+  ticks across all three duty keys — wired into prompt/capability/router.
+  Coverage audit: approval-card lifecycle already lands on WorkflowRun
+  transitions (mirrored since slice 2), so actions need no separate mirror.
+- **Graph health (SHIPPED 2026-07-16, same PR):** `graph-health.ts` reads the
+  route spans production already writes — routine handled share, action
+  stagings, LG-4 shadow agree rate per kind — and issues the machine-checked
+  canary verdict (READY at ≥200 scored @ ≥98% agree). Checkpoint-store size
+  by thread family on the same reader. Owner tool `get_graph_health`; the
+  internal health endpoint carries a fail-open graph block. LG-4 canary
+  flips when the tool says READY — not before.
+- **LG-10 (DECIDED 2026-07-16):** stay self-hosted. Vercel + Supabase
+  Postgres checkpointer + VPS worker serve every shipped slice; none of the
+  three revisit triggers has fired (checkpoint scale is monitored by
+  `get_graph_health` + the 14-day cleanup cron; VPS cron/queues suffice; the
+  app runs single-instance per region). LangGraph Platform brings a second
+  vendor, data egress and per-node pricing for capabilities already covered.
+  Revisit ONLY if a trigger fires — the health tool now measures the first
+  one continuously.
+- **LG-7 (SHIPPED 2026-07-16, PR #393):** `AlmaMemoryStore` BaseStore adapter
+  over the existing pgvector `agent_memory` (search delegates to the head's
+  own ranking; delete refused — owner-curated). Gate `AGENT_LANGGRAPH_STORE`.
+- **LG-8 slice 1 (SHIPPED 2026-07-16, PR #395):** `get_workflow_history` tool
+  (owner asks "কী হয়েছিল" → checkpoint timeline) wired through classification,
+  the plan pack and the head prompt; routing replay goldens run every CI pass.
+- **Infra (2026-07-16, PR #388):** Vercel deploys were intermittently hanging
+  30–45m at `next build`'s lint/type stage — checks moved to a repo-wide PR CI
+  workflow (`ci-checks.yml`); the deploy build only builds now (4–6m).
+- **Owner runbook:** every gate defaults ON in preview / OFF in production.
+  After ~1 week of preview soak with no misses: flip `AGENT_LANGGRAPH_ROUTINE`
+  → then `AGENT_LANGGRAPH_CHECKPOINT` → then the rest, one at a time, watching
+  the route-span extras (`routineGraph`, `actionGraph`, `turnGraph`) between
+  flips. LG-4 canary decision reads the `turnGraph.agree` share.
 
 ## LangGraph feature coverage matrix
 

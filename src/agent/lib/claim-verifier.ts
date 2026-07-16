@@ -18,6 +18,8 @@ export type ClaimViolationCategory =
   | 'fb_post'
   | 'general_write'
   | 'missing_card'
+  | 'prose_choice'
+  | 'missing_ask'
 
 export interface ClaimViolation {
   category: ClaimViolationCategory
@@ -323,8 +325,87 @@ export function detectMissingCardViolation(replyText: string): ClaimViolation[] 
   }]
 }
 
+// ── Prose-choice detection (owner rule 2026-07-07, live-hit 2026-07-16) ─────
+//
+// HARD RULE: giving the Boss a choice means an ask_user card — no exceptions.
+// The prompt says so, but cheap heads still write "Option A: … Option B: …
+// আপনি কোন পথে যেতে চান?" as plain prose, which the owner cannot tap. The
+// missing-card detector can't catch it (nothing PROMISED a card), so this one
+// looks for the choice itself. Deliberately narrower than the prompt rule:
+// only enumerated options or which-path decision asks — free-form clarifying
+// questions stay allowed in prose, so a rhetorical "?" can't loop the verifier.
+
+/// Enumerated options offered in prose: "Option A:", "অপশন ক", or (ক)/(খ)
+/// style list markers at line starts.
+const PROSE_OPTIONS = /(?:\boption\s*[a-c১২৩]\s*[:।).]|অপশন\s*[কখগ১২৩ab]|(?:^|\n)\s*[•·▪-]?\s*\(?[কখগ]\)?\s*[).:।])/im
+/// A decision question aimed straight at the owner.
+// Owner-hit round 2 (2026-07-16 late): "এটা পাঠাবো নাকি আরও ফার্ম/সফট/কোনো
+// পরিবর্তন চান?" slipped through — the ‑ো verb spellings (পাঠাবো/করবো…) and
+// the "X নাকি Y?" either-or shape weren't covered. Both are now first-class:
+// any question containing নাকি IS a choice, and the verb group accepts the
+// optional ‑ো. "পরিবর্তন চান" joins the direct decision-request phrases.
+const DECISION_ASK = /(?:কোন\s*(?:টা|টি|পথে?|দিকে?|অপশন|প্ল্যান)[^\n?।]{0,50}\?|কোনটা\s*(?:করব|আগে|চান|ভালো|নেব)|(?:যেতে|করতে|এগোতে|আগাতে|নিতে|চালাতে)\s+চান|আপনার\s*সিদ্ধান্ত\s*(?:চাই|দরকার|লাগবে)|সিদ্ধান্ত\s*(?:দিন|জানান|দেবেন)|(?:করব|পাঠাব|আগাব|এগোব|চালাব|বাড়াব|দেব|রাখব)ো?\s*কি(?:\s*না)?[^\n?।]{0,12}\?|নাকি\s+[^\n?]{0,60}\?|(?:কোনো\s*)?পরিবর্তন\s*(?:চান|লাগবে)|which\s+(?:one|option|path|plan)\b[^\n?]{0,50}\?)/i
+
 /**
- * Combined verification: Layer 1 (regex) + Layer 2 (ledger).
+ * Detects an owner-facing choice asked in prose while NO ask card was emitted
+ * this turn. Only call when the turn produced zero ask cards.
+ */
+export function detectProseChoiceViolation(replyText: string): ClaimViolation[] {
+  const text = replyText.trim()
+  if (text.length < 12) return []
+
+  const ask = DECISION_ASK.exec(text)
+  const options = PROSE_OPTIONS.exec(text)
+  // Options list alone is fine (a report may enumerate scenarios); it becomes a
+  // choice-ask when the reply also questions the owner. A direct decision
+  // question fires on its own.
+  const hit = ask ?? (options && /\?/.test(text) ? options : null)
+  if (!hit) return []
+
+  return [{
+    category: 'prose_choice',
+    ruleId: 'choice_asked_without_ask_card',
+    matchedSnippet: stripWhitespace(hit[0]).slice(0, 120),
+    requiredTools: ['ask_user'],
+  }]
+}
+// ── Ask-guard (owner escalation 2026-07-16: "agent card diye ask kore na") ──
+// The HARD RULE (2026-07-07) says every owner-facing choice = ask_user card;
+// this detector ENFORCES it: a prose choice-question without an ask_user call
+// this turn triggers the same verification-retry loop as a false claim.
+
+// Numbered/lettered option list (2+ items) — the exact anti-pattern the rule bans.
+const PROSE_OPTION_LIST = /(?:^|\n)\s*(?:[১২৩৪1-4][.)]|[কখগঘ][.)])\s+\S[^\n]*(?:\n\s*(?:[১২৩৪1-4][.)]|[কখগঘ][.)])\s+\S[^\n]*)+/
+// "কোনটা করব/চান/নেব…" and "…করব, নাকি …?" style A-or-B questions.
+const PROSE_CHOICE_Q = /(?:কোনটা|কোনটি|কোন\s*টা)\s*(?:করব|চান|নেব|দেব|ভালো|আগে)|(?:করব|দেব|পাঠাব|চালাব|নেব|বানাব)[^।.!?\n]{0,25}?নাকি[^।.!?\n]{2,60}\?|which\s+(?:one|option)\b/i
+// Courtesy closers that are NOT choices — never violations.
+const COURTESY_Q = /(?:আর\s*কী|আর\s*কি|অন্য\s*কিছু|কিছু\s*লাগবে|আর\s*কিছু)[^।.!?\n]{0,25}\?/
+
+/**
+ * Detects an owner-facing CHOICE asked in prose while no ask_user card was
+ * created this turn. Options in plain text have no tappable buttons — the
+ * owner literally cannot answer them the way the app intends.
+ */
+export function detectMissingAskViolation(
+  replyText: string,
+  toolNames: string[],
+): ClaimViolation[] {
+  if (toolNames.includes('ask_user')) return []
+  const text = replyText.trim()
+  if (text.length < 12 || !text.includes('?')) return []
+  if (COURTESY_Q.test(text) && !PROSE_OPTION_LIST.test(text)) return []
+  const m = PROSE_OPTION_LIST.exec(text) ?? PROSE_CHOICE_Q.exec(text)
+  if (!m) return []
+  return [{
+    category: 'missing_ask',
+    ruleId: 'choice_in_prose_without_ask_card',
+    matchedSnippet: stripWhitespace(m[0]).slice(0, 120),
+    requiredTools: ['ask_user'],
+  }]
+}
+
+/**
+ * Combined verification: Layer 1 (regex) + Layer 2 (ledger) + ask-guard.
  */
 export function verifyClaimsAgainstLedger(
   replyText: string,
@@ -334,7 +415,10 @@ export function verifyClaimsAgainstLedger(
   const regexViolations = detectClaimViolations(replyText, toolNames)
   if (regexViolations.length > 0) return regexViolations
 
-  return detectLedgerViolations(replyText, ledger)
+  const ledgerViolations = detectLedgerViolations(replyText, ledger)
+  if (ledgerViolations.length > 0) return ledgerViolations
+
+  return detectMissingAskViolation(replyText, toolNames)
 }
 
 // ── Guidance + reminder builder ──────────────────────────────────────────────
@@ -364,10 +448,18 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'আপনি কাজ সম্পন্ন হওয়ার দাবি করেছেন কিন্তু এই turn-এ কোনো সফল write/action tool call হয়নি। ' +
     'এখনই প্রয়োজনীয় tool call করুন এবং success result পেলে তবেই confirm দিন। ' +
     'যদি tool call ব্যর্থ হয়ে থাকে → সততা সঙ্গে ব্যর্থতা স্বীকার করুন।',
+  missing_ask:
+    'আপনি Boss-কে prose-এ option/চয়েস-প্রশ্ন দিয়েছেন কিন্তু ask_user card তৈরি করেননি — HARD RULE ভঙ্গ (2026-07-07)। ' +
+    'prose-এর নম্বরওয়ালা option-এ Boss ট্যাপ করতে পারেন না। এখনই ask_user call করুন: question + ২–৪টা ছোট tappable option। ' +
+    'উত্তর লেখায় option-list রাখবেন না — শুধু প্রসঙ্গ + ask_user card।',
   missing_card:
     'আপনি বলেছেন অনুমোদন/প্রশ্ন কার্ড স্যারের সামনে পাঠিয়েছেন/দিচ্ছেন — কিন্তু এই turn-এ আসলে কোনো confirm_card বা ask_card তৈরি হয়নি, তাই স্যারের স্ক্রিনে কোনো কার্ড আসেনি। ' +
     'কার্ড শুধু তখনই আসে যখন আপনি নিজে (head) approval-দরকার এমন action tool টি সরাসরি call করেন এবং সেটি pendingActionId ফেরত দেয় — sub-agent-এর তৈরি pending action স্ক্রিনে কার্ড দেখায় না। ' +
     'এখনই দুটি option: (ক) নিজে সঠিক approval tool টি call করুন যাতে আসল কার্ড surface করে; (খ) যদি এই মুহূর্তে সম্ভব না → চুপচাপ "পাঠিয়েছি" বলবেন না, সততা সঙ্গে বলুন কার্ড আসেনি এবং স্যারকে কী করতে হবে বলুন। কখনো "কার্ড পাঠিয়েছি" বলবেন না যদি কার্ড আসলে না আসে।',
+  prose_choice:
+    'আপনি Boss-কে prose-এর ভিতরে option/সিদ্ধান্তের প্রশ্ন দিয়েছেন কিন্তু ask_user tool call করেননি — Boss টেক্সটের ভিতরের option-এ tap করতে পারেন না (HARD RULE 2026-07-07: choice মানেই ask_user, ব্যতিক্রম নেই)। ' +
+    'আবার লিখুন: বিশ্লেষণ/প্রেক্ষাপট prose-এ রাখুন, কিন্তু option-এর তালিকা আর "কোনটা করবেন?" জাতীয় প্রশ্ন prose থেকে সম্পূর্ণ বাদ দিন — সেগুলো ask_user call-এ দিন (question + ২-৪টি ছোট tappable option, প্রতিটি option এক লাইনের)। ' +
+    'reply-র শেষ কাজ = ask_user call।',
 }
 
 export function buildVerificationReminder(violations: ClaimViolation[]): string {

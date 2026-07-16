@@ -50,6 +50,7 @@ import {
 import {
   buildVerificationReminder,
   detectMissingCardViolation,
+  detectProseChoiceViolation,
   MAX_VERIFY_RETRIES,
   type ClaimViolation,
   type ToolLedgerEntry,
@@ -1194,6 +1195,11 @@ export async function* runAgentTurn(
           // head to actually surface it or admit it couldn't.
           if (finalText && violations.length === 0 && emittedConfirmCards.length === 0 && askCardsEmitted === 0) {
             violations.push(...detectMissingCardViolation(finalText))
+            // Owner rule: a choice for the Boss MUST be an ask_user card — a
+            // prose "Option A/B … কোনটা করবেন?" has nothing to tap (live-hit
+            // 2026-07-16). Same zero-card precondition: an emitted ask card
+            // legitimately carries the question.
+            violations.push(...detectProseChoiceViolation(finalText))
           }
           if (violations.length > 0) {
             verifyRetries++

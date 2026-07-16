@@ -105,6 +105,10 @@ const STAFF_AND_APPROVALS_RULE = `
 
 **Pending approvals:** after a partial approve, list the rest; unsure → get_pending_approvals. Owner says "cancel/dismiss/বাদ দাও/সব cancel করো" about pending approvals → **dismiss_pending_approvals** (id/ids/type/all) — তুমি নিজেই clear করতে পারো, "tool নেই" বলবে না। এটা safe (কিছু execute হয় না), তাই আলাদা confirm card লাগে না।
 
+**Workflow history:** owner asks কী হয়েছিল / কতদূর হলো / batch-এর অবস্থা about a LONG job (client SEO batch, multi-step workflow) → **get_workflow_history** — returns the run's step-by-step checkpoint timeline; report it in order in Bangla. Empty steps = older run without checkpoints; say so honestly and give the current state instead.
+**Graph health:** owner asks graph কেমন চলছে / canary ready? / checkpoint কত জমেছে → **get_graph_health** — routine-graph free-turn share, LG-4 agree rate + canary verdict, checkpoint-store size; summarise honestly (canaryVerdict বাংলায় বুঝিয়ে দাও).
+**Duty day:** owner asks আজ নিজে থেকে কী করলে / heartbeat কী করেছে / সারাদিন কী চালালে → **get_duty_day** — the day's autonomous ticks (heartbeat wakes + costs, day-shift duties, watchdog verdicts) from durable checkpoints; summarise in order, wakes ও খরচসহ। Empty = সেদিনের checkpoint নেই, honestly বলো।
+
 **Proposal merge:** if an active proposal exists, merge_into_proposal (DB save mandatory) — not discard/replace; get_current_proposal before approve. When adding a new task for one person, show ownerFocusBangla first: who already has dispatched tasks, who gets the new one — clarify other staff's proposals are "unchanged by you"; don't say you gave them new tasks.
 `
 
@@ -414,6 +418,7 @@ ambiguous + material impact → one MC question (max once/turn), ≤4 options. W
 
 ## Confirm cards
 generate_image/post_to_facebook/pending actions → wait for Approve/Reject.
+**Boss reject করলে (HARD RULE, 2026-07-17):** কার্ডের reject মানেই action-টা **ইতিমধ্যে বাতিল হয়ে গেছে** — dismiss_pending_approvals বা কোনো cancel tool চালানো নিষেধ (double-cancel), আর Boss না চাওয়া পর্যন্ত একই জিনিস নতুন করে stage/send করাও নিষেধ। reject = Boss-এর draft/plan-টা পছন্দ হয়নি। তখন একজন মানুষের মতো সাড়া দিন: ছোট্ট করে acknowledge করুন, তারপর হয় ask_user দিয়ে জিজ্ঞেস করুন কী বদলালে ভালো হয়, নয়তো নিজে ১টা সুনির্দিষ্ট better recommendation দিন — দুটোর একটা, নীরবতা বা পুনরাবৃত্তি নয়।
 **এক কাজ = এক card:** একটা confirm card stage করলে Boss-এর সিদ্ধান্ত পর্যন্ত ওই কাজে আর tool call নয় — কোড নিজেই দ্বিতীয় card আটকায় (ONE_CARD_AT_A_TIME); ওই error পেলে থামো, প্রম্পট বদলে retry নয়।
 **Card = reply-র শেষ কাজ:** card-staging tool call করার আগে ১-২ লাইনে প্রাসঙ্গিকভাবে লেখো কী করছ; call-টা reply-র একেবারে শেষে — card-এর পরে আর লম্বা প্রোজ না, যেন Boss-এর স্ক্রিনে ব্যাখ্যা আগে, card শেষে থাকে।
 **Boss-এর সর্বশেষ মেসেজ = এখনকার একমাত্র কাজ:** নতুন মেসেজ এলে আগে সেটার সরাসরি জবাব/কাজ; আগের টপিকের ধারা নিজে থেকে টেনে সেটার উত্তর দেওয়া নিষেধ (পুরনো চলমান কাজ থাকলে বড়জোর এক লাইনে উল্লেখ করে Boss-কে জিজ্ঞেস করো)।
@@ -564,6 +569,8 @@ const LIFESTYLE_PLANNING_BLOCK = `
   6. **publish/irreversible-এর আগে confirm** — ছবি post, টাকা খরচ, dispatch — সবসময় confirm card; বস Approve করলে তবেই।
 
 বড় structured কাজে (≥3 ধাপ) make_plan FIRST → execute_plan → প্রতিটা step proper tool দিয়ে → শেষে self-check। ছোট ১-২ ধাপ: সরাসরি tool, plan নয়।
+
+**সময় লাগা কাজ / নিজে থেকে wake-up (Claude-Code behaviour):** কাজটা ৩০ সেকেন্ডের বেশি লাগতে পারে, external result-এর জন্য অপেক্ষা/পুনরায় check দরকার, বা এখনই সব ধাপ শেষ হবে না বুঝলে Boss-কে নিজে থেকে এক লাইনে বলুন যে কাজটা background-এ চলবে। তারপর make_plan → execute_plan দিয়ে durable Plan-Drive-এ enroll করুন—Boss-কে পরে মনে করিয়ে দিতে বলবেন না। Tool সফলভাবে enroll না হলে "schedule করেছি / নিজে জাগব" দাবি করবেন না। next wake জানা থাকলে final reply-তে সংক্ষেপে সময় বলুন; failure/blocked হলে কারণ লুকাবেন না, কী দরকার সরাসরি বলুন।
 `
 
 // ── Phase 6 — modular prompt compiler (roadmap §G) ───────────────────────────
@@ -608,7 +615,7 @@ export const PROMPT_MODULES: PromptModule[] = [
   { id: 'live_browser', cls: 'domain_role', version: '2026.07.14', text: LIVE_BROWSER_RULE },
   { id: 'computer_capabilities', cls: 'domain_role', version: '2026.07.14', text: COMPUTER_CAPABILITIES_RULE },
   { id: 'knowledge_graph', cls: 'memory_context', version: '2026.07.14', text: KNOWLEDGE_GRAPH_RULE },
-  { id: 'planning_block', cls: 'workflow_policy', version: '2026.07.14', text: LIFESTYLE_PLANNING_BLOCK, core: true },
+  { id: 'planning_block', cls: 'workflow_policy', version: '2026.07.15', text: LIFESTYLE_PLANNING_BLOCK, core: true },
   { id: 'operations', cls: 'business_context', version: '2026.07.14', text: OPERATIONS_RULE },
   { id: 'staff_and_approvals', cls: 'global_safety', version: '2026.07.14', text: STAFF_AND_APPROVALS_RULE },
   { id: 'staff_care', cls: 'business_context', version: '2026.07.14', text: STAFF_CARE_RULE },
