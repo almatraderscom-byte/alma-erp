@@ -619,6 +619,7 @@ private struct PortalExpenseFlowChips: View {
         } label: {
             Text(label)
                 .font(.footnote.weight(active ? .semibold : .regular))
+                .lineLimit(1).minimumScaleFactor(0.5)
                 .foregroundStyle(active ? PortalExpensePalette.accentText(colorScheme) : .secondary)
                 .padding(.horizontal, 12).padding(.vertical, 7)
                 .background(active ? PortalExpensePalette.coral.opacity(colorScheme == .dark ? 0.28 : 0.14)

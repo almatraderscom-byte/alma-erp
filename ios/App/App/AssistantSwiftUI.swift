@@ -4081,6 +4081,7 @@ struct AgentThoughtProcessSheet: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(pal.muted)
+                        .accessibilityLabel("বন্ধ করুন")
                         .frame(width: 32, height: 32)
                         .background(Color.white.opacity(0.06), in: Circle())
                 }
@@ -4984,6 +4985,7 @@ struct AgentAskCardView: View {
                         if let idx = pageIndex, pageCount > 1 {
                             Button { onPrev?() } label: {
                                 Image(systemName: "chevron.left")
+                                    .accessibilityLabel("আগের পাতা")
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(idx > 0 ? pal.ink : pal.muted.opacity(0.35))
                                     .frame(width: 28, height: 28)
@@ -4994,6 +4996,7 @@ struct AgentAskCardView: View {
                                 .foregroundStyle(pal.muted)
                             Button { onNext?() } label: {
                                 Image(systemName: "chevron.right")
+                                    .accessibilityLabel("পরের পাতা")
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(idx < pageCount - 1 ? pal.ink : pal.muted.opacity(0.35))
                                     .frame(width: 28, height: 28)
@@ -5007,6 +5010,7 @@ struct AgentAskCardView: View {
                                 onClose()
                             } label: {
                                 Image(systemName: "xmark")
+                                    .accessibilityLabel("কার্ড বন্ধ করুন")
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(pal.muted)
                                     .frame(width: 28, height: 28)
@@ -5697,6 +5701,7 @@ struct AgentComposerView: View {
                             }
                         Button { vm.removePendingFile(f.id) } label: {
                             Image(systemName: "xmark")
+                                .accessibilityLabel("ফাইল সরান")
                                 .font(.system(size: 8, weight: .bold))
                                 .foregroundStyle(.white)
                                 .frame(width: 18, height: 18)
@@ -6131,6 +6136,7 @@ struct AgentSideDrawer: View {
                 if !search.isEmpty {
                     Button { search = "" } label: {
                         Image(systemName: "xmark.circle.fill")
+                            .accessibilityLabel("সার্চ মুছুন")
                             .font(.system(size: 13)).foregroundStyle(pal.muted.opacity(0.7))
                     }
                 }
@@ -6642,6 +6648,7 @@ struct AgentPendingTasksSheet: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(pal.muted)
+                        .accessibilityLabel("বন্ধ করুন")
                         .frame(width: 32, height: 32)
                         .background(Color.white.opacity(0.08), in: Circle())
                 }
@@ -7788,10 +7795,10 @@ extension AlmaTabBarController {
             host.title = "ALMA AI"
             // The exact Claude bar the web Assistant had: glass hamburger + coral compose.
             host.navigationItem.leftBarButtonItem = AlmaWebTabViewController.glassBarButton(
-                icon: "line.3.horizontal", target: hooks, action: #selector(AssistantBarHooks.menuTapped),
+                icon: "line.3.horizontal", label: "চ্যাট হিস্টরি", target: hooks, action: #selector(AssistantBarHooks.menuTapped),
                 light: !AlmaTheme.isDark)
             host.navigationItem.rightBarButtonItem = AlmaWebTabViewController.coralBarButton(
-                icon: "plus", target: hooks, action: #selector(AssistantBarHooks.newChatTapped))
+                icon: "plus", label: "নতুন চ্যাট", target: hooks, action: #selector(AssistantBarHooks.newChatTapped))
             objc_setAssociatedObject(host, &assistantBarHooksKey, hooks, .OBJC_ASSOCIATION_RETAIN)
             let nav = Self.darkNav(root: host, tabTitle: "Assistant", icon: "sparkles", largeTitles: false)
             navRef.value = nav

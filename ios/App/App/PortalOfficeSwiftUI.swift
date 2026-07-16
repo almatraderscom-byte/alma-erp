@@ -1790,6 +1790,7 @@ struct PortalGroupChatSheet: View {
                                 Button { staged.remove(at: idx) } label: {
                                     Image(systemName: "xmark.circle.fill").foregroundStyle(.white, .black.opacity(0.5))
                                 }.offset(x: 4, y: -4)
+                                .accessibilityLabel("ছবি সরান")
                             }
                     }
                 }
@@ -1962,6 +1963,7 @@ struct PortalImageViewer: View {
                 Image(systemName: "xmark")
                     .font(.headline.weight(.bold)).foregroundStyle(.white)
                     .padding(11).background(.ultraThinMaterial, in: Circle())
+                    .accessibilityLabel("বন্ধ করুন")
             }
             .padding(.horizontal, 18).padding(.top, 8)
         }

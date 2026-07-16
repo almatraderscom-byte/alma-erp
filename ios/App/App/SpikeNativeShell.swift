@@ -498,9 +498,9 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     private func applyAgentBar() {
         guard !agentSegments.isEmpty else { return }
         navigationItem.leftBarButtonItem = Self.glassBarButton(
-            icon: "line.3.horizontal", target: self, action: #selector(agentHistory), light: !AlmaTheme.isDark)
+            icon: "line.3.horizontal", label: "চ্যাট হিস্টরি", target: self, action: #selector(agentHistory), light: !AlmaTheme.isDark)
         navigationItem.rightBarButtonItem = Self.coralBarButton(
-            icon: "square.and.pencil", target: self, action: #selector(agentNewChat))
+            icon: "square.and.pencil", label: "নতুন চ্যাট", target: self, action: #selector(agentNewChat))
     }
 
     /// Light ⇄ dark: restyle the root + loader + agent buttons, and push the mode into the
@@ -518,7 +518,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     /// A Claude-style frosted circular bar button. `light: true` = ultra-thin WHITE material
     /// + dark icon (the LIGHT agent header); `light: false` = thin DARK material + white icon
     /// (the dark ERP tabs' back chevron). Hairline ring + soft shadow either way.
-    static func glassBarButton(icon: String, target: Any, action: Selector, light: Bool = false) -> UIBarButtonItem {
+    static func glassBarButton(icon: String, label: String, target: Any, action: Selector, light: Bool = false) -> UIBarButtonItem {
         let size: CGFloat = 36
         let iconColor = light ? UIColor(red: 0.16, green: 0.14, blue: 0.20, alpha: 1) : UIColor.white
         let container = UIButton(type: .custom)
@@ -564,12 +564,15 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // the frosted disc + hairline ring alone carry the depth).
         container.layer.shadowOpacity = 0
         container.addTarget(target, action: action, for: .touchUpInside)
+        // Icon-only control — VoiceOver needs the meaning, not the glyph name.
+        container.accessibilityLabel = label
+        container.accessibilityTraits = .button
         return UIBarButtonItem(customView: container)
     }
 
     /// Claude-style SOLID CORAL circular action button (baked white icon) — the new-chat
     /// button, exactly like Claude's orange compose bubble on the top-right of the header.
-    static func coralBarButton(icon: String, target: Any, action: Selector) -> UIBarButtonItem {
+    static func coralBarButton(icon: String, label: String, target: Any, action: Selector) -> UIBarButtonItem {
         let size: CGFloat = 36
         let coral = UIColor(red: 0.878, green: 0.478, blue: 0.373, alpha: 1) // #E07A5F (ALMA accent)
         let container = UIButton(type: .custom)
@@ -587,6 +590,9 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // Flat — no shadow at all in the header zone (owner spec 2026-07-05).
         container.layer.shadowOpacity = 0
         container.addTarget(target, action: action, for: .touchUpInside)
+        // Icon-only control — VoiceOver needs the meaning, not the glyph name.
+        container.accessibilityLabel = label
+        container.accessibilityTraits = .button
         return UIBarButtonItem(customView: container)
     }
 
@@ -967,7 +973,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         guard navigationController?.viewControllers.first === self else { return }
         if webView?.canGoBack == true {
             navigationItem.leftBarButtonItem = Self.glassBarButton(
-                icon: "chevron.backward", target: self, action: #selector(goBackTapped), light: !AlmaTheme.isDark)
+                icon: "chevron.backward", label: "পেছনে", target: self, action: #selector(goBackTapped), light: !AlmaTheme.isDark)
         } else {
             navigationItem.leftBarButtonItem = nil
         }

@@ -940,7 +940,8 @@ private struct OwnerTodoBar: View {
             Spacer(minLength: 6)
             // Delete — ALWAYS a separate action (owner: marking must not delete).
             Button { Task { await vm.remove(t.id) } } label: {
-                Image(systemName: "trash").font(.system(size: 12, weight: .semibold))
+                Image(systemName: "trash")
+                    .accessibilityLabel("টুডু মুছুন").font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(DashPalette.red500.opacity(0.85))
                     .frame(width: 30, height: 30)
                     .background(DashPalette.red500.opacity(scheme == .dark ? 0.14 : 0.09), in: Circle())

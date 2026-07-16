@@ -572,6 +572,7 @@ struct TradingAnalyticsScreen: View {
         } label: {
             Text(label)
                 .font(.footnote.weight(active ? .semibold : .regular))
+                .lineLimit(1).minimumScaleFactor(0.5)
                 .foregroundStyle(active ? TradingAnalyticsPalette.tradingGreen : .secondary)
                 .padding(.horizontal, 12).padding(.vertical, 7)
                 .background(active ? TradingAnalyticsPalette.tradingGreen.opacity(colorScheme == .dark ? 0.25 : 0.15)

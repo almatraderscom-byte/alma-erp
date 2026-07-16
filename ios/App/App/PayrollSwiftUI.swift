@@ -1386,6 +1386,9 @@ struct PayrollScreen: View {
         } label: {
             Text(label)
                 .font(.footnote.weight(active ? .semibold : .regular))
+                // Accessibility text sizes: keep the pill a pill — one line, shrink
+                // instead of hyphenating ("Trad-ing" broke into a tall oval at AX sizes).
+                .lineLimit(1).minimumScaleFactor(0.5)
                 .foregroundStyle(active ? PayrollPalette.accentText(colorScheme) : .secondary)
                 .padding(.horizontal, 12).padding(.vertical, 7)
                 .background(active ? PayrollPalette.coral.opacity(colorScheme == .dark ? 0.28 : 0.14)

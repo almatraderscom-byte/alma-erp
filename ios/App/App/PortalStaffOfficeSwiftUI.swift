@@ -867,6 +867,7 @@ struct PortalStaffTaskSheet: View {
                                     Image(systemName: "xmark.circle.fill").font(.system(size: 18))
                                         .foregroundStyle(.white, .black.opacity(0.5))
                                 }.buttonStyle(.plain).padding(3)
+                                .accessibilityLabel("ছবি সরান")
                             }
                         }
                         if loadingPhotos {
