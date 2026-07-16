@@ -229,35 +229,61 @@ extension AlmaTabBarController {
         nav?.pushViewController(vc, animated: true)
     }
 
-    /// Route-aware push: migrated pages open their NATIVE screen (AlmaNativeRouter),
-    /// everything else falls back to the web view unchanged. Native screens get a
-    /// FORCED-web escape closure so "ওয়েবে খুলুন" can never recurse into the router.
-    private func pushSmart(on nav: UINavigationController?, path: String, title: String, icon: String) {
-        AlmaPerfLog.event("route.push", path)
-        // Query-carrying deep links (/orders?focus=…, /attendance?review=…) only
-        // work on the web page — the router strips queries and native screens
-        // don't receive them, so routing those "natively" would silently drop
-        // the deep-link context.
-        let bare = path.split(separator: "?").first.map(String.init) ?? path
-        if path.dropFirst(bare.count).count > 1 {
+    /// Route-aware push — IOSP-1: ALL decisions go through AlmaNavCoordinator.
+    /// Native screens get a FORCED-web escape closure so "ওয়েবে খুলুন" can never
+    /// recurse into the router. Web is now an explicit classification (allowlist
+    /// or query-context), and an UNKNOWN internal route fails loudly with
+    /// telemetry + an owner-facing choice — never a silent WKWebView embed.
+    func pushSmart(on nav: UINavigationController?, path: String, title: String, icon: String) {
+        // Kill switch preserved: SwiftUI screens off → the pre-S6 web behaviour.
+        guard AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *) else {
             pushWeb(on: nav, path: path, title: title, icon: icon)
             return
         }
-        if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *),
-           let native = AlmaNativeRouter.screen(for: path, openWebForced: { [weak self, weak nav] p, t in
-               // Same-page pushes are the screen's ESCAPE HATCH → always the real web
-               // (recursion guard; prefix match so /employees/{id}'s escape to
-               // /employees stays a real escape). Cross-page links route back
-               // through the router so e.g. Finance → Office fund opens native.
-               let origin = path.split(separator: "?").first.map(String.init) ?? path
-               let target = p.split(separator: "?").first.map(String.init) ?? p
-               if origin.hasPrefix(target) { self?.pushWeb(on: nav, path: p, title: t, icon: icon) }
-               else { self?.pushSmart(on: nav, path: p, title: t, icon: icon) }
-           }) {
-            nav?.pushViewController(native, animated: true)
-            return
+        let decision = AlmaNavCoordinator.decide(
+            path: path,
+            openWebForced: { [weak self, weak nav] p, t in
+                // Same-page pushes are the screen's ESCAPE HATCH → always the real web
+                // (recursion guard; prefix match so /employees/{id}'s escape to
+                // /employees stays a real escape). Cross-page links route back
+                // through the coordinator so e.g. Finance → Office fund opens native.
+                let origin = path.split(separator: "?").first.map(String.init) ?? path
+                let target = p.split(separator: "?").first.map(String.init) ?? p
+                if origin.hasPrefix(target) { self?.pushWeb(on: nav, path: p, title: t, icon: icon) }
+                else { self?.pushSmart(on: nav, path: p, title: t, icon: icon) }
+            })
+        switch decision {
+        case .native(let vc):
+            AlmaPerfLog.event("route.push", path)
+            nav?.pushViewController(vc, animated: true)
+        case .tabRoot(let index):
+            AlmaPerfLog.event("route.tabRoot", path)
+            selectTabRootStably(index)
+        case .web(let reason):
+            AlmaPerfLog.event("route.webAllowed", "\(path) reason=\(reason)")
+            pushWeb(on: nav, path: path, title: title, icon: icon)
+        case .unknown:
+            AlmaPerfLog.event("route.unknown", path)
+            presentUnknownRouteAlert(on: nav, path: path, title: title, icon: icon)
         }
-        pushWeb(on: nav, path: path, title: title, icon: icon)
+    }
+
+    /// IOSP-1 fail-loud path: an internal route the contract doesn't know.
+    /// The owner sees an honest Bangla error and can still reach the page via an
+    /// EXPLICIT web handoff — routing failures surface instead of hiding.
+    private func presentUnknownRouteAlert(on nav: UINavigationController?,
+                                          path: String, title: String, icon: String) {
+        let alert = UIAlertController(
+            title: "লিংকটি অ্যাপে খোলা যায়নি",
+            message: "এই ঠিকানাটি অ্যাপের পরিচিত কোনো পেজ নয়:\n\(path)",
+            preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "ওয়েবে খুলুন", style: .default) { [weak self, weak nav] _ in
+            AlmaPerfLog.event("route.unknownWebHandoff", path)
+            self?.pushWeb(on: nav, path: path, title: title, icon: icon)
+        })
+        alert.addAction(UIAlertAction(title: "বাতিল", style: .cancel))
+        (nav ?? selectedViewController as? UINavigationController)?
+            .topViewController?.present(alert, animated: true)
     }
 
     /// openWeb closure for a native TAB ROOT: the tab's own path stays a real web
@@ -266,8 +292,8 @@ extension AlmaTabBarController {
     /// tab roots were wired straight to pushWeb, so e.g. tapping a requester name
     /// on Approvals opened the WEB employee profile even though the native
     /// Employees screen exists (owner report 2026-07-15).
-    private func smartOpen(origin: String, navRef: WeakRef<UINavigationController>,
-                           icon: String) -> (_ path: String, _ title: String) -> Void {
+    func smartOpen(origin: String, navRef: WeakRef<UINavigationController>,
+                   icon: String) -> (_ path: String, _ title: String) -> Void {
         { [weak self] path, title in
             let target = path.split(separator: "?").first.map(String.init) ?? path
             if target == origin { self?.pushWeb(on: navRef.value, path: path, title: title, icon: icon) }
@@ -564,17 +590,17 @@ extension AlmaTabBarController {
             "/approvals": 3,
         ]
         if !hasQuery, let index = tabRoots[clean] {
+            AlmaPerfLog.event("route.tabRoot", clean)
             selectTabRootStably(index)
             return
         }
 
         guard let nav = selectedViewController as? UINavigationController else { return }
         let title = Self.notificationTapTitle(for: clean)
-        if hasQuery {
-            pushWeb(on: nav, path: path, title: title, icon: "bell.badge")
-        } else {
-            pushSmart(on: nav, path: path, title: title, icon: "bell.badge")
-        }
+        // IOSP-1: one decision point — pushSmart (AlmaNavCoordinator) classifies
+        // query links, allowlisted web, and unknown routes with telemetry; a
+        // notification tap can no longer silently embed an unknown web page.
+        pushSmart(on: nav, path: path, title: title, icon: "bell.badge")
     }
 
     /// Select a tab root and keep it selected against the cold-start reset race.

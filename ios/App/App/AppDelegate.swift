@@ -10,6 +10,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         AlmaPerfLog.event("launch.didFinishLaunching")
+        #if DEBUG
+        runNavSelfTestIfRequested()
+        #endif
         // Home-screen quick action on COLD START: forward to the AppShortcuts
         // plugin (it retains the event until the JS listener attaches).
         if let shortcutItem = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {
@@ -109,6 +112,23 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        // IOSP-1: almaerp:// deep links (Siri App Intents, Spotlight entities, widgets)
+        // route through the NATIVE shell. Before, Capacitor delivered them to the
+        // HIDDEN dashboard webview (DeepLinkManager → window.location.assign) — the
+        // navigation happened on a webview nobody sees, and the hidden Capacitor
+        // bridge page navigated away from the dashboard it must stay on. Same class
+        // of bug AlmaNavBridge fixed for notification taps; same fix: post
+        // .almaOpenPath and let AlmaTabBarController.routeNotificationTap decide
+        // (native / tab / allowlisted web / fail-loud) via AlmaNavCoordinator.
+        if url.scheme == "almaerp" {
+            var path = "/" + (url.host ?? "") + url.path
+            if path.count > 1, path.hasSuffix("/") { path = String(path.dropLast()) }
+            if let q = url.query, !q.isEmpty { path += "?\(q)" }
+            AlmaPerfLog.event("route.deepLink", path)
+            NotificationCenter.default.post(name: .almaOpenPath, object: nil,
+                                            userInfo: ["path": path])
+            return true // consumed natively — the hidden webview must NOT navigate
+        }
         // Called when the app was launched with a url. Feel free to add additional processing here,
         // but if you want the App API to support tracking app url opens, make sure to keep this call
         return ApplicationDelegateProxy.shared.application(app, open: url, options: options)
@@ -122,3 +142,37 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
 }
+
+#if DEBUG
+extension AppDelegate {
+    /// IOSP-1 navigation-contract self-test (DEBUG builds only, env-gated — never
+    /// compiled into Release/TestFlight). Simulator UI can't be driven headlessly
+    /// (SpringBoard's "Open in …?" dialog blocks `simctl openurl`, and taps need a
+    /// human), so the harness drives the SAME code path a notification tap / deep
+    /// link uses: it posts `.almaOpenPath` for each route in
+    /// `ALMA_NAV_SELFTEST_ROUTES` (comma-separated), one every 6 s starting 10 s
+    /// after launch (unlock margin). Verification happens OUTSIDE the app:
+    /// timed `simctl io screenshot` + the route.* signposts prove each decision.
+    ///
+    ///   SIMCTL_CHILD_ALMA_NAV_SELFTEST=1 \
+    ///   SIMCTL_CHILD_ALMA_NAV_SELFTEST_ROUTES="/trading/accounts,/agent" \
+    ///     xcrun simctl launch <udid> com.almatraders.erp
+    func runNavSelfTestIfRequested() {
+        let env = ProcessInfo.processInfo.environment
+        guard env["ALMA_NAV_SELFTEST"] == "1" else { return }
+        let routes = (env["ALMA_NAV_SELFTEST_ROUTES"] ?? "")
+            .split(separator: ",").map(String.init).filter { $0.hasPrefix("/") }
+        guard !routes.isEmpty else { return }
+        AlmaPerfLog.event("navSelfTest.start", routes.joined(separator: ","))
+        var delay: TimeInterval = 10
+        for route in routes {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                AlmaPerfLog.event("navSelfTest.route", route)
+                NotificationCenter.default.post(name: .almaOpenPath, object: nil,
+                                                userInfo: ["path": route])
+            }
+            delay += 6
+        }
+    }
+}
+#endif

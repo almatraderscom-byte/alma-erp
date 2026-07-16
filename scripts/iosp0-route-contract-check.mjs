@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// IOSP-0 route-contract fixture check.
+// Route-contract check (IOSP-0 fixture + IOSP-1 coordinator cross-check).
 // Usage: node scripts/iosp0-route-contract-check.mjs
 // Verifies, with zero build steps:
 //   1. every Next.js page route exists in ios/route-contract.json;
@@ -7,7 +7,11 @@
 //   3. every exact-pattern entry marked nativeHandler:"native" has a matching
 //      case in ios/App/App/AlmaNativeRouter.swift (dynamic entries checked via
 //      their pathParam prefix);
-//   4. no duplicate paths.
+//   4. no duplicate paths;
+//   5. (IOSP-1) AlmaNavCoordinator.swift's allowlists mirror the fixture BOTH
+//      ways: every temporary-web/public-web fixture route is in the coordinator,
+//      every coordinator allowlist entry is in the fixture with the matching
+//      classification, and every nativeHandler:"tab" route is in tabRootIndex.
 // Exit code 0 = contract consistent; 1 = violations printed.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,6 +19,18 @@ import { join } from 'node:path';
 const root = new URL('..', import.meta.url).pathname;
 const fixture = JSON.parse(readFileSync(join(root, 'ios/route-contract.json'), 'utf8'));
 const routerSrc = readFileSync(join(root, 'ios/App/App/AlmaNativeRouter.swift'), 'utf8');
+const coordSrc = readFileSync(join(root, 'ios/App/App/AlmaNavCoordinator.swift'), 'utf8');
+
+// --- parse the coordinator's Swift literal sets (IOSP-1) ---
+function swiftSet(src, name) {
+  const m = src.match(new RegExp(`${name}[^=]*=\\s*\\[([^\\]]*)\\]`, 's'));
+  if (!m) return null;
+  return [...m[1].matchAll(/"([^"]+)"/g)].map(x => x[1]);
+}
+const coordTemporary = swiftSet(coordSrc, 'temporaryWebRoutes');
+const coordPublic = swiftSet(coordSrc, 'publicWebRoutes');
+const coordPublicPrefixes = swiftSet(coordSrc, 'publicWebPrefixes');
+const coordTabRoots = [...coordSrc.matchAll(/"(\/[^"]*)":\s*\d+/g)].map(x => x[1]);
 
 // --- collect web routes from src/app/**/page.tsx (skip api/) ---
 function webRoutes(dir, prefix = '') {
@@ -56,6 +72,25 @@ for (const r of fixture.routes) {
 
 for (const w of web) {
   if (!paths.includes(w)) errors.push(`web route ${w} missing from route-contract.json`);
+}
+
+// --- IOSP-1: coordinator ↔ fixture cross-check ---
+if (!coordTemporary || !coordPublic || !coordPublicPrefixes) {
+  errors.push('AlmaNavCoordinator.swift: could not parse allowlist sets (temporaryWebRoutes/publicWebRoutes/publicWebPrefixes)');
+} else {
+  const fixTemporary = fixture.routes.filter(r => r.classification === 'temporary-web' && r.pattern === 'exact').map(r => r.path);
+  const fixPublicExact = fixture.routes.filter(r => r.classification === 'public-web-allowed' && r.pattern === 'exact').map(r => r.path);
+  const fixPublicDynamic = fixture.routes.filter(r => r.classification === 'public-web-allowed' && r.pattern === 'dynamic').map(r => r.path.replace(/\[.+\]$/, ''));
+  for (const p of fixTemporary) if (!coordTemporary.includes(p)) errors.push(`${p}: temporary-web in fixture but missing from AlmaNavCoordinator.temporaryWebRoutes`);
+  for (const p of coordTemporary) if (!fixTemporary.includes(p)) errors.push(`${p}: in AlmaNavCoordinator.temporaryWebRoutes but not temporary-web in fixture`);
+  for (const p of fixPublicExact) if (!coordPublic.includes(p)) errors.push(`${p}: public-web-allowed in fixture but missing from AlmaNavCoordinator.publicWebRoutes`);
+  for (const p of coordPublic) if (!fixPublicExact.includes(p)) errors.push(`${p}: in AlmaNavCoordinator.publicWebRoutes but not public-web-allowed in fixture`);
+  for (const p of fixPublicDynamic) if (!coordPublicPrefixes.includes(p)) errors.push(`${p}: dynamic public-web route has no AlmaNavCoordinator.publicWebPrefixes entry`);
+  for (const r of fixture.routes) {
+    if (r.nativeHandler === 'tab' && !coordTabRoots.includes(r.path)) {
+      errors.push(`${r.path}: nativeHandler "tab" but missing from AlmaNavCoordinator.tabRootIndex`);
+    }
+  }
 }
 
 if (errors.length) {

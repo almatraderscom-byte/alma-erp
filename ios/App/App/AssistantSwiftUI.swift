@@ -7766,17 +7766,12 @@ extension AlmaTabBarController {
             let navRef = WeakRef<UINavigationController>()
             let pool = contentPool
             let hooks = AssistantBarHooks()
+            // IOSP-1: the Assistant screen's link-outs go through the same smartOpen
+            // as every other tab root — its auth card's openWeb("/login") now lands
+            // on the NATIVE login screen (owner decision 2026-07-11) instead of the
+            // web login this closure used to force.
             let screen = AssistantScreen(
-                openWeb: { [weak self] path, title in
-                    guard let self else { return }
-                    let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!,
-                                                      processPool: pool,
-                                                      tabTitle: title, systemImage: "sparkles",
-                                                      hideWebHeader: true)
-                    vc.hidesBottomBarWhenPushed = false
-                    navRef.value?.pushViewController(vc, animated: true)
-                    _ = self // keep the capture list shape consistent with SwiftUIShell
-                },
+                openWeb: smartOpen(origin: "/agent", navRef: navRef, icon: "sparkles"),
                 barHooks: hooks)
             let host = AlmaHostingController(rootView: screen)
             host.title = "ALMA AI"
@@ -7793,37 +7788,14 @@ extension AlmaTabBarController {
             // The AssistiveTouch-style floating sub-page nav the web Assistant tab had
             // (owner: it must survive the native migration) — the proven UIKit
             // AgentAssistiveNav, overlaid on the hosting view. "Chat" returns to the
-            // native chat (pops any pushed web screen); the rest push web sub-pages.
-            func webPushItem(_ title: String, _ path: String) -> AgentAssistiveNav.Item {
-                AgentAssistiveNav.Item(title: title, icon: Self.assistantSectionIcon(title)) {
-                    let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!,
-                                                      processPool: pool,
-                                                      tabTitle: title, systemImage: "sparkles",
-                                                      hideWebHeader: true)
-                    vc.hidesBottomBarWhenPushed = false
-                    navRef.value?.pushViewController(vc, animated: true)
-                }
-            }
-            // Prefer the NATIVE screen (AlmaNativeRouter) when SwiftUI screens are on;
-            // fall back to the web tab exactly like webPushItem otherwise. Without this the
-            // assistive "Studio" tab always opened the web page even though the native
-            // Creative Studio ships in the build (owner report, build 62).
+            // native chat (pops any pushed web screen).
+            // IOSP-1: assistive-nav pushes route through the SAME coordinator as every
+            // other link (pushSmart → AlmaNavCoordinator) — native when migrated,
+            // allowlisted web with telemetry otherwise. Replaces this file's private
+            // router-consult copy so there is exactly one navigation decision point.
             func nativePushItem(_ title: String, _ path: String) -> AgentAssistiveNav.Item {
-                AgentAssistiveNav.Item(title: title, icon: Self.assistantSectionIcon(title)) {
-                    let pushWeb: (_ p: String, _ t: String) -> Void = { p, t in
-                        let vc = AlmaWebTabViewController(url: URL(string: Self.base + p)!,
-                                                          processPool: pool, tabTitle: t,
-                                                          systemImage: "sparkles", hideWebHeader: true)
-                        vc.hidesBottomBarWhenPushed = false
-                        navRef.value?.pushViewController(vc, animated: true)
-                    }
-                    if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *),
-                       let native = AlmaNativeRouter.screen(for: path, openWebForced: pushWeb) {
-                        native.hidesBottomBarWhenPushed = false
-                        navRef.value?.pushViewController(native, animated: true)
-                    } else {
-                        pushWeb(path, title)
-                    }
+                AgentAssistiveNav.Item(title: title, icon: Self.assistantSectionIcon(title)) { [weak self] in
+                    self?.pushSmart(on: navRef.value, path: path, title: title, icon: "sparkles")
                 }
             }
             let assistive = AgentAssistiveNav(items: [
