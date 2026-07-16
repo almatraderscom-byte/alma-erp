@@ -96,6 +96,12 @@ export type FamilyChainState = {
   extraPrompt?: string
   /** CS9 — owner opted into protected compositing (no face/garment regen) */
   protectedComposite?: boolean
+  /**
+   * Owner directive 2026-07-17: chain VTON steps run on the owner's chosen
+   * engine — 'fal_fashn_v16' (commercial Fal) or legacy direct 'fashn'.
+   * IDM never runs inside family chains (research-only, single-mode opt-in).
+   */
+  vtonEngine?: 'fashn' | 'fal_fashn_v16'
   conversationId?: string | null
 }
 
@@ -182,8 +188,31 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
   }
   const pajama = isPanjabiTop(state.garmentType) ? WHITE_PAJAMA_SHORT : ''
 
+  // Owner directive 2026-07-17: VTON steps honour the chosen engine. The Fal
+  // FASHN v1.6 payload rides the CS6 durable adapter (provider:'fal').
+  const useFalVton = state.vtonEngine === 'fal_fashn_v16'
+  const falVtonPayload = (personPath: string | undefined, garmentPath: string | undefined) => ({
+    ...base,
+    provider: 'fal',
+    falEngine: 'fal_fashn_v16',
+    falEndpointId: 'fal-ai/fashn/tryon/v1.6',
+    productImagePath: garmentPath,
+    modelImagePath: personPath,
+    clothType: isPanjabiTop(state.garmentType) ? 'overall' : undefined,
+    fashnCategory: 'one-pieces',
+    generationMode: state.generationMode,
+    aspectRatio: state.aspectRatio,
+  })
+
   switch (step) {
     case 'adult_tryon':
+      if (useFalVton) {
+        return {
+          payload: falVtonPayload(state.adultModelPath, state.productImagePath),
+          summary: chainSummary(state, step),
+          costEstimate: 0.075,
+        }
+      }
       return {
         payload: {
           ...base,
@@ -229,6 +258,13 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
     }
 
     case 'child_tryon':
+      if (useFalVton) {
+        return {
+          payload: falVtonPayload(state.childModelPath, state.childGarmentPath),
+          summary: chainSummary(state, step),
+          costEstimate: 0.075,
+        }
+      }
       return {
         payload: {
           ...base,
@@ -409,6 +445,8 @@ export type StartFamilyChainInput = {
   extraPrompt?: string
   /** CS9 — protected compositing: no face/garment regeneration in the merge */
   protectedComposite?: boolean
+  /** VTON engine for the chain's try-on steps ('fal_fashn_v16' = no direct-FASHN credits needed) */
+  vtonEngine?: 'fashn' | 'fal_fashn_v16'
   conversationId?: string | null
 }
 
@@ -442,6 +480,7 @@ async function startPairChain(opts: {
   generationMode: string
   extraPrompt?: string
   protectedComposite?: boolean
+  vtonEngine?: 'fashn' | 'fal_fashn_v16'
   conversationId?: string | null
 }): Promise<ChainJobRef> {
   const roles = VARIANT_ROLES[opts.variant]
@@ -477,6 +516,7 @@ async function startPairChain(opts: {
     stepIndex: 0,
     extraPrompt: opts.extraPrompt,
     protectedComposite: opts.protectedComposite,
+    vtonEngine: opts.vtonEngine,
     aspectRatio: opts.aspectRatio,
     resolution: opts.resolution,
     generationMode: opts.generationMode,
@@ -520,6 +560,7 @@ export async function startFamilyChain(input: StartFamilyChainInput): Promise<{
     generationMode: input.generationMode ?? 'quality',
     extraPrompt: input.extraPrompt,
     protectedComposite: input.protectedComposite,
+    vtonEngine: input.vtonEngine,
     conversationId: input.conversationId ?? null,
   }
 
@@ -545,6 +586,7 @@ export async function startSingleRescueChain(opts: {
   resolution?: string
   generationMode?: string
   extraPrompt?: string
+  vtonEngine?: 'fashn' | 'fal_fashn_v16'
   conversationId?: string | null
 }): Promise<ChainJobRef> {
   const picked = pickScene()
@@ -563,6 +605,7 @@ export async function startSingleRescueChain(opts: {
     plan: ['adult_tryon', 'rescene'],
     stepIndex: 0,
     extraPrompt: opts.extraPrompt,
+    vtonEngine: opts.vtonEngine,
     aspectRatio: opts.aspectRatio ?? '4:5',
     resolution: opts.resolution ?? '2k',
     generationMode: opts.generationMode ?? 'balanced',

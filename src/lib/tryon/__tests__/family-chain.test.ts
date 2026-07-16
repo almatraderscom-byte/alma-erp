@@ -379,3 +379,39 @@ describe('CS9 protected composite chain', () => {
     expect(chainState(lastAction()).plan).not.toContain('pair_composite')
   })
 })
+
+describe('owner directive 2026-07-17 — chain VTON on Fal', () => {
+  it('vtonEngine fal_fashn_v16 → tryon steps carry the CS6 fal adapter payload', async () => {
+    seedModels(['father', 'son'])
+    await startFamilyChain({
+      variant: 'father_son',
+      productImagePath: 'uploads/panjabi.jpg',
+      protectedComposite: true,
+      vtonEngine: 'fal_fashn_v16',
+    })
+    let row = lastAction()
+    // adult step = fal, not direct fashn
+    expect(row.payload.provider).toBe('fal')
+    expect(row.payload.falEngine).toBe('fal_fashn_v16')
+    expect(row.payload.modelImagePath).toBe('models/father.jpg')
+    expect(row.payload.productImagePath).toBe('uploads/panjabi.jpg')
+
+    let nextId = await completeStep(row, 'generated/adult.png')
+    row = actions.find((a) => a.id === nextId)!
+    // child garment step stays Gemini
+    expect(row.payload.provider).toBeUndefined()
+    nextId = await completeStep(row, 'generated/garment.png')
+    row = actions.find((a) => a.id === nextId)!
+    // child tryon = fal with the generated child garment
+    expect(row.payload.provider).toBe('fal')
+    expect(row.payload.productImagePath).toBe('generated/garment.png')
+    expect(row.payload.modelImagePath).toBe('models/son.jpg')
+  })
+
+  it('default (no vtonEngine) keeps legacy direct FASHN payloads', async () => {
+    seedModels(['father', 'son'])
+    await startFamilyChain({ variant: 'father_son', productImagePath: 'uploads/panjabi.jpg' })
+    expect(lastAction().payload.provider).toBe('fashn')
+    expect(lastAction().payload.fashnModel).toBe('tryon-max')
+  })
+})
