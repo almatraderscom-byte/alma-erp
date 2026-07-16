@@ -2,8 +2,10 @@
  * Meta Marketing API — read scope check + minimal write ops (Phase 10).
  */
 import { resilientFetch } from '@/agent/lib/fetch-retry'
+import { metaGraphBase } from '@/agent/lib/marketing/meta-version'
 
-const GRAPH_BASE = 'https://graph.facebook.com/v21.0'
+// Phase 45: version now lives in ONE place (meta-version.ts, env-overridable).
+const GRAPH_BASE = metaGraphBase()
 
 function adsToken(): string {
   const tok = process.env.META_ADS_TOKEN

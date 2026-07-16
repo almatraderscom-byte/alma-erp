@@ -10,6 +10,16 @@ import {
   formatRecommendationsSummary,
   recordRecommendationOutcomes,
 } from '@/agent/lib/ads/optimizer'
+import {
+  buildCampaignDiff,
+  campaignIdempotencyKey,
+  validateCampaignSpec,
+  SUPPORTED_OBJECTIVES,
+  KNOWN_UNSUPPORTED_OBJECTIVES,
+  type CampaignPlanSpec,
+} from '@/agent/lib/marketing/meta-campaign-graph'
+import { getApprovedBrief } from '@/agent/lib/marketing/growth-brief'
+import { capiHealth } from '@/agent/lib/marketing/meta-capi'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -471,6 +481,57 @@ const create_lookalike_audience: AgentTool = {
   },
 }
 
+const ads_campaign_plan: AgentTool = {
+  name: 'ads_campaign_plan',
+  description:
+    'Phase 45 pre-flight for a new campaign (READ-ONLY — creates nothing): validates the spec against the approved ' +
+    'growth-brief budget cap, supported objectives (' +
+    SUPPORTED_OBJECTIVES.join(', ') +
+    '; explicitly-unsupported: ' +
+    KNOWN_UNSUPPORTED_OBJECTIVES.join(', ') +
+    ' — no faked Ads Manager parity), UTM convention, and tracking QA (pixel/CAPI health). Returns errors/warnings, the ' +
+    'projected monthly spend, the owner-readable diff, and the idempotency key that guarantees a retry cannot create a ' +
+    'duplicate. Run this BEFORE launch_campaign; the launch itself still goes through its approval card and is created PAUSED.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      spec: {
+        type: 'object',
+        description:
+          'CampaignPlanSpec: {experimentId (required), objective ("messenger_cod"), name, dailyBudgetBdt, page, message, headline, imageUrl, ageMin, ageMax, audienceId, excludeAudienceId, utm}',
+      },
+    },
+    required: ['spec'],
+  },
+  handler: async (input) => {
+    try {
+      const spec = input.spec as unknown as CampaignPlanSpec
+      const [brief, capi] = await Promise.all([
+        getApprovedBrief('ALMA_LIFESTYLE').catch(() => null),
+        capiHealth().catch(() => null),
+      ])
+      spec.trackingQa = { pixelProven: Boolean(capi?.configured && (capi?.last7d.sent ?? 0) > 0), note: capi ? undefined : 'capi health unreadable' }
+      const validation = validateCampaignSpec(spec, {
+        monthlyBudgetCapBdt: brief?.brief.economics?.monthlyBudgetCapBdt ?? null,
+      })
+      return {
+        success: true,
+        data: {
+          validation,
+          diff: buildCampaignDiff(spec, validation),
+          idempotencyKey: campaignIdempotencyKey(spec),
+          briefVersion: brief?.version ?? null,
+          note: validation.ok
+            ? 'Spec valid — এবার launch_campaign দিয়ে approval card তুলুন (তৈরি হবে PAUSED)।'
+            : 'Spec আটকেছে — errors ঠিক করে আবার plan করুন।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
 export const ADS_TOOLS: AgentTool[] = [
   pause_campaign,
   update_campaign_budget,
@@ -480,6 +541,7 @@ export const ADS_TOOLS: AgentTool[] = [
   list_audiences,
   create_retargeting_audience,
   create_lookalike_audience,
+  ads_campaign_plan,
 ]
 
 export const ADS_ROLE_PROMPT = `
@@ -487,7 +549,7 @@ export const ADS_ROLE_PROMPT = `
 Read: recommend_ad_actions — ranked Bangla verdicts per campaign (scale/reduce/kill/duplicate/refresh_creative/hold). Never manual audience/bid micro-management.
 Write (confirm card ONLY): pause_campaign, update_campaign_budget (+20-30% max step), duplicate_campaign (PAUSED copy), launch_campaign (brand-new Messenger/CTWA campaign — campaign+ad set+creative+ad all created PAUSED on approval, ৳500/day soft cap shows a spend warning above threshold).
 Creative fatigue → refresh_creative → make_ad_creatives (File 10) with angleHint.
-Scaling a proven winner → duplicate_campaign (copy existing). Net-new offer/angle with no existing campaign → launch_campaign.
+Scaling a proven winner → duplicate_campaign (copy existing). Net-new offer/angle with no existing campaign → ads_campaign_plan (validate vs brief cap + UTM + tracking QA, get diff + idempotency) THEN launch_campaign.
 Low spend/impressions → hold. ROAS is directional for COD/Messenger — cross-check orders over time.
 
 ## RETARGETING + LOOKALIKE (audiences)

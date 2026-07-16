@@ -2,8 +2,10 @@
 
 import { resilientFetch } from '@/agent/lib/fetch-retry'
 import { agentStorageDownload } from '@/agent/lib/storage'
+import { metaGraphBase } from '@/agent/lib/marketing/meta-version'
 
-const GRAPH_BASE = 'https://graph.facebook.com/v21.0'
+// Phase 45: version now lives in ONE place (meta-version.ts, env-overridable).
+const GRAPH_BASE = metaGraphBase()
 
 function getPageToken(pageId: string): string | undefined {
   const tokens: Record<string, string | undefined> = {
