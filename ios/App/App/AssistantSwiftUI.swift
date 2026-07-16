@@ -3004,6 +3004,10 @@ final class AssistantVM {
         let runningStarted = iso.string(from: Date().addingTimeInterval(-28))
         let attentionStarted = iso.string(from: Date().addingTimeInterval(-190))
         let finishedAt = iso.string(from: Date().addingTimeInterval(-420))
+        heartbeatFeed = AgentHeartbeatFeed(
+            settings: .init(enabled: true, autoArm: true, dailyHeadWakeCap: 6, officeHoursOnly: false),
+            wakesToday: 1, entries: [],
+            nextCheckAt: ISO8601DateFormatter().string(from: Date().addingTimeInterval(5_400)))
         planDrive = AgentPlanDrivePanel(enabled: true, drives: [
             AgentPlanDriveView(
                 planId: "debug-running", goal: "Order ও courier audit", conversationId: "debug",
@@ -3346,13 +3350,20 @@ final class AssistantVM {
             // answer, so the agent responds to it knowingly — "বাতিল করলাম"
             // deserves a reply, not a shrug.
             if !approve {
-                let line = summary.isEmpty
-                    ? "এই কাজটা বাতিল করলাম।"
-                    : "\"\(summary.prefix(70))\" — এটা বাতিল করলাম।"
+                // The message must carry the GROUND TRUTH, not just the verdict
+                // (owner-hit 2026-07-17): "এটা বাতিল করলাম" alone read as a
+                // COMMAND to a weak head — it re-dismissed the already-rejected
+                // action and re-staged a fresh draft unprompted. State that the
+                // rejection already happened, forbid re-action, and say what a
+                // person would want next: understand why, then ask or recommend.
+                let what = summary.isEmpty ? "কাজটা" : "তোমার \"\(summary.prefix(60))\" draft-টা"
+                send("\(what) আমি reject করলাম — কার্ড থেকে already বাতিল হয়ে গেছে, "
+                    + "নতুন করে dismiss বা আবার stage/send কিছুই কোরো না। "
+                    + "এখন বুঝে নাও কেন পছন্দ হয়নি: আমাকে জিজ্ঞেস করো কী বদলাতে চাই, "
+                    + "অথবা নিজে থেকে better recommendation দাও।")
                 // send() owns the timeline from here (bubble + streaming tail) —
                 // running loadMessages() underneath it would rebuild the array
                 // mid-stream and clobber both. The reply lands via the stream.
-                send(line)
                 return
             }
         } catch {
@@ -7808,8 +7819,45 @@ private struct AgentBackgroundTasksSheet: View {
             LinearGradient(colors: [AlmaRayBurst.colors[1].opacity(0.08), AgentPalette.coral.opacity(0.05)],
                            startPoint: .topLeading, endPoint: .bottomTrailing),
             in: RoundedRectangle(cornerRadius: 19, style: .continuous))
+        .overlay {
+            if summarySheenActive {
+                TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: reduceMotion)) { timeline in
+                    GeometryReader { proxy in
+                        let duration = 2.4
+                        let phase = timeline.date.timeIntervalSinceReferenceDate
+                            .truncatingRemainder(dividingBy: duration) / duration
+                        let width = max(76, proxy.size.width * 0.34)
+                        LinearGradient(
+                            colors: [.clear, AlmaRayBurst.colors[1].opacity(0.08),
+                                     Color.white.opacity(0.12), .clear],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                        .frame(width: width, height: proxy.size.height)
+                        .offset(x: -width + (proxy.size.width + width) * phase)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
         .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous)
             .strokeBorder(AlmaRayBurst.colors[1].opacity(0.18), lineWidth: 1))
+    }
+
+    /// Sheen condition for the Background-execution card, exposed at the
+    /// builder level so the overlay (outside the countdown TimelineView) can
+    /// read it without recomputing per tick.
+    private var summarySheenActive: Bool {
+        let sleeping = runningItems.contains {
+            $0.phase == "driving" && isFutureWake($0.nextTickAt)
+        }
+        let wakeRunning = runningItems.contains { $0.phase == "self-wake" }
+            || (vm.isStreaming
+            && vm.messages.reversed().first(where: { $0.role == .user })?.isHeartbeatWake == true)
+        let wakeArmed = vm.heartbeatFeed?.settings.enabled == true
+            || vm.heartbeatFeed?.settings.autoArm == true
+        return sleeping || wakeRunning || wakeArmed
     }
 
     private func nextHeartbeatCheck(after now: Date) -> Date? {
