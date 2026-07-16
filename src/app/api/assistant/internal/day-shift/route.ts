@@ -47,6 +47,18 @@ export async function POST(req: NextRequest) {
       action === 'start' ? await startDayShift()
       : action === 'morning_brief' ? await sendMorningShiftBrief()
       : await tickDayShift()
+    // LG-9 slice 2: every day-shift decision lands on the day's duty thread
+    // (fail-open inside) — one call site covers start/tick/morning-brief.
+    const { mirrorDutyTick } = await import('@/agent/lib/graph/duty-run-graph')
+    const { todayYmdDhaka } = await import('@/lib/agent-api/dhaka-date')
+    const r = result as { ok?: boolean; detail?: string; conversationId?: string }
+    await mirrorDutyTick('day_shift', todayYmdDhaka(), {
+      decision: `${action}:${r.detail ?? 'ok'}`.slice(0, 80),
+      outcome: r.ok === false ? 'error' : 'active',
+      summary: r.detail ?? null,
+      costUsd: 0,
+      conversationId: r.conversationId ?? null,
+    })
     return NextResponse.json(result)
   } catch (err) {
     console.error('[internal/day-shift]', err)

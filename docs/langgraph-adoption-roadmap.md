@@ -86,6 +86,31 @@ preview: routine lookups answered via the graph at Σ~333 tokens / ~$0.000 vs
   future day-shift/watchdog duties); `getDutyRunDay` replays a day with
   wake + cost totals. Same `AGENT_LANGGRAPH_WORKFLOW` gate, fail-open.
   Remaining LG-9: other duty keys + an owner-facing "আজ কী করলে" reader.
+- **LG-9 slice 2 (SHIPPED 2026-07-16):** duties + plans complete the map.
+  Day-shift (start/tick/morning-brief outcomes) and watchdog verdicts
+  (healthy/alerted/staff_failures — healthy ticks checkpoint too) mirror to
+  `duty:day_shift:<ymd>` / `duty:watchdog:<ymd>`; every plan-driver drive
+  tick (step-done/failed/blocked-approval/plan-done/escalations + cost)
+  checkpoints onto `plan:<planId>` (`plan-run-graph.ts`). New owner-facing
+  tool `get_duty_day` ("আজ নিজে থেকে কী করলে") replays a day's autonomous
+  ticks across all three duty keys — wired into prompt/capability/router.
+  Coverage audit: approval-card lifecycle already lands on WorkflowRun
+  transitions (mirrored since slice 2), so actions need no separate mirror.
+- **Graph health (SHIPPED 2026-07-16, same PR):** `graph-health.ts` reads the
+  route spans production already writes — routine handled share, action
+  stagings, LG-4 shadow agree rate per kind — and issues the machine-checked
+  canary verdict (READY at ≥200 scored @ ≥98% agree). Checkpoint-store size
+  by thread family on the same reader. Owner tool `get_graph_health`; the
+  internal health endpoint carries a fail-open graph block. LG-4 canary
+  flips when the tool says READY — not before.
+- **LG-10 (DECIDED 2026-07-16):** stay self-hosted. Vercel + Supabase
+  Postgres checkpointer + VPS worker serve every shipped slice; none of the
+  three revisit triggers has fired (checkpoint scale is monitored by
+  `get_graph_health` + the 14-day cleanup cron; VPS cron/queues suffice; the
+  app runs single-instance per region). LangGraph Platform brings a second
+  vendor, data egress and per-node pricing for capabilities already covered.
+  Revisit ONLY if a trigger fires — the health tool now measures the first
+  one continuously.
 - **LG-7 (SHIPPED 2026-07-16, PR #393):** `AlmaMemoryStore` BaseStore adapter
   over the existing pgvector `agent_memory` (search delegates to the head's
   own ranking; delete refused — owner-curated). Gate `AGENT_LANGGRAPH_STORE`.
