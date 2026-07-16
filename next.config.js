@@ -17,6 +17,9 @@ const nextConfig = {
       '/api/assistant/brand-models': ['./public/fonts/**'],
       '/api/assistant/brand-models/tryon': ['./public/fonts/**'],
       '/api/assistant/internal/ad-creative-gate': ['./public/fonts/**'],
+      // Client-report PDF (2026-07-16): server-side react-pdf render reads the
+      // Bangla TTFs from disk — trace them into this function too.
+      '/api/assistant/artifacts/[id]/pdf': ['./public/fonts/**'],
     },
   },
   images: {

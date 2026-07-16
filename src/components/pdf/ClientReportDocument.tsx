@@ -1,10 +1,13 @@
-'use client'
 /**
  * Client-report PDF — the agent's markdown artifacts exported as a DESIGNED
  * A4 document (owner ask 2026-07-16: client deliverables must be a polished
  * PDF, না markdown dump). Rides the existing Aura design system (coral accent,
  * same header/table language as invoices & salary slips) so every ALMA
  * document a client sees looks like one family.
+ *
+ * Deliberately NO 'use client' directive: the SERVER route renders this with
+ * renderToBuffer (a long Bangla report froze the browser main thread for
+ * minutes — 2026-07-16 incident; heavy shaping belongs on the server).
  */
 import React from 'react'
 import { Document, Page, Text, View } from '@react-pdf/renderer'
@@ -29,6 +32,8 @@ export interface ClientReportModel {
   blocks: MarkdownBlock[]
   companyName?: string
   tagline?: string
+  /** Server render passes the family it registered; client falls back to fonts.ts state. */
+  fontFamily?: string
 }
 
 function Spans({ spans, size, color }: { spans: InlineSpan[]; size: number; color: string }) {
@@ -132,7 +137,7 @@ function Blocks({ p, blocks }: { p: AuraPalette; blocks: MarkdownBlock[] }) {
 
 export function ClientReportDocument({ model }: { model: ClientReportModel }) {
   const p = auraPalette('light')
-  const fontFamily = getPdfFontFamily()
+  const fontFamily = model.fontFamily ?? getPdfFontFamily()
   return (
     <Document title={model.title} author={model.companyName ?? 'ALMA Digital'}>
       <Page
