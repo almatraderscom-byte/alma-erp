@@ -1,5 +1,10 @@
 {
   "regions": ["hnd1"],
+  "git": {
+    "deploymentEnabled": {
+      "claude/agent-roadmap-marketing-phases-161d84": false
+    }
+  },
   "functions": {
     "src/app/api/assistant/chat/route.ts": {
       "maxDuration": 300
