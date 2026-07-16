@@ -57,6 +57,13 @@ preview: routine lookups answered via the graph at Σ~333 tokens / ~$0.000 vs
   mirrored into a durable graph thread (`wfrun:<runId>`), same reducer = one
   truth, DRIFT logging; `getSeoBatchGraphHistory` replay reader. Gate
   `AGENT_LANGGRAPH_WORKFLOW`. Next slices: content pipeline, browser recipes.
+- **LG-6 slice 2 (SHIPPED 2026-07-16):** EVERY template workflow run (content
+  pipeline `product_post` first consumer, plus `ad_campaign`, …) mirrored from
+  the canonical `transitionWorkflowRun` choke point into thread
+  `wfstep:<runId>` (`workflow-run-graph.ts`); each transition re-checked
+  against the template step map — off-map jumps recorded `legal:false` (drift
+  signal, never blocking); `get_workflow_history` now replays template runs
+  too. Same gate `AGENT_LANGGRAPH_WORKFLOW`. Remaining slice: browser recipes.
 - **LG-7 (SHIPPED 2026-07-16, PR #393):** `AlmaMemoryStore` BaseStore adapter
   over the existing pgvector `agent_memory` (search delegates to the head's
   own ranking; delete refused — owner-curated). Gate `AGENT_LANGGRAPH_STORE`.
