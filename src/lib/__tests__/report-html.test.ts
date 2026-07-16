@@ -9,10 +9,23 @@
  */
 import { describe, it, expect } from 'vitest'
 import { existsSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { buildReportHtml } from '@/lib/pdf/report-html'
+
+// Same shape the route builds from disk — data: URIs, never HTTP (preview
+// deployments sit behind Vercel SSO; headless Chromium can't fetch /fonts).
+async function loadFonts() {
+  const dir = path.join(process.cwd(), 'public', 'fonts')
+  const toDataUri = async (f: string) =>
+    `data:font/ttf;base64,${(await readFile(path.join(dir, f))).toString('base64')}`
+  return {
+    regular: await toDataUri('NotoSansBengali-Regular.ttf'),
+    semiBold: await toDataUri('NotoSansBengali-SemiBold.ttf'),
+    bold: await toDataUri('NotoSansBengali-Bold.ttf'),
+  }
+}
 
 const MD = [
   '# ক্লায়েন্ট সাইট অডিট রিপোর্ট',
@@ -44,11 +57,11 @@ const MD = [
 ].join('\n')
 
 describe('buildReportHtml', () => {
-  it('lifts H1 → title, প্রস্তুত-line → header meta, renders tables/lists, escapes HTML', () => {
+  it('lifts H1 → title, প্রস্তুত-line → header meta, renders tables/lists, escapes HTML', async () => {
     const { html, title } = buildReportHtml({
       markdown: MD + '\n\n<script>alert(1)</script>',
       fallbackTitle: 'x.md',
-      origin: 'https://example.com',
+      fonts: await loadFonts(),
     })
     expect(title).toBe('ক্লায়েন্ট সাইট অডিট রিপোর্ট')
     expect(html).toContain('প্রস্তুত: ALMA Digital · ১৬ জুলাই ২০২৬')
@@ -56,7 +69,7 @@ describe('buildReportHtml', () => {
     expect(html).toContain('<ol>')
     expect(html).not.toContain('<script>alert')
     expect(html).toContain('&lt;script&gt;')
-    expect(html).toContain("url('https://example.com/fonts/NotoSansBengali-Regular.ttf')")
+    expect(html).toContain("url('data:font/ttf;base64,")
   })
 })
 
@@ -69,9 +82,7 @@ const LOCAL_CHROME = [
 describe.skipIf(!LOCAL_CHROME)('local Chromium print smoke (production pipeline)', () => {
   it('prints the Bangla report to a real multi-KB PDF', async () => {
     const puppeteer = (await import('puppeteer-core')).default
-    // Local run: fonts from disk via file:// so no server is needed.
-    const fontsOrigin = `file://${path.join(process.cwd(), 'public')}`
-    const { html } = buildReportHtml({ markdown: MD, fallbackTitle: 'x', origin: fontsOrigin })
+    const { html } = buildReportHtml({ markdown: MD, fallbackTitle: 'x', fonts: await loadFonts() })
     const browser = await puppeteer.launch({ executablePath: LOCAL_CHROME!, headless: true })
     try {
       const page = await browser.newPage()

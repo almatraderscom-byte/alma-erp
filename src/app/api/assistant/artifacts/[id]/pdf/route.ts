@@ -16,6 +16,8 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
@@ -23,6 +25,25 @@ import { buildReportHtml } from '@/lib/pdf/report-html'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
+
+/**
+ * Bangla fonts as data: URIs, read from the traced public/fonts files
+ * (outputFileTracingIncludes). The headless browser must NOT fetch fonts over
+ * HTTP: preview deployments sit behind Vercel SSO, which serves it a login
+ * page instead of the TTF — the PDF then comes out with every Bangla glyph
+ * blank (found live 2026-07-16).
+ */
+async function fontFaceSrcFromDisk() {
+  const dir = path.join(process.cwd(), 'public', 'fonts')
+  const toDataUri = async (file: string) =>
+    `data:font/ttf;base64,${(await readFile(path.join(dir, file))).toString('base64')}`
+  const [regular, semiBold, bold] = await Promise.all([
+    toDataUri('NotoSansBengali-Regular.ttf'),
+    toDataUri('NotoSansBengali-SemiBold.ttf'),
+    toDataUri('NotoSansBengali-Bold.ttf'),
+  ])
+  return { regular, semiBold, bold }
+}
 
 /** Local dev fallbacks — @sparticuz/chromium only ships lambda binaries. */
 const LOCAL_CHROME_PATHS = [
@@ -107,17 +128,16 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
   try {
-    const origin = req.nextUrl.origin
     const { html, title } = buildReportHtml({
       markdown: artifact.content,
       fallbackTitle: artifact.title ?? 'Report',
-      origin,
+      fonts: await fontFaceSrcFromDisk(),
     })
 
     browser = await launchBrowser()
     const page = await browser.newPage()
-    // Fonts load from /fonts on this same deployment — wait for them so the
-    // first page isn't measured with a fallback face.
+    // Fonts are inlined as data: URIs — the ready-wait just guarantees the
+    // faces are parsed before layout is measured.
     await page.setContent(html, { waitUntil: 'load', timeout: 60_000 })
     await page.evaluateHandle('document.fonts.ready')
     const pdf = await page.pdf({
