@@ -38,11 +38,21 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // NotificationCenter observer because it provably fires in this app,
         // while the AppDelegate method path was found NOT to (see the
         // alma.diag.didBecomeActiveMethod marker in applicationDidBecomeActive).
-        if #available(iOS 16.1, *) {
-            NotificationCenter.default.addObserver(
-                forName: UIApplication.didBecomeActiveNotification,
-                object: nil, queue: .main
-            ) { _ in
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { _ in
+            // Badge reset moved from applicationDidBecomeActive(_:) — that
+            // method never fired on cold launch here, so the reset had been
+            // silently dead: server pushes use ios_badgeType "Increase"
+            // (src/lib/notifications.ts), so without this the icon count only
+            // ever grows. Notification Center items are untouched.
+            if #available(iOS 16.0, *) {
+                UNUserNotificationCenter.current().setBadgeCount(0)
+            } else {
+                UIApplication.shared.applicationIconBadgeNumber = 0
+            }
+            if #available(iOS 16.1, *) {
                 PulseRestore.reconcile()
                 PulseRestore.restartFromCache()
             }
@@ -110,31 +120,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Called as part of the transition from the background to the active state; here you can undo many of the changes made on entering the background.
     }
 
-    func applicationDidBecomeActive(_ application: UIApplication) {
-        // Clear the app-icon badge on every open: server pushes use
-        // ios_badgeType "Increase" (src/lib/notifications.ts), so without a reset
-        // the count only ever grows. Notification Center items are untouched.
-        if #available(iOS 16.0, *) {
-            UNUserNotificationCenter.current().setBadgeCount(0)
-        } else {
-            application.applicationIconBadgeNumber = 0
-        }
-
-        // Dynamic Panel reconciliation (spec §14): ActivityKit can leave more
-        // than one Pulse activity alive if the app was killed mid-request, and
-        // two panels for one workspace is always wrong. Silent + no-op when
-        // there is nothing to fix; the survivor is refreshed by the web layer's
-        // next syncLivePulse() with authoritative server data.
-        if #available(iOS 16.1, *) {
-            // Diagnostic (2026-07-16): PulseRestore breadcrumbs showed this
-            // delegate method may not run in this app — the panel work moved to
-            // the guaranteed didBecomeActiveNotification observer in
-            // didFinishLaunching. This marker settles whether the badge reset
-            // above has been running at all.
-            UserDefaults.standard.set(Int(Date().timeIntervalSince1970),
-                                      forKey: "alma.diag.didBecomeActiveMethod")
-        }
-    }
+    // applicationDidBecomeActive(_:) was REMOVED on purpose (2026-07-16): the
+    // method was observed not to fire on cold launch in this app (proven by a
+    // UserDefaults marker that stayed empty while the equivalent
+    // NotificationCenter observer ran) — so the badge reset that lived here
+    // silently never worked. All did-become-active work now runs in the
+    // didBecomeActiveNotification observer registered in didFinishLaunching.
+    // Do not re-add lifecycle work here.
 
     func applicationWillTerminate(_ application: UIApplication) {
         // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
