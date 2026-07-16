@@ -215,7 +215,7 @@ Cost facts to surface in the UI, not hard-code without a model-price configurati
 
 | Phase | Branch | Purpose | Initial status |
 |---|---|---|---|
-| CS5 | `agent-phase-cs5` | Fal foundation, provider registry, flags, durable client | TODO |
+| CS5 | `agent-phase-cs5` | Fal foundation, provider registry, flags, durable client | READY FOR OWNER |
 | CS6 | `agent-phase-cs6` | Selectable IDM-VTON and Fal FASHN single try-on | TODO |
 | CS7 | `agent-phase-cs7` | FLUX Fill precision editor and mask workflow | TODO |
 | CS8 | `agent-phase-cs8` | Professional single/product pipeline and localized repair | TODO |
@@ -278,6 +278,21 @@ The roadmap file itself is allowed in every phase only for updating that phase's
 - No secret reaches the browser bundle.
 - Typecheck, targeted tests, build, diff-scope check, Vercel preview, and Chrome screenshot pass.
 - Update CS5 status to `READY FOR OWNER` and stop. Do not begin CS6.
+
+### CS5 verification notes (2026-07-16, branch `agent-phase-cs5`, tag `pre-agent-phase-cs5` from main `bb04b6c1`)
+
+**Status: READY FOR OWNER**
+
+- Provider registry (`src/lib/creative-studio/provider-registry.ts`): identity/capability/commercial metadata for fashn, gemini, fal_fashn_v16 (commercial), fal_idm_vton (research_only + Bangla warning), fal_flux_fill; legacy fashn/gemini mapping; Fal endpoint allowlist (exactly cat-vton, fashn/tryon/v1.6, flux-pro/v1/fill); single-VTON default validation. 15 vitest tests PASS.
+- Durable Fal queue client (`worker/src/fal/client.mjs` + `fingerprint.mjs`): submit persists request_id to `agent_kv_settings` (`fal_request:<pendingActionId>`) BEFORE polling; restart with same fingerprint resumes the same paid request (proved: zero POSTs on resume path); result-download failure keeps state (retrieval retry, no re-pay); only transient (408/429/5xx/network) poll errors retried, bounded; Fal-side FAILED clears state. 9 node:test tests PASS (`node --test worker/src/fal/__tests__/`). No worker package.json change.
+- Owner flags via kv, all default OFF: `cs_fal_enabled`, `cs_idm_vton_enabled`, `cs_flux_fill_enabled`, `cs_single_vton_default` (default `fashn`, allowlist-validated, 422 on injection). Settings UI section "Fal ইঞ্জিন" added under লাইব্রেরি → স্টুডিও সেটিংস; nothing new is runnable in the Run tab — existing defaults unchanged.
+- Config route exposes truthful availability (`falConfigured` + per-engine configured/enabled/runnable); missing FAL_KEY = clear state, no crash.
+- Family label honesty: multi-person family Run button now reads "Run — FASHN + Gemini চেইন" with hint "প্রতি জনের FASHN try-on, তারপর Gemini দিয়ে এক ফ্রেমে merge" (was claiming plain Gemini).
+- `FAL_KEY=` placeholder documented in `.env.example`; fal list-price helpers in `worker/src/cost-log.mjs` (FASHN v1.6 $0.075/gen flat; FLUX Fill $0.05/MP round-up).
+- Checks: `npm run type-check` PASS; `npm run build` PASS; targeted vitest (creative-studio + tryon) 62/62 PASS; diff scope = allowed files only; no secrets.
+- Browser proof (owner's Chrome, Vercel preview `alma-erp-git-agent-phase-cs5-maruf-s-projects2.vercel.app`, owner logged in): Settings shows Fal section with "FAL_KEY আছে" badge, research-only badge on IDM-VTON; toggle round-trip verified (IDM on → reload persists → back off); config API returned engines with enabled:false/runnable:false for all Fal entries and familyChainLabelBn; family Run button screenshot captured showing the honest chain label.
+- No paid Fal generation exercised in CS5 (foundation only — engines intentionally not runnable). API cost this phase: $0.
+- Ambiguity noted: repo has no `AGENTS.md` (roadmap §3 references it); `CLAUDE.md` was followed as the binding repo rules.
 
 ---
 
