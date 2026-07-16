@@ -1,5 +1,10 @@
 {
   "regions": ["hnd1"],
+  "git": {
+    "deploymentEnabled": {
+      "claude/agent-roadmap-phases-2a10b1": false
+    }
+  },
   "functions": {
     "src/app/api/assistant/chat/route.ts": {
       "maxDuration": 300
