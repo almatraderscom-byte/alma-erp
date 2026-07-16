@@ -30,6 +30,24 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             CallKitVoIP.shared.start()
         }
 
+        // Dynamic Panel lifecycle (spec §14) — on every activation: reconcile
+        // duplicate activities, then restore the panel from the plugin's cache
+        // if nothing is live (survives app restarts; the web sync is throttled
+        // to 5 min and webview-dependent, so without this the lock screen sat
+        // empty after a relaunch — owner-hit 2026-07-16). Registered as a
+        // NotificationCenter observer because it provably fires in this app,
+        // while the AppDelegate method path was found NOT to (see the
+        // alma.diag.didBecomeActiveMethod marker in applicationDidBecomeActive).
+        if #available(iOS 16.1, *) {
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification,
+                object: nil, queue: .main
+            ) { _ in
+                PulseRestore.reconcile()
+                PulseRestore.restartFromCache()
+            }
+        }
+
         // PHASE S1: wrap the app in a native tab bar. The storyboard already created
         // the Capacitor bridge VC as the window root; we REUSE that same instance as
         // tab 0 so Capacitor keeps running (push / Live Pulse / reminders / on-device
@@ -108,7 +126,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // there is nothing to fix; the survivor is refreshed by the web layer's
         // next syncLivePulse() with authoritative server data.
         if #available(iOS 16.1, *) {
-            PulseRestore.reconcile()
+            // Diagnostic (2026-07-16): PulseRestore breadcrumbs showed this
+            // delegate method may not run in this app — the panel work moved to
+            // the guaranteed didBecomeActiveNotification observer in
+            // didFinishLaunching. This marker settles whether the badge reset
+            // above has been running at all.
+            UserDefaults.standard.set(Int(Date().timeIntervalSince1970),
+                                      forKey: "alma.diag.didBecomeActiveMethod")
         }
     }
 

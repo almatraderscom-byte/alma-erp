@@ -32,37 +32,60 @@ enum PulseRestore {
 
     /// Re-request the Pulse Live Activity from the cached last state, if it is
     /// safe and sensible to do so. Silent no-op otherwise.
+    /// Restore-outcome breadcrumb (UserDefaults, no PII) — the restore path is
+    /// deliberately silent, and this is its one observable trace (same pattern
+    /// as the plugin's `alma.pulse.lastResult`).
+    private static let lastRestoreKey = "alma.pulse.lastRestore"
+    private static func note(_ reason: String) {
+        UserDefaults.standard.set(
+            "\(reason) @\(Int(Date().timeIntervalSince1970))", forKey: lastRestoreKey)
+    }
+
     @available(iOS 16.1, *)
     static func restartFromCache() {
         #if canImport(ActivityKit)
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            note("activities_disabled"); return
+        }
 
         // Never fight an existing activity: skip if Pulse is already live, or
         // if a voice session still owns the island.
-        guard Activity<PulseActivityAttributes>.activities.isEmpty else { return }
+        guard Activity<PulseActivityAttributes>.activities.isEmpty else {
+            note("already_live"); return
+        }
         if #available(iOS 17.0, *) {
-            guard Activity<AlmaVoiceActivityAttributes>.activities.isEmpty else { return }
+            guard Activity<AlmaVoiceActivityAttributes>.activities.isEmpty else {
+                note("voice_active"); return
+            }
         }
 
-        guard let cached = readCache() else { return }
+        guard let cached = readCache() else { note("no_fresh_cache"); return }
+
+        // A stale-by-now cache still restores (the panel honestly renders its
+        // stale state), but never hand ActivityKit a PAST staleDate — some OS
+        // versions reject it at request time.
+        let staleDate = cached.state.staleAfterDate.flatMap { $0 > Date() ? $0 : nil }
 
         let attributes = PulseActivityAttributes(title: cached.title)
-        let activity: Activity<PulseActivityAttributes>?
-        if #available(iOS 16.2, *) {
-            activity = try? Activity.request(
-                attributes: attributes,
-                content: ActivityContent(state: cached.state, staleDate: cached.state.staleAfterDate),
-                pushType: .token
-            )
-        } else {
-            activity = try? Activity.request(
-                attributes: attributes,
-                contentState: cached.state,
-                pushType: .token
-            )
-        }
-        if let activity {
+        do {
+            let activity: Activity<PulseActivityAttributes>
+            if #available(iOS 16.2, *) {
+                activity = try Activity.request(
+                    attributes: attributes,
+                    content: ActivityContent(state: cached.state, staleDate: staleDate),
+                    pushType: .token
+                )
+            } else {
+                activity = try Activity.request(
+                    attributes: attributes,
+                    contentState: cached.state,
+                    pushType: .token
+                )
+            }
             LiveActivityBridgePlugin.observePushToken(of: activity)
+            note("restored")
+        } catch {
+            note("request_failed: \(error.localizedDescription)")
         }
         #endif
     }
