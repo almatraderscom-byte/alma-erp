@@ -1,4 +1,5 @@
 import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creative-studio/constants'
+import type { EngineAvailability, StudioEngineId } from '@/lib/creative-studio/provider-registry'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 import type { LifestyleLayoutOverrides } from '@/lib/content-engine/lifestyle-layout'
 
@@ -6,6 +7,14 @@ export type StudioConfig = {
   fashnConfigured: boolean
   geminiConfigured: boolean
   veoConfigured: boolean
+  /** CS5 — FAL_KEY present on the server (foundation; engines runnable from CS6/CS7) */
+  falConfigured: boolean
+  /** CS5 — registry availability snapshot (identity/status/flags, truthful when key missing) */
+  engines: EngineAvailability[]
+  /** CS5 — owner default for single-person Try-On (used from CS6) */
+  singleVtonDefault: StudioEngineId
+  /** honest label for multi-person family renders (FASHN + Gemini chain) */
+  familyChainLabelBn: string
   organization: string
 }
 
@@ -501,6 +510,11 @@ export type StudioSettings = {
   imageEngine: 'gemini' | 'gpt' | 'seedream'
   sceneWeights: Record<string, number>
   childGarments: Array<{ key: string; role: string; productPath: string; garmentPath: string; url: string | null }>
+  /** CS5 — Fal foundation flags (default OFF; engines runnable from CS6/CS7) */
+  falEnabled: boolean
+  idmVtonEnabled: boolean
+  fluxFillEnabled: boolean
+  singleVtonDefault: StudioEngineId
 }
 
 export async function fetchStudioSettings(): Promise<StudioSettings> {
@@ -509,7 +523,15 @@ export async function fetchStudioSettings(): Promise<StudioSettings> {
   return res.json()
 }
 
-export async function saveStudioSettings(patch: { qcLevel?: string; notifyOnDone?: boolean; imageEngine?: 'gemini' | 'gpt' | 'seedream' }) {
+export async function saveStudioSettings(patch: {
+  qcLevel?: string
+  notifyOnDone?: boolean
+  imageEngine?: 'gemini' | 'gpt' | 'seedream'
+  falEnabled?: boolean
+  idmVtonEnabled?: boolean
+  fluxFillEnabled?: boolean
+  singleVtonDefault?: StudioEngineId
+}) {
   const res = await fetch('/api/assistant/creative-studio/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

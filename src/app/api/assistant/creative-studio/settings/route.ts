@@ -8,6 +8,15 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { readKv, writeKv, QC_LEVEL_KEY, NOTIFY_KEY, readSceneWeights } from '@/lib/creative-studio/taste'
+import {
+  CS_FAL_ENABLED_KEY,
+  CS_FLUX_FILL_ENABLED_KEY,
+  CS_IDM_VTON_ENABLED_KEY,
+  CS_SINGLE_VTON_DEFAULT_KEY,
+  SINGLE_VTON_ENGINE_IDS,
+  normalizeSingleVtonDefault,
+  type StudioEngineId,
+} from '@/lib/creative-studio/provider-registry'
 import { agentStorageSignedUrls } from '@/agent/lib/storage'
 
 export const runtime = 'nodejs'
@@ -30,12 +39,16 @@ export async function GET(req: NextRequest) {
   const denied = await auth(req)
   if (denied) return denied
 
-  const [qcLevel, notify, weights, garmentRows, imageModels] = await Promise.all([
+  const [qcLevel, notify, weights, garmentRows, imageModels, falEnabled, idmEnabled, fillEnabled, vtonDefault] = await Promise.all([
     readKv(QC_LEVEL_KEY),
     readKv(NOTIFY_KEY),
     readSceneWeights(),
     db.agentKvSetting.findMany({ where: { key: { startsWith: GARMENT_PREFIX } } }),
     readKv('cs_image_models'),
+    readKv(CS_FAL_ENABLED_KEY),
+    readKv(CS_IDM_VTON_ENABLED_KEY),
+    readKv(CS_FLUX_FILL_ENABLED_KEY),
+    readKv(CS_SINGLE_VTON_DEFAULT_KEY),
   ])
 
   // Image engine — which model family the worker's Gemini-path renders use.
@@ -62,13 +75,26 @@ export async function GET(req: NextRequest) {
     imageEngine,
     sceneWeights: weights,
     childGarments: garments.map((g) => ({ ...g, url: signed[g.garmentPath] ?? null })),
+    // CS5 — Fal foundation flags (all default OFF; engines go runnable in CS6/CS7)
+    falEnabled: falEnabled === '1',
+    idmVtonEnabled: idmEnabled === '1',
+    fluxFillEnabled: fillEnabled === '1',
+    singleVtonDefault: normalizeSingleVtonDefault(vtonDefault),
   })
 }
 
 export async function POST(req: NextRequest) {
   const denied = await auth(req)
   if (denied) return denied
-  let body: { qcLevel?: string; notifyOnDone?: boolean; imageEngine?: string }
+  let body: {
+    qcLevel?: string
+    notifyOnDone?: boolean
+    imageEngine?: string
+    falEnabled?: boolean
+    idmVtonEnabled?: boolean
+    fluxFillEnabled?: boolean
+    singleVtonDefault?: string
+  }
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
 
   if (body.qcLevel && ['off', 'normal', 'strict'].includes(body.qcLevel)) {
@@ -89,6 +115,24 @@ export async function POST(req: NextRequest) {
     await writeKv('cs_image_models', JSON.stringify({ standard: 'seedream-5.0-pro', pro: 'seedream-5.0-pro' }))
   } else if (body.imageEngine === 'gemini') {
     await db.agentKvSetting.deleteMany({ where: { key: 'cs_image_models' } })
+  }
+  // CS5 — Fal foundation flags. Owner-tunable, no redeploy. These only gate
+  // AVAILABILITY metadata in CS5; nothing becomes runnable before CS6/CS7.
+  if (typeof body.falEnabled === 'boolean') {
+    await writeKv(CS_FAL_ENABLED_KEY, body.falEnabled ? '1' : '0')
+  }
+  if (typeof body.idmVtonEnabled === 'boolean') {
+    await writeKv(CS_IDM_VTON_ENABLED_KEY, body.idmVtonEnabled ? '1' : '0')
+  }
+  if (typeof body.fluxFillEnabled === 'boolean') {
+    await writeKv(CS_FLUX_FILL_ENABLED_KEY, body.fluxFillEnabled ? '1' : '0')
+  }
+  if (typeof body.singleVtonDefault === 'string') {
+    // Reject anything outside the single-person VTON allowlist (no injection).
+    if (!SINGLE_VTON_ENGINE_IDS.includes(body.singleVtonDefault as StudioEngineId)) {
+      return Response.json({ error: 'invalid_vton_default' }, { status: 422 })
+    }
+    await writeKv(CS_SINGLE_VTON_DEFAULT_KEY, body.singleVtonDefault)
   }
   return Response.json({ ok: true })
 }

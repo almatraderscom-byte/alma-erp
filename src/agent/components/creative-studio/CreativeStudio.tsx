@@ -18,6 +18,7 @@ import {
   type StudioProvider,
   type FamilyPresetId,
 } from '@/lib/creative-studio/constants'
+import { FAMILY_CHAIN_LABEL_BN, type StudioEngineId } from '@/lib/creative-studio/provider-registry'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 import {
   VIDEO_RECIPES,
@@ -1230,12 +1231,15 @@ function StudioWorkspace({
                   Generating…
                 </>
               ) : (
-                <>Run — {effectiveProvider === 'fashn' ? 'FASHN Pro' : 'Gemini'}</>
+                // CS5: multi-person family actually runs the accuracy chain
+                // (per-person FASHN try-on → Gemini merge) — label it honestly
+                // instead of claiming the whole job is Gemini.
+                <>Run — {isMultiPersonFamily ? FAMILY_CHAIN_LABEL_BN : effectiveProvider === 'fashn' ? 'FASHN Pro' : 'Gemini'}</>
               )}
             </motion.button>
             <p className="mt-1.5 text-center text-[10px] text-muted">
-              {isMultiPersonFamily && provider === 'fashn'
-                ? 'একাধিক মানুষ — FASHN পারে না, Gemini দিয়ে হবে'
+              {isMultiPersonFamily
+                ? 'ফ্যামিলি ছবি: প্রতি জনের FASHN try-on, তারপর Gemini দিয়ে এক ফ্রেমে merge'
                 : 'No LLM cost — direct render queue'}
             </p>
           </div>
@@ -2582,10 +2586,17 @@ function ModelCreatorCard({ models, onQueued }: { models: Array<{ role: string |
 /** CS4 — QC level + Telegram done-ping + child-garment cache management. */
 function StudioSettingsCard() {
   const [settings, setSettings] = useState<StudioSettings | null>(null)
+  const [config, setConfig] = useState<StudioConfig | null>(null)
   useEffect(() => {
     void fetchStudioSettings().then(setSettings).catch(() => {})
+    void fetchStudioConfig().then(setConfig).catch(() => {})
   }, [])
   if (!settings) return null
+
+  const saveFalFlag = (patch: Partial<Pick<StudioSettings, 'falEnabled' | 'idmVtonEnabled' | 'fluxFillEnabled'>> & { singleVtonDefault?: StudioEngineId }) => {
+    setSettings({ ...settings, ...patch })
+    void saveStudioSettings(patch).then(() => toast.success('সেভ হয়েছে')).catch(() => toast.error('হয়নি'))
+  }
   return (
     <div className="mt-3 space-y-2.5 st-card p-3">
       <p className="text-[12px] font-bold text-cream">⚙️ স্টুডিও সেটিংস</p>
@@ -2634,6 +2645,69 @@ function StudioSettingsCard() {
           className="h-4 w-4 accent-[#E07A5F]"
         />
       </label>
+
+      {/* CS5 — Fal engine foundation: owner flags only. Engines become runnable
+          in CS6 (try-on) / CS7 (FLUX Fill); flipping these today changes nothing
+          in the Run tab, so the current defaults stay exactly as they were. */}
+      <div className="border-t border-border-subtle pt-2.5">
+        <div className="flex items-center justify-between">
+          <p className="text-[12px] font-bold text-cream">🧪 Fal ইঞ্জিন (নতুন — সামনের ফেজে চালু)</p>
+          {config && (
+            <span
+              className={cn(
+                'rounded-full px-2 py-0.5 text-[9px] font-semibold',
+                config.falConfigured ? 'bg-[#81B29A]/15 text-[#2d6a4f]' : 'bg-amber-100 text-amber-800',
+              )}
+            >
+              {config.falConfigured ? 'FAL_KEY আছে' : 'FAL_KEY নেই'}
+            </span>
+          )}
+        </div>
+        <p className="mb-2 mt-0.5 text-[10px] text-muted">
+          এখন শুধু প্রস্তুতি — Try-On ইঞ্জিন বাছাই (CS6) ও মাস্ক-এডিট (CS7) এলে এগুলো কাজে লাগবে। আজকের রেন্ডার আগের মতোই চলবে।
+        </p>
+        <label className="flex items-center justify-between gap-2 py-1">
+          <span className="text-[11px] text-muted">Fal ইঞ্জিন চালু (FASHN v1.6 · কমার্শিয়াল)</span>
+          <input
+            type="checkbox"
+            checked={settings.falEnabled}
+            onChange={(e) => saveFalFlag({ falEnabled: e.target.checked })}
+            className="h-4 w-4 accent-[#E07A5F]"
+          />
+        </label>
+        <label className="flex items-center justify-between gap-2 py-1">
+          <span className="text-[11px] text-muted">
+            IDM-VTON <span className="rounded bg-amber-100 px-1 py-px text-[9px] font-bold text-amber-800">পরীক্ষামূলক · research-only</span>
+          </span>
+          <input
+            type="checkbox"
+            checked={settings.idmVtonEnabled}
+            onChange={(e) => saveFalFlag({ idmVtonEnabled: e.target.checked })}
+            className="h-4 w-4 accent-[#E07A5F]"
+          />
+        </label>
+        <label className="flex items-center justify-between gap-2 py-1">
+          <span className="text-[11px] text-muted">FLUX Fill (মাস্ক-করা জায়গা এডিট)</span>
+          <input
+            type="checkbox"
+            checked={settings.fluxFillEnabled}
+            onChange={(e) => saveFalFlag({ fluxFillEnabled: e.target.checked })}
+            className="h-4 w-4 accent-[#E07A5F]"
+          />
+        </label>
+        <label className="flex items-center justify-between gap-2 py-1">
+          <span className="text-[11px] text-muted">সিঙ্গেল Try-On ডিফল্ট (CS6 থেকে কার্যকর)</span>
+          <select
+            value={settings.singleVtonDefault}
+            onChange={(e) => saveFalFlag({ singleVtonDefault: e.target.value as StudioEngineId })}
+            className="rounded-lg border border-border-subtle bg-bg-1 px-2 py-1 text-[11px] text-cream"
+          >
+            <option value="fashn">FASHN Pro (এখনকার)</option>
+            <option value="fal_fashn_v16">Fal FASHN v1.6</option>
+            <option value="fal_idm_vton">IDM-VTON (পরীক্ষামূলক)</option>
+          </select>
+        </label>
+      </div>
       {settings.childGarments.length > 0 && (
         <div>
           <p className="mb-1 text-[11px] font-semibold text-muted">বাচ্চার গার্মেন্ট ক্যাশ (খারাপ হলে মুছুন — পরের রানে নতুন হবে)</p>
