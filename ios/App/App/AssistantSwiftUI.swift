@@ -9496,6 +9496,20 @@ struct AssistantScreen: View {
                 awakening.markReady(hasContent: true)
                 return
             }
+            // ALMA_ANIM_OPENDEMO=1 — headless proof of the drawer path: after
+            // bootstrap, open a DIFFERENT existing conversation via the SAME
+            // vm.openConversation the drawer row calls → the awakening must
+            // replay over it (owner feedback 2026-07-17).
+            if argFlag("ALMA_ANIM_OPENDEMO") {
+                await vm.bootstrap()
+                await vm.loadConversations()   // the drawer loads this list on open
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                if let other = vm.conversations.first(where: { $0.id != vm.conversationId })
+                    ?? vm.conversations.first {
+                    await vm.openConversation(other.id)
+                }
+                return
+            }
             // ALMA_ANIM_PULLDEMO=1 — drive the REAL pull state machine headlessly
             // (scrub ramp → armed → release → real loadMessages → celebrate) so the
             // stage can be screenshotted without a finger. Gesture wiring itself is
