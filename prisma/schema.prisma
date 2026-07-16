@@ -2620,6 +2620,28 @@ model AgentKvSetting {
   @@map("agent_kv_settings")
 }
 
+// Phase 42 — versioned Growth Brain. One row per brief VERSION; history is
+// never rewritten. Exactly one 'approved' row per business at a time (older
+// approved rows become 'superseded'). `brief` holds GrowthBriefContent with
+// facts / inference / recommendation / owner decision kept separate.
+model AgentGrowthBrief {
+  id           String    @id @default(uuid())
+  businessId   String    @default("ALMA_LIFESTYLE")
+  version      Int
+  status       String    @default("draft") // draft | approved | superseded | rejected
+  brief        Json
+  /// Why this version exists (required from v2 onward — explains what changed).
+  changeReason String?   @db.Text
+  approvedAt   DateTime?
+  approvedBy   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([businessId, version])
+  @@index([businessId, status])
+  @@map("agent_growth_briefs")
+}
+
 // Phase E (live browser companion) — a paired Chrome (the owner's own browser
 // running the ALMA Companion extension). The agent drives it live via the
 // command queue below. Token is stored hashed; pairing uses a short-lived code.

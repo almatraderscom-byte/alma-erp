@@ -176,12 +176,29 @@ export async function buildMarketingReportText(days = 7): Promise<{
 }> {
   const data = await gatherMarketingReportData(days)
 
+  // Phase 42: report against the approved Growth Brief targets when one exists
+  // (read-only — a missing brief never blocks the report).
+  let briefLine = ''
+  try {
+    const { getApprovedBrief } = await import('@/agent/lib/marketing/growth-brief')
+    const brief = await getApprovedBrief('ALMA_LIFESTYLE')
+    if (brief) {
+      const b = brief.brief
+      briefLine =
+        `\nApproved Growth Brief v${brief.version}: objective="${b.objective ?? ''}", ` +
+        `monthlyBudgetCapBdt=${b.economics?.monthlyBudgetCapBdt ?? 'n/a'}, targetCpaBdt=${b.economics?.targetCpaBdt ?? 'n/a'} — ` +
+        'judge the numbers against these targets.\n'
+    }
+  } catch {
+    /* report works without the brief */
+  }
+
   let report: string
   try {
     // Anthropic-or-Gemini (owner: Gemini replaces Sonnet for now).
     const raw = await agentSmartText({
       system: REPORT_SYSTEM,
-      prompt: `Weekly marketing report (${days} days). Today: ${todayYmdDhaka()}\n\nData:\n${JSON.stringify(data, null, 0).slice(0, 14000)}`,
+      prompt: `Weekly marketing report (${days} days). Today: ${todayYmdDhaka()}\n${briefLine}\nData:\n${JSON.stringify(data, null, 0).slice(0, 14000)}`,
       maxTokens: 2000,
       costLabel: 'marketing_report',
     })

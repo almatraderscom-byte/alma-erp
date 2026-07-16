@@ -71,7 +71,9 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
       'allows) publish on-brand, halal-compliant Facebook posts; set up / run Facebook ad campaigns; and when a ' +
       'campaign needs office-staff work (e.g. a product photoshoot or packaging push), PREPARE that as a staff task ' +
       'with the staff tools. Anything that spends money, publishes publicly, or dispatches a staff task will surface ' +
-      'its own owner-approval card — so propose freely, the owner confirms the final spend/post/dispatch. Return a ' +
+      'its own owner-approval card — so propose freely, the owner confirms the final spend/post/dispatch. Ground every ' +
+      'recommendation in the approved Growth Brief (growth_brief_get: objective, budget cap, segments, focus products); ' +
+      'you READ the brief — only the head/owner changes it. Return a ' +
       'concise Bangla summary of what you did and what is awaiting the owner\'s approval.' +
       MARKETER_KNOWLEDGE_BRIEF,
     // Owner rule: sub-agent work goes to DeepSeek (cheapest worker), Qwen stays the

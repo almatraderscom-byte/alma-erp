@@ -170,17 +170,44 @@ export async function buildMarketingPlan(weeks = 2): Promise<{
   context: Awaited<ReturnType<typeof gatherMarketingPlanContext>>
   thinData: boolean
 }> {
+  // Phase 42 gate: no campaign/content plan without an approved Growth Brief
+  // (product availability, margin constraint, target customer, objective,
+  // measurement plan, budget boundary). Owner-tunable: growth.brief.enforce.
+  const { getPlanningAuthority } = await import('@/agent/lib/marketing/growth-brief')
+  const authority = await getPlanningAuthority('ALMA_LIFESTYLE')
+  if (!authority.allowed) {
+    throw new Error(authority.ownerMessage ?? 'Approved growth brief required before planning.')
+  }
+
   const context = await gatherMarketingPlanContext(weeks)
   const thinData =
     context.ads.campaigns.every((c) => !c.hasData) &&
     context.stockHighlights.length === 0 &&
     context.calendar.inLeadWindow.length === 0
 
+  // Approved brief constraints ride along so the plan stays inside the owner's
+  // budget boundary and speaks to the agreed objective/segments.
+  const briefContent = authority.brief?.brief ?? null
+  const briefForPrompt = briefContent
+    ? {
+        version: authority.brief!.version,
+        objective: briefContent.objective,
+        monthlyBudgetCapBdt: briefContent.economics?.monthlyBudgetCapBdt ?? null,
+        targetCpaBdt: briefContent.economics?.targetCpaBdt ?? null,
+        segments: (briefContent.customers?.segments ?? []).map((s) => s.name),
+        focusProducts: (briefContent.products?.focus ?? []).map((p) => `${p.name} (${p.availability})`),
+        measurementPlan: briefContent.measurementPlan,
+      }
+    : null
+
   // Anthropic-or-Gemini (owner: Gemini replaces Sonnet for now).
   const raw = await agentSmartText({
     system: PLANNER_SYSTEM,
     prompt:
       `Plan marketing for next ${weeks} week(s) (${context.today} → ${context.horizonEnd}).\n\n` +
+      (briefForPrompt
+        ? `Approved Growth Brief (v${briefForPrompt.version}) — plan MUST stay inside these boundaries:\n${JSON.stringify(briefForPrompt, null, 0)}\n\n`
+        : '') +
       `Context JSON:\n${JSON.stringify(context, null, 0).slice(0, 12000)}\n\n` +
       'Output JSON array only.',
     maxTokens: 2400,
