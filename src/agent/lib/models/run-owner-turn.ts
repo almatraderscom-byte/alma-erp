@@ -810,6 +810,12 @@ async function* runAlternateProviderTurn(
     durationMs: number; error: string | null
   }
   const toolRecords: ToolRecord[] = []
+  // Dead-path guard state (2026-07-16): consecutive-failure streaks per tool
+  // and per exact tool+args signature within THIS turn; a success clears the
+  // tool's streak. One nudge per tool per turn — the point is a change of
+  // strategy, not a scolding loop.
+  const deadPathStreaks = new Map<string, number>()
+  const deadPathNudged = new Set<string>()
   let verifyRetries = 0
   // Guard against a fully EMPTY model round (no text, no tool calls) mid-task —
   // Gemini does this occasionally and ending the turn there strands the owner
@@ -1370,7 +1376,37 @@ async function* runAlternateProviderTurn(
           }
         }
 
-        toolResults.push({ id: call.id, name: call.name, result: annotateEmptyResult(result) })
+        // ── Dead-path guard (owner escalation 2026-07-16: "এভাবে না হলে অন্যভাবে") ──
+        // Transient retries and the browser oscillation guard handle small slips;
+        // this catches STRATEGY-level dead ends: the 3rd failure of the same tool
+        // this turn forces an explicit change of approach — the model must not
+        // keep grinding the same wall.
+        let deadPathNote: string | null = null
+        if (!result.success) {
+          const sig = `${call.name}:${JSON.stringify(call.input ?? {}).slice(0, 160)}`
+          const exactStreak = (deadPathStreaks.get(sig) ?? 0) + 1
+          deadPathStreaks.set(sig, exactStreak)
+          const toolStreak = (deadPathStreaks.get(call.name) ?? 0) + 1
+          deadPathStreaks.set(call.name, toolStreak)
+          if ((exactStreak === 2 || toolStreak === 3) && !deadPathNudged.has(call.name)) {
+            deadPathNudged.add(call.name)
+            deadPathNote =
+              `🛑 DEAD PATH: ${call.name} এই টার্নে ${Math.max(exactStreak, toolStreak)} বার ব্যর্থ — এই approach মৃত, আর repeat করা নিষেধ। ` +
+              'এখন বাধ্যতামূলক ভিন্ন কৌশল: (ক) সম্পূর্ণ ভিন্ন tool/সূত্রে একই লক্ষ্য, (খ) ক্রম বদলাও (আগে অন্য তথ্য জোগাড়), ' +
+              '(গ) কোনোটাই সম্ভব না হলে ask_user card দিয়ে Boss-কে ব্যর্থতার কারণসহ জিজ্ঞেস করো। ' +
+              'নতুন কৌশল নেওয়ার আগে এক লাইনে লেখো আগের approach কেন ব্যর্থ হলো।'
+          }
+        } else {
+          deadPathStreaks.delete(call.name)
+        }
+        const annotated = annotateEmptyResult(result)
+        toolResults.push({
+          id: call.id,
+          name: call.name,
+          result: deadPathNote
+            ? { ...annotated, deadPath: deadPathNote }
+            : annotated,
+        })
       }
 
       messages = appendToolExchange(messages, calls, toolResults)
