@@ -1,0 +1,21 @@
+== Agent animations (spec ALMA_NATIVE_IOS_AGENT_ANIMATIONS_SPEC.md) — 2026-07-17, sim 9E51818A ==
+Branch agent-phase-27 on top of build75+roadmap merge. One new file AgentAnimations.swift
+(+1 pbxproj ref) + 3 surgical hooks in AssistantSwiftUI (state, 2 overlays, task wiring).
+
+Logic selftest (ALMA_ANIM_SELFTEST): 15/15 PASS
+  pull math: resistance/clamps/progress; hysteresis arm 1.00 / disarm 0.94,
+  no-early-arm, no-rearm; awakening reducer order, finalize-loop, success GATED
+  on real readiness, early-accelerate; refresh fires exactly once.
+Awakening demo (ALMA_ANIM_DEMO): phases screenshotted — searching/apologetic/
+  discovered/finalizing bubbles + poses correct; success gated on readiness;
+  dismissal leaves restored conversation intact (no blank frame).
+Pull demo (ALMA_ANIM_PULLDEMO drives the REAL state machine + REAL loadMessages):
+  signposts agentPull.arm→refresh start→done; stage visible over the top fade
+  (bug found+fixed: under .claudeTopFade the blur washed the stage out);
+  after collapse the idle screen is pixel-identical, stage height exactly 0.
+Reduce Motion: awakening = calm fade+wait (no dialogue theatrics), pull = plain
+  progress ring; haptics preserved. VoiceOver: combined status announcements
+  (armed/refreshing/done/failed) in Bangla.
+Owner live-drag in the sim still pending (headless cannot synthesize a finger):
+  gesture wiring is iOS-18 onScrollGeometryChange/onScrollPhaseChange.
+DEBUG-only surface: all demo/selftest flags compiled out of Release builds.

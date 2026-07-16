@@ -9114,6 +9114,10 @@ struct AssistantScreen: View {
     @State private var debugViewer: PortalImagePreview?
     @State private var showBackgroundTasks = false
     @State private var backgroundTaskDetent: PresentationDetent = .medium
+    // Agent animations (spec ALMA_NATIVE_IOS_AGENT_ANIMATIONS_SPEC.md): session-
+    // opening awakening overlay + hidden pull-to-refresh. Pure additive layers.
+    @State private var awakening = AgentAwakeningModel()
+    @State private var agentPull = AgentPullState()
 
     let openWeb: (_ path: String, _ title: String) -> Void
     /// Wired by makeAssistantTab so the native bar buttons drive this screen.
@@ -9248,6 +9252,14 @@ struct AssistantScreen: View {
                     .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.8), value: vm.messages.count)
                 }
                 .coordinateSpace(name: "agentscroll")
+                // Hidden pull-to-refresh (spec §3): exactly 0pt at idle, revealed
+                // only by top-edge overscroll; release above threshold reloads the
+                // REAL conversation once. Off while the awakening overlay owns the
+                // screen. iOS 18+ scroll APIs; on 17 the modifier is inert.
+                .modifier(AgentPullToRefreshModifier(
+                    state: agentPull,
+                    isEnabled: !awakening.isActive,
+                    refresh: { @MainActor in await vm.loadMessages() }))
                 // Owner 2026-07-07: tap on any empty spot dismisses the keyboard
                 // (buttons/rows inside still win their own taps).
                 .onTapGesture {
@@ -9372,6 +9384,12 @@ struct AssistantScreen: View {
             }
         }
         .claudeTopFade()
+        // Pull stage ABOVE the top fade (under it, the fade's blur washes it out).
+        .overlay(alignment: .top) { AgentPullStage(state: agentPull) }
+        // Session-opening awakening (spec §2): centered in the content area only —
+        // the ZStack's frame already excludes the composer inset below and the
+        // native header above, so neither is ever covered.
+        .overlay { AgentAwakeningOverlay(model: awakening) }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             AgentComposerView(vm: vm, openWeb: openWeb)
@@ -9454,7 +9472,40 @@ struct AssistantScreen: View {
                 vm.runDebugUnitTests()
                 return
             }
+            #if DEBUG
+            // Animation logic selftest (pull math / hysteresis / reducer gating).
+            AgentAnimSelfTest.runIfRequested()
+            // ALMA_ANIM_DEMO=1 — hold readiness ~9s so every awakening phase can
+            // be screenshotted headlessly, then hand over to the real session.
+            if argFlag("ALMA_ANIM_DEMO") {
+                awakening.begin(sessionNeedsRestore: true)
+                await vm.bootstrap()
+                try? await Task.sleep(nanoseconds: 9_000_000_000)
+                awakening.markReady(hasContent: true)
+                return
+            }
+            // ALMA_ANIM_PULLDEMO=1 — drive the REAL pull state machine headlessly
+            // (scrub ramp → armed → release → real loadMessages → celebrate) so the
+            // stage can be screenshotted without a finger. Gesture wiring itself is
+            // owner-verified by a live drag in the sim.
+            if argFlag("ALMA_ANIM_PULLDEMO") {
+                await vm.bootstrap()
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                for step in stride(from: CGFloat(0), through: 195, by: 6.5) {
+                    agentPull.dragChanged(rawPull: step)
+                    try? await Task.sleep(nanoseconds: 90_000_000)
+                }
+                try? await Task.sleep(nanoseconds: 2_200_000_000)   // armed hold
+                agentPull.dragEnded { @MainActor in await vm.loadMessages() }
+                return
+            }
+            #endif
+            // Awakening overlay: only when an existing session must restore (the
+            // message list is still empty at first appear). Success is gated on
+            // the REAL bootstrap finishing below.
+            awakening.begin(sessionNeedsRestore: vm.messages.isEmpty)
             await vm.bootstrap()
+            awakening.markReady(hasContent: !vm.messages.isEmpty)
         }
         .fullScreenCover(isPresented: $vm.showSidebar) {
             AgentSideDrawer(vm: vm, openWeb: openWeb)
