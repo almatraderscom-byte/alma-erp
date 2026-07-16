@@ -59,8 +59,10 @@ export interface ReportHtmlInput {
    * URLs sit behind deployment protection (SSO), so the browser inside the
    * lambda gets an HTML login page instead of a TTF and every Bangla glyph
    * renders blank. See fontFaceSrcFromDisk() in the PDF route.
+   * Omit (null) for consumers that strip @font-face anyway (Word export) —
+   * the body font stack falls back to the reader's installed Bangla faces.
    */
-  fonts: { regular: string; semiBold: string; bold: string }
+  fonts: { regular: string; semiBold: string; bold: string } | null
   companyName?: string
   tagline?: string
 }
@@ -90,9 +92,9 @@ export function buildReportHtml(input: ReportHtmlInput): { html: string; title: 
 <meta charset="utf-8"/>
 <title>${esc(title)}</title>
 <style>
-  @font-face { font-family: 'AlmaBn'; src: url('${input.fonts.regular}'); font-weight: 400; }
+${input.fonts ? `  @font-face { font-family: 'AlmaBn'; src: url('${input.fonts.regular}'); font-weight: 400; }
   @font-face { font-family: 'AlmaBn'; src: url('${input.fonts.semiBold}'); font-weight: 600; }
-  @font-face { font-family: 'AlmaBn'; src: url('${input.fonts.bold}'); font-weight: 700; }
+  @font-face { font-family: 'AlmaBn'; src: url('${input.fonts.bold}'); font-weight: 700; }` : ''}
   * { box-sizing: border-box; }
   @page { size: A4; margin: 18mm 14mm 16mm 14mm; }
   html, body { margin: 0; padding: 0; }
