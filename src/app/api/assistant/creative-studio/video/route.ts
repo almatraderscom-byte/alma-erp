@@ -10,7 +10,8 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { agentStorageObjectInfo, agentStorageDelete } from '@/agent/lib/storage'
+import { agentStorageObjectInfo, agentStorageDelete, agentStorageSignedUrls } from '@/agent/lib/storage'
+import { createHash } from 'crypto'
 
 export const runtime = 'nodejs'
 
@@ -25,6 +26,30 @@ export type StudioVideoUpload = {
   name: string
   sizeBytes: number
   uploadedAt: string
+  /** CS11 — content fingerprint (size + head sample) for duplicate detection */
+  contentHash?: string
+}
+
+/**
+ * CS11 — cheap content fingerprint WITHOUT downloading a 500MB file: sha256 of
+ * (size + first 256KB). Re-uploading the same shoot yields the same hash, so
+ * a duplicate registration returns the EXISTING record instead of a second one.
+ */
+async function computeContentHash(path: string, sizeBytes: number): Promise<string | null> {
+  try {
+    const signed = await agentStorageSignedUrls([path], 300)
+    const url = signed[path]
+    if (!url) return null
+    const res = await fetch(url, {
+      headers: { Range: 'bytes=0-262143' },
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!res.ok && res.status !== 206) return null
+    const head = Buffer.from(await res.arrayBuffer())
+    return createHash('sha256').update(String(sizeBytes)).update(head).digest('hex').slice(0, 32)
+  } catch {
+    return null // fingerprinting is best-effort — registration never blocks on it
+  }
 }
 
 async function auth(req: NextRequest) {
@@ -77,12 +102,32 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'ভিডিওটি আপলোড শেষ হয়নি — আবার চেষ্টা করুন।' }, { status: 422 })
   }
 
+  const sizeBytes = info.size > 0 ? info.size : Math.max(0, Number(body.sizeBytes ?? 0))
+
+  // CS11 — duplicate-upload gate: same content fingerprint ⇒ ONE logical
+  // source record. The new storage object is removed; the existing record
+  // comes back so recipes/scene caches keep working on one path.
+  const contentHash = await computeContentHash(path, sizeBytes)
+  if (contentHash) {
+    const existing = (await listUploads()).find((u) => u.contentHash === contentHash)
+    if (existing && existing.path !== path) {
+      await agentStorageDelete([path]).catch(() => { /* best-effort cleanup */ })
+      return Response.json({
+        ok: true,
+        duplicate: true,
+        upload: existing,
+        message: 'এই ভিডিওটা আগেই লাইব্রেরিতে আছে — সেটাই ব্যবহার হবে (ডুপ্লিকেট বাদ)।',
+      })
+    }
+  }
+
   const upload: Omit<StudioVideoUpload, 'id'> = {
     path,
     name: String(body.name ?? 'shoot').slice(0, 120),
     // some storage-api versions omit content-length on HEAD — trust the client's number then
-    sizeBytes: info.size > 0 ? info.size : Math.max(0, Number(body.sizeBytes ?? 0)),
+    sizeBytes,
     uploadedAt: new Date().toISOString(),
+    contentHash: contentHash ?? undefined,
   }
   await db.agentKvSetting.upsert({
     where: { key: `${KV_PREFIX}${uploadId}` },
