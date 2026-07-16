@@ -2666,6 +2666,28 @@ model AgentMarketingEvent {
   @@map("agent_marketing_events")
 }
 
+// Phase 44 — growth experiment registry. Every marketing asset/campaign/CRO
+// change belongs to one experiment with an explicit hypothesis, sample floor,
+// and winner/loser rules. Outcomes + learnings feed future decisions.
+model AgentGrowthExperiment {
+  id           String    @id @default(uuid())
+  businessId   String    @default("ALMA_LIFESTYLE")
+  name         String
+  status       String    @default("draft") // draft | approved | running | stopped | won | lost | inconclusive
+  hypothesis   Json // ExperimentHypothesis (experiment-registry.ts)
+  /// Growth-brief version this experiment serves (traceability to strategy).
+  briefVersion Int?
+  startAt      DateTime?
+  endAt        DateTime?
+  outcome      Json?
+  learning     String?   @db.Text
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([businessId, status])
+  @@map("agent_growth_experiments")
+}
+
 // Phase E (live browser companion) — a paired Chrome (the owner's own browser
 // running the ALMA Companion extension). The agent drives it live via the
 // command queue below. Token is stored hashed; pairing uses a short-lived code.

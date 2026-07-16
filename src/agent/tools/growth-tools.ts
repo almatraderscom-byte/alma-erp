@@ -12,6 +12,20 @@ import {
   setGrowthAutopilot,
   setRankTracking,
 } from '@/agent/lib/growth/settings'
+import {
+  createExperiment,
+  listExperiments,
+  startExperiment,
+  concludeExperiment,
+  listLearnings,
+  evaluateExperiment,
+  validateHypothesis,
+  type ExperimentHypothesis,
+  type ExperimentVerdict,
+} from '@/agent/lib/marketing/experiment-registry'
+import { buildCreativeMatrix, checkCreativeCompliance, assessFatigue, type CreativeFormat, type ProductFacts } from '@/agent/lib/marketing/creative-strategy'
+import { getCalendarHealth } from '@/agent/lib/marketing/content-calendar'
+import { validateCroBrief, formatCroBrief, type CroBrief } from '@/agent/lib/marketing/cro-brief'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -413,12 +427,179 @@ const configure_growth_autopilot: AgentTool = {
   },
 }
 
+const growth_experiment: AgentTool = {
+  name: 'growth_experiment',
+  description:
+    'Experiment registry — marketing as testable hypotheses. action=create (full hypothesis: audience, awareness ' +
+    'stage, pain/desire, offer, angle, hook, proof, format, destination, metric+guardrail, minSample, windowDays, ' +
+    'winner/guardrail rules), list, start, evaluate (pre-agreed rules; refuses winner calls below the sample floor), ' +
+    'conclude (learning sentence MANDATORY), learnings (verified outcomes that must shape future decisions).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      action: { type: 'string', description: 'create | list | start | evaluate | conclude | learnings' },
+      name: { type: 'string', description: 'create: experiment name' },
+      hypothesis: { type: 'object', description: 'create: ExperimentHypothesis JSON' },
+      briefVersion: { type: 'number', description: 'create: growth-brief version this serves' },
+      id: { type: 'string', description: 'start/evaluate/conclude: experiment id' },
+      observed: { type: 'object', description: 'evaluate/conclude: {sample, metricValue, guardrailValue}' },
+      verdict: { type: 'string', description: 'conclude: won|lost|inconclusive|stopped|guardrail_breach' },
+      learning: { type: 'string', description: 'conclude: what this experiment taught us (required)' },
+      status: { type: 'string', description: 'list: filter by status' },
+    },
+    required: ['action'],
+  },
+  handler: async (input) => {
+    try {
+      const action = String(input.action)
+      if (action === 'create') {
+        const hypothesis = input.hypothesis as unknown as ExperimentHypothesis
+        const v = validateHypothesis(hypothesis)
+        if (!v.ok) return { success: false, error: `hypothesis incomplete — missing: ${v.missing.join(', ')}` }
+        const row = await createExperiment({
+          name: String(input.name ?? 'unnamed experiment'),
+          hypothesis,
+          briefVersion: input.briefVersion == null ? null : Number(input.briefVersion),
+        })
+        return { success: true, data: { id: row.id, status: row.status } }
+      }
+      if (action === 'list') {
+        const rows = await listExperiments({ status: input.status ? String(input.status) : undefined })
+        return { success: true, data: { experiments: rows.map((r) => ({ id: r.id, name: r.name, status: r.status, briefVersion: r.briefVersion })) } }
+      }
+      if (action === 'start') {
+        const row = await startExperiment(String(input.id))
+        return { success: true, data: { id: row.id, status: row.status, startAt: row.startAt } }
+      }
+      if (action === 'evaluate') {
+        const rows = await listExperiments({})
+        const row = rows.find((r) => r.id === String(input.id))
+        if (!row) return { success: false, error: `experiment ${input.id} not found` }
+        const observed = input.observed as { sample: number; metricValue: number; guardrailValue: number }
+        if (!observed || !Number.isFinite(observed.sample)) return { success: false, error: 'observed {sample, metricValue, guardrailValue} required' }
+        return { success: true, data: evaluateExperiment(row.hypothesis, observed) }
+      }
+      if (action === 'conclude') {
+        const row = await concludeExperiment({
+          id: String(input.id),
+          verdict: String(input.verdict ?? 'stopped') as ExperimentVerdict | 'stopped',
+          observed: input.observed as { sample: number; metricValue: number; guardrailValue: number } | undefined,
+          learning: String(input.learning ?? ''),
+        })
+        return { success: true, data: { id: row.id, status: row.status, learning: row.learning } }
+      }
+      if (action === 'learnings') {
+        return { success: true, data: { learnings: await listLearnings() } }
+      }
+      return { success: false, error: `unknown action "${action}"` }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const creative_matrix: AgentTool = {
+  name: 'creative_matrix',
+  description:
+    'Build a gated creative matrix for an experiment: one variant per format (static|carousel|reel|story|messenger|' +
+    'landing_page|email|sms|organic_post), each tied to the experiment and pre-checked against the hard gates ' +
+    '(haram content, fake urgency/testimonials, unsupported claims; numeric claims must exist in productFacts). ' +
+    'Variants with compliance.ok=false must be fixed BEFORE any preview/approval. Also: action=check_copy for a single ' +
+    'text, action=fatigue for {ageDays, frequency, ctrTrendRatio}.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      action: { type: 'string', description: 'build | check_copy | fatigue (default build)' },
+      experimentId: { type: 'string', description: 'build: experiment the variants belong to' },
+      hypothesis: { type: 'object', description: 'build: {angle, hook, offer, proof, destination}' },
+      formats: { type: 'array', items: { type: 'string' }, description: 'build: formats to generate' },
+      productFacts: { type: 'object', description: '{name, priceBdt, facts[]} — grounds numeric claims' },
+      copy: { type: 'string', description: 'check_copy: text to gate' },
+      fatigue: { type: 'object', description: 'fatigue: {ageDays, frequency, ctrTrendRatio}' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const action = String(input.action ?? 'build')
+      if (action === 'check_copy') {
+        return { success: true, data: checkCreativeCompliance(String(input.copy ?? ''), (input.productFacts as ProductFacts) ?? null) }
+      }
+      if (action === 'fatigue') {
+        const f = input.fatigue as { ageDays: number; frequency: number; ctrTrendRatio: number }
+        if (!f) return { success: false, error: 'fatigue {ageDays, frequency, ctrTrendRatio} required' }
+        return { success: true, data: assessFatigue(f) }
+      }
+      if (!input.experimentId) return { success: false, error: 'experimentId required — every asset belongs to an experiment' }
+      const variants = buildCreativeMatrix({
+        experimentId: String(input.experimentId),
+        hypothesis: input.hypothesis as { angle: string; hook: string; offer: string; proof: string; destination: string },
+        formats: (input.formats as CreativeFormat[]) ?? ['static', 'organic_post'],
+        productFacts: (input.productFacts as ProductFacts) ?? null,
+      })
+      return {
+        success: true,
+        data: {
+          variants,
+          blocked: variants.filter((v) => !v.compliance.ok).length,
+          note: 'compliance.ok=false variants must be fixed before preview — they never ship.',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const content_calendar_health: AgentTool = {
+  name: 'content_calendar_health',
+  description:
+    'Calendar operations health (±14 days): stale drafts past their slot, approved posts past due (stuck cron), ' +
+    'failed posts with errors, same-page timing conflicts that cannibalize reach — plus recovery advice. Read-only.',
+  input_schema: { type: 'object' as const, properties: {} },
+  handler: async () => {
+    try {
+      return { success: true, data: await getCalendarHealth() }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const cro_brief_draft: AgentTool = {
+  name: 'cro_brief_draft',
+  description:
+    'Validate + format a CRO brief (landing/checkout improvement): page, problem, EVIDENCE (analytics numbers ' +
+    'required), hypothesis, exact change, expected impact RANGE, a11y/mobile/perf checklist, rollback plan. ' +
+    'Output is a brief for owner review — never a live-site edit; implementation goes through branch+preview+merge.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      brief: { type: 'object', description: 'CroBrief JSON' },
+    },
+    required: ['brief'],
+  },
+  handler: async (input) => {
+    try {
+      const brief = input.brief as unknown as CroBrief
+      const v = validateCroBrief(brief)
+      if (!v.ok) return { success: false, error: `CRO brief invalid: ${v.errors.join('; ')}` }
+      return { success: true, data: { formatted: formatCroBrief(brief), brief } }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
 export const GROWTH_TOOLS: AgentTool[] = [
   schedule_content,
   schedule_content_batch,
   list_content_calendar,
   cancel_scheduled_content,
   configure_growth_autopilot,
+  growth_experiment,
+  creative_matrix,
+  content_calendar_health,
+  cro_brief_draft,
 ]
 
 export const GROWTH_ROLE_PROMPT = `
@@ -429,4 +610,5 @@ export const GROWTH_ROLE_PROMPT = `
 - **কিছুই নিজে থেকে পাবলিশ হয় না** — approve করলে তবেই নির্ধারিত সময়ে cron পোস্ট করে। প্ল্যান দেখতে list_content_calendar, বাতিল করতে cancel_scheduled_content।
 - সময় দিন Dhaka লোকাল "YYYY-MM-DD HH:mm" বা ISO ফরম্যাটে; অতীতের সময় দেবেন না।
 - মালিক অটোপাইলট চালু/বন্ধ বা সাপ্তাহিক র‍্যাঙ্ক ট্র্যাকিং চালু/বন্ধ চাইলে **configure_growth_autopilot** ব্যবহার করুন (কোনো argument ছাড়া কল করলে বর্তমান অবস্থা দেখায়)। অটোপাইলট বন্ধ থাকলে শিডিউলড পোস্ট আর সাপ্তাহিক রিপোর্ট থেমে থাকে।
+- **Experiment discipline (Phase 44):** বড় কনটেন্ট/অ্যাড push মানে একটা hypothesis — growth_experiment (create→start→evaluate→conclude+learning)। Asset বানাতে creative_matrix (হারাম/ভুয়া-urgency/ভুয়া-testimonial/ungrounded-claim gate built-in; compliance.ok=false হলে আগে ঠিক করুন)। ক্যালেন্ডার সমস্যা দেখতে content_calendar_health; landing-page উন্নতি প্রস্তাবে cro_brief_draft (evidence + rollback ছাড়া invalid)।
 `

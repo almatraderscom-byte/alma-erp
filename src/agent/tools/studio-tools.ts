@@ -17,6 +17,7 @@ import { runCreativeStudio } from '@/lib/creative-studio/create-run'
 import { getVideoRecipe, VIDEO_RECIPES } from '@/lib/creative-studio/video-recipes'
 import { buildMusicPrompt, buildWishSong, audioCostBdt, MUSIC_STYLES } from '@/lib/creative-studio/audio-lab'
 import { agentStorageSignedUrl } from '@/agent/lib/storage'
+import { checkCreativeCompliance } from '@/agent/lib/marketing/creative-strategy'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -85,6 +86,25 @@ const run_creative_studio: AgentTool = {
   handler: async (input) => {
     const action = String(input.action ?? '')
     const brand = await readBrandRecipe()
+
+    // Phase 44 gate: every free text that can reach a public asset (voiceover,
+    // owner_voice/sfx text, music prompt seed) passes the brand/Islamic +
+    // honesty gate BEFORE a job is queued. Blocked = fix the copy first.
+    {
+      const freeText = [input.voiceoverText, input.text].filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+      for (const t of freeText) {
+        const gate = checkCreativeCompliance(t)
+        if (!gate.ok) {
+          return {
+            success: false,
+            error:
+              'কপি gate-এ আটকেছে: ' +
+              gate.violations.filter((v) => v.severity === 'block').map((v) => `${v.rule} ("${v.match}")`).join('; ') +
+              ' — টেক্সট ঠিক করে আবার পাঠান।',
+          }
+        }
+      }
+    }
 
     if (action === 'get_brand_recipe') return { success: true, data: { recipe: brand } }
 

@@ -58,6 +58,36 @@ export async function runContentEngineSlot({ supabase, slot }) {
     return { dutyStatus: 'skipped', dutyDetail: `ইতিমধ্যে চালানো হয়েছে (${timeLabel})` }
   }
 
+  // Phase 44 exit gate: autonomous content belongs to an approved strategy.
+  // No approved growth brief (and enforcement on) → the slot politely skips
+  // instead of generating strategy-less volume. kv growth.brief.enforce=false
+  // is the owner's escape hatch (same switch the planner honors).
+  try {
+    const { data: enforceRow } = await supabase
+      .from('agent_kv_settings')
+      .select('value')
+      .eq('key', 'growth.brief.enforce')
+      .maybeSingle()
+    const enforce = (enforceRow?.value ?? 'true').trim().toLowerCase() !== 'false'
+    if (enforce) {
+      const { data: brief } = await supabase
+        .from('agent_growth_briefs')
+        .select('id')
+        .eq('businessId', 'ALMA_LIFESTYLE')
+        .eq('status', 'approved')
+        .limit(1)
+        .maybeSingle()
+      if (!brief) {
+        const detail = `approved growth brief নেই — content slot বন্ধ (${timeLabel})`
+        await markSlotRun(supabase, slot, 'skipped', detail)
+        return { dutyStatus: 'skipped', dutyDetail: detail }
+      }
+    }
+  } catch (briefErr) {
+    // Brief check must never take the whole content engine down.
+    console.warn(`[content-engine] brief gate check failed open: ${briefErr.message}`)
+  }
+
   let res
   try {
     res = await fetch(`${getAppUrl()}/api/assistant/internal/content-engine-run`, {
