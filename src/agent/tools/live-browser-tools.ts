@@ -319,6 +319,10 @@ const live_browser_look: AgentTool = {
     'live_browser_act — the same way a person clicks around — and LOOK again after each step to ' +
     'confirm before the next.\n' +
     '• If something is not visible, scroll and look again; never assume a URL exists.\n' +
+    'PAGE INTEL: the result may include `pageIntel` — the detected UI situation (cookie banner, login ' +
+    'wall, blocking modal, captcha, error page, search results, feed, checkout) with a Bangla hint each. ' +
+    'OBEY the hints FIRST (dismiss the banner/modal, report the login/captcha to Boss) BEFORE the task — ' +
+    'an overlay is not "the site is broken".\n' +
     'SCROLL DISCIPLINE (important): the screenshot shows ONLY the current viewport and page text may be ' +
     'TRUNCATED — check the returned `scrollInfo` (y / pageHeight / atBottom) before claiming you saw the ' +
     'whole page. For a long article/feed/product list pass `sweep: true` — the tool then scrolls through ' +
@@ -549,6 +553,21 @@ const live_browser_look: AgentTool = {
       // data — weak heads lose track of where they are on long tasks and start
       // re-navigating from the main view (2026-07-12 carousel wandering).
       if (pageUrl) out.currentUrl = pageUrl
+      // Page intelligence (2026-07-16): recognise the UI situation (cookie
+      // wall, login gate, modal, captcha, error page, feed…) and hand the
+      // model the Bangla playbook hint — deterministic, free, every look.
+      try {
+        const { classifyPagePatterns } = await import('@/agent/lib/live-browser/page-patterns')
+        const rawPageText = typeof (out.page as { text?: unknown } | undefined)?.text === 'string'
+          ? ((out.page as { text: string }).text)
+          : ''
+        const verdict = classifyPagePatterns({
+          text: rawPageText,
+          elementsBlob: out.elements ? JSON.stringify(out.elements).slice(0, 40_000) : '',
+          url: pageUrl ?? '',
+        })
+        if (verdict.patterns.length) out.pageIntel = verdict
+      } catch { /* intel is best-effort */ }
       // §5.4 — tell the model which trust tier this page sits in, so it knows
       // lockdown pages are extraction-only BEFORE it tries to act.
       if (pageUrl) {

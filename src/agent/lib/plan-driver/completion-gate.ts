@@ -19,6 +19,7 @@
  */
 import OpenAI from 'openai'
 import { getModel } from '@/agent/lib/models/registry'
+import { parseModelJson, isObjectWith } from '@/agent/lib/safe-json'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
 import type { Plan } from '@/agent/lib/planner'
@@ -138,21 +139,15 @@ export async function runCompletionGate(
   }
 }
 
-/** Tolerant JSON parse: model may wrap the object in stray text. Fail → not done. */
+/** Guarded JSON intake (safe-json, 2026-07-16): fenced/prose-wrapped/smart-quoted
+ * verdicts all parse through the ONE guarded door; anything off-shape → not done. */
 function parseVerdict(raw: string): { done: boolean; reason: string } {
-  if (!raw) return { done: false, reason: 'গেট থেকে খালি উত্তর — DONE নয়।' }
-  let text = raw
-  const first = text.indexOf('{')
-  const last = text.lastIndexOf('}')
-  if (first >= 0 && last > first) text = text.slice(first, last + 1)
-  try {
-    const obj = JSON.parse(text) as { done?: unknown; reason?: unknown }
-    const done = obj.done === true || obj.done === 'true'
-    const reason = typeof obj.reason === 'string' && obj.reason.trim()
-      ? obj.reason.trim()
-      : (done ? 'লক্ষ্য পূর্ণ হয়েছে।' : 'লক্ষ্য এখনো পূর্ণ হয়নি।')
-    return { done, reason }
-  } catch {
-    return { done: false, reason: 'গেটের উত্তর পড়া গেল না — DONE নয়।' }
-  }
+  const parsed = parseModelJson(raw, isObjectWith('done'))
+  if (!parsed.ok) return { done: false, reason: 'গেটের উত্তর পড়া গেল না — DONE নয়।' }
+  const obj = parsed.value as { done?: unknown; reason?: unknown }
+  const done = obj.done === true || obj.done === 'true'
+  const reason = typeof obj.reason === 'string' && obj.reason.trim()
+    ? obj.reason.trim()
+    : (done ? 'লক্ষ্য পূর্ণ হয়েছে।' : 'লক্ষ্য এখনো পূর্ণ হয়নি।')
+  return { done, reason }
 }

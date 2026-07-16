@@ -18,6 +18,7 @@ export type ClaimViolationCategory =
   | 'fb_post'
   | 'general_write'
   | 'missing_card'
+  | 'missing_ask'
 
 export interface ClaimViolation {
   category: ClaimViolationCategory
@@ -323,8 +324,43 @@ export function detectMissingCardViolation(replyText: string): ClaimViolation[] 
   }]
 }
 
+// ── Ask-guard (owner escalation 2026-07-16: "agent card diye ask kore na") ──
+// The HARD RULE (2026-07-07) says every owner-facing choice = ask_user card;
+// this detector ENFORCES it: a prose choice-question without an ask_user call
+// this turn triggers the same verification-retry loop as a false claim.
+
+// Numbered/lettered option list (2+ items) — the exact anti-pattern the rule bans.
+const PROSE_OPTION_LIST = /(?:^|\n)\s*(?:[১২৩৪1-4][.)]|[কখগঘ][.)])\s+\S[^\n]*(?:\n\s*(?:[১২৩৪1-4][.)]|[কখগঘ][.)])\s+\S[^\n]*)+/
+// "কোনটা করব/চান/নেব…" and "…করব, নাকি …?" style A-or-B questions.
+const PROSE_CHOICE_Q = /(?:কোনটা|কোনটি|কোন\s*টা)\s*(?:করব|চান|নেব|দেব|ভালো|আগে)|(?:করব|দেব|পাঠাব|চালাব|নেব|বানাব)[^।.!?\n]{0,25}?নাকি[^।.!?\n]{2,60}\?|which\s+(?:one|option)\b/i
+// Courtesy closers that are NOT choices — never violations.
+const COURTESY_Q = /(?:আর\s*কী|আর\s*কি|অন্য\s*কিছু|কিছু\s*লাগবে|আর\s*কিছু)[^।.!?\n]{0,25}\?/
+
 /**
- * Combined verification: Layer 1 (regex) + Layer 2 (ledger).
+ * Detects an owner-facing CHOICE asked in prose while no ask_user card was
+ * created this turn. Options in plain text have no tappable buttons — the
+ * owner literally cannot answer them the way the app intends.
+ */
+export function detectMissingAskViolation(
+  replyText: string,
+  toolNames: string[],
+): ClaimViolation[] {
+  if (toolNames.includes('ask_user')) return []
+  const text = replyText.trim()
+  if (text.length < 12 || !text.includes('?')) return []
+  if (COURTESY_Q.test(text) && !PROSE_OPTION_LIST.test(text)) return []
+  const m = PROSE_OPTION_LIST.exec(text) ?? PROSE_CHOICE_Q.exec(text)
+  if (!m) return []
+  return [{
+    category: 'missing_ask',
+    ruleId: 'choice_in_prose_without_ask_card',
+    matchedSnippet: stripWhitespace(m[0]).slice(0, 120),
+    requiredTools: ['ask_user'],
+  }]
+}
+
+/**
+ * Combined verification: Layer 1 (regex) + Layer 2 (ledger) + ask-guard.
  */
 export function verifyClaimsAgainstLedger(
   replyText: string,
@@ -334,7 +370,10 @@ export function verifyClaimsAgainstLedger(
   const regexViolations = detectClaimViolations(replyText, toolNames)
   if (regexViolations.length > 0) return regexViolations
 
-  return detectLedgerViolations(replyText, ledger)
+  const ledgerViolations = detectLedgerViolations(replyText, ledger)
+  if (ledgerViolations.length > 0) return ledgerViolations
+
+  return detectMissingAskViolation(replyText, toolNames)
 }
 
 // ── Guidance + reminder builder ──────────────────────────────────────────────
@@ -364,6 +403,10 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'আপনি কাজ সম্পন্ন হওয়ার দাবি করেছেন কিন্তু এই turn-এ কোনো সফল write/action tool call হয়নি। ' +
     'এখনই প্রয়োজনীয় tool call করুন এবং success result পেলে তবেই confirm দিন। ' +
     'যদি tool call ব্যর্থ হয়ে থাকে → সততা সঙ্গে ব্যর্থতা স্বীকার করুন।',
+  missing_ask:
+    'আপনি Boss-কে prose-এ option/চয়েস-প্রশ্ন দিয়েছেন কিন্তু ask_user card তৈরি করেননি — HARD RULE ভঙ্গ (2026-07-07)। ' +
+    'prose-এর নম্বরওয়ালা option-এ Boss ট্যাপ করতে পারেন না। এখনই ask_user call করুন: question + ২–৪টা ছোট tappable option। ' +
+    'উত্তর লেখায় option-list রাখবেন না — শুধু প্রসঙ্গ + ask_user card।',
   missing_card:
     'আপনি বলেছেন অনুমোদন/প্রশ্ন কার্ড স্যারের সামনে পাঠিয়েছেন/দিচ্ছেন — কিন্তু এই turn-এ আসলে কোনো confirm_card বা ask_card তৈরি হয়নি, তাই স্যারের স্ক্রিনে কোনো কার্ড আসেনি। ' +
     'কার্ড শুধু তখনই আসে যখন আপনি নিজে (head) approval-দরকার এমন action tool টি সরাসরি call করেন এবং সেটি pendingActionId ফেরত দেয় — sub-agent-এর তৈরি pending action স্ক্রিনে কার্ড দেখায় না। ' +
