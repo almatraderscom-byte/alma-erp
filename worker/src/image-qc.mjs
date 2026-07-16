@@ -42,14 +42,15 @@ export async function fetchPipelineMode(supabase) {
   }
 }
 
-export async function scoreImageViaApi({ appUrl, token, storagePath, productType, productImagePath }) {
+export async function scoreImageViaApi({ appUrl, token, storagePath, productType, productImagePath, surface }) {
   const res = await fetch(`${appUrl}/api/assistant/internal/image-qc-score`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ storagePath, productType, productImagePath }),
+    // CS10 — surface selects mode-specific thresholds server-side
+    body: JSON.stringify({ storagePath, productType, productImagePath, surface }),
     signal: AbortSignal.timeout(30_000),
   })
   if (!res.ok) {
@@ -72,6 +73,8 @@ export async function runImageQcLoop({
   productType,
   productImagePath,
   regenerate,
+  /** CS10 — surface-specific thresholds ('single_tryon' | 'family' | …) */
+  surface,
 }) {
   if (qcLevel === 'off') {
     return {
@@ -101,6 +104,7 @@ export async function runImageQcLoop({
         storagePath: currentPath,
         productType,
         productImagePath,
+        surface,
       })
     } catch (err) {
       console.warn('[image-qc] scorer unavailable — delivering unscored:', err?.message ?? err)

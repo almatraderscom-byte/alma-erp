@@ -7,6 +7,34 @@ import { agentStorageSignedUrls } from '@/agent/lib/storage'
 
 export const runtime = 'nodejs'
 
+/** CS10 — one plain-Bangla line summarizing QC + protection metadata. */
+function buildQcDetailsBn(result: Record<string, unknown>): string | null {
+  const parts: string[] = []
+  const qc = result.qc as { pass?: boolean; overall?: number; attempts?: number; pipelineMode?: string; coreAxes?: Record<string, number> } | undefined
+  if (qc && typeof qc === 'object') {
+    const mode = qc.pipelineMode === 'production' ? 'প্রোডাকশন' : qc.pipelineMode === 'preview' ? 'প্রিভিউ' : null
+    if (typeof qc.overall === 'number') {
+      parts.push(`QC ${qc.pass ? 'পাস' : 'ফেল'} ${qc.overall}/৫${qc.attempts && qc.attempts > 1 ? ` (${qc.attempts} চেষ্টা)` : ''}${mode ? ` · ${mode}` : ''}`)
+    }
+    const core = qc.coreAxes
+    if (core && typeof core === 'object') {
+      parts.push(`গার্মেন্ট ${core.garment_fidelity ?? '?'} · মুখ ${core.model_preserved ?? '?'} · হাত/দেহ ${core.anatomy ?? '?'}`)
+    }
+  }
+  if (result.protectedComposite === true) {
+    const mc = result.memberCount
+    parts.push(`🛡 প্রোটেক্টেড কম্পোজিট${typeof mc === 'number' ? ` · ${mc} জন যাচাই` : ''}`)
+  }
+  const pd = result.protectedDiff as { maxKeepDelta?: number } | undefined
+  if (pd && typeof pd.maxKeepDelta === 'number') {
+    parts.push(pd.maxKeepDelta <= 2 ? 'মাস্কের বাইরের পিক্সেল অপরিবর্তিত ✓' : `⚠ সুরক্ষিত পিক্সেলে বদল (${pd.maxKeepDelta})`)
+  }
+  if (typeof result.maskPreset === 'string' && result.maskPreset) {
+    parts.push(`প্রিসেট: ${result.maskPreset}`)
+  }
+  return parts.length ? parts.join(' — ') : null
+}
+
 export async function GET(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
@@ -120,6 +148,12 @@ export async function GET(req: NextRequest) {
       costUsd: (result.costUsd as number | undefined) ?? null,
       researchOnly: Boolean(result.researchOnly ?? (payload.falEngine === 'fal_idm_vton')),
       qc: (result.qc as Record<string, unknown> | undefined) ?? null,
+      // CS10 — plain-Bangla QC/lineage details for the lightbox (CS8/9 follow-ups)
+      maskPreset: (result.maskPreset as string | undefined) ?? null,
+      protectedDiff: (result.protectedDiff as Record<string, unknown> | undefined) ?? null,
+      memberCount: (result.memberCount as number | undefined) ?? null,
+      expectedMembers: (result.expectedMembers as number | undefined) ?? null,
+      qcDetailsBn: buildQcDetailsBn(result),
       previewUrl,
       // small image for the grid tile — falls back to the full preview
       thumbUrl: (thumbPath && signed[thumbPath]) || previewUrl,

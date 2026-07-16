@@ -11,6 +11,7 @@ import {
   evaluateQCScore,
   type QCScore,
 } from '@/lib/tryon/qc-gate'
+import { SURFACE_THRESHOLDS, evaluateSurfaceScore, type StudioSurface } from '@/lib/creative-studio/eval-types'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -36,6 +37,8 @@ export async function POST(req: NextRequest) {
     storagePath?: string
     productType?: string
     productImagePath?: string
+    /** CS10 — surface-specific thresholds (single_tryon/family/precision_edit/…) */
+    surface?: string
   }
   try {
     body = await req.json()
@@ -68,8 +71,11 @@ export async function POST(req: NextRequest) {
       productType: body.productType ?? null,
       productImagePath: body.productImagePath ?? null,
     })
-    const pass = evaluateQCScore(score, level)
-    return NextResponse.json({ level, pass, score })
+    // CS10 — surface-specific thresholds when the caller names a surface;
+    // legacy level-based pass otherwise (backward compatible).
+    const surface = body.surface && body.surface in SURFACE_THRESHOLDS ? (body.surface as StudioSurface) : null
+    const pass = surface ? evaluateSurfaceScore(score, surface) : evaluateQCScore(score, level)
+    return NextResponse.json({ level, pass, score, surface: surface ?? undefined })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })
