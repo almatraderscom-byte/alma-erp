@@ -86,6 +86,16 @@ preview: routine lookups answered via the graph at Σ~333 tokens / ~$0.000 vs
   future day-shift/watchdog duties); `getDutyRunDay` replays a day with
   wake + cost totals. Same `AGENT_LANGGRAPH_WORKFLOW` gate, fail-open.
   Remaining LG-9: other duty keys + an owner-facing "আজ কী করলে" reader.
+- **LG-9 slice 2 (SHIPPED 2026-07-16):** duties + plans complete the map.
+  Day-shift (start/tick/morning-brief outcomes) and watchdog verdicts
+  (healthy/alerted/staff_failures — healthy ticks checkpoint too) mirror to
+  `duty:day_shift:<ymd>` / `duty:watchdog:<ymd>`; every plan-driver drive
+  tick (step-done/failed/blocked-approval/plan-done/escalations + cost)
+  checkpoints onto `plan:<planId>` (`plan-run-graph.ts`). New owner-facing
+  tool `get_duty_day` ("আজ নিজে থেকে কী করলে") replays a day's autonomous
+  ticks across all three duty keys — wired into prompt/capability/router.
+  Coverage audit: approval-card lifecycle already lands on WorkflowRun
+  transitions (mirrored since slice 2), so actions need no separate mirror.
 - **LG-7 (SHIPPED 2026-07-16, PR #393):** `AlmaMemoryStore` BaseStore adapter
   over the existing pgvector `agent_memory` (search delegates to the head's
   own ranking; delete refused — owner-curated). Gate `AGENT_LANGGRAPH_STORE`.

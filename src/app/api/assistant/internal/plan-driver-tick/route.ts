@@ -109,6 +109,15 @@ export async function POST(req: NextRequest) {
       break
     }
     const result = await drivePlan(plan, config)
+    // LG-9 slice 2: every drive tick lands on the plan's durable thread
+    // (fail-open inside) — one call site covers all outcomes.
+    const { mirrorPlanDriveTick } = await import('@/agent/lib/graph/plan-run-graph')
+    await mirrorPlanDriveTick(result.planId, {
+      outcome: result.outcome,
+      stepAction: result.outcome.startsWith('step') || result.outcome === 'blocked-approval' ? result.detail : null,
+      detail: result.detail?.slice(0, 200) ?? null,
+      costTaka: result.costTaka,
+    })
     spentThisTick += result.costTaka
     report.push({
       planId: result.planId,
