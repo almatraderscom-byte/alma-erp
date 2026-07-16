@@ -128,11 +128,30 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
   try {
-    const { html, title } = buildReportHtml({
-      markdown: artifact.content,
-      fallbackTitle: artifact.title ?? 'Report',
-      fonts: await fontFaceSrcFromDisk(),
-    })
+    // html/svg artifacts print AS THEY PREVIEW — the artifact already is the
+    // design (owner ask 2026-07-16: "html e ki dibe na?"). Markdown reports go
+    // through the branded A4 template.
+    const kind = (artifact.type ?? '').toLowerCase()
+    const raw = artifact.content as string
+    let html: string
+    let title = (artifact.title ?? 'Artifact').replace(/\.(md|txt|html?|svg)$/i, '')
+    if (kind === 'svg' || /^\s*<svg[\s>]/i.test(raw)) {
+      html = `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:10mm}html,body{margin:0}svg{max-width:100%;height:auto}</style>${raw}`
+    } else if (kind === 'html' || /^\s*(<!doctype html|<html[\s>])/i.test(raw)) {
+      // Fragment artifacts need a charset (Bangla) + print margins; full
+      // documents are trusted as-is.
+      html = /^\s*(<!doctype html|<html[\s>])/i.test(raw)
+        ? raw
+        : `<!doctype html><meta charset="utf-8"><style>@page{size:A4;margin:12mm}body{margin:0;font-family:-apple-system,'Segoe UI','Noto Sans Bengali',sans-serif}</style>${raw}`
+    } else {
+      const report = buildReportHtml({
+        markdown: raw,
+        fallbackTitle: artifact.title ?? 'Report',
+        fonts: await fontFaceSrcFromDisk(),
+      })
+      html = report.html
+      title = report.title
+    }
 
     browser = await launchBrowser()
     const page = await browser.newPage()
