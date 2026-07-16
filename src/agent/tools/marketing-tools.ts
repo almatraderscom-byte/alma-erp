@@ -1,5 +1,7 @@
 import { createMarketingPlanCard } from '@/agent/lib/marketing/planner'
 import { buildMarketingReportText } from '@/agent/lib/marketing/report'
+import { runCapabilityAudit } from '@/agent/lib/marketing/capability-audit'
+import { assessMeasurementHealth } from '@/agent/lib/marketing/measurement-health'
 import type { AgentTool } from './registry'
 
 const plan_marketing: AgentTool = {
@@ -68,11 +70,39 @@ const marketing_report: AgentTool = {
   },
 }
 
-export const MARKETING_TOOLS: AgentTool[] = [plan_marketing, marketing_report]
+const marketing_capability_audit: AgentTool = {
+  name: 'marketing_capability_audit',
+  description:
+    'Read-only audit: which marketing capabilities (Meta pages/ads/pixel/IG, GA4, GSC, website, WhatsApp, GBP) are ' +
+    'actually reachable right now — probe-proven read/stage vs unknown/broken/unsupported — plus measurement health ' +
+    '(ERP funnel vs GA4 vs spend, data gaps, thin-data flag). No env-presence green, no external writes. ' +
+    'Use before planning campaigns or trusting attribution.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      windowDays: { type: 'number', description: 'Measurement lookback days 1–30 (default 7)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const days = Math.min(Math.max(Number(input.windowDays ?? 7), 1), 30)
+      const [capabilities, measurement] = await Promise.all([
+        runCapabilityAudit(),
+        assessMeasurementHealth(days).catch((err) => ({ error: err instanceof Error ? err.message : String(err) })),
+      ])
+      return { success: true, data: { capabilities, measurement } }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+export const MARKETING_TOOLS: AgentTool[] = [plan_marketing, marketing_report, marketing_capability_audit]
 
 export const MARKETING_ROLE_PROMPT = `
 ## MARKETING STRATEGIST (File 13 — extends daily strategist, marketing-scoped)
 plan_marketing: calendar-aware draft plan → owner approval → File 10 ad briefs + organic staff tasks. NO auto-post/spend.
 marketing_report: paid + Messenger + COD funnel report with 2–3 moves. Directional — thin data = say so.
+marketing_capability_audit: probe-proven capability matrix + measurement health. Run before big campaign/attribution claims.
 Do NOT duplicate general strategist (inventory/staff cross-domain) — use advisor_data_bundle topic=marketing if needed.
 `
