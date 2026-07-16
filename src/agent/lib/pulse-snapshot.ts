@@ -166,6 +166,20 @@ export async function buildPulseSnapshot(now: Date = new Date()): Promise<PulseS
   const { start, end } = dhakaTodayWindow(now)
   const todayWhere = { businessId: BUSINESS_ID, createdAt: { gte: start, lt: end } }
 
+  // The owner's Approvals TAB counts ERP request tables (staff approval/wallet/
+  // advance/waiver/meal), NOT agent confirm cards — device-hit 2026-07-17: tab
+  // said 3 waiting, panel said ০, so approval mode/seal/nag never fired. The
+  // panel now counts BOTH worlds. Fail-open per table (raw counts, no schema
+  // coupling beyond the enum text).
+  const erpPendingCounts = await Promise.all([
+    prisma.$queryRaw`SELECT COUNT(*)::int AS n FROM "ApprovalRequest" WHERE status::text = 'PENDING'`,
+    prisma.$queryRaw`SELECT COUNT(*)::int AS n FROM "WalletRequest" WHERE status::text = 'PENDING'`,
+    prisma.$queryRaw`SELECT COUNT(*)::int AS n FROM "SalaryAdvanceRequest" WHERE status::text = 'PENDING'`,
+    prisma.$queryRaw`SELECT COUNT(*)::int AS n FROM "AttendanceWaiverRequest" WHERE status::text = 'PENDING'`,
+    prisma.$queryRaw`SELECT COUNT(*)::int AS n FROM "MealAllowanceRequest" WHERE status::text = 'PENDING'`,
+  ].map((q) => q.catch(() => [{ n: 0 }]))) as Array<Array<{ n: number }>>
+  const erpApprovalCount = erpPendingCounts.reduce((sum, rows) => sum + (rows[0]?.n ?? 0), 0)
+
   const [ordersToday, latest, pendingRows, taskRows, orderStatusRows, mismatch] = await Promise.all([
     prisma.lifestyleOrder.count({ where: todayWhere }),
     prisma.lifestyleOrder.findFirst({
@@ -189,9 +203,12 @@ export async function buildPulseSnapshot(now: Date = new Date()): Promise<PulseS
     }),
     // All order statuses at once (uses @@index([businessId, status])); we fold
     // case in JS because the DB holds mixed-case variants of the same status.
+    // Bounded to the last 30 days (owner-hit 2026-07-17 on device: the panel
+    // said "৮ চলমান অর্ডার" while the ERP truthfully had 1 pending — years of
+    // never-closed rows are history, not work in flight).
     prisma.lifestyleOrder.groupBy({
       by: ['status'],
-      where: { businessId: BUSINESS_ID },
+      where: { businessId: BUSINESS_ID, createdAt: { gte: new Date(Date.now() - 30 * 86_400_000) } },
       _count: { _all: true },
     }),
     // Stock mismatch = sold more than exists. Rare, real, genuinely urgent.
@@ -203,9 +220,24 @@ export async function buildPulseSnapshot(now: Date = new Date()): Promise<PulseS
     }),
   ])
 
-  const pending = pendingRows.filter((r) => !isPendingActionExpired(r.createdAt, r.type))
-  const approvalCount = pending.length
-  const approval = pending[0] ? toApproval(pending[0] as PendingRow) : undefined
+  // COUNT what the Approvals tab counts — every status='pending' row (owner-hit
+  // 2026-07-17 on device: tab showed 3 waiting approvals, panel said ০ because
+  // the TTL filter dropped anything older than its transient-card window, so
+  // the approval nag/seal/mode never fired). The TTL only picks WHICH card is
+  // featured (prefer one that is still fresh), never how many are waiting.
+  const fresh = pendingRows.filter((r) => !isPendingActionExpired(r.createdAt, r.type))
+  const approvalCount = pendingRows.length + erpApprovalCount
+  const featured = fresh[0] ?? pendingRows[0]
+  const approval = featured
+    ? toApproval(featured as PendingRow)
+    : erpApprovalCount > 0
+      ? {
+          id: 'erp-approvals',
+          title: 'স্টাফ অনুরোধ অপেক্ষায়',
+          counterparty: 'Approvals ট্যাবে দেখুন',
+          createdAt: new Date().toISOString(),
+        }
+      : undefined
 
   const runningTaskCount = clampCount(
     taskRows.find((r) => r.status === 'running')?._count._all ?? 0,
