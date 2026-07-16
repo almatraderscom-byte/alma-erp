@@ -1,0 +1,17 @@
+== IOSP-6 core ERP native-parity audit (2026-07-16) ==
+Method: count native mutation calls (AlmaAPI.send POST/PATCH/DELETE + uploadMultipart) per priority screen; inspect OrderDetailSheet; enumerate residual openWeb targets.
+
+Native mutation calls per priority screen:
+  Orders: 4
+  Approvals: 4
+  Finance: 0
+  Expenses: 2
+  Payroll: 7
+  OfficeFund: 3
+  Portal: 4
+  Attendance: 4
+  Employees: 7
+
+Residual openWeb targets (all screens): /login (auth fallback), same-page 'ওয়েবে খুলুন' (roadmap §4.4 sanctioned), /employees/{id} (routes NATIVE via IOSP-1 smartOpen), invoice /invoice/share (public PDF).
+
+Genuinely-web-only remaining: Attendance selfie CAPTURE (device camera); a few deep settings/import flows flagged for IOSP-7 verification.
