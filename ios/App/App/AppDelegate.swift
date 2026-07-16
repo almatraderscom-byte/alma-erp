@@ -12,6 +12,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         AlmaPerfLog.event("launch.didFinishLaunching")
         #if DEBUG
         runNavSelfTestIfRequested()
+        if #available(iOS 17.0, *) { runOverlaySelfTestIfRequested() }
         #endif
         // Home-screen quick action on COLD START: forward to the AppShortcuts
         // plugin (it retains the event until the JS listener attaches).
@@ -58,6 +59,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // chat). Lives in its own passthrough window above the app, so it can't interfere
         // with any existing screen. Deferred so the scene/window is fully up first.
         if #available(iOS 17.0, *) {
+            // IOSP-2: touch the overlay coordinator first so its keyboard-frame
+            // observers are live before any overlay docks (shared z-order +
+            // tab-bar/keyboard exclusion zones + Reduce Motion/Transparency policy).
+            _ = AlmaOverlayCoordinator.shared
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { FloatingChatHead.shared.install() }
             // App-wide offline beacon + the ALMA Island result banner (own overlay
             // windows, same pattern — nothing existing is touched).
@@ -173,6 +178,41 @@ extension AppDelegate {
             }
             delay += 6
         }
+    }
+
+    /// IOSP-2 overlay self-test (DEBUG-only, env-gated). Drives the REAL keyboard
+    /// exclusion path: posts a synthetic `keyboardWillChangeFrame` with an on-screen
+    /// keyboard so `AlmaOverlayCoordinator` raises its exclusion and the floating
+    /// chat head docks above it — then hides it again. Verify from outside with
+    /// timed screenshots (head should sit higher during the keyboard window) and
+    /// the route.* / overlaySelfTest signposts.
+    ///
+    ///   SIMCTL_CHILD_ALMA_OVERLAY_SELFTEST=1 xcrun simctl launch <udid> com.almatraders.erp
+    @available(iOS 17.0, *)
+    func runOverlaySelfTestIfRequested() {
+        guard ProcessInfo.processInfo.environment["ALMA_OVERLAY_SELFTEST"] == "1" else { return }
+        AlmaPerfLog.event("overlaySelfTest.start")
+        // Park the head at the bottom edge first, so the keyboard-raise visibly lifts it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
+            FloatingChatHead.shared.debugParkAtBottomEdge()
+        }
+        func postKeyboard(height: CGFloat, at delay: TimeInterval, tag: StaticString) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard let scene = AlmaOverlayCoordinator.shared.foregroundScene() else { return }
+                let screenH = scene.screen.bounds.height
+                let width = scene.screen.bounds.width
+                let originY = height > 0 ? screenH - height : screenH
+                let name = height > 0 ? UIResponder.keyboardWillChangeFrameNotification
+                                      : UIResponder.keyboardWillHideNotification
+                AlmaPerfLog.event(tag)
+                NotificationCenter.default.post(
+                    name: name, object: nil,
+                    userInfo: [UIResponder.keyboardFrameEndUserInfoKey:
+                                NSValue(cgRect: CGRect(x: 0, y: originY, width: width, height: max(height, 300)))])
+            }
+        }
+        postKeyboard(height: 340, at: 18, tag: "overlaySelfTest.keyboardUp")
+        postKeyboard(height: 0, at: 26, tag: "overlaySelfTest.keyboardDown")
     }
 }
 #endif

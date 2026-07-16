@@ -84,17 +84,15 @@ final class ConnectivityBeacon {
 
     // ── window plumbing ──────────────────────────────────────────────────────
 
+    // IOSP-2: shared foreground-scene lookup (was a fourth copy of this dance).
     @MainActor private func scene() -> UIWindowScene? {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
-            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        AlmaOverlayCoordinator.shared.foregroundScene()
     }
 
     @MainActor private func showOverlay() {
         guard overlay == nil, let scene = scene() else { return }
         let w = UIWindow(windowScene: scene)
-        w.windowLevel = .alert - 1
+        w.windowLevel = AlmaOverlayCoordinator.Level.beacon
         w.backgroundColor = .clear
         let host = UIHostingController(rootView: OfflineBeaconView())
         host.view.backgroundColor = .clear
@@ -149,12 +147,19 @@ private struct OfflineBeaconView: View {
     @State private var breathe = false
     @State private var countdown = 8
     @State private var checking = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
-            // Dark veil that blurs the whole app behind this window.
-            Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
+            // IOSP-2: Reduce Transparency → an opaque veil instead of the blur, so
+            // the takeover stays legible for users who disable materials.
+            if reduceTransparency {
+                Color(red: 0.05, green: 0.05, blue: 0.07).ignoresSafeArea()
+            } else {
+                Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
+            }
             LinearGradient(colors: [Color.black.opacity(0.55), Color.black.opacity(0.78)],
                            startPoint: .top, endPoint: .bottom).ignoresSafeArea()
 
@@ -209,7 +214,8 @@ private struct OfflineBeaconView: View {
             .padding(26)
         }
         .padding(.top, 0)
-        .onAppear { sweep = true; breathe = true }
+        // IOSP-2: Reduce Motion → hold the perpetual sweep/comet/breathe still.
+        .onAppear { sweep = !reduceMotion; breathe = !reduceMotion }
         .onReceive(ticker) { _ in
             countdown -= 1
             if countdown <= 0 {
@@ -279,14 +285,16 @@ private struct OfflineBeaconView: View {
 private struct PulseRing: View {
     let delay: Double
     @State private var on = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         Circle()
             .strokeBorder(Color(red: 0.96, green: 0.64, blue: 0.55).opacity(0.5), lineWidth: 1)
             .frame(width: 122, height: 122)
             .scaleEffect(on ? 1.25 : 0.55)
             .opacity(on ? 0 : 0.8)
-            .animation(.easeOut(duration: 2.6).repeatForever(autoreverses: false).delay(delay), value: on)
-            .onAppear { on = true }
+            .animation(reduceMotion ? nil : .easeOut(duration: 2.6).repeatForever(autoreverses: false).delay(delay), value: on)
+            // IOSP-2: Reduce Motion → no perpetual pulse (stays a static ring).
+            .onAppear { if !reduceMotion { on = true } }
     }
 }
 
