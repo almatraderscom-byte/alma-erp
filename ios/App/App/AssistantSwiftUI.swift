@@ -7845,9 +7845,12 @@ private struct AgentBackgroundTasksSheet: View {
             .strokeBorder(AlmaRayBurst.colors[1].opacity(0.18), lineWidth: 1))
     }
 
-    /// Sheen condition for the Background-execution card, exposed at the
-    /// builder level so the overlay (outside the countdown TimelineView) can
-    /// read it without recomputing per tick.
+    /// Sheen condition for the Background-execution card. OWNER RULE (finally
+    /// verbatim, 2026-07-17): the sheen marks ONLY work the agent itself put
+    /// in the background — an explicit Plan-Drive sleep or a live autonomous
+    /// wake. The ambient cron wake-check countdown is NOT the agent's own
+    /// task (the original comment said exactly this; overriding it was my
+    /// mistake) — armed-but-idle heartbeat gets NO sheen.
     private var summarySheenActive: Bool {
         let sleeping = runningItems.contains {
             $0.phase == "driving" && isFutureWake($0.nextTickAt)
@@ -7855,9 +7858,7 @@ private struct AgentBackgroundTasksSheet: View {
         let wakeRunning = runningItems.contains { $0.phase == "self-wake" }
             || (vm.isStreaming
             && vm.messages.reversed().first(where: { $0.role == .user })?.isHeartbeatWake == true)
-        let wakeArmed = vm.heartbeatFeed?.settings.enabled == true
-            || vm.heartbeatFeed?.settings.autoArm == true
-        return sleeping || wakeRunning || wakeArmed
+        return sleeping || wakeRunning
     }
 
     private func nextHeartbeatCheck(after now: Date) -> Date? {
