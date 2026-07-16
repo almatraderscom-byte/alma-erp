@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   detectClaimViolations,
   detectLedgerViolations,
+  detectProseChoiceViolation,
   verifyClaimsAgainstLedger,
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
@@ -175,6 +176,54 @@ describe('verifyClaimsAgainstLedger (combined)', () => {
       'আলহামদুলিল্লাহ! মাগরিব mark করে দিয়েছি।',
       [{ toolName: 'mark_salah', success: true }],
     )
+    expect(v).toHaveLength(0)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// detectProseChoiceViolation — HARD RULE: choice ⇒ ask_user card (owner
+// live-hit 2026-07-16: Option A/B/C asked in prose, nothing to tap)
+// ═══════════════════════════════════════════════════════════════════════════
+describe('detectProseChoiceViolation', () => {
+  it('the exact owner-reported shape → violation', () => {
+    const v = detectProseChoiceViolation(
+      '✅ সুপারিশ (আপনার সিদ্ধান্ত চাই)\n' +
+      '· Option A: বর্তমান ক্যাম্পেইন রেখে daily budget $5 (৳৫২০)-এ বাড়ানো (৩৫০% increase)\n' +
+      '· Option B: সম্পূর্ণ নতুন Sales objective + Messaging conversation ক্যাম্পেইন বানানো\n' +
+      '· Option C: আরও ৩-৪ দিন hold রেখে thin data collect করা, তারপর স্কেল সিদ্ধান্ত\n' +
+      'আপনি কোন পথে যেতে চান?',
+    )
+    expect(v).toHaveLength(1)
+    expect(v[0].category).toBe('prose_choice')
+    expect(v[0].requiredTools).toContain('ask_user')
+  })
+
+  it('bare decision question without options → violation', () => {
+    const v = detectProseChoiceViolation('বিশ্লেষণ শেষ। এখন কোনটা করব বস?')
+    expect(v).toHaveLength(1)
+  })
+
+  it('"করব কি?" ask → violation', () => {
+    const v = detectProseChoiceViolation('ক্যাম্পেইনটা এখনই চালাব কি?')
+    expect(v).toHaveLength(1)
+  })
+
+  it('informational report with numbers and no ask → no violation', () => {
+    const v = detectProseChoiceViolation(
+      'আজ ১২টা অর্ডার এসেছে। ডেলিভারি রেট ২৯%। রিটার্ন ২টা — দুটোই সাইজ সমস্যা।',
+    )
+    expect(v).toHaveLength(0)
+  })
+
+  it('scenario enumeration WITHOUT any question → no violation', () => {
+    const v = detectProseChoiceViolation(
+      'তিনটা পরিস্থিতি হতে পারে:\n(ক) স্টক শেষ হলে রিঅর্ডার লাগবে।\n(খ) ডিমান্ড কমলে দাম কমাতে হবে।\n(গ) সব ঠিক থাকলে কিছুই করা লাগবে না।',
+    )
+    expect(v).toHaveLength(0)
+  })
+
+  it('free-form clarifying question stays allowed in prose', () => {
+    const v = detectProseChoiceViolation('কাস্টমারের ফোন নম্বরটা কী বস?')
     expect(v).toHaveLength(0)
   })
 })

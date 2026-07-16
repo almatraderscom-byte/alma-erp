@@ -55,6 +55,8 @@ import {
 import {
   verifyClaimsAgainstLedger,
   buildVerificationReminder,
+  detectMissingCardViolation,
+  detectProseChoiceViolation,
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
@@ -865,6 +867,9 @@ async function* runAlternateProviderTurn(
   let budgetNudgeSent = false
   let deadlineNudgeSent = false
   let canceled = false
+  /// Confirm cards yielded this turn — precondition for the card-shape
+  /// verifiers (an emitted card legitimately carries the ask).
+  let confirmCardsEmitted = 0
   // Live-browser turns raise this cap (see BROWSER_TURN_MAX_ITERATIONS) — a real
   // UI task is 15–30 look→act rounds and must not die silently at the default cap.
   let maxIterations = MAX_TOOL_ITERATIONS
@@ -875,6 +880,7 @@ async function* runAlternateProviderTurn(
   if (actionGraph?.staged && actionGraph.pendingActionId) {
     maxIterations = 0
     timeline.push({ t: 'tool', name: 'log_expense', ok: true, input: { via: 'action_graph' }, result: actionGraph.summary })
+    confirmCardsEmitted++
     yield {
       type: 'confirm_card',
       pendingActionId: actionGraph.pendingActionId,
@@ -1113,6 +1119,14 @@ async function* runAlternateProviderTurn(
             error: r.error ?? undefined,
           }))
           const violations = verifyClaimsAgainstLedger(iterationText.trim(), ledger)
+          // Card-shape checks (parity with core.ts — the cheap-head path never
+          // ran them, which is exactly where weak models break the HARD RULE):
+          // a promised-but-unemitted card, and the owner-hit 2026-07-16 case of
+          // an Option-A/B choice asked in prose with nothing to tap.
+          if (violations.length === 0 && emittedAskCards.length === 0 && confirmCardsEmitted === 0) {
+            violations.push(...detectMissingCardViolation(iterationText.trim()))
+            violations.push(...detectProseChoiceViolation(iterationText.trim()))
+          }
           if (violations.length > 0) {
             verifyRetries++
             yield {
@@ -1340,6 +1354,7 @@ async function* runAlternateProviderTurn(
               }).catch(() => {})
             }
             if (row?.status === 'pending') {
+              confirmCardsEmitted++
               yield {
                 type: 'confirm_card',
                 pendingActionId: d.pendingActionId,
