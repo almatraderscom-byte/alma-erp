@@ -30,6 +30,12 @@ type MetaMcpStatus = {
   remoteToolCount: number | null
   adAccounts: Array<{ id?: string; name?: string }> | null
   probeError: string | null
+  health?: {
+    last24h: { calls: number; ok: number; failed: number; successRate: number | null }
+    last7d: { calls: number; ok: number; failed: number; successRate: number | null }
+    lastSuccessAt: string | null
+    lastError: { code: string | null; toolName: string } | null
+  }
 }
 
 type FeatureStatus = {
@@ -355,6 +361,17 @@ export default function GrowthConnections() {
               {meta.registeredReadTools}টি read টুল এজেন্টে যুক্ত
               {meta.remoteToolCount != null ? ` — Meta সার্ভারে মোট ${meta.remoteToolCount}টি` : ''}।
             </p>
+
+            {/* MA4 observability — MCP call health from telemetry. */}
+            {meta.health && meta.health.last7d.calls > 0 && (
+              <p className="text-[10px] text-muted">
+                📊 গত ৭ দিনে {meta.health.last7d.calls}টি MCP কল · সফল {meta.health.last7d.successRate ?? 0}%
+                {meta.health.lastSuccessAt
+                  ? ` · শেষ সফল ${new Date(meta.health.lastSuccessAt).toLocaleDateString('bn-BD')}`
+                  : ''}
+                {meta.health.lastError ? ` · শেষ এরর: ${meta.health.lastError.code ?? 'unknown'}` : ''}
+              </p>
+            )}
 
             {/* MA3 tier upgrade — re-connect at write scope to draft campaigns.
                 Every write still lands as a PAUSED Approve-card; nothing spends

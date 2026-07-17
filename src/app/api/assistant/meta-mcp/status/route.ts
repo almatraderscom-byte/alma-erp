@@ -12,6 +12,7 @@ import {
 } from '@/agent/lib/meta-mcp/oauth'
 import { getRemoteToolCatalog, META_MCP_READ_TOOL_NAMES } from '@/agent/lib/meta-mcp/bridge'
 import { metaMcpCallTool } from '@/agent/lib/meta-mcp/client'
+import { getMetaMcpHealth } from '@/agent/lib/meta-mcp/health'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -78,6 +79,9 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // MA4 observability — call counts / success rate / last-success from telemetry.
+  const health = await getMetaMcpHealth()
+
   return Response.json({
     envEnabled,
     kvEnabled,
@@ -92,6 +96,7 @@ export async function GET(req: NextRequest) {
     remoteToolCount,
     adAccounts,
     probeError,
+    health,
   })
 }
 
