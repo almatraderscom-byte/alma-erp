@@ -362,8 +362,8 @@ not a production/release PASS.
 | 3 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-3.md` |
 | 4 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-4.md` |
 | 5 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-5.md` |
-| 6 | IN PROGRESS | Unified call UI/UX and accessibility |
-| 7 | QUEUED; auto-continue after Phase 6 engineering PASS | — |
+| 6 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-6.md` |
+| 7 | IN PROGRESS | Resilience, security, quality and optional encryption |
 | 8 | PHYSICAL DEVICES + RELEASE GATE | Must execute every deferred row before release |
 
 ### Phase 0 — Freeze contracts, add observability, remove ambiguity
