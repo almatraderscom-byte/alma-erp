@@ -10,7 +10,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const findManyMock = vi.fn()
 const kvFindUniqueMock = vi.fn(async (): Promise<{ value: string } | null> => null)
 const kvUpsertMock = vi.fn(async () => ({}))
-const notifyOwnerMock = vi.fn(async () => {})
+// notifyOwner takes a payload, so the mock must accept args — otherwise the spread
+// call below is TS2556 and reading mock.calls[0][0] is TS2493 (empty-tuple index).
+const notifyOwnerMock = vi.fn(async (..._args: unknown[]) => {})
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     agentToolEvent: { findMany: (...a: unknown[]) => findManyMock(...(a as [])) },

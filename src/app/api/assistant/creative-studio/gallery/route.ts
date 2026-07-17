@@ -9,8 +9,13 @@ import { looksLikeRawInternalError, sanitizeVideoErrorMessage } from '@/lib/crea
 export const runtime = 'nodejs'
 
 /** CS10 — one plain-Bangla line summarizing QC + protection metadata. */
-function buildQcDetailsBn(result: Record<string, unknown>): string | null {
+function buildQcDetailsBn(result: Record<string, unknown>, payload?: Record<string, unknown>): string | null {
   const parts: string[] = []
+  // supplier-photo prep transparency (owner 2026-07-18: the auto split/clean
+  // work was invisible — say what actually happened to the reseller photo)
+  const chain = payload?.familyChain as { preppedAdultGarmentPath?: string; preppedChildGarmentPath?: string } | undefined
+  if (chain?.preppedChildGarmentPath) parts.push('✂️ সাপ্লায়ার ছবি থেকে দুজনের আসল পিস আলাদা')
+  else if (chain?.preppedAdultGarmentPath) parts.push('✂️ সাপ্লায়ার ছবি অটো-কাট + টেক্সট-ক্লিন')
   const qc = result.qc as { pass?: boolean; overall?: number; attempts?: number; pipelineMode?: string; coreAxes?: Record<string, number> } | undefined
   if (qc && typeof qc === 'object') {
     const mode = qc.pipelineMode === 'production' ? 'প্রোডাকশন' : qc.pipelineMode === 'preview' ? 'প্রিভিউ' : null
@@ -165,7 +170,7 @@ export async function GET(req: NextRequest) {
       protectedDiff: (result.protectedDiff as Record<string, unknown> | undefined) ?? null,
       memberCount: (result.memberCount as number | undefined) ?? null,
       expectedMembers: (result.expectedMembers as number | undefined) ?? null,
-      qcDetailsBn: buildQcDetailsBn(result),
+      qcDetailsBn: buildQcDetailsBn(result, payload as Record<string, unknown>),
       previewUrl,
       // small image for the grid tile — falls back to the full preview
       thumbUrl: (thumbPath && signed[thumbPath]) || previewUrl,

@@ -28,7 +28,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { WebSocketServer } from 'ws'
 import { GoogleGenAI } from '@google/genai'
 import { logCost } from '../cost-log.mjs'
-import { isUnintelligibleTranscript } from './transcript-guard.mjs'
+import { isUnintelligibleTranscript, endSignalFromCaller, isHangupConfirmation } from './transcript-guard.mjs'
 
 const RELAY_MODEL = () => process.env.VOICE_RELAY_MODEL_ID || 'gemini-3.5-flash'
 const MAX_CALL_MINUTES = () => Number(process.env.VOICE_CALL_MAX_MINUTES) || 10
@@ -60,15 +60,24 @@ function verifyRelayToken(callRecordId, expMs, token) {
 }
 
 function buildSystemPrompt({ purpose, recipientName }) {
+  // Is the person on the line the owner himself? (agent sometimes calls Boss directly)
+  const callingOwner = /\b(boss|বস|maruf|মারুফ|মালিক)\b/i.test(String(recipientName ?? ''))
   return (
     `তুমি মালিকের ব্যক্তিগত সহকারী — ${recipientName ? recipientName + ' কে' : 'একজনকে'} ` +
     `মালিকের পক্ষ থেকে ফোন করেছ। উদ্দেশ্য: ${purpose || 'মালিকের বার্তা পৌঁছে দেওয়া'}।\n` +
     `নিয়ম:\n` +
+    (callingOwner
+      ? `- অন্য পক্ষ স্বয়ং মালিক। তাঁকে সবসময় **"বস"** বলে সম্বোধন করবে — কখনো "স্যার", "জনাব" বা "স্যার/ম্যাডাম" নয় (এটা কঠোর নিয়ম)।\n`
+      : '') +
     `- শুধুই সহজ, বিনয়ী, কথ্য বাংলায় কথা বলো। এটা ফোন কল — প্রতিটা উত্তর ১-৩টা ছোট বাক্যে, কোনো markdown/emoji/তালিকা নয়।\n` +
     `- অন্য পক্ষের কথা মন দিয়ে শোনো, প্রয়োজনীয় তথ্য আদায় করো।\n` +
     `- **না বুঝলে বানিয়ে বলবে না** — লাইন কেটে গেলে বা কথা অস্পষ্ট হলে সোজা জিজ্ঞেস করো ` +
     `"দুঃখিত, একটু কেটে গেল — আরেকবার বলবেন?"। অনুমান করে নিজের মতো কথা চালিয়ে যাওয়া কঠোরভাবে নিষিদ্ধ।\n` +
-    `- উদ্দেশ্য পূরণ হয়ে গেলে ভদ্রভাবে বিদায় নাও এবং বিদায়-বাক্যের একদম শেষে ${END_MARKER} লেখো (ওটা উচ্চারিত হবে না)।\n` +
+    `- **তুমি নিজে থেকে কখনো কল কাটবে না বা বিদায় নেবে না।** অন্য পক্ষ যতক্ষণ কথা বলছে বা প্রশ্ন করছে, ` +
+    `স্বাভাবিকভাবে কথা চালিয়ে যাও। উদ্দেশ্য শেষ মনে হলেও নিজে থেকে "আর কিছু লাগবে?"-এর মতো প্রশ্ন বারবার ` +
+    `করবে না — কেবল যা জিজ্ঞেস করা হয়েছে তার সহজ উত্তর দাও, তারপর চুপ করে শোনো।\n` +
+    `- কল কখন রাখতে হবে সেটা সিস্টেম নিজেই সামলায় — অন্য পক্ষ রাখতে চাইলে সিস্টেম নিশ্চিত করে কল কেটে দেবে। ` +
+    `তাই তুমি ${END_MARKER} বা বিদায়-বার্তা নিজে থেকে লিখবে না; শুধু কথা চালিয়ে যাও।\n` +
     `- অপ্রাসঙ্গিক/হারাম বিষয়ে যেও না; না জানলে বলো মালিককে জিজ্ঞেস করে জানানো হবে।`
   )
 }
@@ -101,6 +110,8 @@ class RelaySession {
     this.userTurns = 0
     /** Consecutive mis-heard utterances — 3 in a row means the line/ASR is unusable. */
     this.misheardStreak = 0
+    /** True after the caller asked to end and we asked them to confirm. */
+    this.awaitingHangupConfirm = false
     this.maxTimer = setTimeout(() => this.timeUp(), MAX_CALL_MINUTES() * 60_000)
     // Idle-hangup: if no human speech is ever transcribed, the call reached
     // voicemail / a carrier intercept / dead air — don't monologue for the full
@@ -114,6 +125,17 @@ class RelaySession {
     console.warn(`[voice-relay] idle give-up (no speech in ${IDLE_HANGUP_SEC()}s) — call ${this.callRecordId}`)
     relayDiag.note(relayDiag.lastReports, { call: this.callRecordId, idleHangup: true })
     this.send({ type: 'end' })
+  }
+
+  /** Caller confirmed they want to end — say goodbye and hang up (deterministic). */
+  confirmedHangup() {
+    if (this.ended) return
+    this.ended = true
+    console.log(`[voice-relay] hang-up confirmed by caller — call ${this.callRecordId}`)
+    this.history.push({ role: 'assistant', text: 'আচ্ছা বস, রাখছি তাহলে। আল্লাহ হাফেজ।' })
+    this.speak('আচ্ছা বস, রাখছি তাহলে। আল্লাহ হাফেজ।', true)
+    // Let Twilio flush the goodbye TTS before the socket closes.
+    setTimeout(() => this.send({ type: 'end' }), 3500)
   }
 
   send(obj) {
@@ -130,6 +152,18 @@ class RelaySession {
         this.callSid = msg.callSid ?? null
         this.params = msg.customParameters ?? {}
         break
+      case 'dtmf': {
+        // STT-proof hang-up. Bangla telephony ASR mangles even "কেটে দাও" (heard
+        // "খেতে দাও", live 2026-07-18), so the owner can ALWAYS end the call by
+        // pressing any key — no recognition involved. A keypress is deliberate, so
+        // it hangs up straight away (no confirm step).
+        const digit = msg.digit ?? msg.digits?.digit ?? msg.dtmf?.digit ?? ''
+        if (digit) {
+          console.log(`[voice-relay] DTMF "${digit}" — hanging up — call ${this.callRecordId}`)
+          this.confirmedHangup()
+        }
+        break
+      }
       case 'prompt':
         // ConversationRelay delivers complete utterances (last !== false).
         if (msg.voicePrompt && msg.last !== false) {
@@ -149,6 +183,23 @@ class RelaySession {
             break
           }
           this.misheardStreak = 0
+
+          // ── Deterministic hang-up (owner: "kete dao / ekhon rakho") ──────────
+          // Ending the call is NOT left to the model — it kept asking "আর কিছু
+          // বলবেন?" forever. The relay owns it: an end-signal → ask to confirm ONCE
+          // → a yes hangs up. Anything else just continues the conversation.
+          if (this.awaitingHangupConfirm) {
+            this.awaitingHangupConfirm = false
+            if (isHangupConfirmation(msg.voicePrompt)) { this.confirmedHangup(); break }
+            // not a yes → caller had more to say; fall through and answer it.
+          } else if (endSignalFromCaller(msg.voicePrompt)) {
+            this.awaitingHangupConfirm = true
+            this.history.push({ role: 'user', text: String(msg.voicePrompt) })
+            this.history.push({ role: 'assistant', text: 'তাহলে কি এখন কল রাখব বস?' })
+            this.speak('তাহলে কি এখন কল রাখব বস?', true)
+            break
+          }
+
           this.history.push({ role: 'user', text: String(msg.voicePrompt) })
           void this.respond()
         }
@@ -294,9 +345,21 @@ class RelaySession {
     if (spokenText) this.history.push({ role: 'assistant', text: spokenText })
 
     if (sawEnd && !this.ended) {
-      this.ended = true
-      // Give Twilio a beat to flush TTS of the goodbye before hanging up.
-      setTimeout(() => this.send({ type: 'end' }), 4000)
+      // Guard against a self-terminating model: only hang up if the OTHER PARTY
+      // actually signalled they were done. The owner's complaint "auto kete gese,
+      // ami kati ni" was the model emitting END_CALL because it decided the purpose
+      // was fulfilled. If the last human turn shows no goodbye, ignore the marker,
+      // ask if there's anything else, and keep the line open.
+      const lastUser = [...this.history].reverse().find((t) => t.role === 'user')?.text ?? ''
+      if (endSignalFromCaller(lastUser)) {
+        this.ended = true
+        console.log(`[voice-relay] END honored (caller said bye) — call ${this.callRecordId}`)
+        // Give Twilio a beat to flush TTS of the goodbye before hanging up.
+        setTimeout(() => this.send({ type: 'end' }), 4000)
+      } else {
+        console.warn(`[voice-relay] END suppressed (caller not done: "${lastUser.slice(0, 40)}") — call ${this.callRecordId}`)
+        this.send({ type: 'text', token: 'আর কিছু বলবেন বস?', last: true })
+      }
     }
   }
 
