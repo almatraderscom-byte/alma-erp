@@ -2,11 +2,9 @@
 //  CallNotificationExtension.kt
 //  ALMA ERP — OneSignal notification service extension (Stage 1).
 //
-//  OneSignal owns the app's FCM messaging service, so we hook its extension point instead
-//  of declaring a second (conflicting) FirebaseMessagingService. When a call push arrives
-//  (data.type == "office_call", sent by office-intercom.ts), we suppress the default
-//  notification and raise our own full-screen incoming-call UI instead. Runs even when the
-//  app is backgrounded or killed — that is the whole point.
+//  Compatibility path for legacy OneSignal call pushes. Direct data FCM is canonical;
+//  both paths feed the same server-reconciling process coordinator, and neither trusts
+//  push payload state as call truth.
 //
 //  Registered via <meta-data android:name="com.onesignal.NotificationServiceExtension"> in
 //  AndroidManifest.
@@ -23,11 +21,10 @@ class CallNotificationExtension : INotificationServiceExtension {
 
         // A cancel push (caller hung up / answered elsewhere) — stop the ring instantly:
         // dismiss the full-screen notification and close a live IncomingCallActivity.
-        if (type == "office_call_cancel") {
+        if (type == "office_call_cancel" || (type == "office_call" && data.optString("event") == "cancel")) {
             event.preventDefault()
-            val broadcastId = data.optString("broadcastId")
+            val broadcastId = data.optString("callId").ifEmpty { data.optString("broadcastId") }
             if (broadcastId.isNotEmpty()) com.almatraders.erp.pages.AgoraIntercom.markCallCancelled(broadcastId)
-            CallNotifications.cancel(event.context)
             return
         }
 
@@ -36,11 +33,18 @@ class CallNotificationExtension : INotificationServiceExtension {
         // Don't let OneSignal post its default banner — we render a call instead.
         event.preventDefault()
 
-        val broadcastId = data.optString("broadcastId")
+        val broadcastId = data.optString("callId").ifEmpty { data.optString("broadcastId") }
         if (broadcastId.isEmpty()) return
         val channel = data.optString("channel").ifEmpty { "itc_$broadcastId" }
         val caller = data.optString("caller").ifEmpty { "বস — মারুফ" }
 
-        CallNotifications.showIncomingCall(event.context, broadcastId, channel, caller)
+        // OneSignal is a compatibility wake path only; canonical server state is
+        // fetched before any OS call or notification is surfaced.
+        com.almatraders.erp.pages.AgoraIntercom.reconcileIncoming(
+            event.context,
+            broadcastId,
+            channel,
+            caller,
+        )
     }
 }

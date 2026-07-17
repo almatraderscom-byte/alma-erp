@@ -333,7 +333,7 @@ Phase 8 then runs the full signed iPhone/Android/web matrix and remains the fina
 Phase 8 passes, the implementation may be engineering-complete but must not be released or described
 as fully WhatsApp-like.
 
-> **Claude must hard-verify the current phase and write a PASS evidence record before starting the next phase. A compile, screenshot, or happy-path demo alone is not a PASS. If any exit criterion fails, Claude must stop, record FAIL with exact evidence, fix/retest within the same phase, and must not begin the next phase. One phase per implementation session.**
+> **Claude/Codex must hard-verify the current phase and write a PASS evidence record before starting the next phase. A compile, screenshot, or happy-path demo alone is not a PASS. If any engineering exit criterion fails, the agent must record FAIL with exact evidence, fix/retest within the same phase, and must not begin the next phase. This is one continuous implementation goal—not one phase per chat/session—and the agent automatically continues after each engineering PASS.**
 
 Each phase record must include: audited Git SHA, changed files, migration status, automated test commands/results, real-device matrix rows executed, screenshots/video/log IDs, server call/event IDs, known failures, and an explicit `PHASE N: PASS` or `FAIL` signed with timestamp.
 
@@ -345,6 +345,24 @@ This allows the next engineering phase only after the current non-device gate pa
 blocked until the complete physical-device matrix, signed-build soak, canary, and owner acceptance all
 pass. This batching avoids repeatedly overwriting/configuring the same phones while preserving the
 rule that the feature cannot be released or called WhatsApp-like without real-device proof.
+
+**Fixed physical-verification rule:** hardware rows written inside Phases 0–7 describe the final test
+coverage and are marked `DEVICE DEFERRED` during implementation. They do not force the agent to stop,
+reconnect phones, or repeat device setup. Phase 8 executes all deferred rows together against the
+finished signed build. A Phase 0–7 `ENGINEERING PASS / DEVICE DEFERRED` permits the next phase; it is
+not a production/release PASS.
+
+### Live implementation status
+
+| Phase | Status | Evidence |
+|---|---|---|
+| 0 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-0.md` |
+| 1 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-1.md` |
+| 2 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-2.md` |
+| 3 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-3.md` |
+| 4 | IN PROGRESS | Android process coordinator/Core-Telecom implementation and hard gate |
+| 5–7 | QUEUED; auto-continue after prior engineering PASS | — |
+| 8 | PHYSICAL DEVICES + RELEASE GATE | Must execute every deferred row before release |
 
 ### Phase 0 — Freeze contracts, add observability, remove ambiguity
 
@@ -414,7 +432,7 @@ Tests:
 
 **Exit criteria:** push outcomes are visible and a fully rejected/no-device call becomes `push_unreachable` or a clear failed state, not a fake ringing success.
 
-**Claude hard gate:** real physical iPhone and Android proof in foreground/background/killed/locked states; inspect provider responses and device call IDs; no next phase from simulator-only proof.
+**Engineering hard gate (Phase 2):** provider contract tests, payload/TTL/dedupe negative tests, token-registry authorization checks, delivery-ledger correlation, and build/static verification. Physical iPhone/Android delivery and lifecycle rows are `DEVICE DEFERRED` to Phase 8.
 
 ### Phase 3 — iOS single CallCoordinator + complete CallKit
 
@@ -445,7 +463,7 @@ Tests:
 
 **Exit criteria:** 30 consecutive iOS↔iOS calls across the matrix with zero stuck rings/ghost calls, correct terminal history and no navigation-related drop.
 
-**Claude hard gate:** archive and inspect embedded entitlements; test a TestFlight build, collect CallKit/Agora/server logs for every scenario, and do not accept simulator or debug-only success.
+**Engineering hard gate (Phase 3):** compile/archive, source and embedded configuration inspection, deterministic CallKit/state-machine tests, simulator lifecycle checks, static race review, and correlated protocol evidence. Signed entitlement, TestFlight, audio-route, network-handoff and two-iPhone rows are `DEVICE DEFERRED` to Phase 8.
 
 ### Phase 4 — Android single CallCoordinator + Core-Telecom
 
@@ -475,7 +493,7 @@ Tests:
 
 **Exit criteria:** no stuck notification/ring, correct system controls, navigation/background persistence and canonical server history.
 
-**Claude hard gate:** verify `dumpsys telecom`, notification/FGS state, Logcat, server event ledger and real-device video for denial/fallback cases; no emulator-only PASS.
+**Engineering hard gate (Phase 4):** Kotlin/unit tests, debug and release build, merged-manifest/APK inspection, Core-Telecom/notification/FGS static contract checks, emulator lifecycle/denial checks where available, and correlated protocol evidence. Physical `dumpsys telecom`, OEM/Doze, Bluetooth/GSM and real-device video rows are `DEVICE DEFERRED` to Phase 8.
 
 ### Phase 5 — Web global call client and shared protocol
 
@@ -500,7 +518,7 @@ Tests:
 
 **Exit criteria:** 30-call desktop matrix with zero zombie clients, false completed calls or route-navigation drops.
 
-**Claude hard gate:** browser automation plus two real mobile peers, Agora/server event correlation, and heap/media-device check after repeated calls.
+**Engineering hard gate (Phase 5):** browser automation with mocked/local protocol peers, type/static tests, navigation/reload/offline/token-renewal fault tests, and heap/media cleanup checks. Calls against two real mobile peers are `DEVICE DEFERRED` to Phase 8.
 
 ### Phase 6 — Unified call UI/UX and accessibility
 
@@ -518,7 +536,7 @@ Work:
 
 **Exit criteria:** task-based usability review can place/answer/minimize/return/end a call without knowing the intercom architecture; accessibility audit has no critical findings.
 
-**Claude hard gate:** compare screenshots/videos across three surfaces and states, run accessibility scanners plus manual VoiceOver/TalkBack, and attach approved design checklist.
+**Engineering hard gate (Phase 6):** deterministic snapshots/screenshots across three code surfaces, automated accessibility/contrast/touch-target checks, localization/RTL/static review, and design checklist. Manual VoiceOver/TalkBack on physical phones is `DEVICE DEFERRED` to Phase 8.
 
 ### Phase 7 — Resilience, security, quality and optional encryption
 
@@ -535,7 +553,7 @@ Work:
 
 **Exit criteria:** security review issues resolved or explicitly accepted; chaos suite produces no split state/stuck calls; SLO dashboard and alerts are live.
 
-**Claude hard gate:** independent findings attached, fault injection repeated, privacy log review passed, and no marketing claim exceeds verified encryption properties.
+**Engineering hard gate (Phase 7):** fault injection, authorization/privacy/log-redaction/security tests, dependency/config review, rate-limit/kill-switch/rollback checks, and truthful encryption-copy review. Independent external review findings and signed-build mobile soak remain Phase 8 release evidence when they require outside authority or hardware.
 
 ### Phase 8 — Full matrix, soak, canary and release
 
@@ -656,7 +674,7 @@ Rule: If FAIL, Phase <N+1> is forbidden.
 
 ### Non-negotiable instruction to Claude
 
-> Read this entire roadmap before editing. Work on one phase only. Diagnose root cause before changing code. Preserve unrelated dirty work. Do not mark a phase complete because it compiles. Run the phase’s automated, negative, real-device and cross-platform checks; correlate them by call ID with server events. Write the verification record. If any required evidence is unavailable, mark the phase FAIL/BLOCKED and do not start the next phase.
+> Read this entire roadmap before editing. Work on one phase at a time but continue through all phases in the same nonstop goal. Diagnose root cause before changing code. Preserve unrelated dirty work. Do not mark a phase complete because it compiles. For Phases 0–7, run every available automated, negative, build, simulator/emulator, browser and static cross-platform check; record hardware-only rows as `DEVICE DEFERRED`, write the evidence record, and automatically start the next phase after `ENGINEERING PASS`. Do not pause for phones. Phase 8 alone requires the complete physical-device/signed-build matrix and blocks release until it passes.
 
 ---
 

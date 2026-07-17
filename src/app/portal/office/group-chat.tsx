@@ -10,7 +10,7 @@ import {
   IntercomStyle,
   IntercomCall,
   IntercomLiveBar,
-  useIsIosNative,
+  useIsNativeCallShell,
   type Intercom,
   type ItcBroadcast,
 } from './intercom'
@@ -25,7 +25,7 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
   // Live intercom (walkie-talkie) — polls its own fast feed; broadcasts merge
   // into the message list below and the owner gets the PTT dock.
   const itc = useIntercom(self)
-  const iosNative = useIsIosNative()
+  const nativeCallShell = useIsNativeCallShell()
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [lastSeen, setLastSeen] = useState<string | null>(null)
@@ -331,7 +331,7 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
                 📋
               </button>
             )}
-            {self === 'staff' && !iosNative && (
+            {self === 'staff' && !nativeCallShell && (
               <button
                 className="cp-attach"
                 aria-label="বসকে কল করুন"

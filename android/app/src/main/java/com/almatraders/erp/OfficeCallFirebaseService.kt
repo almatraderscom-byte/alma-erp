@@ -17,7 +17,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
-import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -35,10 +34,9 @@ class OfficeCallFirebaseService : FirebaseMessagingService() {
         if (runCatching { UUID.fromString(callId) }.isFailure) return
         if (data["event"] == "cancel") {
             AgoraIntercom.markCallCancelled(callId)
-            CallNotifications.cancel(this)
             return
         }
-        val expiresAt = runCatching { Instant.parse(data["expiresAt"] ?: "").toEpochMilli() }.getOrNull() ?: return
+        val expiresAt = OfficeCallTime.parseMillis(data["expiresAt"].orEmpty()) ?: return
         if (System.currentTimeMillis() >= expiresAt) return
         // A ring older than the provider TTL is never surfaced after a delay.
         if (message.sentTime > 0L && (System.currentTimeMillis() - message.sentTime) > 60_000L) return
@@ -52,8 +50,7 @@ class OfficeCallFirebaseService : FirebaseMessagingService() {
         val canonicalChannel = canonical.optString("channel")
         if (canonicalChannel.isBlank() || canonicalChannel != data["channel"]) return
 
-        AgoraIntercom.markCallHandled(callId)
-        CallNotifications.showIncomingCall(
+        AgoraIntercom.reconcileIncoming(
             this,
             callId,
             canonicalChannel,

@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -87,8 +88,9 @@ class IncomingCallActivity : ComponentActivity() {
         }
 
         AgoraIntercom.attach(applicationContext)
-        if (broadcastId.isNotEmpty()) AgoraIntercom.markCallHandled(broadcastId)
-        AgoraIntercom.ringIncoming()
+        if (broadcastId.isNotEmpty()) {
+            AgoraIntercom.reconcileIncoming(applicationContext, broadcastId, channel, caller)
+        }
 
         setContent { MaterialTheme { CallScreen() } }
     }
@@ -107,19 +109,24 @@ class IncomingCallActivity : ComponentActivity() {
     }
 
     private fun finishAndCleanup() {
-        CallNotifications.cancel(applicationContext)
+        if (broadcastId.isNotEmpty()) CallNotifications.cancel(applicationContext, broadcastId)
         finish()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        CallNotifications.cancel(applicationContext)
         AgoraIntercom.stopRinging()
     }
 
     @Composable
     private fun CallScreen() {
-        var answered by remember { mutableStateOf(false) }
+        var answered by remember {
+            mutableStateOf(
+                intent.getBooleanExtra(CallNotifications.EXTRA_ONGOING, false) ||
+                    AgoraIntercom.mode == AgoraIntercom.Mode.CALLING ||
+                    AgoraIntercom.mode == AgoraIntercom.Mode.RECONNECTING,
+            )
+        }
         val mode = AgoraIntercom.mode
         val connected = AgoraIntercom.connected
         val seconds = AgoraIntercom.callSeconds
@@ -135,7 +142,6 @@ class IncomingCallActivity : ComponentActivity() {
         LaunchedEffect(cancelledId) {
             if (cancelledId == broadcastId) {
                 AgoraIntercom.stopRinging()
-                if (!answered) AgoraIntercom.leave()
                 finishAndCleanup()
             }
         }
@@ -143,9 +149,10 @@ class IncomingCallActivity : ComponentActivity() {
         LaunchedEffect(Unit) {
             delay(60_000)
             if (!answered) {
-                confirmReceipt()
                 AgoraIntercom.stopRinging()
-                finishAndCleanup()
+                // Ring expiry is server-authoritative; minimizing this Activity must
+                // not invent a missed/declined terminal state.
+                finish()
             }
         }
 
@@ -199,14 +206,14 @@ class IncomingCallActivity : ComponentActivity() {
                         CallButton(Icons.Filled.CallEnd, "প্রত্যাখ্যান", Color(0xFFEF4444)) {
                             AgoraIntercom.stopRinging()
                             confirmReceipt()
-                            AgoraIntercom.leave()
+                            AgoraIntercom.endFromNotification(broadcastId, "DECLINED")
                             finishAndCleanup()
                         }
                         CallButton(Icons.Filled.Call, "গ্রহণ", Color(0xFF10B981)) {
                             answered = true
                             AgoraIntercom.stopRinging()
                             confirmReceipt()
-                            lifecycleScope.launch { AgoraIntercom.startCall(channel, outgoing = false) }
+                            AgoraIntercom.answerFromNotification(broadcastId)
                         }
                     }
                 } else {
@@ -219,8 +226,11 @@ class IncomingCallActivity : ComponentActivity() {
                             if (muted) "আনমিউট" else "মিউট",
                             Color(0xFF6B7280),
                         ) { AgoraIntercom.toggleMute() }
+                        CallButton(Icons.Filled.VolumeUp, if (AgoraIntercom.speakerEnabled) "ইয়ারপিস" else "স্পিকার", Color(0xFF6B7280)) {
+                            AgoraIntercom.toggleSpeaker()
+                        }
                         CallButton(Icons.Filled.CallEnd, "কল কাটুন", Color(0xFFEF4444)) {
-                            AgoraIntercom.leave()
+                            AgoraIntercom.endFromNotification(broadcastId, "COMPLETED")
                             finishAndCleanup()
                         }
                     }

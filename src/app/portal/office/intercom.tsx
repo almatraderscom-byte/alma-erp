@@ -22,22 +22,21 @@ const POLL_MS = 6_000
 const CALL_RING_MS = 60_000
 
 /**
- * True only inside the iOS native shell. There, the native FloatingChatHead +
- * AgoraIntercom own the incoming-call ring and the call screen, so the web call
- * UI (this file's IntercomCall + the dock's call button) must stay silent —
- * otherwise a call double-rings (native ring + web ring). Android WebView has NO
- * native call code, and plain browsers obviously don't, so both keep the web UI.
+ * True inside either native shell. Swift/CallKit and Kotlin/Core-Telecom each
+ * own their complete call lifecycle, so the WebView must never create a second
+ * Agora client or render competing answer/end controls.
  */
-function isIosNativeShell(): boolean {
+function isNativeCallShell(): boolean {
   if (typeof window === 'undefined') return false
   const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } }).Capacitor
-  return Boolean(cap?.isNativePlatform?.()) && cap?.getPlatform?.() === 'ios'
+  const platform = cap?.getPlatform?.()
+  return Boolean(cap?.isNativePlatform?.()) && (platform === 'ios' || platform === 'android')
 }
-/** Mount-safe read of {@link isIosNativeShell} (avoids an SSR/hydration mismatch). */
-export function useIsIosNative(): boolean {
-  const [ios, setIos] = useState(false)
-  useEffect(() => setIos(isIosNativeShell()), [])
-  return ios
+/** Mount-safe read of {@link isNativeCallShell} (avoids an SSR/hydration mismatch). */
+export function useIsNativeCallShell(): boolean {
+  const [native, setNative] = useState(false)
+  useEffect(() => setNative(isNativeCallShell()), [])
+  return native
 }
 /** The Agora channel for a call is derived from its broadcast id (no signaling column needed). */
 const callChannel = (broadcastId: string) => `itc_${broadcastId}`
@@ -529,7 +528,7 @@ export function useIntercom(self: 'owner' | 'staff') {
   // (Skipped in the iOS native shell — CallKit already answered there.)
   const autoAnsweredRef = useRef(false)
   useEffect(() => {
-    if (autoAnsweredRef.current || activeCallId || isIosNativeShell()) return
+    if (autoAnsweredRef.current || activeCallId || isNativeCallShell()) return
     let wanted: string | null = null
     try {
       wanted = new URLSearchParams(window.location.search).get('answerCall')
@@ -591,7 +590,7 @@ export function IntercomDock({ itc }: { itc: Intercom }) {
   const { feed, ptt, recSecs, target, setTarget, error, startPtt, stopPtt } = itc
   // On iOS the owner calls staff from the native roster (FloatingChatHead → লাইভ
   // কল); hide the web call button so the two paths don't fight.
-  const iosNative = useIsIosNative()
+  const nativeCallShell = useIsNativeCallShell()
   const startYRef = useRef(0)
   const [cancelArmed, setCancelArmed] = useState(false)
   const live = ptt === 'live'
@@ -663,7 +662,7 @@ export function IntercomDock({ itc }: { itc: Intercom }) {
           </button>
         </div>
 
-        {iosNative ? null : targetStaff ? (
+        {nativeCallShell ? null : targetStaff ? (
           <button
             className="itc-side call"
             disabled={itc.callStarting || !!itc.activeCallId || ptt === 'live'}
@@ -1102,7 +1101,7 @@ const fmtClock = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:
 
 export function IntercomCall({ itc }: { itc: Intercom }) {
   const { feed, activeCallId, callPeer, callApi, endCall, answerCall, declineCall, nowMs } = itc
-  const iosNative = useIsIosNative()
+  const nativeCallShell = useIsNativeCallShell()
   // Minimize the in-call overlay to a small pill so the rest of the office page
   // is usable while talking (WhatsApp-style multitask). Reset on a new call.
   const [minimized, setMinimized] = useState(false)
@@ -1116,7 +1115,7 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
   // cancels. Freshness uses server-skew-adjusted time so a phone with a wrong
   // clock still rings. Silent in the iOS native shell (native CallKit rings).
   const incoming = useMemo(() => {
-    if (activeCallId || iosNative) return null
+    if (activeCallId || nativeCallShell) return null
     return (
       feed.broadcasts.find(
         (b) =>
@@ -1126,7 +1125,7 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
           nowMs() - new Date(b.createdAt).getTime() < CALL_RING_MS,
       ) ?? null
     )
-  }, [activeCallId, iosNative, feed.broadcasts, nowMs])
+  }, [activeCallId, nativeCallShell, feed.broadcasts, nowMs])
 
   // Ring tone + vibration while an incoming call is pending.
   const ringRef = useRef<{ ctx: AudioContext; stop: () => void } | null>(null)
@@ -1197,7 +1196,7 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
 
   // ── active call (owner or staff, once we've joined) ──
   // On iOS the native call screen renders this instead — keep the web one dark.
-  if (!activeCallId || iosNative) return null
+  if (!activeCallId || nativeCallShell) return null
   const st = callApi.state
   const connected = callApi.remoteJoined
   const failed = st === 'error'

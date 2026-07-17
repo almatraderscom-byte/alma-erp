@@ -11,68 +11,96 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import com.almatraders.erp.pages.AgoraIntercom
 
-/**
- * Foreground service that keeps the Office Live Intercom (Agora RTC walkie-talkie /
- * 1:1 call) alive and mic-legal while the app is backgrounded.
- *
- * Android 14+ (targetSdk 35) BLOCKS microphone capture from a backgrounded app unless
- * it runs a foreground service of type `microphone`. Without this, a call dropped the
- * moment the owner switched apps (or the OS killed it). Started when Agora joins a
- * channel, stopped when it leaves — shows an ongoing "intercom running" notification
- * the user can tap to return.
- */
+/** Keeps Agora mic capture legal and visible while a call is backgrounded. */
 class IntercomForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        ensureChannel(this)
-        val launch = packageManager.getLaunchIntentForPackage(packageName)
-        val pi = launch?.let {
-            PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val callId = intent?.getStringExtra(CallNotifications.EXTRA_BROADCAST_ID).orEmpty()
+        val channel = intent?.getStringExtra(CallNotifications.EXTRA_CHANNEL).orEmpty()
+        val peer = intent?.getStringExtra(CallNotifications.EXTRA_CALLER).orEmpty().ifBlank { "অফিস কল" }
+        val notification = if (callId.isNotBlank()) {
+            CallNotifications.buildOngoing(this, callId, channel, peer)
+        } else {
+            buildLiveNotification()
         }
-        val n: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                if (callId.isNotBlank()) {
+                    types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+                }
+                startForeground(if (callId.isBlank()) LIVE_NOTIF_ID else CallNotifications.notificationId(callId), notification, types)
+            } else {
+                startForeground(if (callId.isBlank()) LIVE_NOTIF_ID else CallNotifications.notificationId(callId), notification)
+            }
+            START_NOT_STICKY
+        } catch (error: Exception) {
+            AgoraIntercom.onForegroundServiceFailure(callId, error.message ?: error.javaClass.simpleName)
+            stopSelf(startId)
+            START_NOT_STICKY
+        }
+    }
+
+    private fun buildLiveNotification(): Notification {
+        ensureLiveChannel(this)
+        val launch = packageManager.getLaunchIntentForPackage(packageName)
+        val open = launch?.let {
+            PendingIntent.getActivity(this, LIVE_NOTIF_ID, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        }
+        return NotificationCompat.Builder(this, LIVE_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("অফিস ইন্টারকম চলছে")
             .setContentText("লাইভ ভয়েস চালু — ফিরতে ট্যাপ করুন")
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setContentIntent(pi)
+            .setContentIntent(open)
             .build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        } else {
-            startForeground(NOTIF_ID, n)
-        }
-        return START_NOT_STICKY
     }
 
     companion object {
-        private const val CHANNEL_ID = "alma_intercom_live"
-        private const val NOTIF_ID = 8801
+        private const val LIVE_CHANNEL_ID = "alma_intercom_live_v2"
+        private const val LIVE_NOTIF_ID = 8801
 
-        private fun ensureChannel(ctx: Context) {
+        private fun ensureLiveChannel(ctx: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
             val mgr = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-            if (mgr.getNotificationChannel(CHANNEL_ID) != null) return
+            if (mgr.getNotificationChannel(LIVE_CHANNEL_ID) != null) return
             mgr.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "অফিস ইন্টারকম", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "লাইভ কল চলাকালীন দেখানো হয়"
+                NotificationChannel(LIVE_CHANNEL_ID, "অফিস ইন্টারকম", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "লাইভ ইন্টারকম চলাকালীন দেখানো হয়"
                     setShowBadge(false)
                 },
             )
         }
 
-        fun start(ctx: Context) {
-            val i = Intent(ctx, IntercomForegroundService::class.java)
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)
-                else ctx.startService(i)
-            } catch (_: Exception) { /* e.g. background-start restriction — call still works foreground */ }
+        fun startLive(ctx: Context): Boolean = startIntent(ctx, Intent(ctx, IntercomForegroundService::class.java))
+
+        fun startCall(ctx: Context, callId: String, channel: String, peer: String): Boolean {
+            val intent = Intent(ctx, IntercomForegroundService::class.java).apply {
+                putExtra(CallNotifications.EXTRA_BROADCAST_ID, callId)
+                putExtra(CallNotifications.EXTRA_CHANNEL, channel)
+                putExtra(CallNotifications.EXTRA_CALLER, peer)
+            }
+            return startIntent(ctx, intent)
+        }
+
+        private fun startIntent(ctx: Context, intent: Intent): Boolean = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(intent)
+            else ctx.startService(intent)
+            true
+        } catch (error: Exception) {
+            AgoraIntercom.onForegroundServiceFailure(
+                intent.getStringExtra(CallNotifications.EXTRA_BROADCAST_ID).orEmpty(),
+                error.message ?: error.javaClass.simpleName,
+            )
+            false
         }
 
         fun stop(ctx: Context) {
-            try { ctx.stopService(Intent(ctx, IntercomForegroundService::class.java)) } catch (_: Exception) {}
+            runCatching { ctx.stopService(Intent(ctx, IntercomForegroundService::class.java)) }
         }
     }
 }

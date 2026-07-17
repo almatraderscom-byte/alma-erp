@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.plainClick
+import com.almatraders.erp.CallNotifications
 import kotlinx.coroutines.launch
 
 private val icViolet = Color(0xFF8B5CF6)
@@ -82,25 +83,36 @@ fun IntercomSheet(isOwner: Boolean, dark: Boolean, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val micLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { }
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
+    ) { AgoraIntercom.refreshCapabilities() }
 
     LaunchedEffect(Unit) {
         AgoraIntercom.attach(context)
         // Mic is needed to speak / PTT — request up front so a press-and-hold works.
-        if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            micLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+        val permissions = buildList {
+            if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                add(android.Manifest.permission.RECORD_AUDIO)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                add(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 31 && context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                add(android.Manifest.permission.BLUETOOTH_CONNECT)
+            }
         }
+        if (permissions.isNotEmpty()) permissionLauncher.launch(permissions.toTypedArray())
         AgoraIntercom.loadFeed()
     }
 
     val ic = AgoraIntercom
-    val inCall = ic.mode == AgoraIntercom.Mode.CALLING || ic.mode == AgoraIntercom.Mode.RINGING
+    val inCall = ic.mode == AgoraIntercom.Mode.CALLING || ic.mode == AgoraIntercom.Mode.RINGING || ic.mode == AgoraIntercom.Mode.RECONNECTING
     val live = ic.mode == AgoraIntercom.Mode.BROADCASTING || ic.mode == AgoraIntercom.Mode.LISTENING
 
     ModalBottomSheet(
-        onDismissRequest = { ic.leave(); onDismiss() },
+        // The process coordinator owns an active call. Closing this sheet only
+        // minimizes it; the ongoing CallStyle notification is the global return UI.
+        onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = AlmaTheme.rootBg(dark),
     ) {
@@ -123,6 +135,19 @@ fun IntercomSheet(isOwner: Boolean, dark: Boolean, onDismiss: () -> Unit) {
                 Text(it, color = icRed, fontSize = 12.sp, textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().background(icRed.copy(alpha = 0.10f), RoundedCornerShape(12.dp)).padding(10.dp))
             }
+            ic.capabilityIssue?.let {
+                Text(
+                    if (it == "full_screen_intent_denied_heads_up_fallback") "ফুল-স্ক্রিন কল বন্ধ — হেডস-আপ নোটিফিকেশন ব্যবহার হবে"
+                    else "কল নোটিফিকেশন/ব্যাকগ্রাউন্ড অনুমতি যাচাই করুন",
+                    color = Color(0xFFF59E0B), fontSize = 12.sp, textAlign = TextAlign.Center,
+                    modifier = Modifier.plainClick {
+                        val settings = if (it == "full_screen_intent_denied_heads_up_fallback") {
+                            CallNotifications.fullScreenSettingsIntent(context)
+                        } else CallNotifications.notificationSettingsIntent(context)
+                        if (settings != null) context.startActivity(settings)
+                    },
+                )
+            }
 
             // Live speaking orb.
             LiveOrb(active = live || inCall, speaking = ic.remoteSpeaking || ic.localSpeaking, dark = dark)
@@ -131,7 +156,10 @@ fun IntercomSheet(isOwner: Boolean, dark: Boolean, onDismiss: () -> Unit) {
                 inCall -> {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         BigBtn(if (ic.micMuted) "🔇 আনমিউট" else "🎙️ মিউট", icViolet, false, Modifier.weight(1f)) { ic.toggleMute() }
-                        BigBtn(if (ic.mode == AgoraIntercom.Mode.RINGING) "বাতিল" else "কল কাটুন", icRed, true, Modifier.weight(1f)) { ic.leave(); onDismiss() }
+                        BigBtn(if (ic.speakerEnabled) "🔈 ইয়ারপিস" else "🔊 স্পিকার", icViolet, false, Modifier.weight(1f)) { ic.toggleSpeaker() }
+                    }
+                    BigBtn(if (ic.mode == AgoraIntercom.Mode.RINGING) "বাতিল" else "কল কাটুন", icRed, true, Modifier.fillMaxWidth()) {
+                        ic.endActiveCallFromUi(); onDismiss()
                     }
                 }
                 else -> {
@@ -165,6 +193,10 @@ fun IntercomSheet(isOwner: Boolean, dark: Boolean, onDismiss: () -> Unit) {
                                     Text("📞", fontSize = 18.sp)
                                 }
                             }
+                        }
+                    } else if (!isOwner) {
+                        BigBtn("📞 বসকে কল করুন", icGreen, true, Modifier.fillMaxWidth()) {
+                            scope.launch { ic.staffCallOwner() }
                         }
                     }
                 }

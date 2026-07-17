@@ -145,6 +145,9 @@ dependencies {
     // Direct high-priority data FCM is the single canonical Office-call wake
     // path. OneSignal remains for non-call ERP notifications and legacy calls.
     implementation 'com.google.firebase:firebase-messaging:24.0.0'
+    // Android system call integration (Telecom, Bluetooth/wearable controls and
+    // platform audio endpoints) for the process-level Office call coordinator.
+    implementation 'androidx.core:core-telecom:1.0.0'
 
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
