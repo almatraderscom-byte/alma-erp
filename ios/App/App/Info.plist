@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>ALMAGitCommit</key>
-	<string>fa396eae49</string>
+	<string>69e4cabeaa</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.almatraders.erp.refresh</string>
