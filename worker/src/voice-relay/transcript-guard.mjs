@@ -46,14 +46,20 @@ const END_SIGNAL_RE = new RegExp(
     '(?:আল্লাহ্?|খোদা|খুদা)\\s*হাফেজ',
     'রাখছি',
     'রাখলাম',
-    '(?:এখন|তাহলে|ঠিক\\s*আছে|আচ্ছা)\\s*রাখি',
+    // "এখন/এবার/কল/আচ্ছা রাখো/রাখি/রাখেন" — the prefix keeps "এটা রাখো" (keep this) out.
+    '(?:এখন|এবার|তাহলে|ঠিক\\s*আছে|আচ্ছা|কল)\\s*(?:রাখো|রাখি|রাখেন|রাখুন)',
+    // direct hang-up commands the owner actually used, 2026-07-18
+    'কে?টে\\s*দা[ওয]',
+    'রেখে\\s*দা[ওয]',
+    'কল\\s*(?:কেটে|বন্ধ|কাটো|কাট)',
     'আর\\s*কিছু\\s*(?:লাগবে|বলার|দরকার|বলব)\\s*(?:না|নেই)',
     'কথা\\s*শেষ',
     // Banglish
     '\\b(?:bye|goodbye)\\b',
     '\\b(?:khoda|khuda|allah)\\s*hafez\\b',
-    '\\b(?:rakhchi|rakhlam)\\b',
-    '\\b(?:ok|okay|thik\\s*ache|accha)\\s*(?:rakhi|bye)\\b',
+    '\\b(?:rakhchi|rakhlam|kete\\s*dao|rekhe\\s*dao|hang\\s*up|cut\\s*(?:the\\s*)?call)\\b',
+    '\\b(?:ekhon|ebar|accha|thik\\s*ache)\\s*rakho\\b',
+    '\\b(?:ok|okay|thik\\s*ache|accha)\\s*(?:rakhi|rakho|bye)\\b',
   ].join('|'),
   'i',
 )
@@ -61,4 +67,25 @@ const END_SIGNAL_RE = new RegExp(
 /** True when the caller's utterance is a genuine goodbye / end-of-call signal. */
 export function endSignalFromCaller(raw) {
   return END_SIGNAL_RE.test(String(raw ?? ''))
+}
+
+// A short, content-free "yes" — used ONLY to confirm a hang-up the caller already
+// asked for, so it must not fire on a sentence that carries a new question/topic.
+// Includes bare hang-up verbs ("রাখো"/"রাখেন") which in the confirm context mean yes,
+// even though on their own (mid-conversation) they are not treated as an end-signal.
+const AFFIRM_RE =
+  /(?:^|\s)(?:হ্যাঁ|হ্যা|জি|জ্বি|জ্বী|হু|হুম|আচ্ছা|ঠিক\s*আছে|রাখো|রাখেন|রাখি|রাখো্|ok|okay|yes|yep|ha|hae|ji|hmm|thik\s*ache|accha|rakho)(?:$|\s|,|।)/i
+
+/**
+ * The caller was asked "shall I hang up?" — is THIS reply a yes?
+ * A repeat goodbye counts; so does a short bare affirmative (≤3 words, no "?").
+ * A longer sentence or a question is treated as "no, keep talking".
+ */
+export function isHangupConfirmation(raw) {
+  const t = String(raw ?? '').trim()
+  if (!t) return false
+  if (endSignalFromCaller(t)) return true
+  if (t.includes('?') || t.includes('？')) return false
+  const words = t.split(/\s+/).filter(Boolean)
+  return words.length <= 3 && AFFIRM_RE.test(` ${t} `)
 }

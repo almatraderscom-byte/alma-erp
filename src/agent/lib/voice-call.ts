@@ -321,7 +321,9 @@ async function placeRelayCall(
       // sentence was simply lost and the agent carried on its own way (owner's "amar
       // kotha na bujhei nijer moto kotha bola"). "speech" delivers those words; the
       // default interruptible="any" already stops the TTS when they start speaking.
-      ` reportInputDuringAgentSpeech="${process.env.VOICE_RELAY_REPORT_DURING_SPEECH ?? 'speech'}"` +
+      // "any" = speech AND DTMF reported even while the agent is talking. DTMF is the
+      // owner's STT-proof hang-up (press any key), so it must never be swallowed.
+      ` reportInputDuringAgentSpeech="${process.env.VOICE_RELAY_REPORT_DURING_SPEECH ?? 'any'}"` +
       // Barge-in: default sensitivity is "high", so the owner's own low-volume echo /
       // line noise kept interrupting the agent mid-sentence — his "বাক্য শেষ না করে
       // অন্য বাক্য শুরু করে". "low" needs real, confident, longer speech to cut the TTS;

@@ -8,7 +8,11 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isUnintelligibleTranscript, endSignalFromCaller } from '../voice-relay/transcript-guard.mjs'
+import {
+  isUnintelligibleTranscript,
+  endSignalFromCaller,
+  isHangupConfirmation,
+} from '../voice-relay/transcript-guard.mjs'
 
 test('real mis-heard Hindi transcripts from prod are rejected', () => {
   for (const t of [
@@ -56,12 +60,33 @@ test('genuine goodbye phrases end the call', () => {
     'আল্লাহ হাফেজ',
     'খোদা হাফেজ',
     'বিদায় বস',
+    // the EXACT phrases the owner used that the first regex missed (2026-07-18)
+    'তুমি কল কেটে দাও',
+    'এখন রাখো',
+    'কল কেটে দাও',
+    'রেখে দাও এখন',
     'ok rakhi',
     'thik ache bye',
     'accha bye',
     'ok bye',
+    'ekhon rakho',
+    'kete dao',
   ]) {
     assert.equal(endSignalFromCaller(t), true, t)
+  }
+})
+
+test('a "shall I hang up?" reply: only a short yes confirms', () => {
+  for (const t of ['হ্যাঁ', 'জি', 'হুম', 'আচ্ছা', 'রাখো', 'হ্যাঁ রাখো', 'ok', 'জি রাখো', 'বিদায়']) {
+    assert.equal(isHangupConfirmation(t), true, t)
+  }
+  for (const t of [
+    'না আজকের সেলটা আগে বলো',      // wants to continue
+    'আচ্ছা তারপর কী হলো?',        // a new question, not a yes
+    'একটু দাঁড়াও আরেকটা কথা আছে', // long → continuation
+    'না না বন্ধ কোরো না',
+  ]) {
+    assert.equal(isHangupConfirmation(t), false, t)
   }
 })
 
