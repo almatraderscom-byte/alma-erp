@@ -1001,7 +1001,10 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     : null
 
   if (personalMode) {
-    stableParts.push(PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE + RESPONSE_STYLE_RULE)
+    // P11 — personal mode gets the SAME constitution anchor as business mode, so
+    // its (often weaker-scaffolded) turns keep the identical discipline. The
+    // PERSONAL_ADVISOR_PROMPT's Quran/hadith anti-fabrication rule still applies.
+    stableParts.push((AGENT_CONSTITUTION ? CONSTITUTION_RULE : '') + PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE + RESPONSE_STYLE_RULE)
     if (tailSummaryBlock) stableParts.push(tailSummaryBlock)
     if (pinnedMemories && pinnedMemories.length > 0) {
       const pinned = pinnedMemories

@@ -29,4 +29,15 @@ describe('CONSTITUTION (P6 — one behaviour contract, model-agnostic)', () => {
     expect(CONSTITUTION_RULE).toContain('দাবির আগে')
     void idxIdentity
   })
+
+  it('P11 — personal mode ALSO gets the constitution when the flag is on', async () => {
+    vi.stubEnv('AGENT_CONSTITUTION', 'on')
+    vi.resetModules()
+    const { buildSystemPrompt } = await import('../system-prompt')
+    // 10th positional arg is personalMode
+    const text = buildSystemPrompt(null, undefined, undefined, undefined, false, false, false, undefined, false, true)
+      .map((b) => b.text ?? '')
+      .join('\n')
+    expect(text).toContain('সংবিধান — সবার আগে')
+  })
 })

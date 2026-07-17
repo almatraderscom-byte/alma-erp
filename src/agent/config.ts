@@ -107,6 +107,11 @@ export const AGENT_PLAN_GATE = process.env.AGENT_PLAN_GATE === 'on'
 // data question so the model can't answer from memory. OFF by default.
 export const AGENT_GROUNDING_GATE = process.env.AGENT_GROUNDING_GATE === 'on'
 
+// P1 — factual-claim gate: flag a live-data number/status stated with NO
+// successful read this turn, so the verifier forces a read or an honest hedge
+// (catches fabricated stats the completion-claim ledger check misses). OFF by default.
+export const AGENT_FACT_GATE = process.env.AGENT_FACT_GATE === 'on'
+
 // Phase prompt specifies budget_tokens values for reference.
 // budget_tokens is deprecated on claude-sonnet-4-6; we use thinking: {type:'adaptive'}
 // and map to output_config.effort levels instead (off → no thinking param, low → medium, high → high).

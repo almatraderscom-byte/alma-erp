@@ -57,6 +57,7 @@ import {
   buildVerificationReminder,
   detectMissingCardViolation,
   detectProseChoiceViolation,
+  detectFabricatedStatViolations,
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
@@ -1198,6 +1199,10 @@ async function* runAlternateProviderTurn(
           if (violations.length === 0 && emittedAskCards.length === 0 && confirmCardsEmitted === 0) {
             violations.push(...detectMissingCardViolation(iterationText.trim()))
             violations.push(...detectProseChoiceViolation(iterationText.trim()))
+          }
+          // P1 — fabricated-stat gate (flag-gated inside → no-op when off).
+          if (violations.length === 0) {
+            violations.push(...detectFabricatedStatViolations(iterationText.trim(), ledger))
           }
           if (violations.length > 0) {
             verifyRetries++

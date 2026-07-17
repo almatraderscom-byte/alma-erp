@@ -5,7 +5,10 @@
  *  1. Specific regex rules (original 6 categories) — high-recall for critical actions.
  *  2. General ledger-based check — catches completion claims for ANY tool category
  *     that wasn't backed by a successful call this turn.
+ *  3. P1 factual-claim gate — catches a fabricated live-data number/status stated
+ *     with no successful read this turn (flag-gated).
  */
+import { AGENT_FACT_GATE } from '@/agent/config'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -20,6 +23,7 @@ export type ClaimViolationCategory =
   | 'missing_card'
   | 'prose_choice'
   | 'missing_ask'
+  | 'fabricated_stat'
 
 export interface ClaimViolation {
   category: ClaimViolationCategory
@@ -407,6 +411,41 @@ export function detectMissingAskViolation(
 /**
  * Combined verification: Layer 1 (regex) + Layer 2 (ledger) + ask-guard.
  */
+// ── P1 factual-claim gate ─────────────────────────────────────────────────────
+
+/** A live-data figure stated adjacent to a data noun, in either order. */
+const STAT_NEAR_DATA_RE =
+  /(?:(?:\d[\d,]*|[০-৯][০-৯,]*)\s*(?:টি|টা|জন|টাকা|৳)?\s*(?:order|অর্ডার|stock|স্টক|বিক্রি|sales?|revenue|আয়|due|বাকি|payment|পেমেন্ট|customer|কাস্টমার|হাজিরা))|(?:(?:order|অর্ডার|stock|স্টক|বিক্রি|sales?|revenue|আয়|due|বাকি|payment|পেমেন্ট|customer|কাস্টমার)\s*(?:হয়েছে|আছে|:|=)?\s*(?:\d[\d,]*|[০-৯][০-৯,]*))/i
+
+/** Read-category tool prefixes — a successful one means the figure is grounded. */
+const READ_TOOL_PREFIX_RE = /^(get_|list_|read_|fetch_|search_|check_|view_|find_|lookup_|query_|count_)/
+
+/** Owner-visible hedge → the model already disclosed the number is unverified. */
+const STAT_HEDGE_RE = /যাচাই\s*করে?\s*(?:দেখি|নি|নেব)|আনুমানিক|approx|estimate|মেমরি\s*থেকে|নিশ্চিত\s*নই|মোটামুটি/i
+
+/**
+ * P1 — a live-data figure stated with NO successful read this turn and no hedge.
+ * The completion-claim ledger check keys on "done" verbs, so a volunteered stat
+ * ("আজ ৫টা অর্ডার হয়েছে") slips through; this catches it. Flag-gated; conservative
+ * (needs a number adjacent to a data noun) and fails open.
+ */
+export function detectFabricatedStatViolations(
+  replyText: string,
+  ledger: ToolLedgerEntry[],
+): ClaimViolation[] {
+  if (!AGENT_FACT_GATE) return []
+  if (FUTURE_INTENT.test(replyText) || STAT_HEDGE_RE.test(replyText)) return []
+  if (ledger.some((e) => e.success && READ_TOOL_PREFIX_RE.test(e.toolName))) return []
+  const m = STAT_NEAR_DATA_RE.exec(replyText)
+  if (!m) return []
+  return [{
+    category: 'fabricated_stat',
+    ruleId: 'stat_without_read',
+    matchedSnippet: m[0].trim().slice(0, 60),
+    requiredTools: [],
+  }]
+}
+
 export function verifyClaimsAgainstLedger(
   replyText: string,
   ledger: ToolLedgerEntry[],
@@ -460,6 +499,9 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'আপনি Boss-কে prose-এর ভিতরে option/সিদ্ধান্তের প্রশ্ন দিয়েছেন কিন্তু ask_user tool call করেননি — Boss টেক্সটের ভিতরের option-এ tap করতে পারেন না (HARD RULE 2026-07-07: choice মানেই ask_user, ব্যতিক্রম নেই)। ' +
     'আবার লিখুন: বিশ্লেষণ/প্রেক্ষাপট prose-এ রাখুন, কিন্তু option-এর তালিকা আর "কোনটা করবেন?" জাতীয় প্রশ্ন prose থেকে সম্পূর্ণ বাদ দিন — সেগুলো ask_user call-এ দিন (question + ২-৪টি ছোট tappable option, প্রতিটি option এক লাইনের)। ' +
     'reply-র শেষ কাজ = ask_user call।',
+  fabricated_stat:
+    'আপনি লাইভ ডেটা (সংখ্যা/অর্ডার/স্টক/বিক্রি/টাকা/হাজিরা) উল্লেখ করেছেন কিন্তু এই turn-এ কোনো read tool দিয়ে সেটা যাচাই করেননি। ' +
+    'হয় এখনই relevant read tool (get_/list_/check_…) call করে আসল সংখ্যাটা আনুন, নয়তো সততা সঙ্গে বলুন সংখ্যাটা যাচাই করা হয়নি ("যাচাই করে দেখিনি — আনুমানিক")। মেমরি থেকে নিশ্চিত সংখ্যা দেবেন না।',
 }
 
 export function buildVerificationReminder(violations: ClaimViolation[]): string {
