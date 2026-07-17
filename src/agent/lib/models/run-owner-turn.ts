@@ -4,7 +4,8 @@
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_HEAD_PARITY, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY } from '@/agent/config'
+import { computeHeadToolCap } from '@/agent/lib/models/head-tool-cap'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { getOfficePulse } from '@/agent/lib/office-pulse'
@@ -690,11 +691,9 @@ async function* runAlternateProviderTurn(
   // earliest tools (core ERP + confirm/ask flows sit at the front of the registry)
   // and drop the tail with a visible note.
   // P10 — the 200-tool cap must also cover the xAI-DIRECT head (provider 'xai',
-  // slug 'grok-4.20', which does NOT start with 'x-ai/'), or the owner's Grok head
-  // silently carries an oversized toolset the xAI API rejects with the same
-  // "Maximum tools limit reached" 400 the OpenRouter path already guards against.
-  const isXaiHead = model.apiModel.startsWith('x-ai/') || (AGENT_HEAD_PARITY && model.provider === 'xai')
-  const toolCap = isXaiHead ? 200 : Infinity
+  // slug 'grok-4.20', which does NOT start with 'x-ai/'). Pure helper so parity
+  // is unit-testable (see head-tool-cap.ts).
+  const toolCap = computeHeadToolCap(model)
   let cappedTools = selectedTools
   if (selectedTools.length > toolCap) {
     const dropped = selectedTools.slice(toolCap).map((t) => t.name)
