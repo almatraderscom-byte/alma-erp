@@ -66,6 +66,87 @@ export function connectedComponents(mask, width, height) {
   return boxes
 }
 
+/** 3x3-cross erosion of a 0/1 mask (pure, exported for tests). */
+export function erodeMask(mask, width, height) {
+  const out = new Uint8Array(width * height)
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x
+      out[i] = mask[i] && mask[i - 1] && mask[i + 1] && mask[i - width] && mask[i + width] ? 1 : 0
+    }
+  }
+  return out
+}
+
+/**
+ * Split ONE merged person blob into individual people (pure, exported for
+ * tests) — owner reality 2026-07-18: মা+মেয়ে / বাবা+মেয়ে sets have DIFFERENT
+ * dresses per person, so each person's own garment must be recovered even
+ * when they touch in the supplier photo (a hand on a shoulder is a thin
+ * connector that erodes away).
+ *
+ * Erode until ≥2 sizeable components appear, then competitively regrow the
+ * top seeds over the ORIGINAL mask (multi-source BFS ≈ watershed).
+ * @returns {{labels: Int32Array, count: number} | null} labels 1..count over
+ *   the original mask pixels, or null when no split is found
+ */
+export function splitMergedPersons(mask, width, height, { maxIter = 8, minAreaFrac = 0.015 } = {}) {
+  let cur = mask
+  for (let it = 0; it < maxIter; it++) {
+    cur = erodeMask(cur, width, height)
+    let remaining = 0
+    for (let i = 0; i < cur.length; i++) remaining += cur[i]
+    if (!remaining) return null
+    const comps = connectedComponents(cur, width, height)
+      .filter((c) => c.area >= minAreaFrac * width * height)
+      .sort((a, b) => b.area - a.area)
+    if (comps.length < 2) continue
+
+    const seeds = comps.slice(0, 4)
+    const labels = new Int32Array(width * height)
+    const queue = []
+    // label each seed's eroded pixels via flood on the eroded mask
+    for (let s = 0; s < seeds.length; s++) {
+      const seedMask = new Uint8Array(width * height)
+      // local flood (4-connectivity) from inside the seed's bbox
+      let start = -1
+      for (let y = seeds[s].y; y < seeds[s].y + seeds[s].height && start < 0; y++) {
+        for (let x = seeds[s].x; x < seeds[s].x + seeds[s].width; x++) {
+          const i = y * width + x
+          if (cur[i] && !labels[i]) { start = i; break }
+        }
+      }
+      if (start < 0) continue
+      const stack = [start]
+      seedMask[start] = 1
+      while (stack.length) {
+        const idx = stack.pop()
+        const x = idx % width
+        const y = (idx / width) | 0
+        if (x > 0 && cur[idx - 1] && !seedMask[idx - 1]) { seedMask[idx - 1] = 1; stack.push(idx - 1) }
+        if (x < width - 1 && cur[idx + 1] && !seedMask[idx + 1]) { seedMask[idx + 1] = 1; stack.push(idx + 1) }
+        if (y > 0 && cur[idx - width] && !seedMask[idx - width]) { seedMask[idx - width] = 1; stack.push(idx - width) }
+        if (y < height - 1 && cur[idx + width] && !seedMask[idx + width]) { seedMask[idx + width] = 1; stack.push(idx + width) }
+      }
+      for (let i = 0; i < seedMask.length; i++) if (seedMask[i]) { labels[i] = s + 1; queue.push(i) }
+    }
+    // competitive BFS regrow over the original mask
+    let head = 0
+    while (head < queue.length) {
+      const idx = queue[head++]
+      const l = labels[idx]
+      const x = idx % width
+      const y = (idx / width) | 0
+      if (x > 0 && mask[idx - 1] && !labels[idx - 1]) { labels[idx - 1] = l; queue.push(idx - 1) }
+      if (x < width - 1 && mask[idx + 1] && !labels[idx + 1]) { labels[idx + 1] = l; queue.push(idx + 1) }
+      if (y > 0 && mask[idx - width] && !labels[idx - width]) { labels[idx - width] = l; queue.push(idx - width) }
+      if (y < height - 1 && mask[idx + width] && !labels[idx + width]) { labels[idx + width] = l; queue.push(idx + width) }
+    }
+    return { labels, count: seeds.length }
+  }
+  return null
+}
+
 /**
  * Remove bright overlay lettering inside the person alpha from a flattened
  * crop. `cutRaw` = the crop's raw RGBA buffer (alpha already limited to the
@@ -97,6 +178,10 @@ async function scrubOverlayText(sharp, flatCrop, cutRaw, dims) {
   }
 }
 
+const TEXT_BOX_INSTRUCTION = 'Detect every region of overlaid graphic text, watermark or logo in this product photo (any language, any colour), including decorative Bangla lettering. Exclude fabric embroidery patterns, buttons and natural objects. Output ONLY a JSON list where each entry has the 2D bounding box in "box_2d" ([ymin, xmin, ymax, xmax], normalized 0-1000) and a short "label". Output [] if there is none.'
+
+const PERSON_BOX_INSTRUCTION = 'Detect each individual PERSON in this photo (adults and children separately, including mannequins wearing clothes). Output ONLY a JSON list where each entry has the 2D bounding box in "box_2d" ([ymin, xmin, ymax, xmax], normalized 0-1000) and a short "label" like "adult man" or "child". Output [] if there is none.'
+
 /**
  * Narrow MECHANICAL text-box detection (Gemini flash, temperature 0) — the
  * owner's no-LLM-creative-judgment rule allows mechanical sub-tasks; this
@@ -104,6 +189,18 @@ async function scrubOverlayText(sharp, flatCrop, cutRaw, dims) {
  * @returns {Promise<Array<{x0:number,y0:number,x1:number,y1:number}>>} 0-1 normalized
  */
 export async function detectOverlayTextBoxes(imageBuf, onDebug) {
+  return geminiBox2d(imageBuf, TEXT_BOX_INSTRUCTION, onDebug)
+}
+
+/**
+ * Per-person boxes for OVERLAPPING people erosion cannot separate (child
+ * standing in front of the parent). Mechanical box detection only.
+ */
+export async function detectPersonBoxes(imageBuf, onDebug) {
+  return geminiBox2d(imageBuf, PERSON_BOX_INSTRUCTION, onDebug)
+}
+
+async function geminiBox2d(imageBuf, instruction, onDebug) {
   const key = process.env.GEMINI_API_KEY
   if (!key) { onDebug?.({ reason: 'no_key' }); return [] }
   // 2.5-flash boxes markedly better; 2.0-flash is the fallback
@@ -120,7 +217,7 @@ export async function detectOverlayTextBoxes(imageBuf, onDebug) {
                 // canonical Gemini detection format — the model is trained on
                 // "box_2d" [ymin,xmin,ymax,xmax] 0-1000; custom shapes often
                 // come back empty (live 2026-07-17: boxes:0 on obvious text)
-                { text: 'Detect every region of overlaid graphic text, watermark or logo in this product photo (any language, any colour), including decorative Bangla lettering. Exclude fabric embroidery patterns, buttons and natural objects. Output ONLY a JSON list where each entry has the 2D bounding box in "box_2d" ([ymin, xmin, ymax, xmax], normalized 0-1000) and a short "label". Output [] if there is none.' },
+                { text: instruction },
                 { inline_data: { mime_type: 'image/png', data: imageBuf.toString('base64') } },
               ],
             }],
@@ -323,24 +420,96 @@ export async function prepSupplierPhoto({ supabase, imagePath, pendingActionId, 
     .sort((a, b) => b.height - a.height)
     .slice(0, 4)
 
+  const { floodInto } = await import('./photo-cleanup.mjs')
+  // per-person small masks: normal components, OR erosion-split of ONE
+  // merged blob (people touching — hand on shoulder etc.). মা+মেয়ে/বাবা+মেয়ে
+  // sets have different dresses per person, so the split matters.
+  let personMasks = []
+  if (comps.length === 1) {
+    const split = splitMergedPersons(mask, smallW, smallH)
+    if (split) {
+      for (let l = 1; l <= split.count; l++) {
+        const m = new Uint8Array(smallW * smallH)
+        let area = 0
+        let minX = smallW; let maxX = -1; let minY = smallH; let maxY = -1
+        for (let i = 0; i < m.length; i++) {
+          if (split.labels[i] !== l) continue
+          m[i] = 1; area++
+          const x = i % smallW; const y = (i / smallW) | 0
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+        }
+        if (area < MIN_COMPONENT_AREA * smallW * smallH) continue
+        personMasks.push({ m, bbox: { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 } })
+      }
+      if (personMasks.length >= 2) console.log(`[garment-prep] ${imagePath} — merged blob erosion-split into ${personMasks.length}`)
+      else personMasks = []
+    }
+    // erosion can't separate OVERLAPPING people (child in front of parent) —
+    // fall back to mechanical Gemini person boxes; the smaller (front) box
+    // claims the overlap pixels first
+    if (!personMasks.length) {
+      const detPng = await sharp(basePng).resize(512, null).png().toBuffer()
+      const pboxes = await detectPersonBoxes(detPng)
+      if (pboxes.length >= 2) {
+        const claimed = new Uint8Array(smallW * smallH)
+        const px = pboxes.map((b) => ({
+          x0: Math.max(0, Math.round(b.x0 * smallW)),
+          y0: Math.max(0, Math.round(b.y0 * smallH)),
+          x1: Math.min(smallW - 1, Math.round(b.x1 * smallW)),
+          y1: Math.min(smallH - 1, Math.round(b.y1 * smallH)),
+        })).map((b) => ({ ...b, area: (b.x1 - b.x0 + 1) * (b.y1 - b.y0 + 1) }))
+          .sort((a, b) => a.area - b.area)
+        for (const b of px) {
+          const m = new Uint8Array(smallW * smallH)
+          let area = 0
+          let minX = smallW; let maxX = -1; let minY = smallH; let maxY = -1
+          for (let y = b.y0; y <= b.y1; y++) {
+            for (let x = b.x0; x <= b.x1; x++) {
+              const i = y * smallW + x
+              if (!mask[i] || claimed[i]) continue
+              m[i] = 1; claimed[i] = 1; area++
+              if (x < minX) minX = x
+              if (x > maxX) maxX = x
+              if (y < minY) minY = y
+              if (y > maxY) maxY = y
+            }
+          }
+          if (area < MIN_COMPONENT_AREA * smallW * smallH * 0.5) continue
+          personMasks.push({ m, bbox: { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 } })
+        }
+        if (personMasks.length >= 2) console.log(`[garment-prep] ${imagePath} — gemini person-box split into ${personMasks.length}`)
+        else personMasks = []
+      }
+    }
+  }
+  if (!personMasks.length) {
+    personMasks = comps.map((c) => {
+      const m = new Uint8Array(smallW * smallH)
+      floodInto(m, mask, smallW, smallH, c)
+      return { m, bbox: { x: c.x, y: c.y, width: c.width, height: c.height } }
+    })
+  }
+  personMasks.sort((a, b) => b.bbox.height - a.bbox.height)
+
   const persons = []
   const textScrubDebug = []
   const scaleX = W / smallW
   const scaleY = H / smallH
-  const { floodInto } = await import('./photo-cleanup.mjs')
-  for (let i = 0; i < comps.length; i++) {
-    const c = comps[i]
+  for (let i = 0; i < personMasks.length; i++) {
+    const c = personMasks[i].bbox
     const mx = Math.round(c.width * scaleX * CROP_MARGIN)
     const my = Math.round(c.height * scaleY * CROP_MARGIN)
     const left = Math.max(0, Math.round(c.x * scaleX) - mx)
     const top = Math.max(0, Math.round(c.y * scaleY) - my)
     const cw = Math.min(W - left, Math.round(c.width * scaleX) + mx * 2)
     const ch = Math.min(H - top, Math.round(c.height * scaleY) + my * 2)
-    // v3: limit the crop's alpha to THIS person component only — the
-    // segmenter keeps disconnected overlay text/graphics as foreground, and
-    // component-masking removes them regardless of colour
-    const compSmall = new Uint8Array(smallW * smallH)
-    floodInto(compSmall, mask, smallW, smallH, c)
+    // v3: limit the crop's alpha to THIS person only — the segmenter keeps
+    // disconnected overlay text/graphics as foreground, and person-masking
+    // removes them regardless of colour
+    const compSmall = personMasks[i].m
     const { data: compRaw, info: compInfo } = await sharp(Buffer.from(compSmall.map((v) => v * 255)), {
       raw: { width: smallW, height: smallH, channels: 1 },
     }).resize(W, H, { fit: 'fill' }).raw().toBuffer({ resolveWithObject: true })

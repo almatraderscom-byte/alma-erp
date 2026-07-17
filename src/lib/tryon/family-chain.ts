@@ -274,9 +274,11 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
     }
 
     case 'child_tryon': {
-      // real supplier child piece when prep split one out, otherwise the SAME
-      // adult garment — the VTON engine sizes it to the child's body itself
-      // (owner decision 2026-07-17: no AI-generated child garment, ever)
+      // real supplier piece when prep split one out. Same-garment fallback is
+      // ONLY valid where the second person wears the same design: father_son
+      // (scaled panjabi) and couple's wife (owner CS4 rule: adult product).
+      // মা+মেয়ে / বাবা+মেয়ে / মা+ছেলে have DIFFERENT dresses per person —
+      // advanceFamilyChain fails those chains earlier when no piece was split.
       const childGarment = state.childGarmentPath ?? adultGarment
       if (useFalVton) {
         return {
@@ -748,6 +750,33 @@ export async function advanceFamilyChain(
       if (child && state.childRole === 'mother') {
         // couple: the second (shorter) person is the wife's piece
         next.childGarmentPath = child
+      }
+      // Different-dress variants (মা+মেয়ে / বাবা+মেয়ে / মা+ছেলে) MUST have the
+      // second person's own piece — the adult-garment fallback would dress a
+      // daughter in a panjabi (owner 2026-07-18). Fail loudly, in Bangla.
+      const needsOwnPiece = state.childRole && state.childRole !== 'mother' && state.variant !== 'father_son'
+      if (needsOwnPiece && !next.childGarmentPath) {
+        const childBn = state.childRole === 'daughter' ? 'মেয়ের' : 'ছেলের'
+        await db.agentPendingAction.create({
+          data: {
+            conversationId: state.conversationId ?? null,
+            type: 'image_gen',
+            status: 'failed',
+            summary: `🧬 ${VARIANT_LABELS_BN[state.variant]} — গার্মেন্ট আলাদা করা যায়নি`,
+            payload: {
+              creativeStudio: true,
+              studioMode: 'product_to_model',
+              familyPreset: state.variant,
+              provider: 'garment_prep',
+              familyChain: { ...state, stepIndex: state.stepIndex },
+            },
+            result: {
+              error: `সাপ্লায়ার ছবি থেকে ${childBn} গার্মেন্ট আলাদা করা যায়নি — এই সেটে দুজনের ড্রেস আলাদা, তাই ${childBn} নিজের পিস দরকার। দুজন একটু আলাদা দাঁড়ানো ছবি দিন, অথবা ${childBn} গার্মেন্টের আলাদা ছবি দিয়ে চালান।`,
+            },
+            resolvedAt: new Date(),
+          },
+        })
+        return null
       }
     }
     if (step === 'adult_tryon') next.adultImagePath = storagePath
