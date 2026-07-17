@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { buildPulseSnapshot } from '@/agent/lib/pulse-snapshot'
+import { toPulseContentState } from '@/lib/pulse-state'
 import { isSystemOwner } from '@/lib/roles'
 
 export const runtime = 'nodejs'
@@ -33,6 +34,14 @@ export async function GET(req: NextRequest) {
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
+  // Return the FLAT PulseContentState (same shape the push path sends via
+  // toPulseContentState), NOT the raw nested PulseSnapshot. The native sync
+  // (PulseNativeSync → ContentState) decodes flat `approvalId` / `approvalTitle`
+  // / `approvalCounterparty`; returning the raw snapshot left those nil (they
+  // live under `snapshot.approval`), so the island lost the অনুমোদন/বাতিল buttons
+  // and showed only the "Approvals ট্যাবে" text (owner device-hit, build 77,
+  // 2026-07-17). toPulseContentState keeps the legacy v1/v2 keys too, so older
+  // builds are unaffected.
   const snapshot = await buildPulseSnapshot()
-  return Response.json(snapshot)
+  return Response.json(toPulseContentState(snapshot))
 }
