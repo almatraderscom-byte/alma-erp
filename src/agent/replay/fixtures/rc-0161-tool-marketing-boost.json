@@ -1,0 +1,29 @@
+{
+  "id": "rc-0161-tool-marketing-boost",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "Marketing ask \"ei post ta boost korle kemon hoy?\" routes to the marketing head with content packs.",
+  "transcript": [],
+  "latestMessage": "ei post ta boost korle kemon hoy?",
+  "expected": {
+    "intent": "marketing_content",
+    "outcome": "Marketing head drafts content; publishing still needs an approval card."
+  },
+  "expect2": {
+    "fastPath": "marketing_kw",
+    "headTier": "marketing",
+    "packs": [
+      "ads"
+    ],
+    "forbiddenPacks": [
+      "finance"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "marketing"
+  ]
+}

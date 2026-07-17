@@ -1,0 +1,28 @@
+{
+  "id": "rc-0222-listen-other-staff",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "personal_listen",
+  "description": "A staff member seeming low is a work/people matter, not owner listen mode.",
+  "transcript": [],
+  "latestMessage": "Rafi ke aj mon kharap mone holo, or sathe kotha bolo",
+  "fakes": {
+    "personalClassification": "work",
+    "triageTier": "heavy"
+  },
+  "expected": {
+    "intent": "staff_care_task",
+    "outcome": "Treated as a staff-related task with judgment."
+  },
+  "expect2": {
+    "fastPath": "personal_hint",
+    "headTier": "heavy",
+    "listenSuppressed": false
+  },
+  "tags": [
+    "personal",
+    "about-others"
+  ]
+}

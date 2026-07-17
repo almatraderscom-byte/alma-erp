@@ -1,0 +1,45 @@
+{
+  "id": "rc-0198-card-packs-dispatch",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "approval_ask_card",
+  "description": "Answering a pending staff_dispatch card must load the staff_dispatch pack so the resumed step's tools are present.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "card পাঠিয়েছি — সিদ্ধান্ত দিলে কাজ শেষ করবো।"
+    }
+  ],
+  "latestMessage": "হ্যাঁ",
+  "replyTo": {
+    "kind": "approval",
+    "id": "pa-dispatch"
+  },
+  "context": {
+    "gapMinutes": 8,
+    "pendingCard": {
+      "kind": "approval",
+      "id": "pa-dispatch",
+      "actionType": "staff_dispatch"
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "approval_grant",
+    "outcome": "The staff_dispatch action executes once with its pack available."
+  },
+  "expect2": {
+    "binding": "pending_card",
+    "packs": [
+      "staff_dispatch"
+    ]
+  },
+  "tags": [
+    "approval",
+    "card-packs"
+  ]
+}

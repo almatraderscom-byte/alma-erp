@@ -1,0 +1,46 @@
+{
+  "id": "rc-0194-card-revise-note",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "approval_ask_card",
+  "description": "\"note e lekho office cha-nasta\" revises the staged expense: the changed effect needs a fresh card — approval never carries over.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "card: ৫০০৳ চা-নাস্তা খরচ — approve করলে লিখবো।"
+    }
+  ],
+  "latestMessage": "note e lekho office cha-nasta",
+  "replyTo": {
+    "kind": "approval",
+    "id": "pa-201"
+  },
+  "context": {
+    "gapMinutes": 5,
+    "pendingCard": {
+      "kind": "approval",
+      "id": "pa-201",
+      "actionType": "log_expense"
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "approval_revise",
+    "approvalRequired": true,
+    "outcome": "A revised card is staged; nothing is written until it is approved."
+  },
+  "expect2": {
+    "binding": "pending_card",
+    "packs": [
+      "finance"
+    ]
+  },
+  "tags": [
+    "approval",
+    "revise"
+  ]
+}

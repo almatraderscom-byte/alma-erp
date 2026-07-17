@@ -1,0 +1,46 @@
+{
+  "id": "rc-0189-card-reject-na",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "approval_ask_card",
+  "description": "\"না\" rejects the pending approval: zero effects, run moves to its rejected/parked path.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "card দিয়েছি: ৫০০৳ খরচ লগ হবে — approve/reject বলুন।"
+    }
+  ],
+  "latestMessage": "না",
+  "replyTo": {
+    "kind": "approval",
+    "id": "pa-201"
+  },
+  "context": {
+    "gapMinutes": 5,
+    "pendingCard": {
+      "kind": "approval",
+      "id": "pa-201",
+      "actionType": "log_expense"
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "approval_reject",
+    "forbiddenTools": [
+      "log_expense"
+    ],
+    "outcome": "No expense is written; the card closes as rejected."
+  },
+  "expect2": {
+    "binding": "pending_card",
+    "continuationText": true
+  },
+  "tags": [
+    "approval",
+    "reject"
+  ]
+}

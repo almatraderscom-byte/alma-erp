@@ -1,0 +1,27 @@
+{
+  "id": "rc-0179-tool-domain-cost",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "\"api credit koto baki ache?\" must select the cost pack.",
+  "transcript": [],
+  "latestMessage": "api credit koto baki ache?",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "api_balance",
+    "outcome": "The cost tools are available to the head for this turn."
+  },
+  "expect2": {
+    "packs": [
+      "cost"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "domain-pack"
+  ]
+}

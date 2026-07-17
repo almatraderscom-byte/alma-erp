@@ -1,0 +1,47 @@
+{
+  "id": "rc-0188-card-approve-hya-only",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "approval_ask_card",
+  "description": "\"হ্যাঁ\" while a log_expense approval is pending: authorization for exactly the displayed effect, once.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "card দিয়েছি: ৫০০৳ চা-নাস্তা খরচ লগ হবে — approve করলে লিখবো।"
+    }
+  ],
+  "latestMessage": "হ্যাঁ",
+  "replyTo": {
+    "kind": "approval",
+    "id": "pa-201"
+  },
+  "context": {
+    "gapMinutes": 5,
+    "pendingCard": {
+      "kind": "approval",
+      "id": "pa-201",
+      "actionType": "log_expense"
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "approval_grant",
+    "approvalRequired": true,
+    "outcome": "Exactly one expense row is written; the run resumes past the gate."
+  },
+  "expect2": {
+    "binding": "pending_card",
+    "packs": [
+      "finance"
+    ],
+    "repeatedEffectRisk": true
+  },
+  "tags": [
+    "approval",
+    "approve"
+  ]
+}

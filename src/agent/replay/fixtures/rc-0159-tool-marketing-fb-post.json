@@ -1,0 +1,29 @@
+{
+  "id": "rc-0159-tool-marketing-fb-post",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "Marketing ask \"notun panjabi r jonno ekta facebook post banao\" routes to the marketing head with content packs.",
+  "transcript": [],
+  "latestMessage": "notun panjabi r jonno ekta facebook post banao",
+  "expected": {
+    "intent": "marketing_content",
+    "outcome": "Marketing head drafts content; publishing still needs an approval card."
+  },
+  "expect2": {
+    "fastPath": "marketing_kw",
+    "headTier": "marketing",
+    "packs": [
+      "social"
+    ],
+    "forbiddenPacks": [
+      "finance"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "marketing"
+  ]
+}

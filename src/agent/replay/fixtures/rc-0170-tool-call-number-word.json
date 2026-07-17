@@ -1,0 +1,27 @@
+{
+  "id": "rc-0170-tool-call-number-word",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "Call instruction referencing a number (\"number e phone kore janao\"): still a call, not a todo.",
+  "transcript": [],
+  "latestMessage": "Karim vai er number e phone kore janao ami kal ashbo",
+  "expected": {
+    "intent": "outbound_call",
+    "tools": [
+      "outbound_phone_call"
+    ],
+    "approvalRequired": true,
+    "outcome": "Outbound call flow; message relayed on approval."
+  },
+  "expect2": {
+    "fastPath": "call_intent",
+    "headTier": "heavy"
+  },
+  "tags": [
+    "tool-selection",
+    "call"
+  ]
+}

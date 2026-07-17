@@ -1,0 +1,38 @@
+{
+  "id": "rc-0132-cont-nostate-tarpor",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "continuity",
+  "description": "\"তারপর?\" with no active run/card/checkpoint: the only honest move is a focused clarifying question.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "accha"
+    },
+    {
+      "role": "agent",
+      "text": "জি Boss।"
+    }
+  ],
+  "latestMessage": "তারপর?",
+  "context": {
+    "gapMinutes": 5
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "ambiguous_continuation",
+    "outcome": "Ask one focused question; do not invent a task or repeat old work."
+  },
+  "expect2": {
+    "binding": "none",
+    "resumeBrief": false
+  },
+  "tags": [
+    "continuity",
+    "no-state"
+  ]
+}

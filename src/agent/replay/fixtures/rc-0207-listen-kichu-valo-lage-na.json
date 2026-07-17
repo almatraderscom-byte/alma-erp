@@ -1,0 +1,50 @@
+{
+  "id": "rc-0207-listen-kichu-valo-lage-na",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "personal_listen",
+  "description": "\"kichu valo lagche na\" is the owner sharing his own state: listen mode — no tools, no work pivot, even though a workflow is active.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "নতুন পাঞ্জাবির জন্য একটা ফেসবুক পোস্ট বানাও"
+    },
+    {
+      "role": "agent",
+      "text": "ছবি বানিয়েছি Boss, এখন ক্যাপশন লিখছি — draft দেখাবো।"
+    }
+  ],
+  "latestMessage": "kichu valo lagche na",
+  "context": {
+    "gapMinutes": 30,
+    "activeWorkflow": {
+      "kind": "fb_post_workflow",
+      "goal": "নতুন পাঞ্জাবি কালেকশনের ফেসবুক পোস্ট",
+      "status": "active",
+      "state": "draft_review",
+      "verifiedEffects": [
+        "generate_image:img-001"
+      ]
+    }
+  },
+  "fakes": {
+    "personalClassification": "personal"
+  },
+  "expected": {
+    "intent": "personal_listen",
+    "tools": [],
+    "outcome": "Warm Bangla listening reply; zero tools; work is not resumed uninvited."
+  },
+  "expect2": {
+    "fastPath": "personal_hint",
+    "headTier": "personal",
+    "listenSuppressed": true,
+    "binding": "none"
+  },
+  "tags": [
+    "personal",
+    "listen-mode"
+  ]
+}

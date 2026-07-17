@@ -1,0 +1,27 @@
+{
+  "id": "rc-0176-tool-domain-research-competitor",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "\"competitor der notun collection research koro\" must select the research pack.",
+  "transcript": [],
+  "latestMessage": "competitor der notun collection research koro",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "competitor_research",
+    "outcome": "The research tools are available to the head for this turn."
+  },
+  "expect2": {
+    "packs": [
+      "research"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "domain-pack"
+  ]
+}

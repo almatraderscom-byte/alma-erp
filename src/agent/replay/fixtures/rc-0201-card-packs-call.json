@@ -1,0 +1,45 @@
+{
+  "id": "rc-0201-card-packs-call",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "approval_ask_card",
+  "description": "Answering a pending outbound_call card must load the reminders pack so the resumed step's tools are present.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "card পাঠিয়েছি — সিদ্ধান্ত দিলে কাজ শেষ করবো।"
+    }
+  ],
+  "latestMessage": "হ্যাঁ",
+  "replyTo": {
+    "kind": "approval",
+    "id": "pa-call"
+  },
+  "context": {
+    "gapMinutes": 8,
+    "pendingCard": {
+      "kind": "approval",
+      "id": "pa-call",
+      "actionType": "outbound_call"
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "approval_grant",
+    "outcome": "The outbound_call action executes once with its pack available."
+  },
+  "expect2": {
+    "binding": "pending_card",
+    "packs": [
+      "reminders"
+    ]
+  },
+  "tags": [
+    "approval",
+    "card-packs"
+  ]
+}

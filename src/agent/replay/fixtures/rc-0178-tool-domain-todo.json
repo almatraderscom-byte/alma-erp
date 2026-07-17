@@ -1,0 +1,27 @@
+{
+  "id": "rc-0178-tool-domain-todo",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "\"আমার আজকের টুডু লিস্ট দেখাও\" must select the todo pack.",
+  "transcript": [],
+  "latestMessage": "আমার আজকের টুডু লিস্ট দেখাও",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "todo_list",
+    "outcome": "The todo tools are available to the head for this turn."
+  },
+  "expect2": {
+    "packs": [
+      "todo"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "domain-pack"
+  ]
+}

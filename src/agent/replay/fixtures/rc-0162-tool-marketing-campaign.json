@@ -1,0 +1,26 @@
+{
+  "id": "rc-0162-tool-marketing-campaign",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "Marketing ask \"eid campaign er idea dao\" routes to the marketing head with content packs.",
+  "transcript": [],
+  "latestMessage": "eid campaign er idea dao",
+  "expected": {
+    "intent": "marketing_content",
+    "outcome": "Marketing head drafts content; publishing still needs an approval card."
+  },
+  "expect2": {
+    "fastPath": "marketing_kw",
+    "headTier": "marketing",
+    "packs": [
+      "ads"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "marketing"
+  ]
+}

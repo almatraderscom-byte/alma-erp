@@ -1,0 +1,49 @@
+{
+  "id": "rc-0224-listen-followup-stays-personal",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "personal_listen",
+  "description": "Short follow-up right after a personal exchange must not resume business work uninvited.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "mon ta valo nei aj"
+    },
+    {
+      "role": "agent",
+      "text": "Boss, আমি আছি — বলুন, শুনছি।"
+    }
+  ],
+  "latestMessage": "jani na, emni",
+  "context": {
+    "gapMinutes": 1,
+    "activeWorkflow": {
+      "kind": "seo_fix_batch",
+      "goal": "ওয়েবসাইটের ৫টা প্রোডাক্টের SEO ঠিক করা",
+      "status": "waiting_worker",
+      "state": "apply_fixes",
+      "verifiedEffects": [
+        "audit_product_seo:done"
+      ]
+    }
+  },
+  "fakes": {
+    "personalClassification": "personal",
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "personal_listen",
+    "tools": [],
+    "outcome": "Stays in listening; the SEO run is not brought up."
+  },
+  "expect2": {
+    "listenSuppressed": true,
+    "binding": "none"
+  },
+  "tags": [
+    "personal",
+    "listen-continuation"
+  ]
+}

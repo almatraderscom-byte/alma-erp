@@ -1,0 +1,63 @@
+{
+  "id": "rc-0195-card-duplicate-approve",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "approval_ask_card",
+  "description": "Second \"approve\" after the effect already executed: must be idempotent — one effect total.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "card: ৫০০৳ খরচ — approve?"
+    },
+    {
+      "role": "owner",
+      "text": "approve"
+    },
+    {
+      "role": "agent",
+      "text": "লিখে দিয়েছি Boss — খরচ লগ হয়েছে।"
+    }
+  ],
+  "latestMessage": "approve",
+  "replyTo": {
+    "kind": "approval",
+    "id": "pa-201"
+  },
+  "context": {
+    "gapMinutes": 1,
+    "pendingCard": {
+      "kind": "approval",
+      "id": "pa-201",
+      "actionType": "log_expense"
+    },
+    "activeWorkflow": {
+      "kind": "expense_log",
+      "goal": "৫০০৳ খরচ লগ",
+      "status": "active",
+      "state": "done_pending_close",
+      "verifiedEffects": [
+        "log_expense:tx-88"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "duplicate_approve",
+    "forbiddenTools": [
+      "log_expense"
+    ],
+    "outcome": "No second row; agent confirms it was already done."
+  },
+  "expect2": {
+    "binding": "pending_card",
+    "repeatedEffectRisk": true
+  },
+  "tags": [
+    "approval",
+    "idempotency"
+  ]
+}

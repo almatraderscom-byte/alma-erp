@@ -1,0 +1,29 @@
+{
+  "id": "rc-0160-tool-marketing-caption",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "Marketing ask \"ei chobi diye caption likhe dao\" routes to the marketing head with content packs.",
+  "transcript": [],
+  "latestMessage": "ei chobi diye caption likhe dao",
+  "expected": {
+    "intent": "marketing_content",
+    "outcome": "Marketing head drafts content; publishing still needs an approval card."
+  },
+  "expect2": {
+    "fastPath": "marketing_kw",
+    "headTier": "marketing",
+    "packs": [
+      "social"
+    ],
+    "forbiddenPacks": [
+      "finance"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "marketing"
+  ]
+}

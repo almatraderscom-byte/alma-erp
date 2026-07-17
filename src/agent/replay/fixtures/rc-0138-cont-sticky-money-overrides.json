@@ -1,0 +1,46 @@
+{
+  "id": "rc-0138-cont-sticky-money-overrides",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "continuity",
+  "description": "A money keyword in a short follow-up overrides stickiness — deny keywords always force the heavy head.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "website er seo gulo thik koro"
+    },
+    {
+      "role": "agent",
+      "text": "অডিট শেষ Boss — ৫টা প্রোডাক্টে ফিক্স লাগবে, apply করছি।"
+    }
+  ],
+  "latestMessage": "salary ta dao age",
+  "context": {
+    "gapMinutes": 2,
+    "stickyModelId": "or-deepseek-v4-flash",
+    "activeWorkflow": {
+      "kind": "seo_fix_batch",
+      "goal": "ওয়েবসাইটের ৫টা প্রোডাক্টের SEO ঠিক করা",
+      "status": "waiting_worker",
+      "state": "apply_fixes",
+      "verifiedEffects": [
+        "audit_product_seo:done"
+      ]
+    }
+  },
+  "expected": {
+    "intent": "money_action",
+    "outcome": "Heavy head; payroll action goes through its approval card."
+  },
+  "expect2": {
+    "fastPath": "deny_kw",
+    "headTier": "heavy"
+  },
+  "tags": [
+    "continuity",
+    "sticky-head",
+    "deny"
+  ]
+}

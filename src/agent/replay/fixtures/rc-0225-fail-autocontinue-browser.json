@@ -1,0 +1,43 @@
+{
+  "id": "rc-0225-fail-autocontinue-browser",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "failure_recovery",
+  "description": "Deadline hit mid-browser-work with successful browser tool calls → auto-continue exactly once.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "facebook e ad manager theke report ta niye aso"
+    }
+  ],
+  "latestMessage": "[control] deadline salvage tick",
+  "context": {
+    "turnOutcome": {
+      "deadlineHit": true,
+      "hasAskCard": false,
+      "tools": [
+        {
+          "toolName": "live_browser_act",
+          "status": "success"
+        },
+        {
+          "toolName": "live_browser_look",
+          "status": "success"
+        }
+      ]
+    }
+  },
+  "expected": {
+    "intent": "auto_continue",
+    "outcome": "One continuation turn resumes the browser task."
+  },
+  "expect2": {
+    "autoContinue": true
+  },
+  "tags": [
+    "failure",
+    "auto-continue"
+  ]
+}
