@@ -542,6 +542,7 @@ async function processImageGen(job) {
         persons: result.persons,
         adultGarmentPath: result.adultGarmentPath,
         childGarmentPath: result.childGarmentPath,
+        textScrub: result.textScrub,
         creativeStudio: false,
       })
       console.log(`[worker] garment-prep ${pendingActionId} — ${result.persons.length} crop(s)`)
