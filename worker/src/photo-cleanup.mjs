@@ -99,8 +99,8 @@ export function fillMaskHoles(mask, width, height) {
   return out
 }
 
-/** Flood-fill component c's pixels of `mask` into `out` (4-connectivity). */
-function floodInto(out, mask, width, height, c) {
+/** Flood-fill component c's pixels of `mask` into `out` (4-connectivity). Exported for garment-prep. */
+export function floodInto(out, mask, width, height, c) {
   let seed = -1
   for (let y = c.y; y < c.y + c.height && seed < 0; y++) {
     for (let x = c.x; x < c.x + c.width; x++) {
@@ -154,6 +154,54 @@ export function smearFillMask(rgb, width, height, fillMask, personMask) {
       x = xe + 1
     }
   }
+}
+
+/**
+ * Detect BRIGHT low-saturation text glyphs INSIDE the person alpha (pure,
+ * exported for tests) — supplier overlay lettering that lands on the garment
+ * survives segmentation and would be baked into try-on outputs (live: Bangla
+ * hem text on the child shot, 2026-07-17).
+ *
+ * A component counts as text when it is bright (r,g,b high, low saturation —
+ * excludes gold embroidery), small (buttons/whole white garments excluded by
+ * area + fill-ratio), and EITHER has a horizontally aligned sibling (a text
+ * line) OR is clearly elongated like a word.
+ * @returns Uint8Array fill mask (component pixels, 1px dilated)
+ */
+export function detectBrightTextInAlpha(rgb, width, height, alphaMask) {
+  const bright = new Uint8Array(width * height)
+  for (let i = 0; i < width * height; i++) {
+    if (!alphaMask[i]) continue
+    const r = rgb[i * 3]
+    const g = rgb[i * 3 + 1]
+    const b = rgb[i * 3 + 2]
+    const mx = Math.max(r, g, b)
+    const mn = Math.min(r, g, b)
+    bright[i] = mn > 175 && mx - mn < 50 ? 1 : 0
+  }
+  const total = width * height
+  const comps = connectedComponents(bright, width, height)
+    .map((c) => ({ ...c, frac: c.area / total, fill: c.area / (c.width * c.height), cy: c.y + c.height / 2 }))
+    // small, non-solid, and THIN like a text line — caps/collars are taller
+    .filter((c) => c.frac >= 0.00002 && c.frac <= 0.01 && c.fill < 0.65 && c.height <= 0.05 * height)
+  const isText = comps.map((c) =>
+    (c.width / c.height >= 2.5 && c.fill < 0.55) ||
+    comps.some((o) => o !== c && Math.abs(o.cy - c.cy) < 2 * Math.max(c.height, o.height)
+      && Math.abs((o.x + o.width / 2) - (c.x + c.width / 2)) < 6 * Math.max(c.width, o.width)),
+  )
+  const out = new Uint8Array(width * height)
+  comps.forEach((c, i) => { if (isText[i]) floodInto(out, bright, width, height, c) })
+  // 1px dilation to cover anti-aliased glyph edges
+  const dil = new Uint8Array(out)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x
+      if (out[idx]) continue
+      if ((x > 0 && out[idx - 1]) || (x < width - 1 && out[idx + 1]) ||
+          (y > 0 && out[idx - width]) || (y < height - 1 && out[idx + width])) dil[idx] = 1
+    }
+  }
+  return dil
 }
 
 /** 0/1 mask of the LARGEST component of a 0/1 mask (pure, exported for tests). */
