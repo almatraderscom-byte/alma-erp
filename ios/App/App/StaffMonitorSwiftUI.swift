@@ -1986,7 +1986,10 @@ private enum StaffMonitorFormat {
 // duplicated from the Orders/Assistant spec verbatim)
 
 @available(iOS 17.0, *)
-private struct StaffMonitorAurora: View {
+/// Shared with the Agents/System control-room sheets (sibling files) so their sheets
+/// wear the same aurora as the tabs instead of a flat near-black rootBg (owner
+/// feedback 2026-07-17: "kono sub page e black background jeno na thake").
+struct StaffMonitorAurora: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drift = false

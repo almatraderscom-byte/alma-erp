@@ -132,8 +132,27 @@ struct AgentHubScreen: View {
             .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
                 .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AgentHubPressStyle())
         .accessibilityLabel(Text("\(item.title) — \(item.subtitle)"))
+    }
+}
+
+// MARK: - Premium press (parity with the Dashboard cards — owner feedback 2026-07-17)
+
+/// Scale-down + dim + light haptic on touch, spring-back on release — the exact
+/// feel the Dashboard tiles have (DashPressStyle). The Hub cards used `.plain`
+/// (no press feedback at all); this brings the same glossy, tactile press so the
+/// Agent Hub reads as premium as the rest of the app.
+@available(iOS 17.0, *)
+private struct AgentHubPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .opacity(configuration.isPressed ? 0.9 : 1)
+            .animation(.spring(response: 0.35, dampingFraction: 0.55), value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+            }
     }
 }
 

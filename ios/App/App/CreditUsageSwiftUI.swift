@@ -1516,24 +1516,28 @@ private struct CUAurora: View {
 private extension View {
     /// SOLID: opaque content surface for dense data (no translucency — 2026 HIG).
     func cuSolid(_ s: ColorScheme, corner: CGFloat = 16) -> some View {
+        // Translucent glass (was opaque near-black) so the page aurora shows through —
+        // provider cards / stat tiles / model card were the last black offenders
+        // (owner feedback 2026-07-17).
         self
-            .background((s == .dark ? Color(red: 0.078, green: 0.071, blue: 0.114) : .white),
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .background(Color.white.opacity(s == .dark ? 0.05 : 0.5),
                         in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .strokeBorder(Color.white.opacity(s == .dark ? 0.055 : 0.6), lineWidth: 1))
-            .shadow(color: .black.opacity(s == .dark ? 0.4 : 0.08), radius: 14, y: 8)
+                .strokeBorder(Color.white.opacity(s == .dark ? 0.09 : 0.6), lineWidth: 1))
+            .shadow(color: .black.opacity(s == .dark ? 0.26 : 0.07), radius: 14, y: 8)
     }
     /// RAISED: a step above solid — the hero. Gentle gradient + deeper shadow.
     func cuRaised(_ s: ColorScheme, corner: CGFloat = 22) -> some View {
+        // Translucent glass (was opaque near-black) so the page aurora shows through —
+        // theme-consistent with the other agent screens (owner feedback 2026-07-17).
         self
-            .background(
-                (s == .dark
-                 ? LinearGradient(colors: [Color(red: 0.106, green: 0.094, blue: 0.149), Color(red: 0.078, green: 0.063, blue: 0.098)], startPoint: .top, endPoint: .bottom)
-                 : LinearGradient(colors: [.white, .white], startPoint: .top, endPoint: .bottom)),
-                in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .background(Color.white.opacity(s == .dark ? 0.05 : 0.55),
+                        in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .strokeBorder(Color.white.opacity(s == .dark ? 0.07 : 0.7), lineWidth: 1))
-            .shadow(color: .black.opacity(s == .dark ? 0.5 : 0.12), radius: 22, y: 12)
+                .strokeBorder(Color.white.opacity(s == .dark ? 0.09 : 0.7), lineWidth: 1))
+            .shadow(color: .black.opacity(s == .dark ? 0.30 : 0.10), radius: 20, y: 11)
     }
     /// GLASS: translucent floating control (liquid-glass) — nav/segment/chip/sheet.
     func cuGlass(_ s: ColorScheme, corner: CGFloat = 14) -> some View {

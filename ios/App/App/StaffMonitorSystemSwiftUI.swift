@@ -739,7 +739,7 @@ struct StaffMonitorSystemTab: View {
                     }
                     .padding(14)
                 }
-                .background(AlmaSwiftTheme.rootBg(scheme))
+                .scrollContentBackground(.hidden)
                 .navigationTitle(sysSheetTitle(which))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -748,7 +748,18 @@ struct StaffMonitorSystemTab: View {
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+            // Aurora, not flat near-black — same look as the tab (owner feedback 2026-07-17).
+            .presentationBackground { StaffMonitorAurora() }
         }
+        #if DEBUG
+        .onAppear {
+            // Headless sim proof hook: SIMCTL_CHILD_ALMA_SM_SHEET=trust|health|brain|…
+            // auto-opens that control-room sheet so its aurora background can be
+            // screenshot-verified without a tap. DEBUG only — never ships.
+            if sheet == nil, let raw = ProcessInfo.processInfo.environment["ALMA_SM_SHEET"],
+               let s = SystemSheet(rawValue: raw) { sheet = s }
+        }
+        #endif
     }
 
     private var divider: some View {

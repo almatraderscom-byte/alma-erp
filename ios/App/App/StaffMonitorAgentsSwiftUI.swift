@@ -789,7 +789,7 @@ struct StaffMonitorAgentsTab: View {
                     }
                     .padding(14)
                 }
-                .background(AlmaSwiftTheme.rootBg(scheme))
+                .scrollContentBackground(.hidden)
                 .navigationTitle(sheetTitle(which))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -800,6 +800,8 @@ struct StaffMonitorAgentsTab: View {
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+            // Aurora, not flat near-black — same look as the tab (owner feedback 2026-07-17).
+            .presentationBackground { StaffMonitorAurora() }
         }
         // Tab-visible fast cadence (§4.9): 2.5s watch (web parity) + 30s panels,
         // ONLY while this tab is on screen and the app is foregrounded. The
