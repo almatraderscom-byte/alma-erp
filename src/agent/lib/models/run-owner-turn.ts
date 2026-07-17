@@ -506,6 +506,46 @@ async function* runAlternateProviderTurn(
     }
   }
 
+  // ── Roadmap 1 Phase 36: interaction state + policy (behaviour as code) ────
+  // Deterministic mode ladder (crisis > listen > teaching > decision/coaching
+  // > concise status > work), emotion read, correction/repair detection.
+  // Gate AGENT_INTERACTION_LAYER: off | shadow (derive+record) | on (directive
+  // injected + commitment ledger enforced). Unset → preview on, prod shadow.
+  const interactionFlag = process.env.AGENT_INTERACTION_LAYER
+  const interactionMode2: 'off' | 'shadow' | 'on' =
+    interactionFlag === 'off' || interactionFlag === 'false' ? 'off'
+    : interactionFlag === 'on' || interactionFlag === 'true' ? 'on'
+    : interactionFlag === 'shadow' ? 'shadow'
+    : process.env.VERCEL_ENV === 'preview' ? 'on' : 'shadow'
+  let interaction: {
+    state: import('@/agent/lib/interaction-state').InteractionState
+    policy: import('@/agent/lib/interaction-policy').InteractionPolicy
+    plan: import('@/agent/lib/response-planner').ResponsePlan
+  } | null = null
+  if (interactionMode2 !== 'off' && lastUserText) {
+    try {
+      const [{ deriveInteractionState }, { policyForState }, { planResponse }] = await Promise.all([
+        import('@/agent/lib/interaction-state'),
+        import('@/agent/lib/interaction-policy'),
+        import('@/agent/lib/response-planner'),
+      ])
+      const state = deriveInteractionState({
+        text: lastUserText,
+        headTier,
+        statusQuery: continuity?.decision.action === 'explain_stop' || continuity?.decision.reason.includes('status'),
+      })
+      const policy = policyForState(state)
+      const plan = planResponse(state, policy, {
+        turnCount: rows.length,
+        hasEvidence: !listenMode,
+        willCommit: workflowRuns.length > 0,
+      })
+      interaction = { state, policy, plan }
+    } catch (err) {
+      console.warn('[run-owner-turn] interaction derive failed open:', err instanceof Error ? err.message : err)
+    }
+  }
+
   // Owner-approved gate fix (2026-07-14, layer 3): STRUCTURED STATE upgrades a
   // text-guessed read-only turn. An ask-card answer, or a continuation reply
   // ("হ্যাঁ/ok") while canonical runs are in flight, continues work the owner
@@ -613,6 +653,18 @@ async function* runAlternateProviderTurn(
   // a listen turn (assembled empty below), so the head physically cannot pivot
   // to work; this note shapes the tone.
   if (listenMode) volatileSections.push(LISTEN_MODE_NOTE)
+  // Phase 36: the behaviour contract for THIS turn (mode/tone/structure/
+  // repair/uncertainty/commitment rules) — live only when the layer is ON;
+  // shadow derives + records without steering. Rides right after the listen
+  // override so listen keeps top priority.
+  if (interaction && interactionMode2 === 'on') {
+    try {
+      const { buildResponseDirective } = await import('@/agent/lib/response-planner')
+      volatileSections.push(buildResponseDirective(interaction.state, interaction.policy, interaction.plan))
+    } catch (err) {
+      console.warn('[run-owner-turn] interaction directive failed open:', err instanceof Error ? err.message : err)
+    }
+  }
   // Owner-intent mutation gate note (origin/main "gate mutations by owner
   // intent"): tells the head which mutation authorization this turn carries.
   // Rides right after the listen override, before the job state.
@@ -909,6 +961,17 @@ async function* runAlternateProviderTurn(
     headTier,
     versions: AGENT_VERSIONS,
     extras: {
+      // Phase 36: this turn's interaction contract (mode/emotion/correction)
+      // — behaviour becomes measurable per turn, not a prompt hope.
+      interaction: interaction
+        ? {
+            layer: interactionMode2,
+            mode: interaction.state.mode,
+            emotion: interaction.state.emotion,
+            correction: interaction.state.correction,
+            tone: interaction.policy.tone,
+          }
+        : null,
       // Phase 32: this turn's continuity decision — every trace shows which
       // work the message was bound to and why (audit + shadow measurement).
       continuity: continuity
@@ -1804,6 +1867,64 @@ async function* runAlternateProviderTurn(
     }
 
     await touchConversationActivity(conversationId)
+
+    // ── Phase 36: commitment ledger ─────────────────────────────────────────
+    // A promised FUTURE action must be backed by durable state created this
+    // turn (open task / card / reminder / checkpoint / active run). Shadow:
+    // violations are recorded on the trace. Live: the missing focus is
+    // CREATED so the promise becomes structurally true — the roadmap's "no
+    // announced action without a durable commitment". Fail-open.
+    if (interaction && finalText.trim()) {
+      try {
+        const { checkCommitmentLedger, violatesAddressContract } = await import('@/agent/lib/interaction-policy')
+        const durableToolHit = toolRecords.some(
+          (r) =>
+            r.status === 'success'
+            && /^(track_open_task|save_task_checkpoint|set_reminder|log_|post_|propose_|prepare_|dispatch|launch_|publish_|send_|make_plan|run_)/.test(r.toolName),
+        )
+        const verdict = checkCommitmentLedger(finalText, {
+          openTaskTracked: durableToolHit,
+          cardStaged: Boolean(actionGraph?.staged) || emittedAskCards.length > 0,
+          focusCreatedOrUpdated: workflowRuns.length > 0,
+        })
+        const badAddress = violatesAddressContract(finalText)
+        if (!verdict.ok || badAddress) {
+          console.warn(
+            `[interaction-ledger] ${!verdict.ok ? `unbacked promise "${verdict.phrase}"` : ''}${badAddress ? ' banned-address' : ''} conv=${conversationId} layer=${interactionMode2}`,
+          )
+        }
+        if (!verdict.ok && interactionMode2 === 'on') {
+          const { createFocus } = await import('@/agent/lib/conversation-focus')
+          await createFocus({
+            conversationId,
+            businessId,
+            goal: `প্রতিশ্রুতি: ${finalText.slice(0, 160)}`,
+            kind: 'commitment',
+            completionCriteria: 'Boss-কে জানানো হয়েছে এবং কাজটা প্রমাণসহ শেষ',
+            cause: 'commitment_ledger',
+          })
+        }
+        void import('@/agent/lib/tool-telemetry').then((m) =>
+          m.logToolEvent({
+            toolName: '__interaction__',
+            phase: 'proof',
+            success: verdict.ok && !badAddress,
+            conversationId,
+            businessId,
+            detail: {
+              mode: interaction!.state.mode,
+              promised: verdict.promised,
+              durable: verdict.durable,
+              phrase: verdict.phrase,
+              badAddress,
+              layer: interactionMode2,
+            },
+          }),
+        ).catch(() => {})
+      } catch (err) {
+        console.warn('[run-owner-turn] commitment ledger failed open:', err instanceof Error ? err.message : err)
+      }
+    }
 
     void logCost({
       provider: providerToCostProvider(model.provider),
