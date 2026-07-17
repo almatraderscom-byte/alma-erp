@@ -28,6 +28,17 @@ export interface TurnGraphHealth {
     agreeRate: number
     byKind: Record<string, { scored: number; agreed: number }>
   }
+  /** Phase 33: the FULL 12-node owner-turn graph's shadow performance. */
+  ownerGraph: {
+    recorded: number
+    scored: number
+    agreed: number
+    agreeRate: number
+    /** disagreement label → count (fast_path | focus_binding | tool_groups | planned_tool). */
+    disagreements: Record<string, number>
+    /** Traces carrying all five required elements (focus/tool/guard/verify/final). */
+    traceComplete: number
+  }
   canaryReady: boolean
   canaryVerdict: string
 }
@@ -50,6 +61,7 @@ export async function getTurnGraphHealth(days = 7): Promise<TurnGraphHealth | nu
       routine: { handled: 0, miss: 0, off: 0, handledShare: 0 },
       action: { staged: 0 },
       shadow: { recorded: 0, scored: 0, agreed: 0, agreeRate: 0, byKind: {} },
+      ownerGraph: { recorded: 0, scored: 0, agreed: 0, agreeRate: 0, disagreements: {}, traceComplete: 0 },
       canaryReady: false,
       canaryVerdict: '',
     }
@@ -57,7 +69,14 @@ export async function getTurnGraphHealth(days = 7): Promise<TurnGraphHealth | nu
       const d = (r.detail ?? {}) as {
         routineGraph?: string
         actionGraph?: string
-        turnGraph?: { fastPath?: string; agree?: boolean | null } | null
+        turnGraph?: {
+          fastPath?: string
+          agree?: boolean | null
+          graph?: {
+            trace?: Record<string, unknown>
+            agreement?: { agree?: boolean | null; disagreements?: string[] }
+          } | null
+        } | null
       }
       if (d.routineGraph === 'handled') health.routine.handled++
       else if (d.routineGraph === 'miss') health.routine.miss++
@@ -75,11 +94,28 @@ export async function getTurnGraphHealth(days = 7): Promise<TurnGraphHealth | nu
             k.agreed++
           }
         }
+        const g = d.turnGraph.graph
+        if (g) {
+          health.ownerGraph.recorded++
+          const t = g.trace ?? {}
+          const complete = ['selectedFocus', 'toolDecision', 'guardResult', 'verification', 'finalState']
+            .every((key) => key in t)
+          if (complete) health.ownerGraph.traceComplete++
+          const a = g.agreement
+          if (a && typeof a.agree === 'boolean') {
+            health.ownerGraph.scored++
+            if (a.agree) health.ownerGraph.agreed++
+            else for (const label of a.disagreements ?? []) {
+              health.ownerGraph.disagreements[label] = (health.ownerGraph.disagreements[label] ?? 0) + 1
+            }
+          }
+        }
       }
     }
     const routineTotal = health.routine.handled + health.routine.miss
     health.routine.handledShare = routineTotal ? health.routine.handled / routineTotal : 0
     health.shadow.agreeRate = health.shadow.scored ? health.shadow.agreed / health.shadow.scored : 0
+    health.ownerGraph.agreeRate = health.ownerGraph.scored ? health.ownerGraph.agreed / health.ownerGraph.scored : 0
     health.canaryReady =
       health.shadow.scored >= CANARY_MIN_SCORED && health.shadow.agreeRate >= CANARY_MIN_AGREE
     health.canaryVerdict = health.canaryReady

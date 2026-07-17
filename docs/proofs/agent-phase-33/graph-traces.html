@@ -1,0 +1,40 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Phase 33 proof — owner-turn graph traces</title>
+<style>body{font-family:-apple-system,system-ui;margin:24px;background:#0d1117;color:#e6edf3}
+h1{font-size:19px}h2{font-size:15px;margin-top:26px}
+table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px}td,th{border:1px solid #30363d;padding:5px 9px;text-align:left;vertical-align:top}
+.ok{color:#3fb950;font-weight:700}.pill{display:inline-block;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:2px 8px;margin:2px;font-size:12px}
+code{color:#79c0ff}</style></head><body>
+<h1>Phase 33 — REAL 12-node owner-turn graph (shadow) · corpus agreement <span class="ok">100% (132/132)</span></h1>
+<p>Nodes: <span class="pill">load_context</span> <span class="pill">classify_intent</span> <span class="pill">policy_precheck</span> <span class="pill">select_tool_pack</span> <span class="pill">plan_model_call</span> <span class="pill">tool_pre_guard</span> <span class="pill">execute_or_stage</span> <span class="pill">observe_verify</span> <span class="pill">repair_retry</span> <span class="pill">update_focus</span> <span class="pill">style_reply</span> <span class="pill">persist_trace</span></p>
+
+<h2>১. Routine READ — "stock koto ache?" — nodes run: 12/12 ✓</h2>
+<table>
+<tr><th>selected focus</th><td><code>{"binding":"new_task","action":"proceed","focusId":null,"reason":"new_task_no_prior_focus"}</code></td></tr>
+<tr><th>tool decision</th><td><code>{"packs":["erp"],"toolCount":20,"plannedTool":"get_inventory_status","planVia":"routine_intent"}</code></td></tr>
+<tr><th>guard result</th><td><code>{"allowed":true,"reason":"read_tool"}</code></td></tr>
+<tr><th>verification</th><td><code>{"required":true,"method":"tool_result_grounding"}</code></td></tr>
+<tr><th>final state</th><td><code>{"effect":"read","replyMode":"grounded_status","focusUpdate":"create_focus","repairsCap":2}</code></td></tr>
+<tr><th>agreement vs live</th><td><code>{"fastPath":true,"focus":true,"toolOverlap":1,"plannedTool":true,"agree":true,"disagreements":[]}</code></td></tr>
+</table>
+
+<h2>২. Multi-tool task — expense card approve ("হ্যাঁ") — nodes run: 12/12 ✓</h2>
+<table>
+<tr><th>selected focus</th><td><code>{"binding":"pending_card","action":"answer_card","focusId":null,"reason":"explicit_reply_to_card"}</code></td></tr>
+<tr><th>tool decision</th><td><code>{"packs":["finance"],"toolCount":21,"plannedTool":"log_expense","planVia":"workflow_step_binding"}</code></td></tr>
+<tr><th>guard result</th><td><code>{"allowed":true,"reason":"write_authorized"}</code></td></tr>
+<tr><th>verification</th><td><code>{"required":true,"method":"claim_verifier_plus_owner_approval"}</code></td></tr>
+<tr><th>final state</th><td><code>{"effect":"stage_card","replyMode":"card_handoff","focusUpdate":"bind_card_focus","repairsCap":2}</code></td></tr>
+<tr><th>agreement vs live</th><td><code>{"fastPath":null,"focus":true,"toolOverlap":1,"plannedTool":true,"agree":true,"disagreements":[]}</code></td></tr>
+</table>
+
+<h2>৩. Recovered FAILURE — deadline checkpoint + "abar try koro" — nodes run: 12/12 ✓</h2>
+<table>
+<tr><th>selected focus</th><td><code>{"binding":"checkpoint","action":"retry","focusId":null,"reason":"checkpoint_retry_or_explain"}</code></td></tr>
+<tr><th>tool decision</th><td><code>{"packs":["browser"],"toolCount":18,"plannedTool":null,"planVia":"model_choice"}</code></td></tr>
+<tr><th>guard result</th><td><code>{"allowed":true,"reason":"model_choice_within_pack"}</code></td></tr>
+<tr><th>verification</th><td><code>{"required":false,"method":"no_effect"}</code></td></tr>
+<tr><th>final state</th><td><code>{"effect":"none","replyMode":"work","focusUpdate":"resume_checkpoint_focus","repairsCap":2}</code></td></tr>
+<tr><th>agreement vs live</th><td><code>{"fastPath":null,"focus":true,"toolOverlap":1,"plannedTool":null,"agree":true,"disagreements":[]}</code></td></tr>
+</table>
+<p style="color:#8b949e;font-size:12px">Shadow contract: the graph DECIDES (same real resolver/classifier/pack/guard code), legacy EXECUTES — node 7 predicts effects only. Restart-resume proven between every node pair in owner-turn-graph.test.ts. Generated 2026-07-17.</p>
+</body></html>

@@ -850,6 +850,48 @@ async function* runAlternateProviderTurn(
     toolRouter: toolSelection.router ?? null,
     // The PLANNED loop cap — the graph paths may still zero it later this turn.
     maxIterations: MAX_TOOL_ITERATIONS,
+    // Phase 33: full 12-node owner-turn graph in shadow — graph decides,
+    // legacy executes. State loader mirrors the resolver's reads (preview-only
+    // cost; the gate keeps production off until the Phase 37 ladder).
+    conversationId,
+    turnId,
+    businessId,
+    boundToolName,
+    continuityBinding: continuity?.decision.binding ?? null,
+    allowMutations: turnAuthorization.allowMutations,
+    loadState: async () => {
+      const [{ getFocusStack }, { listUnresolvedCheckpoints }] = await Promise.all([
+        import('@/agent/lib/conversation-focus'),
+        import('@/agent/lib/checkpoint'),
+      ])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = prisma as any
+      const [stack, cps, pendingActions, askCards] = await Promise.all([
+        getFocusStack(conversationId),
+        listUnresolvedCheckpoints(conversationId),
+        db.agentPendingAction.findMany({
+          where: { conversationId, status: 'pending' },
+          orderBy: { createdAt: 'desc' }, take: 3, select: { id: true, type: true },
+        }),
+        db.agentAskCard.findMany({
+          where: { conversationId, status: 'pending' },
+          orderBy: { createdAt: 'desc' }, take: 3, select: { id: true },
+        }),
+      ])
+      return {
+        activeFocus: stack.active
+          ? { id: stack.active.id, goal: stack.active.goal, kind: stack.active.kind, status: 'active' as const, currentStep: stack.active.currentStep, completedSteps: stack.active.completedSteps }
+          : null,
+        parkedFocuses: stack.parked.map((f) => ({ id: f.id, goal: f.goal, kind: f.kind, status: 'parked' as const })),
+        pendingCards: [
+          ...(askCards as Array<{ id: string }>).map((c) => ({ id: c.id, kind: 'ask_card' as const })),
+          ...(pendingActions as Array<{ id: string; type: string }>).map((c) => ({ id: c.id, kind: 'approval' as const, actionType: c.type })),
+        ],
+        checkpoints: (cps as Array<{ checkpoint: { taskRef: string; taskType: string; currentStep?: string } }>).map((c) => ({
+          taskRef: c.checkpoint.taskRef, taskType: c.checkpoint.taskType, step: c.checkpoint.currentStep ?? 'unknown',
+        })),
+      }
+    },
   })
 
   // Phase 1 route span: what this turn's head was actually given — groups, final
