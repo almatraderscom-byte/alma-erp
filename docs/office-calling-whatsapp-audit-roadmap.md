@@ -364,7 +364,7 @@ not a production/release PASS.
 | 5 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-5.md` |
 | 6 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-6.md` |
 | 7 | ENGINEERING PASS / DEVICE DEFERRED / RELEASE SECURITY EXCEPTION OPEN | `docs/office-calling-phase-evidence/phase-7.md` |
-| 8 | NON-DEVICE PREPARATION IN PROGRESS; PHYSICAL DEVICES + RELEASE GATE | Must execute every deferred row and close/accept the Phase 7 dependency exception before release |
+| 8 | NON-DEVICE PREPARATION COMPLETE / PHYSICAL EVIDENCE REQUIRED / NO-GO | `docs/office-calling-phase-evidence/phase-8.md`; must execute every deferred row and close/accept the Phase 7 dependency exception before release |
 
 ### Phase 0 — Freeze contracts, add observability, remove ambiguity
 
