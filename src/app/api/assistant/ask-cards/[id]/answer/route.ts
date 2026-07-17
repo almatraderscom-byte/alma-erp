@@ -3,7 +3,6 @@ import { getToken } from 'next-auth/jwt'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
 
@@ -40,23 +39,28 @@ export async function POST(
   if (!option) return Response.json({ error: 'option_required' }, { status: 400 })
   if (option.length > 500) return Response.json({ error: 'option_too_long' }, { status: 400 })
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = prisma as any
-  const card = await db.agentAskCard.findUnique({ where: { id: params.id } })
-  if (!card) return Response.json({ error: 'not_found' }, { status: 404 })
-  if (card.status !== 'pending') {
-    return Response.json({ error: 'already_answered', selectedOption: card.selectedOption }, { status: 409 })
+  // Phase 34: one idempotent, run-binding answer path (ask-cards.ts).
+  // Free-text answers are FIRST-CLASS: the card always shows an "Other (write
+  // your own)" row, so the owner's own words are a valid answer. The SAME
+  // answer repeated (double tap / reconnect) is a success that changes
+  // nothing; a DIFFERENT answer after one is recorded is refused — the first
+  // answer already advanced the bound run. The bound WorkflowRun advances
+  // HERE (version-guarded, idempotent), so resume never waits for the next
+  // turn and the answer text is bound state — never re-read as a fresh
+  // owner instruction.
+  const { answerAskCard } = await import('@/agent/lib/ask-cards')
+  const result = await answerAskCard(params.id, option)
+  if (!result.ok) {
+    if (result.reason === 'not_found') return Response.json({ error: 'not_found' }, { status: 404 })
+    return Response.json(
+      { error: 'already_answered', selectedOption: result.card?.selectedOption ?? null },
+      { status: 409 },
+    )
   }
-
-  // Free-text answers are FIRST-CLASS: the card always shows an "Other (write your
-  // own)" row, so the owner's own words are a valid answer — record them verbatim
-  // instead of rejecting anything outside the preset options (old bug: 400
-  // invalid_option silently dropped every free-text answer).
-
-  await db.agentAskCard.update({
-    where: { id: params.id },
-    data: { status: 'answered', selectedOption: option },
+  return Response.json({
+    success: true,
+    option,
+    idempotent: result.alreadyAnswered,
+    workflowRunId: result.card?.workflowRunId ?? null,
   })
-
-  return Response.json({ success: true, option })
 }

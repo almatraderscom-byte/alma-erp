@@ -1,0 +1,43 @@
+{
+  "id": "rc-0227-fail-autocontinue-terminal",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "failure_recovery",
+  "description": "Terminal proof tool already succeeded: the task is done — auto-continue must not reopen it.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "skill pack ta chalao"
+    }
+  ],
+  "latestMessage": "[control] deadline salvage tick",
+  "context": {
+    "turnOutcome": {
+      "deadlineHit": true,
+      "hasAskCard": false,
+      "tools": [
+        {
+          "toolName": "live_browser_act",
+          "status": "success"
+        },
+        {
+          "toolName": "complete_skill_pack_run",
+          "status": "success"
+        }
+      ]
+    }
+  },
+  "expected": {
+    "intent": "no_reopen",
+    "outcome": "Completed work is never reopened by salvage."
+  },
+  "expect2": {
+    "autoContinue": false
+  },
+  "tags": [
+    "failure",
+    "auto-continue"
+  ]
+}

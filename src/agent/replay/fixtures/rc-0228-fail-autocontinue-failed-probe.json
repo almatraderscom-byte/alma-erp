@@ -1,0 +1,39 @@
+{
+  "id": "rc-0228-fail-autocontinue-failed-probe",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "failure_recovery",
+  "description": "Only FAILED browser probes before the deadline: no evidence work remains — do not auto-continue.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "site ta dekhe aso"
+    }
+  ],
+  "latestMessage": "[control] deadline salvage tick",
+  "context": {
+    "turnOutcome": {
+      "deadlineHit": true,
+      "hasAskCard": false,
+      "tools": [
+        {
+          "toolName": "live_browser_look",
+          "status": "error"
+        }
+      ]
+    }
+  },
+  "expected": {
+    "intent": "no_evidence",
+    "outcome": "No auto-continue from failed probes alone."
+  },
+  "expect2": {
+    "autoContinue": false
+  },
+  "tags": [
+    "failure",
+    "auto-continue"
+  ]
+}

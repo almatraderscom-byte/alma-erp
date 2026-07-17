@@ -1,0 +1,4165 @@
+{
+  "behaviorVersion": "phase31-v1",
+  "generatedAt": "2026-07-17T04:00:00.000Z",
+  "totalCases": 150,
+  "totalPassed": 150,
+  "totalFailed": 0,
+  "categories": [
+    {
+      "category": "continuity",
+      "cases": 50,
+      "passed": 50,
+      "failed": 0,
+      "byCheck": {
+        "fastPath": {
+          "pass": 25,
+          "total": 25
+        },
+        "continuationText": {
+          "pass": 31,
+          "total": 31
+        },
+        "resumeBrief": {
+          "pass": 40,
+          "total": 40
+        },
+        "binding": {
+          "pass": 49,
+          "total": 49
+        },
+        "packs⊇": {
+          "pass": 5,
+          "total": 5
+        }
+      }
+    },
+    {
+      "category": "tool_selection",
+      "cases": 30,
+      "passed": 30,
+      "failed": 0,
+      "byCheck": {
+        "fastPath": {
+          "pass": 22,
+          "total": 22
+        },
+        "routineIntent": {
+          "pass": 14,
+          "total": 14
+        },
+        "packs⊇": {
+          "pass": 23,
+          "total": 23
+        },
+        "packs∌": {
+          "pass": 3,
+          "total": 3
+        }
+      }
+    },
+    {
+      "category": "approval_ask_card",
+      "cases": 25,
+      "passed": 25,
+      "failed": 0,
+      "byCheck": {
+        "binding": {
+          "pass": 25,
+          "total": 25
+        },
+        "packs⊇": {
+          "pass": 15,
+          "total": 15
+        },
+        "continuationText": {
+          "pass": 3,
+          "total": 3
+        },
+        "resumeBrief": {
+          "pass": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "category": "personal_listen",
+      "cases": 20,
+      "passed": 20,
+      "failed": 0,
+      "byCheck": {
+        "fastPath": {
+          "pass": 18,
+          "total": 18
+        },
+        "binding": {
+          "pass": 13,
+          "total": 13
+        }
+      }
+    },
+    {
+      "category": "failure_recovery",
+      "cases": 15,
+      "passed": 15,
+      "failed": 0,
+      "byCheck": {
+        "autoContinue": {
+          "pass": 5,
+          "total": 5
+        },
+        "binding": {
+          "pass": 10,
+          "total": 10
+        },
+        "packs⊇": {
+          "pass": 1,
+          "total": 1
+        },
+        "resumeBrief": {
+          "pass": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "category": "cross_surface",
+      "cases": 10,
+      "passed": 10,
+      "failed": 0,
+      "byCheck": {
+        "fastPath": {
+          "pass": 5,
+          "total": 5
+        },
+        "continuationText": {
+          "pass": 4,
+          "total": 4
+        },
+        "resumeBrief": {
+          "pass": 7,
+          "total": 7
+        },
+        "binding": {
+          "pass": 10,
+          "total": 10
+        },
+        "packs⊇": {
+          "pass": 2,
+          "total": 2
+        }
+      }
+    }
+  ],
+  "metrics": {
+    "fastPathAccuracy": 1,
+    "headTierAccuracy": null,
+    "routineIntentAccuracy": 1,
+    "packRecall": 1,
+    "packPrecision": 1,
+    "continuationTextAccuracy": 1,
+    "bindingAccuracy": 1,
+    "resumeBriefAccuracy": 1,
+    "listenSuppressionAccuracy": null,
+    "autoContinueAccuracy": 1,
+    "repeatedEffectRiskCount": 0
+  },
+  "unmeasured": [
+    "groundedness (needs live model output)",
+    "Bangla style / naturalness (needs live model output + human rubric)",
+    "latency (needs live infrastructure)",
+    "token cost (needs live model usage)",
+    "end-to-end effect execution (fixtures replay decisions, not effects)"
+  ],
+  "results": [
+    {
+      "id": "rc-0100-cont-hya-wf-post",
+      "category": "continuity",
+      "traceId": "rt-3bdd72c1",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0101-cont-koro-wf-post",
+      "category": "continuity",
+      "traceId": "rt-9fedce33",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0102-cont-ok-wf-seo",
+      "category": "continuity",
+      "traceId": "rt-1bd76e6e",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0103-cont-continue-wf-seo",
+      "category": "continuity",
+      "traceId": "rt-b223a962",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0104-cont-chaliye-jao-wf-post",
+      "category": "continuity",
+      "traceId": "rt-5a2b41fd",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0105-cont-hmm-wf-dispatch",
+      "category": "continuity",
+      "traceId": "rt-72d1a5ce",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0106-cont-resume-wf-seo",
+      "category": "continuity",
+      "traceId": "rt-e4d65179",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0107-cont-thik-ache-wf-post",
+      "category": "continuity",
+      "traceId": "rt-88c188e0",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0108-cont-gap7h-hya-wf-post",
+      "category": "continuity",
+      "traceId": "rt-0d7be153",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0109-cont-gap7h-koro-wf-post",
+      "category": "continuity",
+      "traceId": "rt-b8a31d21",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0110-cont-gap7h-ok-wf-seo",
+      "category": "continuity",
+      "traceId": "rt-d7e4620b",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0111-cont-gap7h-continue-wf-seo",
+      "category": "continuity",
+      "traceId": "rt-9aebffff",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0112-cont-gap7h-chaliye-jao-wf-post",
+      "category": "continuity",
+      "traceId": "rt-e9d3eeda",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0113-cont-gap7h-hmm-wf-dispatch",
+      "category": "continuity",
+      "traceId": "rt-303095eb",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0114-cont-gap7h-resume-wf-seo",
+      "category": "continuity",
+      "traceId": "rt-8cb42196",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0115-cont-gap7h-thik-ache-wf-post",
+      "category": "continuity",
+      "traceId": "rt-737b1f3d",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0116-cont-gap3d-wf",
+      "category": "continuity",
+      "traceId": "rt-1e20b09a",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0117-cont-gap3d-checkpoint",
+      "category": "continuity",
+      "traceId": "rt-c66d9594",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "checkpoint",
+          "actual": "checkpoint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0118-cont-gap30d-wf",
+      "category": "continuity",
+      "traceId": "rt-66544544",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0119-cont-gap30d-checkpoint",
+      "category": "continuity",
+      "traceId": "rt-e30ed5dc",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "checkpoint",
+          "actual": "checkpoint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0120-cont-gap90d-wf",
+      "category": "continuity",
+      "traceId": "rt-b4ac4807",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0121-cont-gap90d-checkpoint",
+      "category": "continuity",
+      "traceId": "rt-d265659f",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "checkpoint",
+          "actual": "checkpoint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0122-cont-gap30d-no-state",
+      "category": "continuity",
+      "traceId": "rt-1e05d5c1",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0123-cont-gap90d-what-were-we-doing",
+      "category": "continuity",
+      "traceId": "rt-172b0c10",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0124-cont-desired-tarpor",
+      "category": "continuity",
+      "traceId": "rt-3bf70d23",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0125-cont-desired-jekhane-chile",
+      "category": "continuity",
+      "traceId": "rt-d327093a",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0126-cont-desired-otai-koro",
+      "category": "continuity",
+      "traceId": "rt-682598aa",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0127-cont-desired-bakita-koro",
+      "category": "continuity",
+      "traceId": "rt-a7bc0f6c",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0128-cont-desired-ager-obostha",
+      "category": "continuity",
+      "traceId": "rt-eb3f9575",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0129-cont-desired-oi-kaj-ses",
+      "category": "continuity",
+      "traceId": "rt-72cce30f",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0130-cont-nostate-hya",
+      "category": "continuity",
+      "traceId": "rt-62aef416",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0131-cont-nostate-ok",
+      "category": "continuity",
+      "traceId": "rt-7d232077",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0132-cont-nostate-tarpor",
+      "category": "continuity",
+      "traceId": "rt-11e9d72a",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0133-cont-nostate-koi",
+      "category": "continuity",
+      "traceId": "rt-b064a488",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0134-cont-sticky-deepseek",
+      "category": "continuity",
+      "traceId": "rt-f511c847",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0135-cont-sticky-qwen",
+      "category": "continuity",
+      "traceId": "rt-4d5f47d1",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0136-cont-sticky-anthropic-not-inherited",
+      "category": "continuity",
+      "traceId": "rt-1501517e",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0137-cont-sticky-worker-only-not-inherited",
+      "category": "continuity",
+      "traceId": "rt-57dc33ee",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0138-cont-sticky-money-overrides",
+      "category": "continuity",
+      "traceId": "rt-c5643b1b",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "deny_kw",
+          "actual": "deny_kw",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0139-cont-newtask-poster",
+      "category": "continuity",
+      "traceId": "rt-0cb5e91b",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "creative"
+          ],
+          "actual": [
+            "social",
+            "creative"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "new_task",
+          "actual": "new_task",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0140-cont-newtask-stock",
+      "category": "continuity",
+      "traceId": "rt-5c1ac5b2",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "erp"
+          ],
+          "actual": [
+            "erp"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "new_task",
+          "actual": "new_task",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0141-cont-newtask-salah",
+      "category": "continuity",
+      "traceId": "rt-43b3ed80",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "salah"
+          ],
+          "actual": [
+            "salah"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "new_task",
+          "actual": "new_task",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0142-cont-newtask-research",
+      "category": "continuity",
+      "traceId": "rt-69755001",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "research"
+          ],
+          "actual": [
+            "research"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "new_task",
+          "actual": "new_task",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0143-cont-newtask-reminder",
+      "category": "continuity",
+      "traceId": "rt-a9a7e819",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "reminders"
+          ],
+          "actual": [
+            "reminders"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "new_task",
+          "actual": "new_task",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0144-cont-3replies-post-ta-koi",
+      "category": "continuity",
+      "traceId": "rt-c4aac0da",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0145-cont-3replies-oita-ses-koro",
+      "category": "continuity",
+      "traceId": "rt-a4d1db3c",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0146-cont-3replies-ki-holo",
+      "category": "continuity",
+      "traceId": "rt-08605943",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0147-cont-3replies-post-hoise",
+      "category": "continuity",
+      "traceId": "rt-769d0c1c",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0148-cont-3replies-tarpor",
+      "category": "continuity",
+      "traceId": "rt-249d0f22",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0149-cont-3replies-done-koro",
+      "category": "continuity",
+      "traceId": "rt-c55c0bf9",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0150-tool-routine-sales-today",
+      "category": "tool_selection",
+      "traceId": "rt-6902e422",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "routine_kw",
+          "actual": "routine_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": "sales_today",
+          "actual": "sales_today",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "erp"
+          ],
+          "actual": [
+            "erp"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0151-tool-routine-expense-today",
+      "category": "tool_selection",
+      "traceId": "rt-1710114d",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "routine_kw",
+          "actual": "routine_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": "expense_today",
+          "actual": "expense_today",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "finance"
+          ],
+          "actual": [
+            "finance"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0152-tool-routine-attendance",
+      "category": "tool_selection",
+      "traceId": "rt-4277f7c9",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "routine_kw",
+          "actual": "routine_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": "attendance",
+          "actual": "attendance",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "staff_read"
+          ],
+          "actual": [
+            "staff_read"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0153-tool-routine-staff-tasks",
+      "category": "tool_selection",
+      "traceId": "rt-e93b84a0",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "routine_kw",
+          "actual": "routine_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": "staff_tasks",
+          "actual": "staff_tasks",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "staff_read"
+          ],
+          "actual": [
+            "staff_read"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0154-tool-routine-salah-times",
+      "category": "tool_selection",
+      "traceId": "rt-8afc595c",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "routine_kw",
+          "actual": "routine_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": "salah_today",
+          "actual": "salah_today",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "salah"
+          ],
+          "actual": [
+            "salah"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0155-tool-routine-approvals",
+      "category": "tool_selection",
+      "traceId": "rt-ebe5de4d",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "routine_kw",
+          "actual": "routine_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": "approvals_pending",
+          "actual": "approvals_pending",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0156-tool-routine-order-status",
+      "category": "tool_selection",
+      "traceId": "rt-c80d1f35",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "routine_kw",
+          "actual": "routine_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": "order_status",
+          "actual": "order_status",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "erp"
+          ],
+          "actual": [
+            "erp"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0157-tool-routine-orders-pending",
+      "category": "tool_selection",
+      "traceId": "rt-78943614",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "routine_kw",
+          "actual": "routine_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": "orders_pending",
+          "actual": "orders_pending",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "erp"
+          ],
+          "actual": [
+            "erp"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0158-tool-routine-stock",
+      "category": "tool_selection",
+      "traceId": "rt-00b45c70",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "routine_kw",
+          "actual": "routine_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": "stock",
+          "actual": "stock",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "erp"
+          ],
+          "actual": [
+            "erp"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0159-tool-marketing-fb-post",
+      "category": "tool_selection",
+      "traceId": "rt-dc54036c",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "marketing_kw",
+          "actual": "marketing_kw",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "social"
+          ],
+          "actual": [
+            "social",
+            "creative",
+            "ads"
+          ],
+          "pass": true
+        },
+        {
+          "check": "packs∌",
+          "expected": [],
+          "actual": [],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0160-tool-marketing-caption",
+      "category": "tool_selection",
+      "traceId": "rt-e7c0a16b",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "marketing_kw",
+          "actual": "marketing_kw",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "social"
+          ],
+          "actual": [
+            "social",
+            "creative",
+            "ads"
+          ],
+          "pass": true
+        },
+        {
+          "check": "packs∌",
+          "expected": [],
+          "actual": [],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0161-tool-marketing-boost",
+      "category": "tool_selection",
+      "traceId": "rt-38260307",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "marketing_kw",
+          "actual": "marketing_kw",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "ads"
+          ],
+          "actual": [
+            "social",
+            "ads",
+            "creative"
+          ],
+          "pass": true
+        },
+        {
+          "check": "packs∌",
+          "expected": [],
+          "actual": [],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0162-tool-marketing-campaign",
+      "category": "tool_selection",
+      "traceId": "rt-1359842d",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "marketing_kw",
+          "actual": "marketing_kw",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "ads"
+          ],
+          "actual": [
+            "ads",
+            "social",
+            "creative"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0163-tool-marketing-poster-bn",
+      "category": "tool_selection",
+      "traceId": "rt-d3eecc6e",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "marketing_kw",
+          "actual": "marketing_kw",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "creative"
+          ],
+          "actual": [
+            "social",
+            "creative",
+            "ads"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0164-tool-deny-salary",
+      "category": "tool_selection",
+      "traceId": "rt-4c188a53",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "deny_kw",
+          "actual": "deny_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": null,
+          "actual": null,
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0165-tool-deny-payroll",
+      "category": "tool_selection",
+      "traceId": "rt-66af4f7d",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "deny_kw",
+          "actual": "deny_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": null,
+          "actual": null,
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0166-tool-deny-delete",
+      "category": "tool_selection",
+      "traceId": "rt-bbdc0a72",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "deny_kw",
+          "actual": "deny_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": null,
+          "actual": null,
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0167-tool-deny-refund",
+      "category": "tool_selection",
+      "traceId": "rt-984f465e",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "deny_kw",
+          "actual": "deny_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": null,
+          "actual": null,
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0168-tool-deny-fire",
+      "category": "tool_selection",
+      "traceId": "rt-4a21bc7b",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "deny_kw",
+          "actual": "deny_kw",
+          "pass": true
+        },
+        {
+          "check": "routineIntent",
+          "expected": null,
+          "actual": null,
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0169-tool-call-with-number",
+      "category": "tool_selection",
+      "traceId": "rt-f7e006de",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "call_intent",
+          "actual": "call_intent",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "reminders"
+          ],
+          "actual": [
+            "reminders"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0170-tool-call-number-word",
+      "category": "tool_selection",
+      "traceId": "rt-a7a29b52",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "call_intent",
+          "actual": "call_intent",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0171-tool-call-precision-negative",
+      "category": "tool_selection",
+      "traceId": "rt-b436377f",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "reminders"
+          ],
+          "actual": [
+            "reminders"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0172-tool-domain-finance-hisab",
+      "category": "tool_selection",
+      "traceId": "rt-86f0836c",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "finance"
+          ],
+          "actual": [
+            "finance"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0173-tool-domain-erp-price",
+      "category": "tool_selection",
+      "traceId": "rt-bcc3cf8c",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "erp"
+          ],
+          "actual": [
+            "erp"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0174-tool-domain-website-publish",
+      "category": "tool_selection",
+      "traceId": "rt-b71bfbcb",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "website"
+          ],
+          "actual": [
+            "erp",
+            "website"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0175-tool-domain-seo-audit",
+      "category": "tool_selection",
+      "traceId": "rt-f0bd7c1a",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "seo"
+          ],
+          "actual": [
+            "website",
+            "seo"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0176-tool-domain-research-competitor",
+      "category": "tool_selection",
+      "traceId": "rt-0668e3ae",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "research"
+          ],
+          "actual": [
+            "research"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0177-tool-domain-camera",
+      "category": "tool_selection",
+      "traceId": "rt-2748dc94",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "camera"
+          ],
+          "actual": [
+            "camera"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0178-tool-domain-todo",
+      "category": "tool_selection",
+      "traceId": "rt-c01cf394",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "todo"
+          ],
+          "actual": [
+            "todo"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0179-tool-domain-cost",
+      "category": "tool_selection",
+      "traceId": "rt-84a71d3a",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "cost"
+          ],
+          "actual": [
+            "cost"
+          ],
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0180-card-answer-color-blue",
+      "category": "approval_ask_card",
+      "traceId": "rt-89a4ef99",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0181-card-answer-color-full",
+      "category": "approval_ask_card",
+      "traceId": "rt-85a870ad",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0182-card-answer-budget-num",
+      "category": "approval_ask_card",
+      "traceId": "rt-0e5f69d1",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0183-card-answer-time-answer",
+      "category": "approval_ask_card",
+      "traceId": "rt-fdd4294c",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0184-card-answer-choice-second",
+      "category": "approval_ask_card",
+      "traceId": "rt-a5cab1ef",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0185-card-approve-approve-en",
+      "category": "approval_ask_card",
+      "traceId": "rt-1d3831c8",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "finance"
+          ],
+          "actual": [
+            "finance"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0186-card-approve-approve-bn",
+      "category": "approval_ask_card",
+      "traceId": "rt-a1687e6c",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "finance"
+          ],
+          "actual": [
+            "finance",
+            "staff_dispatch"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0187-card-approve-ok-koro",
+      "category": "approval_ask_card",
+      "traceId": "rt-8fe262f1",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "finance"
+          ],
+          "actual": [
+            "finance"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0188-card-approve-hya-only",
+      "category": "approval_ask_card",
+      "traceId": "rt-195cd80b",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "finance"
+          ],
+          "actual": [
+            "finance"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0189-card-reject-na",
+      "category": "approval_ask_card",
+      "traceId": "rt-5b149b1e",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0190-card-reject-batil",
+      "category": "approval_ask_card",
+      "traceId": "rt-ceec3543",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0191-card-reject-cancel",
+      "category": "approval_ask_card",
+      "traceId": "rt-f7ee50ee",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0192-card-revise-amount",
+      "category": "approval_ask_card",
+      "traceId": "rt-d6c3bdb2",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "finance"
+          ],
+          "actual": [
+            "finance"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0193-card-revise-category",
+      "category": "approval_ask_card",
+      "traceId": "rt-17ebf677",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "finance"
+          ],
+          "actual": [
+            "finance",
+            "staff_read"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0194-card-revise-note",
+      "category": "approval_ask_card",
+      "traceId": "rt-a6b0700a",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "finance"
+          ],
+          "actual": [
+            "finance"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0195-card-duplicate-approve",
+      "category": "approval_ask_card",
+      "traceId": "rt-d3562d8d",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0196-card-stale-approve",
+      "category": "approval_ask_card",
+      "traceId": "rt-80d8dd7a",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0197-card-packs-fb-post",
+      "category": "approval_ask_card",
+      "traceId": "rt-48eaa07e",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "social"
+          ],
+          "actual": [
+            "social"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0198-card-packs-dispatch",
+      "category": "approval_ask_card",
+      "traceId": "rt-faf88a2e",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "staff_dispatch"
+          ],
+          "actual": [
+            "staff_dispatch"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0199-card-packs-campaign",
+      "category": "approval_ask_card",
+      "traceId": "rt-ee413c45",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "ads"
+          ],
+          "actual": [
+            "ads"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0200-card-packs-browser",
+      "category": "approval_ask_card",
+      "traceId": "rt-53fcc512",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "browser"
+          ],
+          "actual": [
+            "browser"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0201-card-packs-call",
+      "category": "approval_ask_card",
+      "traceId": "rt-6f6116b5",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "reminders"
+          ],
+          "actual": [
+            "reminders"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0202-card-packs-seo",
+      "category": "approval_ask_card",
+      "traceId": "rt-40009705",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "seo"
+          ],
+          "actual": [
+            "seo"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0203-card-packs-website",
+      "category": "approval_ask_card",
+      "traceId": "rt-4adcfda2",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "website"
+          ],
+          "actual": [
+            "website"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0204-card-packs-image",
+      "category": "approval_ask_card",
+      "traceId": "rt-cad13e41",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "creative"
+          ],
+          "actual": [
+            "creative"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0205-listen-mon-valo-nei",
+      "category": "personal_listen",
+      "traceId": "rt-1545e425",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0206-listen-hotash",
+      "category": "personal_listen",
+      "traceId": "rt-272cc7db",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0207-listen-kichu-valo-lage-na",
+      "category": "personal_listen",
+      "traceId": "rt-207d753c",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0208-listen-ghum",
+      "category": "personal_listen",
+      "traceId": "rt-1cfee18d",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0209-listen-eka",
+      "category": "personal_listen",
+      "traceId": "rt-8cc21906",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0210-listen-tension",
+      "category": "personal_listen",
+      "traceId": "rt-2f18ac87",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0211-listen-klanto",
+      "category": "personal_listen",
+      "traceId": "rt-4c6163b5",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0212-listen-kanna",
+      "category": "personal_listen",
+      "traceId": "rt-91bb163e",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0213-listen-mon-kharap-bn",
+      "category": "personal_listen",
+      "traceId": "rt-0aeb13ed",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0214-listen-hopeless",
+      "category": "personal_listen",
+      "traceId": "rt-2bba3344",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0215-listen-osohay",
+      "category": "personal_listen",
+      "traceId": "rt-bb0b5825",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0216-listen-mon-bosche-na",
+      "category": "personal_listen",
+      "traceId": "rt-de31b5f4",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0217-listen-mixed-sales",
+      "category": "personal_listen",
+      "traceId": "rt-1a53df08",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0218-listen-mixed-post",
+      "category": "personal_listen",
+      "traceId": "rt-d6c4b4e5",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0219-listen-mixed-hisab",
+      "category": "personal_listen",
+      "traceId": "rt-e90045ed",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0220-listen-mixed-order",
+      "category": "personal_listen",
+      "traceId": "rt-d14f3632",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0221-listen-other-customer",
+      "category": "personal_listen",
+      "traceId": "rt-99fd0446",
+      "behaviorVersion": "phase31-v1",
+      "checks": [],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0222-listen-other-staff",
+      "category": "personal_listen",
+      "traceId": "rt-ea0dadd7",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0223-listen-refund-collision",
+      "category": "personal_listen",
+      "traceId": "rt-3a83d4aa",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "deny_kw",
+          "actual": "deny_kw",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0224-listen-followup-stays-personal",
+      "category": "personal_listen",
+      "traceId": "rt-6ebeed06",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0225-fail-autocontinue-browser",
+      "category": "failure_recovery",
+      "traceId": "rt-0ecfe109",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "autoContinue",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0226-fail-autocontinue-askcard-blocks",
+      "category": "failure_recovery",
+      "traceId": "rt-38a479e8",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "autoContinue",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0227-fail-autocontinue-terminal",
+      "category": "failure_recovery",
+      "traceId": "rt-4f7fa779",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "autoContinue",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0228-fail-autocontinue-failed-probe",
+      "category": "failure_recovery",
+      "traceId": "rt-45391c7c",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "autoContinue",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0229-fail-autocontinue-no-deadline",
+      "category": "failure_recovery",
+      "traceId": "rt-089d3749",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "autoContinue",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0230-fail-class-provider",
+      "category": "failure_recovery",
+      "traceId": "rt-6c207518",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "checkpoint",
+          "actual": "checkpoint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0231-fail-class-network",
+      "category": "failure_recovery",
+      "traceId": "rt-a538c086",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "checkpoint",
+          "actual": "checkpoint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0232-fail-class-worker",
+      "category": "failure_recovery",
+      "traceId": "rt-568323e7",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "checkpoint",
+          "actual": "checkpoint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0233-fail-class-ratelimit",
+      "category": "failure_recovery",
+      "traceId": "rt-d9bdb071",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "checkpoint",
+          "actual": "checkpoint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0234-fail-class-browser-disc",
+      "category": "failure_recovery",
+      "traceId": "rt-5dc274c5",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "checkpoint",
+          "actual": "checkpoint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0235-fail-class-deadline",
+      "category": "failure_recovery",
+      "traceId": "rt-03fe1504",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "checkpoint",
+          "actual": "checkpoint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0236-fail-why-stopped",
+      "category": "failure_recovery",
+      "traceId": "rt-b40fbc50",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "checkpoint",
+          "actual": "checkpoint",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0237-fail-waiting-approval",
+      "category": "failure_recovery",
+      "traceId": "rt-c2bbe47c",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "staff_dispatch"
+          ],
+          "actual": [
+            "staff_dispatch"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0238-fail-waiting-answer",
+      "category": "failure_recovery",
+      "traceId": "rt-2245edb8",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0239-fail-app-close-resume",
+      "category": "failure_recovery",
+      "traceId": "rt-de311309",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0240-xsurf-web-native-continue",
+      "category": "cross_surface",
+      "traceId": "rt-557ae267",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0241-xsurf-web-native-state-query",
+      "category": "cross_surface",
+      "traceId": "rt-b16a9e6b",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0242-xsurf-native-telegram-continue",
+      "category": "cross_surface",
+      "traceId": "rt-514acc18",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0243-xsurf-native-telegram-state-query",
+      "category": "cross_surface",
+      "traceId": "rt-bfa29f3c",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0244-xsurf-telegram-web-continue",
+      "category": "cross_surface",
+      "traceId": "rt-81700ad3",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "continuation",
+          "actual": "continuation",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "resumeBrief",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0245-xsurf-telegram-web-state-query",
+      "category": "cross_surface",
+      "traceId": "rt-9f3922bf",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0246-xsurf-card-cross-surface",
+      "category": "cross_surface",
+      "traceId": "rt-582f813a",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "packs⊇",
+          "expected": [
+            "staff_dispatch"
+          ],
+          "actual": [
+            "staff_dispatch"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "pending_card",
+          "actual": "pending_card",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0247-xsurf-telegram-gap-resume",
+      "category": "cross_surface",
+      "traceId": "rt-2c6119da",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "resumeBrief",
+          "expected": true,
+          "actual": true,
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "active_workflow",
+          "actual": "active_workflow",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": []
+    },
+    {
+      "id": "rc-0248-xsurf-listen-cross-surface",
+      "category": "cross_surface",
+      "traceId": "rt-fb7facaf",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "personal_hint",
+          "actual": "personal_hint",
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "none",
+          "actual": "none",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)",
+        "listenSuppressed (resolveHead not injected)"
+      ]
+    },
+    {
+      "id": "rc-0249-xsurf-native-newtask-parks-web-run",
+      "category": "cross_surface",
+      "traceId": "rt-30755424",
+      "behaviorVersion": "phase31-v1",
+      "checks": [
+        {
+          "check": "fastPath",
+          "expected": "marketing_kw",
+          "actual": "marketing_kw",
+          "pass": true
+        },
+        {
+          "check": "continuationText",
+          "expected": false,
+          "actual": false,
+          "pass": true
+        },
+        {
+          "check": "packs⊇",
+          "expected": [
+            "ads"
+          ],
+          "actual": [
+            "ads",
+            "social",
+            "creative"
+          ],
+          "pass": true
+        },
+        {
+          "check": "binding",
+          "expected": "new_task",
+          "actual": "new_task",
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "failed": [],
+      "skipped": [
+        "headTier (resolveHead not injected)"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "id": "rc-0244-xsurf-telegram-web-continue",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "cross_surface",
+  "description": "Work started on telegram, \"continue\" sent from web: same conversation state binds regardless of surface.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "নতুন পাঞ্জাবির জন্য একটা ফেসবুক পোস্ট বানাও"
+    },
+    {
+      "role": "agent",
+      "text": "ছবি বানিয়েছি Boss, এখন ক্যাপশন লিখছি — draft দেখাবো।"
+    }
+  ],
+  "latestMessage": "continue",
+  "context": {
+    "gapMinutes": 20,
+    "priorSurface": "telegram",
+    "surface": "web",
+    "stickyModelId": "or-qwen3-max",
+    "activeWorkflow": {
+      "kind": "fb_post_workflow",
+      "goal": "নতুন পাঞ্জাবি কালেকশনের ফেসবুক পোস্ট",
+      "status": "active",
+      "state": "draft_review",
+      "verifiedEffects": [
+        "generate_image:img-001"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "continue_active_work",
+    "outcome": "The telegram-started run resumes from web at the same step."
+  },
+  "expect2": {
+    "fastPath": "continuation",
+    "continuationText": true,
+    "binding": "active_workflow",
+    "resumeBrief": false,
+    "repeatedEffectRisk": true
+  },
+  "tags": [
+    "cross-surface",
+    "telegram-to-web"
+  ]
+}

@@ -115,6 +115,21 @@ export async function POST(
 
   const businessId = (action.businessId as AgentBusinessId) ?? ('ALMA_LIFESTYLE' as AgentBusinessId)
 
+  // Phase 34: a revision INVALIDATES the staged decision thread — the old
+  // interrupt payload described the pre-revise effect, and approval only ever
+  // covers the exact displayed effect. Consuming it as 'revise' means any
+  // later resume of the stale thread reports already-consumed (zero effects);
+  // the head then re-stages a fresh card/thread for the revised effect.
+  try {
+    const bridgeThread = (action.payload as { bridgeThread?: { threadId?: string } }).bridgeThread
+    if (bridgeThread?.threadId) {
+      const { resumeDecisionThread } = await import('@/agent/lib/graph/action-bridge')
+      await resumeDecisionThread({ decision: 'revise', cardId: actionId, text: feedback })
+    }
+  } catch (err) {
+    console.warn('[revise] bridge thread consume failed (revise unaffected):', err instanceof Error ? err.message : err)
+  }
+
   // Phase 1 approval span: a revision carries the owner's correction TEXT — the
   // roadmap's "link approval-card revision feedback to the originating tool call".
   // The span joins this card + feedback into the conversation trace (fail-open).

@@ -1,0 +1,39 @@
+{
+  "id": "rc-0226-fail-autocontinue-askcard-blocks",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "failure_recovery",
+  "description": "Deadline hit but an ask card is waiting: auto-continue must NOT fire (owner decides first).",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "browser diye order gulo check koro"
+    }
+  ],
+  "latestMessage": "[control] deadline salvage tick",
+  "context": {
+    "turnOutcome": {
+      "deadlineHit": true,
+      "hasAskCard": true,
+      "tools": [
+        {
+          "toolName": "live_browser_act",
+          "status": "success"
+        }
+      ]
+    }
+  },
+  "expected": {
+    "intent": "wait_owner",
+    "outcome": "No auto-continuation while a question is pending."
+  },
+  "expect2": {
+    "autoContinue": false
+  },
+  "tags": [
+    "failure",
+    "auto-continue"
+  ]
+}

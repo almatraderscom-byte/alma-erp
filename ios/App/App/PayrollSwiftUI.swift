@@ -182,6 +182,16 @@ struct PayrollEmployeeWallet: Decodable, Identifiable, Equatable {
 }
 
 /// One pending ADVANCE / WITHDRAWAL request — shown read-only, decided on the web.
+/// Recipient payout account on a pending withdrawal. The summary route reveals it
+/// (number un-masked) ONLY to SUPER_ADMIN — so its presence IS the owner gate for
+/// the native bKash send flow; ADMIN/HR payloads simply have payout: null.
+struct PayrollPayoutMethod: Decodable, Equatable {
+    let provider: String?
+    let accountNumber: String?
+    let accountHolder: String?
+    let status: String?
+}
+
 struct PayrollPendingRequest: Decodable, Identifiable, Equatable {
     let id: String
     let employeeId: String
@@ -191,8 +201,9 @@ struct PayrollPendingRequest: Decodable, Identifiable, Equatable {
     let requestedAmount: Int
     let reason: String?
     let createdAt: String?
+    let payout: PayrollPayoutMethod?
 
-    private enum Keys: String, CodingKey { case id, employeeId, businessId, type, status, requestedAmount, reason, createdAt }
+    private enum Keys: String, CodingKey { case id, employeeId, businessId, type, status, requestedAmount, reason, createdAt, payout }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
@@ -203,7 +214,82 @@ struct PayrollPendingRequest: Decodable, Identifiable, Equatable {
         requestedAmount = payrollFlexInt(c, .requestedAmount) ?? 0
         reason = try? c.decodeIfPresent(String.self, forKey: .reason)
         createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
+        payout = try? c.decodeIfPresent(PayrollPayoutMethod.self, forKey: .payout)
     }
+}
+
+// MARK: - bKash send flow (owner-only: copy number → open bKash → paste TrxID)
+
+/// Half-done bKash send (owner tapped "copy + open bKash" and left for the bKash
+/// app). UserDefaults so it survives iOS killing the app while the owner is away.
+enum BkashSendPendingStore {
+    private static let key = "alma.bkashSendPending.v1"
+    /// After 12h a half-done send is stale — nagging the owner does more harm than good.
+    private static let ttl: TimeInterval = 12 * 60 * 60
+
+    struct Entry: Codable {
+        /// Owning screen — id spaces differ (walletRequest id on Payroll vs
+        /// approvalRequest id on Approvals), so each surface restores only its own.
+        var surface: String? = "payroll"
+        let requestId: String
+        let startedAt: Date
+    }
+
+    static func save(requestId: String, surface: String = "payroll") {
+        let entry = Entry(surface: surface, requestId: requestId, startedAt: Date())
+        if let data = try? JSONEncoder().encode(entry) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    static func read(surface: String = "payroll") -> Entry? {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let entry = try? JSONDecoder().decode(Entry.self, from: data) else { return nil }
+        guard Date().timeIntervalSince(entry.startedAt) < ttl else {
+            clear()
+            return nil
+        }
+        guard (entry.surface ?? "payroll") == surface else { return nil }
+        return entry
+    }
+
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+}
+
+/// The bKash app's Universal Link — the only opener bKash actually publishes.
+///
+/// Evidence (https://bka.sh/.well-known/apple-app-site-association):
+///   {"applinks":{"details":[{"appID":"4XPYVR2AGK.com.bKash.customerapp","paths":["/next"]}]}}
+///
+/// This replaced a `bkash://` custom scheme that was a guess (owner got Safari's
+/// "address is invalid" from it on 2026-07-17). `.universalLinksOnly` is the honest
+/// test: it succeeds only if bKash is really installed and claims the link, so the
+/// fallback below runs exactly when it is not. Note the simulator can never settle
+/// this — it has no App Store, so bKash cannot be installed there to claim anything.
+enum BkashApp {
+    static let url = URL(string: "https://bka.sh/next")!
+
+    /// Opens the bKash app; falls back to its web page when the app is absent.
+    static func open() {
+        UIApplication.shared.open(url, options: [.universalLinksOnly: true]) { openedApp in
+            if !openedApp { UIApplication.shared.open(url) }
+        }
+    }
+}
+
+/// Pull a bKash TrxID out of arbitrary pasteboard text: 10 uppercase alphanumerics
+/// with at least one digit (e.g. BFJ90KAL2M). The digit guard rejects 10-letter
+/// words; the boundary guards reject 11-digit phone numbers (the recipient number
+/// we ourselves copied on the way out) and amounts. Mirrors src/lib/bkash-send-flow.ts.
+func payrollExtractTrxId(_ text: String?) -> String? {
+    guard let t = text?.uppercased(), !t.isEmpty else { return nil }
+    let pattern = "(?<![A-Z0-9])(?=[A-Z0-9]{0,9}\\d)[A-Z0-9]{10}(?![A-Z0-9])"
+    guard let re = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let range = NSRange(t.startIndex..., in: t)
+    guard let m = re.firstMatch(in: t, range: range), let r = Range(m.range, in: t) else { return nil }
+    return String(t[r])
 }
 
 /// Business-level totals for the KPI strip.
@@ -594,6 +680,9 @@ final class PayrollVM {
     // UI state
     var typeFilter = "ALL"          // ALL | SALARY_ACCRUAL | COMMISSION | PENALTY | ADVANCE | WITHDRAWAL
     var monthFilter: String? = nil  // nil = all months (timeline)
+    /// True once the wallet summary has loaded at least once this session — the
+    /// bKash-pending restore uses it to tell "request resolved" from "not loaded yet".
+    var didLoadSummary = false
     var loading = false
     var error: String? = nil
     var notice: String? = nil             // success line (the web's toast)
@@ -622,6 +711,7 @@ final class PayrollVM {
             pendingAdvanceCount = summary.pendingAdvanceCount
             pendingWithdrawalCount = summary.pendingWithdrawalCount
             orphanLedgerCount = summary.orphanLedgerEntryCount
+            didLoadSummary = true
             authExpired = false
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
@@ -945,6 +1035,7 @@ final class PayrollVM {
 @available(iOS 17.0, *)
 struct PayrollScreen: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
     @State private var vm = PayrollVM()
     @State private var selected: PayrollEmployeeWallet? = nil
     @State private var approveTarget: PayrollPendingRequest? = nil
@@ -983,11 +1074,33 @@ struct PayrollScreen: View {
         .background(PayrollAurora())
         .claudeTopFade()
         .refreshable { await vm.load() }
-        .task { await vm.load() }
+        .task {
+            await vm.load()
+            restoreBkashPending()
+        }
+        // Coming back from the bKash app (or a relaunch after iOS killed us there):
+        // re-open the approve sheet for the half-done withdrawal so the owner can
+        // paste the TrxID and finish.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { restoreBkashPending() }
+        }
+        .onChange(of: vm.pendingRequests) { _, _ in restoreBkashPending() }
         .sheet(item: $selected) { wallet in
             PayrollEmployeeDetailSheet(wallet: wallet, openWeb: openWeb)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+    }
+
+    /// Re-open the approve sheet for a half-done bKash send. Only presents when the
+    /// request is still in the pending list; once the list has genuinely loaded and
+    /// the request is gone (approved elsewhere), the stale marker is dropped.
+    private func restoreBkashPending() {
+        guard approveTarget == nil, let entry = BkashSendPendingStore.read() else { return }
+        if let req = vm.pendingRequests.first(where: { $0.id == entry.requestId }) {
+            approveTarget = req
+        } else if vm.didLoadSummary && !vm.loading {
+            BkashSendPendingStore.clear()
         }
     }
 
@@ -1671,9 +1784,14 @@ private struct PayrollReviewSheet: View {
     let onConfirm: (_ approvedAmount: Int, _ transactionId: String, _ paidVia: String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
     @State private var amountText: String
     @State private var txn = ""
     @State private var paidVia = ""
+    /// True when this sheet was re-opened after the owner came back from the bKash
+    /// app (a BkashSendPendingStore entry exists for this request).
+    @State private var resumedFromBkash = false
+    @State private var submitted = false
     @FocusState private var focused: Bool
 
     private static let paidViaOptions: [(String, String)] = [
@@ -1692,6 +1810,14 @@ private struct PayrollReviewSheet: View {
     // Cash handovers have no transaction reference; every other channel keeps one.
     private var needsTxn: Bool { request.type == "WITHDRAWAL" && paidVia != "CASH" }
     private var txnTrimmed: String { txn.trimmingCharacters(in: .whitespacesAndNewlines) }
+    /// Owner-only bKash send flow: the server includes payout (number revealed)
+    /// only for SUPER_ADMIN, so payout presence is the role gate.
+    private var bkashPayoutNumber: String? {
+        guard request.type == "WITHDRAWAL", paidVia == "BKASH",
+              let payout = request.payout, payout.provider == "BKASH",
+              let number = payout.accountNumber, !number.isEmpty, number != "—" else { return nil }
+        return number
+    }
     private var valid: Bool {
         guard let a = amount, a > 0, a <= request.requestedAmount else { return false }
         guard !paidVia.isEmpty else { return false }
@@ -1737,14 +1863,60 @@ private struct PayrollReviewSheet: View {
                             .font(.caption2).foregroundStyle(PayrollPalette.amber600)
                     }
                 }
+                if let number = bkashPayoutNumber {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(resumedFromBkash
+                             ? "বিকাশ থেকে ফিরেছেন — TrxID পেস্ট করে অনুমোদন শেষ করুন"
+                             : "প্রাপকের বিকাশ" + (request.payout?.accountHolder.map { " · \($0)" } ?? ""))
+                            .font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                        Text(number).font(.callout.weight(.bold)).monospaced()
+                        if !resumedFromBkash {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                                UIPasteboard.general.string = number
+                                BkashSendPendingStore.save(requestId: request.id)
+                                BkashApp.open()
+                            } label: {
+                                Label("নম্বর কপি করে বিকাশ খুলুন", systemImage: "arrow.up.forward.app")
+                                    .font(.caption.weight(.bold))
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(PayrollPalette.coral)
+                        }
+                        Text(resumedFromBkash
+                             ? "বিকাশের সফল স্ক্রিনে TrxID কপি করে থাকলে নিচের পেস্ট বাটনেই বসবে।"
+                             : "টাকা পাঠিয়ে অ্যাপে ফিরে এলে এই শিটটাই আবার খুলবে — তখন TrxID পেস্ট করলেই শেষ।")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(PayrollPalette.coral.opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                        .strokeBorder(PayrollPalette.coral.opacity(0.25), lineWidth: 1))
+                }
                 if needsTxn {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("TRANSACTION ID").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
-                        TextField("যে নম্বর/ID থেকে টাকা পাঠালেন", text: $txn)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .padding(12)
-                            .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                        HStack(spacing: 8) {
+                            TextField("যে নম্বর/ID থেকে টাকা পাঠালেন", text: $txn)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .padding(12)
+                                .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                            if bkashPayoutNumber != nil {
+                                // UIPasteboard read is gesture-gated by iOS (paste banner) —
+                                // extract a TrxID-shaped token, never the phone number we copied.
+                                Button("পেস্ট") {
+                                    if let trx = payrollExtractTrxId(UIPasteboard.general.string) {
+                                        txn = trx
+                                    }
+                                }
+                                .font(.caption.weight(.bold))
+                                .buttonStyle(.bordered)
+                                .tint(PayrollPalette.coral)
+                            }
+                        }
                     }
                     Text(txnTrimmed.isEmpty ? "Transaction ID আবশ্যক" : "এই ID সহ staff-কে SMS পাঠানো হবে।")
                         .font(.caption2)
@@ -1752,6 +1924,10 @@ private struct PayrollReviewSheet: View {
                 }
                 Button {
                     guard let a = amount else { return }
+                    submitted = true
+                    if BkashSendPendingStore.read()?.requestId == request.id {
+                        BkashSendPendingStore.clear()
+                    }
                     dismiss()
                     onConfirm(a, txnTrimmed, paidVia)
                 } label: {
@@ -1766,7 +1942,31 @@ private struct PayrollReviewSheet: View {
             .padding(18)
         }
         .presentationBackground { PayrollAurora() }
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            // Sheet re-opened after returning from the bKash app: pre-select বিকাশ
+            // and switch the copy to "paste the TrxID to finish".
+            if BkashSendPendingStore.read()?.requestId == request.id {
+                resumedFromBkash = true
+                paidVia = "BKASH"
+                focused = false
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // The sheet usually survives the round-trip to the bKash app (no relaunch);
+            // returning flips it into "paste the TrxID" mode.
+            if phase == .active, BkashSendPendingStore.read()?.requestId == request.id {
+                resumedFromBkash = true
+                paidVia = "BKASH"
+            }
+        }
+        .onDisappear {
+            // Dismissed without confirming → drop the half-done marker so the sheet
+            // stops re-opening on every foreground (owner can restart from the list).
+            if !submitted, BkashSendPendingStore.read()?.requestId == request.id {
+                BkashSendPendingStore.clear()
+            }
+        }
     }
 }
 

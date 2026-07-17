@@ -1,0 +1,41 @@
+{
+  "id": "rc-0122-cont-gap30d-no-state",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "continuity",
+  "description": "Continuation text after 30 days with NO open state: agent must say what it knows and ask one focused question — never fabricate continuity.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "thanks, sob thik ache"
+    },
+    {
+      "role": "agent",
+      "text": "জি Boss, দরকার হলে ডাক দেবেন।"
+    }
+  ],
+  "latestMessage": "করো",
+  "context": {
+    "gapMinutes": 43200
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "ambiguous_continuation",
+    "outcome": "No open run exists — ask one focused question instead of guessing or restarting anything."
+  },
+  "expect2": {
+    "fastPath": "continuation",
+    "continuationText": true,
+    "binding": "none",
+    "resumeBrief": true
+  },
+  "tags": [
+    "continuity",
+    "gap-30d",
+    "no-state"
+  ]
+}

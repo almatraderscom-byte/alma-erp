@@ -1,0 +1,27 @@
+{
+  "id": "rc-0172-tool-domain-finance-hisab",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "\"gotokal er hisab ta dekhao koto profit holo\" must select the finance pack.",
+  "transcript": [],
+  "latestMessage": "gotokal er hisab ta dekhao koto profit holo",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "finance_read",
+    "outcome": "The finance tools are available to the head for this turn."
+  },
+  "expect2": {
+    "packs": [
+      "finance"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "domain-pack"
+  ]
+}

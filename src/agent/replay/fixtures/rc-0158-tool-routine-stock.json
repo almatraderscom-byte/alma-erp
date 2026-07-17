@@ -1,0 +1,31 @@
+{
+  "id": "rc-0158-tool-routine-stock",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "Routine read \"stock koto ache?\" must hit the deterministic routine graph (intent stock) on the light head.",
+  "transcript": [],
+  "latestMessage": "stock koto ache?",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "routine_stock",
+    "tools": [],
+    "outcome": "Answered by the routine graph with one read tool; no mutation."
+  },
+  "expect2": {
+    "fastPath": "routine_kw",
+    "routineIntent": "stock",
+    "headTier": "light",
+    "packs": [
+      "erp"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "routine"
+  ]
+}

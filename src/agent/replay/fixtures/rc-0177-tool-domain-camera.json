@@ -1,0 +1,27 @@
+{
+  "id": "rc-0177-tool-domain-camera",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "\"camera te office ta dekhao to\" must select the camera pack.",
+  "transcript": [],
+  "latestMessage": "camera te office ta dekhao to",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "office_camera",
+    "outcome": "The camera tools are available to the head for this turn."
+  },
+  "expect2": {
+    "packs": [
+      "camera"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "domain-pack"
+  ]
+}

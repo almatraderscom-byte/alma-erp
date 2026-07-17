@@ -1,0 +1,50 @@
+{
+  "id": "rc-0237-fail-waiting-approval",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "failure_recovery",
+  "description": "Work stopped because approval is pending: status answer must say exactly that and point at the card.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "dispatch proposal card পাঠিয়েছি — approve হলে যাবে।"
+    }
+  ],
+  "latestMessage": "kaj ta atke ache keno?",
+  "context": {
+    "gapMinutes": 90,
+    "pendingCard": {
+      "kind": "approval",
+      "id": "pa-301",
+      "actionType": "staff_dispatch"
+    },
+    "activeWorkflow": {
+      "kind": "staff_dispatch",
+      "goal": "কালকের ডেলিভারি টাস্ক স্টাফদের ভাগ করা",
+      "status": "waiting_owner",
+      "state": "proposal_review",
+      "verifiedEffects": [
+        "prepare_staff_task_proposal:done"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "explain_stop",
+    "outcome": "Blocked on the owner approval card; nothing else is wrong."
+  },
+  "expect2": {
+    "binding": "pending_card",
+    "packs": [
+      "staff_dispatch"
+    ]
+  },
+  "tags": [
+    "failure",
+    "waiting-approval"
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "id": "rc-0134-cont-sticky-deepseek",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "continuity",
+  "description": "Short follow-up in a DeepSeek thread stays on the cheap head (no re-triage up).",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "website er seo gulo thik koro"
+    },
+    {
+      "role": "agent",
+      "text": "অডিট শেষ Boss — ৫টা প্রোডাক্টে ফিক্স লাগবে, apply করছি।"
+    }
+  ],
+  "latestMessage": "hmm",
+  "context": {
+    "gapMinutes": 2,
+    "stickyModelId": "or-deepseek-v4-flash",
+    "activeWorkflow": {
+      "kind": "seo_fix_batch",
+      "goal": "ওয়েবসাইটের ৫টা প্রোডাক্টের SEO ঠিক করা",
+      "status": "waiting_worker",
+      "state": "apply_fixes",
+      "verifiedEffects": [
+        "audit_product_seo:done"
+      ]
+    }
+  },
+  "expected": {
+    "intent": "continue_active_work",
+    "outcome": "Same cheap head continues; no cost jump to the heavy head."
+  },
+  "expect2": {
+    "fastPath": "continuation",
+    "headTier": "light",
+    "binding": "active_workflow"
+  },
+  "tags": [
+    "continuity",
+    "sticky-head"
+  ]
+}

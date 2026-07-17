@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Phase 34 proof — universal decision bridge</title>
+<style>body{font-family:-apple-system,system-ui;margin:24px;background:#0d1117;color:#e6edf3}h1{font-size:19px}
+table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #30363d;padding:7px 10px;text-align:left}
+.ok{color:#3fb950;font-weight:700}.bad{color:#f85149;font-weight:700}
+.verdict{margin:16px 0;padding:12px;border-radius:8px;border:1px solid #30363d;background:#0f1c14;font-size:15px}</style></head><body>
+<h1>Phase 34 — universal interrupt/ask/approval/resume bridge (real graph runs)</h1>
+<table><tr><th>scenario</th><th>result</th><th>verdict</th></tr>
+<tr><td>১. Card staged → typed interrupt thread parked</td><td>staged=true thread=action_bridge:pa-500</td><td class="ok">PASS</td></tr>
+<tr><td>২. Approve (৩ দিনের gap-এর পরে — fresh process, same durable thread)</td><td>applied=true verdict=ok</td><td class="ok">PASS</td></tr>
+<tr><td>৩. Duplicate approve (double-click/reconnect)</td><td>alreadyConsumed=true applied=false → এক টাকাও দ্বিতীয়বার লেখা হয় না</td><td class="ok">PASS</td></tr>
+<tr><td>৪. Revise → পুরনো thread consumed → পুরনো approve চেষ্টা</td><td>revise=true, then approve alreadyConsumed=true → বদলানো কাজে নতুন কার্ড লাগবে</td><td class="ok">PASS</td></tr>
+<tr><td>৫. Stale run version (card v3, run এখন v7)</td><td>verdict=stale_version → "কাজটার অবস্থা এর মধ্যে বদলে গেছে — পুরনো কার্ড দিয়ে কিছু চালানো নিরাপদ নয়; নতুন কার্ড লাগবে।"</td><td class="ok">PASS</td></tr>
+<tr><td>৬. Approve on already-rejected card</td><td>verdict=already_resolved → zero effects</td><td class="ok">PASS</td></tr></table>
+<div class="verdict"><span class="ok">ALL PASS</span> — duplicate approve = এক effect, revise মানেই নতুন কার্ড, stale/expired/rejected = শূন্য effect + পরিষ্কার বার্তা, gap-এর পরে একই থ্রেডেই resume।</div>
+<p style="color:#8b949e;font-size:12px">Interrupt = transport, authorization stays server-side in the routes. Generated 2026-07-17.</p></body></html>

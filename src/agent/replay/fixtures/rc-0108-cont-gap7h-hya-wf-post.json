@@ -1,0 +1,52 @@
+{
+  "id": "rc-0108-cont-gap7h-hya-wf-post",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "continuity",
+  "description": "Continuation \"হ্যাঁ\" after a 7-hour silence: resume brief injected, same workflow resumed at the same step.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "নতুন পাঞ্জাবির জন্য একটা ফেসবুক পোস্ট বানাও"
+    },
+    {
+      "role": "agent",
+      "text": "ছবি বানিয়েছি Boss, এখন ক্যাপশন লিখছি — draft দেখাবো।"
+    }
+  ],
+  "latestMessage": "হ্যাঁ",
+  "context": {
+    "gapMinutes": 420,
+    "stickyModelId": "or-deepseek-v4-flash",
+    "activeWorkflow": {
+      "kind": "fb_post_workflow",
+      "goal": "নতুন পাঞ্জাবি কালেকশনের ফেসবুক পোস্ট",
+      "status": "active",
+      "state": "draft_review",
+      "verifiedEffects": [
+        "generate_image:img-001"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "continue_active_work",
+    "outcome": "Resume brief present; workflow resumes at current step after the gap."
+  },
+  "expect2": {
+    "fastPath": "continuation",
+    "continuationText": true,
+    "binding": "active_workflow",
+    "resumeBrief": true,
+    "headTier": "light",
+    "repeatedEffectRisk": true
+  },
+  "tags": [
+    "continuity",
+    "gap-7h"
+  ]
+}

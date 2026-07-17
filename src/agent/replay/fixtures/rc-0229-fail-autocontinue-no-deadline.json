@@ -1,0 +1,39 @@
+{
+  "id": "rc-0229-fail-autocontinue-no-deadline",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "failure_recovery",
+  "description": "Normal turn end (no deadline): auto-continue never fires.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "browser e dekhe aso"
+    }
+  ],
+  "latestMessage": "[control] deadline salvage tick",
+  "context": {
+    "turnOutcome": {
+      "deadlineHit": false,
+      "hasAskCard": false,
+      "tools": [
+        {
+          "toolName": "live_browser_act",
+          "status": "success"
+        }
+      ]
+    }
+  },
+  "expected": {
+    "intent": "normal_end",
+    "outcome": "Nothing to salvage."
+  },
+  "expect2": {
+    "autoContinue": false
+  },
+  "tags": [
+    "failure",
+    "auto-continue"
+  ]
+}

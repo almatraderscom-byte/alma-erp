@@ -1,0 +1,28 @@
+{
+  "id": "rc-0155-tool-routine-approvals",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "Routine read \"koyta approval pending ache?\" must hit the deterministic routine graph (intent approvals_pending) on the light head.",
+  "transcript": [],
+  "latestMessage": "koyta approval pending ache?",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "routine_approvals_pending",
+    "tools": [],
+    "outcome": "Answered by the routine graph with one read tool; no mutation."
+  },
+  "expect2": {
+    "fastPath": "routine_kw",
+    "routineIntent": "approvals_pending",
+    "headTier": "light"
+  },
+  "tags": [
+    "tool-selection",
+    "routine"
+  ]
+}

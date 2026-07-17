@@ -11,6 +11,8 @@ import { detectInstructionConflicts } from '@/agent/lib/intelligence/counter-pro
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { detectOutboundCallIntent, buildOutboundCallIntakeBlock } from '@/agent/lib/outbound-call-intent'
+import { buildReminderTimeHintBlock } from '@/agent/lib/bangla-time'
+import { detectVoiceProviderRequest } from '@/agent/lib/voice-provider-intent'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
@@ -634,6 +636,10 @@ export async function* runAgentTurn(
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
   const turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
+  // Which call voice Boss asked for — resolved from his OWN words and handed to the
+  // call tool through server context (server wins over model args). Scans the last 3
+  // messages because the call flow is routinely split ("ElevenLabs ভয়েসে…" → number).
+  const ownerVoicePref = detectVoiceProviderRequest(recentUserTexts.slice(-3))
 
   const now = new Date()
   let teachingBlock: string | undefined
@@ -647,9 +653,22 @@ export async function* runAgentTurn(
   const callIntent =
     !personalMode && lastUserText
       ? detectOutboundCallIntent(lastUserText)
-      : { isCall: false, hasNumber: false }
+      : { isCall: false, hasNumber: false, mode: 'unspecified' as const }
   if (callIntent.isCall) {
-    intakeContextBlock = buildOutboundCallIntakeBlock(callIntent.hasNumber)
+    intakeContextBlock = buildOutboundCallIntakeBlock(callIntent.hasNumber, callIntent.mode)
+  }
+
+  // Reminder-to-Boss with a spoken time ("amake 4 tay call dio", "বিকাল ৫টায় মনে
+  // করিয়ে দিও"): resolve the time DETERMINISTICALLY so the head never misreads
+  // "4 tay" as "4 calls" (live-hit 2026-07-17). Only fires when it is clearly a
+  // reminder (not an outbound relay call) AND a confident time expression parsed.
+  if (!intakeContextBlock && lastUserText) {
+    try {
+      const hint = buildReminderTimeHintBlock(lastUserText)
+      if (hint) intakeContextBlock = hint
+    } catch (err) {
+      console.warn('[core] reminder time hint failed:', err instanceof Error ? err.message : err)
+    }
   }
 
   // Point 3 (Part A) — owner office on/off toggle. Highest priority owner-initiated
@@ -1327,8 +1346,8 @@ export async function* runAgentTurn(
         }
         const started = Date.now()
         const result = personalMode
-          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization })
-          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization })
+          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref })
+          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization, ownerVoicePref })
         return { tb, result, durationMs: Date.now() - started }
       }
 

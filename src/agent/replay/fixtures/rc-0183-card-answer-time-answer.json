@@ -1,0 +1,52 @@
+{
+  "id": "rc-0183-card-answer-time-answer",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "approval_ask_card",
+  "description": "\"bikal 5 tay\" answers the bound ask card — it resumes that exact run, never becomes a new instruction.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "প্রশ্ন করেছিলাম: post kokhon publish hobe?"
+    }
+  ],
+  "latestMessage": "bikal 5 tay",
+  "replyTo": {
+    "kind": "ask_card",
+    "id": "ask-103"
+  },
+  "context": {
+    "gapMinutes": 10,
+    "activeWorkflow": {
+      "kind": "fb_post_workflow",
+      "goal": "নতুন পাঞ্জাবি কালেকশনের ফেসবুক পোস্ট",
+      "status": "active",
+      "state": "draft_review",
+      "verifiedEffects": [
+        "generate_image:img-001"
+      ]
+    },
+    "pendingCard": {
+      "kind": "ask_card",
+      "id": "ask-103",
+      "question": "post kokhon publish hobe?"
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "ask_card_answer",
+    "outcome": "The answer feeds the waiting run; work continues from its held step."
+  },
+  "expect2": {
+    "binding": "pending_card",
+    "repeatedEffectRisk": true
+  },
+  "tags": [
+    "ask-card",
+    "answer"
+  ]
+}

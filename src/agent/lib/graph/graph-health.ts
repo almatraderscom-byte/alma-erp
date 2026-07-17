@@ -28,6 +28,17 @@ export interface TurnGraphHealth {
     agreeRate: number
     byKind: Record<string, { scored: number; agreed: number }>
   }
+  /** Phase 33: the FULL 12-node owner-turn graph's shadow performance. */
+  ownerGraph: {
+    recorded: number
+    scored: number
+    agreed: number
+    agreeRate: number
+    /** disagreement label → count (fast_path | focus_binding | tool_groups | planned_tool). */
+    disagreements: Record<string, number>
+    /** Traces carrying all five required elements (focus/tool/guard/verify/final). */
+    traceComplete: number
+  }
   canaryReady: boolean
   canaryVerdict: string
 }
@@ -39,9 +50,9 @@ export async function getTurnGraphHealth(days = 7): Promise<TurnGraphHealth | nu
   try {
     const since = new Date(Date.now() - days * 86_400_000)
     const rows: Array<{ detail: unknown }> = await db.agentToolEvent.findMany({
-      where: { toolName: '__route__', createdAt: { gte: since } },
+      where: { toolName: '__route__', ts: { gte: since } },
       select: { detail: true },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { ts: 'desc' },
       take: 5000,
     })
     const health: TurnGraphHealth = {
@@ -50,6 +61,7 @@ export async function getTurnGraphHealth(days = 7): Promise<TurnGraphHealth | nu
       routine: { handled: 0, miss: 0, off: 0, handledShare: 0 },
       action: { staged: 0 },
       shadow: { recorded: 0, scored: 0, agreed: 0, agreeRate: 0, byKind: {} },
+      ownerGraph: { recorded: 0, scored: 0, agreed: 0, agreeRate: 0, disagreements: {}, traceComplete: 0 },
       canaryReady: false,
       canaryVerdict: '',
     }
@@ -57,7 +69,14 @@ export async function getTurnGraphHealth(days = 7): Promise<TurnGraphHealth | nu
       const d = (r.detail ?? {}) as {
         routineGraph?: string
         actionGraph?: string
-        turnGraph?: { fastPath?: string; agree?: boolean | null } | null
+        turnGraph?: {
+          fastPath?: string
+          agree?: boolean | null
+          graph?: {
+            trace?: Record<string, unknown>
+            agreement?: { agree?: boolean | null; disagreements?: string[] }
+          } | null
+        } | null
       }
       if (d.routineGraph === 'handled') health.routine.handled++
       else if (d.routineGraph === 'miss') health.routine.miss++
@@ -75,11 +94,28 @@ export async function getTurnGraphHealth(days = 7): Promise<TurnGraphHealth | nu
             k.agreed++
           }
         }
+        const g = d.turnGraph.graph
+        if (g) {
+          health.ownerGraph.recorded++
+          const t = g.trace ?? {}
+          const complete = ['selectedFocus', 'toolDecision', 'guardResult', 'verification', 'finalState']
+            .every((key) => key in t)
+          if (complete) health.ownerGraph.traceComplete++
+          const a = g.agreement
+          if (a && typeof a.agree === 'boolean') {
+            health.ownerGraph.scored++
+            if (a.agree) health.ownerGraph.agreed++
+            else for (const label of a.disagreements ?? []) {
+              health.ownerGraph.disagreements[label] = (health.ownerGraph.disagreements[label] ?? 0) + 1
+            }
+          }
+        }
       }
     }
     const routineTotal = health.routine.handled + health.routine.miss
     health.routine.handledShare = routineTotal ? health.routine.handled / routineTotal : 0
     health.shadow.agreeRate = health.shadow.scored ? health.shadow.agreed / health.shadow.scored : 0
+    health.ownerGraph.agreeRate = health.ownerGraph.scored ? health.ownerGraph.agreed / health.ownerGraph.scored : 0
     health.canaryReady =
       health.shadow.scored >= CANARY_MIN_SCORED && health.shadow.agreeRate >= CANARY_MIN_AGREE
     health.canaryVerdict = health.canaryReady
@@ -90,6 +126,80 @@ export async function getTurnGraphHealth(days = 7): Promise<TurnGraphHealth | nu
     console.warn('[graph-health] turn health read failed open:', err instanceof Error ? err.message : err)
     return null
   }
+}
+
+// ── Phase 37: cutover status — every subsystem's kill switch + ladder stage ──
+
+export type SubsystemMode = 'off' | 'shadow' | 'on' | 'preview_only'
+
+export interface CutoverStatus {
+  /** Owner-tunable ladder stage (agent_kv_settings: agent_graph_rollout_stage).
+   *  shadow → synthetic → preview_canary → prod_1 → prod_10 → prod_25 →
+   *  prod_50 → prod_100 → staged_writes. Production default: shadow. */
+  stage: string
+  /** Independent kill switches (all additionally behind AGENT_ENABLED). */
+  switches: Record<string, { env: string; value: string | null; effective: SubsystemMode }>
+  /** Automated-rollback trigger counters visible offline (7d spans). */
+  rollbackSignals: {
+    wrongFocus: number
+    fastPathDisagreements: number
+    ownerGraphDisagreements: number
+    ledgerViolations: number
+  }
+  canaryReady: boolean
+  canaryVerdict: string
+}
+
+function resolveSwitch(env: string, raw: string | undefined, previewDefault: SubsystemMode): { env: string; value: string | null; effective: SubsystemMode } {
+  const v = raw?.trim() ?? null
+  let effective: SubsystemMode
+  if (v === 'false' || v === 'off') effective = 'off'
+  else if (v === 'true' || v === 'on') effective = 'on'
+  else if (v === 'shadow') effective = 'shadow'
+  else effective = process.env.VERCEL_ENV === 'preview' ? previewDefault : (env === 'AGENT_CONTINUITY_RESOLVER' || env === 'AGENT_INTERACTION_LAYER' ? 'shadow' : 'off')
+  return { env, value: v, effective }
+}
+
+/**
+ * One place that answers "what is actually live right now". Reads env +
+ * ladder stage + the offline rollback counters. Fail-open (nulls → zeros).
+ */
+export async function getCutoverStatus(days = 7): Promise<CutoverStatus> {
+  let stage = 'shadow'
+  try {
+    const row = await db.agentKvSetting.findUnique({ where: { key: 'agent_graph_rollout_stage' } })
+    if (row?.value) stage = String(row.value)
+  } catch { /* default shadow */ }
+
+  const switches = {
+    graph: resolveSwitch('AGENT_LANGGRAPH_TURN', process.env.AGENT_LANGGRAPH_TURN, 'shadow'),
+    checkpoint: resolveSwitch('AGENT_LANGGRAPH_CHECKPOINT', process.env.AGENT_LANGGRAPH_CHECKPOINT, 'on'),
+    interrupts: resolveSwitch('AGENT_LANGGRAPH_INTERRUPT', process.env.AGENT_LANGGRAPH_INTERRUPT, 'on'),
+    routine: resolveSwitch('AGENT_LANGGRAPH_ROUTINE', process.env.AGENT_LANGGRAPH_ROUTINE, 'on'),
+    continuity_resolver: resolveSwitch('AGENT_CONTINUITY_RESOLVER', process.env.AGENT_CONTINUITY_RESOLVER, 'on'),
+    interaction_layer: resolveSwitch('AGENT_INTERACTION_LAYER', process.env.AGENT_INTERACTION_LAYER, 'on'),
+  }
+
+  const rollbackSignals = { wrongFocus: 0, fastPathDisagreements: 0, ownerGraphDisagreements: 0, ledgerViolations: 0 }
+  let canaryReady = false
+  let canaryVerdict = 'no data'
+  try {
+    const h = await getTurnGraphHealth(days)
+    if (h) {
+      rollbackSignals.fastPathDisagreements = h.shadow.scored - h.shadow.agreed
+      rollbackSignals.ownerGraphDisagreements = h.ownerGraph.scored - h.ownerGraph.agreed
+      rollbackSignals.wrongFocus = h.ownerGraph.disagreements['focus_binding'] ?? 0
+      canaryReady = h.canaryReady
+      canaryVerdict = h.canaryVerdict
+    }
+    const since = new Date(Date.now() - days * 86_400_000)
+    const violations = await db.agentToolEvent.count({
+      where: { toolName: '__interaction__', success: false, ts: { gte: since } },
+    })
+    rollbackSignals.ledgerViolations = violations
+  } catch { /* fail-open */ }
+
+  return { stage, switches, rollbackSignals, canaryReady, canaryVerdict }
 }
 
 export interface CheckpointStoreHealth {
