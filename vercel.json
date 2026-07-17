@@ -1,5 +1,5 @@
 {
-  "ignoreCommand": "exit 0",
+  "ignoreCommand": "bash scripts/vercel-skip-ios-only.sh",
   "regions": ["hnd1"],
   "functions": {
     "src/app/api/assistant/chat/route.ts": {

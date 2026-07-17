@@ -3,16 +3,16 @@
 This directory contains the hard-verification record for each implementation phase in
 `docs/office-calling-whatsapp-audit-roadmap.md`.
 
-## Active branch guard
+## Vercel verification policy
 
-The `agent/office-calling-whatsapp` branch intentionally sets Vercel's
-`ignoreCommand` to `exit 0`. This prevents every preview deployment while the phased
-calling rebuild is in progress, as requested by the project owner.
+The `agent/office-calling-whatsapp` branch originally set Vercel's `ignoreCommand` to
+`exit 0` while the audit/roadmap and local Phase 0 work were being prepared, as
+requested by the project owner.
 
-**Merge blocker:** restore `vercel.json` to
-`bash scripts/vercel-skip-ios-only.sh` before this branch is merged. A phase can be
-verified locally and on physical devices, but it must not be marked production-ready
-while this guard is active.
+On 2026-07-17 the owner explicitly authorized Vercel use for verification. The branch
+therefore restores the repository-standard `bash scripts/vercel-skip-ios-only.sh`
+policy. Preview deployments may run for web-relevant changes; production deployment
+is not implied by this authorization.
 
 ## Gate rule
 

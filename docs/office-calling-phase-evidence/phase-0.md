@@ -4,7 +4,7 @@
 - Branch: `agent/office-calling-whatsapp`
 - Audited base SHA: `6d7843abb6f31f95cb442f79e2488ef60861cef7`
 - Roadmap commit: `9ba710bc`
-- Deployment: intentionally skipped by owner request; `vercel.json` preview guard is active
+- Deployment: initially skipped; owner authorized Vercel verification later on 2026-07-17
 
 ## Implemented
 
