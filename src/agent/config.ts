@@ -70,10 +70,17 @@ export const MARKETING_HEAD_TOOL_BUDGET = Number(process.env.MARKETING_HEAD_TOOL
  * Full design: docs/BEHAVIOUR_PARITY_LAYER_PLAN.md.
  */
 
+// Vercel PREVIEW auto-enables the opt-in parity flags, so the owner can feel the
+// full difference just by opening the preview link. Production
+// (VERCEL_ENV==='production') is NEVER affected, and an explicit '<FLAG>=off'
+// still wins even on preview.
+const IS_VERCEL_PREVIEW = process.env.VERCEL_ENV === 'preview'
+const parityFlagOn = (v: string | undefined): boolean => v === 'on' || (IS_VERCEL_PREVIEW && v !== 'off')
+
 // P9 — one shared sampling/output contract across ALL adapters, so the same
 // prompt behaves the same everywhere instead of each provider's accidental
-// default. OFF by default (set AGENT_UNIFORM_SAMPLING=on to enable).
-export const AGENT_UNIFORM_SAMPLING = process.env.AGENT_UNIFORM_SAMPLING === 'on'
+// default. OFF in prod unless AGENT_UNIFORM_SAMPLING=on; auto-ON on preview.
+export const AGENT_UNIFORM_SAMPLING = parityFlagOn(process.env.AGENT_UNIFORM_SAMPLING)
 export const GENERATION_DEFAULTS = {
   temperature: Number(process.env.AGENT_TEMPERATURE ?? '0.7'),
   topP: Number(process.env.AGENT_TOP_P ?? '0.95'),
@@ -95,22 +102,22 @@ export const AGENT_HEAD_PARITY = process.env.AGENT_HEAD_PARITY !== 'off'
 // P6/P5 — the distilled, always-first CONSTITUTION (one behaviour contract every
 // model follows identically) plus in-turn re-injection so a long tool-heavy turn
 // doesn't drift from the rules. OFF by default (set AGENT_CONSTITUTION=on).
-export const AGENT_CONSTITUTION = process.env.AGENT_CONSTITUTION === 'on'
+export const AGENT_CONSTITUTION = parityFlagOn(process.env.AGENT_CONSTITUTION)
 // Re-inject the compact core rules every N tool ROUNDS within a single long turn
 // (context-rot mitigation). Only matters for long turns (browser/agentic).
 export const CONSTITUTION_REINJECT_EVERY = Number(process.env.CONSTITUTION_REINJECT_EVERY) || 6
 
 // P3 — plan-first HARD gate: bind make_plan on round 0 for clearly multi-step
 // work so a weak head can't tool-spray a complex task. OFF by default.
-export const AGENT_PLAN_GATE = process.env.AGENT_PLAN_GATE === 'on'
+export const AGENT_PLAN_GATE = parityFlagOn(process.env.AGENT_PLAN_GATE)
 // P2 — ground-before-answer HARD gate: force a tool call on round 0 for a live-
 // data question so the model can't answer from memory. OFF by default.
-export const AGENT_GROUNDING_GATE = process.env.AGENT_GROUNDING_GATE === 'on'
+export const AGENT_GROUNDING_GATE = parityFlagOn(process.env.AGENT_GROUNDING_GATE)
 
 // P1 — factual-claim gate: flag a live-data number/status stated with NO
 // successful read this turn, so the verifier forces a read or an honest hedge
 // (catches fabricated stats the completion-claim ledger check misses). OFF by default.
-export const AGENT_FACT_GATE = process.env.AGENT_FACT_GATE === 'on'
+export const AGENT_FACT_GATE = parityFlagOn(process.env.AGENT_FACT_GATE)
 
 // Phase prompt specifies budget_tokens values for reference.
 // budget_tokens is deprecated on claude-sonnet-4-6; we use thinking: {type:'adaptive'}
