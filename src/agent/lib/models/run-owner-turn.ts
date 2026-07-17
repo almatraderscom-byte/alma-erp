@@ -4,10 +4,10 @@
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE } from '@/agent/config'
 import { computeHeadToolCap } from '@/agent/lib/models/head-tool-cap'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
-import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { getOfficePulse } from '@/agent/lib/office-pulse'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
@@ -59,6 +59,7 @@ import {
   detectMissingCardViolation,
   detectProseChoiceViolation,
   detectFabricatedStatViolations,
+  detectRoboticStyleViolations,
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
@@ -1062,7 +1063,8 @@ async function* runAlternateProviderTurn(
       // a long tool-heavy turn (browser/agentic) doesn't drift from the core
       // rules while the system prompt scrolls far up the context (context rot).
       if (AGENT_CONSTITUTION && iteration > 0 && iteration % CONSTITUTION_REINJECT_EVERY === 0) {
-        messages = [...messages, { role: 'user', content: CONSTITUTION_REMINDER }]
+        // BP6 — the style line rides the same anti-drift injection (tone drifts too).
+        messages = [...messages, { role: 'user', content: AGENT_STYLE ? `${CONSTITUTION_REMINDER}\n${STYLE_REMINDER}` : CONSTITUTION_REMINDER }]
       }
 
       for await (const ev of adapter.streamTurn({
@@ -1202,6 +1204,10 @@ async function* runAlternateProviderTurn(
           // P1 — fabricated-stat gate (flag-gated inside → no-op when off).
           if (violations.length === 0) {
             violations.push(...detectFabricatedStatViolations(iterationText.trim(), ledger))
+          }
+          // BP6 — robotic-style gate (flag-gated inside → no-op when off).
+          if (violations.length === 0) {
+            violations.push(...detectRoboticStyleViolations(iterationText.trim()))
           }
           if (violations.length > 0) {
             verifyRetries++

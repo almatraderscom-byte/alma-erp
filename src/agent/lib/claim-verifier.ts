@@ -8,7 +8,7 @@
  *  3. P1 factual-claim gate — catches a fabricated live-data number/status stated
  *     with no successful read this turn (flag-gated).
  */
-import { AGENT_FACT_GATE } from '@/agent/config'
+import { AGENT_FACT_GATE, AGENT_STYLE_GATE } from '@/agent/config'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -24,6 +24,7 @@ export type ClaimViolationCategory =
   | 'prose_choice'
   | 'missing_ask'
   | 'fabricated_stat'
+  | 'robotic_style'
 
 export interface ClaimViolation {
   category: ClaimViolationCategory
@@ -446,6 +447,50 @@ export function detectFabricatedStatViolations(
   }]
 }
 
+// ── BP6 robotic-style gate ────────────────────────────────────────────────────
+
+/**
+ * Unambiguous robotic filler only — each pattern is something a sharp human
+ * partner would never text. Conservative on purpose: style retries cost a model
+ * round, so we catch the worst offenders and let the prompt handle nuance.
+ */
+const ROBOTIC_FILLER_PATTERNS: Array<{ id: string; re: RegExp }> = [
+  { id: 'canned_opener', re: /^(?:অবশ্যই|নিশ্চিতভাবে|নিশ্চয়ই|certainly|of course|sure)[!,\s]/i },
+  { id: 'great_question', re: /চমৎকার\s*প্রশ্ন|খুব\s*ভালো\s*প্রশ্ন|দারুণ\s*প্রশ্ন|great\s+question|excellent\s+question/i },
+  { id: 'answer_is', re: /আপনার\s*প্রশ্নের\s*উত্তর(?:\s*হলো|\s*হচ্ছে|ে\s*বলি)/i },
+  { id: 'hope_helps', re: /আশা\s*করি\s*(?:এই\s*)?(?:তথ্য|উত্তর)(?:টি|টা)?\s*(?:সহায়ক|কাজে)|hope\s+this\s+helps/i },
+  { id: 'as_an_ai', re: /একজন\s*AI\s*হিসেবে|as\s+an\s+AI\b/i },
+]
+
+/** Count emoji-ish codepoints; owner-chat replies should stay at 0-2. */
+function countEmoji(text: string): number {
+  const m = text.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu)
+  return m ? m.length : 0
+}
+
+/**
+ * BP6 — deterministic detection of unambiguous robotic style. Flag-gated
+ * (AGENT_STYLE_GATE); rides the existing verification retry so the reply is
+ * rewritten like a human partner, on any head model.
+ */
+export function detectRoboticStyleViolations(replyText: string): ClaimViolation[] {
+  if (!AGENT_STYLE_GATE) return []
+  const text = replyText.trim()
+  if (!text) return []
+  const out: ClaimViolation[] = []
+  for (const { id, re } of ROBOTIC_FILLER_PATTERNS) {
+    const m = re.exec(text)
+    if (m) {
+      out.push({ category: 'robotic_style', ruleId: id, matchedSnippet: m[0].slice(0, 60), requiredTools: [] })
+      break // one style violation is enough to trigger the rewrite
+    }
+  }
+  if (out.length === 0 && countEmoji(text) > 4) {
+    out.push({ category: 'robotic_style', ruleId: 'emoji_overload', matchedSnippet: '(অতিরিক্ত emoji)', requiredTools: [] })
+  }
+  return out
+}
+
 export function verifyClaimsAgainstLedger(
   replyText: string,
   ledger: ToolLedgerEntry[],
@@ -502,6 +547,9 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
   fabricated_stat:
     'আপনি লাইভ ডেটা (সংখ্যা/অর্ডার/স্টক/বিক্রি/টাকা/হাজিরা) উল্লেখ করেছেন কিন্তু এই turn-এ কোনো read tool দিয়ে সেটা যাচাই করেননি। ' +
     'হয় এখনই relevant read tool (get_/list_/check_…) call করে আসল সংখ্যাটা আনুন, নয়তো সততা সঙ্গে বলুন সংখ্যাটা যাচাই করা হয়নি ("যাচাই করে দেখিনি — আনুমানিক")। মেমরি থেকে নিশ্চিত সংখ্যা দেবেন না।',
+  robotic_style:
+    'আপনার উত্তরে রোবটিক ফিলার ধরা পড়েছে (canned opener / "চমৎকার প্রশ্ন" / "আপনার প্রশ্নের উত্তর হলো" / কর্পোরেট ক্লোজিং / emoji-বৃষ্টি)। ' +
+    'একই কথাগুলোই আবার লিখুন — এবার একজন ধারালো মানুষ পার্টনারের মতো: সরাসরি আসল উত্তর দিয়ে শুরু, প্লেইন ভাষা, উষ্ণ কিন্তু সংক্ষিপ্ত, ফিলার সম্পূর্ণ বাদ। তথ্য/সিদ্ধান্ত কিছু বদলাবেন না — শুধু ধরন।',
 }
 
 export function buildVerificationReminder(violations: ClaimViolation[]): string {
