@@ -90,7 +90,7 @@ fun buildErpWebView(
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val url = request.url
             // Keep the ERP host in-shell; external links (wa.me, tel:) go to the system.
-            return if (url.host == "alma-erp-six.vercel.app" || url.scheme == "about") {
+            return if (url.host == android.net.Uri.parse(AlmaTheme.BASE_URL).host || url.scheme == "about") {
                 false
             } else {
                 try {

@@ -19,3 +19,8 @@ is not implied by this authorization.
 Each phase must have an evidence file containing the commands, test artifacts,
 device/build identifiers, failures found, and a final `PASS` or `FAIL`. Work on the
 next phase may start only after the current phase has a hard `PASS`.
+
+Per the owner's 2026-07-17 batching decision, Phases 0–7 may record an engineering
+`PASS` with hardware-only rows explicitly marked `DEVICE DEFERRED`; every available
+non-device gate must still pass. Phase 8 cannot pass, ship, or remove the legacy path
+until the complete real-device matrix and soak are executed on signed builds.

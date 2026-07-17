@@ -17,6 +17,8 @@ import { KeyboardResize } from '@capacitor/keyboard'
  * in a production build.
  */
 const remoteServerUrl = process.env.CAPACITOR_SERVER_URL || ''
+const productionHost = 'alma-erp-six.vercel.app'
+const remoteServerHost = remoteServerUrl ? new URL(remoteServerUrl).hostname : ''
 
 const config: CapacitorConfig = {
   appId: 'com.almatraders.erp',
@@ -32,7 +34,7 @@ const config: CapacitorConfig = {
     // of loading it INSIDE the webview — the app then stays stuck on the aura and
     // "refresh" opens Safari. Allowlisting the production host keeps the whole app
     // in-shell. Same-host login redirects stay in-app too.
-    allowNavigation: ['alma-erp-six.vercel.app'],
+    allowNavigation: Array.from(new Set([productionHost, remoteServerHost].filter(Boolean))),
   },
   ios: {
     handleApplicationNotifications: false,

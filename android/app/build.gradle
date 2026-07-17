@@ -3,6 +3,10 @@ apply plugin: 'kotlin-android'
 apply plugin: 'org.jetbrains.kotlin.plugin.compose'
 apply plugin: 'androidx.baselineprofile'
 
+def almaBaseUrl = (project.findProperty('almaBaseUrl') ?: 'https://alma-erp-six.vercel.app')
+    .toString()
+    .replaceAll('/+$', '')
+
 android {
     namespace "com.almatraders.erp"
     compileSdk rootProject.ext.compileSdkVersion
@@ -12,6 +16,9 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 13
         versionName "1.2.1"
+        // Preview verification can override the endpoint with
+        // `-PalmaBaseUrl=https://...`; production remains the fail-safe default.
+        buildConfigField "String", "ALMA_BASE_URL", "\"${almaBaseUrl}\""
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -73,6 +80,7 @@ android {
     // composeOptions block needed.
     buildFeatures {
         compose true
+        buildConfig true
     }
     kotlinOptions {
         jvmTarget = '21'

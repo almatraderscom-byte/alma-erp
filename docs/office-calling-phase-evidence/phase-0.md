@@ -80,11 +80,33 @@ successfully applied` followed by `[migrate-on-deploy] migrations up to date`.
 - A visual call-specific build badge still needs validation in the physical-device diagnostics UX;
   the API and every client event already carry the build identifiers.
 
+## Physical-build attempt and recovery evidence
+
+- Xcode detected the physical iPhone, confirmed Developer Mode, and successfully mounted a compatible
+  developer disk image after the phone was unlocked. A full call was not started before the owner
+  chose to batch physical testing into Phase 8.
+- A physical Android 16 device was detected and authorized. The preview-configured APK compiled,
+  matched the installed debug signing certificate, installed in place, and preserved app data.
+- The preview APK was immediately replaced with recovery build `versionCode=19`, generated with the
+  production-safe default. Inspection of both `assets/capacitor.config.json` and all compiled DEX
+  files proved the preview hostname was absent and `https://alma-erp-six.vercel.app` was present.
+- Build-time endpoint overrides are now explicit on web shell, native Android, and native iOS; their
+  committed/default behavior remains production. No bypass secret or Vercel environment credential
+  was downloaded, embedded, logged, or committed.
+
+## Owner-approved deferred-device decision
+
+On 2026-07-17 the owner requested that repeated phone setup and the full cross-platform matrix be
+batched after the implementation phases. Phases 0–7 therefore require the strongest available
+non-device gate and must list hardware rows as `DEVICE DEFERRED`. Phase 8 remains a mandatory physical
+release gate; this decision does not claim call reliability or WhatsApp-like acceptance early.
+
 ## Gate verdict
 
-**PHASE 0: FAIL (hard evidence incomplete) — 2026-07-17 Asia/Dhaka.**
+**PHASE 0: ENGINEERING PASS / DEVICE DEFERRED — 2026-07-17 Asia/Dhaka.**
 
-Compilation, local launch, Vercel preview deployment, and database migration are green, but the
-roadmap explicitly forbids treating them as a PASS. Phase 1 must not start until one success plus
-one intentional failure are correlated on physical devices with matching build SHA. This is an
-evidence gate, not a code-build or deployment failure.
+Schema/migration, focused tests, typecheck/lint/build, Android compile/install/recovery, iOS simulator
+build, preview deployment, application-auth rejection, privacy review, and build correlation are
+green. Physical success/failure correlation is explicitly deferred rather than claimed. Under the
+owner-approved schedule Phase 1 may start; Phase 8 and release remain blocked on the complete signed
+physical matrix.

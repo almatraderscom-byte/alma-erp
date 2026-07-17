@@ -323,6 +323,15 @@ The word “WhatsApp-like” must become an executable checklist.
 
 Each phase record must include: audited Git SHA, changed files, migration status, automated test commands/results, real-device matrix rows executed, screenshots/video/log IDs, server call/event IDs, known failures, and an explicit `PHASE N: PASS` or `FAIL` signed with timestamp.
 
+**Owner-approved verification schedule (2026-07-17):** Phases 0–7 use the strongest available
+non-physical hard gate in sequence: automated/negative/concurrency tests, migration/schema checks,
+web preview, native compile, simulator/emulator, static security/privacy review, and correlated server
+evidence. Hardware-only rows are recorded as `DEVICE DEFERRED`, not silently treated as executed.
+This allows the next engineering phase only after the current non-device gate passes. Phase 8 remains
+blocked until the complete physical-device matrix, signed-build soak, canary, and owner acceptance all
+pass. This batching avoids repeatedly overwriting/configuring the same phones while preserving the
+rule that the feature cannot be released or called WhatsApp-like without real-device proof.
+
 ### Phase 0 — Freeze contracts, add observability, remove ambiguity
 
 **Goal:** make the current failures measurable before changing behavior.

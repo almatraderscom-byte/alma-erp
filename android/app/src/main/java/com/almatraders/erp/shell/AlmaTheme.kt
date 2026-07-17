@@ -16,6 +16,7 @@ package com.almatraders.erp.shell
 
 import android.content.Context
 import android.webkit.CookieManager
+import com.almatraders.erp.BuildConfig
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -23,7 +24,7 @@ import androidx.compose.ui.graphics.Color
 
 object AlmaTheme {
 
-    const val BASE_URL = "https://alma-erp-six.vercel.app"
+    val BASE_URL: String = BuildConfig.ALMA_BASE_URL.trimEnd('/')
     private const val PREFS = "alma-native-shell"
     private const val THEME_KEY = "alma-theme-mode"      // same name as iOS UserDefaults key
     private const val FLAG_KEY = "alma-native-screens"   // iOS: "alma-swiftui-screens"

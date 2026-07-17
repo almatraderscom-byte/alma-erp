@@ -4,6 +4,8 @@
 <dict>
 	<key>ALMAGitCommit</key>
 	<string>b6b4d36947</string>
+	<key>ALMABaseURL</key>
+	<string>$(ALMA_BASE_URL)</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.almatraders.erp.refresh</string>
