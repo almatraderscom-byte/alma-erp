@@ -7,6 +7,7 @@
  *    agents. A hit does NOT silently drop the content — the caller pauses and
  *    shows the owner what the page tried to say (quoted, not executed).
  */
+import { classifyUntrustedContent } from '@/agent/lib/security/prompt-injection'
 
 const INJECTION_PATTERNS: RegExp[] = [
   /ignore ((all|any|previous|prior|above|the)\s+)+(instructions|rules|prompts)/i,
@@ -27,6 +28,8 @@ export type InjectionScan = {
   flagged: boolean
   /** the matched snippets (quoted back to the owner, never executed) */
   hits: string[]
+  /** Phase 55 — true when a CRITICAL class fired (fake owner, exfiltration, tool invocation…). */
+  critical?: boolean
 }
 
 export function scanForInjection(content: string): InjectionScan {
@@ -39,7 +42,14 @@ export function scanForInjection(content: string): InjectionScan {
       if (hits.length >= 3) break
     }
   }
-  return { flagged: hits.length > 0, hits }
+  // Phase 55: the wider hostile-content classifier (fake-owner, tool-invocation,
+  // encoded payloads, Bangla variants) backs up the legacy pattern set.
+  const scan = classifyUntrustedContent(content)
+  for (const f of scan.findings) {
+    if (hits.length >= 5) break
+    if (!hits.some((h) => h.includes(f.snippet.slice(0, 40)))) hits.push(f.snippet)
+  }
+  return { flagged: hits.length > 0, hits, critical: scan.critical }
 }
 
 /** Wrap page content as tagged DATA (sandwich pattern) before the model sees it. */
