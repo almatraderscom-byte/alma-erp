@@ -1,4 +1,5 @@
 import type { EmployeeLedgerEntryType, WalletRequestStatus, WalletRequestType } from '@prisma/client'
+import type { PayoutSummary } from '@/lib/employee-payment-method'
 
 export type WalletSummary = {
   employeeId: string
@@ -58,6 +59,9 @@ export type WalletRequestDto = {
   reviewNote?: string | null
   createdAt: string
   reviewedAt?: string | null
+  paymentMethodId?: string | null
+  /** SUPER_ADMIN-only (null for everyone else): recipient payout account, number revealed, for the bKash send flow. */
+  payout?: PayoutSummary | null
 }
 
 export type PayrollWallet = {

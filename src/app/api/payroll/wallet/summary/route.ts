@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { serverGet } from '@/lib/server-api'
 import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { computeWalletSummary, moneyDecimal, runningTransactions } from '@/lib/payroll-wallet'
+import { toPayoutSummary, type PayoutSummary } from '@/lib/employee-payment-method'
 import type { HREmployeesApi } from '@/types/hr'
 
 export async function GET(req: NextRequest) {
@@ -56,6 +57,7 @@ export async function GET(req: NextRequest) {
         reviewNote: true,
         createdAt: true,
         reviewedAt: true,
+        paymentMethodId: true,
       },
     }),
     prisma.user.findMany({
@@ -67,6 +69,33 @@ export async function GET(req: NextRequest) {
       select: { id: true, name: true, email: true, employeeIdGas: true, salaryHint: true },
     }),
   ])
+
+  // System owner only: attach each pending WITHDRAWAL's payout account (revealed
+  // number) so the payroll screen can run the copy-number → open-bKash → paste-TrxID
+  // confirmation flow. Other admins keep today's payload — no account numbers leak.
+  const payoutByRequestId = new Map<string, PayoutSummary>()
+  if (ctx.isSystemOwner) {
+    const withdrawals = pendingRequests.filter(r => r.type === 'WITHDRAWAL' && r.status === 'PENDING')
+    if (withdrawals.length) {
+      const methods = await prisma.employeePaymentMethod.findMany({
+        where: {
+          isArchived: false,
+          status: 'ACTIVE',
+          OR: withdrawals.map(r => ({ userId: r.userId, businessId: r.businessId })),
+        },
+        orderBy: [{ isPrimary: 'desc' }, { updatedAt: 'desc' }],
+      })
+      for (const r of withdrawals) {
+        const own = methods.filter(m => m.userId === r.userId && m.businessId === r.businessId)
+        const chosen = (r.paymentMethodId ? own.find(m => m.id === r.paymentMethodId) : null) ?? own[0] ?? null
+        payoutByRequestId.set(r.id, toPayoutSummary(chosen, { reveal: true }))
+      }
+    }
+  }
+  const pendingRequestDtos = pendingRequests.map(r => ({
+    ...r,
+    payout: payoutByRequestId.get(r.id) ?? null,
+  }))
 
   const employeeMeta = new Map<string, { name: string; email?: string; salary?: number }>()
   const knownEmployeeKeys = new Set<string>()
@@ -188,7 +217,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     wallets,
     totals,
-    pendingRequests,
+    pendingRequests: pendingRequestDtos,
     pendingAdvanceCount: pendingRequests.filter(r => r.type === 'ADVANCE').length,
     pendingWithdrawalCount: pendingRequests.filter(r => r.type === 'WITHDRAWAL').length,
     orphanLedgerEntryCount,
