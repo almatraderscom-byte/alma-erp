@@ -49,8 +49,12 @@ async function readIdmCostUsd(supabase) {
 }
 
 export async function processCatVton({ supabase, pendingActionId, payload, logCost }) {
-  const { productImagePath, modelImagePath, clothType } = payload
-  if (!productImagePath || !modelImagePath) throw new Error('cat-vton needs productImagePath + modelImagePath')
+  const { productImagePath, modelImagePath: rawModelImagePath, clothType } = payload
+  if (!productImagePath || !rawModelImagePath) throw new Error('cat-vton needs productImagePath + modelImagePath')
+
+  // scrub dark marketing plates from reseller model photos (free, kv-cached)
+  const { cleanModelPhoto } = await import('../../photo-cleanup.mjs')
+  const modelImagePath = await cleanModelPhoto({ supabase, imagePath: rawModelImagePath })
 
   const [humanDataUri, garmentDataUri] = await Promise.all([
     storagePathToNormalizedDataUri(supabase, modelImagePath),

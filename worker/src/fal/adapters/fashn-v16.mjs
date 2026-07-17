@@ -47,8 +47,13 @@ export function buildFashnV16Input({ modelDataUri, garmentDataUri, category, mod
 }
 
 export async function processFashnV16({ supabase, pendingActionId, payload, logCost }) {
-  const { productImagePath, modelImagePath } = payload
-  if (!productImagePath || !modelImagePath) throw new Error('fashn-v16 needs productImagePath + modelImagePath')
+  const { productImagePath, modelImagePath: rawModelImagePath } = payload
+  if (!productImagePath || !rawModelImagePath) throw new Error('fashn-v16 needs productImagePath + modelImagePath')
+
+  // reseller model photos may carry a dark marketing plate — FASHN keeps the
+  // model background, so scrub it first (free, kv-cached, fail-open)
+  const { cleanModelPhoto } = await import('../../photo-cleanup.mjs')
+  const modelImagePath = await cleanModelPhoto({ supabase, imagePath: rawModelImagePath })
 
   const [modelDataUri, garmentDataUri] = await Promise.all([
     storagePathToNormalizedDataUri(supabase, modelImagePath),
