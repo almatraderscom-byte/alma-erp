@@ -597,6 +597,12 @@ async function processImageGen(job) {
   // Gallery shows (engine, request id, seed, latency, cost).
   if (payload.provider === 'fal') {
     try {
+      // CS12 — owner kill switch: refuse jobs on a killed engine, clearly.
+      const { isEngineKilled } = await import('./fal/client.mjs')
+      if (await isEngineKilled(supabase, payload.falEngine)) {
+        await callJobResult(pendingActionId, 'failed', undefined, `ইঞ্জিনটি kill switch দিয়ে বন্ধ করা আছে (${payload.falEngine}) — সেটিংস থেকে চালু করে আবার চালান।`)
+        return
+      }
       const adapter = payload.falEngine === 'fal_idm_vton'
         ? await import('./fal/adapters/cat-vton.mjs')
         : payload.falEngine === 'fal_flux_fill'
@@ -641,6 +647,11 @@ async function processImageGen(job) {
 
   if (payload.provider === 'fashn') {
     try {
+      const { isEngineKilled } = await import('./fal/client.mjs')
+      if (await isEngineKilled(supabase, 'fashn')) {
+        await callJobResult(pendingActionId, 'failed', undefined, 'FASHN ইঞ্জিনটি kill switch দিয়ে বন্ধ করা আছে — সেটিংস থেকে চালু করে আবার চালান।')
+        return
+      }
       const { processFashnImageGen } = await import('./fashn/process.mjs')
       const { logCost } = await import('./cost-log.mjs')
       const result = await processFashnImageGen({ supabase, pendingActionId, payload, logCost })

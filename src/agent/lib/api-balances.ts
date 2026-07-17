@@ -27,6 +27,7 @@ export type BalanceProviderId =
   | 'elevenlabs'
   | 'veo'
   | 'fal'
+  | 'fashn'
 
 export type ApiBalanceCredit = {
   initialCredit: number
@@ -87,6 +88,8 @@ export const PROVIDER_ALIASES: Record<string, BalanceProviderId> = {
   'veo 3': 'veo',
   veo3: 'veo',
   fal: 'fal',
+  fashn: 'fashn',
+  'fashn.ai': 'fashn',
   'fal.ai': 'fal',
   falai: 'fal',
   seedream: 'fal',
@@ -103,11 +106,12 @@ const PROVIDER_META: Record<BalanceProviderId, { label: string; source: string; 
   oxylabs: { label: 'Oxylabs', source: 'Credit track' },
   elevenlabs: { label: 'ElevenLabs', source: 'Live API' },
   veo: { label: 'VEO 3', source: 'Input+Track' },
+  fashn: { label: 'FASHN (direct)', source: 'Live credits' },
   fal: { label: 'fal.ai (Seedream)', source: 'Live API' },
 }
 
 const TRACKED_COST_PROVIDERS: BalanceProviderId[] = [
-  'anthropic', 'twilio', 'openai', 'openrouter', 'gemini', 'google_tts', 'oxylabs', 'elevenlabs', 'veo', 'fal',
+  'anthropic', 'twilio', 'openai', 'openrouter', 'gemini', 'google_tts', 'oxylabs', 'elevenlabs', 'veo', 'fal', 'fashn',
 ]
 
 function creditKey(provider: BalanceProviderId): string {
@@ -447,6 +451,25 @@ async function fetchFalBalanceUsd(): Promise<number | null> {
   }
 }
 
+/** CS12 — FASHN direct-API credits (the OutOfCredits source). ~\$0.075/credit. */
+async function fetchFashnBalanceUsd(): Promise<number | null> {
+  const apiKey = process.env.FASHN_API_KEY?.trim()
+  if (!apiKey) return null
+  try {
+    const res = await fetch('https://api.fashn.ai/v1/credits', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) return null
+    const data = await res.json() as { credits?: { total?: number } | number }
+    const credits = typeof data.credits === 'number' ? data.credits : data.credits?.total
+    return typeof credits === 'number' && Number.isFinite(credits) ? roundUsd(credits * 0.075) : null
+  } catch (err) {
+    console.warn('[api-balances] fetchFashnBalance failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
 /** ElevenLabs subscription — character quota remaining (Starter plan). */
 async function fetchElevenLabsBalanceUsd(): Promise<number | null> {
   const apiKey = process.env.ELEVENLABS_API_KEY
@@ -515,7 +538,7 @@ export async function refreshApiBalanceCache(): Promise<{
     querySpendByProviderBetween(monthStart, monthEnd),
   ])
 
-  const [twilioLive, anthropicAdminMonth, openaiAdminMonth, openRouterLive, openRouterActivityMonth, elevenLabsLive, falLive] = await Promise.all([
+  const [twilioLive, anthropicAdminMonth, openaiAdminMonth, openRouterLive, openRouterActivityMonth, elevenLabsLive, falLive, fashnLive] = await Promise.all([
     fetchTwilioBalance(),
     fetchAnthropicMonthSpendUsd(todayStr),
     fetchOpenAIMonthSpendUsd(monthStart, monthEnd),
@@ -523,6 +546,7 @@ export async function refreshApiBalanceCache(): Promise<{
     fetchOpenRouterActivityMonthUsd(todayStr),
     fetchElevenLabsBalanceUsd(),
     fetchFalBalanceUsd(),
+    fetchFashnBalanceUsd(),
   ])
 
   let twilioRaw: { balance: string; currency: string } | null = null
@@ -549,6 +573,8 @@ export async function refreshApiBalanceCache(): Promise<{
       balanceUsd = openRouterLive
     } else if (id === 'fal' && falLive != null) {
       balanceUsd = falLive
+    } else if (id === 'fashn' && fashnLive != null) {
+      balanceUsd = fashnLive
     }
 
     // ---- Authoritative month-to-date from each provider's billing API ----
@@ -569,7 +595,8 @@ export async function refreshApiBalanceCache(): Promise<{
     // tracking only if the live call returned null (key unset / API down).
     const openRouterLiveResolved = id === 'openrouter' && openRouterLive != null
     const falLiveResolved = id === 'fal' && falLive != null
-    if (id !== 'twilio' && id !== 'elevenlabs' && !openRouterLiveResolved && !falLiveResolved && credit) {
+    const fashnLiveResolved = id === 'fashn' && fashnLive != null
+    if (id !== 'twilio' && id !== 'elevenlabs' && !openRouterLiveResolved && !falLiveResolved && !fashnLiveResolved && credit) {
       const since = new Date(credit.lastTopup)
       const spent = await querySpendSince(id, since)
       balanceUsd = roundUsd(credit.initialCredit - spent)
@@ -612,6 +639,7 @@ export async function refreshApiBalanceCache(): Promise<{
   // OpenRouter low-balance alerting keys off the live credits API being available.
   creditFlags.openrouter = Boolean(process.env.OPENROUTER_API_KEY || (await getApiBalanceCredit('openrouter')))
   creditFlags.fal = Boolean(process.env.FAL_KEY || (await getApiBalanceCredit('fal')))
+  creditFlags.fashn = Boolean(process.env.FASHN_API_KEY || (await getApiBalanceCredit('fashn')))
 
   const alerts = computeLowBalanceAlerts(providers, {
     anthropicAdmin: Boolean(process.env.ANTHROPIC_ADMIN_API_KEY),

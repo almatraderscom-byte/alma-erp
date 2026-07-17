@@ -5,6 +5,7 @@ import { isSystemOwner } from '@/lib/roles'
 import { isFashnConfigured } from '@/lib/fashn/client'
 import { readKv } from '@/lib/creative-studio/taste'
 import {
+  CS_ENGINE_KILL_PREFIX,
   CS_FAL_ENABLED_KEY,
   CS_FLUX_FILL_ENABLED_KEY,
   CS_IDM_VTON_ENABLED_KEY,
@@ -36,6 +37,11 @@ export async function GET(req: NextRequest) {
     readKv(CS_FLUX_FILL_ENABLED_KEY),
     readKv(CS_SINGLE_VTON_DEFAULT_KEY),
   ])
+  // CS12 — per-engine kill switches feed availability truthfully
+  const kills: Record<string, boolean> = {}
+  for (const id of ['fashn', 'gemini', 'fal_fashn_v16', 'fal_idm_vton', 'fal_flux_fill']) {
+    kills[id] = (await readKv(`${CS_ENGINE_KILL_PREFIX}${id}`)) === '1'
+  }
 
   return Response.json({
     fashnConfigured,
@@ -51,6 +57,7 @@ export async function GET(req: NextRequest) {
         [CS_IDM_VTON_ENABLED_KEY]: idmEnabled === '1',
         [CS_FLUX_FILL_ENABLED_KEY]: fillEnabled === '1',
       },
+      kills,
     }),
     singleVtonDefault: normalizeSingleVtonDefault(vtonDefault),
     familyChainLabelBn: FAMILY_CHAIN_LABEL_BN,

@@ -184,6 +184,22 @@ export function extractFalImageUrl(payload) {
   return payload?.image?.url ?? payload?.images?.[0]?.url ?? null
 }
 
+// ── CS12: model-specific kill switch (owner-tunable, no redeploy) ────────────
+
+/** kv `cs_engine_kill:<engineId>` === '1' ⇒ jobs on this engine must refuse. */
+export async function isEngineKilled(supabase, engineId) {
+  try {
+    const { data } = await supabase
+      .from('agent_kv_settings')
+      .select('value')
+      .eq('key', `cs_engine_kill:${engineId}`)
+      .maybeSingle()
+    return data?.value?.trim() === '1'
+  } catch {
+    return false // kill lookup failure must not block normal work
+  }
+}
+
 // ── durable request state (agent_kv_settings) ────────────────────────────────
 
 const stateKey = (pendingActionId) => `fal_request:${pendingActionId}`
