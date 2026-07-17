@@ -316,6 +316,16 @@ function makeBridgedReadTool(originalName: string): AgentTool {
         const result = await metaMcpCallTool(originalName, forwardedArgs(input))
         return toToolResult(result)
       } catch (e) {
+        // MA4: a terminal auth failure on a CONNECTED account means the token
+        // expired — fire a throttled owner "আবার Connect চাপুন" ntfy so it does
+        // not just fail silently. 'not_connected' (never connected) is NOT an
+        // expiry, so it is excluded. Non-blocking.
+        if (e instanceof MetaMcpError && e.code === 'auth') {
+          void (async () => {
+            const { maybeAlertMetaMcpAuthExpiry } = await import('./health')
+            await maybeAlertMetaMcpAuthExpiry()
+          })().catch(() => {})
+        }
         return mapMcpError(e)
       }
     },

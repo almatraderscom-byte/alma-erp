@@ -248,3 +248,45 @@ Owner msg ──► HEAD = Claude Sonnet 4.6  (SLIM: base+salah+memory+ask+deleg
 > Next step is yours: approve the plan (and the `CLAUDE.md` update), and I'll start at
 > **Step 2** (add models — lowest risk) → **Step 3** (slim head — biggest win), one flagged
 > PR at a time, each verified before the next.
+
+---
+
+## Appendix — Meta Ads MCP module (`src/agent/lib/meta-mcp/`, phases MA1–MA4)
+
+The agent is an **MCP client** of Meta's official Ads MCP server
+(`https://mcp.facebook.com/ads`). It reuses the repo's own MCP wire knowledge
+(`src/app/api/assistant/mcp/route.ts` is an MCP *server*) in reverse.
+
+- **`oauth.ts`** — OAuth 2.1: RFC 9728/8414 discovery (metadata URL is
+  **path-aware**: `/.well-known/oauth-authorization-server/ads`), app-id client
+  (dynamic registration is refused for third parties), PKCE, token refresh,
+  scope tiers (`meta_mcp_scope_tier` read|write|financial), kill switch
+  (`META_MCP_ENABLED` env + `meta_mcp_enabled` kv), budget cap
+  (`meta_mcp_max_daily_budget`).
+- **`client.ts`** — Streamable HTTP JSON-RPC: initialize → tools/list | tools/call,
+  20s timeout, one bounded retry, one 401 refresh-replay, SSE-or-JSON parsing.
+- **`bridge.ts`** — wraps each remote tool as a normal `AgentTool` (prefix
+  `meta_`), so ALL existing discipline applies (contract validation, approval
+  cards, claim-verifier, telemetry). 23 read tools registered (MA1);
+  capability map covers all remote write tools too.
+- **`insights-source.ts`** (MA2) — the marketing brain's single ad-insights
+  entry point: **MCP-preferred, Graph-API fallback**, and it ALWAYS returns the
+  source it actually used + a quote-ready label + degradedReason. Provenance
+  travels with the data, so the head cannot misattribute a source.
+- **`meta-ads-write-tools.ts`** (MA3) — 6 money-touching write tools, each
+  triple-gated (kill switch + connection + write tier) and staged behind an
+  owner approval card; `ads_activate_entity` is a separate before_execute 🔴
+  card. Executed by `actions/[id]/approve/route.ts` (`meta_ads:*` branch).
+- **`health.ts`** (MA4) — telemetry aggregation (call counts / success rate /
+  last-success from `AgentToolEvent`) surfaced on the status route + growth
+  card, plus a throttled owner ntfy on auth expiry.
+
+**What stays on the Graph API (deliberately, per plan §7):** page posting,
+Messenger/CS ingest, boost-post, custom audiences, CAPI, ad library. Insight and
+catalog reads prefer MCP via `insights-source.ts` and fall back to Graph.
+
+**Live status (2026-07):** Meta's MCP is per-account **rollout-gated**
+(`is_ads_mcp_enabled: false` on the owner's accounts today), so MCP insights and
+writes fall back to / wait on Graph. `fb-token-health` scope is therefore
+**unchanged** — Graph still serves every ads path; revisit the scope only after
+Meta enables the account and the MCP reads/writes prove out live.
