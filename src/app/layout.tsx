@@ -19,6 +19,7 @@ import { AmbientBackground } from '@/components/ambient/AmbientBackground'
 import { GlobalKeyboardManager } from '@/components/ui-mobile/GlobalKeyboardManager'
 import { bootEscapeScript } from '@/lib/boot-escape-script'
 import { buildMismatchReloadScript } from '@/lib/build-reload-script'
+import { Analytics } from '@vercel/analytics/next'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 const notoBengali = Noto_Sans_Bengali({
@@ -132,6 +133,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <PromptDialogHost />
         {/* App-wide offline takeover + reconnect flood (owner-approved WOW design). */}
         <ConnectionGuard />
+        <Analytics />
       </body>
     </html>
   )
