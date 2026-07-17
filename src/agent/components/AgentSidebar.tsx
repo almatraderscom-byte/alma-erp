@@ -204,6 +204,8 @@ export default function AgentSidebar({
           </a>
           <a
             href="/agent?monitor=graph"
+            target="_blank"
+            rel="noopener noreferrer"
             className="rounded-full border border-border-subtle bg-white/[0.04] px-2 py-0.5 text-[9px] text-muted transition-all hover:border-[#9D8CFF]/40 hover:bg-[#9D8CFF]/10 hover:text-[#9D8CFF]"
             title="Graph Health — রোলআউট/kill-switch অবস্থা"
           >
