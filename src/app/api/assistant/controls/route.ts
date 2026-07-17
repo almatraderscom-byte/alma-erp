@@ -20,7 +20,72 @@ export async function GET(req: NextRequest) {
   if (disabled) return disabled
   const forbidden = await requireOwner(req)
   if (forbidden) return forbidden
+
+  // Phase 57 — staged autonomy ladder view for the control centre.
+  const section = req.nextUrl.searchParams.get('section')
+  if (section === 'autonomy_rollout') {
+    const { listRollouts, STAGE_LABEL_BN, LADDER_STAGES } = await import('@/agent/lib/autonomy-rollout')
+    const { inspectServiceConnections } = await import('@/agent/lib/integrations/service-registry')
+    const [rollouts, services] = await Promise.all([
+      listRollouts(),
+      inspectServiceConnections().catch(() => []),
+    ])
+    return Response.json({ rollouts, services, stageLabels: STAGE_LABEL_BN, stages: LADDER_STAGES })
+  }
+
   return Response.json(await getAgentControls())
+}
+
+/**
+ * Phase 57 — ladder actions. One task class per call, one rung per promotion,
+ * explicit owner note required; there is NO promote-everything endpoint.
+ */
+export async function POST(req: NextRequest) {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
+  const forbidden = await requireOwner(req)
+  if (forbidden) return forbidden
+
+  let body: { action?: string; taskClass?: string; toStage?: string; note?: string; service?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return Response.json({ error: 'invalid_json' }, { status: 400 })
+  }
+
+  const action = String(body.action ?? '')
+  const rollout = await import('@/agent/lib/autonomy-rollout')
+
+  if (action === 'promote') {
+    const taskClass = String(body.taskClass ?? '')
+    const result = await rollout.promoteTaskClass(taskClass, String(body.note ?? ''))
+    return Response.json(result, { status: result.ok ? 200 : 422 })
+  }
+  if (action === 'demote' || action === 'pause') {
+    const taskClass = String(body.taskClass ?? '')
+    const toStage = action === 'pause' ? 'off' : (String(body.toStage ?? 'off') as (typeof rollout.LADDER_STAGES)[number])
+    if (!rollout.LADDER_STAGES.includes(toStage)) return Response.json({ error: 'bad_stage' }, { status: 400 })
+    const demoted = await rollout.demoteTaskClass(taskClass, toStage, String(body.note ?? 'owner action'))
+    return Response.json({ ok: true, rollout: demoted })
+  }
+  if (action === 'service_pause' || action === 'service_resume' || action === 'service_revoke' || action === 'service_delete_data') {
+    const reg = await import('@/agent/lib/integrations/service-registry')
+    const service = String(body.service ?? '')
+    const fn =
+      action === 'service_pause' ? reg.pauseService
+        : action === 'service_resume' ? reg.resumeService
+          : action === 'service_revoke' ? reg.revokeService
+            : reg.deleteServiceData
+    const ok = await fn(service)
+    return Response.json({ ok }, { status: ok ? 200 : 422 })
+  }
+  if (action === 'clear_quarantine') {
+    const { clearQuarantine } = await import('@/agent/lib/security/incident-response')
+    const ok = await clearQuarantine(String(body.note ?? 'owner cleared via control centre'))
+    return Response.json({ ok }, { status: ok ? 200 : 422 })
+  }
+
+  return Response.json({ error: 'unknown_action' }, { status: 400 })
 }
 
 export async function PATCH(req: NextRequest) {
