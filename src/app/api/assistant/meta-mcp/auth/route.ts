@@ -2,7 +2,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { buildAuthorizationUrl, isMetaMcpEnvEnabled } from '@/agent/lib/meta-mcp/oauth'
+import { buildAuthorizationUrl, isMetaMcpEnvEnabled, setMetaMcpScopeTier } from '@/agent/lib/meta-mcp/oauth'
 
 export const runtime = 'nodejs'
 
@@ -28,6 +28,11 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    // MA3 tier upgrade: ?tier=write|financial re-connects at a higher scope so
+    // the owner can draft campaigns (write) or edit budgets (financial). Default
+    // read — MA1 stays read-only unless the owner explicitly upgrades.
+    const tierParam = req.nextUrl.searchParams.get('tier')
+    if (tierParam) await setMetaMcpScopeTier(tierParam)
     const authUrl = await buildAuthorizationUrl(req.nextUrl.origin)
     return Response.redirect(authUrl)
   } catch (e) {

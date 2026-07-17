@@ -302,6 +302,16 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   meta_ads_get_opportunity_score: read('meta_ads'),
   meta_ads_get_help_article: read('meta_ads'),
 
+  // ── Meta Ads MCP write tools (Phase MA3) — staged behind approval cards ─────
+  // Creates/edits stage a card (mode 'stage' → staged_card); Meta makes entities
+  // PAUSED. activate is the money switch — before_execute + HIGH risk.
+  meta_ads_create_campaign: stage('meta_ads', 'high'),
+  meta_ads_create_ad_set: stage('meta_ads', 'high'),
+  meta_ads_create_ad: stage('meta_ads', 'high'),
+  meta_ads_update_entity: stage('meta_ads', 'high'),
+  meta_ads_catalog_create: stage('meta_ads', 'medium'),
+  meta_ads_activate_entity: { domain: 'meta_ads', mode: 'stage', risk: 'high', approval: 'before_execute', proof: 'external' },
+
   // ── growth autopilot / content calendar ────────────────────────────────────
   schedule_content: stage('growth'),
   schedule_content_batch: stage('growth'),

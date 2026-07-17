@@ -353,9 +353,25 @@ export default function GrowthConnections() {
 
             <p className="text-[11px] text-muted">
               {meta.registeredReadTools}টি read টুল এজেন্টে যুক্ত
-              {meta.remoteToolCount != null ? ` — Meta সার্ভারে মোট ${meta.remoteToolCount}টি` : ''}। লেখা-টুল (ক্যাম্পেইন
-              তৈরি) পরের ধাপে, Approve-কার্ডের পেছনে।
+              {meta.remoteToolCount != null ? ` — Meta সার্ভারে মোট ${meta.remoteToolCount}টি` : ''}।
             </p>
+
+            {/* MA3 tier upgrade — re-connect at write scope to draft campaigns.
+                Every write still lands as a PAUSED Approve-card; nothing spends
+                without the owner. Shown once connected, only while still read-only. */}
+            {meta.tier === 'read' && (
+              <a
+                href={`${META_CONNECT_URL}?tier=write`}
+                className="flex items-center justify-center gap-2 rounded-xl border border-amber-400/30 bg-amber-400/[0.08] px-3 py-2 text-[11px] font-semibold text-amber-400 transition-all hover:bg-amber-400/[0.14]"
+              >
+                লেখা-অনুমতি যোগ করুন (ক্যাম্পেইন তৈরি — Approve-কার্ডের পেছনে)
+              </a>
+            )}
+            {meta.tier !== 'read' && (
+              <p className="text-[11px] font-semibold text-emerald-400/80">
+                লেখা-অনুমতি সক্রিয় — ক্যাম্পেইন তৈরি/এডিট Approve-কার্ডের পেছনে, activate আলাদা লাল কার্ডে।
+              </p>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
