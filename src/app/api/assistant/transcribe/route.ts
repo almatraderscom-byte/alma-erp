@@ -5,6 +5,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { transcribeVoiceBangla } from '@/agent/lib/voice-bangla'
 import { getToken } from 'next-auth/jwt'
 import OpenAI from 'openai'
+import { requireAssistantHumanRequest } from '@/agent/lib/botid-protection'
 
 export const runtime = 'nodejs'
 // Long voice notes (up to 3 min from the console) need transcription headroom.
@@ -26,6 +27,9 @@ export async function POST(req: NextRequest) {
   // speaker's own audio (no ERP data is exposed). The owner agent also uses this.
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+
+  const botBlocked = await requireAssistantHumanRequest(req, { route: '/api/assistant/transcribe' })
+  if (botBlocked) return botBlocked
 
   if (!process.env.OPENAI_API_KEY) {
     return Response.json({ error: 'OPENAI_API_KEY সেট করা নেই। Vercel-এ OPENAI_API_KEY যোগ করুন।' }, { status: 503 })

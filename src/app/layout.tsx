@@ -19,6 +19,8 @@ import { AmbientBackground } from '@/components/ambient/AmbientBackground'
 import { GlobalKeyboardManager } from '@/components/ui-mobile/GlobalKeyboardManager'
 import { bootEscapeScript } from '@/lib/boot-escape-script'
 import { buildMismatchReloadScript } from '@/lib/build-reload-script'
+import { BotIdClient } from 'botid/client'
+import { ASSISTANT_BOTID_PROTECTED_ROUTES } from '@/agent/lib/botid-routes'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 const notoBengali = Noto_Sans_Bengali({
@@ -98,6 +100,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <script dangerouslySetInnerHTML={{ __html: buildReloadScript }} />
         )}
         <script dangerouslySetInnerHTML={{ __html: bootEscapeScript() }} />
+        <BotIdClient protect={[...ASSISTANT_BOTID_PROTECTED_ROUTES]} />
       </head>
       <body className="text-cream antialiased font-sans">
         <div id="alma-boot-splash" aria-hidden="true">
