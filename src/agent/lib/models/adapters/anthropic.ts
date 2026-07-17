@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { NeutralMsg, NeutralTool, NeutralToolChoice, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
+import { resolveGenerationParams } from '@/agent/lib/models/generation-params'
 
 /**
  * Phase 6 (one turn engine) — native Anthropic as a PROVIDER ADAPTER.
@@ -168,9 +169,14 @@ export class AnthropicAdapter implements ProviderAdapter {
       ...(i === args.tools.length - 1 ? { cache_control: { type: 'ephemeral' as const } } : {}),
     }))
 
+    // P9 — shared sampling/output contract. gen is {} unless AGENT_UNIFORM_SAMPLING
+    // is on; temperature is only present for non-thinking models (extended thinking
+    // requires temperature=1), so it is never added to an adaptive-thinking call.
+    const gen = resolveGenerationParams({ thinking: args.thinking })
     const buildParams = (withThinking: boolean): Anthropic.Messages.MessageCreateParamsStreaming => ({
       model: args.apiModel,
-      max_tokens: 8192,
+      max_tokens: gen.maxTokens ?? 8192,
+      ...(gen.temperature !== undefined ? { temperature: gen.temperature, top_p: gen.topP } : {}),
       ...(withThinking ? { thinking: { type: 'adaptive' as const } } : {}),
       system: [{ type: 'text', text: args.system, cache_control: { type: 'ephemeral' } }],
       ...(tools.length > 0 ? { tools } : {}),

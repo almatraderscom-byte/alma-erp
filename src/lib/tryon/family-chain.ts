@@ -47,6 +47,9 @@ export type ChainStepKind =
   // locally and placed deterministically; NO face/garment regeneration.
   | 'pair_composite'
   | 'group_composite'
+  // Supplier-photo prep (owner 2026-07-17: resellers send on-model/mannequin
+  // photos, never garment-only): split people locally, use the real crops.
+  | 'garment_prep'
 
 const STEP_LABELS_BN: Record<ChainStepKind, string> = {
   adult_tryon: 'বড়দের শট (FASHN)',
@@ -57,6 +60,7 @@ const STEP_LABELS_BN: Record<ChainStepKind, string> = {
   rescene: 'বাংলাদেশি ব্যাকগ্রাউন্ড',
   pair_composite: 'প্রোটেক্টেড কম্পোজিট (মুখ/গার্মেন্ট অক্ষত)',
   group_composite: 'পুরো ফ্যামিলি প্রোটেক্টেড কম্পোজিট',
+  garment_prep: 'সাপ্লায়ার ছবি থেকে গার্মেন্ট আলাদা',
 }
 
 const VARIANT_LABELS_BN: Record<string, string> = {
@@ -89,6 +93,9 @@ export type FamilyChainState = {
   childGarmentPath?: string
   adultImagePath?: string
   childImagePath?: string
+  /** supplier-photo prep results (real crops from the reseller photo) */
+  preppedAdultGarmentPath?: string
+  preppedChildGarmentPath?: string
   aspectRatio: string
   resolution: string
   generationMode: string
@@ -204,11 +211,30 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
     aspectRatio: state.aspectRatio,
   })
 
+  const adultGarment = state.preppedAdultGarmentPath ?? state.productImagePath
+
   switch (step) {
+    case 'garment_prep':
+      return {
+        payload: {
+          ...base,
+          creativeStudio: false, // internal artifact — keep the gallery clean
+          chainInternal: true,
+          provider: 'garment_prep',
+          imagePath: state.productImagePath,
+        },
+        summary: chainSummary(state, step),
+        costEstimate: 0, // local segmentation — free
+      }
+
     case 'adult_tryon':
       if (useFalVton) {
         return {
-          payload: falVtonPayload(state.adultModelPath, state.productImagePath),
+          payload: {
+            ...falVtonPayload(state.adultModelPath, adultGarment),
+            // supplier photos are always worn (model/mannequin)
+            garmentPhotoType: state.preppedAdultGarmentPath ? 'model' : undefined,
+          },
           summary: chainSummary(state, step),
           costEstimate: 0.075,
         }
@@ -218,7 +244,7 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
           ...base,
           provider: 'fashn',
           fashnModel: 'tryon-max',
-          fashnInputs: { model_image: state.adultModelPath, product_image: state.productImagePath },
+          fashnInputs: { model_image: state.adultModelPath, product_image: adultGarment },
           fashnOptions: {
             prompt: fashnPosePrompt(state.scene.adultPose, state.scene, [pajama, state.extraPrompt].filter(Boolean).join(' ')),
             resolution: state.resolution,
@@ -495,9 +521,12 @@ async function startPairChain(opts: {
     : await readChildGarmentCache(opts.productImagePath, roles.child)
   // CS9 — protected composite replaces the generative pair merge when opted in.
   const finalStep: ChainStepKind = opts.protectedComposite ? 'pair_composite' : 'pair_merge'
+  // Supplier-photo prep runs FIRST (free, local): real adult/child crops from
+  // the reseller photo; the child_garment generation step is dropped later
+  // when prep finds a real child piece.
   const plan: ChainStepKind[] = cachedGarment
-    ? ['adult_tryon', 'child_tryon', finalStep]
-    : ['adult_tryon', 'child_garment', 'child_tryon', finalStep]
+    ? ['garment_prep', 'adult_tryon', 'child_tryon', finalStep]
+    : ['garment_prep', 'adult_tryon', 'child_garment', 'child_tryon', finalStep]
 
   const state: FamilyChainState = {
     chainId: randomUUID(),
@@ -602,7 +631,9 @@ export async function startSingleRescueChain(opts: {
     fabricNote: attrs.fabricGuess ? `Garment fabric: ${attrs.fabricGuess}.` : undefined,
     adultRole: 'father',
     adultModelPath: opts.modelImagePath,
-    plan: ['adult_tryon', 'rescene'],
+    plan: attrs.garmentType === 'family_matching_set'
+      ? ['garment_prep', 'adult_tryon', 'rescene']
+      : ['adult_tryon', 'rescene'],
     stepIndex: 0,
     extraPrompt: opts.extraPrompt,
     vtonEngine: opts.vtonEngine,
@@ -612,7 +643,7 @@ export async function startSingleRescueChain(opts: {
     conversationId: opts.conversationId ?? null,
   }
 
-  const id = await createStepAction(state, 'adult_tryon')
+  const id = await createStepAction(state, state.plan[0])
   return { pendingActionId: id, label: VARIANT_LABELS_BN.single, type: 'image_gen' }
 }
 
@@ -694,7 +725,7 @@ async function tryStartGroupMerge(state: FamilyChainState): Promise<string | nul
  * worker's job-result callback.
  */
 export async function advanceFamilyChain(
-  action: { id: string; payload: unknown },
+  action: { id: string; payload: unknown; result?: unknown },
   resultStoragePath: string | undefined,
 ): Promise<string | null> {
   try {
@@ -703,12 +734,29 @@ export async function advanceFamilyChain(
     const step = state.plan[state.stepIndex]
     if (!step) return null
     const storagePath = resultStoragePath?.trim()
-    if (!storagePath) return null
+    if (!storagePath && step !== 'garment_prep') return null
 
     // Record this step's artifact.
     const next: FamilyChainState = { ...state }
+    if (step === 'garment_prep') {
+      // result carries the split crops (see worker garment-prep dispatch)
+      const res = (action as { result?: Record<string, unknown> }).result ?? {}
+      const adult = typeof res.adultGarmentPath === 'string' ? res.adultGarmentPath : null
+      const child = typeof res.childGarmentPath === 'string' ? res.childGarmentPath : null
+      if (adult) next.preppedAdultGarmentPath = adult
+      if (child && state.childRole && state.childRole !== 'mother') {
+        // real supplier child piece — skip the AI child_garment generation
+        next.preppedChildGarmentPath = child
+        next.childGarmentPath = child
+        next.plan = state.plan.filter((p) => p !== 'child_garment')
+      }
+      if (child && state.childRole === 'mother') {
+        // couple: the second (shorter) person is the wife's piece
+        next.childGarmentPath = child
+      }
+    }
     if (step === 'adult_tryon') next.adultImagePath = storagePath
-    if (step === 'child_garment') {
+    if (step === 'child_garment' && storagePath) {
       next.childGarmentPath = storagePath
       if (state.childRole && state.childRole !== 'mother') await writeChildGarmentCache(state.productImagePath, state.childRole, storagePath)
     }
@@ -717,7 +765,7 @@ export async function advanceFamilyChain(
     // Pair finished → either done, or hand off to the full-family group merge.
     // CS9: pair_composite behaves exactly like pair_merge in the chain graph.
     if (step === 'pair_merge' || step === 'pair_composite') {
-      if (state.groupId && state.variant !== 'full_family') {
+      if (state.groupId && state.variant !== 'full_family' && storagePath) {
         await recordGroupPair(state.groupId, state.variant, storagePath)
         return tryStartGroupMerge(state)
       }

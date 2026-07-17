@@ -1,0 +1,153 @@
+== IOSP-0 static inventory ==
+commit: d8e168dc8ed2c61c568c580249bb677d82e59c4d
+branch: agent-phase-16
+
+-- Swift scale --
+swift files: 91
+total swift LOC (App target): 100003
+
+-- top 15 files by LOC --
+    8002 ios/App/App/AssistantSwiftUI.swift
+    3898 ios/App/App/CreativeStudioSwiftUI.swift
+    3353 ios/App/App/AssistantVoiceSwiftUI.swift
+    3079 ios/App/App/EmployeesSwiftUI.swift
+    3072 ios/App/App/PortalOfficeSwiftUI.swift
+    2805 ios/App/App/PortalSwiftUI.swift
+    2671 ios/App/App/PayrollSwiftUI.swift
+    2402 ios/App/App/ApprovalsSwiftUI.swift
+    2345 ios/App/App/DashboardSwiftUI.swift
+    2160 ios/App/App/AttendanceSwiftUI.swift
+    2044 ios/App/App/SpikeNativeShell.swift
+    1896 ios/App/App/TradingHomeSwiftUI.swift
+    1876 ios/App/App/OrdersSwiftUI.swift
+    1857 ios/App/App/InventorySwiftUI.swift
+    1827 ios/App/App/TradingHrSwiftUI.swift
+
+-- static risk indicators (grep occurrence counts) --
+repeatForever animations                                117
+TimelineView(.animation)                                11
+material/glass/blur uses                                145
+hard-coded .font(.system(size:))                        1053
+.lineLimit(1)                                           312
+.minimumScaleFactor                                     135
+explicit accessibility decls                            4
+Reduce Motion references                                95
+Reduce Transparency references                          0
+Differentiate Without Color refs                        0
+dynamicTypeSize constraints                             0
+UIScreen.main.bounds assumptions                        5
+Timer.publish / scheduledTimer                          13
+Task.sleep polling loops                                88
+pushWeb call sites                                      7
+WKWebView references                                    42
+deprecated WKProcessPool                                11
+deprecated .allowBluetooth                              3
+
+-- forced-web call sites (pushWeb) --
+  ios/App/App/SwiftUIShell.swift:218:    private func pushWeb(on nav: UINavigationController?, path: String, title: String, icon: String) {
+  ios/App/App/SwiftUIShell.swift:235:            pushWeb(on: nav, path: path, title: title, icon: icon)
+  ios/App/App/SwiftUIShell.swift:246:               if origin.hasPrefix(target) { self?.pushWeb(on: nav, path: p, title: t, icon: icon) }
+  ios/App/App/SwiftUIShell.swift:252:        pushWeb(on: nav, path: path, title: title, icon: icon)
+  ios/App/App/SwiftUIShell.swift:265:            if target == origin { self?.pushWeb(on: navRef.value, path: path, title: title, icon: icon) }
+  ios/App/App/SwiftUIShell.swift:566:            pushWeb(on: nav, path: path, title: title, icon: "bell.badge")
+  ios/App/App/AssistantSwiftUI.swift:7825:                        pushWeb(path, title)
+
+-- polling cadence sites (seconds literals in sleep/timer) --
+  ios/App/App/FloatingChatHead.swift:84:        callWatch = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+  ios/App/App/DigitalInvoicesSwiftUI.swift:381:                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+  ios/App/App/AlmaStarburstSpinner.swift:397:                try? await Task.sleep(nanoseconds: 100_000_000)
+  ios/App/App/AlmaStarburstSpinner.swift:413:                try? await Task.sleep(nanoseconds: 940_000_000)
+  ios/App/App/AlmaStarburstSpinner.swift:421:                try? await Task.sleep(nanoseconds: clusterMs * 500_000)
+  ios/App/App/AlmaStarburstSpinner.swift:425:                    try? await Task.sleep(nanoseconds: clusterMs * 1_000_000)
+  ios/App/App/AlmaStarburstSpinner.swift:431:                    try? await Task.sleep(nanoseconds: 510_000_000)
+  ios/App/App/AlmaStarburstSpinner.swift:434:                    try? await Task.sleep(nanoseconds: 840_000_000)
+  ios/App/App/AlmaStarburstSpinner.swift:437:                    try? await Task.sleep(nanoseconds: 150_000_000)
+  ios/App/App/AlmaStarburstSpinner.swift:524:            try? await Task.sleep(nanoseconds: 2_080_000_000)
+  ios/App/App/AlmaStarburstSpinner.swift:527:            try? await Task.sleep(nanoseconds: 3_600_000_000)
+  ios/App/App/AlmaStarburstSpinner.swift:530:            try? await Task.sleep(nanoseconds: 3_300_000_000)
+  ios/App/App/AlmaStarburstSpinner.swift:533:            try? await Task.sleep(nanoseconds: 3_200_000_000)
+  ios/App/App/AlmaStarburstSpinner.swift:536:            try? await Task.sleep(nanoseconds: 3_000_000_000)
+  ios/App/App/AlmaStarburstSpinner.swift:540:                try? await Task.sleep(nanoseconds: 1_800_000_000)
+  ios/App/App/SpikeNativeShell.swift:1269:            approvalsBadgeTimer = Timer.scheduledTimer(withTimeInterval: 90, repeats: true) { [weak self] _ in
+  ios/App/App/SpikeNativeShell.swift:1588:        idleTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+  ios/App/App/SpikeNativeShell.swift:2002:        pctTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in self?.tick() }
+  ios/App/App/PortalOfficeSwiftUI.swift:1680:                try? await Task.sleep(nanoseconds: 15_000_000_000)
+  ios/App/App/PortalOfficeSwiftUI.swift:1985:                try? await Task.sleep(nanoseconds: 2_200_000_000)
+  ios/App/App/AlmaIslandBanner.swift:63:        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+  ios/App/App/CrmSwiftUI.swift:539:                            try? await Task.sleep(nanoseconds: 450_000_000)
+  ios/App/App/CrmSwiftUI.swift:668:            try? await Task.sleep(nanoseconds: 2_600_000_000)
+  ios/App/App/IntercomUI.swift:151:                try? await Task.sleep(nanoseconds: 2_500_000_000)
+  ios/App/App/SwiftUIShell.swift:586:        Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] timer in
+  ios/App/App/InventorySwiftUI.swift:616:                        try? await Task.sleep(nanoseconds: 300_000_000)
+  ios/App/App/AgoraIntercom.swift:433:        callTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+  ios/App/App/AgoraIntercom.swift:448:                try? await Task.sleep(nanoseconds: 4_000_000_000)
+  ios/App/App/ConnectivityBeacon.swift:57:            offlineDebounce = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { [weak self] _ in
+  ios/App/App/ConnectivityBeacon.swift:127:        chipTimer = Timer.scheduledTimer(withTimeInterval: 3.4, repeats: false) { [weak self] _ in
+  ios/App/App/ConnectivityBeacon.swift:152:    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+  ios/App/App/AlmaCompanion.swift:245:                try? await Task.sleep(nanoseconds: 1_000_000_000)
+  ios/App/App/AlmaCompanion.swift:321:            try? await Task.sleep(nanoseconds: UInt64(ms * 1_000_000))
+  ios/App/App/AlmaCompanion.swift:372:            try? await Task.sleep(nanoseconds: 250_000_000)
+  ios/App/App/AlmaCompanion.swift:374:        try? await Task.sleep(nanoseconds: 500_000_000)
+  ios/App/App/PaymentAccountsSwiftUI.swift:187:            try? await Task.sleep(nanoseconds: 2_000_000_000)
+  ios/App/App/DigitalClientsSwiftUI.swift:424:                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+  ios/App/App/DigitalClientsSwiftUI.swift:469:                        try? await Task.sleep(nanoseconds: 450_000_000)
+  ios/App/App/AssistantVoiceSwiftUI.swift:89:                        try? await Task.sleep(nanoseconds: 1_600_000_000)
+  ios/App/App/AssistantVoiceSwiftUI.swift:278:                    try? await Task.sleep(nanoseconds: 500_000_000)
+  ios/App/App/AssistantVoiceSwiftUI.swift:639:                try? await Task.sleep(nanoseconds: 2_000_000_000)
+  ios/App/App/AssistantVoiceSwiftUI.swift:715:                try? await Task.sleep(nanoseconds: UInt64(tickMs * 1_000_000))
+  ios/App/App/AssistantVoiceSwiftUI.swift:907:                try? await Task.sleep(nanoseconds: 4_000_000_000)
+  ios/App/App/AssistantVoiceSwiftUI.swift:1021:            try? await Task.sleep(nanoseconds: 700_000_000)
+  ios/App/App/AssistantVoiceSwiftUI.swift:1127:                group.addTask { try await Task.sleep(nanoseconds: 8_000_000_000); throw AlmaVoiceSTTError.socket }
+  ios/App/App/AssistantVoiceSwiftUI.swift:1482:            try? await Task.sleep(nanoseconds: 50_000_000_000)
+  ios/App/App/AssistantVoiceSwiftUI.swift:1761:                try? await Task.sleep(nanoseconds: 50_000_000)
+  ios/App/App/CreativeStudioSwiftUI.swift:416:                try? await Task.sleep(nanoseconds: 3_500_000_000)
+  ios/App/App/CreativeStudioSwiftUI.swift:2089:                try? await Task.sleep(nanoseconds: 4_000_000_000)
+  ios/App/App/CreativeStudioSwiftUI.swift:2147:                try? await Task.sleep(nanoseconds: 150_000_000)
+  ios/App/App/CreativeStudioSwiftUI.swift:2222:                try? await Task.sleep(nanoseconds: 4_000_000_000)
+  ios/App/App/CreativeStudioSwiftUI.swift:3784:            try? await Task.sleep(nanoseconds: 4_000_000_000)
+  ios/App/App/AssistantSwiftUI.swift:933:            try? await Task.sleep(nanoseconds: 2_080_000_000)
+  ios/App/App/AssistantSwiftUI.swift:1317:                try? await Task.sleep(nanoseconds: 12_000_000_000)
+  ios/App/App/AssistantSwiftUI.swift:1364:            try? await Task.sleep(nanoseconds: UInt64(500_000_000 * (attempt + 1)))
+  ios/App/App/AssistantSwiftUI.swift:1474:                try? await Task.sleep(nanoseconds: UInt64((delay + Double.random(in: 0...0.25)) * 1_000_000_000))
+  ios/App/App/AssistantSwiftUI.swift:1526:            try? await Task.sleep(nanoseconds: 1_200_000_000)
+  ios/App/App/AssistantSwiftUI.swift:2034:                try await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+  ios/App/App/AssistantSwiftUI.swift:2037:                while true { try await Task.sleep(nanoseconds: 3_600_000_000_000) }
+  ios/App/App/AssistantSwiftUI.swift:2350:            try? await Task.sleep(nanoseconds: 1_200_000_000)
+  ios/App/App/AssistantSwiftUI.swift:2521:                try? await Task.sleep(nanoseconds: 5_000_000)
+  ios/App/App/AssistantSwiftUI.swift:2583:                try? await Task.sleep(nanoseconds: 120_000_000)
+  ios/App/App/AssistantSwiftUI.swift:2966:                            try? await Task.sleep(nanoseconds: 66_000_000)      // ~15 fps
+  ios/App/App/AssistantSwiftUI.swift:5830:    private let timer = Timer.publish(every: 0.066, on: .main, in: .common).autoconnect()
+  ios/App/App/AssistantSwiftUI.swift:7468:                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+  ios/App/App/AssistantSwiftUI.swift:7473:                        try? await Task.sleep(nanoseconds: 130_000_000)
+  ios/App/App/AssistantSwiftUI.swift:7475:                        try? await Task.sleep(nanoseconds: 130_000_000)
+  ios/App/App/AssistantSwiftUI.swift:7503:                Task { try? await Task.sleep(nanoseconds: 2_500_000_000); vm.showVoice = true }
+  ios/App/App/AssistantSwiftUI.swift:7506:                Task { try? await Task.sleep(nanoseconds: 1_500_000_000); Self.presentDrawer(vm) }
+  ios/App/App/AssistantSwiftUI.swift:7509:                Task { try? await Task.sleep(nanoseconds: 4_000_000_000); vm.send(say) }
+  ios/App/App/AssistantSwiftUI.swift:7512:                Task { try? await Task.sleep(nanoseconds: 3_000_000_000); await vm.newChat() }
+  ios/App/App/AssistantSwiftUI.swift:7515:                Task { try? await Task.sleep(nanoseconds: 3_000_000_000); vm.showVoice = true }
+  ios/App/App/AssistantSwiftUI.swift:7519:                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+  ios/App/App/AssistantSwiftUI.swift:7538:                try? await Task.sleep(nanoseconds: 2_000_000_000)
+  ios/App/App/StaffMonitorSwiftUI.swift:592:                try? await Task.sleep(nanoseconds: 10_000_000_000)
+  ios/App/App/StaffMonitorSwiftUI.swift:808:                try? await Task.sleep(nanoseconds: 10_000_000_000)
+  ios/App/App/AgentWhatsappSwiftUI.swift:196:                try? await Task.sleep(nanoseconds: 5_000_000_000)
+  ios/App/App/SettingsBrandingSwiftUI.swift:274:                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+  ios/App/App/TradingTelegramSwiftUI.swift:596:                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+  ios/App/App/TradingTelegramSwiftUI.swift:1102:                try? await Task.sleep(nanoseconds: 8_000_000_000)
+  ios/App/App/VoiceLiveActivityController.swift:71:                try? await Task.sleep(nanoseconds: 80_000_000)
+  ios/App/App/VoiceLiveActivityController.swift:120:            try? await Task.sleep(nanoseconds: 1_500_000_000)
+  ios/App/App/DigitalProjectsSwiftUI.swift:321:                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+  ios/App/App/DigitalProjectsSwiftUI.swift:411:                        try? await Task.sleep(nanoseconds: 450_000_000)
+  ios/App/App/OrdersSwiftUI.swift:705:                        try? await Task.sleep(nanoseconds: 450_000_000)
+  ios/App/App/OrdersSwiftUI.swift:1583:            try? await Task.sleep(nanoseconds: 1_200_000_000)
+  ios/App/App/AssistantTransport.swift:308:            try? await Task.sleep(nanoseconds: 40_000_000)     // 25 flushes/s ceiling
+  ios/App/App/CreditUsageSwiftUI.swift:614:    private let liveTimer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
+  ios/App/App/TradingAccountsSwiftUI.swift:574:                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+  ios/App/App/TradingAccountsSwiftUI.swift:637:                        try? await Task.sleep(nanoseconds: 450_000_000)
+  ios/App/App/TradingHomeSwiftUI.swift:580:                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+  ios/App/App/TargetControlSwiftUI.swift:472:                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+  ios/App/App/NativeLoginSwiftUI.swift:80:            if attemptIndex > 0 { try? await Task.sleep(nanoseconds: 400_000_000) }
+  ios/App/App/NativeLoginSwiftUI.swift:280:                try? await Task.sleep(nanoseconds: 500_000_000)
+  ios/App/App/SettingsSmsSwiftUI.swift:355:                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+  ios/App/App/SettingsTelegramSwiftUI.swift:518:                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+  ios/App/App/TradingStaffSwiftUI.swift:313:                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+  ios/App/App/KnownPeopleSwiftUI.swift:443:                        try? await Task.sleep(nanoseconds: 2_600_000_000)

@@ -9,11 +9,15 @@ import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { readKv, writeKv, QC_LEVEL_KEY, NOTIFY_KEY, readSceneWeights } from '@/lib/creative-studio/taste'
 import {
+  CS_AUTO_CANARY_PCT_KEY,
   CS_FAL_ENABLED_KEY,
   CS_FLUX_FILL_ENABLED_KEY,
   CS_IDM_VTON_ENABLED_KEY,
   CS_SINGLE_VTON_DEFAULT_KEY,
   SINGLE_VTON_ENGINE_IDS,
+  STUDIO_ENGINES,
+  engineKillKey,
+  normalizeCanaryPct,
   normalizeSingleVtonDefault,
   type StudioEngineId,
 } from '@/lib/creative-studio/provider-registry'
@@ -99,6 +103,9 @@ export async function POST(req: NextRequest) {
     fluxFillEnabled?: boolean
     singleVtonDefault?: string
     pipelineMode?: string
+    /** CS12 — kill switch per engine + Auto-canary percentage */
+    killEngine?: { id?: string; killed?: boolean }
+    canaryPct?: number
   }
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
 
@@ -138,6 +145,20 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'invalid_vton_default' }, { status: 422 })
     }
     await writeKv(CS_SINGLE_VTON_DEFAULT_KEY, body.singleVtonDefault)
+  }
+  // CS12 — model-specific kill switch. The WORKER refuses jobs on a killed
+  // engine, so this works even for already-queued actions. No redeploy.
+  if (body.killEngine && typeof body.killEngine === 'object') {
+    const id = String(body.killEngine.id ?? '')
+    if (!STUDIO_ENGINES.some((e) => e.id === id)) {
+      return Response.json({ error: 'invalid_engine' }, { status: 422 })
+    }
+    await writeKv(engineKillKey(id as StudioEngineId), body.killEngine.killed ? '1' : '0')
+  }
+  // CS12 — Auto-canary percentage (stored + surfaced; routing migration is an
+  // explicit owner decision once a golden verdict supports it).
+  if (body.canaryPct !== undefined) {
+    await writeKv(CS_AUTO_CANARY_PCT_KEY, String(normalizeCanaryPct(body.canaryPct)))
   }
   // CS8 — Preview/Production mode. Applies from the NEXT run, no redeploy.
   if (typeof body.pipelineMode === 'string') {

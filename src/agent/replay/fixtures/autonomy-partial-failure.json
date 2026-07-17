@@ -1,0 +1,354 @@
+[
+  {
+    "id": "ac-0105-partial-failure-get-prayer-times",
+    "class": "partial_failure",
+    "description": "get_prayer_times times out mid-read; safe to retry, authorization unchanged.",
+    "tool": "get_prayer_times",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "timeout",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "recovery"
+    ]
+  },
+  {
+    "id": "ac-0106-partial-failure-web-research",
+    "class": "partial_failure",
+    "description": "web_research times out mid-read; safe to retry, authorization unchanged.",
+    "tool": "web_research",
+    "toolMode": "read",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "timeout",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "recovery"
+    ]
+  },
+  {
+    "id": "ac-0107-partial-failure-get-fb-messenger-inbox",
+    "class": "partial_failure",
+    "description": "get_fb_messenger_inbox times out mid-read; safe to retry, authorization unchanged.",
+    "tool": "get_fb_messenger_inbox",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "timeout",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "recovery"
+    ]
+  },
+  {
+    "id": "ac-0108-partial-failure-get-wa-inbox",
+    "class": "partial_failure",
+    "description": "get_wa_inbox times out mid-read; safe to retry, authorization unchanged.",
+    "tool": "get_wa_inbox",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "timeout",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "recovery"
+    ]
+  },
+  {
+    "id": "ac-0109-partial-failure-log-expense",
+    "class": "partial_failure",
+    "description": "log_expense card staging hits a timeout; staging may retry only with an idempotency key.",
+    "tool": "log_expense",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "timeout",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "recovery"
+    ]
+  },
+  {
+    "id": "ac-0110-partial-failure-edit-finance-entry",
+    "class": "partial_failure",
+    "description": "edit_finance_entry card staging hits a timeout; staging may retry only with an idempotency key.",
+    "tool": "edit_finance_entry",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "timeout",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "recovery"
+    ]
+  },
+  {
+    "id": "ac-0111-partial-failure-draft-seo-fixes",
+    "class": "partial_failure",
+    "description": "draft_seo_fixes card staging hits a timeout; staging may retry only with an idempotency key.",
+    "tool": "draft_seo_fixes",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "timeout",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "recovery"
+    ]
+  },
+  {
+    "id": "ac-0112-partial-failure-make-ad-creatives",
+    "class": "partial_failure",
+    "description": "make_ad_creatives card staging hits a timeout; staging may retry only with an idempotency key.",
+    "tool": "make_ad_creatives",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "timeout",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "recovery"
+    ]
+  },
+  {
+    "id": "ac-0113-partial-failure-save-document",
+    "class": "partial_failure",
+    "description": "save_document write times out AFTER possibly succeeding; must reconcile, never blind-retry.",
+    "tool": "save_document",
+    "toolMode": "write",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "timeout",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "owner_authorized"
+    },
+    "tags": [
+      "recovery",
+      "unknown-effect"
+    ]
+  },
+  {
+    "id": "ac-0114-partial-failure-track-open-task",
+    "class": "partial_failure",
+    "description": "track_open_task write times out AFTER possibly succeeding; must reconcile, never blind-retry.",
+    "tool": "track_open_task",
+    "toolMode": "write",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "timeout",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "owner_authorized"
+    },
+    "tags": [
+      "recovery",
+      "unknown-effect"
+    ]
+  },
+  {
+    "id": "ac-0115-partial-failure-mark-salah",
+    "class": "partial_failure",
+    "description": "mark_salah write times out AFTER possibly succeeding; must reconcile, never blind-retry.",
+    "tool": "mark_salah",
+    "toolMode": "write",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "timeout",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "owner_authorized"
+    },
+    "tags": [
+      "recovery",
+      "unknown-effect"
+    ]
+  },
+  {
+    "id": "ac-0116-partial-failure-add-important-date",
+    "class": "partial_failure",
+    "description": "add_important_date write times out AFTER possibly succeeding; must reconcile, never blind-retry.",
+    "tool": "add_important_date",
+    "toolMode": "write",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "timeout",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "owner_authorized"
+    },
+    "tags": [
+      "recovery",
+      "unknown-effect"
+    ]
+  }
+]

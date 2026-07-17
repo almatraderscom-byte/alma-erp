@@ -543,6 +543,28 @@ async function processImageGen(job) {
     return
   }
 
+  // Supplier-photo garment prep (free local segmentation): split the reseller
+  // photo into per-person crops; the chain uses the REAL adult/child pieces.
+  if (payload.provider === 'garment_prep') {
+    try {
+      const { prepSupplierPhoto } = await import('./garment-prep.mjs')
+      const result = await prepSupplierPhoto({ supabase, imagePath: payload.imagePath })
+      await callJobResult(pendingActionId, 'success', {
+        garmentPrep: true,
+        multiPerson: result.multiPerson,
+        persons: result.persons,
+        adultGarmentPath: result.adultGarmentPath,
+        childGarmentPath: result.childGarmentPath,
+        creativeStudio: false,
+      })
+      console.log(`[worker] garment-prep ${pendingActionId} — ${result.persons.length} crop(s)`)
+    } catch (err) {
+      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      console.error(`[worker] garment-prep ${pendingActionId} — failed:`, err.message)
+    }
+    return
+  }
+
   // CS10 — golden-set engine evaluation (owner-triggered, bounded, resumable).
   if (payload.provider === 'golden_eval') {
     try {
@@ -611,6 +633,12 @@ async function processImageGen(job) {
   // Gallery shows (engine, request id, seed, latency, cost).
   if (payload.provider === 'fal') {
     try {
+      // CS12 — owner kill switch: refuse jobs on a killed engine, clearly.
+      const { isEngineKilled } = await import('./fal/client.mjs')
+      if (await isEngineKilled(supabase, payload.falEngine)) {
+        await callJobResult(pendingActionId, 'failed', undefined, `ইঞ্জিনটি kill switch দিয়ে বন্ধ করা আছে (${payload.falEngine}) — সেটিংস থেকে চালু করে আবার চালান।`)
+        return
+      }
       const adapter = payload.falEngine === 'fal_idm_vton'
         ? await import('./fal/adapters/cat-vton.mjs')
         : payload.falEngine === 'fal_flux_fill'
@@ -655,6 +683,11 @@ async function processImageGen(job) {
 
   if (payload.provider === 'fashn') {
     try {
+      const { isEngineKilled } = await import('./fal/client.mjs')
+      if (await isEngineKilled(supabase, 'fashn')) {
+        await callJobResult(pendingActionId, 'failed', undefined, 'FASHN ইঞ্জিনটি kill switch দিয়ে বন্ধ করা আছে — সেটিংস থেকে চালু করে আবার চালান।')
+        return
+      }
       const { processFashnImageGen } = await import('./fashn/process.mjs')
       const { logCost } = await import('./cost-log.mjs')
       const result = await processFashnImageGen({ supabase, pendingActionId, payload, logCost })
@@ -1101,6 +1134,21 @@ agentGraphWorker.on('failed', (job, err) => {
 })
 
 const longTaskWorker = new Worker('long-agent-task', async (job) => {
+  // Phase 54: durable task graph run — leased, checkpointed, crash-resumable.
+  // BullMQ retries are SAFE here (unlike turns): every node checkpoints and
+  // effect nodes are exactly-once, so a re-delivery resumes instead of
+  // duplicating work.
+  if (job.name === 'durable-task' && job.data?.workflowRunId) {
+    const { runDurableTaskOnWorker } = await import('./agent-task-runner.mjs')
+    const result = await runDurableTaskOnWorker({ sb: supabase, runId: job.data.workflowRunId })
+    console.log(`[worker] durable-task ${job.data.workflowRunId} → ${result.status} (${result.completed.length} nodes)`)
+    if (result.status === 'blocked' || result.status === 'lease_unavailable') {
+      // Let BullMQ's backoff retry resume it later.
+      throw new Error(`durable task ${result.status}: ${result.blocker ?? 'lease held elsewhere'}`)
+    }
+    return
+  }
+
   // A2: owner web turn enqueued by /api/assistant/turn. Identified by turnId.
   // Runs the turn via the chat route in stream mode and republishes events to
   // Redis + the agent_turn_events log so the client can tail/replay it.
@@ -1546,6 +1594,50 @@ const heartbeatInterval = startHeartbeatLoop({
   hasSchedulers: Boolean(schedulerQueue),
 })
 const healthPingInterval = startHealthPingLoop()
+
+// Phase 53 — effect-outbox dispatcher (OFF by default; readiness gates flip it).
+// Dispatch posts the run back to the app's assistant surface, where the guard +
+// effect engine own execution; the worker only drives retries/dead-letter.
+if (process.env.AGENT_EFFECT_ENGINE === 'true') {
+  const { startEffectWorkerLoop } = await import('./effect-worker.mjs')
+  startEffectWorkerLoop({
+    sb: supabase,
+    dispatch: async (run) => {
+      try {
+        const res = await fetch(`${getAppUrl()}/api/assistant/internal/health`, {
+          method: 'GET',
+          headers: { 'x-agent-internal-token': getInternalToken() },
+        })
+        // Phase 54 wires real dispatch (durable task graph); until then the
+        // dispatcher only confirms app reachability and reports not-ok so rows
+        // back off instead of silently draining.
+        return res.ok
+          ? { ok: false, error: `dispatch target for tool ${run.tool} not wired yet (Phase 54)` }
+          : { ok: false, error: `app unreachable: ${res.status}` }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  })
+  console.log('[worker] Phase 53 effect-outbox dispatcher started')
+
+  // Phase 58 — continuous reconciler: stale executing → unknown, stuck
+  // unknowns → owner alert, expired outbox leases → released.
+  const { startAutonomyReconcilerLoop } = await import('./autonomy-reconciler.mjs')
+  startAutonomyReconcilerLoop({
+    sb: supabase,
+    notify: async (message) => {
+      try {
+        await fetch(`${getAppUrl()}/api/assistant/internal/urgent-alert`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
+          body: JSON.stringify({ tier: 2, title: '⚠️ অনিশ্চিত effect', message, voice: false, category: 'effect_unknown' }),
+        }).catch(() => {})
+      } catch { /* alert best-effort */ }
+    },
+  })
+  console.log('[worker] Phase 58 autonomy reconciler started')
+}
 
 startTwilioHttpServer()
 if (runSchedulerJobFn) setRetriggerHandler(runSchedulerJobFn)

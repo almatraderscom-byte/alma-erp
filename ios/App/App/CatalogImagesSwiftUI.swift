@@ -440,6 +440,7 @@ struct CatalogImagesScreen: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("সার্চ মুছুন")
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
@@ -905,6 +906,7 @@ private struct CatalogImageDetailSheet: View {
                                     .font(.footnote)
                                     .foregroundStyle(.white, .black.opacity(0.55))
                                     .padding(3)
+                                    .accessibilityLabel("ছবি সরান")
                             }
                             .buttonStyle(.plain)
                             .disabled(busy)
@@ -1002,6 +1004,7 @@ private struct CatalogImageDetailSheet: View {
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
                         .padding(5).background(CatalogImagePalette.red500, in: Circle())
+                        .accessibilityLabel("ডিলিট নিশ্চিত করুন")
                 }
                 .buttonStyle(.plain).disabled(busy)
                 Button { confirmDeleteId = nil } label: {
@@ -1017,6 +1020,7 @@ private struct CatalogImageDetailSheet: View {
                 Image(systemName: "trash")
                     .font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
                     .padding(5).background(Color.black.opacity(0.55), in: Circle())
+                    .accessibilityLabel("ছবি ডিলিট করুন")
             }
             .buttonStyle(.plain).disabled(busy).padding(4)
         }

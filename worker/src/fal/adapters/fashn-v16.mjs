@@ -31,7 +31,7 @@ export function resolveFashnCategory({ clothType, fashnCategory }) {
 }
 
 /** Build the exact fal FASHN v1.6 payload (exported for contract tests). */
-export function buildFashnV16Input({ modelDataUri, garmentDataUri, category, mode, seed }) {
+export function buildFashnV16Input({ modelDataUri, garmentDataUri, category, mode, seed, garmentPhotoType }) {
   if (!CATEGORIES.has(category)) throw new Error(`invalid category: ${category}`)
   return {
     model_image: modelDataUri,
@@ -40,13 +40,20 @@ export function buildFashnV16Input({ modelDataUri, garmentDataUri, category, mod
     mode: MODES.has(mode) ? mode : 'balanced',
     output_format: 'png',
     num_samples: 1,
+    // supplier photos are worn (model/mannequin) — telling FASHN improves extraction
+    ...(['model', 'flat-lay'].includes(garmentPhotoType) ? { garment_photo_type: garmentPhotoType } : {}),
     ...(Number.isFinite(seed) ? { seed } : {}),
   }
 }
 
 export async function processFashnV16({ supabase, pendingActionId, payload, logCost }) {
-  const { productImagePath, modelImagePath } = payload
-  if (!productImagePath || !modelImagePath) throw new Error('fashn-v16 needs productImagePath + modelImagePath')
+  const { productImagePath, modelImagePath: rawModelImagePath } = payload
+  if (!productImagePath || !rawModelImagePath) throw new Error('fashn-v16 needs productImagePath + modelImagePath')
+
+  // reseller model photos may carry a dark marketing plate — FASHN keeps the
+  // model background, so scrub it first (free, kv-cached, fail-open)
+  const { cleanModelPhoto } = await import('../../photo-cleanup.mjs')
+  const modelImagePath = await cleanModelPhoto({ supabase, imagePath: rawModelImagePath })
 
   const [modelDataUri, garmentDataUri] = await Promise.all([
     storagePathToNormalizedDataUri(supabase, modelImagePath),
@@ -69,6 +76,7 @@ export async function processFashnV16({ supabase, pendingActionId, payload, logC
       category,
       mode: payload.generationMode,
       seed: payload.seed,
+      garmentPhotoType: payload.garmentPhotoType,
     })
     const fingerprint = falInputFingerprint(FASHN_V16_ENDPOINT, {
       modelImagePath,

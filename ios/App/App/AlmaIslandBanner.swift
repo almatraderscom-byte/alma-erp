@@ -59,11 +59,29 @@ final class AlmaIslandWatch {
     private var window: PassthroughWindow?
 
     func install() {
+        // IOSP-4: the 30s office-notification poll is scene-aware — suspended in the
+        // background (nothing to surface there; the Island window only shows on a
+        // foreground screen) and resumed on foreground. Removes idle background work.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(resumePoll),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(suspendPoll),
+            name: UIApplication.didEnterBackgroundNotification, object: nil)
+        resumePoll()
+        Task { await poll() } // seed immediately
+    }
+
+    @objc private func resumePoll() {
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { await self?.poll() }
         }
-        Task { await poll() } // seed immediately
+    }
+
+    @objc private func suspendPoll() {
+        timer?.invalidate()
+        timer = nil
     }
 
     private func poll() async {
@@ -79,14 +97,11 @@ final class AlmaIslandWatch {
 
     @MainActor private func present(_ n: IslandNotice) {
         guard window == nil else { return } // one at a time; the next poll re-finds anything missed
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive })
-            ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
-        else { return }
+        // IOSP-2: shared scene lookup + z-order via AlmaOverlayCoordinator.
+        guard let scene = AlmaOverlayCoordinator.shared.foregroundScene() else { return }
 
         let w = PassthroughWindow(windowScene: scene)
-        w.windowLevel = .normal + 2 // above the chat head, below system alerts
+        w.windowLevel = AlmaOverlayCoordinator.Level.island
         w.backgroundColor = .clear
         let host = UIHostingController(rootView: AlmaIslandView(
             kind: n.kind, title: n.title, body: n.body ?? "",
@@ -119,6 +134,7 @@ private struct AlmaIslandView: View {
 
     @State private var open = false
     @State private var confetti = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(kind: String, title: String, body: String, onDone: @escaping () -> Void) {
         self.kind = kind
@@ -139,13 +155,22 @@ private struct AlmaIslandView: View {
             island
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // IOSP-2: the whole pill reads as one VoiceOver element with its message.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title). \(body_)")
         .onAppear {
-            withAnimation(.spring(response: 0.55, dampingFraction: 0.68).delay(0.42)) { open = true }
-            if good {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { confetti = true }
+            // IOSP-2: Reduce Motion → open instantly and skip the confetti burst.
+            if reduceMotion {
+                open = true
+            } else {
+                withAnimation(.spring(response: 0.55, dampingFraction: 0.68).delay(0.42)) { open = true }
+                if good {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { confetti = true }
+                }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 5.2) {
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) { open = false }
+                if reduceMotion { open = false }
+                else { withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) { open = false } }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 5.8) { onDone() }
         }
@@ -183,7 +208,12 @@ private struct AlmaIslandView: View {
             }
         }
         .foregroundStyle(.white)
-        .frame(width: open ? min(UIScreen.main.bounds.width - 22, 560) : 110, height: open ? 74 : 30)
+        // IOSP-2: width from the layout container (capped 560 + 11pt side insets),
+        // not UIScreen.main.bounds — which is wrong under split-view/stage-manager
+        // and on external displays. Closed pill stays a fixed 110.
+        .frame(maxWidth: open ? 560 : 110)
+        .frame(height: open ? 74 : 30)
+        .padding(.horizontal, open ? 11 : 0)
         .background(Color(red: 0.05, green: 0.05, blue: 0.07).opacity(0.94),
                     in: RoundedRectangle(cornerRadius: open ? 26 : 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: open ? 26 : 24, style: .continuous)

@@ -286,6 +286,7 @@ enum ExpensesDateFilter: String, CaseIterable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class ExpensesVM {
     var expenses: [ExpenseLedgerRow] = []
     var totalExpenses = 0

@@ -1,0 +1,17 @@
+== Live Activity 160pt budget fix — 2026-07-17 (owner device-hit on build 76) ==
+Authoritative limit: Apple renderer metrics height=Dynamic<64.00, 160.00>
+(219 samples in sim log) = hard 160pt cap for BOTH the lock-screen card and
+the expanded island. Island bottom region budget ≈ 160 − header(~44) − insets,
+target ≤92.
+
+BEFORE (build 76, measured by ImageRenderer probe):
+  lock approval 176pt / lock orders 172pt  → top clipped on device
+  island bottom approval ~121pt            → buttons clipped on device
+AFTER:
+  lock approval 156 / lock orders 157      (≤160 ✓)
+  bottom approval 83 / orders 89 / tasks 83 (≤92 ✓)
+
+Changes: lock = ONE contextual row (callout OR first feed row, never a stack),
+A-tile 42→32, tighter fonts/paddings; island = no footer on the button page,
+single-card tasks page, slimmer card/buttons. Probe: /tmp/islandprobe recipe
+(swiftc + widget sources + fixture), prints measured heights.

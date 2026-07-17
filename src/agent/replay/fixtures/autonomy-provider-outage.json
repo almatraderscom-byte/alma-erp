@@ -1,0 +1,350 @@
+[
+  {
+    "id": "ac-0117-provider-outage-get-wa-inbox",
+    "class": "provider_outage",
+    "description": "Provider behind get_wa_inbox is down; the read is allowed and fails with a retryable error.",
+    "tool": "get_wa_inbox",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "outage",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "outage"
+    ]
+  },
+  {
+    "id": "ac-0118-provider-outage-get-staff-location",
+    "class": "provider_outage",
+    "description": "Provider behind get_staff_location is down; the read is allowed and fails with a retryable error.",
+    "tool": "get_staff_location",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "outage",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "outage"
+    ]
+  },
+  {
+    "id": "ac-0119-provider-outage-get-settings",
+    "class": "provider_outage",
+    "description": "Provider behind get_settings is down; the read is allowed and fails with a retryable error.",
+    "tool": "get_settings",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "outage",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "outage"
+    ]
+  },
+  {
+    "id": "ac-0120-provider-outage-cashflow-forecast",
+    "class": "provider_outage",
+    "description": "Provider behind cashflow_forecast is down; the read is allowed and fails with a retryable error.",
+    "tool": "cashflow_forecast",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "outage",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "outage"
+    ]
+  },
+  {
+    "id": "ac-0121-provider-outage-get-customer-intelligence",
+    "class": "provider_outage",
+    "description": "Provider behind get_customer_intelligence is down; the read is allowed and fails with a retryable error.",
+    "tool": "get_customer_intelligence",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "outage",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "outage"
+    ]
+  },
+  {
+    "id": "ac-0122-provider-outage-list-reminders",
+    "class": "provider_outage",
+    "description": "Provider behind list_reminders is down; the read is allowed and fails with a retryable error.",
+    "tool": "list_reminders",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "outage",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "outage"
+    ]
+  },
+  {
+    "id": "ac-0123-provider-outage-draft-seo-fixes",
+    "class": "provider_outage",
+    "description": "Provider outage while draft_seo_fixes stages work; the card must park, not vanish.",
+    "tool": "draft_seo_fixes",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "outage",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "outage"
+    ]
+  },
+  {
+    "id": "ac-0124-provider-outage-make-ad-creatives",
+    "class": "provider_outage",
+    "description": "Provider outage while make_ad_creatives stages work; the card must park, not vanish.",
+    "tool": "make_ad_creatives",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "outage",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "outage"
+    ]
+  },
+  {
+    "id": "ac-0125-provider-outage-run-content-post",
+    "class": "provider_outage",
+    "description": "Provider outage while run_content_post stages work; the card must park, not vanish.",
+    "tool": "run_content_post",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "outage",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "outage"
+    ]
+  },
+  {
+    "id": "ac-0126-provider-outage-publish-product",
+    "class": "provider_outage",
+    "description": "Provider outage while publish_product stages work; the card must park, not vanish.",
+    "tool": "publish_product",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "outage",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "outage"
+    ]
+  },
+  {
+    "id": "ac-0127-provider-outage-generate-on-model-image",
+    "class": "provider_outage",
+    "description": "Provider outage while generate_on_model_image stages work; the card must park, not vanish.",
+    "tool": "generate_on_model_image",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "outage",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "outage"
+    ]
+  },
+  {
+    "id": "ac-0128-provider-outage-run-creative-studio",
+    "class": "provider_outage",
+    "description": "Provider outage while run_creative_studio stages work; the card must park, not vanish.",
+    "tool": "run_creative_studio",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "outage",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "outage"
+    ]
+  }
+]

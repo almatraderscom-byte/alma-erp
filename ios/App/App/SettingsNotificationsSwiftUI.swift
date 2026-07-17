@@ -200,6 +200,7 @@ enum SettingsNotifOptions {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class SettingsNotifVM {
     // Stats + dashboard
     var totals: SettingsNotifTotals? = nil

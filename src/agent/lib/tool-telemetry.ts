@@ -3,6 +3,7 @@
  * Writes to AgentToolEvent table; never blocks the turn.
  */
 import { prisma } from '@/lib/prisma'
+import { scrubForLog } from '@/agent/lib/security/secret-dlp'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -27,6 +28,21 @@ export interface ToolEventInput {
   detail?: Record<string, unknown> | null
 }
 
+/**
+ * Phase 58 — trace redaction: telemetry rows are queried by dashboards and
+ * sampled graders, so secrets/PII must never land in them. Deterministic DLP
+ * scrub over the structured detail payload before persist; fail-safe (an
+ * unserializable detail is dropped, never logged raw).
+ */
+function redactDetail(detail: Record<string, unknown> | null | undefined): Record<string, unknown> | undefined {
+  if (!detail) return undefined
+  try {
+    return JSON.parse(scrubForLog(JSON.stringify(detail))) as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+}
+
 export async function logToolEvent(input: ToolEventInput): Promise<void> {
   try {
     await db.agentToolEvent.create({
@@ -42,7 +58,7 @@ export async function logToolEvent(input: ToolEventInput): Promise<void> {
         turnId: input.turnId ?? null,
         phase: input.phase ?? 'tool',
         errorCode: input.errorCode ?? null,
-        detail: input.detail ?? undefined,
+        detail: redactDetail(input.detail),
       },
     })
   } catch {

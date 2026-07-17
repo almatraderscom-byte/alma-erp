@@ -129,7 +129,7 @@ async function summarizeTail(
 
   const instruction =
     'You maintain a rolling memory summary of an owner↔agent conversation so the agent keeps continuity after old turns scroll out of the live window. ' +
-    'Merge the PRIOR SUMMARY with the NEW older turns into ONE updated summary. Keep: the owner\'s goals/topics, decisions made, important facts/numbers, and open action items. ' +
+    'Merge the PRIOR SUMMARY with the NEW older turns into ONE updated summary. Keep: the owner\'s goals/topics, decisions made, standing rules/instructions the owner gave (NEVER drop a standing rule — G9 governance-decay guard), important facts/numbers, and open action items. ' +
     'Drop chit-chat. Output a tight Bangla summary (max ~10 bullets). Do not invent anything.'
   const body =
     `PRIOR SUMMARY (may be empty):\n${previousSummary || '(none)'}\n\n` +

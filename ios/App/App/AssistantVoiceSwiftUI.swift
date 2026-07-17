@@ -2033,6 +2033,7 @@ struct AlmaVoiceConsoleView: View {
                     .shadow(color: good, radius: 5)
                     .opacity(liveBlink ? 0.35 : 1)
                     .onAppear {
+                        guard !UIAccessibility.isReduceMotionEnabled else { return }
                         withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { liveBlink = true }
                     }
                 Text("LIVE").font(.system(size: 10.5, weight: .semibold)).kerning(1.9).foregroundStyle(good)
@@ -2223,6 +2224,7 @@ struct AlmaVoiceConsoleView: View {
                                     }
                                 Button { engine.removeImage(img.id) } label: {
                                     Image(systemName: "xmark.circle.fill")
+                                        .accessibilityLabel("ছবি সরান")
                                         .font(.system(size: 15)).foregroundStyle(.white, .black.opacity(0.5))
                                 }
                                 .offset(x: 5, y: -5)

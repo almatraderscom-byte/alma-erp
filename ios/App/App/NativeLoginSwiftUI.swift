@@ -212,6 +212,7 @@ struct NativeLoginScreen: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(showPassword ? "পাসওয়ার্ড লুকান" : "পাসওয়ার্ড দেখান")
                 }
             }
 

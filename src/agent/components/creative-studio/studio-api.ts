@@ -589,6 +589,43 @@ export async function deleteGarmentCache(key: string) {
   if (!res.ok) throw new Error('cache_delete_failed')
 }
 
+// ── CS12: engine health + kill switches ─────────────────────────────────────
+
+export type StudioHealth = {
+  windowDays: number
+  engines: Array<{
+    engine: string
+    labelBn: string
+    jobs: number
+    failed: number
+    errorRatePct: number
+    qcPassRatePct: number | null
+    p50LatencyMs: number | null
+    p95LatencyMs: number | null
+    spendUsd: number
+    killed: boolean
+  }>
+  kills: Record<string, boolean>
+  canaryPct: number
+  worker: { heartbeatAt: string | null; heartbeatAgeSec: number | null; healthy: boolean }
+  balances: Array<{ id: string; label: string; balanceUsd: number | null; monthUsd: number | null }>
+}
+
+export async function fetchStudioHealth(): Promise<StudioHealth> {
+  const res = await fetch('/api/assistant/creative-studio/health')
+  if (!res.ok) throw new Error('health_failed')
+  return res.json()
+}
+
+export async function setEngineKill(id: string, killed: boolean): Promise<void> {
+  const res = await fetch('/api/assistant/creative-studio/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ killEngine: { id, killed } }),
+  })
+  if (!res.ok) throw new Error('kill_save_failed')
+}
+
 // ── CS10: golden evaluation helpers ─────────────────────────────────────────
 
 export type GoldenEvalSummary = {

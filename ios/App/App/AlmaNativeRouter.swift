@@ -116,6 +116,12 @@ enum AlmaNativeRouter {
             if let clientId = pathParam(clean, after: "/digital/clients/") {
                 return host(DigitalClientsScreen(openWeb: openWebForced, focusClientId: clientId), "Client")
             }
+            // IOSP-1: trading account detail links (/trading/accounts/{id}) were the
+            // last audited dynamic route still falling to web — the native list
+            // opens with that account's detail sheet focused.
+            if let accountId = pathParam(clean, after: "/trading/accounts/") {
+                return host(TradingAccountsScreen(openWeb: openWebForced, focusAccountId: accountId), "Trading account")
+            }
             return nil
         }
     }

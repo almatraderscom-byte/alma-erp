@@ -156,3 +156,32 @@ describe('provider registry — availability snapshot', () => {
     expect(list.find((e) => e.id === 'fal_flux_fill')!.enabled).toBe(true)
   })
 })
+
+describe('CS12 — kill switches + canary (pure)', () => {
+  it('killed engine reports enabled:false regardless of flags', async () => {
+    const { describeEngineAvailability: dea, CS_FAL_ENABLED_KEY: FAL } = await import('../provider-registry')
+    const list = dea({
+      fashnConfigured: true,
+      geminiConfigured: true,
+      falConfigured: true,
+      flags: { [FAL]: true },
+      kills: { fal_fashn_v16: true },
+    })
+    const v16 = list.find((e) => e.id === 'fal_fashn_v16')!
+    expect(v16.killed).toBe(true)
+    expect(v16.enabled).toBe(false)
+    expect(list.find((e) => e.id === 'fashn')!.killed).toBe(false)
+  })
+
+  it('canary pct normalizes and routes deterministically with injected rand', async () => {
+    const { applyCanary, normalizeCanaryPct, engineKillKey } = await import('../provider-registry')
+    expect(normalizeCanaryPct('250')).toBe(100)
+    expect(normalizeCanaryPct(-5)).toBe(0)
+    expect(normalizeCanaryPct('12.6')).toBe(13)
+    expect(normalizeCanaryPct('junk')).toBe(0)
+    expect(applyCanary('a', 'b', 0, () => 0)).toBe('a')
+    expect(applyCanary('a', 'b', 20, () => 0.19)).toBe('b')
+    expect(applyCanary('a', 'b', 20, () => 0.21)).toBe('a')
+    expect(engineKillKey('fal_idm_vton')).toBe('cs_engine_kill:fal_idm_vton')
+  })
+})

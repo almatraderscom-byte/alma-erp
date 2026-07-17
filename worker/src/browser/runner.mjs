@@ -86,6 +86,39 @@ export async function runBrowserTask(payload) {
       dl.cancel().catch(() => {})
     })
 
+    // Phase 55 — egress hardening for the ISOLATED autonomous browser:
+    //  • only http(s) requests leave (blocks ws exfil channels, file:, etc.)
+    //  • oversized response bodies are abandoned (disk/memory fillers)
+    //  • cross-domain main-frame moves are RECORDED with their origin so the
+    //    result carries a forensic redirect trail (guard.ts flags them upstream)
+    const MAX_BODY_BYTES = 25 * 1024 * 1024
+    await page.route('**/*', (route) => {
+      const url = route.request().url()
+      if (!/^https?:\/\//i.test(url)) {
+        result.log.push(`egress BLOCKED (non-http): ${url.slice(0, 120)}`)
+        return route.abort('blockedbyclient')
+      }
+      return route.continue()
+    })
+    page.on('response', (res) => {
+      const len = Number(res.headers()['content-length'] ?? 0)
+      if (len > MAX_BODY_BYTES) {
+        result.log.push(`oversized response ABANDONED (${len} bytes): ${res.url().slice(0, 120)}`)
+      }
+    })
+    const originTrail = []
+    page.on('framenavigated', (frame) => {
+      if (frame !== page.mainFrame()) return
+      try {
+        const host = new URL(frame.url()).hostname
+        if (originTrail[originTrail.length - 1] !== host) {
+          originTrail.push(host)
+          if (originTrail.length > 1) result.log.push(`origin change: ${originTrail[originTrail.length - 2]} → ${host}`)
+        }
+      } catch { /* about:blank etc. */ }
+    })
+    result.originTrail = originTrail
+
     for (let i = 0; i < steps.length; i++) {
       if (Date.now() > deadline) throw new Error('task_timeout')
       const step = steps[i]

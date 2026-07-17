@@ -250,6 +250,7 @@ private struct InventoryCreateResponse: Decodable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class InventoryVM {
     var items: [InventoryStockItem] = []
     var totalSkus = 0

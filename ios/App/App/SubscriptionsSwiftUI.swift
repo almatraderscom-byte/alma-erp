@@ -238,7 +238,8 @@ struct SubscriptionsScreen: View {
         .refreshable { await vm.load() }
         .task { await vm.load() }
         .toolbar { ToolbarItem(placement: .topBarTrailing) {
-            Button { editing = nil; showEditor = true } label: { Image(systemName: "plus") } } }
+            Button { editing = nil; showEditor = true } label: { Image(systemName: "plus") }
+                .accessibilityLabel("নতুন সাবস্ক্রিপশন") } }
         .sheet(isPresented: $showEditor) { SubEditor(existing: editing, vm: vm) }
         .sensoryFeedback(.success, trigger: vm.changeTick)
         .sensoryFeedback(.impact(weight: .light), trigger: showEditor)
@@ -378,7 +379,8 @@ struct SubscriptionsScreen: View {
                     .overlay(Capsule().strokeBorder(s.status.color.opacity(0.28), lineWidth: 1))
                 Spacer()
                 Button { editing = s; showEditor = true } label: {
-                    Image(systemName: "pencil").font(.system(size: 13)).foregroundStyle(.secondary)
+                    Image(systemName: "pencil")
+                        .accessibilityLabel("সম্পাদনা করুন").font(.system(size: 13)).foregroundStyle(.secondary)
                         .frame(width: 29, height: 29).subGlass(scheme, corner: 9)
                 }.buttonStyle(SubPress())
             }.padding(.top, 12)

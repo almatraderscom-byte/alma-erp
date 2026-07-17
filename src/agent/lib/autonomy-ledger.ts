@@ -11,9 +11,13 @@
  *   • buildAutonomyDigest — the once-a-day "here's what I handled for you, undo any?"
  *     report, so autonomy is always transparent, never a black box.
  *
- * Storage: a CAPPED ring buffer in agent_kv_settings (`autonomy_action_log`) — no
- * migration, consistent with the quiet-hours queue / silence-ladder KV patterns.
- * Best-effort and fail-safe: a logging glitch must never break the action it records.
+ * Storage (Phase 53): the SOURCE OF TRUTH is the durable effect engine
+ * (agent_action_runs + append-only agent_effect_ledger). The capped KV ring in
+ * agent_kv_settings (`autonomy_action_log`) is retained ONLY as a derived
+ * recent-view cache for the fast digest/undo paths — it is never authoritative.
+ * New effect flows must go through effects/action-run.executeEffect, where a
+ * ledger failure BLOCKS the effect; this legacy recorder mirrors durable-first
+ * for call sites that record after the fact.
  */
 import { prisma } from '@/lib/prisma'
 
@@ -77,14 +81,51 @@ export async function recordAutonomousAction(entry: {
   mode: 'auto' | 'propose'
   undo?: UndoDescriptor
 }): Promise<string | null> {
+  const id = genId()
+
+  // Phase 53: durable ledger FIRST (agent_action_runs + append-only chain).
+  // The KV ring below is only the derived recent-view cache.
+  let durable = false
+  try {
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const db = prisma as any
+    await db.$transaction(async (tx: any) => {
+      const run = await tx.agentActionRun.create({
+        data: {
+          idempotencyKey: `autonomy:${id}`,
+          effectHash: id,
+          tool: entry.undo?.tool ?? 'legacy_autonomous_action',
+          surface: 'scheduler',
+          actor: 'agent',
+          instructionOrigin: entry.mode === 'auto' ? 'owner_policy' : 'model_initiative',
+          riskTier: 'R1',
+          policyVersion: 'legacy',
+          state: 'succeeded',
+          input: { category: entry.category, summary: entry.summary, mode: entry.mode },
+          proof: { kind: 'legacy_autonomy_record' },
+        },
+      })
+      await tx.agentEffectLedger.create({
+        data: { runId: run.id, seq: 1, kind: 'transition', fromState: null, toState: 'succeeded', payload: { legacy: true } },
+      })
+      await tx.agentEffectLedger.create({
+        data: { runId: run.id, seq: 2, kind: 'proof', payload: { kind: 'legacy_autonomy_record', undo: entry.undo ?? null } },
+      })
+    })
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+    durable = true
+  } catch (err) {
+    console.warn('[autonomy-ledger] durable ledger write failed (KV cache only):', err instanceof Error ? err.message : err)
+  }
+
   try {
     const log = await readLog()
-    const id = genId()
     log.push({ id, at: new Date().toISOString(), category: entry.category, summary: entry.summary, mode: entry.mode, undo: entry.undo })
     await writeLog(log.slice(-MAX_LEDGER_ENTRIES))
     return id
   } catch {
-    return null
+    // KV cache failed — the durable row (if written) still holds the truth.
+    return durable ? id : null
   }
 }
 

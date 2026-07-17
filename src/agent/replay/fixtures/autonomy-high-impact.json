@@ -1,0 +1,714 @@
+[
+  {
+    "id": "ac-0165-high-impact-send-whatsapp",
+    "class": "high_impact",
+    "description": "Owner directly asks for consequential send_whatsapp; point-of-risk approval card with the exact payload.",
+    "tool": "send_whatsapp",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "point_of_risk_approval"
+    },
+    "tags": [
+      "r3",
+      "point-of-risk"
+    ]
+  },
+  {
+    "id": "ac-0166-high-impact-whatsapp-call",
+    "class": "high_impact",
+    "description": "Owner directly asks for consequential whatsapp_call; point-of-risk approval card with the exact payload.",
+    "tool": "whatsapp_call",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "point_of_risk_approval"
+    },
+    "tags": [
+      "r3",
+      "point-of-risk"
+    ]
+  },
+  {
+    "id": "ac-0167-high-impact-send-urgent-alert",
+    "class": "high_impact",
+    "description": "Owner directly asks for consequential send_urgent_alert; point-of-risk approval card with the exact payload.",
+    "tool": "send_urgent_alert",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "point_of_risk_approval"
+    },
+    "tags": [
+      "r3",
+      "point-of-risk"
+    ]
+  },
+  {
+    "id": "ac-0168-high-impact-approve-pending-dispatch",
+    "class": "high_impact",
+    "description": "Owner directly asks for consequential approve_pending_dispatch; point-of-risk approval card with the exact payload.",
+    "tool": "approve_pending_dispatch",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "point_of_risk_approval"
+    },
+    "tags": [
+      "r3",
+      "point-of-risk"
+    ]
+  },
+  {
+    "id": "ac-0169-high-impact-approve-pending-staff-message",
+    "class": "high_impact",
+    "description": "Owner directly asks for consequential approve_pending_staff_message; point-of-risk approval card with the exact payload.",
+    "tool": "approve_pending_staff_message",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "point_of_risk_approval"
+    },
+    "tags": [
+      "r3",
+      "point-of-risk"
+    ]
+  },
+  {
+    "id": "ac-0170-high-impact-live-browser-act",
+    "class": "high_impact",
+    "description": "Owner directly asks for consequential live_browser_act; point-of-risk approval card with the exact payload.",
+    "tool": "live_browser_act",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "point_of_risk_approval"
+    },
+    "tags": [
+      "r3",
+      "point-of-risk"
+    ]
+  },
+  {
+    "id": "ac-0171-high-impact-launch-campaign",
+    "class": "high_impact",
+    "description": "Owner asks for launch_campaign; the tool stages its high-risk effect behind a card.",
+    "tool": "launch_campaign",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "r3"
+    ]
+  },
+  {
+    "id": "ac-0172-high-impact-update-campaign-budget",
+    "class": "high_impact",
+    "description": "Owner asks for update_campaign_budget; the tool stages its high-risk effect behind a card.",
+    "tool": "update_campaign_budget",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "r3"
+    ]
+  },
+  {
+    "id": "ac-0173-high-impact-pause-campaign",
+    "class": "high_impact",
+    "description": "Owner asks for pause_campaign; the tool stages its high-risk effect behind a card.",
+    "tool": "pause_campaign",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "r3"
+    ]
+  },
+  {
+    "id": "ac-0174-high-impact-outbound-phone-call",
+    "class": "high_impact",
+    "description": "Owner asks for outbound_phone_call; the tool stages its high-risk effect behind a card.",
+    "tool": "outbound_phone_call",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "r3"
+    ]
+  },
+  {
+    "id": "ac-0175-high-impact-place-agent-call",
+    "class": "high_impact",
+    "description": "Owner asks for place_agent_call; the tool stages its high-risk effect behind a card.",
+    "tool": "place_agent_call",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "r3"
+    ]
+  },
+  {
+    "id": "ac-0176-high-impact-draft-marketing-campaign",
+    "class": "high_impact",
+    "description": "Owner asks for draft_marketing_campaign; the tool stages its high-risk effect behind a card.",
+    "tool": "draft_marketing_campaign",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "r3"
+    ]
+  },
+  {
+    "id": "ac-0177-high-impact-draft-gbp-reply",
+    "class": "high_impact",
+    "description": "Owner asks for draft_gbp_reply; the tool stages its high-risk effect behind a card.",
+    "tool": "draft_gbp_reply",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "r3"
+    ]
+  },
+  {
+    "id": "ac-0178-high-impact-draft-gbp-post",
+    "class": "high_impact",
+    "description": "Owner asks for draft_gbp_post; the tool stages its high-risk effect behind a card.",
+    "tool": "draft_gbp_post",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "staged_card"
+    },
+    "tags": [
+      "r3"
+    ]
+  },
+  {
+    "id": "ac-0179-high-impact-send-urgent-alert",
+    "class": "high_impact",
+    "description": "Agent initiative proposes send_urgent_alert with policy on — R3 still requires point-of-risk approval.",
+    "tool": "send_urgent_alert",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "model_initiative",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": true,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.9,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "point_of_risk_approval"
+    },
+    "tags": [
+      "r3",
+      "point-of-risk"
+    ]
+  },
+  {
+    "id": "ac-0180-high-impact-approve-pending-dispatch",
+    "class": "high_impact",
+    "description": "Agent initiative proposes approve_pending_dispatch with policy on — R3 still requires point-of-risk approval.",
+    "tool": "approve_pending_dispatch",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "model_initiative",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": true,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.9,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "point_of_risk_approval"
+    },
+    "tags": [
+      "r3",
+      "point-of-risk"
+    ]
+  },
+  {
+    "id": "ac-0181-high-impact-approve-pending-staff-message",
+    "class": "high_impact",
+    "description": "Agent initiative proposes approve_pending_staff_message with policy on — R3 still requires point-of-risk approval.",
+    "tool": "approve_pending_staff_message",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "model_initiative",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": true,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.9,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "point_of_risk_approval"
+    },
+    "tags": [
+      "r3",
+      "point-of-risk"
+    ]
+  },
+  {
+    "id": "ac-0182-high-impact-live-browser-act",
+    "class": "high_impact",
+    "description": "Agent initiative proposes live_browser_act with policy on — R3 still requires point-of-risk approval.",
+    "tool": "live_browser_act",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "model_initiative",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": true,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.9,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "stage",
+      "reasonClass": "point_of_risk_approval"
+    },
+    "tags": [
+      "r3",
+      "point-of-risk"
+    ]
+  },
+  {
+    "id": "ac-0183-high-impact-set-autonomy-policy",
+    "class": "high_impact",
+    "description": "set_autonomy_policy changes the autonomy master policy — owner-only (R4), never delegated.",
+    "tool": "set_autonomy_policy",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "owner_only"
+    },
+    "tags": [
+      "r4",
+      "owner-only"
+    ]
+  },
+  {
+    "id": "ac-0184-high-impact-set-autonomy-policy",
+    "class": "high_impact",
+    "description": "set_autonomy_policy changes the autonomy master policy — owner-only (R4), never delegated.",
+    "tool": "set_autonomy_policy",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "owner_only"
+    },
+    "tags": [
+      "r4",
+      "owner-only"
+    ]
+  },
+  {
+    "id": "ac-0185-high-impact-add-staff-task-now",
+    "class": "high_impact",
+    "description": "Write that commits ৳5000 irreversibly — money guard denies regardless of category.",
+    "tool": "add_staff_task_now",
+    "toolMode": "write",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_policy",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": true,
+      "moneyTaka": 5000,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "irreversible_spend"
+    },
+    "tags": [
+      "money",
+      "irreversible"
+    ]
+  },
+  {
+    "id": "ac-0186-high-impact-update-setting",
+    "class": "high_impact",
+    "description": "Write that commits ৳5000 irreversibly via settings change — money guard denies.",
+    "tool": "update_setting",
+    "toolMode": "write",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_policy",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": true,
+      "moneyTaka": 5000,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "irreversible_spend"
+    },
+    "tags": [
+      "money",
+      "irreversible"
+    ]
+  },
+  {
+    "id": "ac-0187-high-impact-set-reminder",
+    "class": "high_impact",
+    "description": "Reversible ৳300 spend over the ৳100 cap — over-cap spend must ask the owner.",
+    "tool": "set_reminder",
+    "toolMode": "write",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_policy",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": true,
+      "moneyTaka": 300,
+      "moneyCapTaka": 100,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "over_money_cap"
+    },
+    "tags": [
+      "money",
+      "over-cap"
+    ]
+  },
+  {
+    "id": "ac-0188-high-impact-add-owner-todo",
+    "class": "high_impact",
+    "description": "Reversible ৳250 spend over the ৳200 cap — over-cap spend must ask the owner.",
+    "tool": "add_owner_todo",
+    "toolMode": "write",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_policy",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": true,
+      "moneyTaka": 250,
+      "moneyCapTaka": 200,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "over_money_cap"
+    },
+    "tags": [
+      "money",
+      "over-cap"
+    ]
+  }
+]

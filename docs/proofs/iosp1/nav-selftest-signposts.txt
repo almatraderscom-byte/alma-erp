@@ -1,0 +1,18 @@
+2026-07-16 18:30:37.100 Sp App[78623:307584] [com.almatraders.erp.perf:Perf] navSelfTest.route: /totally-unknown-page
+2026-07-16 18:30:37.115 Sp App[78623:307584] [com.almatraders.erp.perf:Perf] route.unknown: /totally-unknown-page
+2026-07-16 18:31:32.929 Sp App[78751:307bfd] [com.almatraders.erp.perf:Perf] navSelfTest.start: /totally-unknown-page
+2026-07-16 18:31:43.115 Sp App[78751:307bfd] [com.almatraders.erp.perf:Perf] navSelfTest.route: /totally-unknown-page
+2026-07-16 18:31:43.115 Sp App[78751:307bfd] [com.almatraders.erp.perf:Perf] route.unknown: /totally-unknown-page
+2026-07-16 18:33:26.572 Sp App[80282:309515] [com.almatraders.erp.perf:Perf] navSelfTest.start: /trading/accounts/DEEPLINK-TEST,/agent,/portal/wallet,/totally-unknown-page
+2026-07-16 18:33:36.601 Sp App[80282:309515] [com.almatraders.erp.perf:Perf] navSelfTest.route: /trading/accounts/DEEPLINK-TEST
+2026-07-16 18:33:36.624 Sp App[80282:309515] [com.almatraders.erp.perf:Perf] route.push: /trading/accounts/DEEPLINK-TEST
+2026-07-16 18:33:37.261 Sp App[80282:309515] [com.almatraders.erp.perf:Perf] route.appeared: Trading account
+2026-07-16 18:33:42.617 Sp App[80282:309515] [com.almatraders.erp.perf:Perf] navSelfTest.route: /agent
+2026-07-16 18:33:42.617 Sp App[80282:309515] [com.almatraders.erp.perf:Perf] route.tabRoot: /agent
+2026-07-16 18:33:43.470 Sp App[80282:309515] [com.almatraders.erp.perf:Perf] route.appeared: ALMA AI
+2026-07-16 18:33:48.604 Sp App[80282:309515] [com.almatraders.erp.perf:Perf] navSelfTest.route: /portal/wallet
+2026-07-16 18:33:48.605 Sp App[80282:309515] [com.almatraders.erp.perf:Perf] route.webAllowed: /portal/wallet reason=temporary-web
+2026-07-16 18:33:48.605 Sp App[80282:309515] [com.almatraders.erp.perf:Perf] route.pushWeb: /portal/wallet
+2026-07-16 18:33:54.700 Sp App[80282:309515] [com.almatraders.erp.perf:Perf] navSelfTest.route: /totally-unknown-page
+2026-07-16 18:33:54.700 Sp App[80282:309515] [com.almatraders.erp.perf:Perf] route.unknown: /totally-unknown-page
+2026-07-16 18:33:59.993 Sp App[80282:309515] [com.almatraders.erp.perf:Perf] route.appeared: ALMA AI
