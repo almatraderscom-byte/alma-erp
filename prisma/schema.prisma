@@ -2121,6 +2121,120 @@ model WorkflowRunEvent {
   @@map("workflow_run_events")
 }
 
+/// Phase 56 — one row per connected external/internal service (the personal/
+/// business OS adapter registry state). An adapter is NEVER 'ready' from OAuth
+/// success alone — readiness requires its sandbox cases to pass first.
+model AgentServiceConnection {
+  id            String    @id @default(uuid())
+  /// Adapter id, e.g. 'personal-records', 'erp-orders'.
+  service       String    @unique
+  /// personal | business
+  scope         String
+  /// disconnected | sandbox | connected | paused | revoked
+  status        String    @default("disconnected")
+  /// Least-privilege grants actually held (adapter capability ops subset).
+  grantedOps    Json      @map("granted_ops")
+  /// sandbox_pending | sandbox_passed | ready
+  readiness     String    @default("sandbox_pending")
+  health        Json?
+  /// Retention window for data cached from this service.
+  retentionDays Int       @default(90) @map("retention_days")
+  connectedAt   DateTime? @map("connected_at")
+  pausedAt      DateTime? @map("paused_at")
+  revokedAt     DateTime? @map("revoked_at")
+  dataDeletedAt DateTime? @map("data_deleted_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([scope, status])
+  @@map("agent_service_connections")
+}
+
+/// Phase 53 — one row per intended EXTERNAL EFFECT (the exactly-once unit).
+/// State machine: proposed → policy_checked → awaiting_approval|claimed →
+/// executing → verifying → succeeded; repair/terminal: denied, expired,
+/// failed_retryable, failed_final, unknown_effect, compensating, compensated.
+model AgentActionRun {
+  id                String    @id @default(uuid())
+  /// Deterministic exactly-once key (capability-token.buildIdempotencyKey).
+  idempotencyKey    String    @unique @map("idempotency_key")
+  /// Normalized effect hash (canonical input) — payload identity for approvals.
+  effectHash        String    @map("effect_hash")
+  tool              String
+  surface           String    @default("owner")
+  actor             String    @default("owner")
+  instructionOrigin String    @default("owner_direct") @map("instruction_origin")
+  conversationId    String?   @map("conversation_id")
+  turnId            String?   @map("turn_id")
+  businessId        String?   @map("business_id")
+  riskTier          String    @map("risk_tier")
+  policyVersion     String    @map("policy_version")
+  approvalRef       String?   @map("approval_ref")
+  state             String    @default("proposed")
+  /// Optimistic concurrency — transitions must present the version they read.
+  stateVersion      Int       @default(1) @map("state_version")
+  attempts          Int       @default(0)
+  input             Json
+  destination       String?
+  /// Provider receipt (message id / call sid / post id …).
+  providerRef       String?   @map("provider_ref")
+  /// Independent postcondition evidence (claim-verifier / re-read / receipt).
+  proof             Json?
+  /// Stored final result envelope for idempotent replay of completed runs.
+  result            Json?
+  costUsd           Float?    @map("cost_usd")
+  /// Whole-taka money this effect commits (BDT rule — integers only).
+  moneyTaka         Int?      @map("money_taka")
+  error             String?   @db.Text
+  /// Set when this run compensates (undoes) another run.
+  compensationOfId  String?   @map("compensation_of_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  ledger            AgentEffectLedger[]
+
+  @@index([state, updatedAt])
+  @@index([conversationId, createdAt])
+  @@index([tool, createdAt])
+  @@map("agent_action_runs")
+}
+
+/// Phase 53 — APPEND-ONLY effect ledger. One row per transition/receipt/proof/
+/// compensation evidence. Never updated, never deleted; ledger write failure
+/// aborts the transition transaction (logging failure blocks the write).
+model AgentEffectLedger {
+  id        String         @id @default(uuid())
+  runId     String         @map("run_id")
+  run       AgentActionRun @relation(fields: [runId], references: [id])
+  /// Per-run monotonic sequence — (runId, seq) unique makes the chain gapless.
+  seq       Int
+  /// transition | receipt | evidence | proof | compensation | note
+  kind      String
+  fromState String?        @map("from_state")
+  toState   String?        @map("to_state")
+  payload   Json?
+  at        DateTime       @default(now())
+
+  @@unique([runId, seq])
+  @@index([runId, at])
+  @@map("agent_effect_ledger")
+}
+
+/// Phase 53 — transactional outbox: dispatch intents committed atomically with
+/// the action run; the VPS effect worker leases and dispatches them.
+model AgentEffectOutbox {
+  id          String    @id @default(uuid())
+  runId       String    @unique @map("run_id")
+  dueAt       DateTime  @default(now()) @map("due_at")
+  leaseUntil  DateTime? @map("lease_until")
+  leaseOwner  String?   @map("lease_owner")
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5) @map("max_attempts")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([dueAt, leaseUntil])
+  @@map("agent_effect_outbox")
+}
+
 model AgentTurn {
   id                    String    @id @default(uuid())
   conversationId        String    @map("conversation_id")

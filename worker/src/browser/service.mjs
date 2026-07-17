@@ -12,6 +12,26 @@ import { Worker } from 'bullmq'
 import { getAppUrl, getInternalToken } from '../env.mjs'
 import { runBrowserTask } from './runner.mjs'
 
+// Phase 55 — the autonomous browser runs in an ISOLATED profile/process
+// (this dedicated PM2 service + fresh ephemeral Playwright context per task;
+// the supervised owner-Chrome companion is a separate mode entirely). The
+// security quarantine is honoured before every task: after a critical
+// incident the app flips agent_kv_settings['security_quarantine'] and this
+// worker refuses new tasks until the owner clears it.
+async function isSecurityQuarantined() {
+  try {
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/health?check=security_quarantine`, {
+      headers: { Authorization: `Bearer ${getInternalToken()}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return true // fail closed — can't verify security state
+    const body = await res.json().catch(() => null)
+    return body?.securityQuarantine === true
+  } catch {
+    return true // fail closed
+  }
+}
+
 const required = ['REDIS_URL', 'APP_URL', 'AGENT_INTERNAL_TOKEN']
 for (const key of required) {
   if (!process.env[key]) {
@@ -60,6 +80,11 @@ const worker = new Worker(
       return
     }
     console.log(`[browser-worker] running task ${pendingActionId}: ${String(payload?.goal ?? '').slice(0, 80)}`)
+    if (await isSecurityQuarantined()) {
+      await callJobResult(pendingActionId, 'failed', undefined, 'security_quarantine — autonomous browser paused until the owner clears the incident')
+      console.warn(`[browser-worker] task ${pendingActionId} refused — security quarantine active (or unverifiable, fail closed)`)
+      return
+    }
     try {
       const result = await runBrowserTask(payload ?? {})
       if (result.ok) {

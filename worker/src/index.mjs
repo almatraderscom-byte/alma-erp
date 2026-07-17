@@ -1025,6 +1025,21 @@ await sweepWorkbenchWorkspaces()
 const workbenchJanitorInterval = setInterval(sweepWorkbenchWorkspaces, 6 * 60 * 60 * 1000)
 
 const longTaskWorker = new Worker('long-agent-task', async (job) => {
+  // Phase 54: durable task graph run — leased, checkpointed, crash-resumable.
+  // BullMQ retries are SAFE here (unlike turns): every node checkpoints and
+  // effect nodes are exactly-once, so a re-delivery resumes instead of
+  // duplicating work.
+  if (job.name === 'durable-task' && job.data?.workflowRunId) {
+    const { runDurableTaskOnWorker } = await import('./agent-task-runner.mjs')
+    const result = await runDurableTaskOnWorker({ sb: supabase, runId: job.data.workflowRunId })
+    console.log(`[worker] durable-task ${job.data.workflowRunId} → ${result.status} (${result.completed.length} nodes)`)
+    if (result.status === 'blocked' || result.status === 'lease_unavailable') {
+      // Let BullMQ's backoff retry resume it later.
+      throw new Error(`durable task ${result.status}: ${result.blocker ?? 'lease held elsewhere'}`)
+    }
+    return
+  }
+
   // A2: owner web turn enqueued by /api/assistant/turn. Identified by turnId.
   // Runs the turn via the chat route in stream mode and republishes events to
   // Redis + the agent_turn_events log so the client can tail/replay it.
@@ -1470,6 +1485,50 @@ const heartbeatInterval = startHeartbeatLoop({
   hasSchedulers: Boolean(schedulerQueue),
 })
 const healthPingInterval = startHealthPingLoop()
+
+// Phase 53 — effect-outbox dispatcher (OFF by default; readiness gates flip it).
+// Dispatch posts the run back to the app's assistant surface, where the guard +
+// effect engine own execution; the worker only drives retries/dead-letter.
+if (process.env.AGENT_EFFECT_ENGINE === 'true') {
+  const { startEffectWorkerLoop } = await import('./effect-worker.mjs')
+  startEffectWorkerLoop({
+    sb: supabase,
+    dispatch: async (run) => {
+      try {
+        const res = await fetch(`${getAppUrl()}/api/assistant/internal/health`, {
+          method: 'GET',
+          headers: { 'x-agent-internal-token': getInternalToken() },
+        })
+        // Phase 54 wires real dispatch (durable task graph); until then the
+        // dispatcher only confirms app reachability and reports not-ok so rows
+        // back off instead of silently draining.
+        return res.ok
+          ? { ok: false, error: `dispatch target for tool ${run.tool} not wired yet (Phase 54)` }
+          : { ok: false, error: `app unreachable: ${res.status}` }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  })
+  console.log('[worker] Phase 53 effect-outbox dispatcher started')
+
+  // Phase 58 — continuous reconciler: stale executing → unknown, stuck
+  // unknowns → owner alert, expired outbox leases → released.
+  const { startAutonomyReconcilerLoop } = await import('./autonomy-reconciler.mjs')
+  startAutonomyReconcilerLoop({
+    sb: supabase,
+    notify: async (message) => {
+      try {
+        await fetch(`${getAppUrl()}/api/assistant/internal/urgent-alert`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
+          body: JSON.stringify({ tier: 2, title: '⚠️ অনিশ্চিত effect', message, voice: false, category: 'effect_unknown' }),
+        }).catch(() => {})
+      } catch { /* alert best-effort */ }
+    },
+  })
+  console.log('[worker] Phase 58 autonomy reconciler started')
+}
 
 startTwilioHttpServer()
 if (runSchedulerJobFn) setRetriggerHandler(runSchedulerJobFn)

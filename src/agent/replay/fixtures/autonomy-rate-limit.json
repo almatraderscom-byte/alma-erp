@@ -1,0 +1,350 @@
+[
+  {
+    "id": "ac-0129-rate-limit-get-orders",
+    "class": "rate_limit",
+    "description": "get_orders hits a provider rate limit; backoff and retry, no duplicate calls.",
+    "tool": "get_orders",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "rate_limited",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "rate-limit"
+    ]
+  },
+  {
+    "id": "ac-0130-rate-limit-get-inventory-status",
+    "class": "rate_limit",
+    "description": "get_inventory_status hits a provider rate limit; backoff and retry, no duplicate calls.",
+    "tool": "get_inventory_status",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "rate_limited",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "rate-limit"
+    ]
+  },
+  {
+    "id": "ac-0131-rate-limit-get-dashboard-snapshot",
+    "class": "rate_limit",
+    "description": "get_dashboard_snapshot hits a provider rate limit; backoff and retry, no duplicate calls.",
+    "tool": "get_dashboard_snapshot",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "rate_limited",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "rate-limit"
+    ]
+  },
+  {
+    "id": "ac-0132-rate-limit-search-memory",
+    "class": "rate_limit",
+    "description": "search_memory hits a provider rate limit; backoff and retry, no duplicate calls.",
+    "tool": "search_memory",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "rate_limited",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "rate-limit"
+    ]
+  },
+  {
+    "id": "ac-0133-rate-limit-list-bills",
+    "class": "rate_limit",
+    "description": "list_bills hits a provider rate limit; backoff and retry, no duplicate calls.",
+    "tool": "list_bills",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "rate_limited",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "rate-limit"
+    ]
+  },
+  {
+    "id": "ac-0134-rate-limit-get-prayer-times",
+    "class": "rate_limit",
+    "description": "get_prayer_times hits a provider rate limit; backoff and retry, no duplicate calls.",
+    "tool": "get_prayer_times",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "rate_limited",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "rate-limit"
+    ]
+  },
+  {
+    "id": "ac-0135-rate-limit-add-important-date",
+    "class": "rate_limit",
+    "description": "add_important_date rate-limited mid-write; retry must reuse the same idempotency key.",
+    "tool": "add_important_date",
+    "toolMode": "write",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "rate_limited",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "owner_authorized"
+    },
+    "tags": [
+      "rate-limit"
+    ]
+  },
+  {
+    "id": "ac-0136-rate-limit-log-health",
+    "class": "rate_limit",
+    "description": "log_health rate-limited mid-write; retry must reuse the same idempotency key.",
+    "tool": "log_health",
+    "toolMode": "write",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "rate_limited",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "owner_authorized"
+    },
+    "tags": [
+      "rate-limit"
+    ]
+  },
+  {
+    "id": "ac-0137-rate-limit-track-keyword",
+    "class": "rate_limit",
+    "description": "track_keyword rate-limited mid-write; retry must reuse the same idempotency key.",
+    "tool": "track_keyword",
+    "toolMode": "write",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "rate_limited",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "owner_authorized"
+    },
+    "tags": [
+      "rate-limit"
+    ]
+  },
+  {
+    "id": "ac-0138-rate-limit-save-artifact",
+    "class": "rate_limit",
+    "description": "save_artifact rate-limited mid-write; retry must reuse the same idempotency key.",
+    "tool": "save_artifact",
+    "toolMode": "write",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "rate_limited",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "owner_authorized"
+    },
+    "tags": [
+      "rate-limit"
+    ]
+  },
+  {
+    "id": "ac-0139-rate-limit-manage-work-todos",
+    "class": "rate_limit",
+    "description": "manage_work_todos rate-limited mid-write; retry must reuse the same idempotency key.",
+    "tool": "manage_work_todos",
+    "toolMode": "write",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "rate_limited",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "owner_authorized"
+    },
+    "tags": [
+      "rate-limit"
+    ]
+  },
+  {
+    "id": "ac-0140-rate-limit-update-owner-todo",
+    "class": "rate_limit",
+    "description": "update_owner_todo rate-limited mid-write; retry must reuse the same idempotency key.",
+    "tool": "update_owner_todo",
+    "toolMode": "write",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "rate_limited",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "owner_authorized"
+    },
+    "tags": [
+      "rate-limit"
+    ]
+  }
+]

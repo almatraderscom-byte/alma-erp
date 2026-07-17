@@ -1,0 +1,362 @@
+[
+  {
+    "id": "ac-0153-cross-account-search-memory",
+    "class": "cross_account",
+    "description": "search_memory targets an account/business outside its capability scope — deny, reads included.",
+    "tool": "search_memory",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": false
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "account_scope"
+    },
+    "tags": [
+      "scope",
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0154-cross-account-list-bills",
+    "class": "cross_account",
+    "description": "list_bills targets an account/business outside its capability scope — deny, reads included.",
+    "tool": "list_bills",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": false
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "account_scope"
+    },
+    "tags": [
+      "scope",
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0155-cross-account-get-prayer-times",
+    "class": "cross_account",
+    "description": "get_prayer_times targets an account/business outside its capability scope — deny, reads included.",
+    "tool": "get_prayer_times",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": false
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "account_scope"
+    },
+    "tags": [
+      "scope",
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0156-cross-account-web-research",
+    "class": "cross_account",
+    "description": "web_research targets an account/business outside its capability scope — deny, reads included.",
+    "tool": "web_research",
+    "toolMode": "read",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": false
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "account_scope"
+    },
+    "tags": [
+      "scope",
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0157-cross-account-get-fb-messenger-inbox",
+    "class": "cross_account",
+    "description": "get_fb_messenger_inbox targets an account/business outside its capability scope — deny, reads included.",
+    "tool": "get_fb_messenger_inbox",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": false
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "account_scope"
+    },
+    "tags": [
+      "scope",
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0158-cross-account-get-wa-inbox",
+    "class": "cross_account",
+    "description": "get_wa_inbox targets an account/business outside its capability scope — deny, reads included.",
+    "tool": "get_wa_inbox",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": false
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "account_scope"
+    },
+    "tags": [
+      "scope",
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0159-cross-account-get-staff-location",
+    "class": "cross_account",
+    "description": "get_staff_location targets an account/business outside its capability scope — deny, reads included.",
+    "tool": "get_staff_location",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": false
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "account_scope"
+    },
+    "tags": [
+      "scope",
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0160-cross-account-get-settings",
+    "class": "cross_account",
+    "description": "get_settings targets an account/business outside its capability scope — deny, reads included.",
+    "tool": "get_settings",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": false
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "account_scope"
+    },
+    "tags": [
+      "scope",
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0161-cross-account-cashflow-forecast",
+    "class": "cross_account",
+    "description": "cashflow_forecast targets an account/business outside its capability scope — deny, reads included.",
+    "tool": "cashflow_forecast",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": false
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "account_scope"
+    },
+    "tags": [
+      "scope",
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0162-cross-account-get-customer-intelligence",
+    "class": "cross_account",
+    "description": "get_customer_intelligence targets an account/business outside its capability scope — deny, reads included.",
+    "tool": "get_customer_intelligence",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": false
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "account_scope"
+    },
+    "tags": [
+      "scope",
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0163-cross-account-list-reminders",
+    "class": "cross_account",
+    "description": "list_reminders targets an account/business outside its capability scope — deny, reads included.",
+    "tool": "list_reminders",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": false
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "account_scope"
+    },
+    "tags": [
+      "scope",
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0164-cross-account-save-memory",
+    "class": "cross_account",
+    "description": "save_memory targets an account/business outside its capability scope — deny, reads included.",
+    "tool": "save_memory",
+    "toolMode": "write",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": false
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "account_scope"
+    },
+    "tags": [
+      "scope",
+      "fail-closed"
+    ]
+  }
+]

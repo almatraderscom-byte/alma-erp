@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import type { AgentControls, AutonomyMode } from '@/agent/lib/agent-controls'
+import AutonomyControlCenter from '@/agent/components/AutonomyControlCenter'
 
 /** Owner Control Center — the master switches for the whole agent.
  *  Pause + autonomy + capability on/off, each wired to real agent behavior. */
@@ -133,6 +134,12 @@ export default function AgentControlCenter() {
             on={caps?.imageVideoGen !== false} disabled={loading || saving}
             onChange={(on) => void patch({ capabilities: { imageVideoGen: on } as AgentControls['capabilities'] }, on ? 'ছবি/ভিডিও চালু' : 'ছবি/ভিডিও বন্ধ')}
           />
+        </div>
+
+        {/* Phase 57 — staged autonomy ladder (per task class, evidence-gated) */}
+        <div className="border-t border-border-subtle px-4 pb-4 pt-3.5">
+          <p className="mb-1 text-[14px] font-semibold text-cream">স্বয়ংক্রিয়তার সিঁড়ি — শ্রেণি ধরে ধরে</p>
+          <AutonomyControlCenter />
         </div>
       </div>
     </div>

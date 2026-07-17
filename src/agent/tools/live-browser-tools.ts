@@ -504,6 +504,21 @@ const live_browser_look: AgentTool = {
             if (pageData?.url) {
               out.lockedDomain = await flagLockdownForUrl(pageData.url, `injection tripwire: ${scan.hits[0] ?? ''}`)
             }
+            // Phase 55 — CRITICAL classes (fake owner, exfiltration, tool
+            // invocation) also leave an immutable incident record + owner alert.
+            // Domain lockdown above already contains it; no global quarantine
+            // for a read — that fires only when content DRIVES an effect.
+            if (scan.critical) {
+              try {
+                const { triggerSecurityIncident } = await import('@/agent/lib/security/incident-response')
+                await triggerSecurityIncident({
+                  kind: 'prompt_injection_effect',
+                  source: pageData?.url ?? 'live-browser page',
+                  evidence: scan.hits.join(' | '),
+                  quarantine: false,
+                })
+              } catch { /* incident record is best-effort on the read path */ }
+            }
           }
           out.page = { ...pageData, text: sandwichWrap(pageData?.url ?? 'page', rawText) }
           if (TRANSIENT_RE.test(rawText.slice(0, 4000))) {
@@ -768,6 +783,26 @@ const live_browser_act: AgentTool = {
       'wait',
     ])
     if (!allowed.has(action)) return { success: false, error: `unsupported action: ${action}` }
+
+    // Phase 55 — security quarantine: after a critical incident (injection
+    // driving an effect, secret egress, envelope violation) ALL browser acting
+    // stops until the owner reviews and clears it. Fail-closed: an unreadable
+    // security store also blocks (reads via live_browser_look stay available).
+    try {
+      const { isQuarantined } = await import('@/agent/lib/security/incident-response')
+      if (await isQuarantined()) {
+        return {
+          success: false,
+          error:
+            'SECURITY_QUARANTINE: একটা নিরাপত্তা ঘটনার কারণে ব্রাউজারে কাজ (act) আপাতত বন্ধ। ' +
+            'Boss review করে quarantine তুললে আবার চলবে। পড়া (live_browser_look) চালু আছে।',
+          errorCode: 'security_quarantine',
+          retryable: false,
+        }
+      }
+    } catch {
+      return { success: false, error: 'security store unreachable — act blocked (fail closed)', errorCode: 'security_quarantine', retryable: false }
+    }
 
     if (action === 'navigate' && !/^https?:\/\//i.test(String(input.url ?? ''))) {
       return { success: false, error: 'navigate needs an http(s) url' }

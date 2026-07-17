@@ -120,3 +120,43 @@ export async function getCheckpointStoreHealth(): Promise<CheckpointStoreHealth 
     return null
   }
 }
+
+// ── Phase 58 — durable task graph health (Phase 54 runs on WorkflowRun) ─────
+
+export interface DurableTaskHealth {
+  active: number
+  blocked: number
+  done: number
+  failed: number
+  cancelled: number
+  /** Oldest still-active run age in minutes (stuck-work detector). */
+  oldestActiveMinutes: number | null
+}
+
+export async function getDurableTaskHealth(): Promise<DurableTaskHealth | null> {
+  try {
+    const rows: Array<{ status: string; state: string; created_at: Date }> = await db.$queryRaw`
+      SELECT status, state, created_at
+      FROM workflow_runs
+      WHERE kind = 'durable_task'
+      ORDER BY created_at DESC
+      LIMIT 500
+    `
+    const health: DurableTaskHealth = { active: 0, blocked: 0, done: 0, failed: 0, cancelled: 0, oldestActiveMinutes: null }
+    let oldestActive: Date | null = null
+    for (const r of rows) {
+      if (r.status === 'active') {
+        health.active += 1
+        if (r.state === 'blocked') health.blocked += 1
+        if (!oldestActive || r.created_at < oldestActive) oldestActive = r.created_at
+      } else if (r.status === 'done') health.done += 1
+      else if (r.status === 'failed') health.failed += 1
+      else if (r.status === 'cancelled') health.cancelled += 1
+    }
+    if (oldestActive) health.oldestActiveMinutes = Math.round((Date.now() - oldestActive.getTime()) / 60000)
+    return health
+  } catch (err) {
+    console.warn('[graph-health] durable task health read failed open:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
