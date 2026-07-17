@@ -80,6 +80,11 @@ export async function resolveFashnImageInputs(supabase, rawInputs) {
     if (!val || typeof val !== 'string') continue
     if (val.startsWith('http') || val.startsWith('data:')) {
       out[key] = val
+    } else if (key === 'model_image') {
+      // reseller model photos may carry a dark marketing plate — scrub first
+      // (free, kv-cached, fail-open)
+      const { cleanModelPhoto } = await import('../photo-cleanup.mjs')
+      out[key] = await storagePathToDataUrl(supabase, await cleanModelPhoto({ supabase, imagePath: val }))
     } else {
       out[key] = await storagePathToDataUrl(supabase, val)
     }
