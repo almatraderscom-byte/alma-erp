@@ -43,6 +43,14 @@ final class CallKitVoIP: NSObject {
     private var pendingToken: String?
     private var registered = false
 
+    private lazy var installationId: String = {
+        let key = "office-call-installation-id"
+        if let existing = UserDefaults.standard.string(forKey: key), !existing.isEmpty { return existing }
+        let created = UUID().uuidString.lowercased()
+        UserDefaults.standard.set(created, forKey: key)
+        return created
+    }()
+
     private override init() {
         let config = CXProviderConfiguration()
         config.supportsVideo = false
@@ -76,12 +84,32 @@ final class CallKitVoIP: NSObject {
 
     private func uploadToken(_ token: String) {
         pendingToken = token
-        struct Body: Encodable { let platform = "ios"; let voipToken: String }
+        struct Body: Encodable {
+            let platform = "ios"
+            let environment: String
+            let installationId: String
+            let voipToken: String
+            let appBuild: String?
+            let buildSha: String?
+        }
         struct Resp: Decodable { let ok: Bool? }
+        #if DEBUG
+        let environment = "sandbox"
+        #else
+        let environment = "production"
+        #endif
+        let info = Bundle.main.infoDictionary
+        let body = Body(
+            environment: environment,
+            installationId: installationId,
+            voipToken: token,
+            appBuild: info?["CFBundleVersion"] as? String,
+            buildSha: info?["ALMAGitCommit"] as? String
+        )
         Task {
             do {
                 let r: Resp = try await AlmaAPI.shared.send(
-                    "POST", "/api/assistant/internal/call-push/register", body: Body(voipToken: token))
+                    "POST", "/api/assistant/internal/call-push/register", body: body)
                 if r.ok == true { registered = true }
             } catch {
                 // Not logged in yet / offline — retried on next didBecomeActive.
@@ -135,6 +163,13 @@ extension CallKitVoIP: PKPushRegistryDelegate {
     func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
         registered = false
         pendingToken = nil
+        struct Body: Encodable { let installationId: String }
+        struct Resp: Decodable { let ok: Bool? }
+        Task {
+            let _: Resp? = try? await AlmaAPI.shared.send(
+                "DELETE", "/api/assistant/internal/call-push/register",
+                body: Body(installationId: installationId))
+        }
     }
 
     func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload,

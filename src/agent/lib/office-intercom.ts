@@ -221,6 +221,16 @@ export async function createIntercomBroadcast(args: {
     })
   }
 
+  // Canonical calls are delivered only by the durable outbox created in the
+  // same transaction. The legacy direct-send block remains for flag-off calls.
+  if (canonical) {
+    return {
+      id: row.id,
+      createdAt: row.createdAt.toISOString(),
+      ...(canonicalResult?.ok && canonicalResult.idempotent ? { idempotent: true } : {}),
+    }
+  }
+
   // Best-effort push so a closed app still gets a ping. Never blocks the send.
   const callerName = args.callerName ?? OWNER_LABEL
   const title =

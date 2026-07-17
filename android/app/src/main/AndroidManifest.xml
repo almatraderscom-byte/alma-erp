@@ -54,6 +54,15 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- Canonical Office-call wake path: direct high-priority data FCM. -->
+        <service
+            android:name=".OfficeCallFirebaseService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
         <!-- Fires background reminders scheduled by ReminderRefresh (WorkManager). -->
         <receiver
             android:name=".ReminderAlarmReceiver"

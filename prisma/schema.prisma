@@ -4527,6 +4527,7 @@ model OfficeCallDevice {
   id                String    @id @default(uuid())
   userId            String    @map("user_id")
   businessId        String    @map("business_id")
+  installationId    String?   @map("installation_id")
   platform          String
   environment       String
   provider          String
@@ -4540,6 +4541,7 @@ model OfficeCallDevice {
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
+  @@unique([userId, installationId, provider])
   @@index([userId, active, lastSeenAt(sort: Desc)])
   @@index([businessId, platform, environment, active])
   @@map("office_call_devices")

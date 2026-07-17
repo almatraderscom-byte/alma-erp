@@ -17,6 +17,7 @@ import { isSystemOwner } from '@/lib/roles'
 import { apnsVoipConfigured, apnsKeyDiag, sendVoipCall } from '@/agent/lib/apns-voip'
 import { fcmCallConfigured } from '@/agent/lib/fcm-call'
 import { prisma } from '@/lib/prisma'
+import { officeCallDeviceEncryptionConfigured } from '@/agent/lib/office-call-devices'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -46,8 +47,8 @@ export async function GET(req: NextRequest) {
   // How many devices are registered for call push (informational).
   let registered = 0
   try {
-    registered = await prisma.pushSubscription.count({
-      where: { enabled: true, provider: { in: ['apns_voip', 'fcm'] } },
+    registered = await prisma.officeCallDevice.count({
+      where: { active: true, invalidatedAt: null, provider: { in: ['apns_voip', 'fcm'] } },
     })
   } catch {
     /* ignore */
@@ -58,6 +59,7 @@ export async function GET(req: NextRequest) {
     apnsProbe,
     apnsKey: apnsKeyDiag(),
     fcmConfigured: fcmCallConfigured(),
+    encryptedRegistryConfigured: officeCallDeviceEncryptionConfigured(),
     registered,
   })
 }

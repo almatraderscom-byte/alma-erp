@@ -113,20 +113,34 @@ export function apnsJwt(): string | null {
 export type VoipCallPayload = {
   type: 'office_call'
   broadcastId: string
+  schemaVersion?: number
+  callId?: string
+  callUUID?: string
   channel: string
   caller: string
+  expiresAt?: string
   /** 'ring' (default) reports a new CallKit incoming call; 'cancel' ends the call
    *  already showing for this broadcastId (caller hung up / callee answered elsewhere). */
   event?: 'ring' | 'cancel'
 }
 
-type SendResult = { token: string; ok: boolean; status?: number; reason?: string }
+export type ApnsVoipSendResult = {
+  token: string
+  ok: boolean
+  status?: number
+  reason?: string
+  messageId?: string
+}
 
 /**
  * Send a VoIP push to every iOS device token. Opens ONE HTTP/2 connection for
  * the batch. Returns per-token results; disables tokens APNs rejects as stale.
  */
-export async function sendVoipCall(tokens: string[], payload: VoipCallPayload): Promise<SendResult[]> {
+export async function sendVoipCall(
+  tokens: string[],
+  payload: VoipCallPayload,
+  options: { environment?: 'sandbox' | 'production' } = {},
+): Promise<ApnsVoipSendResult[]> {
   const uniq = [...new Set(tokens.filter(Boolean))]
   if (uniq.length === 0) return []
   const jwt = apnsJwt()
@@ -134,7 +148,10 @@ export async function sendVoipCall(tokens: string[], payload: VoipCallPayload): 
 
   const bundle = process.env.APNS_BUNDLE_ID?.trim() || 'com.almatraders.erp'
   const topic = `${bundle}.voip`
-  const host = process.env.APNS_PRODUCTION === 'true' ? 'api.push.apple.com' : 'api.sandbox.push.apple.com'
+  const production = options.environment
+    ? options.environment === 'production'
+    : process.env.APNS_PRODUCTION === 'true'
+  const host = production ? 'api.push.apple.com' : 'api.sandbox.push.apple.com'
 
   // The VoIP payload is fully custom (no user-facing aps alert needed) — the
   // PushKit delegate reads these keys and reports the call to CallKit.
@@ -148,9 +165,10 @@ export async function sendVoipCall(tokens: string[], payload: VoipCallPayload): 
   }
 
   const sendOne = (deviceToken: string) =>
-    new Promise<SendResult>((resolve) => {
+    new Promise<ApnsVoipSendResult>((resolve) => {
       let status = 0
       let data = ''
+      let messageId: string | undefined
       const req = client.request({
         ':method': 'POST',
         ':path': `/3/device/${deviceToken}`,
@@ -164,6 +182,7 @@ export async function sendVoipCall(tokens: string[], payload: VoipCallPayload): 
       req.setEncoding('utf8')
       req.on('response', (h) => {
         status = Number(h[':status']) || 0
+        messageId = typeof h['apns-id'] === 'string' ? h['apns-id'] : undefined
       })
       req.on('data', (c) => {
         data += c
@@ -181,7 +200,7 @@ export async function sendVoipCall(tokens: string[], payload: VoipCallPayload): 
             void disableCallToken('voip', deviceToken)
           }
         }
-        resolve({ token: deviceToken, ok, status, reason })
+        resolve({ token: deviceToken, ok, status, reason, messageId })
       })
       req.on('error', (err) => resolve({ token: deviceToken, ok: false, reason: err.message }))
       req.setTimeout(8_000, () => {

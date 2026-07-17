@@ -10,6 +10,7 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
 import com.almatraders.erp.shell.NativeShell;
+import com.google.firebase.messaging.FirebaseMessaging;
 
 public class MainActivity extends BridgeActivity {
     @Override
@@ -18,6 +19,10 @@ public class MainActivity extends BridgeActivity {
         // Background reminder refresh (iOS BackgroundRefresh parity): keep the owner's
         // reminders fresh + scheduled even if the app isn't opened for days.
         ReminderRefresh.INSTANCE.enqueue(this);
+        // Refresh/register the direct FCM token on every launch. Registration is
+        // installation-bound and retried by WorkManager after login/network recovery.
+        FirebaseMessaging.getInstance().getToken().addOnSuccessListener(token ->
+                OfficeCallPushRegistration.INSTANCE.enqueue(this, token));
         super.onCreate(savedInstanceState);
 
         // ALMA native shell (Compose tab bar + native Lifestyle screens wrapping the
