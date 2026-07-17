@@ -103,9 +103,9 @@ async function scrubOverlayText(sharp, flatCrop, cutRaw, dims) {
  * returns bounding boxes only, it decides nothing creative. Fail-open [].
  * @returns {Promise<Array<{x0:number,y0:number,x1:number,y1:number}>>} 0-1 normalized
  */
-export async function detectOverlayTextBoxes(imageBuf) {
+export async function detectOverlayTextBoxes(imageBuf, onDebug) {
   const key = process.env.GEMINI_API_KEY
-  if (!key) return []
+  if (!key) { onDebug?.({ reason: 'no_key' }); return [] }
   // 2.5-flash boxes markedly better; 2.0-flash is the fallback
   for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
     try {
@@ -129,9 +129,10 @@ export async function detectOverlayTextBoxes(imageBuf) {
           signal: AbortSignal.timeout(30_000),
         },
       )
-      if (!res.ok) continue
+      if (!res.ok) { onDebug?.({ model, http: res.status }); continue }
       const data = await res.json()
       const raw = (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('')
+      onDebug?.({ model, raw: raw.slice(0, 220), finish: data.candidates?.[0]?.finishReason })
       // canonical: [{"box_2d":[ymin,xmin,ymax,xmax],"label":...}]; also accept
       // the legacy {"boxes":[[...]]} shape
       const arrMatch = raw.match(/\[[\s\S]*\]/)
@@ -156,7 +157,8 @@ export async function detectOverlayTextBoxes(imageBuf) {
         .filter((b) => b.x1 > b.x0 && b.y1 > b.y0)
       if (boxes.length) return boxes
       // empty from this model — let the fallback model try
-    } catch {
+    } catch (err) {
+      onDebug?.({ model, error: String(err?.message ?? err).slice(0, 120) })
       // try the next model
     }
   }
@@ -352,8 +354,8 @@ export async function prepSupplierPhoto({ supabase, imagePath, pendingActionId, 
     // pixel heuristics (coloured/decorated lettering, smoke-connected blobs)
     // is boxed by a narrow mechanical Gemini call and repainted by FLUX Fill
     // under a protected composite
-    const debug = { crop: i + 1, boxes: 0, inpainted: false, reason: null }
-    const boxes = await detectOverlayTextBoxes(crop)
+    const debug = { crop: i + 1, boxes: 0, inpainted: false, reason: null, det: [] }
+    const boxes = await detectOverlayTextBoxes(crop, (d) => debug.det.push(d))
     debug.boxes = boxes.length
     if (boxes.length) {
       const before = crop
