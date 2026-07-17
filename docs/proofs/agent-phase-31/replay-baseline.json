@@ -2,21 +2,21 @@
   "behaviorVersion": "phase31-v1",
   "generatedAt": "2026-07-17T04:00:00.000Z",
   "totalCases": 150,
-  "totalPassed": 110,
-  "totalFailed": 40,
+  "totalPassed": 150,
+  "totalFailed": 0,
   "categories": [
     {
       "category": "continuity",
       "cases": 50,
-      "passed": 32,
-      "failed": 18,
+      "passed": 50,
+      "failed": 0,
       "byCheck": {
         "fastPath": {
           "pass": 25,
           "total": 25
         },
         "continuationText": {
-          "pass": 25,
+          "pass": 31,
           "total": 31
         },
         "resumeBrief": {
@@ -24,7 +24,7 @@
           "total": 40
         },
         "binding": {
-          "pass": 31,
+          "pass": 49,
           "total": 49
         },
         "packs⊇": {
@@ -36,8 +36,8 @@
     {
       "category": "tool_selection",
       "cases": 30,
-      "passed": 23,
-      "failed": 7,
+      "passed": 30,
+      "failed": 0,
       "byCheck": {
         "fastPath": {
           "pass": 22,
@@ -48,7 +48,7 @@
           "total": 14
         },
         "packs⊇": {
-          "pass": 16,
+          "pass": 23,
           "total": 23
         },
         "packs∌": {
@@ -60,8 +60,8 @@
     {
       "category": "approval_ask_card",
       "cases": 25,
-      "passed": 24,
-      "failed": 1,
+      "passed": 25,
+      "failed": 0,
       "byCheck": {
         "binding": {
           "pass": 25,
@@ -72,7 +72,7 @@
           "total": 15
         },
         "continuationText": {
-          "pass": 2,
+          "pass": 3,
           "total": 3
         },
         "resumeBrief": {
@@ -100,15 +100,15 @@
     {
       "category": "failure_recovery",
       "cases": 15,
-      "passed": 5,
-      "failed": 10,
+      "passed": 15,
+      "failed": 0,
       "byCheck": {
         "autoContinue": {
           "pass": 5,
           "total": 5
         },
         "binding": {
-          "pass": 0,
+          "pass": 10,
           "total": 10
         },
         "packs⊇": {
@@ -124,8 +124,8 @@
     {
       "category": "cross_surface",
       "cases": 10,
-      "passed": 6,
-      "failed": 4,
+      "passed": 10,
+      "failed": 0,
       "byCheck": {
         "fastPath": {
           "pass": 5,
@@ -140,7 +140,7 @@
           "total": 7
         },
         "binding": {
-          "pass": 6,
+          "pass": 10,
           "total": 10
         },
         "packs⊇": {
@@ -154,14 +154,14 @@
     "fastPathAccuracy": 1,
     "headTierAccuracy": null,
     "routineIntentAccuracy": 1,
-    "packRecall": 0.8478260869565217,
+    "packRecall": 1,
     "packPrecision": 1,
-    "continuationTextAccuracy": 0.8157894736842105,
-    "bindingAccuracy": 0.7009345794392523,
+    "continuationTextAccuracy": 1,
+    "bindingAccuracy": 1,
     "resumeBriefAccuracy": 1,
     "listenSuppressionAccuracy": null,
     "autoContinueAccuracy": 1,
-    "repeatedEffectRiskCount": 23
+    "repeatedEffectRiskCount": 0
   },
   "unmeasured": [
     "groundedness (needs live model output)",
@@ -813,14 +813,12 @@
         {
           "check": "binding",
           "expected": "checkpoint",
-          "actual": "none",
-          "pass": false
+          "actual": "checkpoint",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -873,14 +871,12 @@
         {
           "check": "binding",
           "expected": "checkpoint",
-          "actual": "none",
-          "pass": false
+          "actual": "checkpoint",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -933,14 +929,12 @@
         {
           "check": "binding",
           "expected": "checkpoint",
-          "actual": "none",
-          "pass": false
+          "actual": "checkpoint",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -993,14 +987,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -1012,8 +1004,8 @@
         {
           "check": "continuationText",
           "expected": true,
-          "actual": false,
-          "pass": false
+          "actual": true,
+          "pass": true
         },
         {
           "check": "resumeBrief",
@@ -1024,15 +1016,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "continuationText",
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -1044,8 +1033,8 @@
         {
           "check": "continuationText",
           "expected": true,
-          "actual": false,
-          "pass": false
+          "actual": true,
+          "pass": true
         },
         {
           "check": "resumeBrief",
@@ -1056,15 +1045,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "continuationText",
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -1076,8 +1062,8 @@
         {
           "check": "continuationText",
           "expected": true,
-          "actual": false,
-          "pass": false
+          "actual": true,
+          "pass": true
         },
         {
           "check": "resumeBrief",
@@ -1088,15 +1074,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "continuationText",
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -1108,8 +1091,8 @@
         {
           "check": "continuationText",
           "expected": true,
-          "actual": false,
-          "pass": false
+          "actual": true,
+          "pass": true
         },
         {
           "check": "resumeBrief",
@@ -1120,15 +1103,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "continuationText",
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -1140,8 +1120,8 @@
         {
           "check": "continuationText",
           "expected": true,
-          "actual": false,
-          "pass": false
+          "actual": true,
+          "pass": true
         },
         {
           "check": "resumeBrief",
@@ -1152,15 +1132,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "continuationText",
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -1172,8 +1149,8 @@
         {
           "check": "continuationText",
           "expected": true,
-          "actual": false,
-          "pass": false
+          "actual": true,
+          "pass": true
         },
         {
           "check": "resumeBrief",
@@ -1184,15 +1161,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "continuationText",
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -1327,14 +1301,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": [
         "headTier (resolveHead not injected)"
       ]
@@ -1379,14 +1351,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": [
         "headTier (resolveHead not injected)"
       ]
@@ -1591,14 +1561,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "new_task",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -1616,14 +1584,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -1641,14 +1607,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -1666,14 +1630,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "new_task",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -1691,14 +1653,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -1716,14 +1676,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -1749,14 +1707,14 @@
           "expected": [
             "erp"
           ],
-          "actual": [],
-          "pass": false
+          "actual": [
+            "erp"
+          ],
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "packs⊇"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": [
         "headTier (resolveHead not injected)"
       ]
@@ -1784,14 +1742,14 @@
           "expected": [
             "finance"
           ],
-          "actual": [],
-          "pass": false
+          "actual": [
+            "finance"
+          ],
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "packs⊇"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": [
         "headTier (resolveHead not injected)"
       ]
@@ -1819,14 +1777,14 @@
           "expected": [
             "staff_read"
           ],
-          "actual": [],
-          "pass": false
+          "actual": [
+            "staff_read"
+          ],
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "packs⊇"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": [
         "headTier (resolveHead not injected)"
       ]
@@ -1854,14 +1812,14 @@
           "expected": [
             "staff_read"
           ],
-          "actual": [],
-          "pass": false
+          "actual": [
+            "staff_read"
+          ],
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "packs⊇"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": [
         "headTier (resolveHead not injected)"
       ]
@@ -2049,7 +2007,9 @@
             "social"
           ],
           "actual": [
-            "social"
+            "social",
+            "creative",
+            "ads"
           ],
           "pass": true
         },
@@ -2083,8 +2043,12 @@
           "expected": [
             "social"
           ],
-          "actual": [],
-          "pass": false
+          "actual": [
+            "social",
+            "creative",
+            "ads"
+          ],
+          "pass": true
         },
         {
           "check": "packs∌",
@@ -2093,10 +2057,8 @@
           "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "packs⊇"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": [
         "headTier (resolveHead not injected)"
       ]
@@ -2120,7 +2082,8 @@
           ],
           "actual": [
             "social",
-            "ads"
+            "ads",
+            "creative"
           ],
           "pass": true
         },
@@ -2155,7 +2118,9 @@
             "ads"
           ],
           "actual": [
-            "ads"
+            "ads",
+            "social",
+            "creative"
           ],
           "pass": true
         }
@@ -2185,7 +2150,8 @@
           ],
           "actual": [
             "social",
-            "creative"
+            "creative",
+            "ads"
           ],
           "pass": true
         }
@@ -2338,14 +2304,14 @@
           "expected": [
             "reminders"
           ],
-          "actual": [],
-          "pass": false
+          "actual": [
+            "reminders"
+          ],
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "packs⊇"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": [
         "headTier (resolveHead not injected)"
       ]
@@ -2386,14 +2352,14 @@
           "expected": [
             "reminders"
           ],
-          "actual": [],
-          "pass": false
+          "actual": [
+            "reminders"
+          ],
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "packs⊇"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -2792,8 +2758,8 @@
         {
           "check": "continuationText",
           "expected": true,
-          "actual": false,
-          "pass": false
+          "actual": true,
+          "pass": true
         },
         {
           "check": "binding",
@@ -2802,10 +2768,8 @@
           "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "continuationText"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -3727,14 +3691,12 @@
         {
           "check": "binding",
           "expected": "checkpoint",
-          "actual": "none",
-          "pass": false
+          "actual": "checkpoint",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -3746,14 +3708,12 @@
         {
           "check": "binding",
           "expected": "checkpoint",
-          "actual": "none",
-          "pass": false
+          "actual": "checkpoint",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -3765,14 +3725,12 @@
         {
           "check": "binding",
           "expected": "checkpoint",
-          "actual": "none",
-          "pass": false
+          "actual": "checkpoint",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -3784,14 +3742,12 @@
         {
           "check": "binding",
           "expected": "checkpoint",
-          "actual": "none",
-          "pass": false
+          "actual": "checkpoint",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -3803,14 +3759,12 @@
         {
           "check": "binding",
           "expected": "checkpoint",
-          "actual": "none",
-          "pass": false
+          "actual": "checkpoint",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -3822,14 +3776,12 @@
         {
           "check": "binding",
           "expected": "checkpoint",
-          "actual": "none",
-          "pass": false
+          "actual": "checkpoint",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -3841,14 +3793,12 @@
         {
           "check": "binding",
           "expected": "checkpoint",
-          "actual": "none",
-          "pass": false
+          "actual": "checkpoint",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -3870,14 +3820,12 @@
         {
           "check": "binding",
           "expected": "pending_card",
-          "actual": "none",
-          "pass": false
+          "actual": "pending_card",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -3889,14 +3837,12 @@
         {
           "check": "binding",
           "expected": "pending_card",
-          "actual": "new_task",
-          "pass": false
+          "actual": "pending_card",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -3914,14 +3860,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -3974,14 +3918,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -4034,14 +3976,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -4094,14 +4034,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "none",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -4146,14 +4084,12 @@
         {
           "check": "binding",
           "expected": "active_workflow",
-          "actual": "new_task",
-          "pass": false
+          "actual": "active_workflow",
+          "pass": true
         }
       ],
-      "pass": false,
-      "failed": [
-        "binding"
-      ],
+      "pass": true,
+      "failed": [],
       "skipped": []
     },
     {
@@ -4206,7 +4142,9 @@
             "ads"
           ],
           "actual": [
-            "ads"
+            "ads",
+            "social",
+            "creative"
           ],
           "pass": true
         },

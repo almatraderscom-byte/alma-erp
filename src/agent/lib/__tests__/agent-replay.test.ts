@@ -76,14 +76,13 @@ describe('phase 31 runner (real decision code, pure layer)', () => {
     expect(r.metrics.continuationTextAccuracy).toBe(1)
     expect(r.metrics.repeatedEffectRiskCount).toBe(0)
 
-    // Phase 37: recall measures EFFECTIVE tool availability (regex packs +
-    // deterministic routine/call/marketing coverage) — 97.8% ≥ the 95% gate.
-    // One honest residual: "amake 4 tay call dio" (reminder phrasing missing
-    // from the reminders INTENT_RULE; needs a state-router change, out of
-    // this roadmap's allowlists — flagged for the owner).
-    expect(r.totalPassed).toBe(149)
-    expect(r.totalFailed).toBe(1)
-    expect(r.metrics.packRecall).toBeCloseTo(0.9783, 3)
+    // Phase 37 measured recall at 97.8% with one honest residual:
+    // "amake 4 tay call dio" (reminder phrasing missing from the reminders
+    // INTENT_RULE — state-router.ts was outside every roadmap allowlist).
+    // Closed post-roadmap by adding call (dio|diyo|দিও) to the reminders rule.
+    expect(r.totalPassed).toBe(150)
+    expect(r.totalFailed).toBe(0)
+    expect(r.metrics.packRecall).toBe(1)
   })
 
   it('stamps every result with a stable trace id and behaviour version', async () => {
