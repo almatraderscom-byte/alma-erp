@@ -41,7 +41,12 @@ export interface FinancialHealth {
   days: number
   revenue: number
   expenses: { total: number; byCategory: Record<string, number> }
+  /** Ad spend in `adSpendCurrency` — NOT necessarily taka. Never print ৳ without checking. */
   adSpend: number
+  /** Ad-account billing currency (Meta reports spend in it). 'BDT' | 'USD' | … */
+  adSpendCurrency: string
+  /** False when ad spend was left OUT of netProfit because its currency isn't BDT and no FX source exists. */
+  adSpendInNet: boolean
   adRevenue?: number
   grossProfit: number | null
   netProfit: number | null
@@ -76,18 +81,43 @@ function safeNum(v: unknown): number {
   return Number.isFinite(n) ? n : 0
 }
 
-async function fetchAdSpendPeriod(startYmd: string, endYmd: string): Promise<number> {
+/** Money label in its OWN currency — a bare ৳ on a USD ad-spend number is a lie. */
+function money(amount: number, currency: string): string {
+  if (currency === 'BDT') return `৳${amount}`
+  const symbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : `${currency} `
+  return `${symbol}${amount.toFixed(2)}`
+}
+
+/**
+ * Meta reports spend in the AD ACCOUNT'S OWN currency. This used to return
+ * roundMoney(total) — whole-taka law applied to dollars — so a real $11.49 week
+ * became "৳12" and then got subtracted from taka revenue inside netProfit
+ * (live-found 2026-07-17). It now reports the amount WITH its currency; the
+ * caller decides whether it may enter taka arithmetic.
+ */
+async function fetchAdSpendPeriod(startYmd: string, endYmd: string): Promise<{ amount: number; currency: string }> {
   const token = process.env.META_ADS_TOKEN
   const accountId = process.env.META_AD_ACCOUNT_ID
-  if (!token || !accountId) return 0
+  if (!token || !accountId) return { amount: 0, currency: 'BDT' }
 
   try {
     const campRes = await fetch(
       `https://graph.facebook.com/v21.0/${accountId}/campaigns?effective_status=["ACTIVE","PAUSED"]&fields=id&limit=15&access_token=${token}`,
       { signal: AbortSignal.timeout(20_000) },
     )
-    if (!campRes.ok) return 0
+    if (!campRes.ok) return { amount: 0, currency: 'BDT' }
     const campData = (await campRes.json()) as { data?: Array<{ id: string }> }
+
+    let currency = 'BDT'
+    try {
+      const acctRes = await fetch(
+        `https://graph.facebook.com/v21.0/${accountId}?fields=currency&access_token=${token}`,
+        { signal: AbortSignal.timeout(10_000) },
+      )
+      if (acctRes.ok) currency = ((await acctRes.json()) as { currency?: string }).currency || 'BDT'
+    } catch {
+      /* keep default */
+    }
 
     let total = 0
     const range = encodeURIComponent(JSON.stringify({ since: startYmd, until: endYmd }))
@@ -98,10 +128,14 @@ async function fetchAdSpendPeriod(startYmd: string, endYmd: string): Promise<num
       const data = (await res.json()) as { data?: Array<{ spend?: string }> }
       total += safeNum(data.data?.[0]?.spend)
     }
-    return roundMoney(total)
+    // roundMoney() is whole-TAKA law — only legitimate when the account bills in taka.
+    return {
+      amount: currency === 'BDT' ? roundMoney(total) : Math.round(total * 100) / 100,
+      currency,
+    }
   } catch (err) {
     console.warn('[financial-intelligence] fetchAdSpendPeriod failed:', err instanceof Error ? err.message : err)
-    return 0
+    return { amount: 0, currency: 'BDT' }
   }
 }
 
@@ -220,7 +254,9 @@ function buildChannelBreakdown(
 function buildFlags(args: {
   revenue: number
   expensesTotal: number
+  /** In `adSpendCurrency` — do NOT print ৳ unless that is 'BDT'. */
   adSpend: number
+  adSpendCurrency: string
   grossProfit: number | null
   netProfit: number | null
   marginPct: number | null
@@ -250,11 +286,11 @@ function buildFlags(args: {
     const adRatio = Math.round((args.adSpend / args.revenue) * 100)
     if (adRatio >= 25) {
       flags.push(
-        `অ্যাড খরচ ৳${args.adSpend}, রেভিনিউ ৳${args.revenue} (${adRatio}% of revenue) — ROI রিভিউ করুন (attribution নিশ্চিত নয়)।`,
+        `অ্যাড খরচ ${money(args.adSpend, args.adSpendCurrency)}, রেভিনিউ ৳${args.revenue} (${adRatio}% of revenue) — ROI রিভিউ করুন (attribution নিশ্চিত নয়)।`,
       )
     }
   } else if (args.adSpend > 500 && args.revenue === 0) {
-    flags.push(`অ্যাড খরচ ৳${args.adSpend} কিন্তু এই পিরিয়ডে সেল ডেটা কম — ক্যাম্পেইন রিভিউ করুন।`)
+    flags.push(`অ্যাড খরচ ${money(args.adSpend, args.adSpendCurrency)} কিন্তু এই পিরিয়ডে সেল ডেটা কম — ক্যাম্পেইন রিভিউ করুন।`)
   }
 
   if (args.marginPct != null && args.marginPct < 12 && args.marginPct >= 0) {
@@ -328,7 +364,16 @@ export async function analyzeFinancials(opts: { days?: number } = {}): Promise<F
   const prev = periodMetrics(priorOrders)
 
   const revenue = cur.revenue
-  const operatingCosts = roundMoney(expenses.total + adSpend)
+  // Currency guard (live-found 2026-07-17): revenue/expenses are taka. Ad spend
+  // is in the AD ACCOUNT'S currency. Adding a USD number to taka costs produced
+  // a confidently wrong netProfit ("net -৳1,112" off a real $11.49). With no FX
+  // source we refuse to invent a rate: foreign-currency ad spend is REPORTED but
+  // kept OUT of the taka arithmetic, and flagged so nobody reads net as final.
+  const adSpendIsBdt = adSpend.currency === 'BDT'
+  const adSpendInNet = adSpendIsBdt || adSpend.amount === 0
+  const adSpendForNet = adSpendInNet ? adSpend.amount : 0
+  const priorAdSpendForNet = priorAdSpend.currency === 'BDT' ? priorAdSpend.amount : 0
+  const operatingCosts = roundMoney(expenses.total + adSpendForNet)
   const costDataMissing = pricing.costDataMissing || (revenue > 0 && cur.cogs <= 0)
 
   let grossProfit: number | null = null
@@ -347,22 +392,29 @@ export async function analyzeFinancials(opts: { days?: number } = {}): Promise<F
 
   const revenueWoW = pctChange(revenue, prev.revenue)
   const expenseWoW = pctChange(
-    roundMoney(expenses.total + adSpend),
-    roundMoney(priorExpenses.total + priorAdSpend),
+    roundMoney(expenses.total + adSpendForNet),
+    roundMoney(priorExpenses.total + priorAdSpendForNet),
   )
 
   const notes: string[] = []
   if (costDataMissing) {
     notes.push('COGS/cost price অনুপস্থিত — gross profit দেখানো হয়নি; revenue minus known operating costs only.')
   }
-  if (adSpend > 0) {
+  if (adSpend.amount > 0) {
     notes.push('Ad ROI = correlation only; revenue attribution to ads is not fully reliable.')
+  }
+  if (!adSpendInNet) {
+    notes.push(
+      `Ad spend is ${adSpend.currency} ${adSpend.amount} — NOT taka. It is EXCLUDED from netProfit/margin ` +
+      '(no FX source; mixing currencies would fabricate a number). Convert manually before judging net profit.',
+    )
   }
 
   const flags = buildFlags({
     revenue,
     expensesTotal: expenses.total,
-    adSpend,
+    adSpend: adSpend.amount,
+    adSpendCurrency: adSpend.currency,
     grossProfit,
     netProfit,
     marginPct,
@@ -378,7 +430,9 @@ export async function analyzeFinancials(opts: { days?: number } = {}): Promise<F
     days,
     revenue,
     expenses: { total: expenses.total, byCategory: expenses.byCategory },
-    adSpend,
+    adSpend: adSpend.amount,
+    adSpendCurrency: adSpend.currency,
+    adSpendInNet,
     adRevenue: undefined,
     grossProfit,
     netProfit,
@@ -388,7 +442,7 @@ export async function analyzeFinancials(opts: { days?: number } = {}): Promise<F
     costDataMissing,
     costDataCoveragePct: pricing.costDataCoveragePct,
     productBreakdown: buildProductBreakdown(cur.metrics, pricing),
-    channelBreakdown: buildChannelBreakdown(cur.metrics, adSpend),
+    channelBreakdown: buildChannelBreakdown(cur.metrics, adSpendForNet),
     subscriptionNote: subNote,
     notes,
   }
@@ -406,7 +460,10 @@ export async function analyzeAndPersistFinancials(days = 30): Promise<FinancialH
 export function formatFinancialBrief(health: FinancialHealth): string {
   const L: string[] = []
   L.push(`💰 *আর্থিক স্বাস্থ্য (গত ${health.days} দিন)*`)
-  L.push(`আয়: ৳${health.revenue} | খরচ: ৳${health.expenses.total} | অ্যাড: ৳${health.adSpend}`)
+  L.push(
+    `আয়: ৳${health.revenue} | খরচ: ৳${health.expenses.total} | অ্যাড: ${money(health.adSpend, health.adSpendCurrency)}` +
+    (health.adSpendInNet ? '' : ' (নেট হিসাবের বাইরে — অন্য মুদ্রা)'),
+  )
 
   if (health.grossProfit != null) {
     L.push(`গ্রস: ৳${health.grossProfit} | নেট: ৳${health.netProfit ?? '—'} (মার্জিন ${health.marginPct ?? '—'}%)`)

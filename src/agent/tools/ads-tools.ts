@@ -258,7 +258,11 @@ const recommend_ad_actions: AgentTool = {
     'Analyze active Meta Ads campaigns (spend, CTR, ROAS, 7-day trend) and return ranked Bangla recommendations: ' +
     'scale (+20-30% budget), reduce, kill (pause), duplicate winner, or refresh_creative (File 10). ' +
     'Low-data campaigns → hold. Optionally creates ONE batch approval card when createApprovalCard=true. ' +
-    'Execution always via separate confirm cards (update_campaign_budget, pause_campaign, duplicate_campaign, make_ad_creatives).',
+    'Execution always via separate confirm cards (update_campaign_budget, pause_campaign, duplicate_campaign, make_ad_creatives). ' +
+    'Use this for "বুস্ট করব?"/scale decisions: `metaIntelligence` carries Meta\'s own trend / anomaly / opportunity-score / ' +
+    'industry + auction benchmarks when available — cite them ("CTR ইন্ডাস্ট্রি গড়ের নিচে…") instead of judging on spend alone. ' +
+    'SOURCE: quote `provenance.sourceLabel` verbatim; say "Meta MCP" ONLY if provenance.source === "meta_mcp", otherwise state ' +
+    'provenance.degradedReason honestly. MONEY: use accountCurrency / windowSpendLabel — never ৳ unless the currency is BDT.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -276,6 +280,13 @@ const recommend_ad_actions: AgentTool = {
 
       const { metrics, recommendations } = await analyzeAdCampaigns()
       await recordRecommendationOutcomes(recommendations)
+
+      // MA2: Meta's official MCP is the preferred intelligence source; the read
+      // degrades to the Graph path on its own and reports which one it used, so
+      // the head can cite trend/benchmark/anomaly evidence without ever guessing
+      // (or fabricating) where the numbers came from.
+      const { readAdInsights, provenanceOf } = await import('@/agent/lib/meta-mcp/insights-source')
+      const insights = await readAdInsights(7).catch(() => null)
 
       const summary = formatRecommendationsSummary(recommendations)
       const actionable = recommendations.filter((r) => r.verdict !== 'hold')
@@ -312,7 +323,15 @@ const recommend_ad_actions: AgentTool = {
           // Every spend/budget figure in metrics is in the AD ACCOUNT's billing
           // currency below — report them with THIS currency symbol, never ৳
           // unless the currency is BDT.
-          accountCurrency: metrics[0]?.currency ?? 'USD',
+          accountCurrency: metrics[0]?.currency ?? insights?.currency ?? 'USD',
+          // MA2 provenance — quote `provenance.sourceLabel` verbatim; never say
+          // "Meta MCP" unless provenance.source === 'meta_mcp'.
+          provenance: insights ? provenanceOf(insights) : null,
+          // Live Meta intelligence when the account is inside Meta's MCP rollout;
+          // null otherwise (see provenance.degradedReason) — cite it in the
+          // boost/scale reasoning instead of judging on spend alone.
+          metaIntelligence: insights?.mcp ?? null,
+          windowSpendLabel: insights?.totalSpendLabel ?? null,
           campaignCount: activeCampaignCount,
           activeCampaignCount,
           activeCampaignNames: activeNames,

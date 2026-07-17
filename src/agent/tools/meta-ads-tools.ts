@@ -11,3 +11,12 @@ import { createMetaAdsReadTools } from '@/agent/lib/meta-mcp/bridge'
 import type { AgentTool } from './registry'
 
 export const META_ADS_TOOLS: AgentTool[] = createMetaAdsReadTools()
+
+/**
+ * MA2: the catalog slice, also advertised via the `website` group so product /
+ * stock / product-ads questions reach Meta's catalog truth. Same objects as in
+ * META_ADS_TOOLS (deduped by name at assembly), so no double registration.
+ */
+export const META_ADS_CATALOG_TOOLS: AgentTool[] = META_ADS_TOOLS.filter((t) =>
+  t.name.startsWith('meta_ads_catalog_'),
+)
