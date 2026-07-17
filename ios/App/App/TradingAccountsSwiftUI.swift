@@ -869,6 +869,9 @@ private struct TradingAccountsDetailSheet: View {
     @State private var detail: TradingAccountsDetail? = nil
     @State private var loading = true
     @State private var loadError: String? = nil
+    /// NP-6: web hides approve/reject-delete from non-SUPER_ADMIN — same owner
+    /// probe the Dashboard dock uses (owner-only route answers 403 to others).
+    @State private var superAdmin = false
 
     private var account: TradingAccountsRow { detail?.account ?? row }
 
@@ -893,6 +896,16 @@ private struct TradingAccountsDetailSheet: View {
                     if let ranges = detail?.ranges { rangesStrip(ranges) }
                     recentTradesCard
                     recentExpensesCard
+                    // NP-6 (TR-01/TR-02): trades admin · daily summary · screenshot
+                    // history/upload · partnership settlement — all native.
+                    TradingAccountAdminSection(
+                        accountId: account.id,
+                        accountTitle: account.accountTitle,
+                        partnershipEnabled: account.partnershipEnabled == true,
+                        isSuperAdmin: superAdmin)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                        .tradingAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 }
                 webLink
             }
@@ -902,6 +915,11 @@ private struct TradingAccountsDetailSheet: View {
         .task {
             do {
                 detail = try await vm.loadDetail(id: row.id)
+                // Owner probe (403 for everyone else) — gates approve/reject-delete UI.
+                struct TodosEnvelope: Decodable {}
+                if let _: TodosEnvelope = try? await AlmaAPI.shared.get("/api/assistant/todos") {
+                    superAdmin = true
+                }
                 if detail?.summary == nil { loadError = "অ্যাকাউন্ট ডেটা পাওয়া যায়নি" }
             } catch {
                 if !TradingAccountsVM.isCancellation(error) {

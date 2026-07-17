@@ -501,6 +501,244 @@ final class TradingTelegramVM {
         }
     }
 
+    // ── NP-6 (TR-03): draft edit + bulk confirm/reject — web payloads verbatim ──
+
+    var selectedDrafts: Set<String> = []
+    var bulkBusy = false
+
+    struct DraftEditBody: Encodable {
+        let action = "edit"
+        let tradeType: String
+        let usdtAmount: Double
+        let bdtRate: Double
+        let feeUsdt: Double
+        var tradingAccountId: String? = nil
+    }
+
+    func editDraft(_ id: String, body: DraftEditBody) async -> Bool {
+        actingDraftId = id
+        defer { actingDraftId = nil }
+        do {
+            let res: DraftActionResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/trading/telegram/drafts/\(id)", body: body)
+            if let err = res.error { toast = err; return false }
+            toast = "Draft updated"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await load()
+            return true
+        } catch {
+            toast = error.localizedDescription
+            return false
+        }
+    }
+
+    /// POST /drafts/bulk — confirm ({draftIds}) posts to ledger; reject adds
+    /// {action:'reject', reason}. Exact server response counts surface in the toast.
+    func bulkAction(reject: Bool, reason: String = "Rejected") async {
+        guard !selectedDrafts.isEmpty, !bulkBusy else { return }
+        bulkBusy = true
+        defer { bulkBusy = false }
+        struct Body: Encodable {
+            let draftIds: [String]
+            var action: String? = nil
+            var reason: String? = nil
+        }
+        do {
+            let res: DraftActionResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/trading/telegram/drafts/bulk",
+                body: reject ? Body(draftIds: Array(selectedDrafts), action: "reject", reason: reason)
+                             : Body(draftIds: Array(selectedDrafts)))
+            if let err = res.error { toast = err; return }
+            toast = reject ? "Rejected \(res.rejected ?? 0) draft(s). Failed: \(res.failed ?? 0)"
+                           : "Posted \(res.posted ?? 0) trade(s). Failed: \(res.failed ?? 0)"
+            selectedDrafts = []
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await load()
+        } catch {
+            toast = error.localizedDescription
+        }
+    }
+
+    // ── NP-6 (TR-04): user/alias/group/webhook admin — web payloads verbatim ──
+
+    var adminBusy = false
+    var webhookInfo: String? = nil
+
+    private struct OkResp: Decodable { let ok: Bool?; let error: String?; let idempotentReplay: Bool? }
+
+    func linkUser(telegramUserId: String, username: String, userId: String,
+                  defaultAccountId: String, alias: String) async -> Bool {
+        guard !adminBusy else { return false }
+        adminBusy = true
+        defer { adminBusy = false }
+        struct Body: Encodable {
+            let telegramUserId: String
+            var telegramUsername: String? = nil
+            let userId: String
+            var defaultTradingAccountId: String? = nil
+            var defaultAccountAlias: String? = nil
+            let approved = true
+        }
+        do {
+            let r: OkResp = try await AlmaAPI.shared.send(
+                "POST", "/api/trading/telegram/users",
+                body: Body(telegramUserId: telegramUserId,
+                           telegramUsername: username.isEmpty ? nil : username,
+                           userId: userId,
+                           defaultTradingAccountId: defaultAccountId.isEmpty ? nil : defaultAccountId,
+                           defaultAccountAlias: alias.isEmpty ? nil : alias))
+            if let err = r.error { toast = err; return false }
+            toast = "Telegram user linked and approved"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await loadMapping(force: true)
+            return true
+        } catch {
+            toast = error.localizedDescription
+            return false
+        }
+    }
+
+    func unlinkUser(_ id: String) async {
+        guard !adminBusy else { return }
+        adminBusy = true
+        defer { adminBusy = false }
+        do {
+            let r: OkResp = try await AlmaAPI.shared.send("DELETE", "/api/trading/telegram/users/\(id)")
+            toast = r.idempotentReplay == true ? "Telegram mapping was already removed" : "Telegram mapping removed"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            toast = error.localizedDescription
+        }
+        await loadMapping(force: true)
+    }
+
+    func saveAlias(alias: String, accountId: String) async -> Bool {
+        guard !adminBusy else { return false }
+        // Web validation verbatim: 1–16 chars a-z 0-9 _ -
+        let clean = alias.trimmingCharacters(in: .whitespaces).lowercased()
+        guard clean.range(of: "^[a-z0-9_-]{1,16}$", options: .regularExpression) != nil else {
+            toast = "Alias must be 1–16 characters (a-z, 0-9, _, -)"
+            return false
+        }
+        guard !accountId.isEmpty else {
+            toast = "Account required"
+            return false
+        }
+        adminBusy = true
+        defer { adminBusy = false }
+        struct Body: Encodable { let alias: String; let tradingAccountId: String }
+        do {
+            let r: OkResp = try await AlmaAPI.shared.send(
+                "POST", "/api/trading/telegram/aliases", body: Body(alias: clean, tradingAccountId: accountId))
+            if let err = r.error { toast = err; return false }
+            toast = "Account alias saved"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await loadMapping(force: true)
+            return true
+        } catch {
+            toast = error.localizedDescription
+            return false
+        }
+    }
+
+    func registerGroup(chatId: String, title: String, notes: String) async -> Bool {
+        guard !adminBusy else { return false }
+        adminBusy = true
+        defer { adminBusy = false }
+        struct Body: Encodable {
+            let chatId: String
+            var title: String? = nil
+            let approved = true
+            var notes: String? = nil
+        }
+        do {
+            let r: OkResp = try await AlmaAPI.shared.send(
+                "POST", "/api/trading/telegram/chats",
+                body: Body(chatId: chatId.trimmingCharacters(in: .whitespaces),
+                           title: title.isEmpty ? nil : title,
+                           notes: notes.isEmpty ? nil : notes))
+            if let err = r.error { toast = err; return false }
+            toast = "Group registered + approved"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await loadMapping(force: true)
+            return true
+        } catch {
+            toast = error.localizedDescription
+            return false
+        }
+    }
+
+    func setGroupApproved(_ id: String, approved: Bool) async {
+        guard !adminBusy else { return }
+        adminBusy = true
+        defer { adminBusy = false }
+        struct Body: Encodable { let approved: Bool }
+        do {
+            let r: OkResp = try await AlmaAPI.shared.send(
+                "PATCH", "/api/trading/telegram/chats/\(id)", body: Body(approved: approved))
+            if let err = r.error { toast = err } else {
+                toast = approved ? "Group approved" : "Group deactivated"
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            }
+        } catch {
+            toast = error.localizedDescription
+        }
+        await loadMapping(force: true)
+    }
+
+    func testGroup(chatId: String) async {
+        guard !adminBusy else { return }
+        adminBusy = true
+        defer { adminBusy = false }
+        struct Body: Encodable { let chatId: String }
+        do {
+            let r: OkResp = try await AlmaAPI.shared.send(
+                "POST", "/api/trading/telegram/chats/test", body: Body(chatId: chatId))
+            toast = r.error ?? "Test message পাঠানো হয়েছে ✓"
+        } catch {
+            toast = error.localizedDescription
+        }
+    }
+
+    /// GET/POST /api/trading/telegram/setup — webhook status + register.
+    func loadWebhook() async {
+        struct Resp: Decodable {
+            let webhookUrl: String?
+            let registered: Bool?
+            let botUsername: String?
+            private enum Keys: String, CodingKey { case ok, data, webhookUrl, registered, botUsername }
+            init(from decoder: Decoder) throws {
+                let root = try decoder.container(keyedBy: Keys.self)
+                let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+                webhookUrl = try? c.decodeIfPresent(String.self, forKey: .webhookUrl)
+                registered = try? c.decodeIfPresent(Bool.self, forKey: .registered)
+                botUsername = try? c.decodeIfPresent(String.self, forKey: .botUsername)
+            }
+        }
+        if let r: Resp = try? await AlmaAPI.shared.get("/api/trading/telegram/setup") {
+            var bits: [String] = []
+            if let b = r.botUsername { bits.append("@\(b)") }
+            bits.append(r.registered == true ? "webhook ✓" : "webhook ✗")
+            if let u = r.webhookUrl { bits.append(u) }
+            webhookInfo = bits.joined(separator: " · ")
+        }
+    }
+
+    func registerWebhook() async {
+        guard !adminBusy else { return }
+        adminBusy = true
+        defer { adminBusy = false }
+        struct Empty: Encodable {}
+        do {
+            let r: OkResp = try await AlmaAPI.shared.send("POST", "/api/trading/telegram/setup", body: Empty())
+            toast = r.error ?? "Webhook registered successfully"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            toast = error.localizedDescription
+        }
+        await loadWebhook()
+    }
+
     func loadLive() async {
         do {
             let resp: TradingTelegramLive = try await AlmaAPI.shared.get(
@@ -551,6 +789,7 @@ final class TradingTelegramVM {
 struct TradingTelegramScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = TradingTelegramVM()
+    @State private var bulkConfirming = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -656,7 +895,59 @@ struct TradingTelegramScreen: View {
 
     // ── Drafts tab (read-only mirror of the web All Drafts list) ──
 
+    /// NP-6 (TR-03): bulk bar — select-all-pending + confirm/reject with server counts.
+    @ViewBuilder private var bulkBar: some View {
+        if vm.tab == .drafts {
+            HStack(spacing: 8) {
+                Button {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    let pending = (vm.drafts + vm.draftGroups.flatMap(\.drafts))
+                        .filter { $0.status == "PENDING" || $0.status == "LOCKED" }
+                    vm.selectedDrafts = Set(pending.map(\.id))
+                } label: {
+                    Text("সব pending").font(.system(size: 10, weight: .bold))
+                }
+                .buttonStyle(.bordered)
+                if !vm.selectedDrafts.isEmpty {
+                    Text("\(vm.selectedDrafts.count) selected")
+                        .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                        bulkConfirming = true
+                    } label: {
+                        Text(vm.bulkBusy ? "⏳" : "📗 Post to ledger").font(.system(size: 10, weight: .bold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(TradingTelegramPalette.tradeGreen)
+                    .disabled(vm.bulkBusy)
+                    .confirmationDialog("Post \(vm.selectedDrafts.count) draft(s) to the ledger?",
+                                        isPresented: $bulkConfirming, titleVisibility: .visible) {
+                        Button("Post to ledger", role: .destructive) {
+                            Task { await vm.bulkAction(reject: false) }
+                        }
+                        Button("বাতিল", role: .cancel) {}
+                    } message: {
+                        Text("Balances আর P/L আপডেট হবে।")
+                    }
+                    Button {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        Task { await vm.bulkAction(reject: true) }
+                    } label: {
+                        Text("✗ Reject").font(.system(size: 10, weight: .bold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(TradingTelegramPalette.red400)
+                    .disabled(vm.bulkBusy)
+                } else {
+                    Spacer()
+                }
+            }
+        }
+    }
+
     @ViewBuilder private var draftsSection: some View {
+        bulkBar
         statusChips
         infoBanner
         if vm.drafts.isEmpty && vm.draftGroups.isEmpty {
@@ -830,13 +1121,43 @@ private struct TradingTelegramDraftBody: View {
     @State private var deleteReason = ""
     @State private var askingDelete = false
 
+    @State private var showEdit = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 8) {
+                // NP-6 (TR-03): bulk selection — PENDING/LOCKED rows only (web rule).
+                if let vm, draft.status == "PENDING" || draft.status == "LOCKED" {
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        if vm.selectedDrafts.contains(draft.id) { vm.selectedDrafts.remove(draft.id) }
+                        else { vm.selectedDrafts.insert(draft.id) }
+                    } label: {
+                        Image(systemName: vm.selectedDrafts.contains(draft.id)
+                              ? "checkmark.circle.fill" : "circle")
+                            .font(.footnote)
+                            .foregroundStyle(vm.selectedDrafts.contains(draft.id)
+                                             ? TradingTelegramPalette.tradeGreen : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
                 Text(draft.headline)
                     .font(.footnote.weight(.bold).monospacedDigit())
                     .lineLimit(2)
                 Spacer(minLength: 4)
+                if let vm, draft.status == "PENDING" || draft.status == "LOCKED" {
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        showEdit = true
+                    } label: {
+                        Image(systemName: "pencil.circle").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .sheet(isPresented: $showEdit) {
+                        TradingTelegramDraftEditSheet(vm: vm, draft: draft) { showEdit = false }
+                            .presentationDetents([.medium])
+                    }
+                }
                 TradingTelegramStatusPill(status: draft.status)
             }
             if showMeta {
@@ -1224,6 +1545,7 @@ private struct TradingTelegramGroupsSection: View {
             }
             .padding(.vertical, 40)
         } else {
+            registerGroupCard
             ForEach(vm.chats) { c in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
@@ -1232,6 +1554,23 @@ private struct TradingTelegramGroupsSection: View {
                             .lineLimit(1)
                         approvedPill(c.approved)
                         Spacer(minLength: 0)
+                        // NP-6 (TR-04): approve/deactivate + test — web chat admin.
+                        Button(c.approved ? "🚫" : "✅") {
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            Task { await vm.setGroupApproved(c.id, approved: !c.approved) }
+                        }
+                        .buttonStyle(.bordered)
+                        .font(.system(size: 10))
+                        .disabled(vm.adminBusy)
+                        if c.approved {
+                            Button("🧪") {
+                                UISelectionFeedbackGenerator().selectionChanged()
+                                Task { await vm.testGroup(chatId: c.chatId) }
+                            }
+                            .buttonStyle(.bordered)
+                            .font(.system(size: 10))
+                            .disabled(vm.adminBusy)
+                        }
                     }
                     Text(c.title?.isEmpty == false ? c.title! : "Untitled group")
                         .font(.caption).foregroundStyle(.secondary)
@@ -1243,6 +1582,36 @@ private struct TradingTelegramGroupsSection: View {
                 .tradingTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
             }
         }
+    }
+
+    // NP-6 (TR-04): group register (web POST /chats {chatId,title,approved,notes}).
+    @State private var grChatId = ""
+    @State private var grTitle = ""
+
+    private var registerGroupCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("REGISTER GROUP")
+                .font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+            TextField("Chat ID (গ্রুপ হলে -100… দিয়ে শুরু)", text: $grChatId)
+                .keyboardType(.numbersAndPunctuation)
+            TextField("Title (ঐচ্ছিক)", text: $grTitle)
+            Button(vm.adminBusy ? "…" : "➕ Register + approve") {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                Task {
+                    if await vm.registerGroup(chatId: grChatId, title: grTitle, notes: "") {
+                        grChatId = ""; grTitle = ""
+                    }
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(TradingTelegramPalette.tradeGreen)
+            .disabled(vm.adminBusy || grChatId.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        .font(.caption)
+        .textFieldStyle(.roundedBorder)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .tradingTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingCard: some View {
@@ -1274,6 +1643,7 @@ private struct TradingTelegramGroupsSection: View {
 private struct TradingTelegramMappingSection: View {
     let vm: TradingTelegramVM
     @Environment(\.colorScheme) private var colorScheme
+    @State private var unlinkTarget: TradingTelegramUser? = nil
 
     var body: some View {
         if !vm.mappingLoaded {
@@ -1287,7 +1657,83 @@ private struct TradingTelegramMappingSection: View {
         } else {
             usersCard
             aliasesCard
+            adminFormsCard
         }
+    }
+
+    // NP-6 (TR-04): link user + alias + webhook — web payloads verbatim.
+    @State private var nuTelegramId = ""
+    @State private var nuUsername = ""
+    @State private var nuUserId = ""
+    @State private var nuAccountId = ""
+    @State private var nuAlias = ""
+    @State private var alAlias = ""
+    @State private var alAccountId = ""
+
+    @ViewBuilder private var adminFormsCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("LINK TELEGRAM USER")
+                .font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+            TextField("Telegram user ID (সংখ্যা)", text: $nuTelegramId)
+                .keyboardType(.numberPad)
+            TextField("@username (ঐচ্ছিক)", text: $nuUsername)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+            TextField("ERP user ID", text: $nuUserId)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+            TextField("Default trading account ID (ঐচ্ছিক)", text: $nuAccountId)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+            TextField("Default alias (ঐচ্ছিক)", text: $nuAlias)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+            Button(vm.adminBusy ? "…" : "🔗 Link + approve") {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                Task {
+                    if await vm.linkUser(telegramUserId: nuTelegramId, username: nuUsername,
+                                         userId: nuUserId, defaultAccountId: nuAccountId, alias: nuAlias) {
+                        nuTelegramId = ""; nuUsername = ""; nuUserId = ""; nuAccountId = ""; nuAlias = ""
+                    }
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(TradingTelegramPalette.tradeGreen)
+            .disabled(vm.adminBusy || nuTelegramId.isEmpty || nuUserId.isEmpty)
+
+            Divider().opacity(0.4)
+            Text("NEW ACCOUNT ALIAS")
+                .font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+            TextField("alias (a-z, 0-9, _, -)", text: $alAlias)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+            TextField("Trading account ID", text: $alAccountId)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+            Button(vm.adminBusy ? "…" : "💾 Save alias") {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                Task {
+                    if await vm.saveAlias(alias: alAlias, accountId: alAccountId) {
+                        alAlias = ""; alAccountId = ""
+                    }
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(vm.adminBusy || alAlias.isEmpty || alAccountId.isEmpty)
+
+            Divider().opacity(0.4)
+            Text("WEBHOOK")
+                .font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+            if let info = vm.webhookInfo {
+                Text(info).font(.system(size: 10).monospaced()).foregroundStyle(.secondary)
+            }
+            Button(vm.adminBusy ? "…" : "⚙️ Register webhook") {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                Task { await vm.registerWebhook() }
+            }
+            .buttonStyle(.bordered)
+            .disabled(vm.adminBusy)
+        }
+        .font(.caption)
+        .textFieldStyle(.roundedBorder)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .tradingTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .task { await vm.loadWebhook() }
     }
 
     @ViewBuilder private var usersCard: some View {
@@ -1299,6 +1745,7 @@ private struct TradingTelegramMappingSection: View {
             } else {
                 ForEach(vm.users) { u in
                     HStack(alignment: .top, spacing: 10) {
+                        // NP-6 (TR-04): unlink mapping (web DELETE /users/{id}).
                         Text(TradingTelegramFormat.initials(u.userName ?? u.telegramUsername ?? "?"))
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(TradingTelegramPalette.tradeGreen)
@@ -1320,6 +1767,14 @@ private struct TradingTelegramMappingSection: View {
                                                         : TradingTelegramPalette.emerald600)
                                 : (colorScheme == .dark ? TradingTelegramPalette.amber300
                                                         : TradingTelegramPalette.amber600))
+                        // NP-6 (TR-04): unlink (web DELETE /users/{id} with confirm).
+                        Button("🗑️") {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            unlinkTarget = u
+                        }
+                        .buttonStyle(.bordered)
+                        .font(.system(size: 10))
+                        .disabled(vm.adminBusy)
                     }
                     .padding(.vertical, 3)
                     if u != vm.users.last { Divider().opacity(0.3) }
@@ -1329,6 +1784,19 @@ private struct TradingTelegramMappingSection: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .tradingTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .confirmationDialog(
+            unlinkTarget.map { "\($0.userName ?? $0.telegramUsername ?? "user") — mapping মুছবেন?" } ?? "",
+            isPresented: Binding(get: { unlinkTarget != nil }, set: { if !$0 { unlinkTarget = nil } }),
+            titleVisibility: .visible,
+            presenting: unlinkTarget
+        ) { u in
+            Button("Unlink", role: .destructive) {
+                Task { await vm.unlinkUser(u.id) }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: { u in
+            Text("Telegram ID \(u.telegramUserId ?? "—") আর ট্রেড পাঠাতে পারবে না।")
+        }
     }
 
     @ViewBuilder private var aliasesCard: some View {
@@ -1640,4 +2108,63 @@ private struct TradingTelegramCountUpText: View, Animatable {
 @available(iOS 17.0, *)
 #Preview("Telegram Quick Entry — Light") {
     TradingTelegramScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+
+// MARK: - NP-6 (TR-03): draft edit sheet (web saveEdit payload verbatim)
+
+@available(iOS 17.0, *)
+private struct TradingTelegramDraftEditSheet: View {
+    let vm: TradingTelegramVM
+    let draft: TradingTelegramDraft
+    let onDone: () -> Void
+    @State private var type = "BUY"
+    @State private var usdt = ""
+    @State private var rate = ""
+    @State private var feeUsdt = ""
+    @State private var accountId = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Draft #\(draft.id.prefix(8))") {
+                    Picker("Type", selection: $type) {
+                        Text("BUY").tag("BUY")
+                        Text("SELL").tag("SELL")
+                    }
+                    TextField("USDT amount", text: $usdt).keyboardType(.decimalPad)
+                    TextField("BDT rate", text: $rate).keyboardType(.decimalPad)
+                    TextField("Fee (USDT)", text: $feeUsdt).keyboardType(.decimalPad)
+                    TextField("Trading account ID (ঐচ্ছিক)", text: $accountId)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                }
+            }
+            .navigationTitle("Edit draft")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("বাতিল") { onDone() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("সেভ") {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        Task {
+                            guard let u = Double(usdt), let r = Double(rate) else { return }
+                            if await vm.editDraft(draft.id, body: .init(
+                                tradeType: type, usdtAmount: u, bdtRate: r,
+                                feeUsdt: Double(feeUsdt) ?? 0,
+                                tradingAccountId: accountId.isEmpty ? nil : accountId)) {
+                                onDone()
+                            }
+                        }
+                    }
+                    .disabled(Double(usdt) == nil || Double(rate) == nil)
+                }
+            }
+            .onAppear {
+                type = draft.tradeType ?? "BUY"
+                usdt = draft.usdtAmount.map { String($0) } ?? ""
+                rate = draft.bdtRate.map { String($0) } ?? ""
+                feeUsdt = draft.feeUsdt.map { String($0) } ?? ""
+            }
+        }
+    }
 }

@@ -915,7 +915,7 @@
       "title": "Trading account detail actions",
       "route": "/trading/accounts",
       "priority": "P1",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-6",
       "webSource": [
         "src/app/trading/accounts/"
@@ -943,45 +943,46 @@
           "id": "TR-01.audit",
           "title": "Trade audit history",
           "kind": "read",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         },
         {
           "id": "TR-01.tradeedit",
           "title": "Trade edit",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         },
         {
           "id": "TR-01.deletereq",
           "title": "Trade delete request + approve/reject delete",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         },
         {
           "id": "TR-01.screens",
           "title": "Full screenshot history",
           "kind": "read",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         },
         {
           "id": "TR-01.dailysummary",
           "title": "Daily summary editing + contextual actions",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         }
-      ]
+      ],
+      "notes": "NP-6 DONE: TradingAccountAdminSection embedded in the detail sheet — trade audit view, edit (editReason), request/approve/reject delete (web tradeStatus gating + owner probe for SUPER-only buttons), daily bkash summary list+add (whole-taka), full screenshot history (cursor paging + archived) + multipart upload."
     },
     {
       "id": "TR-02",
       "title": "Partnership settlement",
       "route": "/trading/accounts",
       "priority": "P1",
-      "state": "missing",
+      "state": "native",
       "plannedPhase": "NP-6",
       "webSource": [
         "src/app/trading/accounts/"
@@ -992,33 +993,34 @@
           "id": "TR-02.preview",
           "title": "Settlement preview + unsettled expenses + override",
           "kind": "read",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         },
         {
           "id": "TR-02.confirm",
           "title": "Confirm settlement (wallet-post option, before/after server verification)",
           "kind": "write",
           "roleGate": "owner/admin",
-          "state": "missing",
-          "plannedPhase": "NP-6",
-          "notes": "money-sensitive: whole-taka + before/after assertions"
+          "state": "native",
+          "notes": "money-sensitive: whole-taka + before/after assertions",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         },
         {
           "id": "TR-02.history",
           "title": "Settlement history",
           "kind": "read",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         }
-      ]
+      ],
+      "notes": "NP-6 DONE: partnership preview (shares/expenses/net-staff-owes) + unsettled count + notes/override/postToWallet settle with BEFORE/AFTER verification line (owes before→after, history count delta, wallet-post flag) + settlement history."
     },
     {
       "id": "TR-03",
       "title": "Trading Telegram drafts",
       "route": "/trading/telegram",
       "priority": "P1",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-6",
       "webSource": [
         "src/app/trading/telegram/"
@@ -1031,30 +1033,32 @@
           "id": "TR-03.single",
           "title": "Single approve/reject/reopen/delete-request",
           "kind": "write",
-          "state": "native"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         },
         {
           "id": "TR-03.edit",
           "title": "Draft edit",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         },
         {
           "id": "TR-03.bulk",
           "title": "Bulk confirm/reject with selection + exact server response counts",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         }
-      ]
+      ],
+      "notes": "NP-6 DONE: draft edit sheet (web saveEdit payload) + bulk select (PENDING/LOCKED only) + Post-to-ledger confirm + bulk reject — server counts in toast."
     },
     {
       "id": "TR-04",
       "title": "Trading Telegram mapping/admin",
       "route": "/trading/telegram",
       "priority": "P1",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-6",
       "webSource": [
         "src/app/trading/telegram/"
@@ -1067,37 +1071,39 @@
           "id": "TR-04.read",
           "title": "Users/groups/aliases read",
           "kind": "read",
-          "state": "native"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         },
         {
           "id": "TR-04.mapping",
           "title": "User mapping create/update/unlink + alias create/update",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         },
         {
           "id": "TR-04.groups",
           "title": "Group register/approve/deactivate/test",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         },
         {
           "id": "TR-04.webhook",
           "title": "Webhook setup/status/register + refresh",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         }
-      ]
+      ],
+      "notes": "NP-6 DONE: link user (POST users, approved:true), unlink (DELETE + confirm, idempotent replay = success), alias create (web regex validation), group register/approve/deactivate/test, webhook status + register."
     },
     {
       "id": "TR-05",
       "title": "Trading analytics filters/exports",
       "route": "/trading/analytics",
       "priority": "P2",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-6",
       "webSource": [
         "src/app/trading/analytics/"
@@ -1110,17 +1116,18 @@
           "id": "TR-05.filters",
           "title": "Custom start/end date + min/max ROI inputs",
           "kind": "read",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         },
         {
           "id": "TR-05.export",
           "title": "Native CSV/PDF export + Excel-compatible share",
           "kind": "export",
-          "state": "missing",
-          "plannedPhase": "NP-6"
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
         }
-      ]
+      ],
+      "notes": "NP-6 DONE: custom start/end + min/max ROI query params; native CSV (web columns verbatim) + A4 PDF export via share sheet (Excel-compatible CSV — FN-04 groundwork)."
     },
     {
       "id": "FN-01",
@@ -1613,7 +1620,7 @@
     "TargetControlSwiftUI.swift": 3,
     "TaskSpotlightSwiftUI.swift": 3,
     "TradingAccountsSwiftUI.swift": 3,
-    "TradingAnalyticsSwiftUI.swift": 2,
+    "TradingAnalyticsSwiftUI.swift": 1,
     "TradingHomeSwiftUI.swift": 7,
     "TradingHrSwiftUI.swift": 3,
     "TradingStaffSwiftUI.swift": 3,
