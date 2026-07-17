@@ -74,12 +74,36 @@ export async function GET(req: NextRequest) {
     }
   } catch { /* health must never fail on the graph block */ }
 
+  // Phase 55/58 — security quarantine state (the browser worker fail-closes on
+  // this field) + effect-engine/outbox/SLO health for the monitoring panel.
+  let securityQuarantine = true // fail closed until proven otherwise
+  try {
+    const { getQuarantineState } = await import('@/agent/lib/security/incident-response')
+    securityQuarantine = (await getQuarantineState(true)).active
+  } catch { /* stays true — fail closed */ }
+
+  let effects: unknown = null
+  try {
+    const { outboxHealth } = await import('@/agent/lib/effects/outbox')
+    const { computeSloSnapshot, checkSloBreaches } = await import('@/agent/lib/autonomy-slo')
+    const wantSlo = req.nextUrl.searchParams.get('slo') === 'true'
+    const outbox = await outboxHealth()
+    if (wantSlo) {
+      const snapshot = await computeSloSnapshot()
+      effects = { outbox, slo: snapshot, breaches: checkSloBreaches(snapshot) }
+    } else {
+      effects = { outbox }
+    }
+  } catch { /* health must never fail on the effects block */ }
+
   return NextResponse.json({
     ok: db,
     db,
     ...(dbError ? { dbError } : {}),
     agentEnabled: true,
+    securityQuarantine,
     graph,
+    effects,
     timestamp: now.toISOString(),
   })
 }

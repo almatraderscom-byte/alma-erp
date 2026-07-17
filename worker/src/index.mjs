@@ -1500,6 +1500,23 @@ if (process.env.AGENT_EFFECT_ENGINE === 'true') {
     },
   })
   console.log('[worker] Phase 53 effect-outbox dispatcher started')
+
+  // Phase 58 — continuous reconciler: stale executing → unknown, stuck
+  // unknowns → owner alert, expired outbox leases → released.
+  const { startAutonomyReconcilerLoop } = await import('./autonomy-reconciler.mjs')
+  startAutonomyReconcilerLoop({
+    sb: supabase,
+    notify: async (message) => {
+      try {
+        await fetch(`${getAppUrl()}/api/assistant/internal/urgent-alert`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
+          body: JSON.stringify({ tier: 2, title: '⚠️ অনিশ্চিত effect', message, voice: false, category: 'effect_unknown' }),
+        }).catch(() => {})
+      } catch { /* alert best-effort */ }
+    },
+  })
+  console.log('[worker] Phase 58 autonomy reconciler started')
 }
 
 startTwilioHttpServer()

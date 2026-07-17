@@ -33,6 +33,14 @@ export async function GET(req: NextRequest) {
     return Response.json({ rollouts, services, stageLabels: STAGE_LABEL_BN, stages: LADDER_STAGES })
   }
 
+  // Phase 58 — SLO snapshot for the owner monitor panel.
+  if (section === 'slo') {
+    const { computeSloSnapshot, checkSloBreaches } = await import('@/agent/lib/autonomy-slo')
+    const { outboxHealth } = await import('@/agent/lib/effects/outbox')
+    const [snapshot, outbox] = await Promise.all([computeSloSnapshot(), outboxHealth().catch(() => ({ due: 0, leased: 0 }))])
+    return Response.json({ effects: { outbox, slo: snapshot, breaches: checkSloBreaches(snapshot) } })
+  }
+
   return Response.json(await getAgentControls())
 }
 
