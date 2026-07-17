@@ -8,14 +8,23 @@ import Link from 'next/link'
 import { Avatar, Card, Empty, Progress, Skeleton, Button } from '@/components/ui'
 import { PageEnter } from '@/components/layout/AgentAccess'
 import { useActor } from '@/contexts/ActorContext'
-import { can } from '@/lib/roles'
+import { can, isSystemOwner } from '@/lib/roles'
+import {
+  clearBkashSendPending,
+  copyTextToClipboard,
+  extractTrxIdFromText,
+  openBkashApp,
+  readBkashSendPending,
+  readClipboardText,
+  saveBkashSendPending,
+} from '@/lib/bkash-send-flow'
 import { roundMoney } from '@/lib/money'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { BusinessSwitcherCompact } from '@/components/layout/BusinessSwitcher'
 import { cn } from '@/lib/utils'
 const _stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
 const _fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } } }
-import type { PayrollWallet, WalletSummaryResponse } from '@/types/payroll-wallet'
+import type { PayrollWallet, WalletRequestDto, WalletSummaryResponse } from '@/types/payroll-wallet'
 import { downloadBlob, payrollWalletsToCsv, payrollWalletsToWorkbook } from '@/lib/export-payroll-wallet'
 import toast from 'react-hot-toast'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
@@ -109,7 +118,7 @@ export default function PayrollPage() {
   const [automation, setAutomation] = useState<{ enabled: boolean; dayOfMonth: number; timezone: string; heldBusinessIds?: string[] } | null>(null)
   const [preview, setPreview] = useState<{ totalPreviewSalary: number; alreadyAccruedCount: number; employees: Array<{ employeeId: string; name: string; salary: number; alreadyAccrued: boolean }> } | null>(null)
   const [history, setHistory] = useState<Array<{ id: string; periodYm: string; status: string; trigger: string; createdCount: number; skippedCount: number; createdAt: string; error?: string | null }>>([])
-  const [review, setReview] = useState<{ id: string; action: 'APPROVE' | 'REJECT'; type: string; requestedAmount: number; approvedAmount: string; transactionId: string; paidVia: string } | null>(null)
+  const [review, setReview] = useState<{ id: string; action: 'APPROVE' | 'REJECT'; type: string; requestedAmount: number; approvedAmount: string; transactionId: string; paidVia: string; employeeId?: string; businessId?: string; payout?: WalletRequestDto['payout']; resumedFromBkash?: boolean } | null>(null)
   const [reviewBusy, setReviewBusy] = useState(false)
   const [ledgerTypeFilter, setLedgerTypeFilter] = useState('ALL')
   const [employeeFilter, setEmployeeFilter] = useState('')
@@ -124,6 +133,52 @@ export default function PayrollPage() {
   const walletRequestId = useRef(0)
 
   const showApprovals = can(role, 'advanceApprove')
+  // bKash send flow is deliberately owner-only — normal admins keep the manual TrxID field.
+  const ownerBkashFlow = isSystemOwner(role)
+
+  // When the owner comes back from the bKash app, re-open the confirm sheet for the
+  // in-flight withdrawal. visibilitychange fires on both Capacitor shell resume and
+  // mobile-web tab return; the mount-time call covers a full app relaunch (iOS may
+  // kill the WebView while the owner is inside bKash — state lives in localStorage).
+  useEffect(() => {
+    if (!ownerBkashFlow) return
+    const restore = () => {
+      const pending = readBkashSendPending()
+      if (!pending || pending.surface !== 'payroll') return
+      setReview(prev => prev ?? {
+        id: pending.requestId,
+        action: 'APPROVE',
+        type: 'WITHDRAWAL',
+        requestedAmount: pending.requestedAmount,
+        approvedAmount: String(pending.approvedAmount || pending.requestedAmount),
+        transactionId: '',
+        paidVia: 'BKASH',
+        employeeId: pending.employeeId,
+        businessId: pending.businessId,
+        payout: {
+          methodId: null,
+          label: 'bKash',
+          accountHolder: pending.recipientName,
+          accountNumber: pending.recipientNumber,
+          accountNumberMasked: pending.recipientNumber,
+          isVerified: false,
+          status: 'ACTIVE',
+          provider: 'BKASH',
+        },
+        resumedFromBkash: true,
+      })
+    }
+    restore()
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') restore()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+  }, [ownerBkashFlow])
 
   const loadWallets = useCallback(async (fresh = false) => {
     if (!showApprovals) return
@@ -360,6 +415,56 @@ export default function PayrollPage() {
     }
   }
 
+  /** Copy the recipient's bKash number, remember the in-flight request, jump to bKash. */
+  async function startBkashSend() {
+    if (!review?.payout?.accountNumber || review.payout.accountNumber === '—') return
+    const approved = roundMoney(Number(review.approvedAmount || review.requestedAmount))
+    const copied = await copyTextToClipboard(review.payout.accountNumber)
+    saveBkashSendPending({
+      surface: 'payroll',
+      requestId: review.id,
+      employeeId: review.employeeId || '',
+      businessId: review.businessId || '',
+      requestedAmount: review.requestedAmount,
+      approvedAmount: approved > 0 ? approved : review.requestedAmount,
+      recipientNumber: review.payout.accountNumber,
+      recipientName: review.payout.accountHolder ?? null,
+      startedAt: Date.now(),
+    })
+    toast.success(copied
+      ? 'নম্বর কপি হয়েছে — বিকাশে Send Money-তে পেস্ট করুন'
+      : `কপি করা যায়নি — বিকাশে নম্বরটি নিজে লিখুন: ${review.payout.accountNumber}`)
+    // Small delay so the toast paints and the clipboard write settles before the OS switch.
+    window.setTimeout(() => openBkashApp(), 350)
+  }
+
+  /** Fill the TrxID field from the clipboard (bKash success screen → copy → return). */
+  async function pasteTrxId() {
+    const raw = ((await readClipboardText()) || '').trim()
+    const extracted = extractTrxIdFromText(raw)
+    // Guard the fallback: never accept a pure number (that's the recipient's phone
+    // number we copied on the way out, or an amount) as a transaction id.
+    const fallback = /^[A-Za-z0-9-]{6,30}$/.test(raw) && !/^\d+$/.test(raw) ? raw : ''
+    const trx = extracted || fallback
+    if (!trx) {
+      toast.error('ক্লিপবোর্ডে TrxID পাওয়া যায়নি — বিকাশের সফল স্ক্রিন থেকে TrxID কপি করুন')
+      return
+    }
+    setReview(r => (r ? { ...r, transactionId: trx } : r))
+  }
+
+  /** Close the review sheet; a half-done bKash confirmation is cleared so it stops re-opening. */
+  function dismissReview() {
+    if (review) {
+      const pending = readBkashSendPending()
+      if (pending?.requestId === review.id) {
+        clearBkashSendPending()
+        toast('বিকাশ নিশ্চিতকরণ বাতিল হলো — পরে তালিকা থেকে "অনুমোদন" চেপে TrxID দিতে পারবেন', { icon: 'ℹ️' })
+      }
+    }
+    setReview(null)
+  }
+
   async function submitReview() {
     if (!review || reviewBusy) return
     const approvedAmount = review.action === 'APPROVE'
@@ -385,7 +490,21 @@ export default function PayrollPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: review.action, approvedAmount, note: '', transactionId, paid_via: review.paidVia || undefined }),
       })
-      if (!result.ok) return
+      if (!result.ok) {
+        // The request is gone (approved elsewhere / already resolved) — drop the
+        // half-done bKash confirmation so the sheet stops re-opening on resume.
+        if (result.error.code === 'request_not_found') {
+          const pending = readBkashSendPending()
+          if (pending?.requestId === review.id) {
+            clearBkashSendPending()
+            setReview(null)
+            void loadWallets(true)
+          }
+        }
+        return
+      }
+      const pending = readBkashSendPending()
+      if (pending?.requestId === review.id) clearBkashSendPending()
       toast.success(review.action === 'APPROVE' ? 'Approved · wallet ledger updated' : 'Rejected')
       setReview(null)
       void loadWallets(true)
@@ -967,8 +1086,8 @@ export default function PayrollPage() {
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         <span className="font-mono text-sm font-bold text-gold">৳ {Number(req.requestedAmount).toLocaleString('en-BD')}</span>
-                        <Button size="xs" variant="secondary" type="button" onClick={() => setReview({ id: req.id, action: 'REJECT', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '', paidVia: '' })}>প্রত্যাখ্যান</Button>
-                        <Button size="xs" variant="gold" type="button" onClick={() => setReview({ id: req.id, action: 'APPROVE', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '', paidVia: '' })}>অনুমোদন</Button>
+                        <Button size="xs" variant="secondary" type="button" onClick={() => setReview({ id: req.id, action: 'REJECT', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '', paidVia: '', employeeId: req.employeeId, businessId: req.businessId, payout: req.payout ?? null })}>প্রত্যাখ্যান</Button>
+                        <Button size="xs" variant="gold" type="button" onClick={() => setReview({ id: req.id, action: 'APPROVE', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '', paidVia: '', employeeId: req.employeeId, businessId: req.businessId, payout: req.payout ?? null })}>অনুমোদন</Button>
                       </div>
                     </div>
                   ))}
@@ -1312,7 +1431,7 @@ export default function PayrollPage() {
       )}
 
       {review && (
-        <MobileModalPortal open zIndex={80} onBackdropClick={() => setReview(null)}>
+        <MobileModalPortal open zIndex={80} onBackdropClick={dismissReview}>
           <Card className="mobile-modal-shell w-full max-w-md border-gold/20 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <p className="text-sm font-bold text-cream">
@@ -1355,24 +1474,58 @@ export default function PayrollPage() {
                   <span className="mt-1 block text-[10px] text-muted">লেনদেনের খাতায় লেখা থাকবে — সবাই দেখবে কীভাবে পেমেন্ট হয়েছে।</span>
                 </div>
               )}
+              {ownerBkashFlow && review.action === 'APPROVE' && review.type === 'WITHDRAWAL' && review.paidVia === 'BKASH'
+                && review.payout?.provider === 'BKASH' && review.payout.accountNumber && review.payout.accountNumber !== '—' && (
+                <div className="mt-3 rounded-xl border border-gold/25 bg-gold/[0.06] p-3">
+                  <p className="text-[11px] font-bold text-cream">
+                    {review.resumedFromBkash
+                      ? 'বিকাশ থেকে ফিরেছেন — TrxID পেস্ট করে অনুমোদন শেষ করুন'
+                      : `প্রাপকের বিকাশ${review.payout.accountHolder ? ` · ${review.payout.accountHolder}` : ''}`}
+                  </p>
+                  <p className="mt-1 font-mono text-sm font-bold text-gold">{review.payout.accountNumber}</p>
+                  {!review.resumedFromBkash && (
+                    <div className="mt-2">
+                      <Button size="xs" variant="gold" type="button" onClick={() => void startBkashSend()}>
+                        নম্বর কপি করে বিকাশ খুলুন
+                      </Button>
+                    </div>
+                  )}
+                  <span className="mt-2 block text-[10px] text-muted">
+                    {review.resumedFromBkash
+                      ? 'বিকাশের সফল স্ক্রিন থেকে TrxID কপি করে নিচের "পেস্ট" বাটন চাপুন।'
+                      : 'টাকা পাঠিয়ে অ্যাপে ফিরে এলে এই ঘরটাই আবার খুলবে — তখন TrxID পেস্ট করলেই শেষ।'}
+                  </span>
+                </div>
+              )}
               {review.action === 'APPROVE' && review.type === 'WITHDRAWAL' && review.paidVia !== 'CASH' && (
                 <label className="mt-3 block text-[11px] font-bold uppercase tracking-wider text-muted">
                   ট্রানজেকশন আইডি
-                  <input
-                    inputMode="text"
-                    type="text"
-                    placeholder="যে নম্বর/ID থেকে টাকা পাঠালেন"
-                    value={review.transactionId}
-                    onChange={e => setReview(r => r ? { ...r, transactionId: e.target.value } : r)}
-                    className="mt-2 w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-sm text-cream outline-none focus:ring-2 focus:ring-gold/20"
-                  />
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      inputMode="text"
+                      type="text"
+                      placeholder="যে নম্বর/ID থেকে টাকা পাঠালেন"
+                      value={review.transactionId}
+                      onChange={e => setReview(r => r ? { ...r, transactionId: e.target.value } : r)}
+                      className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-sm text-cream outline-none focus:ring-2 focus:ring-gold/20"
+                    />
+                    {ownerBkashFlow && review.paidVia === 'BKASH' && (
+                      <button
+                        type="button"
+                        onClick={() => void pasteTrxId()}
+                        className="shrink-0 rounded-xl border border-gold/40 bg-gold/10 px-4 text-xs font-bold text-gold transition hover:bg-gold/20"
+                      >
+                        পেস্ট
+                      </button>
+                    )}
+                  </div>
                   <span className="mt-1 block text-[10px] font-normal normal-case text-muted">এই ID সহ staff-কে SMS পাঠানো হবে।</span>
                 </label>
               )}
             </div>
             <div className="mobile-modal-footer px-5 pt-3">
               <div className="flex justify-end gap-2">
-                <Button size="xs" variant="secondary" type="button" onClick={() => setReview(null)}>বাতিল</Button>
+                <Button size="xs" variant="secondary" type="button" onClick={dismissReview}>বাতিল</Button>
                 <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} type="button" disabled={reviewBusy} onClick={() => void submitReview()}>
                   {reviewBusy ? 'প্রসেসিং…' : review.action === 'APPROVE' ? 'অনুমোদন নিশ্চিত করুন' : 'প্রত্যাখ্যান নিশ্চিত করুন'}
                 </Button>

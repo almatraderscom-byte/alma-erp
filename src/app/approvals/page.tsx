@@ -10,6 +10,15 @@ import { Button, Card, Empty, KpiCard, PageHeader, Skeleton, Spinner } from '@/c
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useApprovalActions } from '@/hooks/useApprovalActions'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
+import {
+  clearBkashSendPending,
+  copyTextToClipboard,
+  extractTrxIdFromText,
+  openBkashApp,
+  readBkashSendPending,
+  readClipboardText,
+  saveBkashSendPending,
+} from '@/lib/bkash-send-flow'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import type { ApprovalAuditEntry } from '@/lib/approval-types'
 import { normalizeApprovalResponse } from '@/lib/approvals-response'
@@ -51,6 +60,7 @@ type ApprovalRow = {
     accountNumberMasked?: string
     isVerified?: boolean
     status?: string
+    provider?: string | null
   } | null
   penaltyAppeal?: {
     fineDate?: string
@@ -97,7 +107,7 @@ function ApprovalsPageInner() {
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<ApprovalRow | null>(null)
   const [actionTarget, setActionTarget] = useState<{ row: ApprovalRow; action: 'APPROVE' | 'REJECT' } | null>(null)
-  const [withdrawApprove, setWithdrawApprove] = useState<{ row: ApprovalRow; transactionId: string } | null>(null)
+  const [withdrawApprove, setWithdrawApprove] = useState<{ row: ApprovalRow; transactionId: string; resumedFromBkash?: boolean } | null>(null)
   // Reimbursement approvals pause for a payout choice: wallet credit vs already-paid-instantly.
   const [reimburseApprove, setReimburseApprove] = useState<ApprovalRow | null>(null)
   const [note, setNote] = useState('')
@@ -199,6 +209,8 @@ function ApprovalsPageInner() {
       payoutMode,
     })
     if (result.ok) {
+      const pending = readBkashSendPending()
+      if (pending?.surface === 'approvals' && pending.requestId === row.id) clearBkashSendPending()
       setSelected(current => (current?.id === row.id ? null : current))
       setActionTarget(null)
       setWithdrawApprove(null)
@@ -206,6 +218,94 @@ function ApprovalsPageInner() {
       setNote('')
     }
   }
+
+  /** Owner-only bKash send flow: the API reveals the full payout number only to
+   *  SUPER_ADMIN; masked (starred) or absent numbers mean no send flow. */
+  function bkashPayoutNumber(row: ApprovalRow): string | null {
+    const p = row.payoutSummary
+    if (!p || p.provider !== 'BKASH' || p.status === 'MISSING') return null
+    const number = p.accountNumber || ''
+    if (!number || number === '—' || number.includes('*')) return null
+    return number
+  }
+
+  /** Copy the recipient's bKash number, remember the in-flight approval, jump to bKash. */
+  async function startBkashSend() {
+    if (!withdrawApprove) return
+    const number = bkashPayoutNumber(withdrawApprove.row)
+    if (!number) return
+    const copied = await copyTextToClipboard(number)
+    saveBkashSendPending({
+      surface: 'approvals',
+      requestId: withdrawApprove.row.id,
+      employeeId: withdrawApprove.row.requester?.employeeIdGas || '',
+      businessId: withdrawApprove.row.businessId || '',
+      requestedAmount: 0,
+      approvedAmount: 0,
+      recipientNumber: number,
+      recipientName: withdrawApprove.row.payoutSummary?.accountHolder ?? withdrawApprove.row.requester?.name ?? null,
+      startedAt: Date.now(),
+    })
+    toast.success(copied
+      ? 'নম্বর কপি হয়েছে — বিকাশে Send Money-তে পেস্ট করুন'
+      : `কপি করা যায়নি — বিকাশে নম্বরটি নিজে লিখুন: ${number}`)
+    // Small delay so the toast paints and the clipboard write settles before the OS switch.
+    window.setTimeout(() => openBkashApp(), 350)
+  }
+
+  /** Fill the Transaction ID field from the clipboard (bKash success screen → copy → return). */
+  async function pasteTrxId() {
+    const raw = ((await readClipboardText()) || '').trim()
+    const extracted = extractTrxIdFromText(raw)
+    // Never accept a pure number — that's the recipient's phone number we copied
+    // on the way out, or an amount.
+    const fallback = /^[A-Za-z0-9-]{6,30}$/.test(raw) && !/^\d+$/.test(raw) ? raw : ''
+    const trx = extracted || fallback
+    if (!trx) {
+      toast.error('ক্লিপবোর্ডে TrxID পাওয়া যায়নি — বিকাশের সফল স্ক্রিন থেকে TrxID কপি করুন')
+      return
+    }
+    setWithdrawApprove(w => (w ? { ...w, transactionId: trx } : w))
+  }
+
+  /** Close the withdraw modal; a half-done bKash confirmation is cleared so it stops re-opening. */
+  function dismissWithdrawModal() {
+    if (withdrawApprove) {
+      const pending = readBkashSendPending()
+      if (pending?.surface === 'approvals' && pending.requestId === withdrawApprove.row.id) {
+        clearBkashSendPending()
+        toast('বিকাশ নিশ্চিতকরণ বাতিল হলো — পরে কার্ড থেকে Approve চেপে TrxID দিতে পারবেন', { icon: 'ℹ️' })
+      }
+    }
+    setWithdrawApprove(null)
+  }
+
+  // Coming back from the bKash app (mobile) or another tab (desktop): re-open the
+  // withdraw modal for the in-flight approval so the owner can paste the TrxID.
+  useEffect(() => {
+    const restore = () => {
+      const pending = readBkashSendPending()
+      if (!pending || pending.surface !== 'approvals') return
+      const row = (data?.approvals ?? []).find(r => r.id === pending.requestId && r.status === 'PENDING')
+      if (row) {
+        setWithdrawApprove(current => current ?? { row, transactionId: '', resumedFromBkash: true })
+      } else if (data && !loading) {
+        // List is genuinely loaded and the approval is gone (resolved elsewhere).
+        clearBkashSendPending()
+      }
+    }
+    restore()
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') restore()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, loading])
 
   // Wallet withdrawals need a transaction id (sent to staff via SMS) — collect it first.
   function handleApproveClick(row: ApprovalRow) {
@@ -612,7 +712,7 @@ function ApprovalsPageInner() {
         const waDisabled = waBusy || actionsGloballyDisabled
         const txn = withdrawApprove.transactionId.trim()
         return (
-        <MobileModalPortal open zIndex={10001} onBackdropClick={() => setWithdrawApprove(null)}>
+        <MobileModalPortal open zIndex={10001} onBackdropClick={dismissWithdrawModal}>
           <Card className="mobile-modal-shell w-full max-w-lg sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <div className="flex items-start justify-between gap-3">
@@ -620,7 +720,7 @@ function ApprovalsPageInner() {
                   <p className="text-sm font-black text-cream">Approve withdrawal</p>
                   <p className="mt-1 text-xs text-muted">{withdrawApprove.row.requester?.name || withdrawApprove.row.requestedBy} · {withdrawApprove.row.businessName || withdrawApprove.row.businessId || 'Global'}</p>
                 </div>
-                <Button size="xs" variant="ghost" disabled={waBusy} onClick={() => setWithdrawApprove(null)}>Close</Button>
+                <Button size="xs" variant="ghost" disabled={waBusy} onClick={dismissWithdrawModal}>Close</Button>
               </div>
               {waUi.state === 'processing' && (
                 <div className="mt-3 flex items-center gap-2 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-200">
@@ -630,17 +730,55 @@ function ApprovalsPageInner() {
               )}
             </div>
             <div className="mobile-modal-body px-5 space-y-2">
+              {(() => {
+                const number = bkashPayoutNumber(withdrawApprove.row)
+                if (!number) return null
+                return (
+                  <div className="rounded-xl border border-gold/25 bg-gold/[0.06] p-3">
+                    <p className="text-[11px] font-bold text-cream">
+                      {withdrawApprove.resumedFromBkash
+                        ? 'বিকাশ থেকে ফিরেছেন — TrxID পেস্ট করে অনুমোদন শেষ করুন'
+                        : `প্রাপকের বিকাশ${withdrawApprove.row.payoutSummary?.accountHolder ? ` · ${withdrawApprove.row.payoutSummary.accountHolder}` : ''}`}
+                    </p>
+                    <p className="mt-1 font-mono text-sm font-bold text-gold">{number}</p>
+                    {!withdrawApprove.resumedFromBkash && (
+                      <div className="mt-2">
+                        <Button size="xs" variant="gold" type="button" disabled={waDisabled} onClick={() => void startBkashSend()}>
+                          নম্বর কপি করে বিকাশ খুলুন
+                        </Button>
+                      </div>
+                    )}
+                    <span className="mt-2 block text-[10px] text-muted">
+                      {withdrawApprove.resumedFromBkash
+                        ? 'বিকাশের সফল স্ক্রিন থেকে TrxID কপি করে নিচের "পেস্ট" বাটন চাপুন।'
+                        : 'টাকা পাঠিয়ে অ্যাপে ফিরে এলে এই ঘরটাই আবার খুলবে — তখন TrxID পেস্ট করলেই শেষ।'}
+                    </span>
+                  </div>
+                )
+              })()}
               <label className="block text-[11px] font-black uppercase tracking-[0.14em] text-muted">
                 Transaction ID
-                <input
-                  autoFocus
-                  type="text"
-                  value={withdrawApprove.transactionId}
-                  onChange={e => setWithdrawApprove(w => w ? { ...w, transactionId: e.target.value } : w)}
-                  disabled={waDisabled}
-                  placeholder="যে নম্বর/ID থেকে টাকা পাঠালেন"
-                  className="mt-2 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60 disabled:opacity-60"
-                />
+                <div className="mt-2 flex gap-2">
+                  <input
+                    autoFocus={!withdrawApprove.resumedFromBkash}
+                    type="text"
+                    value={withdrawApprove.transactionId}
+                    onChange={e => setWithdrawApprove(w => w ? { ...w, transactionId: e.target.value } : w)}
+                    disabled={waDisabled}
+                    placeholder="যে নম্বর/ID থেকে টাকা পাঠালেন"
+                    className="w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60 disabled:opacity-60"
+                  />
+                  {bkashPayoutNumber(withdrawApprove.row) && (
+                    <button
+                      type="button"
+                      disabled={waDisabled}
+                      onClick={() => void pasteTrxId()}
+                      className="shrink-0 rounded-xl border border-gold/40 bg-gold/10 px-4 text-xs font-bold text-gold transition hover:bg-gold/20 disabled:opacity-60"
+                    >
+                      পেস্ট
+                    </button>
+                  )}
+                </div>
               </label>
               <p className={`text-[11px] ${!txn ? 'text-amber-600' : 'text-muted'}`}>
                 {!txn ? 'Transaction ID আবশ্যক' : 'এই ID সহ staff-কে SMS পাঠানো হবে।'}
