@@ -6,8 +6,11 @@
  * Deterministic, FREE (local segmentation, no paid model):
  *  1. segment the supplier photo (reuses the CS9 local segmenter);
  *  2. split the alpha into connected components = individual people/mannequins;
- *  3. crop the ORIGINAL photo around each person (small margin) — marketing
- *     text at the edges falls away, each garment gets its own clean reference;
+ *  3. crop the segmented CUTOUT around each person (small margin) and flatten
+ *     onto white — marketing text/price plates in the background are removed
+ *     BY CONSTRUCTION (live 2026-07-17: cropping the original kept a
+ *     "CODE-133 PRICE-1450TK" plate inside the person bbox and FASHN baked it
+ *     into the paid output — background pixels must never reach the engine);
  *  4. tallest crop = adult piece, shortest = child piece (real child garment —
  *     no more AI-imagined child version when the supplier photo includes it).
  *
@@ -16,7 +19,8 @@
  */
 import { segmentPerson } from './family-composite.mjs'
 
-const CACHE_PREFIX = 'garment_prep:'
+// v2: crops switched from original-photo to white-flattened cutout (text-plate fix)
+const CACHE_PREFIX = 'garment_prep_v2:'
 const LABEL_SCALE_W = 256 // label components on a small mask — fast + robust
 const MIN_COMPONENT_AREA = 0.04 // ≥4% of pixels to count as a person
 const CROP_MARGIN = 0.06
@@ -129,9 +133,14 @@ export async function prepSupplierPhoto({ supabase, imagePath }) {
     const top = Math.max(0, Math.round(c.y * scaleY) - my)
     const cw = Math.min(W - left, Math.round(c.width * scaleX) + mx * 2)
     const ch = Math.min(H - top, Math.round(c.height * scaleY) + my * 2)
-    // crop the ORIGINAL photo (garment in context — best try-on reference)
-    const crop = await sharp(basePng).extract({ left, top, width: cw, height: ch }).png().toBuffer()
-    const path = `prepped/${imagePath.replace(/[^a-zA-Z0-9]/g, '_').slice(-60)}-p${i + 1}.png`
+    // crop the CUTOUT (smooth alpha) and flatten onto white — background,
+    // including any marketing text plate, can never reach the try-on engine
+    const crop = await sharp(cutout)
+      .extract({ left, top, width: cw, height: ch })
+      .flatten({ background: { r: 255, g: 255, b: 255 } })
+      .png()
+      .toBuffer()
+    const path = `prepped/${imagePath.replace(/[^a-zA-Z0-9]/g, '_').slice(-60)}-v2p${i + 1}.png`
     const { error: upErr } = await supabase.storage.from('agent-files').upload(path, crop, {
       contentType: 'image/png',
       upsert: true,
