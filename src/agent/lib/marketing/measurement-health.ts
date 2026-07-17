@@ -41,7 +41,11 @@ export interface MeasurementHealth {
   }
   paid: {
     observed: boolean
+    /** Spend in the AD ACCOUNT'S currency (see `currency`) — field name is legacy; NOT necessarily ৳. */
     spendBdt: number
+    currency: string
+    /** The ad account actually read — a wrong META_AD_ACCOUNT_ID shows here instead of hiding as 0. */
+    accountId: string | null
     campaignsWithData: number
   }
   gaps: DataGap[]
@@ -164,7 +168,13 @@ export async function assessMeasurementHealth(windowDays = 7): Promise<Measureme
     windowDays: days,
     erp: { observed: report !== null, orders, delivered, revenueBdt },
     analytics: { ga4Configured, observed: ga4Observed, sessions, keyEvents },
-    paid: { observed: report !== null && report.paid.campaigns.length > 0, spendBdt, campaignsWithData },
+    paid: {
+      observed: report !== null && report.paid.campaigns.length > 0,
+      spendBdt,
+      currency: report?.paid.currency ?? 'USD',
+      accountId: report?.paid.accountId ?? null,
+      campaignsWithData,
+    },
     gaps,
     thinData: Boolean(thinOrders) || campaignsWithData === 0,
   }

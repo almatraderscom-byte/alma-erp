@@ -71,6 +71,16 @@ export type CampaignMetrics = {
 export const INSIGHT_MIN_SPEND_BDT = 500
 export const INSIGHT_MIN_IMPRESSIONS = 1000
 
+/**
+ * Spend is in the AD ACCOUNT'S currency — comparing a USD spend against the
+ * ৳500 threshold marked real campaigns "thin" ($11.48 ≈ ৳1400 failed a check
+ * it should pass; live-hit 2026-07-17). Rough fixed bands, no FX service.
+ */
+export function minSpendForCurrency(currency: string): number {
+  if (currency === 'BDT') return INSIGHT_MIN_SPEND_BDT
+  return 5 // USD/EUR-class: ~৳500-600
+}
+
 export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
   const accountId = adAccountId()
   // Fetch effective_status as a real field and filter to ACTIVE client-side.
@@ -180,7 +190,7 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
         roasWeek,
         dailyBudgetBdt,
         effectiveStatus: campaign.effective_status ?? 'ACTIVE',
-        hasEnoughData: spendWeek >= INSIGHT_MIN_SPEND_BDT && impressionsWeek >= INSIGHT_MIN_IMPRESSIONS,
+        hasEnoughData: spendWeek >= minSpendForCurrency(accountCurrency) && impressionsWeek >= INSIGHT_MIN_IMPRESSIONS,
       })
     } catch (err) {
       console.warn(`[ads-insights] ${campaign.name} failed:`, err instanceof Error ? err.message : err)
@@ -188,6 +198,109 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
   }
 
   return rows
+}
+
+export type CampaignMetricsWindow = {
+  /** The env-configured ad account actually read — surfaced so a misconfigured
+   *  META_AD_ACCOUNT_ID shows up as "wrong account", never as a silent ৳0. */
+  accountId: string
+  currency: string
+  windowDays: number
+  campaigns: CampaignMetrics[]
+}
+
+/**
+ * Window-based campaign metrics — STATUS-AGNOSTIC (live-found bug 2026-07-17):
+ * fetchActiveCampaignMetrics() filters to currently-ACTIVE campaigns, so a
+ * campaign the owner paused TODAY vanished from "last 7 days performance" and
+ * the agent reported spend ৳0 while Ads Manager showed $11.48. Historical
+ * reads (reports, digests, measurement health) must include every campaign
+ * that DELIVERED in the window regardless of its status right now.
+ *
+ * Uses account-level insights (level=campaign + time_range) — one call returns
+ * all campaigns with delivery in the window, paused or not (verified live
+ * against act_…468: returns the paused campaign's real $11.48). Optimizer and
+ * other "what should I touch NOW" paths stay on fetchActiveCampaignMetrics.
+ */
+export async function fetchCampaignMetricsWindow(windowDays = 7): Promise<CampaignMetricsWindow> {
+  const accountId = adAccountId()
+  const today = new Date().toISOString().slice(0, 10)
+  const windowStart = new Date(Date.now() - windowDays * 86400000).toISOString().slice(0, 10)
+
+  type InsightRow = Record<string, unknown> & { campaign_id?: string; campaign_name?: string }
+  const insightParams = (since: string, until: string) => ({
+    level: 'campaign',
+    time_range: JSON.stringify({ since, until }),
+    fields: 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpc,actions',
+    limit: '100',
+  })
+
+  const [windowRes, todayRes, campaignsRes, acctRes] = await Promise.all([
+    adsApi<{ data?: InsightRow[] }>(`${accountId}/insights`, insightParams(windowStart, today)),
+    adsApi<{ data?: InsightRow[] }>(`${accountId}/insights`, insightParams(today, today)).catch(() => ({ data: [] as InsightRow[] })),
+    adsApi<{ data?: Array<{ id: string; name?: string; daily_budget?: string; effective_status?: string; objective?: string }> }>(
+      `${accountId}/campaigns`,
+      { fields: 'id,name,daily_budget,effective_status,objective', limit: '100' },
+    ).catch(() => ({ data: [] as Array<{ id: string; name?: string; daily_budget?: string; effective_status?: string; objective?: string }> })),
+    adsApi<{ currency?: string }>(accountId, { fields: 'currency' }).catch(() => ({ currency: undefined })),
+  ])
+
+  const currency = acctRes.currency ?? 'USD'
+  const metaById = new Map((campaignsRes.data ?? []).map((c) => [c.id, c]))
+  const todayById = new Map((todayRes.data ?? []).filter((r) => r.campaign_id).map((r) => [r.campaign_id as string, r]))
+
+  const campaigns: CampaignMetrics[] = []
+  for (const row of windowRes.data ?? []) {
+    const id = String(row.campaign_id ?? '')
+    if (!id) continue
+    const meta = metaById.get(id)
+    const todayRow = todayById.get(id) ?? {}
+
+    const spendWeek = safeNum(row.spend)
+    const spendToday = safeNum(todayRow.spend)
+
+    let dailyBudgetBdt = meta?.daily_budget ? Math.round(safeNum(meta.daily_budget) / 100) : 0
+    if (dailyBudgetBdt === 0) {
+      try {
+        const adsets = await adsApi<{ data?: Array<{ daily_budget?: string; effective_status?: string }> }>(
+          `${id}/adsets`,
+          { fields: 'daily_budget,effective_status', limit: '25' },
+        )
+        dailyBudgetBdt = Math.round(
+          (adsets.data ?? []).reduce((sum, a) => sum + safeNum(a.daily_budget), 0) / 100,
+        )
+      } catch { /* keep 0 */ }
+    }
+
+    campaigns.push({
+      currency,
+      objective: meta?.objective ?? 'UNKNOWN',
+      campaignId: id,
+      name: String(row.campaign_name ?? meta?.name ?? id),
+      spendToday,
+      spendWeek,
+      impressionsToday: safeNum(todayRow.impressions),
+      impressionsWeek: safeNum(row.impressions),
+      clicksToday: safeNum(todayRow.clicks),
+      clicksWeek: safeNum(row.clicks),
+      ctrToday: safeNum(todayRow.ctr),
+      ctrWeek: safeNum(row.ctr),
+      cpcToday: safeNum(todayRow.cpc),
+      roasToday: spendToday > 0
+        ? purchaseValueFromActions(todayRow.actions as Array<{ action_type?: string; value?: string }>) / spendToday
+        : 0,
+      roasWeek: spendWeek > 0
+        ? purchaseValueFromActions(row.actions as Array<{ action_type?: string; value?: string }>) / spendWeek
+        : 0,
+      dailyBudgetBdt,
+      // The TRUE current status (may be PAUSED) — historical rows must never be
+      // presented as currently running.
+      effectiveStatus: meta?.effective_status ?? 'UNKNOWN',
+      hasEnoughData: spendWeek >= minSpendForCurrency(currency) && safeNum(row.impressions) >= INSIGHT_MIN_IMPRESSIONS,
+    })
+  }
+
+  return { accountId, currency, windowDays, campaigns }
 }
 
 export async function fetchCampaignDailyBudgetBdt(campaignId: string): Promise<number> {

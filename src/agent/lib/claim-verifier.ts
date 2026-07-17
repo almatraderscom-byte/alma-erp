@@ -20,6 +20,7 @@ export type ClaimViolationCategory =
   | 'staff_dispatch'
   | 'fb_post'
   | 'general_write'
+  | 'source_attribution'
   | 'missing_card'
   | 'prose_choice'
   | 'missing_ask'
@@ -105,6 +106,19 @@ const RULES: ClaimRule[] = [
       'send_staff_announcement',
       'add_staff_task_now',
     ],
+  },
+  {
+    // Source-attribution honesty (live-hit 2026-07-17): the head answered ads
+    // performance from growth_control_room but told the owner "Meta MCP থেকে
+    // লাইভ চেক করে দেখলাম". Claiming DATA CAME FROM Meta MCP is only true when
+    // a meta_ads_* bridged tool actually ran this turn. Talking ABOUT the MCP
+    // ("Meta MCP এখনো খোলেনি / বন্ধ / connect করা নেই") is not a source claim
+    // and must not trigger — hence the fetch-verb requirement + negation.
+    id: 'meta_mcp_source_claim',
+    category: 'source_attribution',
+    pattern: /(?:meta\s*)?mcp\s*(?:থেকে|দিয়ে|theke|diye)\s*[^\n.।!?]{0,40}?(?:লাইভ|চেক|দেখ|আন|নিয়ে|নিলাম|পেলাম|টেনে|data|ডেটা|সংখ্যা|report|রিপোর্ট|insight)/i,
+    negationPattern: /(?:খোলেনি|খুলেনি|বন্ধ|পারিনি|পারলাম\s*না|যায়নি|আসেনি|connect\s*(?:করা\s*)?নেই|disabled|not\s*enabled|rollout|এখনো\s*(?:খোলে|আসে)নি)/i,
+    requiredTools: ['meta_ads_*'],
   },
   {
     id: 'fb_posted',
@@ -205,7 +219,13 @@ export function detectClaimViolations(
 
     if (rule.negationPattern && rule.negationPattern.test(text)) continue
 
-    const satisfied = rule.requiredTools.some((t) => calledSet.has(t))
+    // A trailing '*' in a required tool name is a prefix match — e.g.
+    // 'meta_ads_*' is satisfied by ANY bridged Meta MCP tool call.
+    const satisfied = rule.requiredTools.some((t) =>
+      t.endsWith('*')
+        ? toolsCalledThisTurn.some((n) => n.startsWith(t.slice(0, -1)))
+        : calledSet.has(t),
+    )
     if (satisfied) continue
 
     violations.push({
@@ -519,6 +539,10 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
   memory_save:
     'স্মৃতিতে রেখেছেন বলে দাবি দিয়েছেন কিন্তু এই turn-এ save_memory tool call হয়নি। ' +
     'এখনই save_memory call করুন (scope + content), success পেলে তবেই "মনে রেখেছি" বলুন।',
+  source_attribution:
+    '"Meta MCP থেকে" ডেটা এনেছেন বলে দাবি দিয়েছেন কিন্তু এই turn-এ কোনো meta_ads_* tool call হয়নি — ' +
+    'ডেটা আসলে অন্য উৎস (যেমন growth_control_room / Graph API) থেকে এসেছে। ' +
+    'হয় এখনই সঠিক meta_ads_* tool call করে আসল MCP ডেটা আনুন, নয়তো সৎভাবে বলুন ডেটাটা কোন উৎস থেকে এসেছে — উৎস নিয়ে কখনো ভুল দাবি নয়।',
   reminder_set:
     'Reminder সেট করার দাবি দিয়েছেন কিন্তু এই turn-এ set_reminder tool call হয়নি। ' +
     'এখনই set_reminder call করুন (title + dueAt ISO), success পেলে confirm দিন।',

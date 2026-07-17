@@ -4,7 +4,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { agentSmartText } from '@/agent/lib/llm-text'
-import { fetchActiveCampaignMetrics } from '@/agent/lib/ads/insights'
+import { fetchCampaignMetricsWindow, type CampaignMetricsWindow } from '@/agent/lib/ads/insights'
 import { getTopCreativeAngles } from '@/agent/lib/ads/creative-performance'
 import { getCsAnalyticsSummary } from '@/agent/lib/cs/analytics'
 import { buildMarketingIntel } from '@/lib/content-intelligence'
@@ -43,7 +43,11 @@ export type MarketingReportData = {
   generatedAt: string
   paid: {
     totalSpendWeek: number
-    campaigns: Array<{ name: string; spendWeek: number; roasWeek: number; ctrWeekPct: number; hasData: boolean }>
+    /** Ad-account billing currency — totalSpendWeek/spendWeek are in THIS, not ৳ (live-hit 2026-07-17). */
+    currency: string
+    /** The ad account actually read (env META_AD_ACCOUNT_ID) — surfaces misconfig instead of silent 0. */
+    accountId: string | null
+    campaigns: Array<{ name: string; spendWeek: number; roasWeek: number; ctrWeekPct: number; hasData: boolean; effectiveStatus: string }>
     bestCampaign: string | null
     worstCampaign: string | null
     topAngles: Array<{ angle: string; avgRoas: number; count: number }>
@@ -63,7 +67,7 @@ export type MarketingReportData = {
 
 export async function gatherMarketingReportData(days = 7): Promise<MarketingReportData> {
   const [
-    campaigns,
+    paidWindow,
     topAngles,
     cs,
     ordersWeek,
@@ -71,11 +75,16 @@ export async function gatherMarketingReportData(days = 7): Promise<MarketingRepo
     staffTasks,
   ] = await Promise.all([
     withTimeout(
-      fetchActiveCampaignMetrics().catch((err) => {
+      // Status-agnostic window read (live-found 2026-07-17): a campaign paused
+      // TODAY must still appear in "last N days" — the ACTIVE-only path made
+      // the agent report ৳0 while Ads Manager showed real spend.
+      fetchCampaignMetricsWindow(days).catch((err): CampaignMetricsWindow => {
         console.warn('[marketing-report] campaign metrics fetch failed:', err instanceof Error ? err.message : String(err))
-        return []
+        return { accountId: process.env.META_AD_ACCOUNT_ID ?? '', currency: 'USD', windowDays: days, campaigns: [] }
       }),
-      20_000, [], 'campaign metrics',
+      20_000,
+      { accountId: process.env.META_AD_ACCOUNT_ID ?? '', currency: 'USD', windowDays: days, campaigns: [] } as CampaignMetricsWindow,
+      'campaign metrics',
     ),
     withTimeout(getTopCreativeAngles(5).catch(() => []), 8_000, [], 'creative angles'),
     withTimeout(getCsAnalyticsSummary(days), 12_000, EMPTY_CS_SUMMARY, 'cs analytics'),
@@ -108,6 +117,7 @@ export async function gatherMarketingReportData(days = 7): Promise<MarketingRepo
     }),
   ])
 
+  const campaigns = paidWindow.campaigns
   const withData = campaigns.filter((c) => c.hasEnoughData)
   const totalSpendWeek = campaigns.reduce((s, c) => s + c.spendWeek, 0)
   const sorted = [...withData].sort((a, b) => b.roasWeek - a.roasWeek)
@@ -122,12 +132,15 @@ export async function gatherMarketingReportData(days = 7): Promise<MarketingRepo
     generatedAt: new Date().toISOString(),
     paid: {
       totalSpendWeek: Math.round(totalSpendWeek),
+      currency: paidWindow.currency,
+      accountId: paidWindow.accountId || null,
       campaigns: campaigns.map((m) => ({
         name: m.name,
         spendWeek: Math.round(m.spendWeek),
         roasWeek: Number(m.roasWeek.toFixed(2)),
         ctrWeekPct: Number((m.ctrWeek * 100).toFixed(2)),
         hasData: m.hasEnoughData,
+        effectiveStatus: m.effectiveStatus,
       })),
       bestCampaign: sorted[0]?.name ?? null,
       worstCampaign: sorted.length > 1 ? sorted[sorted.length - 1]?.name ?? null : null,
@@ -224,7 +237,7 @@ export function formatMarketingReportFallback(data: MarketingReportData): string
     '*Paid (Meta)*',
     data.paid.thinData
       ? '• ডেটা পাতলা — active campaign insights নেই বা spend কম।'
-      : `• Spend ~৳${data.paid.totalSpendWeek} | Best: ${data.paid.bestCampaign ?? '—'} | Worst: ${data.paid.worstCampaign ?? '—'}`,
+      : `• Spend ~${data.paid.currency === 'BDT' ? '৳' : `${data.paid.currency} `}${data.paid.totalSpendWeek} | Best: ${data.paid.bestCampaign ?? '—'} | Worst: ${data.paid.worstCampaign ?? '—'}`,
     data.paid.topAngles[0]
       ? `• Top angle: "${data.paid.topAngles[0].angle}" (avg ROAS ${data.paid.topAngles[0].avgRoas.toFixed(1)}x)`
       : '',
