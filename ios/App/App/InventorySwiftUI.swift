@@ -1114,6 +1114,7 @@ private struct InventoryAddSheet: View {
     @State private var stockText = "0"     // initial_stock
     @State private var reorderText = "0"   // reorder_level
     @State private var notes = ""
+    @State private var imageUrl = ""   // NP-7 (OP-04): web image_url field
     @State private var syncToStock = true
     @State private var confirming = false
     @State private var errorText: String? = nil
@@ -1156,6 +1157,7 @@ private struct InventoryAddSheet: View {
                     numberField("রিঅর্ডার লেভেল", text: $reorderText, invalid: reorder == nil)
                 }
                 textField("নোট", text: $notes, placeholder: "ঐচ্ছিক")
+                textField("ছবির URL", text: $imageUrl, placeholder: "https://… (ঐচ্ছিক)")
 
                 Toggle(isOn: $syncToStock) {
                     VStack(alignment: .leading, spacing: 1) {
@@ -1237,6 +1239,9 @@ private struct InventoryAddSheet: View {
         if !trimmedSize.isEmpty { body["size"] = AnyEncodable(trimmedSize) }
         let trimmedNotes = notes.trimmingCharacters(in: .whitespaces)
         if !trimmedNotes.isEmpty { body["notes"] = AnyEncodable(trimmedNotes) }
+        // NP-7 (OP-04): product photo — the web AddProductModal's image_url field.
+        let trimmedImage = imageUrl.trimmingCharacters(in: .whitespaces)
+        if !trimmedImage.isEmpty { body["image_url"] = AnyEncodable(trimmedImage) }
         Task {
             let err = await vm.createProduct(body: body)
             if let err { errorText = err } else { dismiss() }

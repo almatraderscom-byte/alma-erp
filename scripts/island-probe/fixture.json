@@ -1,0 +1,8 @@
+{"mode":"approval","headline":"আপনার অনুমোদন দরকার","subtitle":"২টা অনুরোধ অপেক্ষায় · এখনই সিদ্ধান্ত দিন",
+ "pendingTaskCount":40,"approvalCount":2,"runningOrderCount":1,"orderProgress":0.5,
+ "items":[{"id":"erp:abc","kind":"approval","title":"ওয়ালেট উত্তোলন — Mohammad Eyafi","subtitle":"PAYROLL · ২ ঘণ্টা আগে","severity":"attention","createdAt":"2026-07-17T05:00:00.000Z","link":"almaerp://agent"},
+  {"id":"orders:running","kind":"orderProgress","title":"১টি অর্ডার চলছে","subtitle":"১ কনফার্মড · ০ পেন্ডিং","valueText":"১","progress":0.5,"severity":"normal","createdAt":"2026-07-17T05:00:00.000Z","link":"almaerp://orders"}],
+ "updatedAtEpoch":1784264400,"staleAfterEpoch":1784268000,
+ "approvalId":"erp:cm0000000000000000000000x","approvalTitle":"ওয়ালেট উত্তোলন — Mohammad Eyafi",
+ "approvalCounterparty":"PAYROLL · ২ ঘণ্টা আগে","approvalAmountText":"৳৭,৪০০",
+ "ordersToday":1,"statusLine":"চলছে","pendingApprovals":2,"openTasks":40}

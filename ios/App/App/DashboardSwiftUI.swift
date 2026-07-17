@@ -1107,7 +1107,11 @@ struct DashboardScreen: View {
         let ids = breaches.prefix(3).map { "#\($0.id)" }.joined(separator: ", ")
         let extra = breaches.count > 3 ? " +\(bnN(breaches.count - 3)) আরও" : ""
         return Button {
-            openWeb("/orders?status=sla", "Orders")
+            // NATIVE orders, not web (owner 2026-07-17): the attention banner opens the
+            // native Orders screen through the single deep-link path (pushSmart →
+            // AlmaNativeRouter → OrdersScreen) — the same decision a notification tap takes.
+            NotificationCenter.default.post(name: .almaOpenPath, object: nil,
+                                            userInfo: ["path": "/orders"])
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "bolt.fill").foregroundStyle(DashPalette.warning(scheme))

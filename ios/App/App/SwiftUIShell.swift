@@ -84,6 +84,11 @@ final class AlmaHostingController<Content: View>: UIHostingController<Content> {
         // IOSP-0 baseline: route.push → route.appeared brackets nav-to-screen time.
         AlmaPerfLog.event("route.appeared", title ?? String(describing: Content.self))
     }
+
+    // Back affordance note (owner report 2026-07-17): iOS 26 renders the SYSTEM
+    // back as a glass circle on every pushed screen — sim-verified present on all
+    // hosted pushes, so no custom item is added (a custom one produced a DOUBLE
+    // back, sim-caught same day). Sheets carry their own close buttons instead.
 }
 
 /// Late-bound weak reference — the SwiftUI screens' closures need the nav controller
@@ -393,7 +398,12 @@ extension AlmaTabBarController {
                 // host is addressed through the WEAK navRef — a closure captured
                 // by the rootView must not retain its own hosting controller.
                 onUserName: { name in
+                    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
                     navRef.value?.viewControllers.first?.title = name
+                    // Owner design 2026-07-17: the 5th tab shows the logged-in user's own
+                    // name in place of "More". Driven by the SAME fresh fetch as the title,
+                    // so a profile-name change is reflected — never a stale cached label.
+                    navRef.value?.tabBarItem.title = trimmed.isEmpty ? "More" : trimmed
                 },
                 // The round avatar bar button shows the user's real photo once the
                 // profile URL loads (and refreshes after an in-app photo change).
@@ -421,10 +431,27 @@ extension AlmaTabBarController {
             host.navigationItem.rightBarButtonItem = UIBarButtonItem(customView: avatarButton)
             let nav = Self.darkNav(root: host, tabTitle: "More", icon: "ellipsis.circle", largeTitles: true)
             navRef.value = nav
+            // Show that tab name from launch (before the More tab is ever opened), fetched
+            // FRESH each launch so a profile-name change can't leave a stale label (owner
+            // 2026-07-17). A 401 before the session is ready just keeps the "More" fallback.
+            Task { @MainActor [weak nav] in
+                if let id: MoreTabIdentity = try? await AlmaAPI.shared.get("/api/users/me"),
+                   let n = id.user?.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !n.isEmpty {
+                    nav?.tabBarItem.title = n
+                }
+            }
             return nav
         }
         return Self.darkNav(root: MoreMenuViewController(),
                             tabTitle: "More", icon: "ellipsis.circle", largeTitles: true)
+    }
+
+    /// Minimal `/api/users/me` shape for the 5th-tab name (owner design 2026-07-17).
+    /// Self-contained so the tab label doesn't couple to MoreMenu's decoders.
+    fileprivate struct MoreTabIdentity: Decodable {
+        struct U: Decodable { let name: String? }
+        let user: U?
     }
 
     /// The glossy "Business" switcher pill (Watch-app "All Watches" style): a frosted

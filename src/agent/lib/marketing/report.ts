@@ -4,7 +4,8 @@
  */
 import { prisma } from '@/lib/prisma'
 import { agentSmartText } from '@/agent/lib/llm-text'
-import { fetchActiveCampaignMetrics } from '@/agent/lib/ads/insights'
+import { roundAdSpend } from '@/agent/lib/ads/insights'
+import { readAdInsights, type AdInsightsRead } from '@/agent/lib/meta-mcp/insights-source'
 import { getTopCreativeAngles } from '@/agent/lib/ads/creative-performance'
 import { getCsAnalyticsSummary } from '@/agent/lib/cs/analytics'
 import { buildMarketingIntel } from '@/lib/content-intelligence'
@@ -27,6 +28,20 @@ const EMPTY_CS_SUMMARY: Awaited<ReturnType<typeof getCsAnalyticsSummary>> = {
   followupRecoveries: 0, topAskedProducts: [], lostSaleReasons: {}, csCostUsd: 0,
 }
 
+/** Honest empty read — carries provenance even when nothing could be fetched. */
+const EMPTY_PAID_READ: AdInsightsRead = {
+  source: 'graph_api',
+  sourceLabel: 'Meta Graph API (পুরনো পথ) থেকে',
+  degradedReason: 'অ্যাড ডেটা পড়া যায়নি',
+  accountId: process.env.META_AD_ACCOUNT_ID ?? '',
+  currency: 'USD',
+  windowDays: 7,
+  campaigns: [],
+  totalSpend: 0,
+  totalSpendLabel: '$0.00',
+  mcp: null,
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>
   const guard = new Promise<T>((resolve) => {
@@ -43,11 +58,40 @@ export type MarketingReportData = {
   generatedAt: string
   paid: {
     totalSpendWeek: number
-    campaigns: Array<{ name: string; spendWeek: number; roasWeek: number; ctrWeekPct: number; hasData: boolean }>
+    /** Ad-account billing currency — totalSpendWeek/spendWeek are in THIS, not ৳ (live-hit 2026-07-17). */
+    currency: string
+    /** The ad account actually read (env META_AD_ACCOUNT_ID) — surfaces misconfig instead of silent 0. */
+    accountId: string | null
+    campaigns: Array<{
+      name: string
+      spendWeek: number
+      roasWeek: number
+      ctrWeekPct: number
+      hasData: boolean
+      effectiveStatus: string
+      /** Performance detail — without these the head cannot answer "ad performance" at all. */
+      impressionsWeek: number
+      clicksWeek: number
+    }>
     bestCampaign: string | null
     worstCampaign: string | null
     topAngles: Array<{ angle: string; avgRoas: number; count: number }>
     thinData: boolean
+    /**
+     * MA2 — where these numbers actually came from, and Meta's own intelligence
+     * when its MCP is open for this account. `source` is never a guess: the head
+     * must quote sourceLabel and may only say "Meta MCP" when source is meta_mcp.
+     */
+    source: 'meta_mcp' | 'graph_api'
+    sourceLabel: string
+    degradedReason: string | null
+    metaIntelligence: {
+      trend: unknown | null
+      anomaly: unknown | null
+      opportunityScore: unknown | null
+      industryBenchmark: unknown | null
+      auctionBenchmarks: unknown | null
+    } | null
   }
   funnel: {
     cs: Awaited<ReturnType<typeof getCsAnalyticsSummary>>
@@ -63,7 +107,7 @@ export type MarketingReportData = {
 
 export async function gatherMarketingReportData(days = 7): Promise<MarketingReportData> {
   const [
-    campaigns,
+    paidWindow,
     topAngles,
     cs,
     ordersWeek,
@@ -71,11 +115,17 @@ export async function gatherMarketingReportData(days = 7): Promise<MarketingRepo
     staffTasks,
   ] = await Promise.all([
     withTimeout(
-      fetchActiveCampaignMetrics().catch((err) => {
+      // MA2: MCP-preferred, Graph-fallback — the read reports its own true source.
+      // Status-agnostic window (live-found 2026-07-17): a campaign paused TODAY
+      // must still appear in "last N days"; the ACTIVE-only path made the agent
+      // report ৳0 while Ads Manager showed real spend.
+      readAdInsights(days).catch((err): AdInsightsRead => {
         console.warn('[marketing-report] campaign metrics fetch failed:', err instanceof Error ? err.message : String(err))
-        return []
+        return { ...EMPTY_PAID_READ, degradedReason: 'অ্যাড ডেটা আনা যায়নি' }
       }),
-      20_000, [], 'campaign metrics',
+      25_000,
+      EMPTY_PAID_READ,
+      'campaign metrics',
     ),
     withTimeout(getTopCreativeAngles(5).catch(() => []), 8_000, [], 'creative angles'),
     withTimeout(getCsAnalyticsSummary(days), 12_000, EMPTY_CS_SUMMARY, 'cs analytics'),
@@ -108,6 +158,7 @@ export async function gatherMarketingReportData(days = 7): Promise<MarketingRepo
     }),
   ])
 
+  const campaigns = paidWindow.campaigns
   const withData = campaigns.filter((c) => c.hasEnoughData)
   const totalSpendWeek = campaigns.reduce((s, c) => s + c.spendWeek, 0)
   const sorted = [...withData].sort((a, b) => b.roasWeek - a.roasWeek)
@@ -121,18 +172,29 @@ export async function gatherMarketingReportData(days = 7): Promise<MarketingRepo
     periodDays: days,
     generatedAt: new Date().toISOString(),
     paid: {
-      totalSpendWeek: Math.round(totalSpendWeek),
+      // Currency-aware: Math.round() on a USD amount reported "12" for a real
+      // $11.48 week (live-hit 2026-07-17). Taka stays whole per ERP money law.
+      totalSpendWeek: roundAdSpend(totalSpendWeek, paidWindow.currency),
+      currency: paidWindow.currency,
+      accountId: paidWindow.accountId || null,
       campaigns: campaigns.map((m) => ({
         name: m.name,
-        spendWeek: Math.round(m.spendWeek),
+        spendWeek: roundAdSpend(m.spendWeek, paidWindow.currency),
         roasWeek: Number(m.roasWeek.toFixed(2)),
-        ctrWeekPct: Number((m.ctrWeek * 100).toFixed(2)),
+        ctrWeekPct: Number(m.ctrWeekPct.toFixed(2)),
         hasData: m.hasEnoughData,
+        effectiveStatus: m.effectiveStatus,
+        impressionsWeek: m.impressionsWeek,
+        clicksWeek: m.clicksWeek,
       })),
       bestCampaign: sorted[0]?.name ?? null,
       worstCampaign: sorted.length > 1 ? sorted[sorted.length - 1]?.name ?? null : null,
       topAngles,
       thinData: withData.length === 0,
+      source: paidWindow.source,
+      sourceLabel: paidWindow.sourceLabel,
+      degradedReason: paidWindow.degradedReason,
+      metaIntelligence: paidWindow.mcp,
     },
     funnel: {
       cs,
@@ -156,6 +218,9 @@ const REPORT_SYSTEM = `আপনি ALMA Lifestyle marketing analyst। Owner-�
 STRUCTURE (markdown):
 ## 📊 Paid (Meta)
 - spend, ROAS trend, best/worst campaign, best creative angle (if data)
+## 🚨 Meta-র নিজস্ব সংকেত (anomaly / benchmark)
+- paid.metaIntelligence থাকলে: anomaly + industry/auction benchmark + opportunity score-এর মানে এক-দুই লাইনে
+  (যেমন "CTR ইন্ডাস্ট্রি গড়ের নিচে")। null হলে এক লাইনে সৎভাবে paid.degradedReason লিখুন — বানাবেন না।
 ## 🔗 Funnel (ad → Messenger → COD)
 - chat count, draft→confirm rates, orders, where it leaks — directional only
 ## 📱 Organic
@@ -167,7 +232,10 @@ RULES:
 - Cite real numbers from data only — invent নয়।
 - Thin data হলে স্পষ্ট বলুন।
 - correlation ≠ causation; Meta ROAS ≠ exact COD profit।
-- Max 3 recommendations — noisy report নিষিদ্ধ।`
+- Max 3 recommendations — noisy report নিষিদ্ধ।
+- MONEY: paid.currency দেখুন — spend ওই মুদ্রায় (BDT না হলে ৳ লিখবেন না, $ /  আসল চিহ্ন ব্যবহার করুন)।
+- SOURCE: paid.sourceLabel হুবহু কোট করুন। paid.source === "meta_mcp" না হলে "Meta MCP থেকে" কখনো লিখবেন না।
+- STATUS: campaigns[].effectiveStatus PAUSED হলে ওটা বন্ধ ক্যাম্পেইনের ইতিহাস — সংখ্যা আসল, কিন্তু "চলছে" বলবেন না।`
 
 export async function buildMarketingReportText(days = 7): Promise<{
   report: string
@@ -224,7 +292,7 @@ export function formatMarketingReportFallback(data: MarketingReportData): string
     '*Paid (Meta)*',
     data.paid.thinData
       ? '• ডেটা পাতলা — active campaign insights নেই বা spend কম।'
-      : `• Spend ~৳${data.paid.totalSpendWeek} | Best: ${data.paid.bestCampaign ?? '—'} | Worst: ${data.paid.worstCampaign ?? '—'}`,
+      : `• Spend ~${data.paid.currency === 'BDT' ? '৳' : `${data.paid.currency} `}${data.paid.totalSpendWeek} | Best: ${data.paid.bestCampaign ?? '—'} | Worst: ${data.paid.worstCampaign ?? '—'}`,
     data.paid.topAngles[0]
       ? `• Top angle: "${data.paid.topAngles[0].angle}" (avg ROAS ${data.paid.topAngles[0].avgRoas.toFixed(1)}x)`
       : '',

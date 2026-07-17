@@ -1466,16 +1466,9 @@ private struct PortalTaskDetailSheet: View {
                     .padding(12)
                     .portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
-                    // Photo proof stays web (needs the camera / file upload).
-                    Button {
-                        openWeb("/portal/office", "Office")
-                    } label: {
-                        Label("📷 ছবি জমা দিতে ওয়েবে খুলুন", systemImage: "safari")
-                            .font(.caption).frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 2)
+                    // NP-7 (OP-01): NATIVE photo proof — PhotosPicker (multi) →
+                    // office/upload → staff-action proof, with progress + retry.
+                    PortalOfficeProofPicker(vm: vm, taskId: task.id)
 
                     Text("Boss অনুমোদন দিলে কাজটি সম্পন্ন হবে। নোটিফিকেশন এই অ্যাপে ও টেলিগ্রামে পাবেন।")
                         .font(.caption2).foregroundStyle(.secondary)
@@ -3072,4 +3065,101 @@ private extension View {
 @available(iOS 17.0, *)
 #Preview("Office — Light") {
     PortalOfficeScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - NP-7 (OP-01): native photo-proof picker + submit
+
+@available(iOS 17.0, *)
+struct PortalOfficeProofPicker: View {
+    let vm: PortalOfficeVM
+    let taskId: String
+    @State private var items: [PhotosPickerItem] = []
+    @State private var images: [Data] = []
+    @State private var note = ""
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            PhotosPicker(selection: $items, maxSelectionCount: 5, matching: .images) {
+                Label(images.isEmpty ? "📷 প্রুফ ছবি বাছুন (৫টা পর্যন্ত)" : "📷 \(images.count)টা ছবি বাছা হয়েছে",
+                      systemImage: "photo.on.rectangle.angled")
+                    .font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(AlmaSwiftTheme.coral.opacity(0.10), in: Capsule())
+                    .foregroundStyle(AlmaSwiftTheme.coral)
+            }
+            if !images.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(images.enumerated()), id: \.offset) { idx, data in
+                            if let img = UIImage(data: data) {
+                                Image(uiImage: img)
+                                    .resizable().scaledToFill()
+                                    .frame(width: 64, height: 64)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    .overlay(alignment: .topTrailing) {
+                                        Button {
+                                            images.remove(at: idx)
+                                            if idx < items.count { items.remove(at: idx) }
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.caption).foregroundStyle(.white)
+                                                .shadow(radius: 2)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .padding(2)
+                                    }
+                            }
+                        }
+                    }
+                }
+                TextField("নোট (ঐচ্ছিক)", text: $note)
+                    .font(.caption)
+                    .textFieldStyle(.roundedBorder)
+                Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    Task {
+                        if await vm.submitProof(taskId, images: images, text: note) {
+                            images = []; items = []; note = ""
+                        }
+                    }
+                } label: {
+                    Text(vm.actionBusyTaskId == taskId ? "⏳ আপলোড হচ্ছে…" : "📤 প্রুফ জমা দিন")
+                        .font(.caption.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(Color(red: 0.020, green: 0.588, blue: 0.412).opacity(0.12), in: Capsule())
+                        .foregroundStyle(Color(red: 0.020, green: 0.588, blue: 0.412))
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.actionBusyTaskId != nil)
+            }
+        }
+        .onChange(of: items) { _, newItems in
+            Task {
+                var out: [Data] = []
+                for item in newItems {
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let img = UIImage(data: data),
+                       // Compression (roadmap NP-7): long edge ≤1600px, jpeg 0.75.
+                       let jpeg = img.resizedForUpload(maxSide: 1600)?.jpegData(compressionQuality: 0.75) {
+                        out.append(jpeg)
+                    }
+                }
+                images = out
+            }
+        }
+    }
+}
+
+private extension UIImage {
+    func resizedForUpload(maxSide: CGFloat) -> UIImage? {
+        let longest = max(size.width, size.height)
+        guard longest > maxSide else { return self }
+        let scale = maxSide / longest
+        let newSize = CGSize(width: size.width * scale, height: size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: newSize)
+        return renderer.image { _ in draw(in: CGRect(origin: .zero, size: newSize)) }
+    }
 }

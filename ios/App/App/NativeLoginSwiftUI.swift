@@ -148,7 +148,9 @@ struct NativeLoginScreen: View {
                     card.padding(.top, 26)
 
                     Button {
-                        openWeb("/forgot-password", "Password reset")
+                        // NP-4 (AU-01): native forgot-password via the single nav path.
+                        NotificationCenter.default.post(name: .almaOpenPath, object: nil,
+                                                        userInfo: ["path": "/forgot-password"])
                     } label: {
                         Text("Forgot password?").font(.caption).foregroundStyle(goldLt)
                     }

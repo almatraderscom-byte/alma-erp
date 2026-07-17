@@ -218,7 +218,7 @@ struct PayrollPendingRequest: Decodable, Identifiable, Equatable {
     }
 }
 
-// MARK: - bKash send flow (owner-only: copy number → bkash:// → paste TrxID)
+// MARK: - bKash send flow (owner-only: copy number → open bKash → paste TrxID)
 
 /// Half-done bKash send (owner tapped "copy + open bKash" and left for the bKash
 /// app). UserDefaults so it survives iOS killing the app while the owner is away.
@@ -255,6 +255,27 @@ enum BkashSendPendingStore {
 
     static func clear() {
         UserDefaults.standard.removeObject(forKey: key)
+    }
+}
+
+/// The bKash app's Universal Link — the only opener bKash actually publishes.
+///
+/// Evidence (https://bka.sh/.well-known/apple-app-site-association):
+///   {"applinks":{"details":[{"appID":"4XPYVR2AGK.com.bKash.customerapp","paths":["/next"]}]}}
+///
+/// This replaced a `bkash://` custom scheme that was a guess (owner got Safari's
+/// "address is invalid" from it on 2026-07-17). `.universalLinksOnly` is the honest
+/// test: it succeeds only if bKash is really installed and claims the link, so the
+/// fallback below runs exactly when it is not. Note the simulator can never settle
+/// this — it has no App Store, so bKash cannot be installed there to claim anything.
+enum BkashApp {
+    static let url = URL(string: "https://bka.sh/next")!
+
+    /// Opens the bKash app; falls back to its web page when the app is absent.
+    static func open() {
+        UIApplication.shared.open(url, options: [.universalLinksOnly: true]) { openedApp in
+            if !openedApp { UIApplication.shared.open(url) }
+        }
     }
 }
 
@@ -1854,9 +1875,7 @@ private struct PayrollReviewSheet: View {
                                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                                 UIPasteboard.general.string = number
                                 BkashSendPendingStore.save(requestId: request.id)
-                                if let url = URL(string: "bkash://") {
-                                    UIApplication.shared.open(url)
-                                }
+                                BkashApp.open()
                             } label: {
                                 Label("নম্বর কপি করে বিকাশ খুলুন", systemImage: "arrow.up.forward.app")
                                     .font(.caption.weight(.bold))

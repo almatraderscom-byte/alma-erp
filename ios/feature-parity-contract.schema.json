@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ALMA ERP iOS feature/action parity contract",
+  "description": "Action-level parity contract (roadmap NP-0). Route-level coverage lives in route-contract.json; this file tracks SECTIONS and ACTIONS so a screen cannot be route-green while feature-red.",
+  "type": "object",
+  "required": ["version", "generatedFor", "baseline", "surfaces", "exceptions", "openWebAllowlist"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "type": "integer" },
+    "generatedFor": { "type": "string" },
+    "generatedDate": { "type": "string" },
+    "baseline": {
+      "type": "object",
+      "required": ["sha"],
+      "properties": {
+        "sha": { "type": "string" },
+        "branch": { "type": "string" },
+        "iosBuildInGit": { "type": "integer" },
+        "iosBuildInstalledSim": { "type": "integer" },
+        "webProduction": { "type": "string" },
+        "apiBase": { "type": "string" },
+        "notes": { "type": "string" }
+      }
+    },
+    "surfaces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "route", "priority", "state", "actions"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^(AG|AU|AD|TR|FN|OP|DN)-[0-9]{2}$" },
+          "title": { "type": "string" },
+          "route": { "type": "string" },
+          "priority": { "enum": ["P0", "P1", "P2", "P3", "done"] },
+          "state": { "enum": ["native", "partial", "missing", "routing", "ux", "retired", "public-web"] },
+          "plannedPhase": { "type": "string", "pattern": "^NP-[0-9]$" },
+          "webSource": { "type": "array", "items": { "type": "string" } },
+          "nativeSource": { "type": "array", "items": { "type": "string" } },
+          "notes": { "type": "string" },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "kind", "state"],
+              "properties": {
+                "id": { "type": "string" },
+                "title": { "type": "string" },
+                "kind": { "enum": ["read", "write", "export", "upload", "deep-link", "oauth", "navigation"] },
+                "roleGate": { "type": "string" },
+                "api": { "type": "string" },
+                "state": { "enum": ["native", "system-handoff", "public-web", "missing", "retired"] },
+                "plannedPhase": { "type": "string", "pattern": "^NP-[0-9]$" },
+                "verify": { "type": "string" },
+                "notes": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "exceptions": {
+      "type": "array",
+      "description": "Only approved public-web and system-handoff destinations. An internal ALMA page is never a valid exception.",
+      "items": {
+        "type": "object",
+        "required": ["id", "class", "target", "reason"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^EX-[0-9]{2}$" },
+          "class": { "enum": ["public-web", "system-handoff", "login-fallback"] },
+          "target": { "type": "string" },
+          "reason": { "type": "string" },
+          "approvedBy": { "type": "string" },
+          "date": { "type": "string" }
+        }
+      }
+    },
+    "openWebAllowlist": {
+      "type": "object",
+      "description": "Snapshot of openWeb( call-site counts per Swift file at contract time. The checker fails if any file GAINS call sites (new undocumented escape) and asks for a snapshot refresh when counts drop (escape removed).",
+      "additionalProperties": { "type": "integer" }
+    }
+  }
+}

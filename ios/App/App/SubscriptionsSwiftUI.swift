@@ -602,20 +602,23 @@ private struct SubAurora: View {
 @available(iOS 17.0, *)
 private extension View {
     func subSolid(_ s: ColorScheme, corner: CGFloat = 16) -> some View {
+        // Translucent glass (was opaque near-black) so the page aurora shows through
+        // — theme-consistent (owner feedback 2026-07-17).
         self
-            .background((s == .dark ? Color(red: 0.078, green: 0.071, blue: 0.114) : .white), in: RoundedRectangle(cornerRadius: corner, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous).strokeBorder(Color.white.opacity(s == .dark ? 0.055 : 0.6), lineWidth: 1))
-            .shadow(color: .black.opacity(s == .dark ? 0.4 : 0.08), radius: 14, y: 8)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .background(Color.white.opacity(s == .dark ? 0.05 : 0.5), in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous).strokeBorder(Color.white.opacity(s == .dark ? 0.09 : 0.6), lineWidth: 1))
+            .shadow(color: .black.opacity(s == .dark ? 0.26 : 0.07), radius: 14, y: 8)
     }
     func subRaised(_ s: ColorScheme, corner: CGFloat = 20) -> some View {
+        // Translucent glass (was opaque near-black) so the page aurora shows through
+        // — theme-consistent (owner feedback 2026-07-17).
         self
-            .background(
-                (s == .dark
-                 ? LinearGradient(colors: [Color(red: 0.106, green: 0.094, blue: 0.149), Color(red: 0.078, green: 0.063, blue: 0.098)], startPoint: .top, endPoint: .bottom)
-                 : LinearGradient(colors: [.white, .white], startPoint: .top, endPoint: .bottom)),
-                in: RoundedRectangle(cornerRadius: corner, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous).strokeBorder(Color.white.opacity(s == .dark ? 0.07 : 0.7), lineWidth: 1))
-            .shadow(color: .black.opacity(s == .dark ? 0.5 : 0.12), radius: 22, y: 12)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .background(Color.white.opacity(s == .dark ? 0.05 : 0.55),
+                        in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous).strokeBorder(Color.white.opacity(s == .dark ? 0.09 : 0.7), lineWidth: 1))
+            .shadow(color: .black.opacity(s == .dark ? 0.30 : 0.10), radius: 20, y: 11)
     }
     func subGlass(_ s: ColorScheme, corner: CGFloat = 14) -> some View {
         self

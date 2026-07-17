@@ -188,6 +188,79 @@ final class SettingsBrandingVM {
 
     var toast: String? = nil
     var uploading = false
+    var savingBusiness: String? = nil
+    var saveNotice: String? = nil
+
+    /// NP-5 (AD-06): POST /api/branding {action:'save', …fields, business_id} —
+    /// the web api.branding.save payload verbatim; reload = server truth.
+    struct BrandingEditFields {
+        var companyName = "", tagline = "", phone = "", email = "", website = ""
+        var address = "", facebook = ""
+        var colorPrimary = "", colorSecondary = "", colorAccent = ""
+        var invoicePrefix = ""
+        var watermarkEnabled = false
+        var watermarkOpacity = "0.06"
+        var footerThanks = "", footerPolicy = "", footerNote = ""
+
+        static func from(_ b: SettingsBrandingInfo) -> BrandingEditFields {
+            var f = BrandingEditFields()
+            f.companyName = b.companyName ?? ""
+            f.tagline = b.tagline ?? ""
+            f.phone = b.phone ?? ""
+            f.email = b.email ?? ""
+            f.website = b.website ?? ""
+            f.address = b.address ?? ""
+            f.facebook = b.facebook ?? ""
+            f.colorPrimary = b.colorPrimary ?? ""
+            f.colorSecondary = b.colorSecondary ?? ""
+            f.colorAccent = b.colorAccent ?? ""
+            f.invoicePrefix = b.invoicePrefix ?? ""
+            f.watermarkEnabled = b.invoiceWatermarkEnabled ?? false
+            f.watermarkOpacity = b.invoiceWatermarkOpacity.map { String($0) } ?? "0.06"
+            f.footerThanks = b.invoiceFooterThanks ?? ""
+            f.footerPolicy = b.invoiceFooterPolicy ?? ""
+            f.footerNote = b.invoiceFooterNote ?? ""
+            return f
+        }
+    }
+
+    func saveBranding(businessId: String, _ f: BrandingEditFields) async -> Bool {
+        guard savingBusiness == nil else { return false }
+        savingBusiness = businessId
+        defer { savingBusiness = nil }
+        struct Body: Encodable {
+            let action = "save"
+            let business_id: String
+            let company_name: String, tagline: String, phone: String, email: String
+            let website: String, address: String, facebook: String
+            let color_primary: String, color_secondary: String, color_accent: String
+            let invoice_prefix: String
+            let invoice_watermark_enabled: Bool
+            let invoice_watermark_opacity: String
+            let invoice_footer_thanks: String, invoice_footer_policy: String, invoice_footer_note: String
+        }
+        struct Resp: Decodable { let ok: Bool? }
+        do {
+            let _: Resp = try await AlmaAPI.shared.send("POST", "/api/branding", body: Body(
+                business_id: businessId,
+                company_name: f.companyName, tagline: f.tagline, phone: f.phone, email: f.email,
+                website: f.website, address: f.address, facebook: f.facebook,
+                color_primary: f.colorPrimary, color_secondary: f.colorSecondary, color_accent: f.colorAccent,
+                invoice_prefix: f.invoicePrefix,
+                invoice_watermark_enabled: f.watermarkEnabled,
+                invoice_watermark_opacity: f.watermarkOpacity,
+                invoice_footer_thanks: f.footerThanks, invoice_footer_policy: f.footerPolicy,
+                invoice_footer_note: f.footerNote))
+            saveNotice = "✓ Branding সেভ হয়েছে"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await load()
+            return true
+        } catch {
+            saveNotice = "✗ Save ব্যর্থ: \(error.localizedDescription)"
+            return false
+        }
+    }
+
 
     private struct UploadBody: Encodable {
         let action = "upload"
@@ -234,6 +307,7 @@ final class SettingsBrandingVM {
 struct SettingsBrandingScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = SettingsBrandingVM()
+    @State private var editTarget: SettingsBrandingInfo? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -247,7 +321,20 @@ struct SettingsBrandingScreen: View {
                 assetGuideCard
                 if vm.loading && vm.brandings.isEmpty { loadingRows }
                 ForEach(vm.brandings) { branding in
-                    SettingsBrandingCard(branding: branding, vm: vm)
+                    VStack(spacing: 6) {
+                        SettingsBrandingCard(branding: branding, vm: vm)
+                        Button {
+                            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                            editTarget = branding
+                        } label: {
+                            Label("✏️ \(branding.businessId) এডিট", systemImage: "pencil")
+                                .font(.caption.weight(.bold))
+                                .frame(maxWidth: .infinity).padding(.vertical, 9)
+                                .background(SettingsBrandingPalette.coral.opacity(0.10), in: Capsule())
+                                .foregroundStyle(SettingsBrandingPalette.coral)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 if !vm.loading && vm.brandings.isEmpty && vm.error == nil && !vm.authExpired {
                     emptyState
@@ -262,6 +349,11 @@ struct SettingsBrandingScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .sheet(item: $editTarget) { b in
+            SettingsBrandingEditSheet(vm: vm, branding: b) { editTarget = nil }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
         .overlay(alignment: .bottom) {
             if let t = vm.toast {
                 Text(t)
@@ -338,17 +430,16 @@ struct SettingsBrandingScreen: View {
     }
 
     /// Web escape hatch — every edit (uploads included) happens on the web page.
+    /// NP-5 (AD-06): edits run natively — per-card ✏️ button opens the form sheet.
     private var webEscape: some View {
-        Button {
-            openWeb("/settings/branding", "Branding")
-        } label: {
-            Label("লোগো আপলোড ও এডিট — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+        Group {
+            if let notice = vm.saveNotice {
+                Text(notice).font(.caption2)
+                    .foregroundStyle(notice.hasPrefix("✓") ? .green : .red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
+            }
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.vertical, 6)
     }
 }
 
@@ -779,4 +870,79 @@ private extension View {
 @available(iOS 17.0, *)
 #Preview("Settings · Branding — Light") {
     SettingsBrandingScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - NP-5 (AD-06): branding edit form (web save payload verbatim)
+
+@available(iOS 17.0, *)
+private struct SettingsBrandingEditSheet: View {
+    let vm: SettingsBrandingVM
+    let branding: SettingsBrandingInfo
+    let onDone: () -> Void
+    @State private var f = SettingsBrandingVM.BrandingEditFields()
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("কোম্পানি") {
+                    TextField("Company name", text: $f.companyName)
+                    TextField("Tagline", text: $f.tagline)
+                    TextField("Phone", text: $f.phone).keyboardType(.phonePad)
+                    TextField("Email", text: $f.email).keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                    TextField("Website", text: $f.website).keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                    TextField("Address", text: $f.address, axis: .vertical).lineLimit(2...3)
+                    TextField("Facebook", text: $f.facebook).textInputAutocapitalization(.never)
+                }
+                Section("রং (hex)") {
+                    HStack { TextField("Primary #", text: $f.colorPrimary); colorDot(f.colorPrimary) }
+                    HStack { TextField("Secondary #", text: $f.colorSecondary); colorDot(f.colorSecondary) }
+                    HStack { TextField("Accent #", text: $f.colorAccent); colorDot(f.colorAccent) }
+                }
+                Section("Invoice") {
+                    TextField("Invoice prefix", text: $f.invoicePrefix).textInputAutocapitalization(.characters)
+                    Toggle("Watermark", isOn: $f.watermarkEnabled)
+                    if f.watermarkEnabled {
+                        TextField("Watermark opacity (0–1)", text: $f.watermarkOpacity)
+                            .keyboardType(.decimalPad)
+                    }
+                    TextField("Footer — thanks", text: $f.footerThanks, axis: .vertical)
+                    TextField("Footer — policy", text: $f.footerPolicy, axis: .vertical)
+                    TextField("Footer — note", text: $f.footerNote, axis: .vertical)
+                }
+                if let notice = vm.saveNotice, notice.hasPrefix("✗") {
+                    Section { Text(notice).font(.caption).foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle("\(branding.businessId) branding")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("বাতিল") { onDone() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(vm.savingBusiness != nil ? "সেভ…" : "সেভ") {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        Task { if await vm.saveBranding(businessId: branding.businessId, f) { onDone() } }
+                    }
+                    // Save validation: opacity must be a 0–1 number when watermark is on.
+                    .disabled(vm.savingBusiness != nil
+                              || f.companyName.trimmingCharacters(in: .whitespaces).isEmpty
+                              || (f.watermarkEnabled && !(Double(f.watermarkOpacity).map { (0...1).contains($0) } ?? false)))
+                }
+            }
+            .onAppear { f = SettingsBrandingVM.BrandingEditFields.from(branding) }
+        }
+    }
+
+    @ViewBuilder private func colorDot(_ hex: String) -> some View {
+        let clean = hex.trimmingCharacters(in: CharacterSet(charactersIn: "# "))
+        if clean.count == 6, let v = UInt32(clean, radix: 16) {
+            Circle()
+                .fill(Color(red: Double((v >> 16) & 0xFF) / 255,
+                            green: Double((v >> 8) & 0xFF) / 255,
+                            blue: Double(v & 0xFF) / 255))
+                .frame(width: 18, height: 18)
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.2), lineWidth: 1))
+        }
+    }
 }

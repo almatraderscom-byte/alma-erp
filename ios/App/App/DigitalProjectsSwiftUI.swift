@@ -7,8 +7,8 @@
 //  Web-parity blocks: search + status filter (Lead/Proposal/Active/Review/Completed/
 //  On Hold/Cancelled) · project rows (name, client · service, PaymentStatusBadge,
 //  PaymentProgressBar, Value/Paid/Due/status·deadline footer) · detail sheet with the
-//  full project record + "View client" web link. Mutations (+ New Project form) stay on
-//  the web escape hatch — this screen is read-only.
+//  full project record + "View client" web link. NATIVE WRITES (verified 2026-07-17):
+//  project create (POST /api/digital/projects).
 //  Carried lessons: lenient row decoding, shimmer skeletons, no global overlays,
 //  cancellation-safe pull-to-refresh.
 //

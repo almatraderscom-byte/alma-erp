@@ -358,18 +358,127 @@ struct SettingsSessionScreen: View {
         }
     }
 
-    /// Escape hatch — profile edit, photo and password change stay on the web.
+    /// NP-5 (AD-09): the SAME native profile controls the More sheet has — embedded
+    /// here so the session page needs no web escape (web payloads verbatim).
     private var webEscape: some View {
-        Button {
-            openWeb("/settings/session", "Session")
-        } label: {
-            Label("প্রোফাইল এডিট ও পাসওয়ার্ড পরিবর্তন — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+        SessionProfileControls()
+    }
+}
+
+// MARK: - NP-5 (AD-09): native profile edit + password change (web session payloads)
+
+@available(iOS 17.0, *)
+private struct SessionProfileControls: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var name = ""
+    @State private var phone = ""
+    @State private var loaded = false
+    @State private var savingProfile = false
+    @State private var pwCur = ""
+    @State private var pwNew = ""
+    @State private var savingPw = false
+    @State private var notice: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("প্রোফাইল")
+                .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+            TextField("নাম", text: $name).textFieldStyle(.roundedBorder)
+            TextField("ফোন", text: $phone).textFieldStyle(.roundedBorder).keyboardType(.phonePad)
+            Button {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                Task { await saveProfile() }
+            } label: {
+                Text(savingProfile ? "সেভ…" : "💾 প্রোফাইল সেভ")
+                    .font(.caption.weight(.bold)).frame(maxWidth: .infinity).padding(.vertical, 9)
+                    .background(AlmaSwiftTheme.coral.opacity(0.12), in: Capsule())
+                    .foregroundStyle(AlmaSwiftTheme.coral)
+            }
+            .buttonStyle(.plain)
+            .disabled(savingProfile || name.trimmingCharacters(in: .whitespaces).isEmpty)
+
+            Divider().opacity(0.4)
+            Text("পাসওয়ার্ড পরিবর্তন")
+                .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+            SecureField("বর্তমান পাসওয়ার্ড", text: $pwCur).textFieldStyle(.roundedBorder)
+            SecureField("নতুন পাসওয়ার্ড (৮+ অক্ষর)", text: $pwNew).textFieldStyle(.roundedBorder)
+                .textContentType(.newPassword)
+            Button {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                Task { await changePassword() }
+            } label: {
+                Text(savingPw ? "…" : "🔑 পাসওয়ার্ড বদলান")
+                    .font(.caption.weight(.bold)).frame(maxWidth: .infinity).padding(.vertical, 9)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                    .foregroundStyle(.primary)
+            }
+            .buttonStyle(.plain)
+            .disabled(savingPw || pwCur.isEmpty || pwNew.count < 8)
+
+            if let n = notice {
+                Text(n).font(.caption2)
+                    .foregroundStyle(n.hasPrefix("✓") ? Color(red: 0.020, green: 0.588, blue: 0.412)
+                                                      : Color(red: 0.937, green: 0.267, blue: 0.267))
+            }
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .settingsSessionGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .task {
+            guard !loaded else { return }
+            loaded = true
+            struct Me: Decodable {
+                let name: String?
+                let phone: String?
+                private enum Keys: String, CodingKey { case user }
+                private enum U: String, CodingKey { case name, phone }
+                init(from decoder: Decoder) throws {
+                    let root = try decoder.container(keyedBy: Keys.self)
+                    let u = try? root.nestedContainer(keyedBy: U.self, forKey: .user)
+                    name = try? u?.decodeIfPresent(String.self, forKey: .name)
+                    phone = try? u?.decodeIfPresent(String.self, forKey: .phone)
+                }
+            }
+            if let me: Me = try? await AlmaAPI.shared.get("/api/users/me") {
+                name = me.name ?? ""
+                phone = me.phone ?? ""
+            }
+        }
+    }
+
+    private func saveProfile() async {
+        savingProfile = true
+        defer { savingProfile = false }
+        struct Body: Encodable { let name: String; let phone: String? }
+        struct Resp: Decodable { let ok: Bool?; let error: String? }
+        do {
+            let _: Resp = try await AlmaAPI.shared.send(
+                "PATCH", "/api/users/me",
+                body: Body(name: name.trimmingCharacters(in: .whitespaces),
+                           phone: phone.trimmingCharacters(in: .whitespaces).isEmpty ? nil
+                                  : phone.trimmingCharacters(in: .whitespaces)))
+            notice = "✓ Profile updated"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            notice = "✗ Save ব্যর্থ: \(error.localizedDescription)"
+        }
+    }
+
+    private func changePassword() async {
+        savingPw = true
+        defer { savingPw = false }
+        struct Body: Encodable { let currentPassword: String; let newPassword: String }
+        struct Resp: Decodable { let ok: Bool?; let error: String? }
+        do {
+            let _: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/users/me/password", body: Body(currentPassword: pwCur, newPassword: pwNew))
+            notice = "✓ Password changed"
+            pwCur = ""
+            pwNew = ""
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            notice = "✗ Password change ব্যর্থ: \(error.localizedDescription)"
+        }
     }
 }
 

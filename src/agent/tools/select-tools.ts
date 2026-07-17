@@ -33,9 +33,10 @@ export function selectToolGroupsSync(
     return { groups: ['base', 'erp'], confident: true }
   }
 
-  if (t.length < 12 && g.size === 1) {
-    return { groups: ['base', 'erp'], confident: true }
-  }
+  // NOTE: the "too short → default to erp" fallback used to fire HERE, before
+  // any keyword test — so a terse but specific message like "CTR কেমন" (8 chars)
+  // never reached the growth regex and routed to erp (live-hit 2026-07-17). It
+  // now runs AFTER the keyword checks below: short + NO keyword matched → erp.
 
   if (/staff|হাজিরা|টাস্ক|বেতন|fine|eyafi|mustahid|dispatch|approve|পাঠাও/i.test(t)) {
     g.add('staff')
@@ -43,7 +44,14 @@ export function selectToolGroupsSync(
   }
   if (/order|stock|inventory|product|দাম|price|reorder|catalog/i.test(t)) g.add('erp')
   if (/customer|messenger|cs|winback|segment|inbox/i.test(t)) g.add('cs')
-  if (/\bads?\b|advert|বুস্ট|campaign|seo|competitor|গ্রো|marketing|intel|optimizer|ROAS|scale|plan_marketing|marketing_report|মার্কেটিং|ফানেল/i.test(t)) g.add('growth')
+  // Ad-metric words (impressions/clicks/CTR/reach/spend/performance/অ্যাড
+  // পারফরম্যান্স) belong to `growth` (recommend_ad_actions carries the real
+  // per-campaign impressions/clicks/CTR). Live-hit 2026-07-17: "গত ৭ দিনের অ্যাড
+  // পারফরম্যান্স … খরচ, impressions, clicks, CTR" routed to `finance` only
+  // (via "খরচ") and the head answered from get_financial_health, which has NO
+  // impressions/clicks/CTR — so it truthfully said "no readable data" while the
+  // ads tools had them. Any ad-metric phrasing now also pulls `growth`.
+  if (/\bads?\b|advert|বুস্ট|campaign|seo|competitor|গ্রো|marketing|intel|optimizer|ROAS|scale|plan_marketing|marketing_report|মার্কেটিং|ফানেল|অ্যাড|এড|impression|ইমপ্রেশন|\bctr\b|সিটিআর|clicks?|ক্লিক|reach|রিচ|পারফরম্যান্স|performance|boost/i.test(t)) g.add('growth')
   if (/content|ছবি|image|post|model|try.?on|ব্র্যান্ড|facebook|fb|creative|অফার|offer|poster|reel|video|ভিডিও|রিল/i.test(t)) g.add('content')
   if (/website|almatraders|publish|catalog/i.test(t)) g.add('website')
   if (/salah|নামাজ|prayer|namaz|fajr|dhuhr|asr|maghrib|isha|ফজর|যোহর|আসর|মাগরিব|ইশা|জুম্মা|poreci|porlam|পড়েছি|পড়লাম|নামায/i.test(t)) g.add('salah')
@@ -51,6 +59,13 @@ export function selectToolGroupsSync(
   if (/api.?(credit|balance|key)|subscription|সাবস্ক্রিপশন|ক্রেডিট|recharge|রিচার্জ|credit.?balance|api.?bill/i.test(t)) g.add('cost')
   if (/সমস্যা|error|bug|diagnose|health|watchdog/i.test(t)) g.add('diag')
   if (/qc|screenshot|invoice|রসিদ|receipt|brand.?check|ছবি.*(?:check|দেখ|inspect)|photo.*(?:check|inspect|qc)|poster.*(?:check|read|দেখ)/i.test(t)) g.add('vision')
+
+  // Short message with NO domain keyword matched (still only `base`): default to
+  // erp, same as the old early short-circuit — but now a short message that DID
+  // match a keyword (e.g. "CTR কেমন" → growth) keeps its group.
+  if (t.length < 12 && g.size === 1) {
+    return { groups: ['base', 'erp'], confident: true }
+  }
 
   if (g.size === 1) {
     for (const x of AMBIGUOUS_FALLBACK) g.add(x)

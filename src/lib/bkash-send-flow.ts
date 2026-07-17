@@ -82,25 +82,69 @@ export function extractTrxIdFromText(text: string | null | undefined): string | 
 }
 
 /**
- * Launch the bKash app. Inside the Capacitor shell (iOS/Android) a non-http(s)
- * navigation is forwarded to the OS which opens the app — same path the existing
- * tel: links use, so no native build is needed. Mobile browsers behave the same;
- * desktop quietly no-ops (the copied number still works for bKash web/manual).
+ * The bKash app's Universal Link — the only opener bKash actually publishes.
+ *
+ * Evidence (https://bka.sh/.well-known/apple-app-site-association):
+ *   {"applinks":{"details":[{"appID":"4XPYVR2AGK.com.bKash.customerapp","paths":["/next"]}]}}
+ * App installed → iOS hands the tap straight to bKash and this page never loads.
+ * Not installed → the page loads and forwards to the App Store listing.
+ *
+ * This replaced a `bkash://` custom scheme that was a guess: bKash documents no such
+ * scheme, and the owner got Safari's "cannot open the page because the address is
+ * invalid" from it on 2026-07-17. Don't reintroduce a custom scheme without proof
+ * from a device that has bKash installed — the simulator cannot answer this question
+ * (no App Store there, so bKash can never be installed to claim a scheme).
+ */
+export const BKASH_APP_URL = 'https://bka.sh/next'
+
+/**
+ * Navigate to the bKash app. MUST be called synchronously inside the tap handler:
+ * iOS only honours a Universal Link while the user-gesture flag is live, and any
+ * `await`/`setTimeout` before it drops that flag (the original bug).
  */
 export function openBkashApp(): void {
   if (typeof window === 'undefined') return
-  window.location.href = 'bkash://'
+  window.location.href = BKASH_APP_URL
 }
 
-/** Clipboard write with a safe failure mode (false = tell the owner to copy manually). */
-export async function copyTextToClipboard(text: string): Promise<boolean> {
-  if (typeof navigator === 'undefined') return false
+/**
+ * Copy inside the tap, synchronously. The async Clipboard API only resolves on a
+ * later microtask — by then the gesture flag the Universal Link needs is gone, so
+ * we cannot await it before navigating. execCommand is deprecated but is the only
+ * synchronous path and still works in every browser this app ships to; the async
+ * API runs as a best-effort backup when it fails.
+ */
+export function copyTextToClipboard(text: string): boolean {
+  if (typeof document === 'undefined') return false
+  let copied = false
   try {
-    await navigator.clipboard.writeText(text)
-    return true
+    const el = document.createElement('textarea')
+    el.value = text
+    el.contentEditable = 'true'
+    el.readOnly = false
+    el.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;'
+    document.body.appendChild(el)
+    // iOS Safari ignores .select() on a synthetic textarea — it needs a real range.
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    el.setSelectionRange(0, text.length)
+    copied = document.execCommand('copy')
+    selection?.removeAllRanges()
+    el.remove()
   } catch {
-    return false
+    copied = false
   }
+  if (!copied) {
+    try {
+      void navigator.clipboard?.writeText(text).catch(() => {})
+    } catch {
+      /* nothing else to try — the sheet shows the number for manual entry */
+    }
+  }
+  return copied
 }
 
 /**
