@@ -28,7 +28,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { WebSocketServer } from 'ws'
 import { GoogleGenAI } from '@google/genai'
 import { logCost } from '../cost-log.mjs'
-import { isUnintelligibleTranscript } from './transcript-guard.mjs'
+import { isUnintelligibleTranscript, endSignalFromCaller } from './transcript-guard.mjs'
 
 const RELAY_MODEL = () => process.env.VOICE_RELAY_MODEL_ID || 'gemini-3.5-flash'
 const MAX_CALL_MINUTES = () => Number(process.env.VOICE_CALL_MAX_MINUTES) || 10
@@ -60,15 +60,25 @@ function verifyRelayToken(callRecordId, expMs, token) {
 }
 
 function buildSystemPrompt({ purpose, recipientName }) {
+  // Is the person on the line the owner himself? (agent sometimes calls Boss directly)
+  const callingOwner = /\b(boss|বস|maruf|মারুফ|মালিক)\b/i.test(String(recipientName ?? ''))
   return (
     `তুমি মালিকের ব্যক্তিগত সহকারী — ${recipientName ? recipientName + ' কে' : 'একজনকে'} ` +
     `মালিকের পক্ষ থেকে ফোন করেছ। উদ্দেশ্য: ${purpose || 'মালিকের বার্তা পৌঁছে দেওয়া'}।\n` +
     `নিয়ম:\n` +
+    (callingOwner
+      ? `- অন্য পক্ষ স্বয়ং মালিক। তাঁকে সবসময় **"বস"** বলে সম্বোধন করবে — কখনো "স্যার", "জনাব" বা "স্যার/ম্যাডাম" নয় (এটা কঠোর নিয়ম)।\n`
+      : '') +
     `- শুধুই সহজ, বিনয়ী, কথ্য বাংলায় কথা বলো। এটা ফোন কল — প্রতিটা উত্তর ১-৩টা ছোট বাক্যে, কোনো markdown/emoji/তালিকা নয়।\n` +
     `- অন্য পক্ষের কথা মন দিয়ে শোনো, প্রয়োজনীয় তথ্য আদায় করো।\n` +
     `- **না বুঝলে বানিয়ে বলবে না** — লাইন কেটে গেলে বা কথা অস্পষ্ট হলে সোজা জিজ্ঞেস করো ` +
     `"দুঃখিত, একটু কেটে গেল — আরেকবার বলবেন?"। অনুমান করে নিজের মতো কথা চালিয়ে যাওয়া কঠোরভাবে নিষিদ্ধ।\n` +
-    `- উদ্দেশ্য পূরণ হয়ে গেলে ভদ্রভাবে বিদায় নাও এবং বিদায়-বাক্যের একদম শেষে ${END_MARKER} লেখো (ওটা উচ্চারিত হবে না)।\n` +
+    `- **তুমি নিজে থেকে কখনো কল কাটবে না।** অন্য পক্ষ যতক্ষণ কথা বলছে, প্রশ্ন করছে বা লাইনে আছে, ` +
+    `ততক্ষণ ধৈর্য ধরে কথা চালিয়ে যাও — উদ্দেশ্য শেষ মনে হলেও নয়। কোনো উত্তর দেওয়ার পর "আর কিছু বলবেন?" ` +
+    `জিজ্ঞেস করো, নিজে থেকে বিদায় নিও না।\n` +
+    `- একমাত্র যখন অন্য পক্ষ স্পষ্টভাবে কথা শেষ করতে চায় (যেমন "রাখছি", "আর কিছু লাগবে না", ` +
+    `"ঠিক আছে বিদায়", "আল্লাহ হাফেজ", "ok rakhi") — শুধু তখনই ভদ্রভাবে বিদায় নিয়ে বিদায়-বাক্যের একদম শেষে ` +
+    `${END_MARKER} লেখো (ওটা উচ্চারিত হবে না)। সন্দেহ থাকলে কল কাটবে না, কথা চালিয়ে যাও।\n` +
     `- অপ্রাসঙ্গিক/হারাম বিষয়ে যেও না; না জানলে বলো মালিককে জিজ্ঞেস করে জানানো হবে।`
   )
 }
@@ -294,9 +304,21 @@ class RelaySession {
     if (spokenText) this.history.push({ role: 'assistant', text: spokenText })
 
     if (sawEnd && !this.ended) {
-      this.ended = true
-      // Give Twilio a beat to flush TTS of the goodbye before hanging up.
-      setTimeout(() => this.send({ type: 'end' }), 4000)
+      // Guard against a self-terminating model: only hang up if the OTHER PARTY
+      // actually signalled they were done. The owner's complaint "auto kete gese,
+      // ami kati ni" was the model emitting END_CALL because it decided the purpose
+      // was fulfilled. If the last human turn shows no goodbye, ignore the marker,
+      // ask if there's anything else, and keep the line open.
+      const lastUser = [...this.history].reverse().find((t) => t.role === 'user')?.text ?? ''
+      if (endSignalFromCaller(lastUser)) {
+        this.ended = true
+        console.log(`[voice-relay] END honored (caller said bye) — call ${this.callRecordId}`)
+        // Give Twilio a beat to flush TTS of the goodbye before hanging up.
+        setTimeout(() => this.send({ type: 'end' }), 4000)
+      } else {
+        console.warn(`[voice-relay] END suppressed (caller not done: "${lastUser.slice(0, 40)}") — call ${this.callRecordId}`)
+        this.send({ type: 'text', token: 'আর কিছু বলবেন বস?', last: true })
+      }
     }
   }
 

@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isUnintelligibleTranscript } from '../voice-relay/transcript-guard.mjs'
+import { isUnintelligibleTranscript, endSignalFromCaller } from '../voice-relay/transcript-guard.mjs'
 
 test('real mis-heard Hindi transcripts from prod are rejected', () => {
   for (const t of [
@@ -44,4 +44,38 @@ test('noise, punctuation and empty are rejected', () => {
 
 test('mixed Bangla+Devanagari is kept — Bangla content is present', () => {
   assert.equal(isUnintelligibleTranscript('হ্যাঁ ठीक আছে'), false)
+})
+
+// ── endSignalFromCaller: only a real human goodbye may end the call ──────────
+test('genuine goodbye phrases end the call', () => {
+  for (const t of [
+    'আচ্ছা তাহলে রাখছি',
+    'ঠিক আছে রাখি, ভালো থাকবেন',
+    'আর কিছু লাগবে না, ধন্যবাদ',
+    'আর কিছু বলার নেই',
+    'আল্লাহ হাফেজ',
+    'খোদা হাফেজ',
+    'বিদায় বস',
+    'ok rakhi',
+    'thik ache bye',
+    'accha bye',
+    'ok bye',
+  ]) {
+    assert.equal(endSignalFromCaller(t), true, t)
+  }
+})
+
+test('mid-conversation speech NEVER ends the call (the auto-cut bug)', () => {
+  for (const t of [
+    'আজকে সেল কত হয়েছে বলো তো',
+    'আচ্ছা, তারপর কী হলো?',      // "আচ্ছা" alone is not a goodbye
+    'ধন্যবাদ, এখন বলো আজকের অর্ডার কেমন', // "ধন্যবাদ" alone is not a goodbye
+    'এটা একটু রাখো তো',           // "রাখো" (keep this) is not "রাখছি" (hanging up)
+    'আমি ভালো আছি',
+    'হ্যাঁ বলুন',
+    'আর কিছু জানি না',            // "আর কিছু...না" WITHOUT লাগবে/বলার is not an ending
+    'okay tell me more',
+  ]) {
+    assert.equal(endSignalFromCaller(t), false, t)
+  }
 })

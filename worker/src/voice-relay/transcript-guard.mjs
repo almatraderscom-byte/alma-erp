@@ -31,3 +31,34 @@ export function isUnintelligibleTranscript(raw) {
   if (t.replace(/[\s।.,!?-]/g, '').length < 2) return true
   return false
 }
+
+/**
+ * Does the caller's own speech clearly signal they want to END the call?
+ *
+ * The relay must NEVER hang up on its own — the owner's "auto kete gese, ami kati ni"
+ * was the model deciding the purpose was done and emitting the end marker. We only
+ * honour that marker when the HUMAN actually said goodbye. Bangla + Banglish closings
+ * only; a bare "ধন্যবাদ"/"accha" is NOT an ending (conversation often continues after).
+ */
+const END_SIGNAL_RE = new RegExp(
+  [
+    'বিদায়',
+    '(?:আল্লাহ্?|খোদা|খুদা)\\s*হাফেজ',
+    'রাখছি',
+    'রাখলাম',
+    '(?:এখন|তাহলে|ঠিক\\s*আছে|আচ্ছা)\\s*রাখি',
+    'আর\\s*কিছু\\s*(?:লাগবে|বলার|দরকার|বলব)\\s*(?:না|নেই)',
+    'কথা\\s*শেষ',
+    // Banglish
+    '\\b(?:bye|goodbye)\\b',
+    '\\b(?:khoda|khuda|allah)\\s*hafez\\b',
+    '\\b(?:rakhchi|rakhlam)\\b',
+    '\\b(?:ok|okay|thik\\s*ache|accha)\\s*(?:rakhi|bye)\\b',
+  ].join('|'),
+  'i',
+)
+
+/** True when the caller's utterance is a genuine goodbye / end-of-call signal. */
+export function endSignalFromCaller(raw) {
+  return END_SIGNAL_RE.test(String(raw ?? ''))
+}

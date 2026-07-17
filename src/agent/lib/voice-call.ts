@@ -25,6 +25,13 @@ const ELEVEN_OUTBOUND_URL = 'https://api.elevenlabs.io/v1/convai/twilio/outbound
 const DEFAULT_DAILY_CAP = 10
 /** The exact one-way voice the owner loves — now on two-way calls via ConversationRelay. */
 const RELAY_TTS_VOICE = 'bn-IN-Chirp3-HD-Charon'
+/**
+ * Speech hints — business/call words the owner actually uses, fed to the STT so
+ * Bangla telephony audio stops mis-hearing them (live 2026-07-18: "সেল আছে?" was
+ * transcribed "সেল বিচে?"). Comma-separated, owner-tunable via VOICE_RELAY_HINTS.
+ */
+const RELAY_STT_HINTS =
+  'সেল,বিক্রি,অর্ডার,ডেলিভারি,পেমেন্ট,বাকি,টাকা,কাস্টমার,স্টক,দোকান,আজকে,কালকে,কত,দাম,প্রোডাক্ট,ছবি,পোস্ট,মিটিং,রিমাইন্ডার,বস'
 
 /** Which engine runs two-way calls: ElevenLabs ConvAI (legacy) or Twilio
  * ConversationRelay + Gemini + Google Charon voice (better Bangla accent). */
@@ -315,6 +322,13 @@ async function placeRelayCall(
       // kotha na bujhei nijer moto kotha bola"). "speech" delivers those words; the
       // default interruptible="any" already stops the TTS when they start speaking.
       ` reportInputDuringAgentSpeech="${process.env.VOICE_RELAY_REPORT_DURING_SPEECH ?? 'speech'}"` +
+      // Barge-in: default sensitivity is "high", so the owner's own low-volume echo /
+      // line noise kept interrupting the agent mid-sentence — his "বাক্য শেষ না করে
+      // অন্য বাক্য শুরু করে". "low" needs real, confident, longer speech to cut the TTS;
+      // genuine barge-in still works. Owner-tunable via VOICE_RELAY_INTERRUPT_SENSITIVITY.
+      ` interruptSensitivity="${process.env.VOICE_RELAY_INTERRUPT_SENSITIVITY ?? 'low'}"` +
+      // Bias the STT toward the words the owner actually says on these calls.
+      ` hints="${escapeXmlAttr(process.env.VOICE_RELAY_HINTS ?? RELAY_STT_HINTS)}"` +
       (process.env.VOICE_RELAY_SPEECH_TIMEOUT_MS
         ? ` speechTimeout="${process.env.VOICE_RELAY_SPEECH_TIMEOUT_MS}"`
         : '') +
