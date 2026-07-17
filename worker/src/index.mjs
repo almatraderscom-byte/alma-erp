@@ -529,6 +529,28 @@ async function processImageGen(job) {
     return
   }
 
+  // Supplier-photo garment prep (free local segmentation): split the reseller
+  // photo into per-person crops; the chain uses the REAL adult/child pieces.
+  if (payload.provider === 'garment_prep') {
+    try {
+      const { prepSupplierPhoto } = await import('./garment-prep.mjs')
+      const result = await prepSupplierPhoto({ supabase, imagePath: payload.imagePath })
+      await callJobResult(pendingActionId, 'success', {
+        garmentPrep: true,
+        multiPerson: result.multiPerson,
+        persons: result.persons,
+        adultGarmentPath: result.adultGarmentPath,
+        childGarmentPath: result.childGarmentPath,
+        creativeStudio: false,
+      })
+      console.log(`[worker] garment-prep ${pendingActionId} — ${result.persons.length} crop(s)`)
+    } catch (err) {
+      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      console.error(`[worker] garment-prep ${pendingActionId} — failed:`, err.message)
+    }
+    return
+  }
+
   // CS10 — golden-set engine evaluation (owner-triggered, bounded, resumable).
   if (payload.provider === 'golden_eval') {
     try {
