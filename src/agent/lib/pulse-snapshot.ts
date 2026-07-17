@@ -128,6 +128,88 @@ type PendingRow = {
   createdAt: Date
 }
 
+/** Bangla label for an ERP ApprovalRequest.type (src/lib/approval-types.ts). */
+function erpKindBangla(type: string): string {
+  switch (type) {
+    case 'WALLET_WITHDRAWAL': return 'ওয়ালেট উত্তোলন'
+    case 'WALLET_ADVANCE':
+    case 'SALARY_ADVANCE': return 'বেতন অগ্রিম'
+    case 'MEAL_ALLOWANCE': return 'খাবার ভাতা'
+    case 'NO_CHECKOUT_FINE': return 'চেক-আউট জরিমানা'
+    case 'PENALTY_APPEAL': return 'জরিমানা আপিল'
+    case 'ATTENDANCE_EXCEPTION':
+    case 'ATTENDANCE_LEAVE': return 'উপস্থিতি অনুরোধ'
+    case 'EXPENSE_ADD':
+    case 'EXPENSE_REIMBURSEMENT': return 'খরচ অনুমোদন'
+    case 'OFFICE_FUND_ADVANCE': return 'অফিস ফান্ড অগ্রিম'
+    case 'OFFICE_FUND_RECONCILE': return 'অফিস ফান্ড হিসাব'
+    case 'SALARY_CORRECTION': return 'বেতন সংশোধন'
+    case 'TRADE_DELETE': return 'ট্রেড ডিলিট'
+    case 'ORDER_DELETE': return 'অর্ডার ডিলিট'
+    case 'DRIVING_MODE': return 'ড্রাইভিং মোড'
+    default: return 'স্টাফ অনুরোধ'
+  }
+}
+
+/** "২ ঘণ্টা আগে"-style relative age in Bangla digits. */
+function banglaAge(from: Date, now: Date): string {
+  const mins = Math.max(0, Math.round((now.getTime() - from.getTime()) / 60_000))
+  if (mins < 1) return 'এইমাত্র'
+  if (mins < 60) return `${toBanglaDigits(mins)} মিনিট আগে`
+  const hours = Math.round(mins / 60)
+  if (hours < 24) return `${toBanglaDigits(hours)} ঘণ্টা আগে`
+  return `${toBanglaDigits(Math.round(hours / 24))} দিন আগে`
+}
+
+type ErpFeaturedRow = { id: string; type: string; module: string; requesterName: string | null; createdAt: Date }
+
+/**
+ * Newest PENDING ERP ApprovalRequest with its requester's name — the hub table
+ * every wallet/advance/waiver/meal request routes through, and exactly the id
+ * `PATCH /api/approvals/{id}` acts on (so the island's buttons can decide it).
+ * Amount is enriched fail-open from the entity table by id probe.
+ */
+async function fetchFeaturedErpApproval(now: Date): Promise<PulseApproval | undefined> {
+  try {
+    const rows = (await prisma.$queryRaw`
+      SELECT a.id, a.type, a.module, a."createdAt", u.name AS "requesterName"
+      FROM "ApprovalRequest" a
+      LEFT JOIN "User" u ON u.id = a."requestedBy"
+      WHERE a.status::text = 'PENDING'
+      ORDER BY a."createdAt" DESC
+      LIMIT 1`) as ErpFeaturedRow[]
+    const row = rows[0]
+    if (!row) return undefined
+
+    // Amount lives on the underlying entity — probe the money tables by the
+    // hub's entityId (cuids never collide across tables; each probe fail-open).
+    let amount: number | undefined
+    try {
+      const probes = (await Promise.all([
+        prisma.$queryRaw`SELECT "requestedAmount"::float8 AS amt FROM "WalletRequest" w JOIN "ApprovalRequest" a ON a."entityId" = w.id WHERE a.id = ${row.id} LIMIT 1`,
+        prisma.$queryRaw`SELECT "amount"::float8 AS amt FROM "SalaryAdvanceRequest" s JOIN "ApprovalRequest" a ON a."entityId" = s.id WHERE a.id = ${row.id} LIMIT 1`,
+        prisma.$queryRaw`SELECT "amountBdt"::float8 AS amt FROM "MealAllowanceRequest" m JOIN "ApprovalRequest" a ON a."entityId" = m.id WHERE a.id = ${row.id} LIMIT 1`,
+        prisma.$queryRaw`SELECT "originalPenaltyAmount"::float8 AS amt FROM "AttendanceWaiverRequest" v JOIN "ApprovalRequest" a ON a."entityId" = v.id WHERE a.id = ${row.id} LIMIT 1`,
+      ].map((q) => q.catch(() => [])))) as Array<Array<{ amt: number | null }>>
+      amount = probes.flat().map((p) => Number(p?.amt)).find((n) => Number.isFinite(n) && n > 0)
+    } catch { /* amount stays hidden — card still renders */ }
+
+    const kind = erpKindBangla(row.type)
+    return {
+      // "erp:" prefix tells the island's intent to decide via PATCH
+      // /api/approvals/{id} instead of the agent pending-action endpoint.
+      id: `erp:${row.id}`,
+      title: row.requesterName ? `${kind} — ${row.requesterName}` : kind,
+      counterparty: `${row.module || 'ERP'} · ${banglaAge(row.createdAt, now)}`,
+      amountText: amount ? formatTakaBn(amount) : undefined,
+      reference: undefined,
+      createdAt: row.createdAt.toISOString(),
+    }
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Structured approval summary from a pending-action row. Only uses fields that
  * really exist — `log_ledger_entry` carries {personName, amount, currency};
@@ -228,10 +310,15 @@ export async function buildPulseSnapshot(now: Date = new Date()): Promise<PulseS
   const fresh = pendingRows.filter((r) => !isPendingActionExpired(r.createdAt, r.type))
   const approvalCount = pendingRows.length + erpApprovalCount
   const featured = fresh[0] ?? pendingRows[0]
+  // Demo-approved island (2026-07-17): the featured card must be a REAL,
+  // decidable request — agent card first, else the newest ERP request with its
+  // requester + amount (id "erp:<hub-id>" → island buttons PATCH /api/approvals).
+  // The old anonymous 'erp-approvals' stub ("Approvals ট্যাবে দেখুন", no buttons)
+  // is only the last-ditch fallback if the detail fetch itself fails.
   const approval = featured
     ? toApproval(featured as PendingRow)
     : erpApprovalCount > 0
-      ? {
+      ? (await fetchFeaturedErpApproval(now)) ?? {
           id: 'erp-approvals',
           title: 'স্টাফ অনুরোধ অপেক্ষায়',
           counterparty: 'Approvals ট্যাবে দেখুন',

@@ -84,8 +84,23 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             PulseIntentBridge.executor = { actionId, approve in
                 struct OkResp: Decodable { let ok: Bool? }
                 do {
-                    let _: OkResp = try await AlmaAPI.shared.send(
-                        "POST", "/api/assistant/actions/\(actionId)/\(approve ? "approve" : "reject")")
+                    if actionId.hasPrefix("erp:") {
+                        // ERP request-table approval (island demo parity
+                        // 2026-07-17): the snapshot sends the ApprovalRequest
+                        // hub id — decide it through the SAME endpoint the
+                        // native Approvals tab uses.
+                        let id = String(actionId.dropFirst(4))
+                        struct Body: Encodable {
+                            let action: String; let note: String; let operation_id: String
+                        }
+                        let _: OkResp = try await AlmaAPI.shared.send(
+                            "PATCH", "/api/approvals/\(id)",
+                            body: Body(action: approve ? "APPROVE" : "REJECT", note: "",
+                                       operation_id: "island-\(UUID().uuidString.lowercased())"))
+                    } else {
+                        let _: OkResp = try await AlmaAPI.shared.send(
+                            "POST", "/api/assistant/actions/\(actionId)/\(approve ? "approve" : "reject")")
+                    }
                     UserDefaults.standard.removeObject(forKey: "alma.pulse.lastNativeSyncAt")
                     if #available(iOS 16.1, *) { PulseNativeSync.syncNow(reason: "intent") }
                     return true

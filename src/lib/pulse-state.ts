@@ -243,9 +243,10 @@ export function copyForMode(
         // truncating (the longer "আপনার অনুমোদনেই পরের ধাপ" clipped mid-word in
         // the snapshot pass).
         headline: 'আপনার অনুমোদন দরকার',
-        subtitle: ctx.approval
-          ? `${ctx.approval.title} — অপেক্ষায়`
-          : `${toBanglaDigits(ctx.approvalCount)}টি অনুমোদন অপেক্ষায়`,
+        // Demo-approved copy (2026-07-17). The old `${title} — অপেক্ষায়` echoed
+        // titles that already end in "অপেক্ষায়" ("স্টাফ অনুরোধ অপেক্ষায় — অপেক্ষায়"),
+        // so the subtitle is count-based and never repeats the card title.
+        subtitle: `${toBanglaDigits(ctx.approvalCount)}টা অনুরোধ অপেক্ষায় · এখনই সিদ্ধান্ত দিন`,
       }
 
     case 'orders':
