@@ -116,7 +116,12 @@ const RULES: ClaimRule[] = [
     // and must not trigger — hence the fetch-verb requirement + negation.
     id: 'meta_mcp_source_claim',
     category: 'source_attribution',
-    pattern: /(?:meta\s*)?mcp\s*(?:থেকে|দিয়ে|theke|diye)\s*[^\n.।!?]{0,40}?(?:লাইভ|চেক|দেখ|আন|নিয়ে|নিলাম|পেলাম|টেনে|data|ডেটা|সংখ্যা|report|রিপোর্ট|insight)/i,
+    // "MCP থেকে চেক করলাম" AND "MCP-এ কোনো data নেই" both assert knowledge the
+    // head can only have from an actual meta_ads_* call — the second form slipped
+    // through the থেকে-only pattern on 2026-07-17 (it had called NO MCP tool).
+    // Honest connection-state talk ("MCP এখনো খোলেনি / connect করা নেই") is
+    // negated below and stays allowed.
+    pattern: /(?:meta\s*)?mcp\s*(?:থেকে|দিয়ে|theke|diye|-?এ|-?তে|-?te)\s*[^\n.।!?]{0,40}?(?:লাইভ|চেক|দেখ|আন|নিয়ে|নিলাম|পেলাম|টেনে|data|ডেটা|সংখ্যা|report|রিপোর্ট|insight)/i,
     negationPattern: /(?:খোলেনি|খুলেনি|বন্ধ|পারিনি|পারলাম\s*না|যায়নি|আসেনি|connect\s*(?:করা\s*)?নেই|disabled|not\s*enabled|rollout|এখনো\s*(?:খোলে|আসে)নি)/i,
     requiredTools: ['meta_ads_*'],
   },

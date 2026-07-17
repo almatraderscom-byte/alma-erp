@@ -31,4 +31,16 @@ describe('meta_mcp_source_claim', () => {
     const plain = 'বস, গত ৭ দিনে spend $11.48, impressions 49,804 — growth রিপোর্ট থেকে।'
     expect(detectClaimViolations(plain, ['growth_control_room'])).toHaveLength(0)
   })
+
+  it('flags "MCP-এ কোনো data নেই" too — asserting MCP state without calling it (live-hit round 2)', () => {
+    const slipped = 'বস, ad spend ৳12। Impressions, clicks, CTR — Meta MCP-এ কোনো readable data নেই (campaignsWithData=0)।'
+    const v = detectClaimViolations(slipped, ['get_financial_health'])
+    expect(v).toHaveLength(1)
+    expect(v[0].ruleId).toBe('meta_mcp_source_claim')
+  })
+
+  it('still allows honest connection-state talk', () => {
+    const honest = 'বস, Meta MCP এখনো এই অ্যাকাউন্টে খোলেনি (rollout বাকি) — তাই Graph রিপোর্ট থেকে বলছি।'
+    expect(detectClaimViolations(honest, ['growth_control_room'])).toHaveLength(0)
+  })
 })
