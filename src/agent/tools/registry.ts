@@ -644,6 +644,16 @@ interface ToolRunContext {
   surface?: 'owner' | 'cs' | 'scheduler'
   turnAuthorization?: OwnerTurnAuthorization
   driveClientSeoBatch?: boolean
+  /**
+   * Phase 52 guard context — explicit instruction origin (heartbeat/autodrive/
+   * browser callers set this; surfaces derive a default), an approval envelope
+   * when executing an approved action, and caller-known scope flags.
+   */
+  instructionOrigin?: 'owner_direct' | 'owner_policy' | 'model_initiative' | 'external_content'
+  approvalEnvelope?: import('@/agent/lib/policy/capability-token').SignedEnvelope
+  confidence?: number
+  capabilityRevoked?: boolean
+  accountScopeOk?: boolean
 }
 
 function classificationFor(name: string): ResolvedClassification {
@@ -761,6 +771,63 @@ export async function runRegisteredTool(
     }
   }
 
+  // Phase 52 universal tool guard — EVERY registered tool call on every surface
+  // passes through the deterministic policy kernel. Hard constitutional
+  // violations (untrusted-content instructions, stale approvals, same-turn
+  // duplicates, R4 owner-only, money-cap breaches, out-of-scope accounts) are
+  // BLOCKED; ladder decisions (point-of-risk staging for owner-direct R3
+  // writes, bounded-policy proposals) are shadow-logged until Phase 57 promotes
+  // them per task class. Fail-closed for effects, fail-open for reads.
+  {
+    const { guardToolCall } = await import('@/agent/lib/policy/tool-guard')
+    const guard = await guardToolCall(tool.name, input ?? {}, cap, {
+      surface: ctx.surface,
+      conversationId: ctx.conversationId,
+      businessId: ctx.businessId,
+      turnId: ctx.turnId,
+      instructionOrigin: ctx.instructionOrigin,
+      approvalEnvelope: ctx.approvalEnvelope,
+      confidence: ctx.confidence,
+      capabilityRevoked: ctx.capabilityRevoked,
+      accountScopeOk: ctx.accountScopeOk,
+    })
+    if (guard.action === 'block') {
+      void logToolEvent({
+        ...baseEvent,
+        success: false,
+        errorClass: 'guard_blocked',
+        errorCode: guard.errorCode ?? 'guard_blocked',
+        latencyMs: Date.now() - started,
+        detail: {
+          ...capDetail,
+          argsValidation: 'passed',
+          guardDecision: guard.decision.decision,
+          guardReason: guard.decision.reasonClass,
+          guardTier: guard.decision.riskTier,
+          guardEnforced: true,
+        },
+      })
+      return { success: false, error: guard.error, errorCode: guard.errorCode ?? 'guard_blocked', retryable: false }
+    }
+    // Shadow observability: when the constitution wanted a stricter path than
+    // we enforce today, record it — Phase 57 readiness is computed from these.
+    if (!guard.enforced) {
+      void logToolEvent({
+        ...baseEvent,
+        success: true,
+        latencyMs: 0,
+        detail: {
+          ...capDetail,
+          guardDecision: guard.decision.decision,
+          guardReason: guard.decision.reasonClass,
+          guardTier: guard.decision.riskTier,
+          guardEnforced: false,
+          guardShadow: true,
+        },
+      })
+    }
+  }
+
   try {
     const handlerContext = { ...serverContext }
     delete handlerContext.turnAuthorization
@@ -871,6 +938,11 @@ export async function executeTool(
     turnId,
     turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
     driveClientSeoBatch: serverContext.driveClientSeoBatch === true,
+    instructionOrigin: serverContext.instructionOrigin as ToolRunContext['instructionOrigin'],
+    approvalEnvelope: serverContext.approvalEnvelope as ToolRunContext['approvalEnvelope'],
+    confidence: typeof serverContext.confidence === 'number' ? serverContext.confidence : undefined,
+    capabilityRevoked: serverContext.capabilityRevoked === true,
+    accountScopeOk: serverContext.accountScopeOk === false ? false : undefined,
   })
 }
 
