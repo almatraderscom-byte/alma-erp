@@ -11,6 +11,10 @@
   },
   "crons": [
     {
+      "path": "/api/cron/office-call-reconcile",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/live-activity-push",
       "schedule": "*/2 * * * *"
     },

@@ -3,6 +3,13 @@
 This directory contains the hard-verification record for each implementation phase in
 `docs/office-calling-whatsapp-audit-roadmap.md`.
 
+## Fixed goal
+
+This is one continuing, non-stop implementation goal. Phases 0–7 run sequentially
+with every available agent-side hard gate; the agent continues automatically after
+each PASS. Repeated physical setup is deferred to the single comprehensive Phase 8
+iPhone/Android/web matrix, which remains mandatory before release.
+
 ## Vercel verification policy
 
 The `agent/office-calling-whatsapp` branch originally set Vercel's `ignoreCommand` to

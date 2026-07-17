@@ -12,6 +12,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { resolveSessionStaff } from '@/agent/lib/office-staff'
+import { businessAllowed } from '@/lib/business-access'
 import { agentStorageUpload, agentStorageSignedUrl } from '@/agent/lib/storage'
 import { createIntercomBroadcast, getIntercomFeed, resolveOwnerUserId } from '@/agent/lib/office-intercom'
 
@@ -45,6 +46,9 @@ async function identify(req: NextRequest): Promise<Identity> {
   if (!token?.sub) return { ok: false, error: 'unauthorized', code: 401 }
   if (isSystemOwner(token)) {
     const businessId = req.nextUrl.searchParams.get('businessId')?.trim() || DEFAULT_BUSINESS
+    if (!businessAllowed(token.businessAccess as string | undefined, businessId)) {
+      return { ok: false, error: 'forbidden', code: 403 }
+    }
     return { ok: true, role: 'owner', userId: token.sub, businessId }
   }
   const staff = await resolveSessionStaff(token.sub)
@@ -79,7 +83,7 @@ export async function POST(req: NextRequest) {
 
   // ── urgent alert / live-call ring (no audio) ──
   if (contentType.includes('application/json')) {
-    let body: { kind?: string; targetStaffId?: string }
+    let body: { kind?: string; targetStaffId?: string; idempotencyKey?: string }
     try {
       body = await req.json()
     } catch {
@@ -93,6 +97,10 @@ export async function POST(req: NextRequest) {
     // is bidirectional: the owner rings a chosen staff; a staff rings the owner.
     // (Urgent alerts stay owner-only.)
     if (body.kind === 'call') {
+      const idempotencyKey = body.idempotencyKey?.trim() || null
+      if (idempotencyKey && (idempotencyKey.length < 8 || idempotencyKey.length > 128)) {
+        return Response.json({ error: 'invalid_idempotency_key' }, { status: 400 })
+      }
       if (id.role === 'owner') {
         const targetStaffId = body.targetStaffId?.trim() || null
         if (!targetStaffId) return Response.json({ error: 'call_needs_target' }, { status: 400 })
@@ -101,12 +109,13 @@ export async function POST(req: NextRequest) {
           senderUserId: id.userId,
           kind: 'call',
           targetStaffId,
+          clientRequestId: idempotencyKey,
         })
-        if ('error' in res) return Response.json({ error: res.error }, { status: 422 })
-        return Response.json({ ok: true, ...res }, { status: 201 })
+        if ('error' in res) return Response.json({ error: res.error }, { status: res.error === 'busy' ? 409 : 422 })
+        return Response.json({ ok: true, ...res }, { status: res.idempotent ? 200 : 201 })
       }
       // staff → owner
-      const ownerUserId = await resolveOwnerUserId()
+      const ownerUserId = await resolveOwnerUserId(id.businessId)
       if (!ownerUserId) return Response.json({ error: 'owner_unavailable' }, { status: 422 })
       const res = await createIntercomBroadcast({
         businessId: id.businessId,
@@ -114,9 +123,10 @@ export async function POST(req: NextRequest) {
         kind: 'call',
         targetUserId: ownerUserId,
         callerName: id.staffName,
+        clientRequestId: idempotencyKey,
       })
-      if ('error' in res) return Response.json({ error: res.error }, { status: 422 })
-      return Response.json({ ok: true, ...res }, { status: 201 })
+      if ('error' in res) return Response.json({ error: res.error }, { status: res.error === 'busy' ? 409 : 422 })
+      return Response.json({ ok: true, ...res }, { status: res.idempotent ? 200 : 201 })
     }
 
     // urgent — owner-only

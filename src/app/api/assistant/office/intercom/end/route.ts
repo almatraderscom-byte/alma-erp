@@ -7,34 +7,22 @@
  * call row is left as the missed-/completed-call history the feed renders.
  */
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { isSystemOwner } from '@/lib/roles'
-import { resolveSessionStaff } from '@/agent/lib/office-staff'
+import { identifyOfficeCallRequest } from '@/agent/lib/office-call-auth'
 import { endCall, type CallEndReason } from '@/agent/lib/office-intercom'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const DEFAULT_BUSINESS = 'ALMA_LIFESTYLE'
-const REASONS: CallEndReason[] = ['cancelled', 'declined', 'missed', 'completed']
+const REASONS: CallEndReason[] = ['cancelled', 'declined', 'missed', 'completed', 'failed']
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-
-  let businessId: string
-  if (isSystemOwner(token)) {
-    businessId = req.nextUrl.searchParams.get('businessId')?.trim() || DEFAULT_BUSINESS
-  } else {
-    const staff = await resolveSessionStaff(token.sub)
-    if (!staff) return Response.json({ error: 'forbidden' }, { status: 403 })
-    businessId = staff.businessId
-  }
+  const identity = await identifyOfficeCallRequest(req)
+  if (!identity.ok) return Response.json({ error: identity.error }, { status: identity.code })
 
   let body: { broadcastId?: string; reason?: string }
   try {
@@ -46,6 +34,12 @@ export async function POST(req: NextRequest) {
   if (!broadcastId) return Response.json({ error: 'broadcast_required' }, { status: 400 })
   const reason = (REASONS.includes(body.reason as CallEndReason) ? body.reason : 'completed') as CallEndReason
 
-  const res = await endCall({ broadcastId, businessId, reason, actorUserId: token.sub })
-  return Response.json(res, { status: 200 })
+  const res = await endCall({
+    broadcastId,
+    businessId: identity.businessId,
+    reason,
+    actorUserId: identity.userId,
+  })
+  const status = res.ok ? 200 : res.error === 'forbidden' ? 403 : res.error === 'not_found' ? 404 : 409
+  return Response.json(res, { status })
 }

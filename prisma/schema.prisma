@@ -878,36 +878,36 @@ model OfficeFundEntry {
 /// money manually (bKash/cash) on approval; it stays the company's money until
 /// reconciled (spent + leftover). Distinct from the staff wallet — never salary.
 model OfficeAdvance {
-  id              String    @id @default(cuid())
-  businessId      String    @default("ALMA_LIFESTYLE")
+  id                  String    @id @default(cuid())
+  businessId          String    @default("ALMA_LIFESTYLE")
   /// The admin who requested + received the advance (HR employee id).
-  employeeId      String
-  userId          String?
-  requestedByName String?
+  employeeId          String
+  userId              String?
+  requestedByName     String?
   /// Whole taka requested / disbursed.
-  amount          Int
+  amount              Int
   /// Why the cash is needed (office work description).
-  purpose         String?   @db.Text
+  purpose             String?   @db.Text
   /// Where the owner sends the money manually — display label + number.
-  payoutMethod    String?
-  payoutNumber    String?
+  payoutMethod        String?
+  payoutNumber        String?
   /// PENDING → OUTSTANDING (approved, owner sent) → SETTLED (reconciled);
   /// or REJECTED / CANCELLED. Outstanding advances show on the admin's My Desk.
-  status          String    @default("PENDING")
+  status              String    @default("PENDING")
   /// Reconciliation outcome (Phase D): how much was actually spent + leftover,
   /// and how the leftover was returned (WALLET_DEDUCT | CASH_RETURN).
-  spentAmount     Int?
-  leftoverAmount  Int?
-  leftoverMethod  String?
+  spentAmount         Int?
+  leftoverAmount      Int?
+  leftoverMethod      String?
   /// Links to the approval requests that drove the advance and its reconcile.
   approvalId          String?
   reconcileApprovalId String?
-  approvedById    String?
-  approvedAt      DateTime?
-  settledAt       DateTime?
-  createdById     String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  approvedById        String?
+  approvedAt          DateTime?
+  settledAt           DateTime?
+  createdById         String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@index([businessId, status, createdAt(sort: Desc)])
   @@index([employeeId, status])
@@ -2155,41 +2155,41 @@ model AgentServiceConnection {
 /// executing → verifying → succeeded; repair/terminal: denied, expired,
 /// failed_retryable, failed_final, unknown_effect, compensating, compensated.
 model AgentActionRun {
-  id                String    @id @default(uuid())
+  id                String              @id @default(uuid())
   /// Deterministic exactly-once key (capability-token.buildIdempotencyKey).
-  idempotencyKey    String    @unique @map("idempotency_key")
+  idempotencyKey    String              @unique @map("idempotency_key")
   /// Normalized effect hash (canonical input) — payload identity for approvals.
-  effectHash        String    @map("effect_hash")
+  effectHash        String              @map("effect_hash")
   tool              String
-  surface           String    @default("owner")
-  actor             String    @default("owner")
-  instructionOrigin String    @default("owner_direct") @map("instruction_origin")
-  conversationId    String?   @map("conversation_id")
-  turnId            String?   @map("turn_id")
-  businessId        String?   @map("business_id")
-  riskTier          String    @map("risk_tier")
-  policyVersion     String    @map("policy_version")
-  approvalRef       String?   @map("approval_ref")
-  state             String    @default("proposed")
+  surface           String              @default("owner")
+  actor             String              @default("owner")
+  instructionOrigin String              @default("owner_direct") @map("instruction_origin")
+  conversationId    String?             @map("conversation_id")
+  turnId            String?             @map("turn_id")
+  businessId        String?             @map("business_id")
+  riskTier          String              @map("risk_tier")
+  policyVersion     String              @map("policy_version")
+  approvalRef       String?             @map("approval_ref")
+  state             String              @default("proposed")
   /// Optimistic concurrency — transitions must present the version they read.
-  stateVersion      Int       @default(1) @map("state_version")
-  attempts          Int       @default(0)
+  stateVersion      Int                 @default(1) @map("state_version")
+  attempts          Int                 @default(0)
   input             Json
   destination       String?
   /// Provider receipt (message id / call sid / post id …).
-  providerRef       String?   @map("provider_ref")
+  providerRef       String?             @map("provider_ref")
   /// Independent postcondition evidence (claim-verifier / re-read / receipt).
   proof             Json?
   /// Stored final result envelope for idempotent replay of completed runs.
   result            Json?
-  costUsd           Float?    @map("cost_usd")
+  costUsd           Float?              @map("cost_usd")
   /// Whole-taka money this effect commits (BDT rule — integers only).
-  moneyTaka         Int?      @map("money_taka")
-  error             String?   @db.Text
+  moneyTaka         Int?                @map("money_taka")
+  error             String?             @db.Text
   /// Set when this run compensates (undoes) another run.
-  compensationOfId  String?   @map("compensation_of_id")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+  compensationOfId  String?             @map("compensation_of_id")
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
   ledger            AgentEffectLedger[]
 
   @@index([state, updatedAt])
@@ -2261,7 +2261,7 @@ model AgentTurn {
   userMessageId         String?   @map("user_message_id")
   /// The persisted assistant AgentMessage of the terminal reply — lets the client
   /// fetch the exact final row instead of re-reading the whole history.
-  assistantMessageId String? @map("assistant_message_id")
+  assistantMessageId    String?   @map("assistant_message_id")
   /// Highest agent_turn_events.seq written for this turn (-1 = none yet) — the
   /// client's replay cursor and the "stream quiet but alive" liveness signal.
   lastSeq               Int       @default(-1) @map("last_seq")
@@ -2612,60 +2612,60 @@ model StaffLeave {
 // ─── PHASE 6: Staff Tasks ───────────────────────────────────────────────────
 
 model AgentStaffTask {
-  id                 String                         @id @default(uuid())
-  staffId            String                         @map("staff_id")
-  staff              AgentStaff                     @relation(fields: [staffId], references: [id], onDelete: Cascade)
-  title              String
-  detail             String?                        @db.Text
-  type               String                         @default("misc")
-  productRef         String?                        @map("product_ref")
-  status             String                         @default("proposed")
-  proposedFor        DateTime                       @map("proposed_for") @db.Date
+  id                       String                         @id @default(uuid())
+  staffId                  String                         @map("staff_id")
+  staff                    AgentStaff                     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  title                    String
+  detail                   String?                        @db.Text
+  type                     String                         @default("misc")
+  productRef               String?                        @map("product_ref")
+  status                   String                         @default("proposed")
+  proposedFor              DateTime                       @map("proposed_for") @db.Date
   /// Owner-set deadline for this task (when it should be finished). Drives office overdue flags.
-  dueAt              DateTime?                      @map("due_at")
-  completedAt        DateTime?                      @map("completed_at")
-  carriedFromTaskId  String?                        @map("carried_from_task_id")
-  carriedFrom        AgentStaffTask?                @relation("CarryForward", fields: [carriedFromTaskId], references: [id], onDelete: SetNull)
-  carriedTasks       AgentStaffTask[]               @relation("CarryForward")
-  source             String                         @default("agent")
-  verificationStatus String                         @default("not_required") @map("verification_status")
-  proofType          String?                        @map("proof_type")
-  proofData          Json?                          @map("proof_data")
-  reviewerNote       String?                        @map("reviewer_note") @db.Text
-  redoCount          Int                            @default(0) @map("redo_count")
-  contextShot        String?                        @map("context_shot") @db.Text
+  dueAt                    DateTime?                      @map("due_at")
+  completedAt              DateTime?                      @map("completed_at")
+  carriedFromTaskId        String?                        @map("carried_from_task_id")
+  carriedFrom              AgentStaffTask?                @relation("CarryForward", fields: [carriedFromTaskId], references: [id], onDelete: SetNull)
+  carriedTasks             AgentStaffTask[]               @relation("CarryForward")
+  source                   String                         @default("agent")
+  verificationStatus       String                         @default("not_required") @map("verification_status")
+  proofType                String?                        @map("proof_type")
+  proofData                Json?                          @map("proof_data")
+  reviewerNote             String?                        @map("reviewer_note") @db.Text
+  redoCount                Int                            @default(0) @map("redo_count")
+  contextShot              String?                        @map("context_shot") @db.Text
   // ── Office update-tracking: "update requested but not given" + escalation. ──
   /// When the owner/agent asked the staff for a progress update.
-  updateRequestedAt  DateTime?                      @map("update_requested_at")
+  updateRequestedAt        DateTime?                      @map("update_requested_at")
   /// Who asked: 'owner' | 'agent'.
-  updateRequestedBy  String?                        @map("update_requested_by")
-  updateRequestNote  String?                        @map("update_request_note") @db.Text
+  updateRequestedBy        String?                        @map("update_requested_by")
+  updateRequestNote        String?                        @map("update_request_note") @db.Text
   /// Last time the staff actually responded with an update.
-  lastStaffUpdateAt  DateTime?                      @map("last_staff_update_at")
+  lastStaffUpdateAt        DateTime?                      @map("last_staff_update_at")
   /// Set once the unanswered request was escalated to the owner (countdown over).
-  escalatedAt        DateTime?                      @map("escalated_at")
+  escalatedAt              DateTime?                      @map("escalated_at")
   // ── Phase-2 DeepSeek supervisor state. ──
   /// How many clarifying questions the supervisor has asked the staff (capped at 2).
-  supervisorClarifyCount Int                        @default(0) @map("supervisor_clarify_count")
+  supervisorClarifyCount   Int                            @default(0) @map("supervisor_clarify_count")
   /// Task the supervisor couldn't auto-verify/understand → owner must review (the ~10%).
-  supervisorNeedsOwner   Boolean                    @default(false) @map("supervisor_needs_owner")
+  supervisorNeedsOwner     Boolean                        @default(false) @map("supervisor_needs_owner")
   /// Last time the supervisor acted on this task (debounce + re-triage marker).
-  supervisorLastTickAt   DateTime?                  @map("supervisor_last_tick_at")
+  supervisorLastTickAt     DateTime?                      @map("supervisor_last_tick_at")
   // ── Phase-3 90/10 escalation gate. ──
   /// Owner forced this task to always reach him, overriding the criticality gate.
-  supervisorAlwaysEscalate Boolean                  @default(false) @map("supervisor_always_escalate")
+  supervisorAlwaysEscalate Boolean                        @default(false) @map("supervisor_always_escalate")
   /// Last criticality the supervisor computed ('critical' | 'normal'). Audit only.
-  supervisorCriticality  String?                    @map("supervisor_criticality")
+  supervisorCriticality    String?                        @map("supervisor_criticality")
   // ── Phase-D durable follow-up schedule. ──
   /// When the supervisor should next check in on this task (deadline-aware).
   /// Durable so a follow-up survives restarts / day boundaries (not recomputed).
-  nextFollowUpAt     DateTime?                      @map("next_follow_up_at")
+  nextFollowUpAt           DateTime?                      @map("next_follow_up_at")
   /// Business scope inherited from staff ('ALMA_LIFESTYLE' | 'ALMA_TRADING').
-  businessId         String                         @default("ALMA_LIFESTYLE") @map("business_id")
-  createdAt          DateTime                       @default(now()) @map("created_at")
-  marketingHistory   AgentProductMarketingHistory[]
-  officeComments     OfficeComment[]                @relation("TaskComments")
-  officeEvents       OfficeTaskEvent[]              @relation("TaskEvents")
+  businessId               String                         @default("ALMA_LIFESTYLE") @map("business_id")
+  createdAt                DateTime                       @default(now()) @map("created_at")
+  marketingHistory         AgentProductMarketingHistory[]
+  officeComments           OfficeComment[]                @relation("TaskComments")
+  officeEvents             OfficeTaskEvent[]              @relation("TaskEvents")
 
   @@index([staffId])
   @@index([proposedFor, status])
@@ -2806,20 +2806,20 @@ model AgentGrowthExperiment {
 // running the ALMA Companion extension). The agent drives it live via the
 // command queue below. Token is stored hashed; pairing uses a short-lived code.
 model LiveBrowserDevice {
-  id           String    @id @default(uuid())
-  ownerUserId  String
-  name         String    @default("My Chrome")
+  id          String    @id @default(uuid())
+  ownerUserId String
+  name        String    @default("My Chrome")
   /// sha256(token) — the raw token only ever lives in the extension.
-  tokenHash    String?   @unique
+  tokenHash   String?   @unique
   /// one-time pairing code + expiry (cleared once paired).
-  pairingCode  String?   @unique
-  pairingExp   DateTime?
-  pairedAt     DateTime?
-  lastSeenAt   DateTime?
-  revoked      Boolean   @default(false)
-  createdAt    DateTime  @default(now())
+  pairingCode String?   @unique
+  pairingExp  DateTime?
+  pairedAt    DateTime?
+  lastSeenAt  DateTime?
+  revoked     Boolean   @default(false)
+  createdAt   DateTime  @default(now())
 
-  commands     LiveBrowserCommand[]
+  commands LiveBrowserCommand[]
 
   @@index([ownerUserId])
   @@map("live_browser_devices")
@@ -2828,16 +2828,16 @@ model LiveBrowserDevice {
 // One command the agent wants the paired browser to run (navigate/read/click/…)
 // Durable queue (never in-memory): extension polls 'queued', posts result back.
 model LiveBrowserCommand {
-  id          String    @id @default(uuid())
+  id          String            @id @default(uuid())
   deviceId    String
   device      LiveBrowserDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
   action      String
   params      Json?
   /// queued → delivered → done | failed
-  status      String    @default("queued")
+  status      String            @default("queued")
   result      Json?
-  error       String?   @db.Text
-  createdAt   DateTime  @default(now())
+  error       String?           @db.Text
+  createdAt   DateTime          @default(now())
   deliveredAt DateTime?
   resolvedAt  DateTime?
 
@@ -3942,7 +3942,7 @@ model AgentOpenTask {
   /// open | running | done | cancelled
   status          String    @default("open")
   /// Self-contained Bangla brief the agent reads to pick the work back up.
-  resumeNote      String    @db.Text @map("resume_note")
+  resumeNote      String    @map("resume_note") @db.Text
   /// P0 structured checkpoint (goal, doneSteps, currentStep, artifacts, error,
   /// resumeHint …) — resume never needs full chat history.
   checkpoint      Json?     @map("checkpoint")
@@ -4396,6 +4396,155 @@ model OfficeCallEvent {
   @@map("office_call_events")
 }
 
+enum OfficeCallState {
+  CREATED
+  RINGING
+  ANSWERED
+  CONNECTING
+  CONNECTED
+  RECONNECTING
+  ENDED
+}
+
+enum OfficeCallTerminalReason {
+  DECLINED
+  CANCELLED
+  MISSED
+  COMPLETED
+  FAILED
+  BUSY
+  PUSH_UNREACHABLE
+}
+
+enum OfficeCallLegRole {
+  CALLER
+  CALLEE
+}
+
+enum OfficeCallOutboxStatus {
+  PENDING
+  PROCESSING
+  DELIVERED
+  FAILED
+  DEAD
+}
+
+/// Canonical server-owned truth for one 1:1 Office voice call. Legacy intercom
+/// rows remain a compatibility/history projection while this domain rolls out.
+model OfficeCallSession {
+  id                String                      @id @default(uuid())
+  businessId        String                      @map("business_id")
+  callerUserId      String                      @map("caller_user_id")
+  calleeUserId      String                      @map("callee_user_id")
+  targetStaffId     String?                     @map("target_staff_id")
+  legacyBroadcastId String?                     @unique @map("legacy_broadcast_id")
+  clientRequestId   String?                     @map("client_request_id")
+  agoraChannel      String                      @unique @map("agora_channel")
+  state             OfficeCallState             @default(CREATED)
+  terminalReason    OfficeCallTerminalReason?   @map("terminal_reason")
+  version           Int                         @default(0)
+  ringExpiresAt     DateTime                    @map("ring_expires_at")
+  maxEndsAt         DateTime                    @map("max_ends_at")
+  answeredAt        DateTime?                   @map("answered_at")
+  connectedAt       DateTime?                   @map("connected_at")
+  endedAt           DateTime?                   @map("ended_at")
+  createdAt         DateTime                    @default(now()) @map("created_at")
+  updatedAt         DateTime                    @updatedAt @map("updated_at")
+  legs              OfficeCallLeg[]
+  outbox            OfficeCallOutbox[]
+  participantLocks  OfficeCallParticipantLock[]
+
+  @@unique([businessId, callerUserId, clientRequestId])
+  @@index([businessId, state, createdAt(sort: Desc)])
+  @@index([callerUserId, state])
+  @@index([calleeUserId, state])
+  @@map("office_call_sessions")
+}
+
+/// One logical media leg per participant. Phase 3/4 may add device-specific legs;
+/// stable per-user Agora UIDs are allocated at call creation and never use uid=0.
+model OfficeCallLeg {
+  id                String            @id @default(uuid())
+  callId            String            @map("call_id")
+  participantUserId String            @map("participant_user_id")
+  role              OfficeCallLegRole
+  state             OfficeCallState   @default(CREATED)
+  agoraUid          Int               @map("agora_uid")
+  deviceId          String?           @map("device_id")
+  joinedAt          DateTime?         @map("joined_at")
+  leftAt            DateTime?         @map("left_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+  call              OfficeCallSession @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@unique([callId, participantUserId])
+  @@unique([callId, agoraUid])
+  @@index([participantUserId, createdAt(sort: Desc)])
+  @@map("office_call_legs")
+}
+
+/// Transactional one-active-call lock. Creating both participant rows in the
+/// call transaction makes concurrent create attempts fail deterministically.
+model OfficeCallParticipantLock {
+  userId     String            @id @map("user_id")
+  callId     String            @map("call_id")
+  businessId String            @map("business_id")
+  createdAt  DateTime          @default(now()) @map("created_at")
+  call       OfficeCallSession @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId])
+  @@index([businessId])
+  @@map("office_call_participant_locks")
+}
+
+/// Durable delivery work created in the same transaction as the call. Phase 2
+/// owns provider processing/retry; Phase 1 only guarantees atomic persistence.
+model OfficeCallOutbox {
+  id             String                 @id @default(uuid())
+  callId         String                 @map("call_id")
+  targetUserId   String                 @map("target_user_id")
+  kind           String
+  idempotencyKey String                 @unique @map("idempotency_key")
+  payload        Json
+  status         OfficeCallOutboxStatus @default(PENDING)
+  attempts       Int                    @default(0)
+  availableAt    DateTime               @default(now()) @map("available_at")
+  lockedAt       DateTime?              @map("locked_at")
+  processedAt    DateTime?              @map("processed_at")
+  lastErrorCode  String?                @map("last_error_code")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+  call           OfficeCallSession      @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([status, availableAt])
+  @@index([callId, createdAt])
+  @@map("office_call_outbox")
+}
+
+/// Explicit call-device registry. Raw provider tokens are never returned by
+/// diagnostics; Phase 2 will own authenticated registration and encryption.
+model OfficeCallDevice {
+  id                String    @id @default(uuid())
+  userId            String    @map("user_id")
+  businessId        String    @map("business_id")
+  platform          String
+  environment       String
+  provider          String
+  providerTokenHash String    @unique @map("provider_token_hash")
+  providerTokenEnc  String?   @map("provider_token_enc") @db.Text
+  appBuild          String?   @map("app_build")
+  buildSha          String?   @map("build_sha")
+  active            Boolean   @default(true)
+  lastSeenAt        DateTime  @default(now()) @map("last_seen_at")
+  invalidatedAt     DateTime? @map("invalidated_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@index([userId, active, lastSeenAt(sort: Desc)])
+  @@index([businessId, platform, environment, active])
+  @@map("office_call_devices")
+}
+
 /// Per-staff receipt for one intercom broadcast.
 model OfficeIntercomReceipt {
   id          String                  @id @default(uuid())
@@ -4493,7 +4642,7 @@ model AgentConversationFocus {
   blocker            String?
   /// Exact legal next actions (tool names / step labels) + done-when criteria.
   nextActions        Json?     @map("next_actions")
-  completionCriteria String?   @db.Text @map("completion_criteria")
+  completionCriteria String?   @map("completion_criteria") @db.Text
   artifacts          Json?
   /// Surface the focus was last touched from: web | native | telegram.
   surface            String?

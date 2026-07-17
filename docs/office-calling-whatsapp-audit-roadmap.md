@@ -319,6 +319,20 @@ The word “WhatsApp-like” must become an executable checklist.
 
 ## Mandatory rule for every phase
 
+### Fixed execution goal (owner directive, 2026-07-17)
+
+Codex/Claude must complete this entire roadmap as one continuing, non-stop goal. Phases 0–7 must be
+implemented strictly in order, and each phase must pass every hard verification available from the
+agent environment before the next phase starts. The agent must automatically continue to the next
+phase after recording that PASS; it must not pause merely to ask for phones, repeat physical setup,
+or wait for a routine confirmation. If a real external-authority or secret-dependent blocker occurs,
+it must be recorded precisely, while all remaining safe in-scope work continues.
+
+Physical-device reliability testing is deliberately batched once, after Phases 0–7 are complete.
+Phase 8 then runs the full signed iPhone/Android/web matrix and remains the final release gate. Until
+Phase 8 passes, the implementation may be engineering-complete but must not be released or described
+as fully WhatsApp-like.
+
 > **Claude must hard-verify the current phase and write a PASS evidence record before starting the next phase. A compile, screenshot, or happy-path demo alone is not a PASS. If any exit criterion fails, Claude must stop, record FAIL with exact evidence, fix/retest within the same phase, and must not begin the next phase. One phase per implementation session.**
 
 Each phase record must include: audited Git SHA, changed files, migration status, automated test commands/results, real-device matrix rows executed, screenshots/video/log IDs, server call/event IDs, known failures, and an explicit `PHASE N: PASS` or `FAIL` signed with timestamp.
