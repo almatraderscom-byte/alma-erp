@@ -186,6 +186,33 @@ export function isVtonClothType(v: string | null | undefined): v is VtonClothTyp
   return VTON_CLOTH_TYPES.includes(v as VtonClothType)
 }
 
+// ── CS12: model-specific kill switches + canary ──────────────────────────────
+
+/** kv key per engine: '1' = killed. Enforced in the WORKER (jobs refuse to
+ * run) and reflected in config availability — flipping it needs no redeploy. */
+export const CS_ENGINE_KILL_PREFIX = 'cs_engine_kill:'
+export function engineKillKey(id: StudioEngineId): string {
+  return `${CS_ENGINE_KILL_PREFIX}${id}`
+}
+
+/** Owner-tunable canary percentage for a future Auto-default migration. Stored
+ * and surfaced now; ROUTING enforcement deliberately waits for an owner
+ * decision to migrate (CS10 verdict: no engine clearly ahead yet). */
+export const CS_AUTO_CANARY_PCT_KEY = 'cs_auto_canary_pct'
+
+export function normalizeCanaryPct(value: string | number | null | undefined): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0
+  return Math.min(100, Math.max(0, Math.round(n)))
+}
+
+/** Pure canary picker (unit-tested): route `canaryPct`% of runs to the candidate. */
+export function applyCanary<T>(defaultEngine: T, candidateEngine: T, canaryPct: number, rand: () => number = Math.random): T {
+  const pct = normalizeCanaryPct(canaryPct)
+  if (pct <= 0) return defaultEngine
+  return rand() * 100 < pct ? candidateEngine : defaultEngine
+}
+
 /**
  * Honest label for multi-person family renders. The backend runs the accuracy
  * chain (per-person FASHN try-on → Gemini merge), NOT a single Gemini call —
@@ -207,6 +234,8 @@ export type EngineAvailability = {
   singlePersonOnly: boolean
   approxCost: string | null
   warningBn: string | null
+  /** CS12 — owner kill switch active (worker refuses jobs on this engine) */
+  killed: boolean
 }
 
 /**
@@ -219,22 +248,28 @@ export function describeEngineAvailability(input: {
   geminiConfigured: boolean
   falConfigured: boolean
   flags: Partial<Record<EngineSettingsFlag, boolean>>
+  /** CS12 — per-engine kill switches (killed ⇒ enabled:false regardless of flags) */
+  kills?: Partial<Record<StudioEngineId, boolean>>
 }): EngineAvailability[] {
   const envOk: Record<EngineEnvKey, boolean> = {
     FASHN_API_KEY: input.fashnConfigured,
     GEMINI_API_KEY: input.geminiConfigured,
     FAL_KEY: input.falConfigured,
   }
-  return STUDIO_ENGINES.map((e) => ({
-    id: e.id,
-    label: e.label,
-    labelBn: e.labelBn,
-    status: e.status,
-    configured: envOk[e.requiresEnv],
-    enabled: e.settingsFlag ? Boolean(input.flags[e.settingsFlag]) : true,
-    runnable: e.runnable,
-    singlePersonOnly: e.singlePersonOnly,
-    approxCost: e.approxCost ?? null,
-    warningBn: e.warningBn ?? null,
-  }))
+  return STUDIO_ENGINES.map((e) => {
+    const killed = Boolean(input.kills?.[e.id])
+    return {
+      id: e.id,
+      label: e.label,
+      labelBn: e.labelBn,
+      status: e.status,
+      configured: envOk[e.requiresEnv],
+      enabled: !killed && (e.settingsFlag ? Boolean(input.flags[e.settingsFlag]) : true),
+      runnable: e.runnable,
+      singlePersonOnly: e.singlePersonOnly,
+      approxCost: e.approxCost ?? null,
+      warningBn: e.warningBn ?? null,
+      killed,
+    }
+  })
 }

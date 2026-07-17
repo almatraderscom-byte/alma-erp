@@ -1069,7 +1069,8 @@ private struct CSHomeTab: View {
     private var header: some View {
         HStack(spacing: 11) {
             Button { exit(); CSHaptic.tap() } label: {
-                Image(systemName: "chevron.left").font(.system(size: 17, weight: .semibold))
+                Image(systemName: "chevron.left")
+                    .accessibilityLabel("পেছনে").font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(AgentPalette(scheme).ink).frame(width: 38, height: 38).csGlass(scheme, corner: 999)
             }.buttonStyle(.plain)
             VStack(alignment: .leading, spacing: 2) {
@@ -1304,7 +1305,8 @@ private struct CSCreateTab: View {
     private var header: some View {
         HStack(spacing: 11) {
             Button { back(); CSHaptic.tap() } label: {
-                Image(systemName: "chevron.left").font(.system(size: 17, weight: .semibold))
+                Image(systemName: "chevron.left")
+                    .accessibilityLabel("পেছনে").font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(AgentPalette(scheme).ink).frame(width: 38, height: 38).csGlass(scheme, corner: 999)
             }.buttonStyle(.plain)
             VStack(alignment: .leading, spacing: 2) {
@@ -2292,7 +2294,8 @@ private struct CSVideoTab: View {
                             }
                         }.buttonStyle(.plain)
                         Button { Task { await vm.deleteVideo(up) }; CSHaptic.tap() } label: {
-                            Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                            Image(systemName: "xmark")
+                                .accessibilityLabel("ভিডিও মুছুন").font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(AgentPalette(scheme).muted).frame(width: 28, height: 28)
                         }.buttonStyle(.plain)
                     }
@@ -2507,7 +2510,8 @@ private struct CSMusicLibrary: View {
                         .padding(.vertical, 3).padding(.horizontal, 7)
                         .background(Color.white.opacity(0.08), in: Capsule())
                     Button { Task { await vm.deleteMusic(t) }; CSHaptic.tap() } label: {
-                        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                        Image(systemName: "xmark")
+                            .accessibilityLabel("অডিও মুছুন").font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(AgentPalette(scheme).muted)
                     }.buttonStyle(.plain)
                 }
@@ -2985,7 +2989,8 @@ private struct CSLibraryTab: View {
                                 CSPhoto(url: CS.url(g.url), ratio: 0.78).frame(width: 46, height: 60)
                                     .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                                 Button { Task { await vm.deleteGarmentCache(g.key) }; CSHaptic.tap() } label: {
-                                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(.white)
+                                    Image(systemName: "xmark")
+                                        .accessibilityLabel("আইটেম মুছুন").font(.system(size: 8, weight: .bold)).foregroundStyle(.white)
                                         .frame(width: 16, height: 16).background(Color.red, in: Circle())
                                 }.buttonStyle(.plain).offset(x: 5, y: -5)
                             }

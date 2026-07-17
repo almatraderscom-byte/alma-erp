@@ -203,8 +203,9 @@ struct IntercomView: View {
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
                 .frame(width: 116, height: 116)
                 .shadow(color: (speaking ? PortalOfficePalette.coral : .clear).opacity(0.6), radius: 22)
-                .scaleEffect(speaking ? 1.06 : 1)
-                .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: speaking)
+                .scaleEffect(speaking && !UIAccessibility.isReduceMotionEnabled ? 1.06 : 1)
+                .animation(UIAccessibility.isReduceMotionEnabled ? nil
+                           : .easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: speaking)
             Image(systemName: speaking ? "waveform" : (active ? "dot.radiowaves.left.and.right" : "mic.slash"))
                 .font(.system(size: 40, weight: .semibold)).foregroundStyle(.white)
         }
@@ -255,9 +256,10 @@ struct IncomingCallView: View {
             VStack(spacing: 20) {
                 Spacer()
                 officeAvatar(nil, initial: "M", size: 104)
-                    .scaleEffect(pulse ? 1.06 : 1)
+                    .scaleEffect(pulse && !UIAccessibility.isReduceMotionEnabled ? 1.06 : 1)
                     .shadow(color: PortalOfficePalette.emerald600.opacity(0.5), radius: pulse ? 26 : 10)
-                    .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulse)
+                    .animation(UIAccessibility.isReduceMotionEnabled ? nil
+                               : .easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulse)
                 Text(incoming.caller).font(.title.weight(.bold)).foregroundStyle(.white)
                 Text(statusLine).font(.subheadline).foregroundStyle(.white.opacity(0.75))
                 if ic.mode == .calling {

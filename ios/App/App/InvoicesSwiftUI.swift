@@ -249,6 +249,7 @@ struct InvoiceOrdersResponse: Decodable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class InvoicesVM {
     var invoices: [InvoiceRecord] = []
     var totals = InvoiceTotals()

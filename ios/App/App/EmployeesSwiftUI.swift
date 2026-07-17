@@ -468,6 +468,7 @@ private let employeesBusinessId = "ALMA_LIFESTYLE"
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class EmployeesVM {
     var employees: [EmployeeRosterItem] = []
     /// Full LinkableUser list from include_users=1 — add-employee picker + link flows.
@@ -567,6 +568,7 @@ final class EmployeesVM {
 /// Detail sheet data + actions — everything the web detail page fetches and writes.
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class EmployeeDetailVM {
     var wallet: EmployeeWalletDetail? = nil
     var attendance: EmployeeAttendanceDetail? = nil
@@ -981,6 +983,7 @@ struct EmployeesScreen: View {
         } label: {
             Text(label)
                 .font(.footnote.weight(active ? .semibold : .regular))
+                .lineLimit(1).minimumScaleFactor(0.5)
                 .foregroundStyle(active ? EmployeePalette.accentText(colorScheme) : .secondary)
                 .padding(.horizontal, 12).padding(.vertical, 7)
                 .background(active ? EmployeePalette.coral.opacity(colorScheme == .dark ? 0.28 : 0.14)

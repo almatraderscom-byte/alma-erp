@@ -1,0 +1,43 @@
+== Agent animations (spec ALMA_NATIVE_IOS_AGENT_ANIMATIONS_SPEC.md) — 2026-07-17, sim 9E51818A ==
+Branch agent-phase-27 on top of build75+roadmap merge. One new file AgentAnimations.swift
+(+1 pbxproj ref) + 3 surgical hooks in AssistantSwiftUI (state, 2 overlays, task wiring).
+
+Logic selftest (ALMA_ANIM_SELFTEST): 15/15 PASS
+  pull math: resistance/clamps/progress; hysteresis arm 1.00 / disarm 0.94,
+  no-early-arm, no-rearm; awakening reducer order, finalize-loop, success GATED
+  on real readiness, early-accelerate; refresh fires exactly once.
+Awakening demo (ALMA_ANIM_DEMO): phases screenshotted — searching/apologetic/
+  discovered/finalizing bubbles + poses correct; success gated on readiness;
+  dismissal leaves restored conversation intact (no blank frame).
+Pull demo (ALMA_ANIM_PULLDEMO drives the REAL state machine + REAL loadMessages):
+  signposts agentPull.arm→refresh start→done; stage visible over the top fade
+  (bug found+fixed: under .claudeTopFade the blur washed the stage out);
+  after collapse the idle screen is pixel-identical, stage height exactly 0.
+Reduce Motion: awakening = calm fade+wait (no dialogue theatrics), pull = plain
+  progress ring; haptics preserved. VoiceOver: combined status announcements
+  (armed/refreshing/done/failed) in Bangla.
+Owner live-drag in the sim still pending (headless cannot synthesize a finger):
+  gesture wiring is iOS-18 onScrollGeometryChange/onScrollPhaseChange.
+DEBUG-only surface: all demo/selftest flags compiled out of Release builds.
+
+== ROUND 2 (owner feedback 2026-07-17) ==
+1. Awakening now ALSO replays when a DIFFERENT existing conversation is opened
+   from the drawer (VM restoreTick/restoreReadyTick → screen restart/markReady),
+   not only on app launch. Success still gated on the real history load.
+2. Custom hidden pull-to-refresh added to the HOME DASHBOARD (professional pick:
+   first tab, most-used). Replaces the plain system .refreshable on iOS 18+;
+   iOS 17 falls back to the system refresh inside the modifier (no page loses
+   refresh). Sim-proven: character + "Release to refresh" at armed, real vm.load()
+   runs (agentPull arm→refresh→done), idle screen pixel-clean (0pt).
+   Build SUCCEEDED, 0 new warnings.
+
+== ROUND 3 — ios-build-76 integration (2026-07-17) ==
+Merged origin/ios-build-76 (Pulse native sync + island approve/reject, 4 commits)
+into agent-phase-27 (roadmap + animations): ZERO conflicts, all 3 new Swift files
+registered, both sides' AppDelegate hooks coexist. Clean build 0 errors,
+Swift-6-risk 0, warnings unchanged (36). Full suite re-run on merged tree:
+anim selftest 15/15, cache PASS, crash-repro survived (0 reports), tabs live.
+Pulse verified: ALMA_PULSE_RESET launch created a FRESH PulseActivityAttributes
+activity (WidgetRenderer log) and the Dynamic Island renders compact gold
+approval mode with the app backgrounded (screenshot). Island button TAP needs
+a hand per their handoff — owner device/Mac check.

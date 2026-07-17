@@ -1,0 +1,8 @@
+== Warning categories (App target, base d8e168dc + IOSP-0 instrumentation) ==
+WKProcessPool deprecated: 15
+Swift6 async-not-awaited: 96
+allowBluetooth deprecated: 1
+never-mutated var: 3
+script-phase no outputs: 5
+
+== Unique warning lines:      174 ==

@@ -364,6 +364,7 @@ struct ApprovalIntegrityReport: Decodable, Equatable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class ApprovalsVM {
     // Business view
     var approvals: [AlmaApproval] = []

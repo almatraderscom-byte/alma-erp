@@ -312,7 +312,6 @@ final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
 /// `almaShell` bridge), with a back button that drives web history.
 final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler, WKUIDelegate {
     private let url: URL
-    private let sharedProcessPool: WKProcessPool
     private var webView: WKWebView!
     private var loader: AlmaPremiumLoader!   // premium branded first-paint / transition loader
     private let baseTitle: String
@@ -326,10 +325,9 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     private let agentSegments: [(title: String, url: URL)]
     private var assistiveNav: AgentAssistiveNav?
 
-    init(url: URL, processPool: WKProcessPool, tabTitle: String, systemImage: String,
+    init(url: URL, tabTitle: String, systemImage: String,
          hideWebHeader: Bool = false, agentSegments: [(title: String, url: URL)] = []) {
         self.url = url
-        self.sharedProcessPool = processPool
         self.baseTitle = tabTitle
         self.hideWebHeader = hideWebHeader
         self.agentSegments = agentSegments
@@ -370,7 +368,6 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         content.add(WeakScriptMessageHandler(self), name: "almaContextMenu")
 
         let config = WKWebViewConfiguration()
-        config.processPool = sharedProcessPool
         config.websiteDataStore = .default()   // shared cookies -> shared login with Capacitor tab
         config.userContentController = content
         config.allowsInlineMediaPlayback = true
@@ -501,9 +498,9 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     private func applyAgentBar() {
         guard !agentSegments.isEmpty else { return }
         navigationItem.leftBarButtonItem = Self.glassBarButton(
-            icon: "line.3.horizontal", target: self, action: #selector(agentHistory), light: !AlmaTheme.isDark)
+            icon: "line.3.horizontal", label: "চ্যাট হিস্টরি", target: self, action: #selector(agentHistory), light: !AlmaTheme.isDark)
         navigationItem.rightBarButtonItem = Self.coralBarButton(
-            icon: "square.and.pencil", target: self, action: #selector(agentNewChat))
+            icon: "square.and.pencil", label: "নতুন চ্যাট", target: self, action: #selector(agentNewChat))
     }
 
     /// Light ⇄ dark: restyle the root + loader + agent buttons, and push the mode into the
@@ -521,7 +518,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     /// A Claude-style frosted circular bar button. `light: true` = ultra-thin WHITE material
     /// + dark icon (the LIGHT agent header); `light: false` = thin DARK material + white icon
     /// (the dark ERP tabs' back chevron). Hairline ring + soft shadow either way.
-    static func glassBarButton(icon: String, target: Any, action: Selector, light: Bool = false) -> UIBarButtonItem {
+    static func glassBarButton(icon: String, label: String, target: Any, action: Selector, light: Bool = false) -> UIBarButtonItem {
         let size: CGFloat = 36
         let iconColor = light ? UIColor(red: 0.16, green: 0.14, blue: 0.20, alpha: 1) : UIColor.white
         let container = UIButton(type: .custom)
@@ -567,12 +564,15 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // the frosted disc + hairline ring alone carry the depth).
         container.layer.shadowOpacity = 0
         container.addTarget(target, action: action, for: .touchUpInside)
+        // Icon-only control — VoiceOver needs the meaning, not the glyph name.
+        container.accessibilityLabel = label
+        container.accessibilityTraits = .button
         return UIBarButtonItem(customView: container)
     }
 
     /// Claude-style SOLID CORAL circular action button (baked white icon) — the new-chat
     /// button, exactly like Claude's orange compose bubble on the top-right of the header.
-    static func coralBarButton(icon: String, target: Any, action: Selector) -> UIBarButtonItem {
+    static func coralBarButton(icon: String, label: String, target: Any, action: Selector) -> UIBarButtonItem {
         let size: CGFloat = 36
         let coral = UIColor(red: 0.878, green: 0.478, blue: 0.373, alpha: 1) // #E07A5F (ALMA accent)
         let container = UIButton(type: .custom)
@@ -590,6 +590,9 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // Flat — no shadow at all in the header zone (owner spec 2026-07-05).
         container.layer.shadowOpacity = 0
         container.addTarget(target, action: action, for: .touchUpInside)
+        // Icon-only control — VoiceOver needs the meaning, not the glyph name.
+        container.accessibilityLabel = label
+        container.accessibilityTraits = .button
         return UIBarButtonItem(customView: container)
     }
 
@@ -970,7 +973,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         guard navigationController?.viewControllers.first === self else { return }
         if webView?.canGoBack == true {
             navigationItem.leftBarButtonItem = Self.glassBarButton(
-                icon: "chevron.backward", target: self, action: #selector(goBackTapped), light: !AlmaTheme.isDark)
+                icon: "chevron.backward", label: "পেছনে", target: self, action: #selector(goBackTapped), light: !AlmaTheme.isDark)
         } else {
             navigationItem.leftBarButtonItem = nil
         }
@@ -988,7 +991,6 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
 final class MoreMenuViewController: UITableViewController {
     private struct Item { let title: String; let icon: String; let path: String }
     private struct Section { let header: String; let items: [Item] }
-    private let sharedPool: WKProcessPool
 
     private let sections: [Section] = [
         // P3 mobile companion: the agent drives a browser ON THIS PHONE (same
@@ -1051,8 +1053,7 @@ final class MoreMenuViewController: UITableViewController {
         Biz(name: "Creative Digital IT", tagline: "Digital Agency", symbol: "c.circle.fill", color: UIColor(red: 0.42, green: 0.56, blue: 0.88, alpha: 1), path: "/digital"),
     ]
 
-    init(processPool: WKProcessPool) {
-        self.sharedPool = processPool
+    init() {
         super.init(style: .insetGrouped)
         title = "More"
         tabBarItem = UITabBarItem(
@@ -1168,13 +1169,13 @@ final class MoreMenuViewController: UITableViewController {
         }
         // Native (non-web) rows: the phone companion is a native screen.
         if path == "native:companion" {
-            let vc = AlmaCompanionViewController(processPool: sharedPool)
+            let vc = AlmaCompanionViewController()
             vc.hidesBottomBarWhenPushed = false
             navigationController?.pushViewController(vc, animated: true)
             return
         }
         let vc = AlmaWebTabViewController(
-            url: URL(string: base + path)!, processPool: sharedPool,
+            url: URL(string: base + path)!,
             tabTitle: tabTitle, systemImage: symbol, hideWebHeader: true)
         vc.hidesBottomBarWhenPushed = false
         navigationController?.pushViewController(vc, animated: true)
@@ -1189,9 +1190,6 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
     weak var dashboardVC: UIViewController?  // internal: makeDashboardTab() (SwiftUIShell.swift) mounts it
     private var approvalsBadgeTimer: Timer?
     private static let approvalsTabIndex = 3
-    /// Shared by every content web view (and the S6 SwiftUI screens' web escapes +
-    /// the Companion) — one pool = one logged-in session everywhere.
-    let contentPool = WKProcessPool()
 
     /// - Parameter dashboard: the storyboard's Capacitor bridge VC, reused as tab 0.
     init(dashboard: UIViewController) {
@@ -1317,7 +1315,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         selectedIndex = 4 // More
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let nav = self?.viewControllers?.last as? UINavigationController else { return }
-            nav.pushViewController(AlmaCompanionViewController(processPool: WKProcessPool()), animated: false)
+            nav.pushViewController(AlmaCompanionViewController(), animated: false)
         }
     }
 

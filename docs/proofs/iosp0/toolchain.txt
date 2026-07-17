@@ -1,0 +1,20 @@
+== IOSP-0 toolchain baseline ==
+Captured: 2026-07-16
+Xcode: Xcode 26.6 (Build version 17F113)
+Simulator SDK: iOS 26.5 (iphonesimulator26.5)
+Swift toolchain: Apple Swift version 6.3.3
+Swift language mode (App target): 5  (Swift 6 async warnings present → would be errors under Swift 6)
+Deployment target: iOS 16.0 (native SwiftUI feature gate iOS 17+)
+CURRENT_PROJECT_VERSION (Info.plist build): 73
+Route contract: 69 fixture routes cover 66 web page.tsx routes (native-required 61, temporary-web 5, public-web 3)
+Open routing gaps (7): /agent, /agent/live-watch, /portal/wallet, /trading/accounts/[id] → IOSP-1; /forgot-password, /reset-password, /agent/creative-studio-demo → IOSP-7
+
+== Deprecated API / Swift 6 blockers (from build-warnings.txt) ==
+WKProcessPool deprecated (iOS 15):        15 occurrences (SpikeNativeShell, AlmaCompanion, CompanionSwiftUI...)
+async-not-awaited (Swift 6 error):        96 occurrences (Dashboard/Approvals/PortalOffice/StaffMonitor...)
+.allowBluetooth deprecated:               1 (audio session)
+CocoaPods copy/embed phase no outputs:    5 (build hygiene)
+never-mutated var → let:                  3 (cleanup)
+
+== iOS 27 status ==
+NOT adopted/verified. Toolchain is Xcode 26.6 / iOS 26.5 SDK. iOS 27 adoption is IOSP-8 and requires Xcode 27 + iOS 27 runtime (not installed).

@@ -144,10 +144,10 @@ struct CompanionScreen: View {
 
     private let makeCompanionVC: () -> UIViewController
 
-    /// Production entry point — passes the app's shared WKProcessPool straight
-    /// through to AlmaCompanionViewController so cookies/logins keep working.
-    init(processPool: WKProcessPool) {
-        self.makeCompanionVC = { AlmaCompanionViewController(processPool: processPool) }
+    /// Production entry point — the companion VC shares cookies/logins with the
+    /// rest of the app through the default website data store.
+    init() {
+        self.makeCompanionVC = { AlmaCompanionViewController() }
     }
 
     /// Injection entry point (previews / tests): supply any stand-in VC so the
@@ -171,7 +171,7 @@ struct CompanionScreen: View {
     }
 }
 
-// MARK: - Preview (stub VC — no WKProcessPool, no pairing alert, no network)
+// MARK: - Preview (stub VC — no pairing alert, no network)
 
 @available(iOS 17.0, *)
 #Preview("Companion chrome — stub") {

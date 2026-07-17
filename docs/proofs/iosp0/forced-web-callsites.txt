@@ -1,0 +1,85 @@
+== IOSP-0 forced-web call-site inventory ==
+commit: d8e168dc8ed2c61c568c580249bb677d82e59c4d
+
+-- A. pushWeb sites (WKWebView push, bypasses/escapes native router) --
+ios/App/App/SwiftUIShell.swift:218:    private func pushWeb(on nav: UINavigationController?, path: String, title: String, icon: String) {
+ios/App/App/SwiftUIShell.swift:235:            pushWeb(on: nav, path: path, title: title, icon: icon)
+ios/App/App/SwiftUIShell.swift:246:               if origin.hasPrefix(target) { self?.pushWeb(on: nav, path: p, title: t, icon: icon) }
+ios/App/App/SwiftUIShell.swift:252:        pushWeb(on: nav, path: path, title: title, icon: icon)
+ios/App/App/SwiftUIShell.swift:265:            if target == origin { self?.pushWeb(on: navRef.value, path: path, title: title, icon: icon) }
+ios/App/App/SwiftUIShell.swift:566:            pushWeb(on: nav, path: path, title: title, icon: "bell.badge")
+ios/App/App/AssistantSwiftUI.swift:7825:                        pushWeb(path, title)
+
+-- B. per-screen openWeb escape-hatch call counts (feature-level web fallbacks inside native screens) --
+ios/App/App/TradingHomeSwiftUI.swift:7
+ios/App/App/InvoicesSwiftUI.swift:6
+ios/App/App/DashboardSwiftUI.swift:6
+ios/App/App/PortalSwiftUI.swift:5
+ios/App/App/InventorySwiftUI.swift:5
+ios/App/App/ApprovalsSwiftUI.swift:5
+ios/App/App/SupplierImportSwiftUI.swift:4
+ios/App/App/StaffMonitorSwiftUI.swift:4
+ios/App/App/PortalOfficeSwiftUI.swift:4
+ios/App/App/ExpensesSwiftUI.swift:4
+ios/App/App/DigitalProjectsSwiftUI.swift:4
+ios/App/App/BusinessArchiveSwiftUI.swift:4
+ios/App/App/AttendanceSwiftUI.swift:4
+ios/App/App/TradingStaffSwiftUI.swift:3
+ios/App/App/TradingHrSwiftUI.swift:3
+ios/App/App/TradingAccountsSwiftUI.swift:3
+ios/App/App/TaskSpotlightSwiftUI.swift:3
+ios/App/App/TargetControlSwiftUI.swift:3
+ios/App/App/SettingsUsersSwiftUI.swift:3
+ios/App/App/SettingsNotificationsSwiftUI.swift:3
+ios/App/App/PortalExpenseSwiftUI.swift:3
+ios/App/App/PayrollSwiftUI.swift:3
+ios/App/App/PaymentAccountsSwiftUI.swift:3
+ios/App/App/OrdersSwiftUI.swift:3
+ios/App/App/OfficeFundSwiftUI.swift:3
+ios/App/App/InsightsSwiftUI.swift:3
+ios/App/App/FinanceSwiftUI.swift:3
+ios/App/App/EmployeesSwiftUI.swift:3
+ios/App/App/DigitalInvoicesSwiftUI.swift:3
+ios/App/App/DigitalHomeSwiftUI.swift:3
+ios/App/App/DigitalClientsSwiftUI.swift:3
+ios/App/App/CrmSwiftUI.swift:3
+ios/App/App/BriefingSwiftUI.swift:3
+ios/App/App/AuditSwiftUI.swift:3
+ios/App/App/AgentWhatsappSwiftUI.swift:3
+ios/App/App/AgentGrowthSwiftUI.swift:3
+ios/App/App/TradingTelegramSwiftUI.swift:2
+ios/App/App/TradingAnalyticsSwiftUI.swift:2
+ios/App/App/SystemDiagnosticsSwiftUI.swift:2
+ios/App/App/SettingsTelegramSwiftUI.swift:2
+ios/App/App/SettingsSmsSwiftUI.swift:2
+ios/App/App/SettingsSessionSwiftUI.swift:2
+ios/App/App/SettingsDatabaseSwiftUI.swift:2
+ios/App/App/SettingsBrandingSwiftUI.swift:2
+ios/App/App/NativeLoginSwiftUI.swift:2
+ios/App/App/CreditUsageSwiftUI.swift:2
+ios/App/App/CreativeStudioSwiftUI.swift:2
+ios/App/App/AnalyticsSwiftUI.swift:2
+ios/App/App/AgentCostsSwiftUI.swift:2
+ios/App/App/ActivitySwiftUI.swift:2
+ios/App/App/SubscriptionsSwiftUI.swift:1
+ios/App/App/PortalStaffOfficeSwiftUI.swift:1
+ios/App/App/OrderCreateSwiftUI.swift:1
+ios/App/App/KnownPeopleSwiftUI.swift:1
+ios/App/App/CatalogImagesSwiftUI.swift:1
+ios/App/App/AssistantSwiftUI.swift:1
+
+-- C. total openWeb invocations --
+     165
+
+-- D. structural analysis (base d8e168dc) --
+Root tabs (Dashboard/Orders/Agent/Approvals/More) now wire link-outs through
+smartOpen() -> pushSmart() (SwiftUIShell.swift:261-268); the audited
+"root callbacks call pushWeb directly" defect is already closed on this base.
+Remaining pushWeb entry conditions:
+  1. query-carrying deep links (pushSmart line 233-237: query => web, documented);
+  2. same-origin escape hatch "ওয়েবে খুলুন" (line 246, intentional recursion guard);
+  3. router-miss fallback (line 252 + AssistantSwiftUI.swift:7825);
+  4. notification tap with query (line 566).
+IOSP-1 targets: (1) query deep links should resolve native where the native
+screen supports the parameter; (3) unknown internal routes must fail loudly
+(structured telemetry) instead of silently embedding web.

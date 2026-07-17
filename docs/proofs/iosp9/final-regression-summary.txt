@@ -1,0 +1,16 @@
+== IOSP-9 final regression — 2026-07-17, Pro Max sim 9E51818A ==
+
+5-min foreground idle: 116 api requests (IOSP-0 baseline: 116 — unchanged; foreground 3s intercom poll is the IOSP-4 documented exception)
+  100 GET /api/assistant/office/intercom
+   10 GET /api/assistant/office/notifications
+    3 GET /api/assistant/actions
+    3 GET /api/approvals
+
+75s backgrounded (Safari fronted): office/intercom polls = 0  (IOSP-4 scene-suspend intact)
+
+Cache selftest (IOSP-3): cacheSelfTest.concurrentStart→concurrentDone, ttlStart→ttlDone  PASS
+Crash repro (IOSP-4):    callResetRepro.start→survived, process alive, no new crash report  PASS
+
+Nav contract selftest routes: /trading/accounts→NATIVE(live data), /agent→tab root,
+/portal/wallet→temporary-web(allowed), /definitely-unknown-route→fail-loud Bangla alert  PASS
+Route-contract checker: 69 fixture routes cover 66 web routes; 5 open gaps all sanctioned in IOSP-7 ledger  PASS

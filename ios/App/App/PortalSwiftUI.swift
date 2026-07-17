@@ -497,6 +497,7 @@ struct PortalActionResponse: Decodable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class PortalVM {
     /// The same business the other native tabs scope to (web _businessId default).
     static let businessId = "ALMA_LIFESTYLE"

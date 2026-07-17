@@ -39,6 +39,16 @@ private enum PulsePalette {
     static let tile = Color(red: 0x1a / 255.0, green: 0x18 / 255.0, blue: 0x24 / 255.0)
     static let textPrimary = Color.white
     static let textSecondary = Color(red: 0.72, green: 0.72, blue: 0.78)
+
+    // Demo-artifact identity (402f0291): gold-aurora edge + LIVE dot.
+    static let goldBright   = Color(red: 0xEF / 255.0, green: 0xD1 / 255.0, blue: 0x87 / 255.0) // #EFD187
+    static let goldDeep     = Color(red: 0xC6 / 255.0, green: 0x95 / 255.0, blue: 0x2F / 255.0) // #C6952F
+    static let live         = Color(red: 0x46 / 255.0, green: 0xE0 / 255.0, blue: 0xA3 / 255.0) // #46E0A3
+    static let auroraBlue   = Color(red: 0x38 / 255.0, green: 0x6F / 255.0, blue: 0xFF / 255.0) // #386FFF
+    static let auroraViolet = Color(red: 0x7C / 255.0, green: 0x4D / 255.0, blue: 0xFF / 255.0) // #7C4DFF
+    static let auroraMagenta = Color(red: 0xD6 / 255.0, green: 0x33 / 255.0, blue: 0xFF / 255.0) // #D633FF
+    static let auroraPink   = Color(red: 0xFF / 255.0, green: 0x2E / 255.0, blue: 0x86 / 255.0) // #FF2E86
+    static let auroraCoral  = Color(red: 0xFF / 255.0, green: 0x6E / 255.0, blue: 0x50 / 255.0) // #FF6E50
 }
 
 // MARK: - Theme per mode (spec §9)
@@ -599,31 +609,201 @@ private struct PulseCompactPriority: View {
     }
 }
 
+/// The demo-approved expanded body (owner artifact 402f0291, 2026-07-17):
+/// a page "deck" — approval page (gold card: requester + privacy-blurred ৳
+/// + REAL অনুমোদন/বাতিল buttons, now for ERP requests too via the "erp:" id),
+/// orders page (pipeline bar + পেন্ডিং/কনফার্মড/ডেলিভারড steps), tasks page
+/// (কাজ + "ALMA পাহারায়") — framed by the demo's aurora edge and closed by the
+/// LIVE · page-dots · ALMA footer. Page turns = one server update each (the
+/// demo's own contract; no self-timers in ActivityKit).
 @available(iOS 16.1, *)
-private struct PulseExpandedStatus: View {
+struct PulseExpandedBody: View {
     let state: PulseActivityAttributes.ContentState
     let mode: PulseMode
 
+    /// Real decidable id — an agent pending-action id, or "erp:<hub-id>" (the
+    /// ApprovalRequest row PATCH /api/approvals acts on). Only the legacy
+    /// anonymous stub keeps buttons off.
+    private var actionableId: String? {
+        guard let id = state.approvalId, !id.isEmpty, id != "erp-approvals" else { return nil }
+        return id
+    }
+
+    private var pageIndex: Int {
+        switch mode {
+        case .approval, .urgent: return 0
+        case .orders: return 1
+        default: return 2
+        }
+    }
+
     var body: some View {
-        if let item = state.feedItems.first {
-            HStack(spacing: 6) {
-                Image(systemName: PulseTheme.icon(forItemKind: item.kind))
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(PulseTheme.tint(for: item.level))
-                    .accessibilityHidden(true)
-                Text(item.subtitle ?? item.title)
-                    .font(.system(size: 11))
-                    .foregroundColor(PulsePalette.textSecondary)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                if let progress = item.clampedProgress {
-                    PulseProgressBar(value: progress, tint: PulseTheme.tint(for: mode))
-                        .frame(width: 64)
+        VStack(spacing: 6) {
+            Group {
+                switch pageIndex {
+                case 0: approvalPage
+                case 1: ordersPage
+                default: tasksPage
                 }
             }
-            .padding(.top, 2)
-            .accessibilityElement(children: .combine)
+            footer
         }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.white.opacity(0.03)))
+        .overlay(
+            // Demo's animated aurora edge, as a static gradient ring (island
+            // snapshots can't run continuous animation).
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(
+                    AngularGradient(colors: [PulsePalette.auroraBlue, PulsePalette.auroraViolet,
+                                             PulsePalette.auroraMagenta, PulsePalette.auroraPink,
+                                             PulsePalette.auroraCoral, PulsePalette.gold,
+                                             PulsePalette.auroraBlue],
+                                    center: .center),
+                    lineWidth: 1)
+                .opacity(0.55))
+    }
+
+    // ── Page 0: approval ────────────────────────────────────────────────────
+    @ViewBuilder private var approvalPage: some View {
+        deckCard(icon: "💰",
+                 title: state.approvalTitle ?? "অনুমোদনের অনুরোধ",
+                 sub: state.approvalCounterparty ?? "Approvals ট্যাবে বিস্তারিত",
+                 trailing: state.approvalAmountText, trailingPrivate: true)
+
+        if #available(iOS 17.0, *), let id = actionableId {
+            HStack(spacing: 8) {
+                Button(intent: AlmaApproveActionIntent(actionId: id, approve: true)) {
+                    Text("অনুমোদন")
+                        .font(.system(size: 12.5, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+                .background(
+                    LinearGradient(colors: [PulsePalette.goldBright, PulsePalette.goldDeep],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                    in: Capsule())
+                .foregroundColor(Color(red: 0.09, green: 0.06, blue: 0.02))
+
+                Button(intent: AlmaApproveActionIntent(actionId: id, approve: false)) {
+                    Text("বাতিল")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+                .background(Color.white.opacity(0.10), in: Capsule())
+                .foregroundColor(PulsePalette.textSecondary)
+            }
+        } else {
+            Text("বিস্তারিত ও সিদ্ধান্ত — ট্যাপ করে Approvals ট্যাবে")
+                .font(.system(size: 10))
+                .foregroundColor(PulsePalette.textSecondary)
+        }
+    }
+
+    // ── Page 1: orders pipeline ─────────────────────────────────────────────
+    private var orderStep: Int {
+        let p = state.feedItems.first(where: { $0.kind == "orderProgress" })?.clampedProgress
+            ?? state.orderProgress ?? 0
+        return p >= 0.999 ? 2 : (p >= 0.5 ? 1 : 0)
+    }
+
+    @ViewBuilder private var ordersPage: some View {
+        let item = state.feedItems.first(where: { $0.kind == "orderProgress" })
+        deckCard(icon: "📦",
+                 title: item?.title ?? "\(banglaDigits(state.runningOrderCount ?? 0))টি অর্ডার চলছে",
+                 sub: item?.subtitle ?? "কুরিয়ার হ্যান্ডওভার বাকি",
+                 trailing: banglaDigits(state.runningOrderCount ?? 0), trailingPrivate: false)
+        PulseProgressBar(value: max(0.06, item?.clampedProgress ?? state.orderProgress ?? 0),
+                         tint: PulsePalette.auroraPink)
+        HStack {
+            stepLabel("পেন্ডিং", hot: orderStep == 0)
+            Spacer()
+            stepLabel("কনফার্মড", hot: orderStep == 1)
+            Spacer()
+            stepLabel("ডেলিভারড", hot: orderStep == 2)
+        }
+    }
+
+    private func stepLabel(_ text: String, hot: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 9.5, weight: hot ? .bold : .regular))
+            .foregroundColor(hot ? PulsePalette.textPrimary : PulsePalette.textSecondary)
+    }
+
+    // ── Page 2: tasks + sentinel ────────────────────────────────────────────
+    @ViewBuilder private var tasksPage: some View {
+        deckCard(icon: "🗒️",
+                 title: "আজকের বাকি কাজ \(banglaDigits(state.pendingTaskCount ?? 0))টা",
+                 sub: state.displaySubtitle,
+                 trailing: banglaDigits(state.pendingTaskCount ?? 0), trailingPrivate: false)
+        deckCard(icon: "🤖",
+                 title: "ALMA পাহারায় আছে",
+                 sub: "নতুন কিছু ঘটলেই island নিজে জানাবে",
+                 trailing: nil, trailingPrivate: false)
+    }
+
+    // ── Shared card + footer ────────────────────────────────────────────────
+    @ViewBuilder private func deckCard(icon: String, title: String, sub: String,
+                                       trailing: String?, trailingPrivate: Bool) -> some View {
+        HStack(spacing: 9) {
+            Text(icon).font(.system(size: 15))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundColor(PulsePalette.textPrimary)
+                    .lineLimit(1)
+                Text(sub)
+                    .font(.system(size: 10.5))
+                    .foregroundColor(PulsePalette.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if let trailing {
+                Text(trailing)
+                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    .foregroundColor(PulsePalette.gold)
+                    .privacySensitive(trailingPrivate)
+            }
+        }
+        .padding(.horizontal, 11).padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(Color.white.opacity(0.06)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .strokeBorder(PulsePalette.gold.opacity(0.26), lineWidth: 1))
+    }
+
+    private var footer: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Circle().fill(PulsePalette.live).frame(width: 5, height: 5)
+                Text("LIVE").font(.system(size: 8.5, weight: .heavy)).kerning(2)
+                    .foregroundColor(PulsePalette.textSecondary)
+            }
+            Spacer()
+            HStack(spacing: 4) {
+                ForEach(0..<3, id: \.self) { i in
+                    Capsule()
+                        .fill(i == pageIndex ? PulsePalette.gold : Color.white.opacity(0.18))
+                        .frame(width: i == pageIndex ? 14 : 5, height: 4.5)
+                }
+            }
+            Spacer()
+            Text("ALMA")
+                .font(.system(size: 9, weight: .black)).kerning(2.5)
+                .foregroundStyle(
+                    LinearGradient(colors: [PulsePalette.auroraBlue, PulsePalette.auroraViolet,
+                                            PulsePalette.auroraMagenta, PulsePalette.auroraPink],
+                                   startPoint: .leading, endPoint: .trailing))
+        }
+        .padding(.horizontal, 2)
+        .accessibilityHidden(true)
     }
 }
 
@@ -687,7 +867,7 @@ struct PulseLiveActivity: Widget {
                     .accessibilityElement(children: .combine)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    PulseExpandedStatus(state: context.state, mode: mode)
+                    PulseExpandedBody(state: context.state, mode: mode)
                 }
             } compactLeading: {
                 Image(systemName: PulseTheme.icon(for: mode))

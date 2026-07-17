@@ -9,6 +9,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        AlmaPerfLog.event("launch.didFinishLaunching")
+        #if DEBUG
+        runNavSelfTestIfRequested()
+        if #available(iOS 17.0, *) { runOverlaySelfTestIfRequested() }
+        runCacheSelfTestIfRequested()
+        if #available(iOS 17.0, *) { runCallResetCrashReproIfRequested() }
+        #endif
         // Home-screen quick action on COLD START: forward to the AppShortcuts
         // plugin (it retains the event until the JS listener attaches).
         if let shortcutItem = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {
@@ -59,6 +66,49 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                     #endif
                     PulseRestore.reconcile()
                     PulseRestore.restartFromCache()
+                    // Native panel sync (2026-07-17): the webview path 401s
+                    // when its hidden session dies — this one rides AlmaAPI's
+                    // shared-store cookies, so the island stays truthful even
+                    // then. Throttled inside; silent on failure.
+                    PulseNativeSync.syncNow(reason: "active")
+                }
+            }
+        }
+
+        // Island approve/reject (owner spec 2026-07-17): LiveActivityIntent
+        // runs in THIS process, so the normal authenticated AlmaAPI session
+        // does the POST — no keychain sharing, no new server auth. After the
+        // decision, force-refresh the panel past the native-sync throttle so
+        // the island reflects the new truth within seconds.
+        if #available(iOS 17.0, *) {
+            PulseIntentBridge.executor = { actionId, approve in
+                struct OkResp: Decodable { let ok: Bool? }
+                do {
+                    if actionId.hasPrefix("erp:") {
+                        // ERP request-table approval (island demo parity
+                        // 2026-07-17): the snapshot sends the ApprovalRequest
+                        // hub id — decide it through the SAME endpoint the
+                        // native Approvals tab uses.
+                        let id = String(actionId.dropFirst(4))
+                        struct Body: Encodable {
+                            let action: String; let note: String; let operation_id: String
+                        }
+                        let _: OkResp = try await AlmaAPI.shared.send(
+                            "PATCH", "/api/approvals/\(id)",
+                            body: Body(action: approve ? "APPROVE" : "REJECT", note: "",
+                                       operation_id: "island-\(UUID().uuidString.lowercased())"))
+                    } else {
+                        let _: OkResp = try await AlmaAPI.shared.send(
+                            "POST", "/api/assistant/actions/\(actionId)/\(approve ? "approve" : "reject")")
+                    }
+                    UserDefaults.standard.removeObject(forKey: "alma.pulse.lastNativeSyncAt")
+                    if #available(iOS 16.1, *) { PulseNativeSync.syncNow(reason: "intent") }
+                    return true
+                } catch {
+                    if #available(iOS 16.1, *) {
+                        LiveActivityBridgePlugin.breadcrumb("intent_failed")
+                    }
+                    return false
                 }
             }
         }
@@ -87,6 +137,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // chat). Lives in its own passthrough window above the app, so it can't interfere
         // with any existing screen. Deferred so the scene/window is fully up first.
         if #available(iOS 17.0, *) {
+            // IOSP-2: touch the overlay coordinator first so its keyboard-frame
+            // observers are live before any overlay docks (shared z-order +
+            // tab-bar/keyboard exclusion zones + Reduce Motion/Transparency policy).
+            _ = AlmaOverlayCoordinator.shared
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { FloatingChatHead.shared.install() }
             // App-wide offline beacon + the ALMA Island result banner (own overlay
             // windows, same pattern — nothing existing is touched).
@@ -138,6 +192,23 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        // IOSP-1: almaerp:// deep links (Siri App Intents, Spotlight entities, widgets)
+        // route through the NATIVE shell. Before, Capacitor delivered them to the
+        // HIDDEN dashboard webview (DeepLinkManager → window.location.assign) — the
+        // navigation happened on a webview nobody sees, and the hidden Capacitor
+        // bridge page navigated away from the dashboard it must stay on. Same class
+        // of bug AlmaNavBridge fixed for notification taps; same fix: post
+        // .almaOpenPath and let AlmaTabBarController.routeNotificationTap decide
+        // (native / tab / allowlisted web / fail-loud) via AlmaNavCoordinator.
+        if url.scheme == "almaerp" {
+            var path = "/" + (url.host ?? "") + url.path
+            if path.count > 1, path.hasSuffix("/") { path = String(path.dropLast()) }
+            if let q = url.query, !q.isEmpty { path += "?\(q)" }
+            AlmaPerfLog.event("route.deepLink", path)
+            NotificationCenter.default.post(name: .almaOpenPath, object: nil,
+                                            userInfo: ["path": path])
+            return true // consumed natively — the hidden webview must NOT navigate
+        }
         // Called when the app was launched with a url. Feel free to add additional processing here,
         // but if you want the App API to support tracking app url opens, make sure to keep this call
         return ApplicationDelegateProxy.shared.application(app, open: url, options: options)
@@ -151,3 +222,118 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
 }
+
+#if DEBUG
+extension AppDelegate {
+    /// IOSP-1 navigation-contract self-test (DEBUG builds only, env-gated — never
+    /// compiled into Release/TestFlight). Simulator UI can't be driven headlessly
+    /// (SpringBoard's "Open in …?" dialog blocks `simctl openurl`, and taps need a
+    /// human), so the harness drives the SAME code path a notification tap / deep
+    /// link uses: it posts `.almaOpenPath` for each route in
+    /// `ALMA_NAV_SELFTEST_ROUTES` (comma-separated), one every 6 s starting 10 s
+    /// after launch (unlock margin). Verification happens OUTSIDE the app:
+    /// timed `simctl io screenshot` + the route.* signposts prove each decision.
+    ///
+    ///   SIMCTL_CHILD_ALMA_NAV_SELFTEST=1 \
+    ///   SIMCTL_CHILD_ALMA_NAV_SELFTEST_ROUTES="/trading/accounts,/agent" \
+    ///     xcrun simctl launch <udid> com.almatraders.erp
+    func runNavSelfTestIfRequested() {
+        let env = ProcessInfo.processInfo.environment
+        guard env["ALMA_NAV_SELFTEST"] == "1" else { return }
+        let routes = (env["ALMA_NAV_SELFTEST_ROUTES"] ?? "")
+            .split(separator: ",").map(String.init).filter { $0.hasPrefix("/") }
+        guard !routes.isEmpty else { return }
+        AlmaPerfLog.event("navSelfTest.start", routes.joined(separator: ","))
+        var delay: TimeInterval = 10
+        for route in routes {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                AlmaPerfLog.event("navSelfTest.route", route)
+                NotificationCenter.default.post(name: .almaOpenPath, object: nil,
+                                                userInfo: ["path": route])
+            }
+            delay += 6
+        }
+    }
+
+    /// IOSP-2 overlay self-test (DEBUG-only, env-gated). Drives the REAL keyboard
+    /// exclusion path: posts a synthetic `keyboardWillChangeFrame` with an on-screen
+    /// keyboard so `AlmaOverlayCoordinator` raises its exclusion and the floating
+    /// chat head docks above it — then hides it again. Verify from outside with
+    /// timed screenshots (head should sit higher during the keyboard window) and
+    /// the route.* / overlaySelfTest signposts.
+    ///
+    ///   SIMCTL_CHILD_ALMA_OVERLAY_SELFTEST=1 xcrun simctl launch <udid> com.almatraders.erp
+    @available(iOS 17.0, *)
+    func runOverlaySelfTestIfRequested() {
+        guard ProcessInfo.processInfo.environment["ALMA_OVERLAY_SELFTEST"] == "1" else { return }
+        AlmaPerfLog.event("overlaySelfTest.start")
+        // Park the head at the bottom edge first, so the keyboard-raise visibly lifts it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
+            FloatingChatHead.shared.debugParkAtBottomEdge()
+        }
+        func postKeyboard(height: CGFloat, at delay: TimeInterval, tag: StaticString) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard let scene = AlmaOverlayCoordinator.shared.foregroundScene() else { return }
+                let screenH = scene.screen.bounds.height
+                let width = scene.screen.bounds.width
+                let originY = height > 0 ? screenH - height : screenH
+                let name = height > 0 ? UIResponder.keyboardWillChangeFrameNotification
+                                      : UIResponder.keyboardWillHideNotification
+                AlmaPerfLog.event(tag)
+                NotificationCenter.default.post(
+                    name: name, object: nil,
+                    userInfo: [UIResponder.keyboardFrameEndUserInfoKey:
+                                NSValue(cgRect: CGRect(x: 0, y: originY, width: width, height: max(height, 300)))])
+            }
+        }
+        postKeyboard(height: 340, at: 18, tag: "overlaySelfTest.keyboardUp")
+        postKeyboard(height: 0, at: 26, tag: "overlaySelfTest.keyboardDown")
+    }
+
+    /// IOSP-3 cache self-test (DEBUG-only, env-gated). Proves single-flight (N
+    /// concurrent identical GETs → ONE api.request) and TTL (repeated getCached
+    /// within the window → cache.hit, no refetch). Verify from outside by counting
+    /// `api.request` vs `cache.hit` signposts for the probe path.
+    ///
+    ///   SIMCTL_CHILD_ALMA_CACHE_SELFTEST=1 xcrun simctl launch <udid> com.almatraders.erp
+    func runCacheSelfTestIfRequested() {
+        guard ProcessInfo.processInfo.environment["ALMA_CACHE_SELFTEST"] == "1" else { return }
+        // Decodes from ANY JSON shape (reads nothing) — we only care about request counts.
+        struct Probe: Decodable { init(from decoder: Decoder) throws {} }
+        let path = "/api/assistant/office/notifications"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
+            Task {
+                AlmaPerfLog.event("cacheSelfTest.concurrentStart")
+                // 6 identical GETs fired together → single-flight should collapse to 1.
+                await withTaskGroup(of: Void.self) { group in
+                    for _ in 0..<6 {
+                        group.addTask { _ = try? await AlmaAPI.shared.get(path) as Probe }
+                    }
+                }
+                AlmaPerfLog.event("cacheSelfTest.concurrentDone")
+                // 4 sequential cached reads within a 60s TTL → 1 fetch + 3 cache.hit.
+                AlmaPerfLog.event("cacheSelfTest.ttlStart")
+                for _ in 0..<4 { _ = try? await AlmaAPI.shared.getCached(path, ttl: 60) as Probe }
+                AlmaPerfLog.event("cacheSelfTest.ttlDone")
+            }
+        }
+    }
+
+    /// IOSP-4 crash-fix regression (DEBUG-only, env-gated). Before the fix, reading
+    /// AgoraIntercom.engine through Observation's keypath machinery SIGTRAP'd
+    /// (`could not demangle keypath type 'AgoraRtcEngineKit?'`). This is the exact
+    /// read CallKitVoIP.providerDidReset triggers via leave(). With `engine` now
+    /// @ObservationIgnored, this must complete and emit callResetRepro.survived.
+    ///
+    ///   SIMCTL_CHILD_ALMA_CRASH_REPRO=1 xcrun simctl launch <udid> com.almatraders.erp
+    @available(iOS 17.0, *)
+    func runCallResetCrashReproIfRequested() {
+        guard ProcessInfo.processInfo.environment["ALMA_CRASH_REPRO"] == "1" else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+            AlmaPerfLog.event("callResetRepro.start")
+            AgoraIntercom.shared.leave() // reads `engine` — the crashing keypath pre-fix
+            AlmaPerfLog.event("callResetRepro.survived")
+        }
+    }
+}
+#endif
