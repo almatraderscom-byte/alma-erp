@@ -1111,6 +1111,13 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     if (projectInstructions?.trim()) {
       volatileParts.push(`\n## প্রজেক্ট-নির্দিষ্ট নির্দেশনা\n${projectInstructions.trim()}`)
     }
+    // Deterministic intake directives (e.g. the resolved reminder-time hint) apply
+    // to personal turns too — personal reminders were the exact live miss: the hint
+    // was computed in core.ts but this branch never injected it, so the head still
+    // misread "amake 4 tay call dio" as "make 4 calls".
+    if (intakeContextBlock) {
+      volatileParts.push(intakeContextBlock)
+    }
   } else {
     const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : buildLifestyleStaticPrompt(activeGroups, args.activeToolNames)
     stableParts.push(corePrompt)
