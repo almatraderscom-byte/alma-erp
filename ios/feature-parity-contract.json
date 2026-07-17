@@ -1579,7 +1579,7 @@
   "openWebAllowlist": {
     "ActivitySwiftUI.swift": 2,
     "AgentCostsSwiftUI.swift": 2,
-    "AgentGrowthSwiftUI.swift": 3,
+    "AgentGrowthSwiftUI.swift": 4,
     "AgentWhatsappSwiftUI.swift": 3,
     "AnalyticsSwiftUI.swift": 2,
     "ApprovalsSwiftUI.swift": 5,
@@ -1592,7 +1592,7 @@
     "CreativeStudioSwiftUI.swift": 3,
     "CreditUsageSwiftUI.swift": 1,
     "CrmSwiftUI.swift": 3,
-    "DashboardSwiftUI.swift": 6,
+    "DashboardSwiftUI.swift": 5,
     "DigitalClientsSwiftUI.swift": 3,
     "DigitalHomeSwiftUI.swift": 3,
     "DigitalInvoicesSwiftUI.swift": 3,
