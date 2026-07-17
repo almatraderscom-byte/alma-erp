@@ -157,6 +157,32 @@ async function fetchJson(url: string): Promise<Record<string, unknown> | null> {
 }
 
 /**
+ * RFC 8414 metadata URL candidates for an authorization server. When the AS
+ * identifier carries a PATH (Meta's does: authorization_servers[0] is the MCP
+ * endpoint itself, "https://mcp.facebook.com/ads"), the spec inserts the
+ * well-known segment BETWEEN host and path — verified live 2026-07-17:
+ * https://mcp.facebook.com/.well-known/oauth-authorization-server/ads is the
+ * one that answers (path-appended form 404s). Both forms are tried, RFC-correct
+ * first, then the OIDC variants.
+ */
+export function authServerMetadataCandidates(authServer: string): string[] {
+  const as = authServer.replace(/\/$/, '')
+  try {
+    const u = new URL(as)
+    const path = u.pathname === '/' ? '' : u.pathname
+    const candidates = [
+      `${u.origin}/.well-known/oauth-authorization-server${path}`,
+      ...(path ? [`${as}/.well-known/oauth-authorization-server`] : []),
+      `${u.origin}/.well-known/openid-configuration${path}`,
+      ...(path ? [`${as}/.well-known/openid-configuration`] : []),
+    ]
+    return candidates
+  } catch {
+    return [`${as}/.well-known/oauth-authorization-server`, `${as}/.well-known/openid-configuration`]
+  }
+}
+
+/**
  * Resolve the authorization server + its metadata for the MCP endpoint,
  * cached in kv for a day (Meta's MCP auth is new — plan §8 isolates all of
  * this here so spec drift is a one-file fix).
@@ -188,10 +214,7 @@ export async function discoverAuthServer(force = false): Promise<AuthServerMetad
   // we invent silently — the status route surfaces which path was used).
   if (!authServer) authServer = 'https://www.facebook.com'
 
-  const asCandidates = [
-    `${authServer}/.well-known/oauth-authorization-server`,
-    `${authServer}/.well-known/openid-configuration`,
-  ]
+  const asCandidates = authServerMetadataCandidates(authServer)
   let metadata: AuthServerMetadata | null = null
   for (const url of asCandidates) {
     const doc = await fetchJson(url)
