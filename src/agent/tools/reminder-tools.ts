@@ -4,7 +4,7 @@
 import { prisma } from '@/lib/prisma'
 import { formatReminderConfirmation } from '@/agent/lib/reminder-rrule'
 import { checkUrgentRateLimit, checkOutboundCallRateLimit } from '@/agent/lib/urgent-rate-limit'
-import { summarizeOutboundAction, outboundWasDialed } from '@/agent/lib/outbound-call-tracking'
+import { summarizeOutboundAction, isBlockingOutboundDuplicate } from '@/agent/lib/outbound-call-tracking'
 import { normalizeOutboundPhone } from '@/lib/twilio/phone'
 import { voicePrefLabel, type OwnerVoicePref } from '@/agent/lib/voice-provider-intent'
 import type { AgentTool } from './registry'
@@ -369,11 +369,14 @@ const outbound_phone_call: AgentTool = {
           orderBy: { createdAt: 'desc' },
           take: 20,
         })
-        const duplicate = recent.find((r: { payload: { phone?: string }; status: string; result?: unknown }) => {
-          const p = normalizeOutboundPhone(String(r.payload?.phone ?? ''))
-          if (p !== phone) return false
-          if (r.status === 'pending' || r.status === 'approved') return true
-          return outboundWasDialed(r as Parameters<typeof outboundWasDialed>[0])
+        // A DIALED call is not a DELIVERED one — see isBlockingOutboundDuplicate.
+        // The old rule blocked every new call to a number dialed in the last 2 hours,
+        // so after a call rang unanswered, Boss asking "abar call koro" was silently
+        // swallowed while the agent reported success (live 2026-07-18).
+        const nowMs = Date.now()
+        const duplicate = recent.find((r: { payload: { phone?: string } }) => {
+          if (normalizeOutboundPhone(String(r.payload?.phone ?? '')) !== phone) return false
+          return isBlockingOutboundDuplicate(r as unknown as Parameters<typeof isBlockingOutboundDuplicate>[0], nowMs)
         })
         if (duplicate) {
           // A still-PENDING card is an editable draft (not yet dialing). The old code
@@ -402,8 +405,18 @@ const outbound_phone_call: AgentTool = {
               },
             }
           }
-          // Already approved / dialing / dialed → must NOT be edited or duplicated; just report.
+          // Reaches here only for: approved-and-queued, currently-ringing (<90s), or
+          // already-answered. A no-answer/failed row is NOT a duplicate (handled above)
+          // so "abar call koro" after an unanswered call falls through and places a
+          // real new call. Tell the model the EXACT phase so it never claims a call was
+          // just placed when it wasn't.
           const summary = summarizeOutboundAction(duplicate)
+          const inFlightNote =
+            summary.phase === 'answered'
+              ? 'This number was already CALLED and the person ANSWERED — the message was delivered. Do NOT say you are placing a new call; report that it was already delivered. Only place another call if Boss explicitly wants to call again.'
+              : summary.status === 'approved'
+                ? 'A call to this number is APPROVED and about to be dialed by the worker — it has NOT connected yet. Do NOT claim the call is done; say it is being placed now.'
+                : 'A call to this number is RINGING right now (placed seconds ago). Do NOT place another or claim it finished; say it is ringing.'
           return {
             success: true,
             data: {
@@ -414,8 +427,8 @@ const outbound_phone_call: AgentTool = {
               phase: summary.phase,
               dialed: summary.dialed,
               answered: summary.answered,
-              message:
-                'A call to this number is already approved/in progress — use get_outbound_call_status to report; do not create another card.',
+              callPlacedThisTurn: false,
+              message: inFlightNote,
             },
           }
         }
