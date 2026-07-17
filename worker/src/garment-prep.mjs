@@ -147,13 +147,13 @@ export async function detectOverlayTextBoxes(imageBuf) {
  * repaints ONLY the text boxes (protected composite guarantees every other
  * pixel is byte-identical). Fail-open: returns the crop unchanged.
  */
-async function inpaintTextBoxes({ supabase, pendingActionId, cropPng, boxes, imagePath, cropIndex, logCost }) {
-  if (!pendingActionId) return cropPng // durable Fal state needs an action id
+async function inpaintTextBoxes({ supabase, pendingActionId, cropPng, boxes, imagePath, cropIndex, logCost, onSkip }) {
+  if (!pendingActionId) { onSkip?.('no_action_id'); return cropPng } // durable Fal state needs an action id
   try {
     // owner kill switch for Fill — skip silently when explicitly off
     const { data: flag } = await supabase
       .from('agent_kv_settings').select('value').eq('key', 'cs_flux_fill_enabled').maybeSingle()
-    if (flag && ['false', '0', 'off'].includes(String(flag.value).trim().toLowerCase())) return cropPng
+    if (flag && ['false', '0', 'off'].includes(String(flag.value).trim().toLowerCase())) { onSkip?.('fill_flag_off'); return cropPng }
 
     const sharp = (await import('sharp')).default
     const meta = await sharp(cropPng).metadata()
@@ -170,7 +170,7 @@ async function inpaintTextBoxes({ supabase, pendingActionId, cropPng, boxes, ima
         height: Math.min(H - top, Math.round((b.y1 - b.y0 + pad * 2) * H)),
       }
     }).filter((r) => r.width > 2 && r.height > 2)
-    if (!rects.length) return cropPng
+    if (!rects.length) { onSkip?.('rects_empty'); return cropPng }
 
     const maskBuf = await sharp({
       create: { width: W, height: H, channels: 3, background: { r: 0, g: 0, b: 0 } },
@@ -183,7 +183,7 @@ async function inpaintTextBoxes({ supabase, pendingActionId, cropPng, boxes, ima
     const { buildFluxFillInput, protectedComposite, FLUX_FILL_ENDPOINT } = await import('./fal/adapters/flux-fill.mjs')
     const { runFalQueueJob, clearFalRequestState, isEngineKilled, extractFalImageUrl } = await import('./fal/client.mjs')
     const { falInputFingerprint } = await import('./fal/fingerprint.mjs')
-    if (await isEngineKilled(supabase, 'fal_flux_fill')) return cropPng
+    if (await isEngineKilled(supabase, 'fal_flux_fill')) { onSkip?.('engine_killed'); return cropPng }
 
     const toUri = (buf) => `data:image/png;base64,${buf.toString('base64')}`
     const input = buildFluxFillInput({
@@ -206,9 +206,9 @@ async function inpaintTextBoxes({ supabase, pendingActionId, cropPng, boxes, ima
     })
     await clearFalRequestState(supabase, pendingActionId)
     const url = extractFalImageUrl(out.payload)
-    if (!url) return cropPng
+    if (!url) { onSkip?.('no_fill_image_url'); return cropPng }
     const fillRes = await fetch(url, { signal: AbortSignal.timeout(60_000) })
-    if (!fillRes.ok) return cropPng
+    if (!fillRes.ok) { onSkip?.('fill_download_http_' + fillRes.status); return cropPng }
     const fillBuf = Buffer.from(await fillRes.arrayBuffer())
     const { composited } = await protectedComposite({ baseBuf: cropPng, maskBuf, fillBuf })
     void logCost?.({
@@ -222,6 +222,7 @@ async function inpaintTextBoxes({ supabase, pendingActionId, cropPng, boxes, ima
     console.log(`[garment-prep] FLUX Fill removed ${rects.length} text box(es) on crop ${cropIndex}`)
     return composited
   } catch (err) {
+    onSkip?.('error: ' + err.message)
     console.warn(`[garment-prep] text inpaint skipped (${err.message})`)
     return cropPng
   }
@@ -287,6 +288,7 @@ export async function prepSupplierPhoto({ supabase, imagePath, pendingActionId, 
     .slice(0, 4)
 
   const persons = []
+  const textScrubDebug = []
   const scaleX = W / smallW
   const scaleY = H / smallH
   const { floodInto } = await import('./photo-cleanup.mjs')
@@ -329,12 +331,21 @@ export async function prepSupplierPhoto({ supabase, imagePath, pendingActionId, 
     // pixel heuristics (coloured/decorated lettering, smoke-connected blobs)
     // is boxed by a narrow mechanical Gemini call and repainted by FLUX Fill
     // under a protected composite
+    const debug = { crop: i + 1, boxes: 0, inpainted: false, reason: null }
     const boxes = await detectOverlayTextBoxes(crop)
+    debug.boxes = boxes.length
     if (boxes.length) {
+      const before = crop
       crop = await inpaintTextBoxes({
         supabase, pendingActionId, cropPng: crop, boxes, imagePath, cropIndex: i + 1, logCost,
+        onSkip: (reason) => { debug.reason = reason },
       })
+      debug.inpainted = crop !== before
+    } else {
+      debug.reason = 'no_boxes_detected'
     }
+    textScrubDebug.push(debug)
+    console.log(`[garment-prep] crop ${i + 1} text-scrub debug: ${JSON.stringify(debug)}`)
     const path = `prepped/${imagePath.replace(/[^a-zA-Z0-9]/g, '_').slice(-60)}-v3p${i + 1}.png`
     const { error: upErr } = await supabase.storage.from('agent-files').upload(path, crop, {
       contentType: 'image/png',
@@ -350,6 +361,7 @@ export async function prepSupplierPhoto({ supabase, imagePath, pendingActionId, 
     // tallest = adult piece; shortest = child piece (real supplier child garment)
     adultGarmentPath: persons[0]?.path ?? null,
     childGarmentPath: persons.length > 1 ? persons[persons.length - 1].path : null,
+    textScrub: textScrubDebug,
   }
   await writeCache(supabase, imagePath, result)
   console.log(`[garment-prep] ${imagePath} — ${persons.length} person(s) split`)
