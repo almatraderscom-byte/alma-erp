@@ -50,9 +50,9 @@ export async function getTurnGraphHealth(days = 7): Promise<TurnGraphHealth | nu
   try {
     const since = new Date(Date.now() - days * 86_400_000)
     const rows: Array<{ detail: unknown }> = await db.agentToolEvent.findMany({
-      where: { toolName: '__route__', createdAt: { gte: since } },
+      where: { toolName: '__route__', ts: { gte: since } },
       select: { detail: true },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { ts: 'desc' },
       take: 5000,
     })
     const health: TurnGraphHealth = {
@@ -194,7 +194,7 @@ export async function getCutoverStatus(days = 7): Promise<CutoverStatus> {
     }
     const since = new Date(Date.now() - days * 86_400_000)
     const violations = await db.agentToolEvent.count({
-      where: { toolName: '__interaction__', success: false, createdAt: { gte: since } },
+      where: { toolName: '__interaction__', success: false, ts: { gte: since } },
     })
     rollbackSignals.ledgerViolations = violations
   } catch { /* fail-open */ }
