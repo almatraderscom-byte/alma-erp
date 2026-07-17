@@ -124,7 +124,10 @@ export async function detectOverlayTextBoxes(imageBuf, onDebug) {
                 { inline_data: { mime_type: 'image/png', data: imageBuf.toString('base64') } },
               ],
             }],
-            generationConfig: { temperature: 0, maxOutputTokens: 1024 },
+            // 2.5-flash burns "thinking" tokens against maxOutputTokens — live
+            // 2026-07-17 it emitted valid box_2d JSON and hit MAX_TOKENS at
+            // 1024 mid-array. Budget up + thinking off.
+            generationConfig: { temperature: 0, maxOutputTokens: 4096, thinkingConfig: { thinkingBudget: 0 } },
           }),
           signal: AbortSignal.timeout(30_000),
         },
@@ -150,6 +153,13 @@ export async function detectOverlayTextBoxes(imageBuf, onDebug) {
           const obj = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? '{}')
           if (Array.isArray(obj.boxes)) rawBoxes = obj.boxes
         } catch { /* fall through */ }
+      }
+      if (!rawBoxes.length) {
+        // truncation-tolerant salvage: every complete "box_2d": [a,b,c,d]
+        // survives even when MAX_TOKENS cuts the array mid-stream
+        for (const m of raw.matchAll(/"box_2d"\s*:\s*\[\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\]/g)) {
+          rawBoxes.push([Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])])
+        }
       }
       const boxes = rawBoxes
         .filter((b) => Array.isArray(b) && b.length === 4 && b.every((v) => Number.isFinite(v)))
