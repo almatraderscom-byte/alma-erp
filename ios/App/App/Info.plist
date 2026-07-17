@@ -52,7 +52,7 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>ALMA ERP needs your location to verify office attendance check-in/out and staff geo-fencing.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>ALMA ERP uses the microphone so you can talk to the AI assistant by voice.</string>
+	<string>ALMA ERP uses the microphone for Office voice calls, walkie-talkie messages, and speaking to the AI assistant.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>ALMA ERP saves generated images and reports to your photo library when you choose to.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

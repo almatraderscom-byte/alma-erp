@@ -34,7 +34,7 @@ function isIosNativeShell(): boolean {
   return Boolean(cap?.isNativePlatform?.()) && cap?.getPlatform?.() === 'ios'
 }
 /** Mount-safe read of {@link isIosNativeShell} (avoids an SSR/hydration mismatch). */
-function useIsIosNative(): boolean {
+export function useIsIosNative(): boolean {
   const [ios, setIos] = useState(false)
   useEffect(() => setIos(isIosNativeShell()), [])
   return ios

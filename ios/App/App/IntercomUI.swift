@@ -27,7 +27,7 @@ struct IntercomView: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         if let e = ic.error { errorStrip(e) }
-                        if ic.mode == .calling || ic.mode == .ringing {
+                        if ic.hasActiveCall {
                             callBar
                         } else if !vm.roleResolved {
                             ProgressView().tint(.white).padding(.top, 70)
@@ -46,12 +46,15 @@ struct IntercomView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("বন্ধ") { ic.leave(); dismiss() }
+                    Button(ic.hasActiveCall ? "মিনিমাইজ" : "বন্ধ") {
+                        if !ic.hasActiveCall { ic.leave() }
+                        dismiss()
+                    }
                 }
             }
         }
         .task { await ic.loadFeed() }
-        .onDisappear { ic.leave() }
+        .onDisappear { if !ic.hasActiveCall { ic.leave() } }
     }
 
     // ── Owner: press-and-hold voice note (reaches ALL staff, lands in the group) ──
@@ -139,6 +142,9 @@ struct IntercomView: View {
                 .font(.title3.weight(.bold))
             Text("বস ভয়েস পাঠালে এখানে সাথে সাথে বেজে উঠবে।")
                 .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            bigButton("📞 বসকে কল করুন", tint: PortalOfficePalette.emerald600, filled: true) {
+                Task { await ic.staffCallOwner() }
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(18).portalOfficeGlass(scheme, corner: 22)
@@ -147,7 +153,7 @@ struct IntercomView: View {
             // Incoming CALLS are handled app-wide by FloatingChatHead; here we only
             // auto-play new voice notes while this screen is open.
             while !Task.isCancelled {
-                if ic.mode != .calling && ic.mode != .ringing { await playPendingVoiceNotes() }
+                if !ic.hasActiveCall { await playPendingVoiceNotes() }
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
             }
         }
@@ -173,22 +179,32 @@ struct IntercomView: View {
     // ── Active call bar (both sides) — ringing until the other side joins ──
     private var callBar: some View {
         let ringing = ic.mode == .ringing
+        let reconnecting = ic.mode == .reconnecting
         return VStack(spacing: 14) {
             // While ringing, keep the orb pulsing so it clearly reads as "not connected yet".
             liveOrb(active: true, speaking: ringing || ic.remoteSpeaking)
-            Text(ringing ? "📞 রিং হচ্ছে…" : (ic.remoteSpeaking ? "🔊 কথা হচ্ছে" : "📞 কল চলছে"))
+            Text(reconnecting ? "পুনঃসংযোগ হচ্ছে…" :
+                 (ringing ? "📞 রিং হচ্ছে…" : (ic.remoteSpeaking ? "🔊 কথা হচ্ছে" : "📞 কল চলছে")))
                 .font(.title3.weight(.bold))
             // No timer until connected — WhatsApp-style.
-            Text(ringing ? "অপর পক্ষ ধরার অপেক্ষায়…" : timeStr(ic.callSeconds))
+            Text(reconnecting ? "আরও \(ic.reconnectSeconds) সেকেন্ড চেষ্টা হবে" :
+                 (ringing ? "অপর পক্ষ ধরার অপেক্ষায়…" : timeStr(ic.callSeconds)))
                 .font(ringing ? .subheadline : .title2.weight(.bold).monospacedDigit())
                 .foregroundStyle(.secondary)
+            if !ringing {
+                Text(ic.audioRoute).font(.caption).foregroundStyle(.secondary)
+            }
             HStack(spacing: 10) {
                 if !ringing {
                     bigButton(ic.micMuted ? "🔇 আনমিউট" : "🎙️ মিউট",
                               tint: PortalOfficePalette.violet) { ic.toggleMute() }
+                    bigButton(ic.speakerEnabled ? "🔈 ইয়ারপিস" : "🔊 স্পিকার",
+                              tint: PortalOfficePalette.coral) { ic.toggleSpeaker() }
                 }
                 bigButton(ringing ? "বাতিল" : "কল কাটুন",
-                          tint: PortalOfficePalette.red500, filled: true) { ic.leave() }
+                          tint: PortalOfficePalette.red500, filled: true) {
+                    Task { await ic.endActiveCall() }
+                }
             }
         }
         .frame(maxWidth: .infinity)
@@ -247,7 +263,7 @@ struct IncomingCallView: View {
     @State private var answered = false
     @State private var pulse = false
 
-    private var inCall: Bool { ic.mode == .calling || ic.mode == .ringing }
+    private var inCall: Bool { ic.hasActiveCall }
 
     var body: some View {
         ZStack {
@@ -286,6 +302,7 @@ struct IncomingCallView: View {
 
     private var statusLine: String {
         if ic.mode == .calling { return ic.remoteSpeaking ? "🔊 কথা হচ্ছে" : "কল চলছে" }
+        if ic.mode == .reconnecting { return "পুনঃসংযোগ হচ্ছে…" }
         if answered { return "সংযোগ হচ্ছে…" }
         return "📞 অফিস কল করছে…"
     }
@@ -296,7 +313,7 @@ struct IncomingCallView: View {
                 circleBtn(ic.micMuted ? "mic.slash.fill" : "mic.fill",
                           tint: .white.opacity(0.18)) { ic.toggleMute() }
                 circleBtn("phone.down.fill", tint: PortalOfficePalette.red500, big: true) {
-                    ic.leave(); dismiss()
+                    Task { await ic.endActiveCall(); dismiss() }
                 }
             }
         } else {
@@ -304,7 +321,8 @@ struct IncomingCallView: View {
                 VStack(spacing: 8) {
                     circleBtn("phone.down.fill", tint: PortalOfficePalette.red500, big: true) {
                         ic.confirmCallReceipt(incoming.broadcastId)   // legacy answer/history acknowledgement
-                        ic.stopRinging(); ic.leave(); dismiss()
+                        ic.stopRinging()
+                        Task { await ic.endActiveCall(reason: "DECLINED"); dismiss() }
                     }
                     Text("প্রত্যাখ্যান").font(.caption).foregroundStyle(.white.opacity(0.8))
                 }

@@ -75,6 +75,9 @@ final class FloatingChatHead {
         NotificationCenter.default.addObserver(
             self, selector: #selector(exclusionChanged),
             name: AlmaOverlayCoordinator.keyboardDidChange, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(callCoordinatorChanged),
+            name: .officeCallCoordinatorDidChange, object: nil)
         startCallWatch()
     }
 
@@ -144,23 +147,20 @@ final class FloatingChatHead {
         callWatch = nil
     }
 
+    @objc private func callCoordinatorChanged() {
+        let active = OfficeCallCoordinator.shared.hasActiveCall
+        button?.setCallActive(active)
+    }
+
     @MainActor private func pollIncoming() async {
         guard !incomingUp,
               overlay?.rootViewController?.presentedViewController == nil else { return }
-        if AgoraIntercom.shared.mode == .calling || AgoraIntercom.shared.mode == .ringing { return }
+        if OfficeCallCoordinator.shared.hasActiveCall { return }
         guard let inc = await AgoraIntercom.shared.pendingIncomingCall() else { return }
-        incomingUp = true
-        let host = ChatHostController(rootView: IncomingCallView(incoming: inc))
-        host.modalPresentationStyle = .overFullScreen
-        host.view.backgroundColor = .clear
-        host.onDisappear = { [weak self] in
-            self?.incomingUp = false
-            if self?.overlay?.rootViewController?.presentedViewController == nil {
-                self?.button?.isHidden = false
-            }
-        }
-        button?.isHidden = true
-        overlay?.rootViewController?.present(host, animated: true)
+        // Foreground fallback still enters the exact same CallKit/coordinator path
+        // as PushKit. No second custom call lifecycle exists.
+        CallKitVoIP.shared.showIncomingFromPoll(
+            callId: inc.broadcastId, channel: inc.channel, caller: inc.caller)
     }
 
     private func placeInitial() {
@@ -211,7 +211,10 @@ final class FloatingChatHead {
     }
 
     private func openChat() {
-        if #available(iOS 17.0, *) { present(OfficeChatStandalone()) }
+        if #available(iOS 17.0, *) {
+            if OfficeCallCoordinator.shared.hasActiveCall { openIntercom() }
+            else { present(OfficeChatStandalone()) }
+        }
     }
 
     private func openIntercom() {
@@ -247,6 +250,7 @@ final class FloatingHeadButton: UIView {
     var onDragEnded: ((CGPoint) -> Void)?
 
     private let gradient = CAGradientLayer()
+    private let iconView = UIImageView()
     private var grabOffset: CGSize = .zero
 
     override init(frame: CGRect) {
@@ -268,14 +272,14 @@ final class FloatingHeadButton: UIView {
         layer.shadowRadius = 9
         layer.shadowOffset = CGSize(width: 0, height: 4)
 
-        let icon = UIImageView(image: UIImage(
+        iconView.image = UIImage(
             systemName: "bubble.left.and.bubble.right.fill",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 23, weight: .semibold)))
-        icon.tintColor = .white
-        icon.contentMode = .center
-        icon.frame = bounds
-        icon.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        addSubview(icon)
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 23, weight: .semibold))
+        iconView.tintColor = .white
+        iconView.contentMode = .center
+        iconView.frame = bounds
+        iconView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(iconView)
 
         addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(pan(_:))))
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tap)))
@@ -290,6 +294,14 @@ final class FloatingHeadButton: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         gradient.frame = bounds
+    }
+
+    func setCallActive(_ active: Bool) {
+        iconView.image = UIImage(
+            systemName: active ? "phone.fill" : "bubble.left.and.bubble.right.fill",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 23, weight: .semibold))
+        accessibilityLabel = active ? "চলমান কলে ফিরুন" : "অফিস চ্যাট"
+        layer.shadowColor = active ? UIColor.systemGreen.cgColor : UIColor.black.cgColor
     }
 
     @objc private func tap() {
