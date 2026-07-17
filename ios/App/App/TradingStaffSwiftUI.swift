@@ -1,7 +1,7 @@
 //
 //  TradingStaffSwiftUI.swift
 //  ALMA ERP — the ALMA Trading staff admin (/agent/trading-staff) as a native
-//  SwiftUI screen (read-only).
+//  SwiftUI screen (read + native staff upsert).
 //
 //  Mirrors the web page — same endpoint, same colours, same blocks:
 //    GET /api/assistant/internal/trading-staff/upsert → { staff, eligibleUsers }
@@ -9,8 +9,8 @@
 //  summary strip (staff/active/telegram counts) · "Linked Trading staff (N)"
 //  cards (initials avatar · glowing active dot · ERP link line · Telegram chat
 //  ID · role label) · "Link a new Trading staff" eligible-user list · detail
-//  sheet. All WRITE actions (link/activate/deactivate/edit chat ID) stay on the
-//  web — the footer escape hatch opens /agent/trading-staff.
+//  sheet. NATIVE WRITES (verified 2026-07-17): link/activate/deactivate/edit chat ID
+//  via POST /api/assistant/internal/trading-staff/upsert.
 //  Carried lessons: lenient decoding, cancellation-safe .refreshable, auth card.
 //
 

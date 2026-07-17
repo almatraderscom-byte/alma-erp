@@ -10,8 +10,10 @@
 //  service, phone · email, id, notes preview). Detail (sheet): billing summary
 //  (status badge + payment progress bar + value/paid/due rows) · contact card ·
 //  projects with per-project payment progress · payment history table.
-//  Mutations (add client / project / payment) stay on the web escape hatch —
-//  this screen is read-only. CDIT accent: blue (0.42, 0.56, 0.88) hero accent.
+//  NATIVE WRITES (verified 2026-07-17): client create + payment record (POST via
+//  /api/digital/clients paths). STILL WEB (parity ledger OP-08, phase NP-7):
+//  contextual "create project from client detail" prefill.
+//  CDIT accent: blue (0.42, 0.56, 0.88) hero accent.
 //  Carried lessons: lenient row decoding, ONE spinner pattern, no global overlays.
 //
 

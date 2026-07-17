@@ -22,7 +22,8 @@
 //  iOS re-set: personal dashboard cards — greeting, my balance, my tasks with
 //  status circles, attendance summary — plus NATIVE request sheets (wallet
 //  withdraw/advance, leave apply, checkout exception) with confirm dialogs.
-//  Check-in / check-out stays on the web (selfie camera + GPS geofence).
+//  Check-in / check-out is NATIVE (verified 2026-07-17): front-camera selfie + GPS
+//  via POST /api/attendance/check-in and /api/attendance/check-out.
 //  Carried lessons: lenient per-field decoding, ONE load path, no global overlay.
 //
 

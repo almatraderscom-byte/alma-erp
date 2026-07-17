@@ -1,6 +1,6 @@
 //
 //  SettingsTelegramSwiftUI.swift
-//  ALMA ERP — Telegram Ops settings as a native SwiftUI screen (READ-ONLY).
+//  ALMA ERP — Telegram Ops settings as a native SwiftUI screen (read + native actions).
 //
 //  Mirrors the web /settings/telegram-ops page — same endpoints, same colours, same blocks:
 //    GET /api/settings/telegram-ops?business_id=…        → {ok,data:{setting,recentQueue,stats}}
@@ -10,8 +10,10 @@
 //  last success) · owner-routing diagnostics (chat IDs monospace) · recipients & master
 //  switch (read-only) · schedule (BD) · alert toggles (read-only) · queue 7-day chips ·
 //  last failure · recent queue rows.
-//  Config CHANGES (chat IDs, toggles, schedule, test/process/retry) stay on the web —
-//  standing-rule config is never mutated natively; footer escape hatch opens the page.
+//  NATIVE WRITES (verified 2026-07-17): process queue (POST …/health), test message
+//  (POST …/test), retry failed/single (POST …/retry), master enable (PATCH
+//  /api/settings/telegram-ops). STILL WEB (parity ledger AD-07, phase NP-5): owner
+//  chat IDs, full schedule values, per-alert toggles.
 //  Carried lessons: lenient decoding, ONE loading state, never a global overlay.
 //
 

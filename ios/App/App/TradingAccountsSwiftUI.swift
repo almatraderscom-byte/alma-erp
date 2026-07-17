@@ -1,7 +1,7 @@
 //
 //  TradingAccountsSwiftUI.swift
 //  ALMA ERP — Trading Accounts (/trading/accounts + /trading/accounts/[id]) as a
-//  native SwiftUI screen (read-only).
+//  native SwiftUI screen (read + native account create/edit/archive).
 //
 //  Mirrors the web pages — same endpoints, same colours, same blocks:
 //    GET /api/trading/accounts?search=…&status=…       → { accounts, total }
@@ -15,8 +15,10 @@
 //  · negative-balance risk warning · account info card (type, staff, commission,
 //  deposits/withdrawals/adjustments, merchant progress) · partnership card ·
 //  Today Summary · ranges strip · recent trades · recent expenses.
-//  All WRITE actions (create/edit/archive, + Trade, expenses, capital, screenshots,
-//  settlement) stay on the web escape hatch — this screen is read-only.
+//  NATIVE WRITES (verified 2026-07-17): account create (POST /api/trading/accounts)
+//  and edit/archive (PATCH …/{id}). Trade/expense/capital/screenshot entry is native
+//  on Trading Home. STILL WEB (parity ledger TR-01/TR-02, phases NP-6): detail-level
+//  trade edit/audit/delete flows and partnership settlement.
 //  Carried lessons: lenient all-optional decoding (Prisma Decimals arrive as JSON
 //  strings), ONE spinner (AlmaStarburstSpinner family), cancellation-safe
 //  .refreshable, auth card, no global overlays.

@@ -25,7 +25,8 @@
 //
 //  Data (all live, owner-only, cookie-bridged via AlmaAPI):
 //    GET /api/assistant/costs/summary · /balances · /logs.
-//  Budget config / CSV stay on the web — footer escape opens /agent/costs.
+//  Budget config is NATIVE (owner 2026-07-11: web saveBudget PUT parity). Only CSV
+//  export/share + total reconciliation remain web (parity ledger AG-11, phase NP-4).
 //  Parallel-session rule: page-owned material/aurora helpers (no cross-page imports).
 //
 

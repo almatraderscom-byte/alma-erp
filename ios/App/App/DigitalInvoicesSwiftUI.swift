@@ -10,8 +10,9 @@
 //  client-side on issued_date||created_at YMD — native preset chips) · invoice rows
 //  (mono id · client · type + due date · PaymentStatusBadge Unpaid-muted /
 //  Partial-amber / Paid-emerald · amount · Paid green / Due amber sublines).
-//  MUTATIONS STAY WEB: create invoice, record payment and the premium PDF preview
-//  are the web escape ("ওয়েবে খুলুন" → /digital/invoices) — this screen is read-only.
+//  NATIVE WRITES (verified 2026-07-17): invoice create, payment record, PDF generation
+//  (POST /api/digital/invoices/pdf). STILL WEB (parity ledger FN-02, phase NP-7):
+//  in-app PDF preview (PDFKit/Quick Look).
 //  Carried lessons: lenient row decoding, shimmer skeletons, no global overlays.
 //
 

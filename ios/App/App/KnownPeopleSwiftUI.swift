@@ -1,7 +1,7 @@
 //
 //  KnownPeopleSwiftUI.swift
 //  ALMA ERP — the agent's "চেনা মুখ" page (camera face registry + entrance watch)
-//  as a native, READ-ONLY SwiftUI screen.
+//  as a native SwiftUI screen with FULL ACTION PARITY (NP-0 header refresh 2026-07-17).
 //
 //  Mirrors the web /agent/known-people page (KnownPeopleManager) — same endpoints,
 //  same Bangla labels, same blocks:
@@ -10,8 +10,9 @@
 //  Blocks: entrance-watch settings card (read-only digest) · search · role chips ·
 //  Contacts-style people rows (photo/initials avatar + role capsule + active state) ·
 //  person detail sheet (photo, role, note, photos count, added date).
-//  All edits (add person, toggle, delete, settings, 🧪 test) stay on the web —
-//  footer escape hatch opens /agent/known-people.
+//  NATIVE WRITES (verified 2026-07-17): entrance-watch settings save (POST …/settings),
+//  add person (POST), edit person/photos (PATCH), active toggle (PATCH), delete
+//  (DELETE), and 🧪 test (POST …/test). No web escape needed for edits.
 //  Carried lessons: lenient decoding (try? per field), cancellation-safe refresh,
 //  auth-expired card, ONE loading shimmer set — never a global overlay.
 //
