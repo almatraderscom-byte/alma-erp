@@ -1018,10 +1018,25 @@ async function* runAlternateProviderTurn(
       // A real tool failure is a blocker, not permission to hammer the same
       // browser/action 20 more times. Stop and surface the exact error.
       const contractToolName = contractFailure ? null : requestedContractTool
+      // P3 — plan-first: bind make_plan on round 0 for clearly multi-step work,
+      // but never over an explicit contract/workflow bind, and only when make_plan
+      // is loaded and hasn't already run this turn.
+      const planBoundTool =
+        ownerRequirements.planFirst && iteration === 0
+          && iterationTools.some((t) => t.name === 'make_plan')
+          && !toolRecords.some((r) => r.toolName === 'make_plan')
+          ? 'make_plan'
+          : null
       const roundBoundToolName =
         contractToolName && iterationTools.some((t) => t.name === contractToolName)
           ? contractToolName
-          : iteration === 0 ? boundToolName : null
+          : iteration === 0 ? (boundToolName ?? planBoundTool) : null
+      // P2 — ground-before-answer: when nothing else is bound, force ANY tool on
+      // round 0 of a live-data question so the head cannot answer from memory.
+      const groundingRequiredThisRound =
+        ownerRequirements.groundingRequired && iteration === 0 && !roundBoundToolName
+          && iterationTools.length > 0
+          && !toolRecords.some((r) => r.status === 'success')
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
@@ -1064,7 +1079,9 @@ async function* runAlternateProviderTurn(
         toolChoice:
           roundBoundToolName && iterationTools.length > 0
             ? { name: roundBoundToolName }
-            : undefined,
+            : groundingRequiredThisRound
+              ? 'required'
+              : undefined,
       })) {
         if (ev.type === 'text_delta') {
           if (thinkingText && thinkingMs == null && thinkingStartedAt) {

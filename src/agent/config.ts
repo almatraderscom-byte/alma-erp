@@ -100,6 +100,13 @@ export const AGENT_CONSTITUTION = process.env.AGENT_CONSTITUTION === 'on'
 // (context-rot mitigation). Only matters for long turns (browser/agentic).
 export const CONSTITUTION_REINJECT_EVERY = Number(process.env.CONSTITUTION_REINJECT_EVERY) || 6
 
+// P3 — plan-first HARD gate: bind make_plan on round 0 for clearly multi-step
+// work so a weak head can't tool-spray a complex task. OFF by default.
+export const AGENT_PLAN_GATE = process.env.AGENT_PLAN_GATE === 'on'
+// P2 — ground-before-answer HARD gate: force a tool call on round 0 for a live-
+// data question so the model can't answer from memory. OFF by default.
+export const AGENT_GROUNDING_GATE = process.env.AGENT_GROUNDING_GATE === 'on'
+
 // Phase prompt specifies budget_tokens values for reference.
 // budget_tokens is deprecated on claude-sonnet-4-6; we use thinking: {type:'adaptive'}
 // and map to output_config.effort levels instead (off → no thinking param, low → medium, high → high).
