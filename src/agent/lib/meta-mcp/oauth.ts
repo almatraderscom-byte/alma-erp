@@ -47,14 +47,20 @@ export type MetaMcpScopeTier = 'read' | 'write' | 'financial'
  *  pages_show_list instagram_basic ads_mcp_management".
  * READ deliberately excludes every *_management scope that can mutate ads or
  * catalogs; Meta's Business dialog additionally grants per-ad-account tiers.
+ *
+ * ads_mcp_management is deliberately ABSENT: it is internal to Meta's own
+ * pre-registered MCP clients (claude.ai/ChatGPT). A normal developer app
+ * requesting it gets "Invalid Scopes" from the v25.0 dialog — live-hit
+ * 2026-07-17 with the ALMA AI AGENT app. Third-party guides confirm classic
+ * ads_read/ads_management/business_management tokens are what our own-app
+ * path can mint.
  */
 const TIER_SCOPES: Record<MetaMcpScopeTier, string[]> = {
-  read: ['ads_read', 'business_management', 'pages_show_list', 'ads_mcp_management'],
+  read: ['ads_read', 'business_management', 'pages_show_list'],
   write: [
     'ads_read',
     'business_management',
     'pages_show_list',
-    'ads_mcp_management',
     'ads_management',
     'catalog_management',
     'instagram_basic',
@@ -65,7 +71,6 @@ const TIER_SCOPES: Record<MetaMcpScopeTier, string[]> = {
     'ads_read',
     'business_management',
     'pages_show_list',
-    'ads_mcp_management',
     'ads_management',
     'catalog_management',
     'instagram_basic',
