@@ -1,0 +1,52 @@
+{
+  "id": "rc-0113-cont-gap7h-hmm-wf-dispatch",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "continuity",
+  "description": "Continuation \"hmm\" after a 7-hour silence: resume brief injected, same workflow resumed at the same step.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "kal er delivery task gulo staff der vag kore dao"
+    },
+    {
+      "role": "agent",
+      "text": "প্রস্তাব রেডি Boss — approve করলে পাঠিয়ে দেবো।"
+    }
+  ],
+  "latestMessage": "hmm",
+  "context": {
+    "gapMinutes": 420,
+    "stickyModelId": "or-deepseek-v4-flash",
+    "activeWorkflow": {
+      "kind": "staff_dispatch",
+      "goal": "কালকের ডেলিভারি টাস্ক স্টাফদের ভাগ করা",
+      "status": "waiting_owner",
+      "state": "proposal_review",
+      "verifiedEffects": [
+        "prepare_staff_task_proposal:done"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "continue_active_work",
+    "outcome": "Resume brief present; workflow resumes at current step after the gap."
+  },
+  "expect2": {
+    "fastPath": "continuation",
+    "continuationText": true,
+    "binding": "active_workflow",
+    "resumeBrief": true,
+    "headTier": "light",
+    "repeatedEffectRisk": true
+  },
+  "tags": [
+    "continuity",
+    "gap-7h"
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "id": "rc-0175-tool-domain-seo-audit",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "\"almatraders er seo audit koro\" must select the seo pack.",
+  "transcript": [],
+  "latestMessage": "almatraders er seo audit koro",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "seo_audit",
+    "outcome": "The seo tools are available to the head for this turn."
+  },
+  "expect2": {
+    "packs": [
+      "seo"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "domain-pack"
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "id": "rc-0152-tool-routine-attendance",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "Routine read \"ke ke office e ase?\" must hit the deterministic routine graph (intent attendance) on the light head.",
+  "transcript": [],
+  "latestMessage": "ke ke office e ase?",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "routine_attendance",
+    "tools": [],
+    "outcome": "Answered by the routine graph with one read tool; no mutation."
+  },
+  "expect2": {
+    "fastPath": "routine_kw",
+    "routineIntent": "attendance",
+    "headTier": "light",
+    "packs": [
+      "staff_read"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "routine"
+  ]
+}

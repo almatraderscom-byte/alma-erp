@@ -1,0 +1,27 @@
+{
+  "id": "rc-0174-tool-domain-website-publish",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "\"website e notun product publish koro\" must select the website pack.",
+  "transcript": [],
+  "latestMessage": "website e notun product publish koro",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "website_publish",
+    "outcome": "The website tools are available to the head for this turn."
+  },
+  "expect2": {
+    "packs": [
+      "website"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "domain-pack"
+  ]
+}

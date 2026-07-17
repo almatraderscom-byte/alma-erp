@@ -1,0 +1,50 @@
+{
+  "id": "rc-0129-cont-desired-oi-kaj-ses",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "continuity",
+  "description": "\"oi kaj ta ses koro\" is a natural continuation an assistant must bind to the active run (roadmap target; current CONTINUE_RE may miss it).",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "website er seo gulo thik koro"
+    },
+    {
+      "role": "agent",
+      "text": "অডিট শেষ Boss — ৫টা প্রোডাক্টে ফিক্স লাগবে, apply করছি।"
+    }
+  ],
+  "latestMessage": "oi kaj ta ses koro",
+  "context": {
+    "gapMinutes": 15,
+    "stickyModelId": "or-deepseek-v4-flash",
+    "activeWorkflow": {
+      "kind": "seo_fix_batch",
+      "goal": "ওয়েবসাইটের ৫টা প্রোডাক্টের SEO ঠিক করা",
+      "status": "waiting_worker",
+      "state": "apply_fixes",
+      "verifiedEffects": [
+        "audit_product_seo:done"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "continue_active_work",
+    "outcome": "Binds to the active SEO run and resumes its current step."
+  },
+  "expect2": {
+    "continuationText": true,
+    "binding": "active_workflow",
+    "resumeBrief": false,
+    "repeatedEffectRisk": true
+  },
+  "tags": [
+    "continuity",
+    "desired-continuation"
+  ]
+}

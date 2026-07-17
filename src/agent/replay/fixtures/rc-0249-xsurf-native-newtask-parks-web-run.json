@@ -1,0 +1,54 @@
+{
+  "id": "rc-0249-xsurf-native-newtask-parks-web-run",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "cross_surface",
+  "description": "New unrelated task from native while a web-started run is active: park the web run, start fresh — surfaces share one focus state.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "website er seo gulo thik koro"
+    },
+    {
+      "role": "agent",
+      "text": "অডিট শেষ Boss — ৫টা প্রোডাক্টে ফিক্স লাগবে, apply করছি।"
+    }
+  ],
+  "latestMessage": "ekta eid campaign er idea dao",
+  "context": {
+    "gapMinutes": 25,
+    "priorSurface": "web",
+    "surface": "native",
+    "activeWorkflow": {
+      "kind": "seo_fix_batch",
+      "goal": "ওয়েবসাইটের ৫টা প্রোডাক্টের SEO ঠিক করা",
+      "status": "waiting_worker",
+      "state": "apply_fixes",
+      "verifiedEffects": [
+        "audit_product_seo:done"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "new_task_parks_old",
+    "outcome": "SEO run parked; campaign ideation starts on the marketing head."
+  },
+  "expect2": {
+    "fastPath": "marketing_kw",
+    "headTier": "marketing",
+    "continuationText": false,
+    "binding": "new_task",
+    "packs": [
+      "ads"
+    ]
+  },
+  "tags": [
+    "cross-surface",
+    "new-task"
+  ]
+}

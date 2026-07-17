@@ -1,0 +1,31 @@
+{
+  "id": "rc-0154-tool-routine-salah-times",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "Routine read \"aj asr namaz koyta y?\" must hit the deterministic routine graph (intent salah_today) on the light head.",
+  "transcript": [],
+  "latestMessage": "aj asr namaz koyta y?",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "routine_salah_today",
+    "tools": [],
+    "outcome": "Answered by the routine graph with one read tool; no mutation."
+  },
+  "expect2": {
+    "fastPath": "routine_kw",
+    "routineIntent": "salah_today",
+    "headTier": "light",
+    "packs": [
+      "salah"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "routine"
+  ]
+}

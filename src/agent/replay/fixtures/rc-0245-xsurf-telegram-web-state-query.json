@@ -1,0 +1,50 @@
+{
+  "id": "rc-0245-xsurf-telegram-web-state-query",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "cross_surface",
+  "description": "\"ki obostha oi kajer?\" from web after working on telegram: evidence-backed status from durable state.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "website er seo gulo thik koro"
+    },
+    {
+      "role": "agent",
+      "text": "অডিট শেষ Boss — ৫টা প্রোডাক্টে ফিক্স লাগবে, apply করছি।"
+    }
+  ],
+  "latestMessage": "ki obostha oi kajer?",
+  "context": {
+    "gapMinutes": 480,
+    "priorSurface": "telegram",
+    "surface": "web",
+    "activeWorkflow": {
+      "kind": "seo_fix_batch",
+      "goal": "ওয়েবসাইটের ৫টা প্রোডাক্টের SEO ঠিক করা",
+      "status": "waiting_worker",
+      "state": "apply_fixes",
+      "verifiedEffects": [
+        "audit_product_seo:done"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "state_query",
+    "outcome": "Status comes from the run record; resume brief covers the gap."
+  },
+  "expect2": {
+    "binding": "active_workflow",
+    "resumeBrief": true
+  },
+  "tags": [
+    "cross-surface",
+    "telegram-to-web",
+    "state-query"
+  ]
+}

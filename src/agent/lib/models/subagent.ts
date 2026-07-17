@@ -52,6 +52,21 @@ export interface RunSubAgentParams {
   /** Ignored for tier routing — critical roles always Claude. Head model kept for logs only. */
   modelId?: string | null
   signal?: AbortSignal
+  /**
+   * Phase 35: PARALLEL fan-out branches run read-only by construction — the
+   * tool list is filtered to reads and every memory/effect writer is dropped,
+   * so concurrent specialists can never write memory or owner-facing effects.
+   * Writes stay on the sequential path behind the safety kernel.
+   */
+  readOnly?: boolean
+}
+
+/** Read-safe tool-name shapes + hard excludes (memory + effect writers). */
+const READ_ONLY_TOOL_RE = /^(get_|list_|search_|check_|analyze_|audit_|research_|fetch_|read_|compare_|recall_|simulate_|diagnose_|run_health|marketing_report|advisor_|web_research)/
+const NEVER_PARALLEL_TOOLS = new Set(['save_memory', 'track_open_task', 'resolve_open_task', 'save_task_checkpoint', 'ask_user'])
+
+export function filterToolsReadOnly<T extends { name: string }>(tools: T[]): T[] {
+  return tools.filter((t) => READ_ONLY_TOOL_RE.test(t.name) && !NEVER_PARALLEL_TOOLS.has(t.name))
 }
 
 export interface SubAgentResult {
@@ -168,7 +183,8 @@ async function runWithModel(
   actualCostUsd: number | null
 }> {
   const system = buildSystemPrompt(def)
-  const rawTools = assembleSelectedTools(def.toolGroups).filter((t) => t.name !== 'delegate_to_specialist')
+  let rawTools = assembleSelectedTools(def.toolGroups).filter((t) => t.name !== 'delegate_to_specialist')
+  if (params.readOnly) rawTools = filterToolsReadOnly(rawTools)
 
   if (model.provider === 'anthropic') {
     // The native sub-agent loop sends no cache_control breakpoint, so its cache

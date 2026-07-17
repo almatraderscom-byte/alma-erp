@@ -1,0 +1,50 @@
+{
+  "id": "rc-0247-xsurf-telegram-gap-resume",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "cross_surface",
+  "description": "Telegram message after 8h continuing native-started work: resume brief + workflow binding together.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "kal er delivery task gulo staff der vag kore dao"
+    },
+    {
+      "role": "agent",
+      "text": "প্রস্তাব রেডি Boss — approve করলে পাঠিয়ে দেবো।"
+    }
+  ],
+  "latestMessage": "oi proposal ta pathao",
+  "context": {
+    "gapMinutes": 480,
+    "priorSurface": "native",
+    "surface": "telegram",
+    "activeWorkflow": {
+      "kind": "staff_dispatch",
+      "goal": "কালকের ডেলিভারি টাস্ক স্টাফদের ভাগ করা",
+      "status": "waiting_owner",
+      "state": "proposal_review",
+      "verifiedEffects": [
+        "prepare_staff_task_proposal:done"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "continue_active_work",
+    "outcome": "Dispatch proposal resumes from proposal_review; not re-proposed."
+  },
+  "expect2": {
+    "binding": "active_workflow",
+    "resumeBrief": true,
+    "repeatedEffectRisk": true
+  },
+  "tags": [
+    "cross-surface",
+    "telegram"
+  ]
+}

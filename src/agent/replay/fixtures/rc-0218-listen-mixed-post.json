@@ -1,0 +1,28 @@
+{
+  "id": "rc-0218-listen-mixed-post",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "personal_listen",
+  "description": "Feeling + concrete work ask (\"hotash lagche, tao ekta post banao\"): classifier must answer work — content work proceeds.",
+  "transcript": [],
+  "latestMessage": "hotash lagche, tao ekta post banao",
+  "fakes": {
+    "personalClassification": "work",
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "work_with_feeling",
+    "outcome": "Acknowledge the feeling briefly, then do the asked work."
+  },
+  "expect2": {
+    "fastPath": "personal_hint",
+    "headTier": "marketing",
+    "listenSuppressed": false
+  },
+  "tags": [
+    "personal",
+    "mixed"
+  ]
+}

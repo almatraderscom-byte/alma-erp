@@ -59,8 +59,12 @@ export async function GET(req: NextRequest) {
   // growth or a silent mirror failure must show up HERE, not in an incident.
   let graph: unknown = null
   try {
-    const { getCheckpointStoreHealth, getTurnGraphHealth } = await import('@/agent/lib/graph/graph-health')
-    const [store, turns] = await Promise.all([getCheckpointStoreHealth(), getTurnGraphHealth(1)])
+    const { getCheckpointStoreHealth, getTurnGraphHealth, getCutoverStatus } = await import('@/agent/lib/graph/graph-health')
+    const [store, turns, cutover] = await Promise.all([
+      getCheckpointStoreHealth(),
+      getTurnGraphHealth(1),
+      getCutoverStatus(7),
+    ])
     graph = {
       store,
       today: turns
@@ -69,8 +73,14 @@ export async function GET(req: NextRequest) {
             routineHandledShare: turns.routine.handledShare,
             shadowAgreeRate: turns.shadow.agreeRate,
             scored: turns.shadow.scored,
+            // Phase 37: the 12-node graph's shadow performance + trace health.
+            ownerGraphAgreeRate: turns.ownerGraph.agreeRate,
+            ownerGraphScored: turns.ownerGraph.scored,
+            ownerGraphTraceComplete: turns.ownerGraph.traceComplete,
           }
         : null,
+      // Phase 37: ladder stage, six kill switches, rollback signals.
+      cutover,
     }
   } catch { /* health must never fail on the graph block */ }
 

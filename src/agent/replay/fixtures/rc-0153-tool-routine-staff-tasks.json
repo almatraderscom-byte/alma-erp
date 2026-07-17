@@ -1,0 +1,31 @@
+{
+  "id": "rc-0153-tool-routine-staff-tasks",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "Routine read \"Rafi ke ki task dise?\" must hit the deterministic routine graph (intent staff_tasks) on the light head.",
+  "transcript": [],
+  "latestMessage": "Rafi ke ki task dise?",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "routine_staff_tasks",
+    "tools": [],
+    "outcome": "Answered by the routine graph with one read tool; no mutation."
+  },
+  "expect2": {
+    "fastPath": "routine_kw",
+    "routineIntent": "staff_tasks",
+    "headTier": "light",
+    "packs": [
+      "staff_read"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "routine"
+  ]
+}

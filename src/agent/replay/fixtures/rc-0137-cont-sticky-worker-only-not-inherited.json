@@ -1,0 +1,49 @@
+{
+  "id": "rc-0137-cont-sticky-worker-only-not-inherited",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "continuity",
+  "description": "Short follow-up where the last model was worker-only (headPickable=false): must not be inherited as head.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "website er seo gulo thik koro"
+    },
+    {
+      "role": "agent",
+      "text": "অডিট শেষ Boss — ৫টা প্রোডাক্টে ফিক্স লাগবে, apply করছি।"
+    }
+  ],
+  "latestMessage": "hae",
+  "context": {
+    "gapMinutes": 2,
+    "stickyModelId": "or-glm-4-32b",
+    "activeWorkflow": {
+      "kind": "seo_fix_batch",
+      "goal": "ওয়েবসাইটের ৫টা প্রোডাক্টের SEO ঠিক করা",
+      "status": "waiting_worker",
+      "state": "apply_fixes",
+      "verifiedEffects": [
+        "audit_product_seo:done"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "continue_active_work",
+    "outcome": "Worker-only model rejected; triage picks the light head."
+  },
+  "expect2": {
+    "fastPath": "continuation",
+    "headTier": "light",
+    "binding": "active_workflow"
+  },
+  "tags": [
+    "continuity",
+    "sticky-head"
+  ]
+}

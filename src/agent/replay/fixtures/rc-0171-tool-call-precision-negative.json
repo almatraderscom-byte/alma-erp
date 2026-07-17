@@ -1,0 +1,31 @@
+{
+  "id": "rc-0171-tool-call-precision-negative",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "\"amake 4 tay call dio\" is a reminder-to-me, NOT an outbound relay call — precision guard.",
+  "transcript": [],
+  "latestMessage": "amake 4 tay call dio",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "reminder_request",
+    "forbiddenTools": [
+      "outbound_phone_call"
+    ],
+    "outcome": "A reminder is set; no outbound call is dialed."
+  },
+  "expect2": {
+    "fastPath": "continuation",
+    "packs": [
+      "reminders"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "call-negative"
+  ]
+}

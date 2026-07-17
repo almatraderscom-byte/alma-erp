@@ -1,0 +1,65 @@
+{
+  "id": "rc-0148-cont-3replies-tarpor",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "continuity",
+  "description": "After 2–3 unrelated replies, \"তারপর?\" must bind back to the still-active post workflow (the owner's \"forgot after 2-3 replies\" complaint).",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "নতুন পাঞ্জাবির জন্য একটা ফেসবুক পোস্ট বানাও"
+    },
+    {
+      "role": "agent",
+      "text": "ছবি বানিয়েছি Boss, draft ক্যাপশন লিখছি।"
+    },
+    {
+      "role": "owner",
+      "text": "accha aj brishti hobe naki?"
+    },
+    {
+      "role": "agent",
+      "text": "Boss, ঢাকায় বিকেলে হালকা বৃষ্টির সম্ভাবনা আছে।"
+    },
+    {
+      "role": "owner",
+      "text": "dokan e AC ta thik ache to?"
+    },
+    {
+      "role": "agent",
+      "text": "জি Boss, অফিস ক্যামেরায় সব স্বাভাবিক দেখাচ্ছে।"
+    }
+  ],
+  "latestMessage": "তারপর?",
+  "context": {
+    "gapMinutes": 6,
+    "stickyModelId": "or-qwen3-max",
+    "activeWorkflow": {
+      "kind": "fb_post_workflow",
+      "goal": "নতুন পাঞ্জাবি কালেকশনের ফেসবুক পোস্ট",
+      "status": "active",
+      "state": "draft_review",
+      "verifiedEffects": [
+        "generate_image:img-001"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "continue_active_work",
+    "outcome": "Binds to the post workflow at draft_review; the image is NOT regenerated."
+  },
+  "expect2": {
+    "binding": "active_workflow",
+    "resumeBrief": false,
+    "repeatedEffectRisk": true
+  },
+  "tags": [
+    "continuity",
+    "2-3-replies-later"
+  ]
+}

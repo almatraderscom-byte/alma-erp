@@ -1,0 +1,47 @@
+{
+  "id": "rc-0238-fail-waiting-answer",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "failure_recovery",
+  "description": "Work stopped on an unanswered ask card: agent repeats the ONE pending question, does not restart.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "জিজ্ঞেস করেছিলাম: কোন রঙের পাঞ্জাবি পোস্টে যাবে?"
+    }
+  ],
+  "latestMessage": "post er ki khobor?",
+  "context": {
+    "gapMinutes": 240,
+    "pendingCard": {
+      "kind": "ask_card",
+      "id": "ask-101",
+      "question": "কোন রঙের পাঞ্জাবি পোস্টে যাবে?"
+    },
+    "activeWorkflow": {
+      "kind": "fb_post_workflow",
+      "goal": "নতুন পাঞ্জাবি কালেকশনের ফেসবুক পোস্ট",
+      "status": "active",
+      "state": "draft_review",
+      "verifiedEffects": [
+        "generate_image:img-001"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "explain_stop",
+    "outcome": "Waiting on the color answer; asks it again once."
+  },
+  "expect2": {
+    "binding": "pending_card"
+  },
+  "tags": [
+    "failure",
+    "waiting-answer"
+  ]
+}
