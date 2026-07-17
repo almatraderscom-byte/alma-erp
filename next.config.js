@@ -87,6 +87,7 @@ const nextConfig = {
   },
 }
 
+const { withBotId } = require('botid/next/config')
 const { withSentryConfig } = require('@sentry/nextjs')
 
 const sentryBuildOptions = {
@@ -101,7 +102,9 @@ const sentryBuildOptions = {
   tunnelRoute: '/monitoring',
 }
 
+const botIdNextConfig = withBotId(nextConfig)
+
 module.exports =
   process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN
-    ? withSentryConfig(nextConfig, sentryBuildOptions)
-    : nextConfig
+    ? withSentryConfig(botIdNextConfig, sentryBuildOptions)
+    : botIdNextConfig

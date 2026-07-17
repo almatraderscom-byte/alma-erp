@@ -13,6 +13,7 @@ import {
   type TurnSnapshot,
 } from '@/agent/lib/turn-status'
 import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
+import { requireAssistantHumanRequest } from '@/agent/lib/botid-protection'
 
 export const runtime = 'nodejs'
 
@@ -45,6 +46,9 @@ export async function POST(req: NextRequest) {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+
+  const botBlocked = await requireAssistantHumanRequest(req, { route: '/api/assistant/turn' })
+  if (botBlocked) return botBlocked
 
   if (!isTurnHandoffConfigured()) {
     return Response.json(

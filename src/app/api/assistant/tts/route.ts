@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { googleTtsConfigured, synthesizeBanglaMp3 } from '@/agent/lib/google-tts'
 import { getToken } from 'next-auth/jwt'
+import { requireAssistantHumanRequest } from '@/agent/lib/botid-protection'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -38,6 +39,9 @@ export async function POST(req: NextRequest) {
   // Google TTS (text→audio only, no ERP data exposed). The owner agent also uses this.
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+
+  const botBlocked = await requireAssistantHumanRequest(req, { route: '/api/assistant/tts' })
+  if (botBlocked) return botBlocked
 
   if (!googleTtsConfigured()) {
     return Response.json(

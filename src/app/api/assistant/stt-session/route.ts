@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { WHISPER_BANGLA_PROMPT, BANGLA_STT_MODEL } from '@/agent/lib/voice-bangla'
 import { getToken } from 'next-auth/jwt'
+import { requireAssistantHumanRequest } from '@/agent/lib/botid-protection'
 
 export const runtime = 'nodejs'
 export const maxDuration = 15
@@ -23,6 +24,9 @@ export async function POST(req: NextRequest) {
 
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+
+  const botBlocked = await requireAssistantHumanRequest(req, { route: '/api/assistant/stt-session' })
+  if (botBlocked) return botBlocked
 
   if (!process.env.OPENAI_API_KEY) {
     return Response.json({ error: 'OPENAI_API_KEY সেট করা নেই।' }, { status: 503 })

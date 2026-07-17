@@ -40,6 +40,7 @@ import {
   type AgentBusinessId,
 } from '@/lib/agent-api/business-context'
 import { shouldPersistIncomingMessage } from '@/agent/lib/continuation-policy'
+import { requireAssistantHumanRequest } from '@/agent/lib/botid-protection'
 
 export const runtime = 'nodejs'
 // 800s (Pro plan + Fluid compute; Vercel allows up to 1800s). Raised from 300s
@@ -125,6 +126,9 @@ export async function POST(req: NextRequest) {
   const authHeader = req.headers.get('authorization') ?? ''
   const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
   const isInternalCall = verifyInternalToken(bearerToken)
+
+  const botBlocked = await requireAssistantHumanRequest(req, { route: '/api/assistant/chat', bypass: isInternalCall })
+  if (botBlocked) return botBlocked
 
   if (isInternalCall && typeof (body as { modelId?: string }).modelId === 'string') {
     assertModelOverrideNotAllowed((body as { modelId?: string }).modelId)
