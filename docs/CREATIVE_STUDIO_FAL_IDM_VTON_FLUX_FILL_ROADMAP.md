@@ -222,7 +222,7 @@ Cost facts to surface in the UI, not hard-code without a model-price configurati
 | CS9 | `agent-phase-cs9` | Family/couple/full-family protected compositing | READY FOR OWNER |
 | CS10 | `agent-phase-cs10` | QC 2.0, golden evaluation and model comparison | READY FOR OWNER |
 | CS11 | `agent-phase-cs11` | Short-video and owner-shot video hardening | READY FOR OWNER |
-| CS12 | `agent-phase-cs12` | Observability, rollout controls and final E2E certification | TODO |
+| CS12 | `agent-phase-cs12` | Observability, rollout controls and final E2E certification | READY FOR OWNER |
 
 The roadmap file itself is allowed in every phase only for updating that phase's status/checklist. Do not rewrite future phase scope while implementing the current phase unless the owner explicitly approves a roadmap change.
 
@@ -793,6 +793,20 @@ The roadmap file itself is allowed in every phase only for updating that phase's
 - Typecheck, targeted tests, full relevant tests, build, and diff scope pass.
 - No production deployment or main merge is performed by Claude Code.
 - Update CS12 status to `READY FOR OWNER`, push the branch, and stop.
+
+### CS12 verification notes (2026-07-17, branch `agent-phase-cs12`, tag `pre-agent-phase-cs12`, PR #427 — owner-directed continuation + merge) — **PROGRAM COMPLETE**
+
+**Status: READY FOR OWNER (merged; live-verified on production)**
+
+- **🚦 Engine health live:** `/api/assistant/creative-studio/health` + Settings section — real 7-day per-engine numbers on production (e.g. Fal v1.6: 5 jobs · 0% failed · p95 34s · $0.525; FASHN direct honestly shows 40% failed = the OutOfCredits window), worker heartbeat, live balances (fal $8.74 at verification).
+- **Kill switch live-PASSED ($0):** IDM killed via settings → a queued IDM job was REFUSED by the worker with "ইঞ্জিনটি kill switch দিয়ে বন্ধ করা আছে (fal_idm_vton) — সেটিংস থেকে চালু করে আবার চালান।" → switch off → engine available again. Enforcement is worker-side, no redeploy.
+- **Canary %:** stored/validated/surfaced (`cs_auto_canary_pct`, pure-tested applyCanary). Routing hookup deliberately deferred: CS10 verdict says no Auto-default candidate exists yet — the owner decides when one does (1-line create-run hookup then).
+- **FASHN direct credits** joined the live balance/alert system — the OutOfCredits class of surprise is now visible in advance.
+- **Certification:** `docs/creative-studio-final-certification.md` (full E2E matrix, every PASS tied to a real receipt, no unsupported claims; open items: couple live run one click away, clean golden set, music bed, per-engine acceptance tally) + `worker/scripts/run-creative-studio-certification.mjs` (paid-free environment PASS/FAIL, stored to kv).
+- Checks: type-check PASS, build PASS, vitest 116/116.
+- Real spend this phase: **$0** (kill-switch test blocks before any paid call).
+- Known nuance: the health "Worker সাড়া নেই" badge keys off the long-task consumer heartbeat (2026-07-13 pattern) — the HTTP-poll worker was demonstrably alive (it processed the kill-test job); badge self-heals a minute after a deploy settles.
+- Deviations (owner-directed): phases CS5–CS12 all ran in one continuous session at the owner's explicit instruction, with Claude merging PRs and deploying the VPS worker under standing permission ("worker deploy koro" / "onumoti dilam"); the roadmap's one-phase-per-session rule was overridden by the owner for this program.
 
 ## 8. Mandatory phase workflow
 
