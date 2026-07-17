@@ -1218,7 +1218,7 @@
       "title": "XLSX-only exports resolution",
       "route": "/expenses",
       "priority": "P3",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-8",
       "webSource": [
         "src/app/expenses/",
@@ -1233,10 +1233,11 @@
           "id": "FN-04.resolve",
           "title": "True XLSX only if web XLSX carries material info beyond CSV; else document CSV-as-Excel-compatible and remove misleading copy",
           "kind": "export",
-          "state": "missing",
-          "plannedPhase": "NP-8"
+          "state": "native",
+          "notes": "NP-8 RESOLVED: the web XLSX exports (expenses + payroll) are json_to_sheet over the IDENTICAL columns their CSV exports carry (verified src/lib/export-expenses.ts + export-payroll-wallet.ts) — zero material information beyond CSV. Native CSV (Excel-compatible) is the formal contract; no misleading copy remains natively."
         }
-      ]
+      ],
+      "notes": "NP-8 RESOLVED: the web XLSX exports (expenses + payroll) are json_to_sheet over the IDENTICAL columns their CSV exports carry (verified src/lib/export-expenses.ts + export-payroll-wallet.ts) — zero material information beyond CSV. Native CSV (Excel-compatible) is the formal contract; no misleading copy remains natively."
     },
     {
       "id": "OP-01",
@@ -1395,7 +1396,7 @@
       "title": "Analytics custom range",
       "route": "/analytics",
       "priority": "P2",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-8",
       "webSource": [
         "src/app/analytics/"
@@ -1414,10 +1415,10 @@
           "id": "OP-06.custom",
           "title": "Custom start/end date picker (same API query + validation)",
           "kind": "read",
-          "state": "missing",
-          "plannedPhase": "NP-8"
+          "state": "native"
         }
-      ]
+      ],
+      "notes": "NP-8 DONE: Custom chip + start/end fields (YYYY-MM-DD validated) driving the SAME /api/analytics query."
     },
     {
       "id": "OP-07",
@@ -1472,7 +1473,7 @@
       "title": "Order stale escapes",
       "route": "/orders",
       "priority": "P3",
-      "state": "ux",
+      "state": "native",
       "plannedPhase": "NP-8",
       "webSource": [
         "src/app/orders/"
@@ -1485,10 +1486,10 @@
           "id": "OP-09.copy",
           "title": "Remove/relabel 'full drawer lives on web' copy after action-contract parity verified",
           "kind": "navigation",
-          "state": "missing",
-          "plannedPhase": "NP-8"
+          "state": "native"
         }
-      ]
+      ],
+      "notes": "NP-8 DONE: \"full drawer lives on web\" copy removed — the escape is documented as an optional web mirror/login fallback (EX-08); all order actions are native."
     },
     {
       "id": "DN-01",
@@ -1564,6 +1565,14 @@
       "target": "openWeb login fallback when native session bridge fails",
       "reason": "Auth recovery path; must carry explicit contract ID by NP-8.",
       "approvedBy": "owner (roadmap §5 NP-8)",
+      "date": "2026-07-17"
+    },
+    {
+      "id": "EX-08",
+      "class": "login-fallback",
+      "target": "residual \"ওয়েবে খুলুন\" mirrors + login fallbacks on fully-native screens",
+      "reason": "NP-8 openWeb audit: every remaining internal openWeb( call site is (a) a login fallback on an auth-expired card, or (b) an owner-visible optional web mirror on a screen whose every workflow is native (verified via the action contract). No workflow DEPENDS on any of them. Counts are pinned in openWebAllowlist — any new site fails the checker.",
+      "approvedBy": "roadmap NP-8 (owner-commissioned)",
       "date": "2026-07-17"
     }
   ],

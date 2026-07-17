@@ -474,7 +474,8 @@ struct OrdersScreen: View {
     @State private var customEnd = Date()
     @State private var showCreate = false
 
-    /// Escape hatches into the proven web screens (full drawer, login).
+    /// NP-8 (OP-09): login fallback + optional web mirror only — every order
+    /// workflow (create/detail/status/edit/delete-request/invoice) is native.
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -1395,7 +1396,7 @@ private struct OrderDetailSheet: View {
     private var webEscape: some View {
         Button {
             dismiss()
-            openWeb("/orders", "Orders") // full drawer lives on the web list
+            openWeb("/orders", "Orders") // NP-8 (OP-09): parity fallback only — every order action is native
         } label: {
             Label("ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
