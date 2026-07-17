@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { emitWebOfficeCallEvent } from '@/agent/lib/office-call-client-events'
+import { acquireWebCallLease } from '@/agent/lib/office-call-web-lease'
 import {
   connectionStateForAgora,
   isExpectedAgoraPeer,
@@ -99,6 +100,7 @@ export function useAgoraCall(): UseAgoraCall {
   const selectedOutputRef = useRef('')
   const sdkDeviceCleanupRef = useRef<(() => void) | null>(null)
   const renewingRef = useRef(false)
+  const leaseReleaseRef = useRef<(() => void) | null>(null)
 
   const updateState = useCallback((next: AgoraCallState) => {
     stateRef.current = next
@@ -140,6 +142,8 @@ export function useAgoraCall(): UseAgoraCall {
     sdkDeviceCleanupRef.current?.()
     sdkDeviceCleanupRef.current = null
     renewingRef.current = false
+    leaseReleaseRef.current?.()
+    leaseReleaseRef.current = null
     expectedPeerUidRef.current = null
     establishedPeerUidRef.current = null
     for (const track of remoteTracksRef.current.values()) {
@@ -203,6 +207,20 @@ export function useAgoraCall(): UseAgoraCall {
     let localClient: AnyClient | null = null
     let localTrack: AnyLocalAudioTrack | null = null
     try {
+      const callId = ch.startsWith('itc_') ? ch.slice(4) : ch
+      const releaseLease = await acquireWebCallLease(callId, () => {
+        if (!stillCurrent()) return
+        setError('call_active_in_another_tab')
+        emitWebOfficeCallEvent({ channel: ch, event: 'client.tab_lease_lost', state: stateRef.current })
+        void leave().then(() => updateState('error'))
+      })
+      if (!releaseLease) throw new Error('call_active_in_another_tab')
+      if (!stillCurrent()) {
+        releaseLease()
+        return
+      }
+      leaseReleaseRef.current = releaseLease
+
       const controller = new AbortController()
       requestAbortRef.current = controller
       const response = await fetch('/api/assistant/office/intercom/call-token', {
@@ -386,7 +404,7 @@ export function useAgoraCall(): UseAgoraCall {
       updateState('error')
       emitWebOfficeCallEvent({ channel: ch, event: 'client.media_error', state: 'error', metadata: { code } })
     }
-  }, [clearRemoteGrace, refreshDevices, teardown, updateRemoteJoined, updateState])
+  }, [clearRemoteGrace, leave, refreshDevices, teardown, updateRemoteJoined, updateState])
 
   const toggleMute = useCallback(async () => {
     const track = localTrackRef.current

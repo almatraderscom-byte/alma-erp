@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { connectionStateForAgora, isExpectedAgoraPeer, webCallErrorCode } from '../office-call-web-policy'
+import { canClaimWebCallLease } from '../office-call-web-lease'
 
 describe('Office web call policy', () => {
   it('accepts only the participant-bound Agora uid', () => {
@@ -19,5 +20,15 @@ describe('Office web call policy', () => {
     expect(webCallErrorCode(new DOMException('blocked', 'NotAllowedError'))).toBe('microphone_permission_denied')
     expect(webCallErrorCode(new DOMException('busy', 'NotReadableError'))).toBe('microphone_in_use')
     expect(webCallErrorCode(new DOMException('gone', 'NotFoundError'))).toBe('microphone_not_found')
+  })
+
+  it('allows exactly one live media owner per browser call across 30 cycles', () => {
+    for (let call = 0; call < 30; call += 1) {
+      const now = 1_000_000 + call
+      const active = { owner: `tab-a-${call}`, expiresAt: now + 15_000 }
+      expect(canClaimWebCallLease(active, `tab-a-${call}`, now)).toBe(true)
+      expect(canClaimWebCallLease(active, `tab-b-${call}`, now)).toBe(false)
+      expect(canClaimWebCallLease(active, `tab-b-${call}`, active.expiresAt)).toBe(true)
+    }
   })
 })
