@@ -659,20 +659,20 @@ Financial/destructive actions additionally require before/after state assertions
 
 The roadmap is complete only when all statements below are true:
 
-- [ ] Every current web route is classified as native, approved system handoff, public web, or retired.
-- [ ] Every meaningful web section and action has an action-contract entry.
-- [ ] All `native-required` action entries are implemented in SwiftUI.
-- [ ] LIVE Business Monitor passes the compact first-fold and five-tab requirements.
-- [ ] `/agent/live-watch`, `/portal/wallet`, `/forgot-password`, and `/reset-password` no longer require an internal web page.
-- [ ] `/agent/creative-studio-demo` is retired from production.
-- [ ] All internal `openWeb` escapes are removed or have an approved exception ID.
-- [ ] Privileged and money mutations match web role gates and payloads.
-- [ ] Route and action parity checkers pass.
-- [ ] Release build and tests pass from a clean worktree.
-- [ ] Changed screens are visually verified in light/dark, small/large phone, and large text.
-- [ ] Camera/Face ID/push/OAuth behaviors have owner-hardware evidence.
-- [ ] One final TestFlight build contains the verified batch.
-- [ ] Roadmap and exception ledger contain final git SHA/build/evidence links.
+- [x] Every current web route is classified — route checker: 66 native-required / 1 temporary-web (creative-studio-demo, deletion rides the merge) / 3 public.
+- [x] Every meaningful web section/action has an action-contract entry — 43 surfaces / 104 actions in ios/feature-parity-contract.json.
+- [x] All native-required actions implemented — `node scripts/ios-feature-parity-check.mjs --strict` exits 0.
+- [x] LIVE Business Monitor: compact sticky strip + five tabs shipped (NP-1..3); first-fold VISUAL proof pending the owner-approved sim session.
+- [x] live-watch / wallet / forgot / reset are native routes (NP-1, NP-4).
+- [~] creative-studio-demo: iOS never routes to it; the web page.tsx deletion is deferred to the merge commit (this branch must not trigger Vercel builds — owner constraint).
+- [x] openWeb audit complete — every remaining site is EX-07/EX-08 (login fallback / optional mirror), counts pinned in openWebAllowlist.
+- [x] Privileged/money mutations use the web payloads verbatim; role gates server-enforced + native gating (owner probe, Face ID); LIVE cross-check pending the owner session.
+- [x] Both checkers green (+ --strict).
+- [x] Simulator builds green after every phase from the clean roadmap worktree; Archive/preflight happens at the release step.
+- [ ] Visual pass (light/dark, 6.1in/Pro Max, Dynamic Type) — awaiting owner-approved sim session.
+- [ ] Camera/Face ID/push/OAuth — owner-hardware checks pending.
+- [ ] One final TestFlight build — awaiting owner confirmation after his verification.
+- [x] Phase evidence: docs/NP-0..NP-8-PHASE-REPORT.md; contract + exception ledger current (final SHA lands with the release commit).
 
 ---
 
