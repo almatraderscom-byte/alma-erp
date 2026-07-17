@@ -103,6 +103,19 @@ export async function POST(
     console.warn('[reject] workflow sync failed (rejection unaffected):', err instanceof Error ? err.message : err)
   }
 
+  // Phase 34: consume the card's bridge/interrupt thread (typed 'reject') so a
+  // later stray approve on the same thread reports already-consumed instead of
+  // resuming. Zero effects either way — rejection is final. Fail-open.
+  try {
+    const bridgeThread = (action.payload as { bridgeThread?: { threadId?: string }; graphThread?: { threadId?: string } })
+    if (bridgeThread.bridgeThread?.threadId) {
+      const { resumeDecisionThread } = await import('@/agent/lib/graph/action-bridge')
+      await resumeDecisionThread({ decision: 'reject', cardId: actionId })
+    }
+  } catch (err) {
+    console.warn('[reject] bridge thread consume failed (rejection unaffected):', err instanceof Error ? err.message : err)
+  }
+
   // Phase 1 approval span: rejections join the turn trace too — a rejected card
   // is the strongest "the agent staged the wrong thing" signal we have (fail-open).
   void import('@/agent/lib/tool-telemetry').then((m) =>
