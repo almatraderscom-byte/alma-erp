@@ -808,6 +808,15 @@ The roadmap file itself is allowed in every phase only for updating that phase's
 - Known nuance: the health "Worker সাড়া নেই" badge keys off the long-task consumer heartbeat (2026-07-13 pattern) — the HTTP-poll worker was demonstrably alive (it processed the kill-test job); badge self-heals a minute after a deploy settles.
 - Deviations (owner-directed): phases CS5–CS12 all ran in one continuous session at the owner's explicit instruction, with Claude merging PRs and deploying the VPS worker under standing permission ("worker deploy koro" / "onumoti dilam"); the roadmap's one-phase-per-session rule was overridden by the owner for this program.
 
+### Post-program hardening: supplier-photo reality (2026-07-17, PRs #431/#432/#433 — owner directive "reseller-ra garment-only image dey na")
+
+Resellers never send garment-only photos — always on-model/on-mannequin, usually with marketing text/price plates. Three deterministic, free (no-LLM) fixes, all live-proven on the real olive father+son supplier photo in production:
+
+- **Garment prep** (PR #431 + #432, `worker/src/garment-prep.mjs`): supplier photo → local segmentation → connected-component split → per-person crops, **white-flattened cutouts** (kv `garment_prep_v2:<path>`). Tallest crop = adult piece; a second (shorter) component becomes the REAL child garment and drops the AI child_garment step. Family chains prepend a free `garment_prep` step; adult try-on sends `garment_photo_type: model` to fal FASHN v1.6.
+- **Model-photo plate scrub** (PR #433, `worker/src/photo-cleanup.mjs`): the CODE-133 plate in every output actually came from the saved **Father test model photo** (itself a reseller shot) — FASHN keeps the model image's background. Dark-rectangle detection → largest-alpha-component person mask → interior-hole fill (white glyphs) → per-row smear fill of only the component pixels + blur; person pixels pixel-identical; kv `model_clean:<path>`; fail-open. Hooked into fal FASHN v1.6, cat-vton and direct FASHN `model_image`.
+- **Live E2E proof (3rd olive run, ≈$0.15)**: prep cache hit → cleaned model (`cleaned/model_library_….png`, byte-identical to the local harness output) → adult shot WITHOUT plate → cached child garment reused (plan auto-shortened 5→4 steps) → protected composite "৪/৪ · ২ জন যাচাই" clean of ALL marketing text.
+- Honest limits (documented in code): people touching in the supplier photo merge into ONE component (olive photo) so the child piece isn't split — apart-standing sets (like the maroon মা-মেয়ে set) will split; only DARK plates are detected (bright plates risk lamp/sky false positives); boxless stroked text overlaying a person survives segmentation — residual risk, FASHN ignored it in live runs.
+
 ## 8. Mandatory phase workflow
 
 Claude Code must execute this checklist for every phase:
