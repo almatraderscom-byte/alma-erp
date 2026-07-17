@@ -34,13 +34,39 @@ xcrun simctl launch --console-pty $UDID com.almatraders.islandprobe | grep MEASU
 
 ## Build 77-এ আরো যা ঢুকবে বলে ঠিক আছে (এই ব্রাঞ্চে already আছে)
 
-Main-current সব — build 76-এর পরে merge হওয়া PR #427-433 (creative-studio garment-prep ইত্যাদি) + 160pt fix। তোমার নিজের কাজ এর ওপরে।
+Main-current সব — build 76-এর পরে merge হওয়া PR #427-433 (creative-studio garment-prep ইত্যাদি) + 160pt fix + **PR #446-এর bKash send-flow (নিচের section)**। তোমার নিজের কাজ এর ওপরে।
+
+## bKash send-flow (PR #446, main-এ merged 2026-07-17 — এই ব্রাঞ্চে merge করা আছে, conflict ছিল না)
+
+Owner-এর payout workflow: Approvals (বা Payroll) → Approve → **এক tap-এ প্রাপকের বিকাশ নম্বর copy + bkash:// দিয়ে bKash app খোলা** → টাকা পাঠিয়ে ফিরলে sheet **নিজে আবার খোলে** "TrxID পেস্ট করুন" mode-এ (app kill হলেও UserDefaults `alma.bkashSendPending.v1` থেকে ফেরে, TTL 12h, surface-scoped `payroll`/`approvals`) → পেস্ট বাটন clipboard থেকে **শুধু TrxID-আকৃতির token** নেয় (10 alnum + অন্তত ১টা digit — ফোন নম্বর/amount reject)।
+
+- **ফাইল:** `ios/App/App/ApprovalsSwiftUI.swift` (WithdrawTxnSheet + restore), `ios/App/App/PayrollSwiftUI.swift` (PayrollReviewSheet + restore + `BkashSendPendingStore` + `payrollExtractTrxId` — store/extractor দুই ফাইলেই শেয়ার্ড, PayrollSwiftUI-তে সংজ্ঞা)। Server-side কিছু বদলায়নি এই ব্রাঞ্চে যা আগে থেকে main-এ নেই।
+- **Owner-gate:** server payoutSummary-র খোলা নম্বর শুধু SUPER_ADMIN-কে দেয় — নম্বর নেই/masked (`*`) হলে UI ব্লকটা আসেই না। ADMIN-এ regression-চেক করার দরকার নেই, gate server-এ।
+- **নতুন Swift ফাইল নেই** — pbxproj অপরিবর্তিত, plist অপরিবর্তিত (bkash:// scheme খোলা Capacitor/`UIApplication.open` দিয়েই হয়, `LSApplicationQueriesSchemes` লাগে না)।
+
+### সিম-verify recipe (আগের সেশনে একবার পুরোটা PASS করা — তুমি আবার করবে তোমার কাজের সাথে)
+
+সিম `9E51818A-…` (IOSP0), unlock: passcode `Maruf@123` (memory `reference_ios_sim_access`)। Prod-এ একটা আসল pending WALLET_WITHDRAWAL থাকা লাগবে (2026-07-17-এ Mohammad Eyafi ৳7,400 ছিল; না থাকলে ভিজ্যুয়াল অংশটুকু স্কিপ করে শুধু build+screenshot দাও, **টেস্টের জন্য নিজে withdrawal request বানিয়ো না**)।
+
+1. Build+install+launch → Approvals tab → withdrawal কার্ডের **Approve** → sheet-এ দেখো: প্রাপকের বিকাশ নম্বর + "নম্বর কপি করে বিকাশ খুলুন" + TrxID ঘরের পাশে "পেস্ট" ✅
+2. কপি-বাটন tap → `xcrun simctl pbpaste $UDID` = নম্বর ✅; pending সংরক্ষিত কি না:
+   `C=$(xcrun simctl get_app_container $UDID com.almatraders.erp data)` → `$C/Library/Preferences/com.almatraders.erp.plist`-এ `alma.bkashSendPending.v1` আছে (⚠️ `simctl spawn defaults read` container prefs **দেখে না** — plist-টা plutil/python দিয়ে পড়ো) ✅
+3. `simctl terminate` + relaunch + unlock → Approvals tab → sheet **নিজে খোলে** "বিকাশ থেকে ফিরেছেন…" mode-এ ✅
+4. Sheet swipe-down → plist থেকে entry মুছে গেছে ✅
+5. **কখনোই "Confirm approval" চেপো না** — আসল টাকার record; sheet খোলা-বন্ধই যথেষ্ট।
+
+### Gotchas (এই কাজ verify করতে গিয়ে শেখা)
+
+- Sheet-এর ভেতরের বাটনে tap করার আগে **fresh screenshot** — detent animation-এর সাথে race করলে tap পেছনের কার্ডে লাগে (একবার detail sheet খুলে গিয়েছিল)
+- সিমে `bkash://` খুললে **কিছুই দেখা যায় না** (bKash install নেই, `UIApplication.open` নীরবে fail) — এটা প্রত্যাশিত, sheet resumed-mode-এ যায় না যতক্ষণ scenePhase না বদলায়; আসল যাচাই device-এ
+- Sheet খোলা রেখে bKash ঘুরে এলে (app kill ছাড়া) `onChange(of: scenePhase)`-ই mode flip করে — দুটো পথই টেস্টেড
 
 ## Owner-এর কাছে দেখানোর সময় (confirm-এর আগে)
 
 1. প্রোবের MEASURE লাইনগুলো (সংখ্যাসহ) + লক/island PNG
-2. তোমার নিজের কাজের প্রমাণ
-3. `git log origin/main..HEAD` — কী কী যাচ্ছে তার তালিকা, **conflict-ছাড়া** merge-প্রমাণ
+2. bKash sheet-এর ৪-ধাপ recipe-র screenshot (উপরের section)
+3. তোমার নিজের কাজের প্রমাণ
+4. `git log origin/main..HEAD` — কী কী যাচ্ছে তার তালিকা, **conflict-ছাড়া** merge-প্রমাণ
 
 ## Build 77 recipe (owner-এর confirm-এর পরে, আগে নয়)
 
