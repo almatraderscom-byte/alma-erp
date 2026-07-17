@@ -298,6 +298,14 @@ export const INTERCOM_CSS = `
 .itc-call-target .actions button:disabled{opacity:.45;cursor:not-allowed}.itc-call-target .actions small{font-size:9px;font-weight:700}
 .itc-call-diagnostic{margin-top:15px;padding:12px 14px;border-radius:14px;color:#fde68a;background:rgba(245,158,11,.12);
   border:1px solid rgba(245,158,11,.3);font-size:12px;line-height:1.5}
+.itc-call-health-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.itc-call-health-head h3{margin:0!important}
+.itc-call-health-head span{font-size:10px;font-weight:800;padding:4px 8px;border-radius:999px}.itc-call-health-head span.ok{color:#6ee7b7;background:rgba(34,197,94,.12)}
+.itc-call-health-head span.warn{color:#fcd34d;background:rgba(245,158,11,.12)}
+.itc-call-health{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:11px}
+.itc-call-health>div{display:flex;min-width:0;flex-direction:column;padding:10px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07)}
+.itc-call-health>div b{font-size:13px;overflow-wrap:anywhere}.itc-call-health>div small{font-size:9.5px;color:#AEB2C0}
+.itc-call-security,.itc-call-health-alerts{grid-column:1/-1;margin:0;padding:9px 11px;border-radius:12px;font-size:10.5px;line-height:1.45}
+.itc-call-security{color:#cbd5e1;background:rgba(148,163,184,.09)}.itc-call-health-alerts{color:#fde68a;background:rgba(245,158,11,.12);overflow-wrap:anywhere}
 .itc-recent-call{display:grid;grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;
   background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07)}
 .itc-recent-call .direction{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:900;background:rgba(255,255,255,.07)}
@@ -316,6 +324,7 @@ export const INTERCOM_CSS = `
   .itc-call-target .avatar{width:44px;height:44px}.itc-call-target .actions a,.itc-call-target .actions button{min-width:48px}
 }
 @media(max-width:390px){.itc-call-target .actions small{display:none}.itc-call-target .actions a,.itc-call-target .actions button{min-width:44px;width:44px}}
+@media(max-width:480px){.itc-call-health{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 /* ═══ full-screen live-call overlay (incoming ring + active call) ═══ */
 .itc-call{position:fixed;inset:0;z-index:2147483401;display:flex;flex-direction:column;align-items:center;

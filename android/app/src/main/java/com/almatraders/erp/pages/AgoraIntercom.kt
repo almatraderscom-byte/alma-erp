@@ -40,6 +40,7 @@ import com.almatraders.erp.OfficeCallPushRegistration
 import io.agora.rtc2.ChannelMediaOptions
 import io.agora.rtc2.Constants
 import io.agora.rtc2.IRtcEngineEventHandler
+import io.agora.rtc2.IRtcEngineEventHandler.RtcStats
 import io.agora.rtc2.RtcEngine
 import io.agora.rtc2.RtcEngineConfig
 import kotlinx.coroutines.Dispatchers
@@ -107,6 +108,9 @@ object AgoraIntercom {
     @Volatile private var canonicalStateValue = ""
     private var callOutgoing = false
     private var currentTokenExpiryMs: Long? = null
+    private var joinStartedAtMs = 0L
+    private var lastQualityTelemetryMs = 0L
+    private var reconnectCount = 0
     private var mutedBeforeInactive = false
     private val handledCallIds = HashSet<String>()
     private val telemetryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -250,6 +254,7 @@ object AgoraIntercom {
     suspend fun startCall(ch: String, outgoing: Boolean) {
         currentCallId = callIdFromChannel(ch)
         callOutgoing = outgoing
+        joinStartedAtMs = System.currentTimeMillis()
         emitTelemetry(if (outgoing) "client.join_started" else "client.answer_pressed", "connecting")
         if (!outgoing) emitTelemetry("client.join_started", "connecting")
         post { error = null; mode = Mode.RINGING; callSeconds = 0; statusText = if (outgoing) "রিং হচ্ছে…" else "কল ধরছেন…" }
@@ -481,6 +486,9 @@ object AgoraIntercom {
         canonicalStateValue = ""
         callOutgoing = false
         currentTokenExpiryMs = null
+        joinStartedAtMs = 0L
+        lastQualityTelemetryMs = 0L
+        reconnectCount = 0
         mutedBeforeInactive = false
     }
 
@@ -648,7 +656,9 @@ object AgoraIntercom {
 
     private fun beginReconnectGrace() {
         if (currentCallId == null || reconnectDeadlineMs != null) return
+        reconnectCount += 1
         reconnectDeadlineMs = System.currentTimeMillis() + 15_000
+        emitTelemetry("client.reconnect_started", "reconnecting", metrics = mapOf("reconnectCount" to reconnectCount))
         post { mode = Mode.RECONNECTING; connected = false; statusText = "পুনঃসংযোগ হচ্ছে…"; reconnectSeconds = 15 }
         coordinatorScope.launch { transitionCanonical("RECONNECTING") }
         val task = object : Runnable {
@@ -737,7 +747,8 @@ object AgoraIntercom {
     private val handler = object : IRtcEngineEventHandler() {
         override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) {
             post { connected = false }
-            emitTelemetry("client.local_joined", "connecting")
+            val latency = if (joinStartedAtMs > 0) (System.currentTimeMillis() - joinStartedAtMs).coerceAtLeast(0) else null
+            emitTelemetry("client.local_joined", "connecting", latencyMs = latency)
         }
         override fun onUserJoined(uid: Int, elapsed: Int) {
             remoteUids.add(uid)
@@ -752,6 +763,9 @@ object AgoraIntercom {
                     stopRingTimeout(); ringtone.stop(); startCallTicker()
                 }
                 currentCallId?.let { OfficeCallTelecom.setActive(it) }
+                if (reconnectCount > 0) emitTelemetry(
+                    "client.reconnect_recovered", "in-call", metrics = mapOf("reconnectCount" to reconnectCount),
+                )
                 emitTelemetry("client.peer_joined", "in-call")
             }
         }
@@ -773,6 +787,9 @@ object AgoraIntercom {
                         if (transitionCanonical("CONNECTED")) {
                             stopReconnectGrace()
                             post { mode = Mode.CALLING; connected = true; statusText = "কল চলছে" }
+                            emitTelemetry(
+                                "client.reconnect_recovered", "in-call", metrics = mapOf("reconnectCount" to reconnectCount),
+                            )
                         }
                     }
                 }
@@ -791,6 +808,24 @@ object AgoraIntercom {
                 else -> "unknown"
             }
             post { audioRoute = route; speakerEnabled = route == "speaker" }
+            if (currentCallId != null) emitTelemetry("client.audio_route_changed", canonicalStateValue.lowercase(), route)
+        }
+        override fun onRtcStats(stats: RtcStats?) {
+            val sample = stats ?: return
+            val now = System.currentTimeMillis()
+            if (currentCallId == null || now - lastQualityTelemetryMs < 10_000) return
+            lastQualityTelemetryMs = now
+            emitTelemetry(
+                "client.quality_sample",
+                canonicalStateValue.lowercase(),
+                metrics = mapOf(
+                    "rttMs" to sample.lastmileDelay,
+                    "packetLossPct" to maxOf(sample.txPacketLossRate, sample.rxPacketLossRate),
+                    "txAudioKbps" to sample.txAudioKBitRate,
+                    "rxAudioKbps" to sample.rxAudioKBitRate,
+                    "reconnectCount" to reconnectCount,
+                ),
+            )
         }
         override fun onAudioVolumeIndication(speakers: Array<out AudioVolumeInfo>?, totalVolume: Int) {
             val list = speakers ?: return
@@ -850,7 +885,13 @@ object AgoraIntercom {
         return runCatching { UUID.fromString(candidate).toString() }.getOrNull()
     }
 
-    private fun emitTelemetry(event: String, state: String, detail: String? = null) {
+    private fun emitTelemetry(
+        event: String,
+        state: String,
+        detail: String? = null,
+        latencyMs: Long? = null,
+        metrics: Map<String, Number> = emptyMap(),
+    ) {
         val callId = currentCallId ?: return
         val context = appContext ?: return
         val installationId = OfficeCallPushRegistration.installationId(context)
@@ -867,7 +908,13 @@ object AgoraIntercom {
             .put("appBuild", "${packageInfo?.versionName ?: "unknown"} (${versionCode ?: 0})")
             .put("state", state)
             .put("occurredAt", OfficeCallTime.nowIso())
-        if (detail != null) body.put("metadata", JSONObject().put("code", detail.take(160)))
+        if (latencyMs != null) body.put("latencyMs", latencyMs)
+        if (detail != null || metrics.isNotEmpty()) {
+            val metadata = JSONObject()
+            if (detail != null) metadata.put("code", detail.take(160))
+            metrics.forEach { (key, value) -> metadata.put(key, value) }
+            body.put("metadata", metadata)
+        }
         telemetryScope.launch { runCatching { AlmaApi.send("POST", "/api/assistant/office/calls/events", body) } }
     }
 }

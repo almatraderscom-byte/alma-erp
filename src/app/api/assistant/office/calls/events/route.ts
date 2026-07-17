@@ -10,6 +10,7 @@ import {
 } from '@/agent/lib/office-call-observability'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
+import { getOfficeCallRuntimePolicy } from '@/agent/lib/office-call-reliability'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -43,6 +44,9 @@ export async function POST(req: NextRequest) {
 
   const identity = await identify(req)
   if (!identity.ok) return Response.json({ error: identity.error }, { status: identity.code })
+
+  const contentLength = Number(req.headers.get('content-length') ?? 0)
+  if (contentLength > 16_384) return Response.json({ error: 'payload_too_large' }, { status: 413 })
 
   let body: {
     callId?: string
@@ -79,6 +83,21 @@ export async function POST(req: NextRequest) {
     select: { id: true },
   })
   if (!participant) return Response.json({ error: 'call_forbidden' }, { status: 403 })
+
+  const eventLimit = getOfficeCallRuntimePolicy().rateLimit.eventsPerCallPerMinute
+  const recentEvents = await prisma.officeCallEvent.count({
+    where: {
+      callId,
+      actorUserId: identity.userId,
+      occurredAt: { gte: new Date(Date.now() - 60_000) },
+    },
+  })
+  if (recentEvents >= eventLimit) {
+    return Response.json(
+      { error: 'rate_limited', retryAfterSec: 60 },
+      { status: 429, headers: { 'Retry-After': '60' } },
+    )
+  }
 
   const occurredAt = body.occurredAt ? new Date(body.occurredAt) : undefined
   if (occurredAt && Number.isNaN(occurredAt.getTime())) {

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   findFirst: vi.fn(),
   findMany: vi.fn(),
+  count: vi.fn(),
   userFindMany: vi.fn(),
 }))
 
@@ -16,6 +17,7 @@ vi.mock('@/lib/prisma', () => ({
       findUnique: mocks.findUnique,
       findFirst: mocks.findFirst,
       findMany: mocks.findMany,
+      count: mocks.count,
     },
     user: { findMany: mocks.userFindMany },
   },
@@ -81,6 +83,7 @@ describe('office call domain persistence guards', () => {
     mocks.findUnique.mockReset()
     mocks.findFirst.mockReset()
     mocks.findMany.mockReset()
+    mocks.count.mockReset().mockResolvedValue(0)
     mocks.userFindMany.mockReset()
   })
 

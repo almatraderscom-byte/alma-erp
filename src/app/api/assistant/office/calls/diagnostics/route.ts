@@ -13,6 +13,11 @@ import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { businessAllowed } from '@/lib/business-access'
 import { officeCallDeviceEncryptionConfigured } from '@/agent/lib/office-call-devices'
+import {
+  collectOfficeCallHealth,
+  getOfficeCallRuntimePolicy,
+  OFFICE_CALL_MEDIA_SECURITY_POSTURE,
+} from '@/agent/lib/office-call-reliability'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -36,7 +41,7 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'invalid_call_id' }, { status: 400 })
   }
 
-  const [registered, outbox, events, call] = await Promise.all([
+  const [registered, outbox, events, call, health] = await Promise.all([
     prisma.officeCallDevice.groupBy({
       by: ['provider', 'platform'],
       where: {
@@ -87,6 +92,7 @@ export async function GET(req: NextRequest) {
           },
         })
       : Promise.resolve(null),
+    collectOfficeCallHealth({ businessId, hours: 24 }),
   ])
 
   const outboxCounts = Object.fromEntries(outbox.map((row) => [row.status, row._count.id]))
@@ -95,6 +101,7 @@ export async function GET(req: NextRequest) {
     ...(apnsVoipConfigured() || fcmCallConfigured() ? [] : ['no_direct_call_provider_configured']),
     ...((outboxCounts.DEAD ?? 0) > 0 ? [`dead_delivery_outbox:${outboxCounts.DEAD}`] : []),
   ]
+  const runtimePolicy = getOfficeCallRuntimePolicy()
 
   return Response.json({
     ok: true,
@@ -110,7 +117,9 @@ export async function GET(req: NextRequest) {
       ),
     },
     timing: OFFICE_CALL_TIMING,
+    runtimePolicy,
     contract: OFFICE_CALL_PRODUCT_CONTRACT,
+    mediaSecurity: OFFICE_CALL_MEDIA_SECURITY_POSTURE,
     registeredDevices: registered.map((row) => ({
       provider: row.provider,
       platform: row.platform,
@@ -128,5 +137,6 @@ export async function GET(req: NextRequest) {
     },
     call,
     events,
+    health,
   })
 }

@@ -5,7 +5,7 @@ import { errorMeta, logEvent } from '@/lib/logger'
 
 export const OFFICE_CALL_TIMING = {
   ringTimeoutMs: 60_000,
-  peerReconnectGraceMs: 5_000,
+  peerReconnectGraceMs: 15_000,
   tokenTtlSec: 3_600,
   pushTtlSec: 45,
   maxCallDurationMs: 2 * 60 * 60_000,
@@ -30,6 +30,24 @@ export const OFFICE_CALL_CLIENT_EVENTS = [
   'client.leave_started',
   'client.local_left',
   'client.media_error',
+  'client.connection_state',
+  'client.connection_changed',
+  'client.quality_sample',
+  'client.audio_route_changed',
+  'client.audio_interrupted',
+  'client.reconnect_started',
+  'client.reconnect_recovered',
+  'client.reconcile_failed',
+  'client.transition_failed',
+  'client.token_renewed',
+  'client.token_renew_failed',
+  'client.telecom_error',
+  'client.fgs_error',
+  'client.tab_lease_lost',
+  'client.unexpected_peer_rejected',
+  'client.network_offline',
+  'client.network_online',
+  'client.page_unloaded',
   'client.app_backgrounded',
   'client.app_foregrounded',
 ] as const
@@ -41,6 +59,7 @@ export type OfficeCallPlatform = 'web' | 'ios' | 'android'
 const CLIENT_EVENT_SET = new Set<string>(OFFICE_CALL_CLIENT_EVENTS)
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SENSITIVE_KEY_RE = /token|authorization|cookie|secret|certificate|private.?key|password|email|phone/i
+const SENSITIVE_VALUE_RE = /(?:bearer\s+[a-z0-9._~+/=-]{12,}|\b[a-f0-9]{64}\b|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b|(?:\+?88)?01[3-9]\d{8})/i
 const MAX_METADATA_KEYS = 24
 const MAX_STRING_LENGTH = 180
 const MAX_DEPTH = 3
@@ -61,7 +80,10 @@ export function callIdFromAgoraChannel(channel: string): string | null {
 function cleanValue(value: unknown, depth: number): unknown {
   if (value === null || typeof value === 'boolean') return value
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
-  if (typeof value === 'string') return value.slice(0, MAX_STRING_LENGTH)
+  if (typeof value === 'string') {
+    const clipped = value.slice(0, MAX_STRING_LENGTH)
+    return SENSITIVE_VALUE_RE.test(clipped) ? '[redacted]' : clipped
+  }
   if (depth >= MAX_DEPTH) return '[truncated]'
   if (Array.isArray(value)) return value.slice(0, 12).map((item) => cleanValue(item, depth + 1))
   if (typeof value !== 'object') return String(value).slice(0, MAX_STRING_LENGTH)
@@ -152,7 +174,7 @@ export async function recordOfficeCallEvent(input: RecordOfficeCallEventInput): 
       state: input.state?.slice(0, 80) ?? null,
       provider: input.provider?.slice(0, 80) ?? null,
       success: input.success ?? null,
-      latencyMs: input.latencyMs == null ? null : Math.max(0, Math.round(input.latencyMs)),
+      latencyMs: input.latencyMs == null ? null : Math.min(86_400_000, Math.max(0, Math.round(input.latencyMs))),
       metadata: metadata as Prisma.InputJsonValue | undefined,
       occurredAt: input.occurredAt,
     },

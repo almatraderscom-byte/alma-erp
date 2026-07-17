@@ -1,8 +1,22 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { connectionStateForAgora, isExpectedAgoraPeer, webCallErrorCode } from '../office-call-web-policy'
 import { canClaimWebCallLease } from '../office-call-web-lease'
 
 describe('Office web call policy', () => {
+  it('allows the first-party web app to use its microphone in production headers', () => {
+    const vercelConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'vercel.json'), 'utf8')) as {
+      headers?: Array<{ headers?: Array<{ key?: string; value?: string }> }>
+    }
+    const permissionsPolicy = vercelConfig.headers
+      ?.flatMap((rule) => rule.headers ?? [])
+      .find((header) => header.key?.toLowerCase() === 'permissions-policy')
+
+    expect(permissionsPolicy?.value).toContain('microphone=(self)')
+    expect(permissionsPolicy?.value).not.toContain('microphone=()')
+  })
+
   it('accepts only the participant-bound Agora uid', () => {
     expect(isExpectedAgoraPeer({ candidate: 22, expected: 22, established: null })).toBe(true)
     expect(isExpectedAgoraPeer({ candidate: 23, expected: 22, established: null })).toBe(false)

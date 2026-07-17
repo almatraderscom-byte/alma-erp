@@ -28,6 +28,20 @@ const SIGNED_TTL = 60 * 60 * 24 * 365 // 1 year, same policy as office image pro
 /** Recorder mimeTypes we accept (Chrome webm/opus, iOS WKWebView mp4/aac). */
 const AUDIO_TYPES = ['audio/webm', 'audio/mp4', 'audio/aac', 'audio/ogg', 'audio/mpeg', 'audio/wav', 'audio/x-m4a']
 
+function callErrorResponse(result: { error: string; retryAfterSec?: number }) {
+  const status = result.error === 'rate_limited'
+    ? 429
+    : result.error === 'calling_disabled'
+      ? 503
+      : result.error === 'busy'
+        ? 409
+        : 422
+  return Response.json(
+    { error: result.error, ...(result.retryAfterSec ? { retryAfterSec: result.retryAfterSec } : {}) },
+    { status, headers: result.retryAfterSec ? { 'Retry-After': String(result.retryAfterSec) } : undefined },
+  )
+}
+
 function extForAudio(mime: string): string {
   if (/mp4|m4a|aac/i.test(mime)) return 'm4a'
   if (/ogg/i.test(mime)) return 'ogg'
@@ -111,7 +125,7 @@ export async function POST(req: NextRequest) {
           targetStaffId,
           clientRequestId: idempotencyKey,
         })
-        if ('error' in res) return Response.json({ error: res.error }, { status: res.error === 'busy' ? 409 : 422 })
+        if ('error' in res) return callErrorResponse(res)
         return Response.json({ ok: true, ...res }, { status: res.idempotent ? 200 : 201 })
       }
       // staff → owner
@@ -125,7 +139,7 @@ export async function POST(req: NextRequest) {
         callerName: id.staffName,
         clientRequestId: idempotencyKey,
       })
-      if ('error' in res) return Response.json({ error: res.error }, { status: res.error === 'busy' ? 409 : 422 })
+      if ('error' in res) return callErrorResponse(res)
       return Response.json({ ok: true, ...res }, { status: res.idempotent ? 200 : 201 })
     }
 

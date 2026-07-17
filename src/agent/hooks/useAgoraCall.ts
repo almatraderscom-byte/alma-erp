@@ -24,6 +24,8 @@ type AnyClient = {
   renewToken: (token: string) => Promise<void>
   on: (event: string, cb: (...args: unknown[]) => void) => void
   removeAllListeners: () => void
+  getRTCStats?: () => Promise<Record<string, unknown>>
+  getRemoteAudioStats?: () => Record<string, Record<string, unknown>>
 }
 type AnyLocalAudioTrack = {
   setMuted: (muted: boolean) => Promise<void>
@@ -101,6 +103,10 @@ export function useAgoraCall(): UseAgoraCall {
   const sdkDeviceCleanupRef = useRef<(() => void) | null>(null)
   const renewingRef = useRef(false)
   const leaseReleaseRef = useRef<(() => void) | null>(null)
+  const joinStartedAtRef = useRef(0)
+  const lastQualityAtRef = useRef(0)
+  const reconnectCountRef = useRef(0)
+  const reconnectingRef = useRef(false)
 
   const updateState = useCallback((next: AgoraCallState) => {
     stateRef.current = next
@@ -142,6 +148,7 @@ export function useAgoraCall(): UseAgoraCall {
     sdkDeviceCleanupRef.current?.()
     sdkDeviceCleanupRef.current = null
     renewingRef.current = false
+    reconnectingRef.current = false
     leaseReleaseRef.current?.()
     leaseReleaseRef.current = null
     expectedPeerUidRef.current = null
@@ -202,6 +209,7 @@ export function useAgoraCall(): UseAgoraCall {
       setNetworkQuality({ uplink: 0, downlink: 0 })
     }
     emitWebOfficeCallEvent({ channel: ch, event: 'client.join_started', state: 'connecting' })
+    joinStartedAtRef.current = performance.now()
 
     const stillCurrent = () => mountedRef.current && generationRef.current === generation && channelRef.current === ch
     let localClient: AnyClient | null = null
@@ -272,6 +280,15 @@ export function useAgoraCall(): UseAgoraCall {
         const user = args[0] as AnyRemoteUser
         if (!accepts(user)) return
         clearRemoteGrace()
+        if (reconnectingRef.current) {
+          reconnectingRef.current = false
+          emitWebOfficeCallEvent({
+            channel: ch,
+            event: 'client.reconnect_recovered',
+            state: 'in-call',
+            metadata: { reconnectCount: reconnectCountRef.current },
+          })
+        }
         updateRemoteJoined(true)
         updateState('in-call')
         emitWebOfficeCallEvent({ channel: ch, event: 'client.peer_joined', state: 'in-call' })
@@ -284,7 +301,15 @@ export function useAgoraCall(): UseAgoraCall {
         try { track?.stop() } catch { /* already stopped */ }
         remoteTracksRef.current.delete(String(user.uid))
         clearRemoteGrace()
+        reconnectingRef.current = true
+        reconnectCountRef.current += 1
         updateState('reconnecting')
+        emitWebOfficeCallEvent({
+          channel: ch,
+          event: 'client.reconnect_started',
+          state: 'reconnecting',
+          metadata: { reconnectCount: reconnectCountRef.current },
+        })
         remoteGraceRef.current = setTimeout(() => {
           if (!stillCurrent()) return
           remoteGraceRef.current = null
@@ -337,6 +362,28 @@ export function useAgoraCall(): UseAgoraCall {
           uplink: Number(quality.uplinkNetworkQuality ?? 0),
           downlink: Number(quality.downlinkNetworkQuality ?? 0),
         })
+        const now = Date.now()
+        if (!stillCurrent() || now - lastQualityAtRef.current < 10_000) return
+        lastQualityAtRef.current = now
+        void (async () => {
+          const rtc = (await localClient?.getRTCStats?.().catch(() => ({})) ?? {}) as Record<string, unknown>
+          const remote = Object.values(localClient?.getRemoteAudioStats?.() ?? {})[0] ?? {}
+          if (!stillCurrent()) return
+          emitWebOfficeCallEvent({
+            channel: ch,
+            event: 'client.quality_sample',
+            state: stateRef.current,
+            metadata: {
+              uplinkQuality: Number(quality.uplinkNetworkQuality ?? 0),
+              downlinkQuality: Number(quality.downlinkNetworkQuality ?? 0),
+              rttMs: Number(rtc.RTT ?? 0),
+              packetLossPct: Number(remote.packetLossRate ?? 0),
+              jitterMs: Number(remote.jitterBufferDelay ?? 0),
+              audioRoute: selectedOutputRef.current ? 'selected_output' : 'system_default',
+              reconnectCount: reconnectCountRef.current,
+            },
+          })
+        })()
       })
       localClient.on('token-privilege-will-expire', () => {
         if (!stillCurrent() || renewingRef.current) return
@@ -369,7 +416,12 @@ export function useAgoraCall(): UseAgoraCall {
         try { await localClient.leave() } catch { /* stale join */ }
         return
       }
-      emitWebOfficeCallEvent({ channel: ch, event: 'client.local_joined', state: 'connecting' })
+      emitWebOfficeCallEvent({
+        channel: ch,
+        event: 'client.local_joined',
+        state: 'connecting',
+        latencyMs: Math.max(0, Math.round(performance.now() - joinStartedAtRef.current)),
+      })
 
       localTrack = await AgoraRTC.createMicrophoneAudioTrack({
         encoderConfig: 'high_quality',
@@ -424,6 +476,8 @@ export function useAgoraCall(): UseAgoraCall {
       await localTrackRef.current?.setDevice?.(deviceId)
       selectedMicrophoneRef.current = deviceId
       if (mountedRef.current) setSelectedMicrophone(deviceId)
+      const channel = channelRef.current
+      if (channel) emitWebOfficeCallEvent({ channel, event: 'client.audio_route_changed', state: stateRef.current, metadata: { route: 'microphone' } })
     } catch {
       if (mountedRef.current) setError('microphone_switch_failed')
     }
@@ -435,6 +489,8 @@ export function useAgoraCall(): UseAgoraCall {
       await Promise.all([...remoteTracksRef.current.values()].map((track) => track.setPlaybackDevice?.(deviceId)))
       selectedOutputRef.current = deviceId
       if (mountedRef.current) setSelectedOutput(deviceId)
+      const channel = channelRef.current
+      if (channel) emitWebOfficeCallEvent({ channel, event: 'client.audio_route_changed', state: stateRef.current, metadata: { route: 'output' } })
     } catch {
       if (mountedRef.current) setError('output_switch_failed')
     }

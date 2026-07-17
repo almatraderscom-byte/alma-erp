@@ -26,6 +26,7 @@ import {
   resolveBusinessOwnerUserId,
   transitionCanonicalOfficeCall,
 } from '@/agent/lib/office-call-domain'
+import { getOfficeCallRuntimePolicy } from '@/agent/lib/office-call-reliability'
 
 /** 'voice' = PTT audio · 'urgent' = full-volume text alert · 'call' = live VoIP ring (Agora channel = itc_<broadcastId>). */
 export type IntercomKind = 'voice' | 'urgent' | 'call'
@@ -151,9 +152,19 @@ export async function createIntercomBroadcast(args: {
   clientRequestId?: string | null
 }): Promise<
   | { id: string; createdAt: string; idempotent?: boolean }
-  | { error: 'no_target_staff' | 'busy' | 'idempotency_conflict' | 'invalid_participants' }
+  | {
+      error:
+        | 'no_target_staff'
+        | 'busy'
+        | 'idempotency_conflict'
+        | 'invalid_participants'
+        | 'calling_disabled'
+        | 'rate_limited'
+      retryAfterSec?: number
+    }
 > {
   const isCall = args.kind === 'call'
+  if (isCall && getOfficeCallRuntimePolicy().killSwitch) return { error: 'calling_disabled' }
   const staff = await activeStaff(args.businessId)
   // Voice/urgent fan out to a staff subset (targetStaffId, or everyone). A call
   // rings exactly ONE callee: owner→staff has a targetStaffId (one receipt);
@@ -184,7 +195,9 @@ export async function createIntercomBroadcast(args: {
         clientRequestId: args.clientRequestId ?? null,
       })
     : null
-  if (canonicalResult && !canonicalResult.ok) return { error: canonicalResult.error }
+  if (canonicalResult && !canonicalResult.ok) {
+    return { error: canonicalResult.error, ...(canonicalResult.retryAfterSec ? { retryAfterSec: canonicalResult.retryAfterSec } : {}) }
+  }
 
   const row = canonicalResult?.ok
     ? { id: canonicalResult.id, createdAt: new Date(canonicalResult.createdAt) }

@@ -155,6 +155,9 @@ final class OfficeCallCoordinator: NSObject {
     @ObservationIgnored private var reconnectTimer: Timer?
     @ObservationIgnored private var reconnectDeadline: Date?
     @ObservationIgnored private var tokenExpiry: Date?
+    @ObservationIgnored private var joinStartedAt: Date?
+    @ObservationIgnored private var lastQualityTelemetryAt: Date?
+    @ObservationIgnored private var reconnectCount = 0
     @ObservationIgnored private var remoteUids = Set<UInt>()   // remote parties currently on the call channel
     private let ringtone = IntercomRingtone()   // ringback (caller) + incoming ring (callee)
     @ObservationIgnored private var handledCallIds = Set<String>()  // call broadcasts we've already surfaced
@@ -216,6 +219,7 @@ final class OfficeCallCoordinator: NSObject {
         let callId = Self.callId(from: ch)
         activeCallId = callId
         callDirection = outgoing ? .outgoing : .incoming
+        joinStartedAt = Date()
         emitTelemetry(outgoing ? "client.join_started" : "client.answer_pressed", state: "connecting")
         if !outgoing { emitTelemetry("client.join_started", state: "connecting") }
         error = nil
@@ -355,6 +359,9 @@ final class OfficeCallCoordinator: NSObject {
         currentCallVersion = nil
         speakerEnabled = false
         reconnectSeconds = 0
+        joinStartedAt = nil
+        lastQualityTelemetryAt = nil
+        reconnectCount = 0
         UIDevice.current.isProximityMonitoringEnabled = false
         NotificationCenter.default.post(name: .officeCallCoordinatorDidChange, object: nil)
     }
@@ -512,10 +519,13 @@ final class OfficeCallCoordinator: NSObject {
         // Agora may emit several reconnecting/failed callbacks for one outage. Never
         // restart the deadline on each callback or a broken call can live forever.
         guard reconnectDeadline == nil else { return }
+        reconnectCount += 1
         mode = .reconnecting
         statusText = "পুনঃসংযোগ হচ্ছে…"
         reconnectSeconds = 15
         reconnectDeadline = Date().addingTimeInterval(15)
+        emitTelemetry("client.reconnect_started", state: "reconnecting",
+                      metrics: ["reconnectCount": Double(reconnectCount)])
         _ = await transitionCanonical(to: "RECONNECTING")
         // A connected callback may have won while the server write was in flight.
         guard reconnectDeadline != nil, hasActiveCall, mode == .reconnecting else { return }
@@ -804,9 +814,14 @@ final class OfficeCallCoordinator: NSObject {
 
     @MainActor
     private func updateAudioRoute() {
+        let previous = audioRoute
         let output = AVAudioSession.sharedInstance().currentRoute.outputs.first
         audioRoute = output?.portName ?? (speakerEnabled ? "Speaker" : "iPhone")
         UIDevice.current.isProximityMonitoringEnabled = activeCallId != nil && !speakerEnabled
+        if activeCallId != nil, audioRoute != previous {
+            emitTelemetry("client.audio_route_changed", state: canonicalState.lowercased(),
+                          detail: audioRoute)
+        }
     }
 
     private func ensureMicPermission() async throws {
@@ -921,7 +936,8 @@ final class OfficeCallCoordinator: NSObject {
         return UUID(uuidString: candidate) == nil ? nil : candidate.lowercased()
     }
 
-    private func emitTelemetry(_ event: String, state: String, detail: String? = nil) {
+    private func emitTelemetry(_ event: String, state: String, detail: String? = nil,
+                               latencyMs: Int? = nil, metrics: [String: Double] = [:]) {
         guard let callId = activeCallId else { return }
         struct Body: Encodable {
             let callId: String
@@ -931,6 +947,7 @@ final class OfficeCallCoordinator: NSObject {
             let appBuild: String
             let buildSha: String?
             let state: String
+            let latencyMs: Int?
             let metadata: [String: String]?
             let occurredAt: String
         }
@@ -938,6 +955,8 @@ final class OfficeCallCoordinator: NSObject {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
         let build = info?["CFBundleVersion"] as? String ?? "unknown"
+        var metadata = metrics.mapValues { String($0) }
+        if let detail { metadata["code"] = String(detail.prefix(160)) }
         let body = Body(
             callId: callId,
             event: event,
@@ -946,7 +965,8 @@ final class OfficeCallCoordinator: NSObject {
             appBuild: "\(version) (\(build))",
             buildSha: info?["ALMAGitCommit"] as? String,
             state: state,
-            metadata: detail.map { ["code": String($0.prefix(160))] },
+            latencyMs: latencyMs,
+            metadata: metadata.isEmpty ? nil : metadata,
             occurredAt: ISO8601DateFormatter().string(from: Date())
         )
         Task {
@@ -968,7 +988,8 @@ extension OfficeCallCoordinator: AgoraRtcEngineDelegate {
     func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinChannel channel: String, withUid uid: UInt, elapsed: Int) {
         Task { @MainActor in
             self.connected = true
-            self.emitTelemetry("client.local_joined", state: "connecting")
+            let latency = self.joinStartedAt.map { max(0, Int(Date().timeIntervalSince($0) * 1_000)) }
+            self.emitTelemetry("client.local_joined", state: "connecting", latencyMs: latency)
         }
     }
 
@@ -978,6 +999,10 @@ extension OfficeCallCoordinator: AgoraRtcEngineDelegate {
         Task { @MainActor in
             self.remoteUids.insert(uid)
             self.stopReconnectGrace()
+            if self.reconnectCount > 0 {
+                self.emitTelemetry("client.reconnect_recovered", state: "in-call",
+                                   metrics: ["reconnectCount": Double(self.reconnectCount)])
+            }
             if self.mode == .ringing || self.mode == .reconnecting {
                 guard await self.promoteCanonicalToConnected() else {
                     self.emitTelemetry("client.transition_failed", state: "connected", detail: "peer_join_before_answer")
@@ -1046,6 +1071,8 @@ extension OfficeCallCoordinator: AgoraRtcEngineDelegate {
                     self.stopReconnectGrace()
                     _ = await self.transitionCanonical(to: "CONNECTED")
                     self.mode = .calling
+                    self.emitTelemetry("client.reconnect_recovered", state: "in-call",
+                                       metrics: ["reconnectCount": Double(self.reconnectCount)])
                 }
             case .failed:
                 if self.hasActiveCall { await self.beginReconnectGrace() }
@@ -1054,6 +1081,26 @@ extension OfficeCallCoordinator: AgoraRtcEngineDelegate {
             }
             self.emitTelemetry("client.connection_changed", state: String(describing: state),
                                detail: String(describing: reason))
+        }
+    }
+
+    func rtcEngine(_ engine: AgoraRtcEngineKit, reportRtcStats stats: AgoraChannelStats) {
+        Task { @MainActor in
+            guard self.hasActiveCall else { return }
+            let now = Date()
+            if let last = self.lastQualityTelemetryAt, now.timeIntervalSince(last) < 10 { return }
+            self.lastQualityTelemetryAt = now
+            self.emitTelemetry(
+                "client.quality_sample",
+                state: self.canonicalState.lowercased(),
+                metrics: [
+                    "rttMs": Double(stats.lastmileDelay),
+                    "packetLossPct": Double(max(stats.txPacketLossRate, stats.rxPacketLossRate)),
+                    "txAudioKbps": Double(stats.txAudioKBitrate),
+                    "rxAudioKbps": Double(stats.rxAudioKBitrate),
+                    "reconnectCount": Double(self.reconnectCount),
+                ]
+            )
         }
     }
 

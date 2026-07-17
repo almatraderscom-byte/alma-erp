@@ -38,6 +38,8 @@ describe('office call observability', () => {
 
   it('allows the explicit client event contract only', () => {
     expect(isOfficeCallClientEvent('client.peer_joined')).toBe(true)
+    expect(isOfficeCallClientEvent('client.quality_sample')).toBe(true)
+    expect(isOfficeCallClientEvent('client.telecom_error')).toBe(true)
     expect(isOfficeCallClientEvent('server.admin_override')).toBe(false)
   })
 
@@ -50,6 +52,8 @@ describe('office call observability', () => {
       token: '[redacted]',
       nested: { authorization: '[redacted]', safe: 'x'.repeat(180) },
     })
+    expect(sanitizeOfficeCallMetadata({ code: 'Bearer abcdefghijklmnopqrstuvwxyz' })).toEqual({ code: '[redacted]' })
+    expect(sanitizeOfficeCallMetadata({ message: 'call me at 01712345678' })).toEqual({ message: '[redacted]' })
   })
 
   it('summarizes provider delivery without retaining tokens or raw response bodies', () => {

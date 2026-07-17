@@ -2,6 +2,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { OFFICE_CALL_TIMING } from '@/agent/lib/office-call-observability'
+import {
+  enforceOfficeCallPlacementPolicy,
+  getOfficeCallRuntimePolicy,
+} from '@/agent/lib/office-call-reliability'
 
 export const OFFICE_CALL_STATES = [
   'CREATED',
@@ -115,7 +119,11 @@ type CreateCanonicalArgs = {
 
 export type CreateCanonicalResult =
   | { ok: true; id: string; createdAt: string; idempotent: boolean }
-  | { ok: false; error: 'busy' | 'idempotency_conflict' | 'invalid_participants' }
+  | {
+      ok: false
+      error: 'busy' | 'idempotency_conflict' | 'invalid_participants' | 'calling_disabled' | 'rate_limited'
+      retryAfterSec?: number
+    }
 
 function isUniqueError(error: unknown): error is Prisma.PrismaClientKnownRequestError {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002'
@@ -151,10 +159,17 @@ export async function createCanonicalOfficeCall(args: CreateCanonicalArgs): Prom
     }
   }
 
+  const placement = await enforceOfficeCallPlacementPolicy({
+    businessId: args.businessId,
+    callerUserId: args.callerUserId,
+    calleeUserId: args.calleeUserId,
+  })
+  if (!placement.ok) return placement
+
   const callId = randomUUID()
   const now = new Date()
   const ringExpiresAt = new Date(now.getTime() + OFFICE_CALL_TIMING.ringTimeoutMs)
-  const maxEndsAt = new Date(now.getTime() + OFFICE_CALL_TIMING.maxCallDurationMs)
+  const maxEndsAt = new Date(now.getTime() + getOfficeCallRuntimePolicy().maxCallDurationMs)
   const agoraChannel = `itc_${callId}`
   const callerUid = stableOfficeCallAgoraUid(callId, args.callerUserId, 'CALLER')
   let calleeUid = stableOfficeCallAgoraUid(callId, args.calleeUserId, 'CALLEE')

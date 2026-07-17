@@ -1301,8 +1301,27 @@ function permissionMessage(code: string | null): string | null {
   return 'কল সংযোগে সমস্যা হয়েছে। Network ও browser microphone permission দেখে আবার চেষ্টা করুন।'
 }
 
+type CallOpsDiagnostics = {
+  deliveryHealth: { healthy: boolean; alerts: string[] }
+  health: {
+    window: { calls: number; terminal: number }
+    rates: { failure: number; missed: number; reconnectPerCall: number; pushRejected: number }
+    latencyMs: { pushToRingP95: number | null; joinP95: number | null; answerToAudioP95: number | null }
+    media: { samples: number; worstPacketLossPct: number; worstRttMs: number }
+    stuckActiveSessions: number
+    alerts: string[]
+  }
+  runtimePolicy: { killSwitch: boolean; rolloutPercent: number }
+  mediaSecurity: { userFacingClaim: string; endToEndEncryptedClaimAllowed: boolean }
+}
+
+const latencyLabel = (value: number | null) => value == null ? '—' : `${Math.round(value)} ms`
+const percentLabel = (value: number) => `${(value * 100).toFixed(1)}%`
+
 export function IntercomCallsPanel({ itc, onClose }: { itc: Intercom; onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement>(null)
+  const [ops, setOps] = useState<CallOpsDiagnostics | null>(null)
+  const [opsError, setOpsError] = useState(false)
   const recent = useMemo(
     () => [...itc.feed.broadcasts].reverse().filter((broadcast) => broadcast.kind === 'call').slice(0, 12),
     [itc.feed.broadcasts],
@@ -1317,6 +1336,21 @@ export function IntercomCallsPanel({ itc, onClose }: { itc: Intercom; onClose: (
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  useEffect(() => {
+    if (itc.self !== 'owner') return
+    const controller = new AbortController()
+    void fetch('/api/assistant/office/calls/diagnostics', { cache: 'no-store', signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`diagnostics_${response.status}`)
+        return response.json() as Promise<CallOpsDiagnostics>
+      })
+      .then((body) => setOps(body))
+      .catch((error: unknown) => {
+        if ((error as { name?: string })?.name !== 'AbortError') setOpsError(true)
+      })
+    return () => controller.abort()
+  }, [itc.self])
 
   return (
     <div className="itc-calls-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
@@ -1376,6 +1410,35 @@ export function IntercomCallsPanel({ itc, onClose }: { itc: Intercom; onClose: (
           </section>
 
           {diagnostic && <div className="itc-call-diagnostic" role="alert">⚠️ {diagnostic}</div>}
+
+          {itc.self === 'owner' && (
+            <section aria-labelledby="itc-call-health-title">
+              <div className="itc-call-health-head">
+                <h3 id="itc-call-health-title">Call operations · গত ২৪ ঘণ্টা</h3>
+                {ops && <span className={ops.health.alerts.length || !ops.deliveryHealth.healthy ? 'warn' : 'ok'}>
+                  {ops.health.alerts.length || !ops.deliveryHealth.healthy ? 'মনোযোগ দরকার' : 'স্বাভাবিক'}
+                </span>}
+              </div>
+              {ops ? (
+                <div className="itc-call-health">
+                  <div><b>{bn(ops.health.window.calls)}</b><small>Calls</small></div>
+                  <div><b>{latencyLabel(ops.health.latencyMs.pushToRingP95)}</b><small>Push → ring p95</small></div>
+                  <div><b>{latencyLabel(ops.health.latencyMs.answerToAudioP95)}</b><small>Answer → audio p95</small></div>
+                  <div><b>{percentLabel(ops.health.rates.failure)}</b><small>Failure</small></div>
+                  <div><b>{percentLabel(ops.health.rates.missed)}</b><small>Missed</small></div>
+                  <div><b>{bn(ops.health.stuckActiveSessions)}</b><small>Stuck active</small></div>
+                  <p className="itc-call-security">🔐 {ops.mediaSecurity.userFacingClaim}</p>
+                  {(ops.health.alerts.length > 0 || ops.deliveryHealth.alerts.length > 0) && (
+                    <p className="itc-call-health-alerts" role="alert">
+                      {[...ops.health.alerts, ...ops.deliveryHealth.alerts].join(' · ')}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="itc-calls-empty">{opsError ? 'Operations health load করা যায়নি।' : 'Operations health load হচ্ছে…'}</p>
+              )}
+            </section>
+          )}
 
           <section aria-labelledby="itc-recent-calls-title">
             <h3 id="itc-recent-calls-title">সাম্প্রতিক কল</h3>
