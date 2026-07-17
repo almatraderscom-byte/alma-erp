@@ -119,6 +119,13 @@ export const AGENT_GROUNDING_GATE = parityFlagOn(process.env.AGENT_GROUNDING_GAT
 // (catches fabricated stats the completion-claim ledger check misses). OFF by default.
 export const AGENT_FACT_GATE = parityFlagOn(process.env.AGENT_FACT_GATE)
 
+// BP5 — communication STYLE: a calibrated tone/structure module (answer-first,
+// plain language, warm-but-professional, structure only when it helps, clear next
+// step) with good/bad examples, so the *way* any head talks gets ~70-80% closer
+// to the desired feel regardless of model. OFF in prod unless AGENT_STYLE=on;
+// auto-ON on preview.
+export const AGENT_STYLE = parityFlagOn(process.env.AGENT_STYLE)
+
 // Phase prompt specifies budget_tokens values for reference.
 // budget_tokens is deprecated on claude-sonnet-4-6; we use thinking: {type:'adaptive'}
 // and map to output_config.effort levels instead (off → no thinking param, low → medium, high → high).
