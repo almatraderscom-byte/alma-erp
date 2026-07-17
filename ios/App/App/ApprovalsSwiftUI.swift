@@ -1825,9 +1825,7 @@ private struct WithdrawTxnSheet: View {
                             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                             UIPasteboard.general.string = number
                             BkashSendPendingStore.save(requestId: approval.id, surface: "approvals")
-                            if let url = URL(string: "bkash://") {
-                                UIApplication.shared.open(url)
-                            }
+                            BkashApp.open()
                         } label: {
                             Label("নম্বর কপি করে বিকাশ খুলুন", systemImage: "arrow.up.forward.app")
                                 .font(.caption.weight(.bold))

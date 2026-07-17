@@ -6,6 +6,7 @@ import { formatReminderConfirmation } from '@/agent/lib/reminder-rrule'
 import { checkUrgentRateLimit, checkOutboundCallRateLimit } from '@/agent/lib/urgent-rate-limit'
 import { summarizeOutboundAction, outboundWasDialed } from '@/agent/lib/outbound-call-tracking'
 import { normalizeOutboundPhone } from '@/lib/twilio/phone'
+import { voicePrefLabel, type OwnerVoicePref } from '@/agent/lib/voice-provider-intent'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -340,6 +341,25 @@ const outbound_phone_call: AgentTool = {
       const rate = await checkOutboundCallRateLimit()
       if (!rate.ok) return { success: false, error: rate.error }
 
+      // VOICE = Boss's words, not the model's guess. `ownerVoicePref` arrives via the
+      // tool's SERVER context (which wins over model args), resolved by regex from his
+      // recent messages. Prod audit found the model picked ElevenLabs 11 of 12 times
+      // — ~18× Google's cost — despite "google = default" in this tool's description.
+      // Only Boss naming ElevenLabs buys the expensive voice. No context (scheduler /
+      // heartbeat path) → keep the model's value, which already defaults to google.
+      const pref = input.ownerVoicePref as OwnerVoicePref | undefined
+      const ttsProvider: 'google' | 'elevenlabs' = pref
+        ? pref.provider
+        : input.ttsProvider === 'elevenlabs' ? 'elevenlabs' : 'google'
+      const voiceGender: 'male' | 'female' = pref
+        ? pref.gender
+        : input.voiceGender === 'female' ? 'female' : 'male'
+      const voiceLine = pref
+        ? voicePrefLabel(pref)
+        : ttsProvider === 'elevenlabs' ? 'ElevenLabs' : 'Google'
+      const cardSummary = (msg: string) =>
+        `📞 কল → ${phone}\n🔊 ভয়েস: ${voiceLine}\n\n🗣️ "${msg.slice(0, 300)}"`
+
       {
         const recent = await db.agentPendingAction.findMany({
           where: {
@@ -367,13 +387,8 @@ const outbound_phone_call: AgentTool = {
             const updated = await db.agentPendingAction.update({
               where: { id: duplicate.id },
               data: {
-                payload: {
-                  phone,
-                  message,
-                  ttsProvider: input.ttsProvider === 'elevenlabs' ? 'elevenlabs' : 'google',
-                  voiceGender: input.voiceGender === 'female' ? 'female' : 'male',
-                },
-                summary: `📞 কল → ${phone}\n\n🗣️ "${message.slice(0, 300)}"`,
+                payload: { phone, message, ttsProvider, voiceGender },
+                summary: cardSummary(message),
               },
             })
             return {
@@ -410,13 +425,8 @@ const outbound_phone_call: AgentTool = {
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'outbound_call',
-          payload: {
-            phone,
-            message,
-            ttsProvider: input.ttsProvider === 'elevenlabs' ? 'elevenlabs' : 'google',
-            voiceGender: input.voiceGender === 'female' ? 'female' : 'male',
-          },
-          summary: `📞 কল → ${phone}\n\n🗣️ "${message.slice(0, 300)}"`,
+          payload: { phone, message, ttsProvider, voiceGender },
+          summary: cardSummary(message),
           costEstimate: 0.05,
           status: 'pending',
         },
@@ -426,7 +436,10 @@ const outbound_phone_call: AgentTool = {
         data: {
           pendingActionId: action.id,
           phone,
-          message: 'Outbound call queued — Boss must Approve before dialing.',
+          voice: voiceLine,
+          message:
+            `Outbound call queued in the ${ttsProvider} voice — Boss must Approve before dialing. ` +
+            'The voice was resolved from Boss\'s own words; do NOT claim a different voice than the one above.',
         },
       }
     } catch (err) {
