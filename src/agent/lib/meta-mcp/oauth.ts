@@ -76,7 +76,7 @@ export function getMetaMcpEndpoint(): string {
   return (process.env.META_MCP_ENDPOINT || META_MCP_DEFAULT_ENDPOINT).replace(/\/$/, '')
 }
 
-/** Env half of the kill switch (default OFF — plan §2.5). */
+/** Env half of the kill switch (default OFF — plan §2.5). Set on Vercel 2026-07-17 (preview). */
 export function isMetaMcpEnvEnabled(): boolean {
   const v = (process.env.META_MCP_ENABLED ?? '').trim().toLowerCase()
   return ['1', 'true', 'on', 'yes'].includes(v)
