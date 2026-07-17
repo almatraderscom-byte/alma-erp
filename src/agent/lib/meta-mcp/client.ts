@@ -151,16 +151,24 @@ async function rpc(method: string, params?: Record<string, unknown>, opts?: RpcO
     }
 
     if (res.status === 401) {
+      // Read Meta's own reason first — e.g. "This resource is restricted to
+      // certain users" means the MCP front door is closed to this client class
+      // (live-hit 2026-07-17 with a VALID classic-app token), which is a very
+      // different problem from an expired token.
+      const detail = (await res.text().catch(() => '')).slice(0, 200)
       if (!triedRefresh) {
         triedRefresh = true
         try {
           token = await getMetaMcpAccessToken({ forceRefresh: true })
-        } catch (e) {
-          throw new MetaMcpError('auth', e instanceof Error ? e.message : 'token refresh failed')
+          continue
+        } catch {
+          throw new MetaMcpError(
+            'auth',
+            `meta_mcp: Meta ঢুকতে দেয়নি (401${detail ? `: ${detail}` : ''}) — টোকেনটা Graph API-তে বৈধ; Meta-র MCP এখনো তৃতীয়-পক্ষ client-এর জন্য খোলা না-ও থাকতে পারে।`,
+          )
         }
-        continue
       }
-      throw new MetaMcpError('auth', 'meta_mcp: unauthorized (401) after refresh — আবার Connect চাপুন')
+      throw new MetaMcpError('auth', `meta_mcp: unauthorized after refresh (401${detail ? `: ${detail}` : ''})`)
     }
 
     if (res.status === 404 && session.id && !opts?.skipSession) {

@@ -32,14 +32,21 @@
 | `git diff --stat` scope check | **PASS** — agent files + `.env.example` only; zero ERP files; `/api/agent/*` untouched |
 | Write tools absent from registry at read tier | **PASS** (test-proven, bridge.test.ts) |
 | Live OAuth discovery against Meta | **PASS** — found+fixed RFC 8414 path-aware URL; Meta offers dynamic client registration, PKCE S256, refresh tokens |
-| Preview deploy (dpl_GGs7AZiNiryAsNYELxyVqAZyAdHr) | **PASS — READY**; meta-mcp routes live, correctly 401 without owner session |
-| Browser proof (a) Connect flow (b) live insights answer | **PENDING** — blocked on: Chrome-MCP classifier outage (Anthropic-side, transient) + owner steps below |
+| Preview deploy | **PASS — READY**; meta-mcp routes live, correctly 401 without owner session |
+| Browser proof (a) Connect flow | **PASS** — owner connected live on the preview (Chrome-MCP screenshots): card shows **"যুক্ত আছে ✓ — read-only"**; token stored in kv; token verified VALID against Graph API (listed the owner's 3 ad accounts) |
+| Browser proof (b) live insights answer via MCP | **BLOCKED BY META** — see below; not a code defect |
 
-## Owner steps to finish acceptance (one-time)
+## Live finding (2026-07-17): Meta's MCP is closed to third-party clients today
 
-1. Vercel → alma-erp → Settings → Environment Variables: `META_MCP_ENABLED=true` (Preview now; Production at merge time).
-2. Open the preview `/agent/growth`, log in, press **"Meta Ads যুক্ত করুন (read-only)"**, approve on Meta's dialog.
-3. Then ask the agent: "গত ৭ দিনের অ্যাড পারফরম্যান্স কেমন?" — screenshot both for the record.
+Proven chain, each step live-tested:
+1. Dynamic client registration → `400 invalid_client_metadata: "Dynamic registration is not available for this client"`.
+2. Classic app requesting `ads_mcp_management` → dialog rejects: "Invalid Scopes" (scope is internal to Meta's own pre-registered MCP clients — claude.ai/ChatGPT).
+3. Owner's app WITHOUT that scope → OAuth completes, token valid on Graph API (`/me/adaccounts` returns 3 accounts), but `mcp.facebook.com/ads` answers `401 {"title":"This resource is restricted to certain users…"}`.
+4. Same wall hit by Claude Code CLI (anthropics/claude-code#55002, #57191, #58054) and OpenAI Codex (openai/codex#24103) — no user-side workaround as of July 2026; the fix must come from Meta (client allowlist / `is_ads_mcp_enabled` rollout).
+
+**Consequences:** MA1's own surface is fully built, kill-switched, and proven up to Meta's gate. The bridge works the day Meta opens third-party access — zero further code needed on the happy path. Old Graph-API ads tools are untouched and keep serving insights (the connect token itself already works there). MA2 can proceed with Graph-API-preferred sources; the MCP-preferred switch stays ready behind the same tools.
+
+**Owner follow-ups (no urgency):** check the "Start building today" email for any business-onboarding/allowlist link for Ads MCP; alternatively the owner can connect claude.ai's own Meta Ads connector for personal use — that path uses Meta's whitelisted client and works today.
 
 ## Ambiguities + decisions made
 
