@@ -2,10 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>ALMAGitCommit</key>
-	<string>fa396eae49</string>
 	<key>ALMABaseURL</key>
 	<string>$(ALMA_BASE_URL)</string>
+	<key>ALMAGitCommit</key>
+	<string>1872a255ca</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.almatraders.erp.refresh</string>
