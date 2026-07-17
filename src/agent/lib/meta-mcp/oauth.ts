@@ -48,16 +48,20 @@ export type MetaMcpScopeTier = 'read' | 'write' | 'financial'
  * READ deliberately excludes every *_management scope that can mutate ads or
  * catalogs; Meta's Business dialog additionally grants per-ad-account tiers.
  *
- * ads_mcp_management is deliberately ABSENT: it is internal to Meta's own
- * pre-registered MCP clients (claude.ai/ChatGPT). A normal developer app
- * requesting it gets "Invalid Scopes" from the v25.0 dialog — live-hit
- * 2026-07-17 with the ALMA AI AGENT app. Third-party guides confirm classic
- * ads_read/ads_management/business_management tokens are what our own-app
- * path can mint.
+ * ads_mcp_management REQUIRES the app to carry the "Create & manage ads with
+ * ads MCP server" USE CASE (App Dashboard → Use cases) — without it the v25.0
+ * dialog rejects the whole request with "Invalid Scopes" (live-hit 2026-07-17)
+ * and the MCP endpoint 401s "restricted to certain users". Per Meta's doc
+ * (documentation/ads-commerce/ads-ai-connectors/ads-mcp-server/
+ * ads-mcp-server-get-started, updated 2026-07-14) the own-app path is: add the
+ * use case, then OAuth with your app id as client_id and ads_mcp_management in
+ * scope. Dynamic client registration stays refused for third parties — the
+ * app-id fallback IS the sanctioned path.
  */
 const TIER_SCOPES: Record<MetaMcpScopeTier, string[]> = {
-  read: ['ads_read', 'business_management', 'pages_show_list'],
+  read: ['ads_mcp_management', 'ads_read', 'business_management', 'pages_show_list'],
   write: [
+    'ads_mcp_management',
     'ads_read',
     'business_management',
     'pages_show_list',
@@ -68,6 +72,7 @@ const TIER_SCOPES: Record<MetaMcpScopeTier, string[]> = {
   // "financial" (budget edits) is granted inside Meta's dialog per ad account —
   // the OAuth scope string is the same as write (plan §1 auth row).
   financial: [
+    'ads_mcp_management',
     'ads_read',
     'business_management',
     'pages_show_list',
