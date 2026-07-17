@@ -84,6 +84,11 @@ final class AlmaHostingController<Content: View>: UIHostingController<Content> {
         // IOSP-0 baseline: route.push → route.appeared brackets nav-to-screen time.
         AlmaPerfLog.event("route.appeared", title ?? String(describing: Content.self))
     }
+
+    // Back affordance note (owner report 2026-07-17): iOS 26 renders the SYSTEM
+    // back as a glass circle on every pushed screen — sim-verified present on all
+    // hosted pushes, so no custom item is added (a custom one produced a DOUBLE
+    // back, sim-caught same day). Sheets carry their own close buttons instead.
 }
 
 /// Late-bound weak reference — the SwiftUI screens' closures need the nav controller

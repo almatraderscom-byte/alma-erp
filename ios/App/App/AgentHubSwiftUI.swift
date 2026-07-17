@@ -79,6 +79,11 @@ struct AgentHubScreen: View {
                     CompanionScreen()
                         .navigationTitle("Phone Companion")
                         .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("বন্ধ") { showCompanion = false }
+                            }
+                        }
                 }
             }
         }

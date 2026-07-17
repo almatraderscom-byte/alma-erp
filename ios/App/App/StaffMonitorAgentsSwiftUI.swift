@@ -707,7 +707,7 @@ struct StaffMonitorAgentsTab: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var pending: StaffMonitorControlAction? = nil
     @State private var modelSearch = ""
-    @State private var modelsCollapsed = true
+    @State private var modelsCollapsed = false
     @State private var showScreenshotViewer = false
 
     private let emerald = Color(red: 0.020, green: 0.588, blue: 0.412)
@@ -715,18 +715,91 @@ struct StaffMonitorAgentsTab: View {
     private let amber600 = Color(red: 0.851, green: 0.467, blue: 0.024)
     private let coral = Color(red: 0.878, green: 0.478, blue: 0.373)
 
+    /// Owner feedback 2026-07-17: the six stacked cards read like the cluttered web
+    /// page. iOS composition instead — a COMPACT control-room list (icon + live
+    /// status + chevron, More-menu language); each row drills into a focused sheet.
+    enum AgentSheet: String, Identifiable {
+        case control, models, heartbeat, browser, routing, slo
+        var id: String { rawValue }
+    }
+    @State private var sheet: AgentSheet? = nil
+
     var body: some View {
         VStack(spacing: 10) {
-            controlCenterCard
-            sloCard
-            modelsCard
-            heartbeatCard
-            liveBrowserCard
-            routingCard
+            VStack(spacing: 0) {
+                controlRoomRow("🎛️", "কন্ট্রোল সেন্টার",
+                               vm.controls.map { $0.paused ? "Agent বন্ধ আছে" : "চালু · অটোনমি: \($0.autonomyLabel)" } ?? "লোড হচ্ছে…",
+                               tint: vm.controls?.paused == true ? red500 : emerald,
+                               sheet: .control) {
+                    // Quick master toggle stays one tap away (never optimistic).
+                    if let c = vm.controls {
+                        Toggle("", isOn: Binding(
+                            get: { !c.paused },
+                            set: { on in pending = on ? .resumeAgent : .pauseAgent }))
+                            .labelsHidden()
+                            .tint(emerald)
+                            .disabled(vm.busy)
+                    }
+                }
+                Divider().opacity(0.25).padding(.leading, 56)
+                controlRoomRow("🧠", "AI মডেল",
+                               vm.models.map { "\($0.filter(\.enabled).count)/\($0.count) চালু" } ?? "লোড হচ্ছে…",
+                               tint: emerald, sheet: .models)
+                Divider().opacity(0.25).padding(.leading, 56)
+                controlRoomRow("💓", "হার্টবিট",
+                               vm.heartbeat.map { $0.enabled ? "চালু · আজ \($0.wakesToday)/\($0.dailyHeadWakeCap) বার" : "বন্ধ" } ?? "লোড হচ্ছে…",
+                               tint: vm.heartbeat?.enabled == true ? emerald : .secondary,
+                               sheet: .heartbeat)
+                Divider().opacity(0.25).padding(.leading, 56)
+                controlRoomRow("🖥️", "লাইভ ব্রাউজার",
+                               vm.watch.map { w in
+                                   w.enabled ? "চালু · অনলাইন \(w.onlineCount)\(w.running ? " · কাজ চলছে" : "")" : "বন্ধ"
+                               } ?? "লোড হচ্ছে…",
+                               tint: vm.watch?.enabled == true ? emerald : .secondary,
+                               sheet: .browser)
+                Divider().opacity(0.25).padding(.leading, 56)
+                controlRoomRow("🎚️", "Opus রাউটিং",
+                               vm.routing.map { "Opus \($0.config.opusEnabled ? "চালু" : "বন্ধ") · আজ \($0.opusUsedToday) কল" } ?? "লোড হচ্ছে…",
+                               tint: vm.routing?.config.opusEnabled == true ? coral : .secondary,
+                               sheet: .routing)
+                Divider().opacity(0.25).padding(.leading, 56)
+                controlRoomRow("📏", "SLO — স্বয়ংক্রিয়তার মান",
+                               vm.slo.map { $0.breaches.isEmpty ? "সব invariant ঠিক ✓" : "\($0.breaches.count)টা লঙ্ঘন" } ?? "লোড হচ্ছে…",
+                               tint: (vm.slo?.breaches.isEmpty ?? true) ? emerald : red500,
+                               sheet: .slo)
+            }
+            .smGlass(scheme)
             if let err = vm.actionError {
                 Text(err).font(.caption2).foregroundStyle(red500)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+        .sheet(item: $sheet) { which in
+            NavigationStack {
+                ScrollView {
+                    VStack(spacing: 10) {
+                        switch which {
+                        case .control: controlCenterCard
+                        case .models: modelsCard
+                        case .heartbeat: heartbeatCard
+                        case .browser: liveBrowserCard
+                        case .routing: routingCard
+                        case .slo: sloCard
+                        }
+                    }
+                    .padding(14)
+                }
+                .background(AlmaSwiftTheme.rootBg(scheme))
+                .navigationTitle(sheetTitle(which))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("বন্ধ") { sheet = nil }
+                    }
+                }
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         // Tab-visible fast cadence (§4.9): 2.5s watch (web parity) + 30s panels,
         // ONLY while this tab is on screen and the app is foregrounded. The
@@ -775,6 +848,59 @@ struct StaffMonitorAgentsTab: View {
         } message: {
             Text(vm.heartbeatToast ?? "")
         }
+    }
+
+    private func sheetTitle(_ s: AgentSheet) -> String {
+        switch s {
+        case .control: return "কন্ট্রোল সেন্টার"
+        case .models: return "AI মডেল"
+        case .heartbeat: return "হার্টবিট"
+        case .browser: return "লাইভ ব্রাউজার"
+        case .routing: return "Opus রাউটিং"
+        case .slo: return "SLO"
+        }
+    }
+
+    /// One iOS-style control-room row: icon square · title · live subtitle ·
+    /// optional inline accessory (master toggle) · chevron → sheet.
+    private func controlRoomRow(_ icon: String, _ title: String, _ subtitle: String,
+                                tint: Color, sheet target: AgentSheet,
+                                @ViewBuilder accessory: () -> some View = { EmptyView() }) -> some View {
+        HStack(spacing: 12) {
+            Button {
+                UISelectionFeedbackGenerator().selectionChanged()
+                sheet = target
+            } label: {
+                HStack(spacing: 12) {
+                    Text(icon)
+                        .font(.system(size: 17))
+                        .frame(width: 38, height: 38)
+                        .background(tint.opacity(0.13),
+                                    in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                        Text(subtitle).font(.caption2).foregroundStyle(tint).lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            accessory()
+            Button {
+                UISelectionFeedbackGenerator().selectionChanged()
+                sheet = target
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("\(title) — \(subtitle)"))
     }
 
     private func run(_ action: StaffMonitorControlAction) {
@@ -1485,7 +1611,7 @@ func smClock(_ iso: String?) -> String? {
 // MARK: - Screenshot zoom viewer (pinch-zoom + share/save via system sheet)
 
 @available(iOS 17.0, *)
-private struct SMScreenshotViewer: View {
+struct SMScreenshotViewer: View {
     let image: UIImage
     let at: String?
     @Environment(\.dismiss) private var dismiss
@@ -1528,7 +1654,7 @@ private struct SMScreenshotViewer: View {
 }
 
 /// Transferable PNG wrapper so ShareLink offers Save Image / share targets.
-private struct SMScreenshotFile: Transferable {
+struct SMScreenshotFile: Transferable {
     let data: Data
     static var transferRepresentation: some TransferRepresentation {
         DataRepresentation(exportedContentType: .png) { $0.data }
@@ -1547,5 +1673,199 @@ private extension View {
                         in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
                 .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+// MARK: - Dedicated Live Watch screen (owner feedback 2026-07-17: NOT a Monitor copy)
+
+/// /agent/live-watch now opens THIS focused screen — the live browser feed as the
+/// hero (big screenshot, devices, stop switch, step stream). The Monitor's Agents
+/// tab keeps a compact row that opens the same panel; both read one VM/data source.
+@available(iOS 17.0, *)
+struct LiveWatchScreen: View {
+    let openWeb: (_ path: String, _ title: String) -> Void
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var vm = StaffMonitorControlsVM()
+    @State private var pending: StaffMonitorControlAction? = nil
+    @State private var showViewer = false
+
+    private let emerald = Color(red: 0.020, green: 0.588, blue: 0.412)
+    private let red500 = Color(red: 0.937, green: 0.267, blue: 0.267)
+    private let amber600 = Color(red: 0.851, green: 0.467, blue: 0.024)
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                if let w = vm.watch {
+                    // ── Hero: what the agent sees RIGHT NOW ──
+                    if let img = w.screenshotImage {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                            showViewer = true
+                        } label: {
+                            Image(uiImage: img)
+                                .resizable()
+                                .scaledToFit()
+                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+                                .overlay(alignment: .topLeading) {
+                                    HStack(spacing: 5) {
+                                        Circle().fill(w.running ? amber600 : emerald)
+                                            .frame(width: 7, height: 7)
+                                        Text(w.running ? "কাজ চলছে" : "LIVE")
+                                            .font(.system(size: 10, weight: .heavy))
+                                    }
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 9).padding(.vertical, 5)
+                                    .background(.black.opacity(0.55), in: Capsule())
+                                    .padding(10)
+                                }
+                                .overlay(alignment: .topTrailing) {
+                                    if let t = smClock(w.latestScreenshotAt) {
+                                        Text(t)
+                                            .font(.system(size: 10, weight: .bold).monospacedDigit())
+                                            .foregroundStyle(.white)
+                                            .padding(.horizontal, 8).padding(.vertical, 5)
+                                            .background(.black.opacity(0.55), in: Capsule())
+                                            .padding(10)
+                                    }
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text("এজেন্ট এখন যে পেজ দেখছে — বড় করতে চাপুন"))
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "display")
+                                .font(.largeTitle).foregroundStyle(.secondary)
+                            Text(w.enabled ? "এখনো কোনো স্ক্রিনশট নেই — এজেন্ট ব্রাউজারে কাজ শুরু করলে এখানে লাইভ দেখা যাবে।"
+                                           : "লাইভ ব্রাউজার বন্ধ আছে।")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 44)
+                        .smGlass(scheme)
+                    }
+
+                    // ── Status + devices + kill switch ──
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Circle().fill(w.enabled ? emerald : red500).frame(width: 9, height: 9)
+                            Text(w.enabled ? "চালু · অনলাইন \(w.onlineCount) ডিভাইস" : "বন্ধ")
+                                .font(.subheadline.weight(.bold))
+                            Spacer()
+                            if vm.busy { ProgressView().controlSize(.small) }
+                        }
+                        if !w.devices.isEmpty {
+                            Text(w.devices.map { "\($0.online ? "🟢" : "⚪️") \($0.name)" }.joined(separator: "  ·  "))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Button {
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            pending = w.enabled ? .stopBrowser : .resumeBrowser
+                        } label: {
+                            Text(w.enabled ? "⏹ সব থামাও" : "▶️ আবার চালু করো")
+                                .font(.subheadline.weight(.bold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background((w.enabled ? red500 : emerald).opacity(0.14), in: Capsule())
+                                .foregroundStyle(w.enabled ? red500 : emerald)
+                                .overlay(Capsule().strokeBorder(
+                                    (w.enabled ? red500 : emerald).opacity(0.35), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(vm.busy)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .smGlass(scheme)
+
+                    // ── Step stream ──
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("লাইভ স্টেপ")
+                            .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                        if w.steps.isEmpty {
+                            Text("এখনো কোনো ধাপ নেই।").font(.caption2).foregroundStyle(.secondary)
+                        } else {
+                            ForEach(w.steps) { s in
+                                let badge = smStepBadge(s.status)
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text(smActionBN(s.action))
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .frame(width: 96, alignment: .leading)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(s.target.isEmpty ? "—" : s.target)
+                                            .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                                        if let err = s.error, !err.isEmpty {
+                                            Text(String(err.prefix(120)))
+                                                .font(.system(size: 9)).foregroundStyle(red500).lineLimit(2)
+                                        }
+                                    }
+                                    Spacer(minLength: 4)
+                                    Text(badge.label)
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(badge.color)
+                                        .padding(.horizontal, 5).padding(.vertical, 2)
+                                        .background(badge.color.opacity(0.10), in: Capsule())
+                                    if let t = smClock(s.at) {
+                                        Text(t).font(.system(size: 9).monospacedDigit()).foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                                if s.id != w.steps.last?.id { Divider().opacity(0.3) }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .smGlass(scheme)
+                } else {
+                    ProgressView("লোড হচ্ছে…")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 60)
+                }
+                Color.clear.frame(height: 40)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+        }
+        .background(AlmaSwiftTheme.rootBg(scheme))
+        .refreshable { await vm.refreshWatch() }
+        .task {
+            await vm.refreshWatch()
+            // Web parity cadence: 2.5s while visible + foregrounded.
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                if Task.isCancelled { break }
+                guard scenePhase == .active else { continue }
+                await vm.refreshWatch()
+            }
+        }
+        .confirmationDialog(
+            pending?.title ?? "",
+            isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
+            titleVisibility: .visible,
+            presenting: pending
+        ) { action in
+            Button(action.confirmLabel, role: action.isDestructive ? .destructive : nil) {
+                Task {
+                    switch action {
+                    case .stopBrowser: await vm.liveBrowser(stop: true)
+                    case .resumeBrowser: await vm.liveBrowser(stop: false)
+                    default: break
+                    }
+                }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: { action in
+            Text(action.message)
+        }
+        .sheet(isPresented: $showViewer) {
+            if let img = vm.watch?.screenshotImage {
+                SMScreenshotViewer(image: img, at: vm.watch?.latestScreenshotAt)
+            }
+        }
     }
 }

@@ -660,20 +660,142 @@ struct StaffMonitorSystemTab: View {
     private let coral = Color(red: 0.878, green: 0.478, blue: 0.373)
     private let gold = Color(red: 0.831, green: 0.659, blue: 0.294)
 
+    /// Owner feedback 2026-07-17: the stacked System cards read like the web's
+    /// clutter. iOS composition — compact grouped rows, each drilling into a
+    /// focused sheet (same language as the Agents tab control room).
+    enum SystemSheet: String, Identifiable {
+        case duty, salah, voice, trust, brain, health, autofix, services, deploy
+        var id: String { rawValue }
+    }
+    @State private var sheet: SystemSheet? = nil
+
     var body: some View {
+        let dutyDone = duties.filter { $0.status == "done" }.count
+        let dutyFailed = duties.filter { $0.status == "failed" || $0.status == "missed" }.count
+        let salahDone = salahDuties.filter { $0.status == "done" }.count
+        let healthySvc = services.filter(\.healthy).count
+        let pendingFix = ops.autoFix.filter { $0.status == "pending" }.count
         VStack(spacing: 10) {
-            dutyTimelineCard
-            if isLive { salahCard }
-            if isLive { salahSettingsCard }
-            if isLive { voiceSettingsCard }
-            if isLive { trustCard }
-            if isLive { brainCard }
-            if isLive { healthCard }
-            if isLive && !ops.autoFix.isEmpty { autoFixCard }
-            if isLive && !services.isEmpty { servicesCard }
-            if isLive { deployCard }
+            VStack(spacing: 0) {
+                sysRow("🤖", "Agent ডিউটি",
+                       duties.isEmpty ? "ডেটা নেই" : "\(dutyDone)/\(duties.count) done\(dutyFailed > 0 ? " · \(dutyFailed) failed" : "")",
+                       tint: dutyFailed > 0 ? red500 : emerald, sheet: .duty)
+                divider
+                if isLive {
+                    sysRow("🕌", "সালাহ",
+                           salahDuties.isEmpty ? "সময় ও রিমাইন্ডার" : "\(salahDone)/\(salahDuties.count) ওয়াক্ত হয়েছে",
+                           tint: emerald, sheet: .salah)
+                    divider
+                    sysRow("🎙️", "ভয়েস সেটিংস", "স্ট্রিমিং · ওয়েক ওয়ার্ড", tint: coral, sheet: .voice)
+                    divider
+                    sysRow("🛡️", "ট্রাস্ট ইঞ্জিন",
+                           ops.trustRules.isEmpty ? "কোনো rule নেই" : "\(ops.trustRules.count)টা rule",
+                           tint: Color(red: 0.506, green: 0.698, blue: 0.604), sheet: .trust)
+                    divider
+                    sysRow("🧠", "এজেন্ট ব্রেইন",
+                           ops.brain.map { "\($0.memoryCount) memories · $\(String(format: "%.2f", $0.todayCostUsd)) আজ" } ?? "লোড হচ্ছে…",
+                           tint: coral, sheet: .brain)
+                    divider
+                    sysRow("🔍", "System Health",
+                           ops.health.map { $0.ok ? "✅ Healthy" : "⚠️ \($0.issues.count)টা issue" } ?? "স্ক্যান হচ্ছে…",
+                           tint: (ops.health?.ok ?? true) ? emerald : red500, sheet: .health)
+                    if !ops.autoFix.isEmpty {
+                        divider
+                        sysRow("🛠️", "Auto-Fix",
+                               pendingFix > 0 ? "\(pendingFix)টা অনুমোদনের অপেক্ষায়" : "\(ops.autoFix.count)টা অ্যাকশন",
+                               tint: pendingFix > 0 ? gold : .secondary, sheet: .autofix)
+                    }
+                    if !services.isEmpty {
+                        divider
+                        sysRow("⚡", "Background Services", "\(healthySvc)/\(services.count) সুস্থ",
+                               tint: healthySvc == services.count ? emerald : red500, sheet: .services)
+                    }
+                    divider
+                    sysRow("🚀", "VPS Worker",
+                           ops.deployMsg.map { String($0.prefix(40)) } ?? (smClock(ops.lastDeploy).map { "Last deploy \($0)" } ?? "Deploy + verify"),
+                           tint: Color(red: 0.506, green: 0.698, blue: 0.604), sheet: .deploy)
+                }
+            }
+            .sysGlass(scheme)
             buildBadge
         }
+        .sheet(item: $sheet) { which in
+            NavigationStack {
+                ScrollView {
+                    VStack(spacing: 10) {
+                        switch which {
+                        case .duty: dutyTimelineCard
+                        case .salah:
+                            salahCard
+                            salahSettingsCard
+                        case .voice: voiceSettingsCard
+                        case .trust: trustCard
+                        case .brain: brainCard
+                        case .health: healthCard
+                        case .autofix: autoFixCard
+                        case .services: servicesCard
+                        case .deploy: deployCard
+                        }
+                    }
+                    .padding(14)
+                }
+                .background(AlmaSwiftTheme.rootBg(scheme))
+                .navigationTitle(sysSheetTitle(which))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) { Button("বন্ধ") { sheet = nil } }
+                }
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    private var divider: some View {
+        Divider().opacity(0.25).padding(.leading, 56)
+    }
+
+    private func sysSheetTitle(_ s: SystemSheet) -> String {
+        switch s {
+        case .duty: return "Agent ডিউটি"
+        case .salah: return "সালাহ"
+        case .voice: return "ভয়েস"
+        case .trust: return "ট্রাস্ট ইঞ্জিন"
+        case .brain: return "এজেন্ট ব্রেইন"
+        case .health: return "System Health"
+        case .autofix: return "Auto-Fix"
+        case .services: return "Services"
+        case .deploy: return "VPS Worker"
+        }
+    }
+
+    private func sysRow(_ icon: String, _ title: String, _ subtitle: String,
+                        tint: Color, sheet target: SystemSheet) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            sheet = target
+        } label: {
+            HStack(spacing: 12) {
+                Text(icon)
+                    .font(.system(size: 17))
+                    .frame(width: 38, height: 38)
+                    .background(tint.opacity(0.13),
+                                in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    Text(subtitle).font(.caption2).foregroundStyle(tint).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 13)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("\(title) — \(subtitle)"))
     }
 
     // ── 🤖 Agent Duties: category-grouped rows + per-duty toggle + retrigger ──

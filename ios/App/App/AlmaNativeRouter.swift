@@ -100,10 +100,10 @@ enum AlmaNativeRouter {
         case "/agent/known-people": return host(KnownPeopleScreen(openWeb: openWebForced), "Known people")
         case "/agent/growth": return host(AgentGrowthScreen(openWeb: openWebForced), "Growth")
         case "/agent/staff-monitor": return host(StaffMonitorScreen(openWeb: openWebForced), "LIVE Business")
-        // NP-1 (AG-08): Live Watch IS the Monitor's Agents/live-browser tab — one
-        // canonical native implementation; the deep link selects that tab.
+        // Owner feedback 2026-07-17: Live Watch is its OWN focused screen (live
+        // browser hero) — visually distinct from the Monitor; same data source.
         case "/agent/live-watch":
-            return host(StaffMonitorScreen(openWeb: openWebForced, initialTab: .agents), "Live Watch")
+            return host(LiveWatchScreen(openWeb: openWebForced), "Live Watch")
         // NP-1 (AG-09): canonical Agent Hub — every Agent surface in one visible menu.
         case "/agent/hub": return host(AgentHubScreen(openWeb: openWebForced), "Agent Hub")
         // NP-4 (AU-01 / FN-01): native auth recovery + wallet deep link.

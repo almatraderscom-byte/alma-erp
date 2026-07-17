@@ -116,8 +116,8 @@
       "pattern": "exact",
       "classification": "native-required",
       "nativeHandler": "native",
-      "screen": "StaffMonitorScreen",
-      "notes": "NP-1 (AG-08): deep link opens the native LIVE Business Monitor with the Agents/live-browser tab selected — one canonical implementation, never a WKWebView. Full live content (devices/screenshot/steps) lands NP-2."
+      "screen": "LiveWatchScreen",
+      "notes": "Owner feedback 2026-07-17: dedicated focused Live Watch screen (live-browser hero + steps) — distinct from the Monitor; same watch data source. Never a WKWebView."
     },
     {
       "path": "/agent/hub",
