@@ -73,6 +73,9 @@ import {
   fetchGoldenEval,
   runGoldenEvalNow,
   type GoldenEvalSummary,
+  fetchStudioHealth,
+  setEngineKill,
+  type StudioHealth,
   type StudioSettings,
   fetchAudioLabStatus,
   queueAudioJob,
@@ -2856,10 +2859,13 @@ function StudioSettingsCard() {
   // CS10 — golden evaluation summary + run trigger
   const [goldenEval, setGoldenEval] = useState<GoldenEvalSummary | null>(null)
   const [evalRunning, setEvalRunning] = useState(false)
+  // CS12 — engine health + kill switches
+  const [health, setHealth] = useState<StudioHealth | null>(null)
   useEffect(() => {
     void fetchStudioSettings().then(setSettings).catch(() => {})
     void fetchStudioConfig().then(setConfig).catch(() => {})
     void fetchGoldenEval().then(setGoldenEval).catch(() => {})
+    void fetchStudioHealth().then(setHealth).catch(() => {})
   }, [])
   if (!settings) return null
 
@@ -2994,6 +3000,47 @@ function StudioSettingsCard() {
           </select>
         </label>
       </div>
+      {/* CS12 — engine health, kill switches, worker heartbeat, balances */}
+      {health && (
+        <div className="border-t border-border-subtle pt-2.5">
+          <div className="flex items-center justify-between">
+            <p className="text-[12px] font-bold text-cream">🚦 ইঞ্জিন হেলথ (শেষ {health.windowDays} দিন)</p>
+            <span className={cn('rounded-full px-2 py-0.5 text-[9px] font-semibold', health.worker.healthy ? 'bg-[#81B29A]/15 text-[#2d6a4f]' : 'bg-red-100 text-red-700')}>
+              Worker {health.worker.healthy ? 'সচল' : 'সাড়া নেই'}
+            </span>
+          </div>
+          <div className="mt-1.5 space-y-1">
+            {health.engines.slice(0, 6).map((e) => (
+              <div key={e.engine} className="flex items-center justify-between gap-2">
+                <p className="min-w-0 flex-1 truncate text-[10px] leading-snug text-muted-hi">
+                  {e.labelBn}: {e.jobs} কাজ · ব্যর্থ {e.errorRatePct}%{e.qcPassRatePct !== null ? ` · QC পাস ${e.qcPassRatePct}%` : ''}{e.p95LatencyMs ? ` · p95 ${Math.round(e.p95LatencyMs / 1000)}s` : ''} · ${e.spendUsd}
+                </p>
+                <label className="flex shrink-0 items-center gap-1 text-[9px] text-muted">
+                  বন্ধ
+                  <input
+                    type="checkbox"
+                    checked={Boolean(health.kills[e.engine])}
+                    onChange={(ev) => {
+                      const killed = ev.target.checked
+                      setHealth({ ...health, kills: { ...health.kills, [e.engine]: killed } })
+                      void setEngineKill(e.engine, killed)
+                        .then(() => toast.success(killed ? e.labelBn + ' বন্ধ (kill switch)' : e.labelBn + ' চালু'))
+                        .catch(() => toast.error('হয়নি'))
+                    }}
+                    className="h-3.5 w-3.5 accent-red-500"
+                  />
+                </label>
+              </div>
+            ))}
+          </div>
+          {health.balances.length > 0 && (
+            <p className="mt-1.5 text-[10px] text-muted">
+              ব্যালেন্স: {health.balances.map((b) => b.label + ' ' + (b.balanceUsd !== null ? '$' + b.balanceUsd : '—')).join(' · ')}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* CS10 — golden evaluation: measurable engine comparison, owner-triggered */}
       <div className="border-t border-border-subtle pt-2.5">
         <div className="flex items-center justify-between">
