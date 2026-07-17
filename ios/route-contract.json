@@ -114,10 +114,18 @@
     {
       "path": "/agent/live-watch",
       "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "IOSP-1 decision: explicit temporary-web exception (AlmaNavCoordinator.temporaryWebRoutes, telemetry route.webAllowed). Live-browser console is a heavy web surface; native-or-retire decision in IOSP-7.",
-      "gapPhase": "IOSP-7"
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "StaffMonitorScreen",
+      "notes": "NP-1 (AG-08): deep link opens the native LIVE Business Monitor with the Agents/live-browser tab selected — one canonical implementation, never a WKWebView. Full live content (devices/screenshot/steps) lands NP-2."
+    },
+    {
+      "path": "/agent/hub",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "AgentHubScreen",
+      "notes": "NP-1 (AG-09): iOS-only canonical Agent Hub (no web page.tsx) — every Agent surface reachable from one visible native menu."
     },
     {
       "path": "/agent/staff-monitor",

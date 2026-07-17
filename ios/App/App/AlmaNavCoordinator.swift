@@ -38,11 +38,11 @@ enum AlmaNavCoordinator {
     /// temporary-web: owner-approved embedded-web debt, each with a decision phase.
     /// Expiry reviews happen in the phase noted in route-contract.json.
     static let temporaryWebRoutes: Set<String> = [
-        "/agent/live-watch",          // IOSP-7: native Live Watch or documented exception
-        "/portal/wallet",             // IOSP-7: native wallet or documented exception
-        "/forgot-password",           // IOSP-7: native shell + secure handoff
-        "/reset-password",            // IOSP-7: native reset completion
-        "/agent/creative-studio-demo" // IOSP-7: dev/demo route — exclude or remove
+        // NP-1: /agent/live-watch went NATIVE (Monitor → Agents tab, AG-08).
+        "/portal/wallet",             // NP-4: route to native WalletStatementScreen (FN-01)
+        "/forgot-password",           // NP-4: native forgot-password form (AU-01)
+        "/reset-password",            // NP-4: native reset completion (AU-02)
+        "/agent/creative-studio-demo" // NP-4: retire from production (AG-13)
     ]
 
     /// public-web-allowed: public informational/share pages — web is correct.

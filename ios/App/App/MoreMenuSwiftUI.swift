@@ -334,6 +334,11 @@ struct MoreMenuScreen: View {
         // P3 mobile companion: "native:companion" is a sentinel — that row pushes the
         // NATIVE companion screen (openCompanion) instead of a web view.
         var agentItems: [MenuItem] = [
+            // NP-1 (AG-09): the canonical Agent Hub — every Agent surface in one
+            // visible menu (the deep audit found Monitor/WhatsApp/Growth/Trading
+            // Staff hidden in inconsistent groups). Hub first, then the shortcuts.
+            MenuItem(title: "Agent Hub",       icon: "square.grid.2x2.fill",             path: "/agent/hub"),
+            MenuItem(title: "LIVE Business",   icon: "chart.bar.xaxis",                  path: "/agent/staff-monitor"),
             MenuItem(title: "Phone Companion", icon: "iphone.radiowaves.left.and.right", path: "native:companion"),
             MenuItem(title: "Live Watch",      icon: "eye",                              path: "/agent/live-watch"),
             // Office-camera face registry: upload reference photos so entrance-watch

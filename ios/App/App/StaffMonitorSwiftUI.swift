@@ -1,13 +1,17 @@
 //
 //  StaffMonitorSwiftUI.swift
-//  ALMA ERP — Staff Monitor as a native SwiftUI screen (read-only).
+//  ALMA ERP — LIVE Business Monitor as a compact five-tab native control room.
 //
-//  Mirrors the web /agent/staff-monitor page's staff blocks — same endpoint,
-//  same colours, same Bangla labels:
+//  NP-1 shell (roadmap §4 mobile IA): sticky status strip (LIVE pulse + Agent /
+//  Browser / Heartbeat / alert chips) + five tabs — Overview · Agents · Staff ·
+//  Feed · System — with the date/history control under the tabs. The old single
+//  oversized vertical page is retired; every tab renders lazy content only.
+//  /agent/live-watch deep-links here with the Agents tab selected (AG-08 —
+//  one canonical native implementation, never a WKWebView).
+//
+//  Data: same endpoints the web page fetches:
 //    GET /api/agent/staff-monitor            → live staff summaries + geo + feed
 //    GET /api/agent/staff-monitor?date=YYYY-MM-DD → archived day summary
-//  (Session-cookie route — the exact browser fetch the web page itself makes.
-//   No key-authed agent routes; staff dispatch/nudge/escalate stay on web.)
 //
 //  Owner control panels (audit fix 2026-07-11): the web page's four top panels
 //  come native as the SAFETY-CRITICAL essentials only —
@@ -574,9 +578,11 @@ private final class StaffMonitorControlsVM {
 
 @available(iOS 17.0, *)
 private struct StaffMonitorControlsSection: View {
+    // NP-1: the SCREEN owns this VM (status-strip chips read it on every tab)
+    // and drives the 10s watch polling — the section only renders + mutates.
+    let vm: StaffMonitorControlsVM
     let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var colorScheme
-    @State private var vm = StaffMonitorControlsVM()
     @State private var pending: StaffMonitorControlAction? = nil
 
     var body: some View {
@@ -584,16 +590,6 @@ private struct StaffMonitorControlsSection: View {
             if vm.controls != nil { controlCenterCard }
             if vm.watch != nil { liveBrowserCard }
             if vm.heartbeat != nil || vm.models != nil { statusCard }
-        }
-        .task {
-            await vm.loadAll()
-            // Watch state must stay fresh (emergency panel); 10s matches the
-            // screen's own live cadence. Cancelled with the view, like the parent.
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
-                if Task.isCancelled { break }
-                await vm.refreshWatch()
-            }
         }
         .confirmationDialog(
             pending?.title ?? "",
@@ -768,47 +764,95 @@ private struct StaffMonitorControlsSection: View {
 
 // MARK: - Screen
 
+// MARK: - Monitor tabs (web MonitorTabs parity — five tabs, neon accents verbatim)
+
+enum StaffMonitorTab: String, CaseIterable {
+    case overview, agents, staff, feed, system
+
+    var label: String {
+        switch self {
+        case .overview: return "Overview"
+        case .agents: return "Agents"
+        case .staff: return "Staff"
+        case .feed: return "Feed"
+        case .system: return "System"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .overview: return "📊"
+        case .agents: return "🤖"
+        case .staff: return "👥"
+        case .feed: return "📨"
+        case .system: return "⚙️"
+        }
+    }
+    /// Web MonitorTabs neon hexes verbatim (#5B8CFF/#A855F7/#EC4899/#22D3A5/#E07A5F).
+    var neon: Color {
+        switch self {
+        case .overview: return Color(red: 0.357, green: 0.549, blue: 1.000)
+        case .agents: return Color(red: 0.659, green: 0.333, blue: 0.969)
+        case .staff: return Color(red: 0.925, green: 0.282, blue: 0.600)
+        case .feed: return Color(red: 0.133, green: 0.827, blue: 0.647)
+        case .system: return Color(red: 0.878, green: 0.478, blue: 0.373)
+        }
+    }
+}
+
 @available(iOS 17.0, *)
 struct StaffMonitorScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = StaffMonitorVM()
+    @State fileprivate var controlsVM = StaffMonitorControlsVM()
     @State private var selected: StaffMonitorSummary? = nil
+    @State private var tab: StaffMonitorTab
+    @State private var feedExpanded = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
+    /// `initialTab` lets deep links land on a specific tab — /agent/live-watch
+    /// opens the Agents (live browser) tab (AG-08, one canonical implementation).
+    init(openWeb: @escaping (_ path: String, _ title: String) -> Void,
+         initialTab: StaffMonitorTab = .overview) {
+        self.openWeb = openWeb
+        _tab = State(initialValue: initialTab)
+    }
+
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 10) {
-                headerBar
-                dayChips
-                if vm.authExpired { authCard }
-                if let err = vm.error, vm.data == nil { errorCard(err) }
-                if vm.data != nil { kpiStrip }
-                // Owner control panels (web page order: control panels above staff blocks).
-                if !vm.authExpired { StaffMonitorControlsSection(openWeb: openWeb) }
-                geoFenceNote
-                if vm.loading && vm.data == nil { loadingRows }
-                staffCards
-                alertsSection
-                if let d = vm.data, !vm.loading, d.staffSummaries.isEmpty, vm.error == nil, !vm.authExpired {
-                    emptyState
+        // Status strip + tab strip live OUTSIDE the scroll view — genuinely sticky
+        // (roadmap §4.2 first fold), tab content scrolls beneath them.
+        VStack(spacing: 0) {
+            headerZone
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    dayChips
+                    tabContent
+                    // Floating-control clearance (roadmap §4.2 hard rule): the last
+                    // row must never sit under a floating Agent control / home bar.
+                    Color.clear.frame(height: 96)
                 }
-                webEscape
-                Color.clear.frame(height: 8)
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 6)
+            .claudeTopFade()
+            .refreshable {
+                await vm.load()
+                await controlsVM.loadAll()
+            }
         }
         .background(StaffMonitorAurora())
-        .claudeTopFade()
-        .refreshable { await vm.load() }
         .task {
             await vm.load()
-            // Web parity: auto-refresh every 10s while live; SwiftUI cancels this
-            // task when the screen leaves the hierarchy.
+            await controlsVM.loadAll()
+            // Web parity: auto-refresh every 10s while live (staff payload + the
+            // emergency live-browser watch state). SwiftUI cancels this task when
+            // the screen leaves the hierarchy — no orphan timers (roadmap §4.9).
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 if Task.isCancelled { break }
-                if vm.isLive { await vm.load(silent: true) }
+                if vm.isLive {
+                    await vm.load(silent: true)
+                    await controlsVM.refreshWatch()
+                }
             }
         }
         .sheet(item: $selected) { s in
@@ -818,18 +862,318 @@ struct StaffMonitorScreen: View {
         }
     }
 
-    // ── Header: Live pulse / archive badge + meta line (web sticky header parity) ──
+    // ── Sticky header zone: status strip + five-tab strip ──
 
-    private var headerBar: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Staff Monitor").font(.subheadline.weight(.bold))
-                Text(metaLine).font(.caption2).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if vm.isLive { livePulse } else if let d = vm.selectedDate { archiveBadge(d) }
+    private var headerZone: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            statusStrip
+            tabStrip
         }
-        .padding(.top, 4)
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
+    }
+
+    /// Compact status chips: LIVE/archive · Agent · Browser · Heartbeat · alerts.
+    /// Each chip is a shortcut into the tab that controls it.
+    private var statusStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if vm.isLive { livePulse } else if let d = vm.selectedDate { archiveBadge(d) }
+                if let c = controlsVM.controls {
+                    statusChip(c.paused ? "🛑 Agent বন্ধ" : "🟢 Agent",
+                               c.paused ? StaffMonitorPalette.red500 : StaffMonitorPalette.emerald600) { tab = .agents }
+                }
+                if let w = controlsVM.watch {
+                    statusChip(w.enabled ? "🖥️ ব্রাউজার \(w.onlineCount)" : "🖥️ বন্ধ",
+                               w.enabled ? StaffMonitorPalette.emerald600 : .secondary) { tab = .agents }
+                }
+                if let h = controlsVM.heartbeat {
+                    statusChip(h.enabled ? "💓 \(h.wakesToday)" : "💓 বন্ধ",
+                               h.enabled ? StaffMonitorPalette.emerald600 : .secondary) { tab = .agents }
+                }
+                let unacked = vm.data?.unackedMessages.count ?? 0
+                if unacked > 0 {
+                    statusChip("⚠️ \(unacked)", StaffMonitorPalette.amber600) { tab = .feed }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func statusChip(_ text: String, _ color: Color, action: @escaping () -> Void) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            action()
+        } label: {
+            Text(text)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(color)
+                .padding(.horizontal, 9).padding(.vertical, 5)
+                .background(color.opacity(0.10), in: Capsule())
+                .overlay(Capsule().strokeBorder(color.opacity(0.30), lineWidth: 0.8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Five-tab strip — web MonitorTabs parity: icon + label + count badge +
+    /// neon underline on the active tab. Horizontally scrollable on small phones.
+    private var tabStrip: some View {
+        let unacked = vm.data?.unackedMessages.count ?? 0
+        let staffCount = vm.data?.staffSummaries.count ?? 0
+        let feedCount = feedRows.count
+        func badge(for t: StaffMonitorTab) -> Int? {
+            switch t {
+            case .overview: return unacked > 0 ? unacked : nil
+            case .staff: return staffCount > 0 ? staffCount : nil
+            case .feed: return feedCount > 0 ? feedCount : nil
+            default: return nil
+            }
+        }
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                ForEach(StaffMonitorTab.allCases, id: \.self) { t in
+                    let active = tab == t
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        withAnimation(.easeOut(duration: 0.18)) { tab = t }
+                    } label: {
+                        VStack(spacing: 4) {
+                            HStack(spacing: 4) {
+                                Text(t.icon).font(.caption)
+                                Text(t.label)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(active ? t.neon : .secondary)
+                                if let b = badge(for: t) {
+                                    Text("\(b)")
+                                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                        .foregroundStyle(active ? t.neon : .secondary)
+                                        .padding(.horizontal, 5).padding(.vertical, 1.5)
+                                        .background((active ? t.neon : Color.secondary).opacity(0.14), in: Capsule())
+                                }
+                            }
+                            Capsule()
+                                .fill(LinearGradient(colors: [.clear, t.neon, .clear],
+                                                     startPoint: .leading, endPoint: .trailing))
+                                .frame(height: 2)
+                                .opacity(active ? 1 : 0)
+                                .shadow(color: active ? t.neon.opacity(0.6) : .clear, radius: 4)
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.top, 5)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text(t.label))
+                    .accessibilityAddTraits(active ? .isSelected : [])
+                }
+            }
+        }
+    }
+
+    // ── Tab content (lazy — only the active tab renders) ──
+
+    @ViewBuilder private var tabContent: some View {
+        if vm.authExpired { authCard }
+        if let err = vm.error, vm.data == nil { errorCard(err) }
+        if vm.loading && vm.data == nil { loadingRows }
+        switch tab {
+        case .overview: overviewTab
+        case .agents: agentsTab
+        case .staff: staffTab
+        case .feed: feedTab
+        case .system: systemTab
+        }
+    }
+
+    // ── OVERVIEW: KPIs + actionable alert summary + top staff + refresh meta ──
+
+    @ViewBuilder private var overviewTab: some View {
+        if vm.data != nil {
+            kpiStrip
+            overviewAlertCard
+            topStaffSection
+            Text(metaLine)
+                .font(.caption2).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 2)
+        }
+    }
+
+    /// Actionable alert summary, or a COMPACT all-clear line (roadmap §4.2: empty
+    /// states collapse — they never occupy the rest of the page).
+    @ViewBuilder private var overviewAlertCard: some View {
+        let unacked = vm.data?.unackedMessages.count ?? 0
+        let alerts = vm.data?.productivityAlerts.count ?? 0
+        if unacked > 0 || alerts > 0 {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("🔔 অ্যালার্ট")
+                    .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                if unacked > 0 {
+                    alertRow("⏳ \(unacked)টা মেসেজ এখনো acknowledge হয়নি",
+                             StaffMonitorPalette.amber600) { tab = .feed }
+                }
+                if alerts > 0 {
+                    alertRow("⚡ \(alerts)টা প্রোডাক্টিভিটি অ্যালার্ট",
+                             StaffMonitorPalette.red500) { tab = .staff }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        } else if vm.data != nil {
+            Label("সব ঠিক আছে — কোনো অ্যালার্ট নেই", systemImage: "checkmark.circle")
+                .font(.caption).foregroundStyle(StaffMonitorPalette.emerald600)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        }
+    }
+
+    private func alertRow(_ text: String, _ color: Color, action: @escaping () -> Void) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            action()
+        } label: {
+            HStack {
+                Text(text).font(.caption.weight(.semibold)).foregroundStyle(color)
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Compact top staff (web MonitorStaffCards on Overview): top 3 by progress,
+    /// with a jump into the full Staff tab.
+    @ViewBuilder private var topStaffSection: some View {
+        if let summaries = vm.data?.staffSummaries, !summaries.isEmpty {
+            let top = summaries.sorted { $0.completionPct > $1.completionPct }.prefix(3)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("👥 টপ স্টাফ")
+                        .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                    Spacer()
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        tab = .staff
+                    } label: {
+                        Text("সবাই ›").font(.caption2.weight(.semibold))
+                            .foregroundStyle(StaffMonitorPalette.accentText(colorScheme))
+                    }
+                    .buttonStyle(.plain)
+                }
+                ForEach(Array(top)) { s in
+                    StaffMonitorCard(
+                        summary: s,
+                        geo: vm.geo(for: s.staffId),
+                        alertCount: vm.alerts(for: s.staffId).count,
+                        onTap: { selected = s })
+                }
+            }
+        } else if let d = vm.data, d.staffSummaries.isEmpty, !vm.loading {
+            emptyState
+        }
+    }
+
+    // ── AGENTS: owner control panels (live only, web parity) ──
+
+    @ViewBuilder private var agentsTab: some View {
+        if !vm.isLive {
+            // Web parity string verbatim.
+            Text("Agent কন্ট্রোল শুধু লাইভ ভিউতে — \"Today\" চাপুন")
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+                .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        } else if !vm.authExpired {
+            StaffMonitorControlsSection(vm: controlsVM, openWeb: openWeb)
+        }
+    }
+
+    // ── STAFF: full cards + geo + productivity ──
+
+    @ViewBuilder private var staffTab: some View {
+        geoFenceNote
+        staffCards
+        alertsSection
+        if let d = vm.data, !vm.loading, d.staffSummaries.isEmpty, vm.error == nil, !vm.authExpired {
+            emptyState
+        }
+    }
+
+    // ── FEED: unacked + message feed (escalate/approvals actions land NP-3) ──
+
+    private var feedRows: [StaffMonitorFeedRow] {
+        let d = vm.data
+        let rows = (d?.feed.isEmpty == false ? d?.feed : d?.historyFeed) ?? []
+        return rows
+    }
+
+    @ViewBuilder private var feedTab: some View {
+        let unacked = vm.data?.unackedMessages ?? []
+        if !unacked.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("⏳ Pending Ack (\(unacked.count))")
+                    .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                ForEach(unacked.prefix(10)) { m in
+                    StaffMonitorFeedCardRow(m: m, scheme: colorScheme)
+                    if m.id != unacked.prefix(10).last?.id { Divider().opacity(0.4) }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        }
+        VStack(alignment: .leading, spacing: 10) {
+            Text("📨 Message Feed")
+                .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+            if feedRows.isEmpty {
+                Text("কোনো মেসেজ লগ নেই").font(.caption).foregroundStyle(.secondary)
+            } else {
+                let visible = feedExpanded ? feedRows : Array(feedRows.prefix(6))
+                ForEach(visible) { m in
+                    StaffMonitorFeedCardRow(m: m, scheme: colorScheme)
+                    if m.id != visible.last?.id { Divider().opacity(0.4) }
+                }
+                if feedRows.count > 6 {
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        withAnimation { feedExpanded.toggle() }
+                    } label: {
+                        Text(feedExpanded ? "▴ কম দেখুন" : "▾ আরও \(feedRows.count - 6)টা")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(StaffMonitorPalette.accentText(colorScheme))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+    }
+
+    // ── SYSTEM: duty/Salah/trust/brain/health/deploy land in NP-3 — compact note ──
+
+    private var systemTab: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("⚙️ System")
+                .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+            Text("ডিউটি টাইমলাইন · সালাহ · ট্রাস্ট · ব্রেন · হেলথ স্ক্যান · ডিপ্লয় — native ভার্সন NP-3 তে আসছে।")
+                .font(.caption).foregroundStyle(.secondary)
+            // Contract AG-07.system (plannedPhase NP-3): explicitly unfinished phase
+            // item — the ONLY sanctioned internal web escape on this screen.
+            Button { openWeb("/agent/staff-monitor", "LIVE Business") } label: {
+                Label("আপাতত ওয়েবে খুলুন", systemImage: "safari").font(.caption2)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var metaLine: String {
@@ -1027,17 +1371,57 @@ struct StaffMonitorScreen: View {
         }
     }
 
-    private var webEscape: some View {
-        Button {
-            openWeb("/agent/staff-monitor", "Staff monitor")
-        } label: {
-            Label("সব কন্ট্রোল ও অ্যাকশন (টাস্ক দাও • মেসেজ • এসকালেট) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+}
+
+// MARK: - Feed row (web FeedMessage + AckBadge parity — compact card row)
+
+@available(iOS 17.0, *)
+private struct StaffMonitorFeedCardRow: View {
+    let m: StaffMonitorFeedRow
+    let scheme: ColorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(m.staffName ?? "—").font(.caption.weight(.bold)).lineLimit(1)
+                Text(m.typeLabel)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(StaffMonitorPalette.accentText(scheme))
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(StaffMonitorPalette.coral.opacity(0.12), in: Capsule())
+                if let t = StaffMonitorFormat.clock(m.sentAt ?? m.createdAt) {
+                    Text(t).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Spacer()
+                ackBadge
+            }
+            Text(m.content)
+                .font(.caption)
+                .foregroundStyle(.primary.opacity(0.85))
+                .lineLimit(3)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.vertical, 6)
+        .padding(.vertical, 2)
+    }
+
+    /// Web AckBadge parity: ✓ time · ⏳ unseen · sending…
+    @ViewBuilder private var ackBadge: some View {
+        if let ack = m.acknowledgedAt, let t = StaffMonitorFormat.clock(ack) {
+            Text("✓ \(t)")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(StaffMonitorPalette.emerald600)
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background(StaffMonitorPalette.emerald600.opacity(0.10), in: Capsule())
+        } else if m.status == "delivered" || m.status == "sent" {
+            Text("⏳ unseen")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(StaffMonitorPalette.amber600)
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background(StaffMonitorPalette.amber500.opacity(0.10), in: Capsule())
+        } else if m.status == "queued" || m.status == "pending" {
+            Text("sending…")
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+        }
     }
 }
 

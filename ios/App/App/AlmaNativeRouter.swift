@@ -89,7 +89,13 @@ enum AlmaNativeRouter {
         case "/agent/trading-staff": return host(TradingStaffScreen(openWeb: openWebForced), "Trading staff")
         case "/agent/known-people": return host(KnownPeopleScreen(openWeb: openWebForced), "Known people")
         case "/agent/growth": return host(AgentGrowthScreen(openWeb: openWebForced), "Growth")
-        case "/agent/staff-monitor": return host(StaffMonitorScreen(openWeb: openWebForced), "Staff monitor")
+        case "/agent/staff-monitor": return host(StaffMonitorScreen(openWeb: openWebForced), "LIVE Business")
+        // NP-1 (AG-08): Live Watch IS the Monitor's Agents/live-browser tab — one
+        // canonical native implementation; the deep link selects that tab.
+        case "/agent/live-watch":
+            return host(StaffMonitorScreen(openWeb: openWebForced, initialTab: .agents), "Live Watch")
+        // NP-1 (AG-09): canonical Agent Hub — every Agent surface in one visible menu.
+        case "/agent/hub": return host(AgentHubScreen(openWeb: openWebForced), "Agent Hub")
         // Trading business (S7 batch — Trading + Digital go native, 2026-07-10)
         case "/trading": return host(TradingHomeScreen(openWeb: openWebForced), "Trading")
         case "/trading/accounts": return host(TradingAccountsScreen(openWeb: openWebForced), "Trading accounts")

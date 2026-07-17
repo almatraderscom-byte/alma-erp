@@ -9726,6 +9726,7 @@ extension AlmaTabBarController {
         case "WhatsApp": return "message.fill"
         case "Monitor": return "chart.bar.xaxis"
         case "Costs": return "dollarsign.circle"
+        case "Hub": return "square.grid.2x2.fill"
         default: return "sparkles"
         }
     }
@@ -9791,6 +9792,9 @@ extension AlmaTabBarController {
                 nativePushItem("WhatsApp", "/agent/whatsapp"),
                 nativePushItem("Monitor", "/agent/staff-monitor"),
                 nativePushItem("Costs", "/agent/costs"),
+                // NP-1 (AG-09): the radial stays a SHORTCUT; the Hub is the
+                // canonical, discoverable list of every Agent surface.
+                nativePushItem("Hub", "/agent/hub"),
             ])
             host.view.addSubview(assistive)
             assistive.attach(to: host.view, tabBarHeight: 49)
