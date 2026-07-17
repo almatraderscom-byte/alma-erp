@@ -28,6 +28,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { WebSocketServer } from 'ws'
 import { GoogleGenAI } from '@google/genai'
 import { logCost } from '../cost-log.mjs'
+import { isUnintelligibleTranscript } from './transcript-guard.mjs'
 
 const RELAY_MODEL = () => process.env.VOICE_RELAY_MODEL_ID || 'gemini-3.5-flash'
 const MAX_CALL_MINUTES = () => Number(process.env.VOICE_CALL_MAX_MINUTES) || 10
@@ -65,10 +66,13 @@ function buildSystemPrompt({ purpose, recipientName }) {
     `নিয়ম:\n` +
     `- শুধুই সহজ, বিনয়ী, কথ্য বাংলায় কথা বলো। এটা ফোন কল — প্রতিটা উত্তর ১-৩টা ছোট বাক্যে, কোনো markdown/emoji/তালিকা নয়।\n` +
     `- অন্য পক্ষের কথা মন দিয়ে শোনো, প্রয়োজনীয় তথ্য আদায় করো।\n` +
+    `- **না বুঝলে বানিয়ে বলবে না** — লাইন কেটে গেলে বা কথা অস্পষ্ট হলে সোজা জিজ্ঞেস করো ` +
+    `"দুঃখিত, একটু কেটে গেল — আরেকবার বলবেন?"। অনুমান করে নিজের মতো কথা চালিয়ে যাওয়া কঠোরভাবে নিষিদ্ধ।\n` +
     `- উদ্দেশ্য পূরণ হয়ে গেলে ভদ্রভাবে বিদায় নাও এবং বিদায়-বাক্যের একদম শেষে ${END_MARKER} লেখো (ওটা উচ্চারিত হবে না)।\n` +
     `- অপ্রাসঙ্গিক/হারাম বিষয়ে যেও না; না জানলে বলো মালিককে জিজ্ঞেস করে জানানো হবে।`
   )
 }
+
 
 // Diagnostics visible on /health — per-turn latency/errors and report outcomes,
 // so failures are readable remotely instead of guessed at.
@@ -95,6 +99,8 @@ class RelaySession {
     this.ended = false
     this.reported = false
     this.userTurns = 0
+    /** Consecutive mis-heard utterances — 3 in a row means the line/ASR is unusable. */
+    this.misheardStreak = 0
     this.maxTimer = setTimeout(() => this.timeUp(), MAX_CALL_MINUTES() * 60_000)
     // Idle-hangup: if no human speech is ever transcribed, the call reached
     // voicemail / a carrier intercept / dead air — don't monologue for the full
@@ -129,6 +135,20 @@ class RelaySession {
         if (msg.voicePrompt && msg.last !== false) {
           this.userTurns++
           clearTimeout(this.idleTimer) // real human speech — cancel idle-hangup
+          // Mis-heard speech (Hindi-script / noise) never reaches the model: it would
+          // answer the garbage confidently and drift off on its own. Ask to repeat,
+          // and keep the bad text OUT of history so it can't poison later turns.
+          if (isUnintelligibleTranscript(msg.voicePrompt)) {
+            this.misheardStreak++
+            relayDiag.note(relayDiag.lastTurns, {
+              call: this.callRecordId,
+              misheard: String(msg.voicePrompt).slice(0, 60),
+              streak: this.misheardStreak,
+            })
+            this.askToRepeat()
+            break
+          }
+          this.misheardStreak = 0
           this.history.push({ role: 'user', text: String(msg.voicePrompt) })
           void this.respond()
         }
@@ -147,6 +167,31 @@ class RelaySession {
       default:
         break
     }
+  }
+
+  /**
+   * Deterministic "say that again" — spoken WITHOUT the model, so a mis-heard line
+   * can never turn into an invented answer. After 3 straight misses the line itself
+   * is the problem; say so honestly and hang up rather than loop forever.
+   */
+  askToRepeat() {
+    if (this.ended) return
+    if (this.misheardStreak >= 3) {
+      this.ended = true
+      this.speak('লাইনটা খুব খারাপ, আপনার কথা ধরতে পারছি না। পরে আবার কল দিচ্ছি। আসসালামু আলাইকুম।', true)
+      setTimeout(() => this.send({ type: 'end' }), 5000)
+      return
+    }
+    const line = this.misheardStreak === 1
+      ? 'দুঃখিত, একটু কেটে গেল — আরেকবার বলবেন?'
+      : 'এখনও পরিষ্কার শুনতে পাচ্ছি না। একটু আস্তে করে আবার বলুন প্লিজ।'
+    this.speak(line, true)
+  }
+
+  /** Speak one ready-made line (no model involved). */
+  speak(text, last = false) {
+    this.send({ type: 'text', token: text, last: false })
+    if (last) this.send({ type: 'text', token: '', last: true })
   }
 
   async respond() {
@@ -186,6 +231,18 @@ class RelaySession {
           thinkingConfig: { thinkingBudget: 0 },
         },
       })
+      // Prosody: Twilio synthesises each text message we send as its own TTS unit, so
+      // forwarding raw Gemini chunks made the voice speak in fragments — the owner's
+      // "robotic sound". Twilio's own best-practices note that holding text back gives
+      // "a smoother and more consistent pace of speaking". We flush on sentence
+      // boundaries instead: whole clauses reach TTS (natural intonation) while the
+      // FIRST sentence still leaves as soon as it is complete, so latency barely moves.
+      let buf = ''
+      const flush = () => {
+        const out = buf.trim()
+        buf = ''
+        if (out) this.send({ type: 'text', token: out + ' ', last: false })
+      }
       for await (const chunk of stream) {
         if (ac.signal.aborted) return
         let token = chunk.text ?? ''
@@ -199,9 +256,12 @@ class RelaySession {
             if (token.endsWith(END_MARKER.slice(0, i))) { token = token.slice(0, -i); break }
           }
         }
-        if (token) this.send({ type: 'text', token, last: false })
+        buf += token
+        // Bangla danda, ?, !, or a long clause — flush a speakable unit.
+        if (/[।?!]\s*$/.test(buf) || buf.length > 160) flush()
         if (sawEnd) break
       }
+      flush()
     } catch (err) {
       // Barge-in / newer prompt aborted us — the newer respond() owns the floor.
       if (ac.signal.aborted && String(ac.signal.reason?.message) !== 'llm_timeout') {

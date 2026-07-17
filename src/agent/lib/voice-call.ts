@@ -309,6 +309,12 @@ async function placeRelayCall(
       ` transcriptionProvider="${process.env.VOICE_RELAY_STT_PROVIDER ?? 'Deepgram'}"` +
       ` transcriptionLanguage="${process.env.VOICE_RELAY_STT_LANGUAGE ?? 'bn'}"` +
       ` speechModel="${process.env.VOICE_RELAY_STT_MODEL ?? 'nova-3-general'}"` +
+      // Turn-taking: Twilio defaults reportInputDuringAgentSpeech to "none", so anything
+      // the other person said WHILE the agent was talking never reached us — their
+      // sentence was simply lost and the agent carried on its own way (owner's "amar
+      // kotha na bujhei nijer moto kotha bola"). "speech" delivers those words; the
+      // default interruptible="any" already stops the TTS when they start speaking.
+      ` reportInputDuringAgentSpeech="${process.env.VOICE_RELAY_REPORT_DURING_SPEECH ?? 'speech'}"` +
       (process.env.VOICE_RELAY_SPEECH_TIMEOUT_MS
         ? ` speechTimeout="${process.env.VOICE_RELAY_SPEECH_TIMEOUT_MS}"`
         : '') +
