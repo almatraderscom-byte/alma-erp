@@ -57,13 +57,13 @@
       "title": "Agent Control Center (pause + autonomy + capabilities)",
       "route": "/agent/staff-monitor",
       "priority": "P0",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-2",
       "webSource": [
         "src/agent/components/monitor/AgentControlCenter.tsx"
       ],
       "nativeSource": [
-        "ios/App/App/StaffMonitorSwiftUI.swift"
+        "ios/App/App/StaffMonitorAgentsSwiftUI.swift"
       ],
       "actions": [
         {
@@ -81,8 +81,8 @@
           "kind": "write",
           "roleGate": "owner",
           "api": "PATCH /api/assistant/controls",
-          "state": "missing",
-          "plannedPhase": "NP-2"
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
         },
         {
           "id": "AG-02.capabilities",
@@ -90,45 +90,49 @@
           "kind": "write",
           "roleGate": "owner",
           "api": "PATCH /api/assistant/controls",
-          "state": "missing",
-          "plannedPhase": "NP-2"
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
         }
-      ]
+      ],
+      "notes": "NP-2 DONE: pause confirm-dialog + autonomy segmented + 3 capability toggles, PATCH /api/assistant/controls, server echo only."
     },
     {
       "id": "AG-03",
       "title": "Autonomy SLO surface",
       "route": "/agent/staff-monitor",
       "priority": "P0",
-      "state": "missing",
+      "state": "native",
       "plannedPhase": "NP-2",
       "webSource": [
         "src/agent/components/monitor/AutonomySloPanel.tsx"
       ],
-      "nativeSource": [],
+      "nativeSource": [
+        "ios/App/App/StaffMonitorAgentsSwiftUI.swift"
+      ],
       "actions": [
         {
           "id": "AG-03.slo",
           "title": "SLO invariants, class rollout/stage/sample/error, degraded warnings",
           "kind": "read",
           "api": "GET /api/assistant/controls?section=slo",
-          "state": "missing",
-          "plannedPhase": "NP-2"
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
         }
-      ]
+      ],
+      "notes": "NP-2 DONE: SLO invariants grid + breaches + per-class rows + outbox line (GET /api/assistant/controls?section=slo)."
     },
     {
       "id": "AG-04",
       "title": "Per-model toggles",
       "route": "/agent/staff-monitor",
       "priority": "P0",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-2",
       "webSource": [
         "src/agent/components/monitor/ModelTogglePanel.tsx"
       ],
       "nativeSource": [
-        "ios/App/App/StaffMonitorSwiftUI.swift"
+        "ios/App/App/StaffMonitorAgentsSwiftUI.swift"
       ],
       "actions": [
         {
@@ -136,9 +140,9 @@
           "title": "Searchable/grouped per-model state",
           "kind": "read",
           "api": "GET /api/assistant/models",
-          "state": "missing",
-          "plannedPhase": "NP-2",
-          "notes": "native shows enabled count only"
+          "state": "native",
+          "notes": "native shows enabled count only",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
         },
         {
           "id": "AG-04.toggle",
@@ -146,23 +150,24 @@
           "kind": "write",
           "roleGate": "owner",
           "api": "PATCH /api/assistant/models",
-          "state": "missing",
-          "plannedPhase": "NP-2"
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
         }
-      ]
+      ],
+      "notes": "NP-2 DONE: search + provider-grouped model rows, PATCH {modelId,enabled} with enabledMap echo."
     },
     {
       "id": "AG-05",
       "title": "Heartbeat panel",
       "route": "/agent/staff-monitor",
       "priority": "P0",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-2",
       "webSource": [
         "src/agent/components/monitor/HeartbeatPanel.tsx"
       ],
       "nativeSource": [
-        "ios/App/App/StaffMonitorSwiftUI.swift"
+        "ios/App/App/StaffMonitorAgentsSwiftUI.swift"
       ],
       "actions": [
         {
@@ -170,8 +175,8 @@
           "title": "Full wake history/timeline",
           "kind": "read",
           "api": "GET /api/assistant/heartbeat",
-          "state": "missing",
-          "plannedPhase": "NP-2"
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
         },
         {
           "id": "AG-05.enable",
@@ -179,8 +184,8 @@
           "kind": "write",
           "roleGate": "owner",
           "api": "POST /api/assistant/heartbeat",
-          "state": "missing",
-          "plannedPhase": "NP-2"
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
         },
         {
           "id": "AG-05.testnow",
@@ -188,23 +193,24 @@
           "kind": "write",
           "roleGate": "owner",
           "api": "POST /api/assistant/heartbeat",
-          "state": "missing",
-          "plannedPhase": "NP-2"
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
         }
-      ]
+      ],
+      "notes": "NP-2 DONE: full timeline (limit=20), enable/disable + test_now POST; response feed is the displayed truth."
     },
     {
       "id": "AG-06",
       "title": "Live browser watch",
       "route": "/agent/staff-monitor",
       "priority": "P0",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-2",
       "webSource": [
         "src/agent/components/monitor/LiveBrowserWatchPanel.tsx"
       ],
       "nativeSource": [
-        "ios/App/App/StaffMonitorSwiftUI.swift"
+        "ios/App/App/StaffMonitorAgentsSwiftUI.swift"
       ],
       "actions": [
         {
@@ -221,26 +227,27 @@
           "title": "Connected devices/online count",
           "kind": "read",
           "api": "GET /api/assistant/live-browser/watch",
-          "state": "missing",
-          "plannedPhase": "NP-2"
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
         },
         {
           "id": "AG-06.screenshot",
           "title": "Latest screenshot (tap-to-zoom/save/share)",
           "kind": "read",
           "api": "GET /api/assistant/live-browser/watch",
-          "state": "missing",
-          "plannedPhase": "NP-2"
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
         },
         {
           "id": "AG-06.steps",
           "title": "Live step feed (action/target/state/error/time)",
           "kind": "read",
           "api": "GET /api/assistant/live-browser/watch",
-          "state": "missing",
-          "plannedPhase": "NP-2"
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
         }
-      ]
+      ],
+      "notes": "NP-2 DONE: devices line, latest screenshot (zoom sheet + ShareLink PNG), full step feed with status/error/time, 2.5s tab-visible polling."
     },
     {
       "id": "AG-07",
@@ -1562,7 +1569,7 @@
     "SettingsSmsSwiftUI.swift": 2,
     "SettingsTelegramSwiftUI.swift": 2,
     "SettingsUsersSwiftUI.swift": 3,
-    "StaffMonitorSwiftUI.swift": 4,
+    "StaffMonitorSwiftUI.swift": 3,
     "SubscriptionsSwiftUI.swift": 1,
     "SupplierImportSwiftUI.swift": 4,
     "SystemDiagnosticsSwiftUI.swift": 2,
