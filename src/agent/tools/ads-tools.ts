@@ -259,10 +259,13 @@ const recommend_ad_actions: AgentTool = {
     'scale (+20-30% budget), reduce, kill (pause), duplicate winner, or refresh_creative (File 10). ' +
     'Low-data campaigns → hold. Optionally creates ONE batch approval card when createApprovalCard=true. ' +
     'Execution always via separate confirm cards (update_campaign_budget, pause_campaign, duplicate_campaign, make_ad_creatives). ' +
-    'Use this for "বুস্ট করব?"/scale decisions: `metaIntelligence` carries Meta\'s own trend / anomaly / opportunity-score / ' +
-    'industry + auction benchmarks when available — cite them ("CTR ইন্ডাস্ট্রি গড়ের নিচে…") instead of judging on spend alone. ' +
+    'Use this for "বুস্ট করব?"/scale decisions AND "গত ৭ দিনের অ্যাড পারফরম্যান্স / impressions / clicks / CTR কত?" questions. ' +
+    'For a performance answer, quote `windowPerformance` (per-campaign impressions/clicks/CTR/spendLabel/status for the last 7 ' +
+    'days, PAUSED campaigns included) — it is the REAL data; never say "ডেটা নেই" when windowPerformance has rows. ' +
+    '`metaIntelligence` carries Meta\'s own trend / anomaly / opportunity-score / industry + auction benchmarks when available — ' +
+    'cite them ("CTR ইন্ডাস্ট্রি গড়ের নিচে…") instead of judging on spend alone. ' +
     'SOURCE: quote `provenance.sourceLabel` verbatim; say "Meta MCP" ONLY if provenance.source === "meta_mcp", otherwise state ' +
-    'provenance.degradedReason honestly. MONEY: use accountCurrency / windowSpendLabel — never ৳ unless the currency is BDT.',
+    'provenance.degradedReason honestly. MONEY: use windowPerformance[].spendLabel / windowSpendLabel — never ৳ unless BDT.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -286,6 +289,7 @@ const recommend_ad_actions: AgentTool = {
       // the head can cite trend/benchmark/anomaly evidence without ever guessing
       // (or fabricating) where the numbers came from.
       const { readAdInsights, provenanceOf } = await import('@/agent/lib/meta-mcp/insights-source')
+      const { formatAdSpend } = await import('@/agent/lib/ads/insights')
       const insights = await readAdInsights(7).catch(() => null)
 
       const summary = formatRecommendationsSummary(recommendations)
@@ -307,9 +311,25 @@ const recommend_ad_actions: AgentTool = {
       const activeNames = metrics.map((m) => m.name)
 
       let message: string
+      // Window performance (status-agnostic) — the AUTHORITATIVE per-campaign
+      // impressions/clicks/CTR for a "how did ads perform?" answer. Without this
+      // in the tool result the head fell back to recalling numbers from chat
+      // history and hedged "usable data নেই / পুরনো চেক" even though the data
+      // existed (live-hit 2026-07-17). A paused campaign's window is real history.
+      const windowPerformance = (insights?.campaigns ?? []).map((c) => ({
+        name: c.name,
+        status: c.effectiveStatus,
+        spendLabel: formatAdSpend(c.spendWeek, insights?.currency ?? 'USD'),
+        impressions: c.impressionsWeek,
+        clicks: c.clicksWeek,
+        ctrPct: Number(c.ctrWeekPct.toFixed(2)),
+      }))
+
       if (activeCampaignCount === 0) {
         message =
-          'এই অ্যাড অ্যাকাউন্টে এই মুহূর্তে কোনো ACTIVE ক্যাম্পেইন চলছে না (সব paused/archived)।'
+          windowPerformance.length > 0
+            ? `এই মুহূর্তে কোনো ACTIVE ক্যাম্পেইন নেই (সব paused), কিন্তু গত ৭ দিনের পারফরম্যান্স আসল ডেটা windowPerformance-এ আছে — quote it (impressions/clicks/CTR সহ, paused লেবেলসহ), "ডেটা নেই" বলবেন না।`
+            : 'এই অ্যাড অ্যাকাউন্টে গত ৭ দিনে কোনো ক্যাম্পেইন ডেলিভারি করেনি।'
       } else if (actionable.length > 0) {
         message = `${activeCampaignCount}টি ACTIVE ক্যাম্পেইন চলছে — ${actionable.length}টিতে actionable rec; owner approve ছাড়া budget/spend change হবে না।`
       } else {
@@ -332,6 +352,9 @@ const recommend_ad_actions: AgentTool = {
           // boost/scale reasoning instead of judging on spend alone.
           metaIntelligence: insights?.mcp ?? null,
           windowSpendLabel: insights?.totalSpendLabel ?? null,
+          // The real last-7-days per-campaign performance (paused-inclusive) —
+          // this is what a "impressions/clicks/CTR কত?" question is answered from.
+          windowPerformance,
           campaignCount: activeCampaignCount,
           activeCampaignCount,
           activeCampaignNames: activeNames,
