@@ -553,9 +553,15 @@ struct PulseLockScreenView: View {
 
             PulseMetricsRow(state: state, mode: mode)
 
-            // Exactly ONE focus row: the callout when there is one, else the
-            // first feed row — never a stack (spec §7 emphasis + 160pt cap).
-            if let callout {
+            // Approval mode gets real অনুমোদন/বাতিল buttons right on the lock card so the
+            // owner can decide WITHOUT opening the app (owner 2026-07-17 — the 160pt fix had
+            // left only a text callout). The button row takes the single focus-row slot, so
+            // the card still fits Apple's 160pt lock-screen cap (probe-verified).
+            if #available(iOS 17.0, *), mode == .approval, let id = pulseActionableId(state) {
+                PulseApprovalButtons(actionId: id)
+            } else if let callout {
+                // Exactly ONE focus row: the callout when there is one, else the
+                // first feed row — never a stack (spec §7 emphasis + 160pt cap).
                 callout
             } else if let item = items.first {
                 PulseFeedRow(item: item, focused: true)
@@ -564,6 +570,50 @@ struct PulseLockScreenView: View {
         .padding(.horizontal, 12).padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(PulseGlassBackground(tint: PulseTheme.tint(for: mode)))
+    }
+}
+
+// MARK: - Shared approval buttons (lock card + expanded island)
+
+/// The real decidable id for a state: an agent pending-action id, or "erp:<hub-id>"
+/// (the ApprovalRequest row PATCH /api/approvals acts on). Legacy anonymous stub = nil.
+@available(iOS 16.1, *)
+func pulseActionableId(_ state: PulseActivityAttributes.ContentState) -> String? {
+    guard let id = state.approvalId, !id.isEmpty, id != "erp-approvals" else { return nil }
+    return id
+}
+
+/// Owner rule 2026-07-17: অনুমোদন/বাতিল must be reachable WITHOUT opening the app —
+/// on BOTH the lock-screen card and the expanded island. The 160pt height fix had
+/// dropped them from the lock card; this shared row restores them identically.
+@available(iOS 17.0, *)
+struct PulseApprovalButtons: View {
+    let actionId: String
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(intent: AlmaApproveActionIntent(actionId: actionId, approve: true)) {
+                Text("অনুমোদন")
+                    .font(.system(size: 12, weight: .bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.plain)
+            .background(
+                LinearGradient(colors: [PulsePalette.goldBright, PulsePalette.goldDeep],
+                               startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: Capsule())
+            .foregroundColor(Color(red: 0.09, green: 0.06, blue: 0.02))
+
+            Button(intent: AlmaApproveActionIntent(actionId: actionId, approve: false)) {
+                Text("বাতিল")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.plain)
+            .background(Color.white.opacity(0.10), in: Capsule())
+            .foregroundColor(PulsePalette.textSecondary)
+        }
     }
 }
 
@@ -671,30 +721,7 @@ struct PulseExpandedBody: View {
                  trailing: state.approvalAmountText, trailingPrivate: true)
 
         if #available(iOS 17.0, *), let id = actionableId {
-            HStack(spacing: 8) {
-                Button(intent: AlmaApproveActionIntent(actionId: id, approve: true)) {
-                    Text("অনুমোদন")
-                        .font(.system(size: 12, weight: .bold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.plain)
-                .background(
-                    LinearGradient(colors: [PulsePalette.goldBright, PulsePalette.goldDeep],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing),
-                    in: Capsule())
-                .foregroundColor(Color(red: 0.09, green: 0.06, blue: 0.02))
-
-                Button(intent: AlmaApproveActionIntent(actionId: id, approve: false)) {
-                    Text("বাতিল")
-                        .font(.system(size: 12, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.plain)
-                .background(Color.white.opacity(0.10), in: Capsule())
-                .foregroundColor(PulsePalette.textSecondary)
-            }
+            PulseApprovalButtons(actionId: id)
         } else {
             Text("বিস্তারিত ও সিদ্ধান্ত — ট্যাপ করে Approvals ট্যাবে")
                 .font(.system(size: 10))

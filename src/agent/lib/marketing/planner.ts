@@ -119,7 +119,7 @@ export async function gatherMarketingPlanContext(weeks = 2) {
         name: m.name,
         spendWeek: Math.round(m.spendWeek),
         roasWeek: Number(m.roasWeek.toFixed(2)),
-        ctrWeekPct: Number((m.ctrWeek * 100).toFixed(2)),
+        ctrWeekPct: Number(m.ctrWeekPct.toFixed(2)),
         hasData: m.hasEnoughData,
       })),
     },

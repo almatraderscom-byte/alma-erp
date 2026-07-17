@@ -168,10 +168,43 @@ export function startDiagnosticHttpServer() {
             { headers: { Authorization: `Basic ${auth}` } },
           )
           const c = await r.json()
+          // WHICH number dialled matters: the owner keeps a dedicated salah caller-id
+          // and a normal one, and a carrier can block one while passing the other.
+          // Masked to the last 4 — enough to tell the two apart, no full number leak.
+          const last4 = (n) => (n ? String(n).slice(-4) : null)
+          // How long the phone actually rang. Twilio only reports `duration` for
+          // ANSWERED calls, so a rejected/blocked call always reads 0 and looks like
+          // a plain "no-answer". start→end is the only way to tell a 2-second carrier
+          // rejection ("instant miss call") apart from a real 45s unanswered ring.
+          const ringSec = c.start_time && c.end_time
+            ? Math.round((new Date(c.end_time) - new Date(c.start_time)) / 1000)
+            : null
+          // Twilio's Debugger carries the real reason (e.g. 13224 blocked number,
+          // 32xxx carrier rejection) — the Call resource never exposes it.
+          let alerts = []
+          try {
+            const ar = await fetch(
+              `https://monitor.twilio.com/v1/Alerts?ResourceSid=${encodeURIComponent(sid)}&PageSize=5`,
+              { headers: { Authorization: `Basic ${auth}` }, signal: AbortSignal.timeout(8000) },
+            )
+            const ad = await ar.json()
+            alerts = (ad.alerts ?? []).map((a) => ({
+              code: a.error_code, severity: a.alert_text ? 'error' : a.log_level,
+              text: String(a.alert_text ?? '').slice(0, 300), at: a.date_created,
+            }))
+          } catch { /* debugger is best-effort */ }
           res.writeHead(200, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({
             sid, status: c.status, duration: c.duration, price: c.price,
             answered_by: c.answered_by, start: c.start_time, end: c.end_time,
+            ringSec,
+            fromLast4: last4(c.from), toLast4: last4(c.to),
+            direction: c.direction,
+            alerts,
+            configuredFromLast4: {
+              normal: last4(process.env.TWILIO_FROM_NUMBER),
+              salah: last4(process.env.TWILIO_SALAH_FROM_NUMBER),
+            },
           }))
         } catch (err) {
           res.writeHead(502, { 'Content-Type': 'application/json' })

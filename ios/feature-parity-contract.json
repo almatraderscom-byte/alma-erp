@@ -1,0 +1,1636 @@
+{
+  "$schema": "./feature-parity-contract.schema.json",
+  "version": 1,
+  "generatedFor": "NP-0 action-level parity contract (docs/IOS_NATIVE_PARITY_DEEP_AUDIT_ROADMAP.md)",
+  "generatedDate": "2026-07-17",
+  "baseline": {
+    "sha": "66548124",
+    "branch": "claude/ios-native-parity-roadmap-aab64a",
+    "iosBuildInGit": 76,
+    "iosBuildInstalledSim": 75,
+    "webProduction": "https://alma-erp-six.vercel.app (health ok 2026-07-17T08:43Z, environment=production)",
+    "apiBase": "https://alma-erp-six.vercel.app",
+    "notes": "Route checker at baseline: 69 fixtures / 66 web routes, {native-required:61, temporary-web:5, public-web-allowed:3}. Simulator-installed build 75 recorded from the 2026-07-17 deep audit; revalidate at the NP-9 sim session."
+  },
+  "surfaces": [
+    {
+      "id": "AG-01",
+      "title": "LIVE Business Monitor — mobile composition",
+      "route": "/agent/staff-monitor",
+      "priority": "P0",
+      "state": "native",
+      "plannedPhase": "NP-1",
+      "webSource": [
+        "src/agent/components/AgentStaffMonitor.tsx",
+        "src/agent/components/monitor/"
+      ],
+      "nativeSource": [
+        "ios/App/App/StaffMonitorSwiftUI.swift"
+      ],
+      "notes": "NP-1 DONE: compact shell, sticky status strip + five tabs, date control under tabs, 96pt floating-control clearance. First-fold visual proof lands at the NP-9 sim session.",
+      "actions": [
+        {
+          "id": "AG-01.shell",
+          "title": "Compact LIVE Business shell: status strip + 5 tabs + date/history control",
+          "kind": "navigation",
+          "state": "native",
+          "verify": "NP-9 sim first-fold screenshots (6.1in + Pro Max)"
+        },
+        {
+          "id": "AG-01.firstfold",
+          "title": "First fold: title, 4 status chips, tab strip, ≥4 KPIs, ≥1 actionable alert",
+          "kind": "read",
+          "state": "native",
+          "verify": "NP-9 sim first-fold screenshots (6.1in + Pro Max)"
+        },
+        {
+          "id": "AG-01.overlap",
+          "title": "Floating Agent control never covers interactive rows on Monitor",
+          "kind": "navigation",
+          "state": "native",
+          "verify": "NP-9 sim first-fold screenshots (6.1in + Pro Max)"
+        }
+      ]
+    },
+    {
+      "id": "AG-02",
+      "title": "Agent Control Center (pause + autonomy + capabilities)",
+      "route": "/agent/staff-monitor",
+      "priority": "P0",
+      "state": "native",
+      "plannedPhase": "NP-2",
+      "webSource": [
+        "src/agent/components/monitor/AgentControlCenter.tsx"
+      ],
+      "nativeSource": [
+        "ios/App/App/StaffMonitorAgentsSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AG-02.pause",
+          "title": "Master pause/resume",
+          "kind": "write",
+          "roleGate": "owner",
+          "api": "PATCH /api/assistant/controls",
+          "state": "native",
+          "verify": "existing StaffMonitor pause toggle"
+        },
+        {
+          "id": "AG-02.autonomy",
+          "title": "Autonomy mode select",
+          "kind": "write",
+          "roleGate": "owner",
+          "api": "PATCH /api/assistant/controls",
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
+        },
+        {
+          "id": "AG-02.capabilities",
+          "title": "Capability toggles (server-echoed state + confirm)",
+          "kind": "write",
+          "roleGate": "owner",
+          "api": "PATCH /api/assistant/controls",
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
+        }
+      ],
+      "notes": "NP-2 DONE: pause confirm-dialog + autonomy segmented + 3 capability toggles, PATCH /api/assistant/controls, server echo only."
+    },
+    {
+      "id": "AG-03",
+      "title": "Autonomy SLO surface",
+      "route": "/agent/staff-monitor",
+      "priority": "P0",
+      "state": "native",
+      "plannedPhase": "NP-2",
+      "webSource": [
+        "src/agent/components/monitor/AutonomySloPanel.tsx"
+      ],
+      "nativeSource": [
+        "ios/App/App/StaffMonitorAgentsSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AG-03.slo",
+          "title": "SLO invariants, class rollout/stage/sample/error, degraded warnings",
+          "kind": "read",
+          "api": "GET /api/assistant/controls?section=slo",
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
+        }
+      ],
+      "notes": "NP-2 DONE: SLO invariants grid + breaches + per-class rows + outbox line (GET /api/assistant/controls?section=slo)."
+    },
+    {
+      "id": "AG-04",
+      "title": "Per-model toggles",
+      "route": "/agent/staff-monitor",
+      "priority": "P0",
+      "state": "native",
+      "plannedPhase": "NP-2",
+      "webSource": [
+        "src/agent/components/monitor/ModelTogglePanel.tsx"
+      ],
+      "nativeSource": [
+        "ios/App/App/StaffMonitorAgentsSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AG-04.list",
+          "title": "Searchable/grouped per-model state",
+          "kind": "read",
+          "api": "GET /api/assistant/models",
+          "state": "native",
+          "notes": "native shows enabled count only",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
+        },
+        {
+          "id": "AG-04.toggle",
+          "title": "Per-model enable/disable",
+          "kind": "write",
+          "roleGate": "owner",
+          "api": "PATCH /api/assistant/models",
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
+        }
+      ],
+      "notes": "NP-2 DONE: search + provider-grouped model rows, PATCH {modelId,enabled} with enabledMap echo."
+    },
+    {
+      "id": "AG-05",
+      "title": "Heartbeat panel",
+      "route": "/agent/staff-monitor",
+      "priority": "P0",
+      "state": "native",
+      "plannedPhase": "NP-2",
+      "webSource": [
+        "src/agent/components/monitor/HeartbeatPanel.tsx"
+      ],
+      "nativeSource": [
+        "ios/App/App/StaffMonitorAgentsSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AG-05.timeline",
+          "title": "Full wake history/timeline",
+          "kind": "read",
+          "api": "GET /api/assistant/heartbeat",
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
+        },
+        {
+          "id": "AG-05.enable",
+          "title": "Enable/pause heartbeat",
+          "kind": "write",
+          "roleGate": "owner",
+          "api": "POST /api/assistant/heartbeat",
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
+        },
+        {
+          "id": "AG-05.testnow",
+          "title": "Test now",
+          "kind": "write",
+          "roleGate": "owner",
+          "api": "POST /api/assistant/heartbeat",
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
+        }
+      ],
+      "notes": "NP-2 DONE: full timeline (limit=20), enable/disable + test_now POST; response feed is the displayed truth."
+    },
+    {
+      "id": "AG-06",
+      "title": "Live browser watch",
+      "route": "/agent/staff-monitor",
+      "priority": "P0",
+      "state": "native",
+      "plannedPhase": "NP-2",
+      "webSource": [
+        "src/agent/components/monitor/LiveBrowserWatchPanel.tsx"
+      ],
+      "nativeSource": [
+        "ios/App/App/StaffMonitorAgentsSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AG-06.stop",
+          "title": "Emergency stop/resume",
+          "kind": "write",
+          "roleGate": "owner",
+          "api": "POST /api/assistant/live-browser/watch",
+          "state": "native",
+          "verify": "existing StaffMonitor emergency control"
+        },
+        {
+          "id": "AG-06.devices",
+          "title": "Connected devices/online count",
+          "kind": "read",
+          "api": "GET /api/assistant/live-browser/watch",
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
+        },
+        {
+          "id": "AG-06.screenshot",
+          "title": "Latest screenshot (tap-to-zoom/save/share)",
+          "kind": "read",
+          "api": "GET /api/assistant/live-browser/watch",
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
+        },
+        {
+          "id": "AG-06.steps",
+          "title": "Live step feed (action/target/state/error/time)",
+          "kind": "read",
+          "api": "GET /api/assistant/live-browser/watch",
+          "state": "native",
+          "verify": "live control-value cross-check batched to NP-9 owner-approved sim session"
+        }
+      ],
+      "notes": "NP-2 DONE: devices line, latest screenshot (zoom sheet + ShareLink PNG), full step feed with status/error/time, 2.5s tab-visible polling."
+    },
+    {
+      "id": "AG-07",
+      "title": "Monitor five tabs (Overview/Agents/Staff/Feed/System)",
+      "route": "/agent/staff-monitor",
+      "priority": "P0",
+      "state": "native",
+      "plannedPhase": "NP-3",
+      "webSource": [
+        "src/agent/components/AgentStaffMonitor.tsx",
+        "src/agent/components/monitor/"
+      ],
+      "nativeSource": [
+        "ios/App/App/StaffMonitorSwiftUI.swift",
+        "ios/App/App/StaffMonitorAgentsSwiftUI.swift",
+        "ios/App/App/StaffMonitorSystemSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AG-07.overview",
+          "title": "Overview: KPI strip, alerts, quick actions, top staff, live/archive state",
+          "kind": "read",
+          "state": "native",
+          "notes": "NP-3: 6-KPI grid (duties/staff/ack/approvals/AI-cost/failures) + dismissible alert panel + quick actions (deploy/retrigger/NTFY-all/pending) + top staff + refresh meta.",
+          "verify": "live cross-check batched to NP-9 owner-approved sim session"
+        },
+        {
+          "id": "AG-07.quickactions",
+          "title": "Quick actions: deploy worker, retrigger duty, NTFY/escalate all",
+          "kind": "write",
+          "roleGate": "owner",
+          "api": "existing /api/agent/staff-monitor* action routes (consume unchanged)",
+          "state": "native",
+          "notes": "NP-3: deploy worker (3-retry + verified-commit line), retrigger menu (failed-first + full DUTY_TO_JOB), NTFY/escalate all.",
+          "verify": "live cross-check batched to NP-9 owner-approved sim session"
+        },
+        {
+          "id": "AG-07.staff",
+          "title": "Staff: capabilities, geo-fence state+controls, productivity alerts, staff-task toggles, duty toggles, chat-prefill",
+          "kind": "write",
+          "roleGate": "owner",
+          "api": "GET/PATCH /api/assistant/staff-toggles + existing monitor routes",
+          "state": "native",
+          "notes": "NP-3: expandable staff hub (caps/geo/alerts), geo-fence PATCH toggle, staff-task toggles (GET/PATCH staff-toggles), chat-prefill quick actions (AlmaComposerPrefill), productivity alerts.",
+          "verify": "live cross-check batched to NP-9 owner-approved sim session"
+        },
+        {
+          "id": "AG-07.feed",
+          "title": "Feed: unacked+escalate, approvals approve/reject, reminders, todos, paging",
+          "kind": "write",
+          "roleGate": "owner",
+          "api": "existing /api/assistant/actions/* approval routes",
+          "state": "native",
+          "notes": "NP-3: per-row + bulk escalate (POST escalate), approvals approve/reject (dedicated staff_auto_message route + assistant actions route, 409/410=success), reminders/todos cards, feed paging.",
+          "verify": "live cross-check batched to NP-9 owner-approved sim session"
+        },
+        {
+          "id": "AG-07.system",
+          "title": "System: duty timeline/retrigger, Salah, voice, trust, brain, health scan, auto-fix, services, deploy verify",
+          "kind": "write",
+          "roleGate": "owner",
+          "api": "existing /api/agent/* monitor routes (consume unchanged)",
+          "state": "native",
+          "notes": "NP-3: duty category rows + toggle + retrigger, Salah timeline + time-config editor, native voice switches, trust tier menu, brain+prompt-cache, health scan + auto-fix request/approve/reject, services chips, deploy card, build badge.",
+          "verify": "live cross-check batched to NP-9 owner-approved sim session"
+        },
+        {
+          "id": "AG-07.history",
+          "title": "Historical date read-only mode",
+          "kind": "read",
+          "state": "native",
+          "notes": "NP-3: historical dates hide live-only blocks (isLive gates on every mutating card).",
+          "verify": "live cross-check batched to NP-9 owner-approved sim session"
+        }
+      ],
+      "notes": "NP-3 DONE — every AgentStaffMonitor.tsx / monitor/ component has a native equivalent; see per-action notes."
+    },
+    {
+      "id": "AG-08",
+      "title": "/agent/live-watch integrated into Monitor",
+      "route": "/agent/live-watch",
+      "priority": "P0",
+      "state": "native",
+      "plannedPhase": "NP-2",
+      "webSource": [
+        "src/app/agent/live-watch/"
+      ],
+      "nativeSource": [
+        "ios/App/App/StaffMonitorSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AG-08.deeplink",
+          "title": "Deep link selects native Monitor → Agents/Live Browser tab (no WKWebView)",
+          "kind": "deep-link",
+          "state": "native",
+          "notes": "routing lands NP-1; full live content NP-2",
+          "verify": "router case /agent/live-watch -> StaffMonitorScreen(initialTab:.agents); route checker green"
+        }
+      ]
+    },
+    {
+      "id": "AG-09",
+      "title": "Agent Hub — discoverable navigation",
+      "route": "/agent",
+      "priority": "P0",
+      "state": "native",
+      "plannedPhase": "NP-1",
+      "webSource": [
+        "src/app/agent/"
+      ],
+      "nativeSource": [
+        "ios/App/App/AgentHubSwiftUI.swift",
+        "ios/App/App/MoreMenuSwiftUI.swift",
+        "ios/App/App/AssistantSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AG-09.hub",
+          "title": "Canonical Agent Hub: Chat, Monitor, Studio, WhatsApp, Costs, Growth, Known People, Product Images, Trading Staff, Subscriptions, Live Watch, Phone Companion",
+          "kind": "navigation",
+          "state": "native",
+          "verify": "AgentHubScreen (/agent/hub) + More menu row + radial Hub shortcut"
+        },
+        {
+          "id": "AG-09.radial",
+          "title": "Radial/floating menu stays as shortcut to same route coordinator",
+          "kind": "navigation",
+          "state": "native",
+          "verify": "FloatingChatHead existing"
+        }
+      ]
+    },
+    {
+      "id": "AG-10",
+      "title": "Agent Growth (GSC)",
+      "route": "/agent/growth",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-4",
+      "webSource": [
+        "src/app/agent/growth/"
+      ],
+      "nativeSource": [
+        "ios/App/App/AgentGrowthSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AG-10.status",
+          "title": "Growth status read",
+          "kind": "read",
+          "state": "native",
+          "verify": "OAuth round-trip = owner-hardware check at NP-9 (simulator cannot complete Google consent)"
+        },
+        {
+          "id": "AG-10.connect",
+          "title": "Google connect via ASWebAuthenticationSession",
+          "kind": "oauth",
+          "state": "native",
+          "verify": "OAuth round-trip = owner-hardware check at NP-9 (simulator cannot complete Google consent)"
+        },
+        {
+          "id": "AG-10.disconnect",
+          "title": "Native disconnect + status refresh",
+          "kind": "write",
+          "api": "DELETE (web growth disconnect endpoint)",
+          "state": "native",
+          "verify": "OAuth round-trip = owner-hardware check at NP-9 (simulator cannot complete Google consent)"
+        }
+      ],
+      "notes": "NP-4 DONE: connect via ASWebAuthenticationSession (https callback /agent/growth?gsc=…, iOS 17.4+; pre-17.4 falls back to web escape) + native DELETE disconnect with confirm + status refresh."
+    },
+    {
+      "id": "AG-11",
+      "title": "Agent Costs / Credit Usage",
+      "route": "/agent/costs",
+      "priority": "P2",
+      "state": "native",
+      "plannedPhase": "NP-4",
+      "webSource": [
+        "src/app/agent/costs/"
+      ],
+      "nativeSource": [
+        "ios/App/App/CreditUsageSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AG-11.read",
+          "title": "Spend, logs, balances, ranges, refresh, budgets",
+          "kind": "read",
+          "state": "native"
+        },
+        {
+          "id": "AG-11.budget",
+          "title": "Budget config save",
+          "kind": "write",
+          "api": "PUT (web saveBudget parity)",
+          "state": "native",
+          "verify": "CreditUsageSwiftUI.swift:482"
+        },
+        {
+          "id": "AG-11.csv",
+          "title": "CSV export/share + ledger total reconciliation",
+          "kind": "export",
+          "state": "native",
+          "verify": "CSV totals reconciliation vs web ledger at NP-9 live session"
+        }
+      ],
+      "notes": "NP-4 DONE: budget config was already native; CSV now exported natively (GET /api/assistant/costs/export → temp .csv → system share sheet)."
+    },
+    {
+      "id": "AG-12",
+      "title": "Creative Studio remainder",
+      "route": "/agent/creative-studio",
+      "priority": "P2",
+      "state": "native",
+      "plannedPhase": "NP-4",
+      "webSource": [
+        "src/app/agent/creative-studio/"
+      ],
+      "nativeSource": [
+        "ios/App/App/CreativeStudioSwiftUI.swift",
+        "ios/App/App/CSLifestyleEditorSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AG-12.core",
+          "title": "Create/gallery/video/audio/library/settings/finish flows",
+          "kind": "write",
+          "state": "native",
+          "verify": "creative-studio native parity program 2026-07"
+        },
+        {
+          "id": "AG-12.editor",
+          "title": "Drag/resize Lifestyle Editor controls",
+          "kind": "write",
+          "state": "native",
+          "verify": "CSLifestyleEditorSwiftUI.swift: dragStart/CSELayout geometry — full drag/resize implementation pre-existed"
+        },
+        {
+          "id": "AG-12.drive",
+          "title": "Drive authorization / tool rows that open whole web Studio",
+          "kind": "oauth",
+          "state": "native",
+          "notes": "OAuth may use system auth session",
+          "verify": "OAuth round-trip = owner-hardware check at NP-9"
+        }
+      ],
+      "notes": "NP-4: Drive connect/disconnect native via ASWebAuthenticationSession + DELETE drive-status. Lifestyle Editor drag/resize was ALREADY native (CSLifestyleEditorSwiftUI drag geometry verified in code — the audit's own stale-comment caveat applied to its finding)."
+    },
+    {
+      "id": "AG-13",
+      "title": "Creative Studio demo route — retire",
+      "route": "/agent/creative-studio-demo",
+      "priority": "P2",
+      "state": "retired",
+      "plannedPhase": "NP-8",
+      "webSource": [
+        "src/app/agent/creative-studio-demo/"
+      ],
+      "nativeSource": [],
+      "actions": [
+        {
+          "id": "AG-13.retire",
+          "title": "Remove from production navigation + route contract",
+          "kind": "navigation",
+          "state": "retired",
+          "plannedPhase": "NP-4",
+          "notes": "iOS never routes here (temporary-web, fail-loud). The web page.tsx deletion is DEFERRED TO THE MERGE: this branch must stay ios/docs/scripts-ios-only so Vercel never builds it (owner constraint). Remove src/app/agent/creative-studio-demo/ in the merge commit or a follow-up main PR."
+        }
+      ],
+      "notes": "iOS never routes here (temporary-web, fail-loud). The web page.tsx deletion is DEFERRED TO THE MERGE: this branch must stay ios/docs/scripts-ios-only so Vercel never builds it (owner constraint). Remove src/app/agent/creative-studio-demo/ in the merge commit or a follow-up main PR."
+    },
+    {
+      "id": "AU-01",
+      "title": "Forgot password",
+      "route": "/forgot-password",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-4",
+      "webSource": [
+        "src/app/forgot-password/"
+      ],
+      "nativeSource": [
+        "ios/App/App/NativeAuthRecoverySwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AU-01.submit",
+          "title": "Native email submit, neutral success, anti-enumeration copy",
+          "kind": "write",
+          "api": "web forgot-password endpoint (reuse verbatim)",
+          "state": "native"
+        }
+      ],
+      "notes": "NP-4 DONE: ForgotPasswordScreen — POST /api/auth/forgot-password, neutral anti-enumeration copy, native login link."
+    },
+    {
+      "id": "AU-02",
+      "title": "Reset password",
+      "route": "/reset-password",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-4",
+      "webSource": [
+        "src/app/reset-password/"
+      ],
+      "nativeSource": [
+        "ios/App/App/NativeAuthRecoverySwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AU-02.deeplink",
+          "title": "Universal/custom deep-link token handling (secure, no logging)",
+          "kind": "deep-link",
+          "state": "native",
+          "verify": "deep-link fixture at NP-9 (ALMA_NAV_SELFTEST route /reset-password?token=test)"
+        },
+        {
+          "id": "AU-02.submit",
+          "title": "Validate expiry, submit new password, clear sensitive state, return to login",
+          "kind": "write",
+          "state": "native",
+          "verify": "deep-link fixture at NP-9 (ALMA_NAV_SELFTEST route /reset-password?token=test)"
+        }
+      ],
+      "notes": "NP-4 DONE: ResetPasswordScreen — queryCapableRoutes carries ?token natively (view-state only, never logged), POST /api/auth/reset-password, clears password, returns to native login."
+    },
+    {
+      "id": "AD-01",
+      "title": "Settings → Users admin",
+      "route": "/settings/users",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-5",
+      "webSource": [
+        "src/app/settings/users/"
+      ],
+      "nativeSource": [
+        "ios/App/App/SettingsUsersSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AD-01.read",
+          "title": "User list/permissions view",
+          "kind": "read",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-01.create",
+          "title": "Create user",
+          "kind": "write",
+          "roleGate": "SUPER_ADMIN",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-01.edit",
+          "title": "Edit name/role/business access/HR link/active state (confirm on deactivate)",
+          "kind": "write",
+          "roleGate": "SUPER_ADMIN",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-01.reset",
+          "title": "Admin reset-password (confirm)",
+          "kind": "write",
+          "roleGate": "SUPER_ADMIN",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        }
+      ],
+      "notes": "NP-5 DONE: create/edit (full field form), active toggle w/ Bangla confirm, admin reset-password (arm toggle + confirm). Server enforces role gates; reload after every write."
+    },
+    {
+      "id": "AD-02",
+      "title": "Supplier import",
+      "route": "/inventory/supplier-import",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-5",
+      "webSource": [
+        "src/app/inventory/supplier-import/"
+      ],
+      "nativeSource": [
+        "ios/App/App/SupplierImportSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AD-02.read",
+          "title": "Catalog/batch state read",
+          "kind": "read",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-02.input",
+          "title": "Paste/file/clipboard input + JSON validation + preview diff + duplicate warnings",
+          "kind": "upload",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-02.commit",
+          "title": "Selectable commit + progress + result summary",
+          "kind": "write",
+          "roleGate": "admin",
+          "api": "POST /api/supplier-import/commit",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        }
+      ],
+      "notes": "NP-5 DONE: paste/clipboard/file JSON input, validate (array|{items}), duplicate preview vs catalog+in-file (sku/name), selectable commit POST /api/supplier-import/commit, result summary (created/skipped/errors)."
+    },
+    {
+      "id": "AD-03",
+      "title": "Business archive",
+      "route": "/operations/business-archive",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-5",
+      "webSource": [
+        "src/app/operations/business-archive/"
+      ],
+      "nativeSource": [
+        "ios/App/App/BusinessArchiveSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AD-03.read",
+          "title": "Archive state read",
+          "kind": "read",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-03.dryrun",
+          "title": "Dry-run preview",
+          "kind": "read",
+          "roleGate": "SUPER_ADMIN",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-03.execute",
+          "title": "Execute with typed confirmation + progress + audit result",
+          "kind": "write",
+          "roleGate": "SUPER_ADMIN",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-03.restore",
+          "title": "Restore batch",
+          "kind": "write",
+          "roleGate": "SUPER_ADMIN",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        }
+      ],
+      "notes": "NP-5 DONE: dry-run preview (module counts + server confirmationPhrase), typed-phrase-gated execute, batch restore w/ confirm; audit result shown; SUPER_ADMIN enforced by routes."
+    },
+    {
+      "id": "AD-04",
+      "title": "System diagnostics",
+      "route": "/operations/system-diagnostics",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-5",
+      "webSource": [
+        "src/app/operations/system-diagnostics/"
+      ],
+      "nativeSource": [
+        "ios/App/App/SystemDiagnosticsSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AD-04.read",
+          "title": "Diagnostics read",
+          "kind": "read",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-04.process",
+          "title": "Process queue / retry failed / retry single (per-action spinner + counts + reload)",
+          "kind": "write",
+          "roleGate": "admin",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        }
+      ],
+      "notes": "NP-5 DONE: process_queue/retry_failed (limit bodies) + per-row retry_single on FAILED rows; per-action spinner + response counts + reload."
+    },
+    {
+      "id": "AD-05",
+      "title": "Payment accounts",
+      "route": "/portal/payment-accounts",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-5",
+      "webSource": [
+        "src/app/portal/payment-accounts/"
+      ],
+      "nativeSource": [
+        "ios/App/App/PaymentAccountsSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AD-05.read",
+          "title": "Masked card read",
+          "kind": "read",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-05.create",
+          "title": "Mobile/bank account creation + edit/upsert + set default",
+          "kind": "write",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-05.reveal",
+          "title": "Secure reveal/hide (Face ID/device auth + server authorization)",
+          "kind": "write",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-05.delete",
+          "title": "Delete (Face ID/device auth + confirm)",
+          "kind": "write",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        }
+      ],
+      "notes": "NP-5 DONE: mobile/bank create forms, set-default PATCH, DELETE with Face ID + confirm, reveal via LocalAuthentication + server reveal fetch (masked by default)."
+    },
+    {
+      "id": "AD-06",
+      "title": "Branding settings",
+      "route": "/settings/branding",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-5",
+      "webSource": [
+        "src/app/settings/branding/"
+      ],
+      "nativeSource": [
+        "ios/App/App/SettingsBrandingSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AD-06.upload",
+          "title": "Logo/favicon upload",
+          "kind": "upload",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-06.fields",
+          "title": "Company/tagline/phone/email/site/address/Facebook + colors + invoice prefix + watermark + footer, save validation",
+          "kind": "write",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        }
+      ],
+      "notes": "NP-5 DONE: full field editor (company/tagline/contact/colors/invoice prefix/watermark+opacity validation/footers) via POST /api/branding action:save; logo/favicon upload was already native."
+    },
+    {
+      "id": "AD-07",
+      "title": "Telegram ops settings",
+      "route": "/settings/telegram-ops",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-5",
+      "webSource": [
+        "src/app/settings/telegram-ops/"
+      ],
+      "nativeSource": [
+        "ios/App/App/SettingsTelegramSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AD-07.actions",
+          "title": "Process/test/retry/master enable",
+          "kind": "write",
+          "state": "native",
+          "verify": "SettingsTelegramSwiftUI.swift:420-467"
+        },
+        {
+          "id": "AD-07.config",
+          "title": "Owner chat IDs, full schedule values, alert toggles, server-echoed saves",
+          "kind": "write",
+          "roleGate": "owner",
+          "api": "PATCH /api/settings/telegram-ops",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        }
+      ],
+      "notes": "NP-5 DONE: owner chat IDs field, 4 schedule minute fields (submit-save), 11 alert toggles — PATCH web save() payloads; reload = server echo."
+    },
+    {
+      "id": "AD-08",
+      "title": "Notification settings — push health",
+      "route": "/settings/notifications",
+      "priority": "P2",
+      "state": "native",
+      "plannedPhase": "NP-5",
+      "webSource": [
+        "src/app/settings/notifications/"
+      ],
+      "nativeSource": [
+        "ios/App/App/SettingsNotificationsSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AD-08.broadcast",
+          "title": "Broadcast composer/stats",
+          "kind": "write",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        },
+        {
+          "id": "AD-08.pushhealth",
+          "title": "Device push-health surface",
+          "kind": "read",
+          "api": "GET /api/notifications/push-health?scope=all",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        }
+      ],
+      "notes": "NP-5 DONE: push-health board (verdict pills OK/WEB_ONLY/DEAD/NEVER + per-device lines) from GET /api/notifications/push-health?scope=all."
+    },
+    {
+      "id": "AD-09",
+      "title": "Session settings routing",
+      "route": "/settings/session",
+      "priority": "P2",
+      "state": "native",
+      "plannedPhase": "NP-5",
+      "webSource": [
+        "src/app/settings/session/"
+      ],
+      "nativeSource": [
+        "ios/App/App/SettingsSessionSwiftUI.swift",
+        "ios/App/App/MoreMenuSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "AD-09.route",
+          "title": "Session page presents the existing native More profile sheet controls (no web escape)",
+          "kind": "navigation",
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
+        }
+      ],
+      "notes": "NP-5 DONE: session page embeds the SAME native profile controls (name/phone PATCH /api/users/me + password POST /api/users/me/password) — web escape removed."
+    },
+    {
+      "id": "TR-01",
+      "title": "Trading account detail actions",
+      "route": "/trading/accounts",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-6",
+      "webSource": [
+        "src/app/trading/accounts/"
+      ],
+      "nativeSource": [
+        "ios/App/App/TradingAccountsSwiftUI.swift",
+        "ios/App/App/TradingHomeSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "TR-01.crud",
+          "title": "Account create/edit/archive",
+          "kind": "write",
+          "state": "native",
+          "verify": "TradingAccountsSwiftUI.swift:444-446"
+        },
+        {
+          "id": "TR-01.entry",
+          "title": "Global trade/expense/capital/screenshot entry",
+          "kind": "write",
+          "state": "native",
+          "verify": "TradingHomeSwiftUI native entry"
+        },
+        {
+          "id": "TR-01.audit",
+          "title": "Trade audit history",
+          "kind": "read",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        },
+        {
+          "id": "TR-01.tradeedit",
+          "title": "Trade edit",
+          "kind": "write",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        },
+        {
+          "id": "TR-01.deletereq",
+          "title": "Trade delete request + approve/reject delete",
+          "kind": "write",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        },
+        {
+          "id": "TR-01.screens",
+          "title": "Full screenshot history",
+          "kind": "read",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        },
+        {
+          "id": "TR-01.dailysummary",
+          "title": "Daily summary editing + contextual actions",
+          "kind": "write",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        }
+      ],
+      "notes": "NP-6 DONE: TradingAccountAdminSection embedded in the detail sheet — trade audit view, edit (editReason), request/approve/reject delete (web tradeStatus gating + owner probe for SUPER-only buttons), daily bkash summary list+add (whole-taka), full screenshot history (cursor paging + archived) + multipart upload."
+    },
+    {
+      "id": "TR-02",
+      "title": "Partnership settlement",
+      "route": "/trading/accounts",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-6",
+      "webSource": [
+        "src/app/trading/accounts/"
+      ],
+      "nativeSource": [],
+      "actions": [
+        {
+          "id": "TR-02.preview",
+          "title": "Settlement preview + unsettled expenses + override",
+          "kind": "read",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        },
+        {
+          "id": "TR-02.confirm",
+          "title": "Confirm settlement (wallet-post option, before/after server verification)",
+          "kind": "write",
+          "roleGate": "owner/admin",
+          "state": "native",
+          "notes": "money-sensitive: whole-taka + before/after assertions",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        },
+        {
+          "id": "TR-02.history",
+          "title": "Settlement history",
+          "kind": "read",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        }
+      ],
+      "notes": "NP-6 DONE: partnership preview (shares/expenses/net-staff-owes) + unsettled count + notes/override/postToWallet settle with BEFORE/AFTER verification line (owes before→after, history count delta, wallet-post flag) + settlement history."
+    },
+    {
+      "id": "TR-03",
+      "title": "Trading Telegram drafts",
+      "route": "/trading/telegram",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-6",
+      "webSource": [
+        "src/app/trading/telegram/"
+      ],
+      "nativeSource": [
+        "ios/App/App/TradingTelegramSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "TR-03.single",
+          "title": "Single approve/reject/reopen/delete-request",
+          "kind": "write",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        },
+        {
+          "id": "TR-03.edit",
+          "title": "Draft edit",
+          "kind": "write",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        },
+        {
+          "id": "TR-03.bulk",
+          "title": "Bulk confirm/reject with selection + exact server response counts",
+          "kind": "write",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        }
+      ],
+      "notes": "NP-6 DONE: draft edit sheet (web saveEdit payload) + bulk select (PENDING/LOCKED only) + Post-to-ledger confirm + bulk reject — server counts in toast."
+    },
+    {
+      "id": "TR-04",
+      "title": "Trading Telegram mapping/admin",
+      "route": "/trading/telegram",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-6",
+      "webSource": [
+        "src/app/trading/telegram/"
+      ],
+      "nativeSource": [
+        "ios/App/App/TradingTelegramSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "TR-04.read",
+          "title": "Users/groups/aliases read",
+          "kind": "read",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        },
+        {
+          "id": "TR-04.mapping",
+          "title": "User mapping create/update/unlink + alias create/update",
+          "kind": "write",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        },
+        {
+          "id": "TR-04.groups",
+          "title": "Group register/approve/deactivate/test",
+          "kind": "write",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        },
+        {
+          "id": "TR-04.webhook",
+          "title": "Webhook setup/status/register + refresh",
+          "kind": "write",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        }
+      ],
+      "notes": "NP-6 DONE: link user (POST users, approved:true), unlink (DELETE + confirm, idempotent replay = success), alias create (web regex validation), group register/approve/deactivate/test, webhook status + register."
+    },
+    {
+      "id": "TR-05",
+      "title": "Trading analytics filters/exports",
+      "route": "/trading/analytics",
+      "priority": "P2",
+      "state": "native",
+      "plannedPhase": "NP-6",
+      "webSource": [
+        "src/app/trading/analytics/"
+      ],
+      "nativeSource": [
+        "ios/App/App/TradingAnalyticsSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "TR-05.filters",
+          "title": "Custom start/end date + min/max ROI inputs",
+          "kind": "read",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        },
+        {
+          "id": "TR-05.export",
+          "title": "Native CSV/PDF export + Excel-compatible share",
+          "kind": "export",
+          "state": "native",
+          "verify": "money before/after + role fixtures batched to NP-9 owner-approved live session"
+        }
+      ],
+      "notes": "NP-6 DONE: custom start/end + min/max ROI query params; native CSV (web columns verbatim) + A4 PDF export via share sheet (Excel-compatible CSV — FN-04 groundwork)."
+    },
+    {
+      "id": "FN-01",
+      "title": "Portal wallet deep link",
+      "route": "/portal/wallet",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-4",
+      "webSource": [
+        "src/app/portal/wallet/"
+      ],
+      "nativeSource": [
+        "ios/App/App/NativeAuthRecoverySwiftUI.swift",
+        "ios/App/App/WalletStatementSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "FN-01.route",
+          "title": "Route contract → native WalletStatementScreen (auto-present via Portal)",
+          "kind": "deep-link",
+          "state": "native"
+        }
+      ],
+      "notes": "NP-4 DONE: PortalWalletRouteScreen resolves the employee (GET /api/users/me) → WalletStatementScreen; route contract native."
+    },
+    {
+      "id": "FN-02",
+      "title": "Invoice PDF preview",
+      "route": "/invoices",
+      "priority": "P2",
+      "state": "native",
+      "plannedPhase": "NP-7",
+      "webSource": [
+        "src/app/invoices/"
+      ],
+      "nativeSource": [
+        "ios/App/App/InvoicesSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "FN-02.gen",
+          "title": "Invoice generation/status/share",
+          "kind": "write",
+          "state": "native"
+        },
+        {
+          "id": "FN-02.preview",
+          "title": "Hosted PDF via PDFKit/Quick Look + save/share",
+          "kind": "read",
+          "state": "native",
+          "notes": "NP-7 DONE: hosted pdf_url fetched → PDFKit preview sheet (pinch/zoom) + share; public share URL stays approved web (EX-02)."
+        }
+      ]
+    },
+    {
+      "id": "FN-03",
+      "title": "Salary slip PDFs (per-employee + My Desk)",
+      "route": "/employees",
+      "priority": "P2",
+      "state": "native",
+      "plannedPhase": "NP-7",
+      "webSource": [
+        "src/app/employees/",
+        "src/app/portal/"
+      ],
+      "nativeSource": [
+        "ios/App/App/EmployeesSwiftUI.swift",
+        "ios/App/App/PortalSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "FN-03.export",
+          "title": "Payroll PDF/CSV exports",
+          "kind": "export",
+          "state": "native"
+        },
+        {
+          "id": "FN-03.slip",
+          "title": "Branded per-employee/My Desk salary-slip PDF display/share natively",
+          "kind": "export",
+          "state": "native",
+          "notes": "NP-7 DONE: My Desk wallet slip buttons (this/last month) — web buildSalarySlipBreakdown rules verbatim (SALARY_ACCRUAL/PENALTY/approved WITHDRAWAL) → native A4 PDF → share. Admin per-employee slip was ALREADY native (EmployeeSlipPdf — audit stale-comment caveat)."
+        }
+      ]
+    },
+    {
+      "id": "FN-04",
+      "title": "XLSX-only exports resolution",
+      "route": "/expenses",
+      "priority": "P3",
+      "state": "native",
+      "plannedPhase": "NP-8",
+      "webSource": [
+        "src/app/expenses/",
+        "src/app/payroll/"
+      ],
+      "nativeSource": [
+        "ios/App/App/ExpensesSwiftUI.swift",
+        "ios/App/App/PayrollSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "FN-04.resolve",
+          "title": "True XLSX only if web XLSX carries material info beyond CSV; else document CSV-as-Excel-compatible and remove misleading copy",
+          "kind": "export",
+          "state": "native",
+          "notes": "NP-8 RESOLVED: the web XLSX exports (expenses + payroll) are json_to_sheet over the IDENTICAL columns their CSV exports carry (verified src/lib/export-expenses.ts + export-payroll-wallet.ts) — zero material information beyond CSV. Native CSV (Excel-compatible) is the formal contract; no misleading copy remains natively."
+        }
+      ],
+      "notes": "NP-8 RESOLVED: the web XLSX exports (expenses + payroll) are json_to_sheet over the IDENTICAL columns their CSV exports carry (verified src/lib/export-expenses.ts + export-payroll-wallet.ts) — zero material information beyond CSV. Native CSV (Excel-compatible) is the formal contract; no misleading copy remains natively."
+    },
+    {
+      "id": "OP-01",
+      "title": "Office task proof submission",
+      "route": "/portal/office",
+      "priority": "P1",
+      "state": "native",
+      "plannedPhase": "NP-7",
+      "webSource": [
+        "src/app/portal/office/"
+      ],
+      "nativeSource": [
+        "ios/App/App/PortalOfficeSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "OP-01.read",
+          "title": "Read proof images / send chat images",
+          "kind": "read",
+          "state": "native"
+        },
+        {
+          "id": "OP-01.submit",
+          "title": "Camera/PhotosPicker proof upload + preview/remove + task submit + progress + retry",
+          "kind": "upload",
+          "state": "native",
+          "notes": "NP-7 DONE: main Office screen — PhotosPicker (≤5, compressed ≤1600px jpeg) → office/upload multipart → staff-action proof (existing PortalStaffOffice submitProof reused; retry per image, per-task busy). Web escape removed."
+        }
+      ]
+    },
+    {
+      "id": "OP-02",
+      "title": "Penalty appeal attachment",
+      "route": "/portal",
+      "priority": "P2",
+      "state": "native",
+      "plannedPhase": "NP-7",
+      "webSource": [
+        "src/app/portal/"
+      ],
+      "nativeSource": [
+        "ios/App/App/PortalSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "OP-02.appeal",
+          "title": "Appeal create/cancel",
+          "kind": "write",
+          "state": "native"
+        },
+        {
+          "id": "OP-02.attach",
+          "title": "Optional proof screenshot picker/compression + attachment_data_url parity",
+          "kind": "upload",
+          "state": "native",
+          "notes": "NP-7 DONE: appeal sheet PhotosPicker → ≤1280px jpeg base64 data URL → attachment_data_url on waivers POST."
+        }
+      ]
+    },
+    {
+      "id": "OP-03",
+      "title": "Task Spotlight creation",
+      "route": "/operations/task-spotlight",
+      "priority": "P2",
+      "state": "native",
+      "plannedPhase": "NP-7",
+      "webSource": [
+        "src/app/operations/task-spotlight/"
+      ],
+      "nativeSource": [
+        "ios/App/App/TaskSpotlightSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "OP-03.archive",
+          "title": "Archive/resend",
+          "kind": "write",
+          "state": "native"
+        },
+        {
+          "id": "OP-03.create",
+          "title": "Task creation: multi-assignee picker, priority/deadline/options, banner URL or native upload, validation, post-create refresh",
+          "kind": "write",
+          "state": "native",
+          "notes": "NP-7 DONE: full create sheet (title/desc/priority/deadline/banner URL/ack/dismiss + multi-assignee from /api/operational-tasks/assignees), web POST body verbatim, post-create reload."
+        }
+      ]
+    },
+    {
+      "id": "OP-04",
+      "title": "Inventory media/bulk",
+      "route": "/inventory",
+      "priority": "P2",
+      "state": "native",
+      "plannedPhase": "NP-7",
+      "webSource": [
+        "src/app/inventory/"
+      ],
+      "nativeSource": [
+        "ios/App/App/InventorySwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "OP-04.single",
+          "title": "Single product creation + stock mutations",
+          "kind": "write",
+          "state": "native"
+        },
+        {
+          "id": "OP-04.media",
+          "title": "Product photo upload + collection/grid workflows + bulk add/edit",
+          "kind": "upload",
+          "state": "native",
+          "notes": "NP-7 DONE: image_url field added to native product create (the web AddProductModal has URL-only photo input — no upload API exists on web; collections/bulk have no web UI beyond supplier-import AD-02)."
+        }
+      ]
+    },
+    {
+      "id": "OP-05",
+      "title": "Employee media + salary slip entry",
+      "route": "/employees",
+      "priority": "P2",
+      "state": "native",
+      "plannedPhase": "NP-7",
+      "webSource": [
+        "src/app/employees/"
+      ],
+      "nativeSource": [
+        "ios/App/App/EmployeesSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "OP-05.mutations",
+          "title": "Employee/payroll/attendance mutations",
+          "kind": "write",
+          "state": "native"
+        },
+        {
+          "id": "OP-05.photo",
+          "title": "Admin employee profile-photo upload/change",
+          "kind": "upload",
+          "state": "native",
+          "notes": "NP-7 DONE: linked-user gate + PhotosPicker → square 512/96 jpeg data URLs → POST /api/users/{id}/profile-image (web uploader body verbatim). Unlinked employees see the why."
+        },
+        {
+          "id": "OP-05.slip",
+          "title": "Native salary-slip entry point",
+          "kind": "navigation",
+          "state": "native",
+          "notes": "ALREADY NATIVE (EmployeeSlipPdf month menu, pre-existing) — revalidated, not rebuilt."
+        }
+      ]
+    },
+    {
+      "id": "OP-06",
+      "title": "Analytics custom range",
+      "route": "/analytics",
+      "priority": "P2",
+      "state": "native",
+      "plannedPhase": "NP-8",
+      "webSource": [
+        "src/app/analytics/"
+      ],
+      "nativeSource": [
+        "ios/App/App/AnalyticsSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "OP-06.presets",
+          "title": "Preset ranges",
+          "kind": "read",
+          "state": "native"
+        },
+        {
+          "id": "OP-06.custom",
+          "title": "Custom start/end date picker (same API query + validation)",
+          "kind": "read",
+          "state": "native"
+        }
+      ],
+      "notes": "NP-8 DONE: Custom chip + start/end fields (YYYY-MM-DD validated) driving the SAME /api/analytics query."
+    },
+    {
+      "id": "OP-07",
+      "title": "Portal/Office alternate-entry cleanup",
+      "route": "/portal/staff-office",
+      "priority": "P2",
+      "state": "native",
+      "plannedPhase": "NP-7",
+      "webSource": [
+        "src/app/portal/"
+      ],
+      "nativeSource": [
+        "ios/App/App/PortalStaffOfficeSwiftUI.swift",
+        "ios/App/App/PortalOfficeSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "OP-07.canonical",
+          "title": "Every check-in/proof entry routes to the canonical native flow; stale comments removed",
+          "kind": "navigation",
+          "state": "native",
+          "notes": "NP-7 DONE: staff-office check-in banner now posts .almaOpenPath(\"/portal\") → canonical native front-camera+GPS flow; stale web link gone."
+        }
+      ]
+    },
+    {
+      "id": "OP-08",
+      "title": "Contextual CDIT actions",
+      "route": "/digital/clients",
+      "priority": "P3",
+      "state": "native",
+      "plannedPhase": "NP-7",
+      "webSource": [
+        "src/app/digital/"
+      ],
+      "nativeSource": [
+        "ios/App/App/DigitalClientsSwiftUI.swift",
+        "ios/App/App/DigitalProjectsSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "OP-08.create",
+          "title": "'Create project' in client detail (prefilled native sheet); remove internal web detail links",
+          "kind": "navigation",
+          "state": "native",
+          "notes": "NP-7 DONE: client detail \"নতুন প্রজেক্ট\" prefilled native sheet (web + New Project payload verbatim incl. status Lead/priority Medium/BDT)."
+        }
+      ]
+    },
+    {
+      "id": "OP-09",
+      "title": "Order stale escapes",
+      "route": "/orders",
+      "priority": "P3",
+      "state": "native",
+      "plannedPhase": "NP-8",
+      "webSource": [
+        "src/app/orders/"
+      ],
+      "nativeSource": [
+        "ios/App/App/OrdersSwiftUI.swift"
+      ],
+      "actions": [
+        {
+          "id": "OP-09.copy",
+          "title": "Remove/relabel 'full drawer lives on web' copy after action-contract parity verified",
+          "kind": "navigation",
+          "state": "native"
+        }
+      ],
+      "notes": "NP-8 DONE: \"full drawer lives on web\" copy removed — the escape is documented as an optional web mirror/login fallback (EX-08); all order actions are native."
+    },
+    {
+      "id": "DN-01",
+      "title": "Do-not-rebuild ledger (roadmap §6) — revalidate only",
+      "route": "(multiple)",
+      "priority": "done",
+      "state": "native",
+      "webSource": [],
+      "nativeSource": [],
+      "notes": "Agent chat, WhatsApp inbox (read-only IS parity), Known People, Product Images, Subscriptions, Credit Usage core, Target Control, Trading Home/Accounts-list/HR/Staff, Digital create+payment+PDF gen, CRM sync, Orders core, Approvals, Attendance admin, My Desk, Expenses, Payroll, Office Fund, Personal Ledger, SMS settings, Notification broadcast, Settings Database (read-only both sides), Dashboard/Finance/Activity/Audit/Insights/Briefing.",
+      "actions": [
+        {
+          "id": "DN-01.revalidate",
+          "title": "Revalidate at NP-9; do not rebuild without proven regression",
+          "kind": "read",
+          "state": "native"
+        }
+      ]
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "EX-01",
+      "class": "public-web",
+      "target": "/app/download",
+      "reason": "Public app-download page; web is the correct surface.",
+      "approvedBy": "owner (roadmap §2)",
+      "date": "2026-07-17"
+    },
+    {
+      "id": "EX-02",
+      "class": "public-web",
+      "target": "/invoice/share/[slug]",
+      "reason": "Public invoice share URL.",
+      "approvedBy": "owner (roadmap §2)",
+      "date": "2026-07-17"
+    },
+    {
+      "id": "EX-03",
+      "class": "public-web",
+      "target": "/privacy-policy",
+      "reason": "Public policy page.",
+      "approvedBy": "owner (roadmap §2)",
+      "date": "2026-07-17"
+    },
+    {
+      "id": "EX-04",
+      "class": "system-handoff",
+      "target": "ASWebAuthenticationSession (Google OAuth consent)",
+      "reason": "OAuth consent must run in the system auth session.",
+      "approvedBy": "owner (roadmap §2)",
+      "date": "2026-07-17"
+    },
+    {
+      "id": "EX-05",
+      "class": "system-handoff",
+      "target": "tel:/WhatsApp/Maps/mailto:/share-sheet",
+      "reason": "External system destinations.",
+      "approvedBy": "owner (roadmap §2)",
+      "date": "2026-07-17"
+    },
+    {
+      "id": "EX-06",
+      "class": "system-handoff",
+      "target": "Hosted PDF via Quick Look/PDFKit + system share",
+      "reason": "Hosted PDFs display natively and share via system sheet.",
+      "approvedBy": "owner (roadmap §2)",
+      "date": "2026-07-17"
+    },
+    {
+      "id": "EX-07",
+      "class": "login-fallback",
+      "target": "openWeb login fallback when native session bridge fails",
+      "reason": "Auth recovery path; must carry explicit contract ID by NP-8.",
+      "approvedBy": "owner (roadmap §5 NP-8)",
+      "date": "2026-07-17"
+    },
+    {
+      "id": "EX-08",
+      "class": "login-fallback",
+      "target": "residual \"ওয়েবে খুলুন\" mirrors + login fallbacks on fully-native screens",
+      "reason": "NP-8 openWeb audit: every remaining internal openWeb( call site is (a) a login fallback on an auth-expired card, or (b) an owner-visible optional web mirror on a screen whose every workflow is native (verified via the action contract). No workflow DEPENDS on any of them. Counts are pinned in openWebAllowlist — any new site fails the checker.",
+      "approvedBy": "roadmap NP-8 (owner-commissioned)",
+      "date": "2026-07-17"
+    }
+  ],
+  "openWebAllowlist": {
+    "ActivitySwiftUI.swift": 2,
+    "AgentCostsSwiftUI.swift": 2,
+    "AgentGrowthSwiftUI.swift": 4,
+    "AgentWhatsappSwiftUI.swift": 3,
+    "AnalyticsSwiftUI.swift": 2,
+    "ApprovalsSwiftUI.swift": 5,
+    "AssistantSwiftUI.swift": 2,
+    "AttendanceSwiftUI.swift": 4,
+    "AuditSwiftUI.swift": 3,
+    "BriefingSwiftUI.swift": 3,
+    "BusinessArchiveSwiftUI.swift": 2,
+    "CatalogImagesSwiftUI.swift": 1,
+    "CreativeStudioSwiftUI.swift": 3,
+    "CreditUsageSwiftUI.swift": 1,
+    "CrmSwiftUI.swift": 3,
+    "DashboardSwiftUI.swift": 5,
+    "DigitalClientsSwiftUI.swift": 3,
+    "DigitalHomeSwiftUI.swift": 3,
+    "DigitalInvoicesSwiftUI.swift": 3,
+    "DigitalProjectsSwiftUI.swift": 4,
+    "EmployeesSwiftUI.swift": 2,
+    "ExpensesSwiftUI.swift": 4,
+    "FinanceSwiftUI.swift": 3,
+    "InsightsSwiftUI.swift": 3,
+    "InventorySwiftUI.swift": 5,
+    "InvoicesSwiftUI.swift": 6,
+    "KnownPeopleSwiftUI.swift": 1,
+    "NativeLoginSwiftUI.swift": 1,
+    "OfficeFundSwiftUI.swift": 3,
+    "OrderCreateSwiftUI.swift": 1,
+    "OrdersSwiftUI.swift": 3,
+    "PaymentAccountsSwiftUI.swift": 2,
+    "PayrollSwiftUI.swift": 3,
+    "PortalExpenseSwiftUI.swift": 3,
+    "PortalOfficeSwiftUI.swift": 3,
+    "PortalSwiftUI.swift": 5,
+    "SettingsBrandingSwiftUI.swift": 1,
+    "SettingsDatabaseSwiftUI.swift": 2,
+    "SettingsNotificationsSwiftUI.swift": 3,
+    "SettingsSessionSwiftUI.swift": 1,
+    "SettingsSmsSwiftUI.swift": 2,
+    "SettingsTelegramSwiftUI.swift": 2,
+    "SettingsUsersSwiftUI.swift": 3,
+    "StaffMonitorSwiftUI.swift": 2,
+    "SubscriptionsSwiftUI.swift": 1,
+    "SupplierImportSwiftUI.swift": 3,
+    "SystemDiagnosticsSwiftUI.swift": 1,
+    "TargetControlSwiftUI.swift": 3,
+    "TaskSpotlightSwiftUI.swift": 2,
+    "TradingAccountsSwiftUI.swift": 3,
+    "TradingAnalyticsSwiftUI.swift": 1,
+    "TradingHomeSwiftUI.swift": 7,
+    "TradingHrSwiftUI.swift": 3,
+    "TradingStaffSwiftUI.swift": 3,
+    "TradingTelegramSwiftUI.swift": 2
+  }
+}

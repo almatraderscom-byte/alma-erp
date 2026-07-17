@@ -593,6 +593,15 @@ function FamilyRoleChecklist({
 // UI so the owner never picks a mode that will fail server-side.
 const FASHN_ONLY_MODES: StudioModeId[] = ['model_swap', 'face_to_model', 'edit']
 
+// One truthful engine-name map for the whole Studio (header badge, pickers,
+// captions) — the owner must always see WHICH engine will actually run.
+const ENGINE_LABELS_BN: Record<string, string> = {
+  fashn: 'FASHN Pro',
+  fal_fashn_v16: 'Fal FASHN v1.6',
+  fal_idm_vton: 'IDM-VTON ⚠',
+  gemini: 'Gemini',
+}
+
 export default function CreativeStudio() {
   const [view, setView] = useState<MainView>('studio')
   const [config, setConfig] = useState<StudioConfig | null>(null)
@@ -640,16 +649,23 @@ export default function CreativeStudio() {
             <Link href="/agent/catalog-images" className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-muted hover:text-cream">
               📸 ক্যাটালগ
             </Link>
-            {config && (
-              <span
-                className={cn(
-                  'rounded-full px-2 py-0.5 text-[10px] font-semibold',
-                  config.fashnConfigured ? 'bg-[#81B29A]/15 text-[#2d6a4f]' : 'bg-amber-100 text-amber-800',
-                )}
-              >
-                {config.fashnConfigured ? 'FASHN Pro ready' : 'Add FASHN_API_KEY'}
-              </span>
-            )}
+            {config && (() => {
+              // truthful badge: name the engine that will ACTUALLY run by
+              // default (owner 2026-07-18: the old "FASHN Pro ready" label hid
+              // that Fal FASHN v1.6 had taken over everywhere)
+              const def = config.singleVtonDefault ?? 'fashn'
+              const ok = def !== 'fashn' || config.fashnConfigured
+              return (
+                <span
+                  className={cn(
+                    'rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                    ok ? 'bg-[#81B29A]/15 text-[#2d6a4f]' : 'bg-amber-100 text-amber-800',
+                  )}
+                >
+                  {ok ? `⚙ ${ENGINE_LABELS_BN[def] ?? def} চালু` : 'Add FASHN_API_KEY'}
+                </span>
+              )
+            })()}
           </div>
         </header>
 
@@ -676,7 +692,7 @@ export default function CreativeStudio() {
             )}
             {view === 'video' && (
               <motion.div key="video" className="absolute inset-0" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <VideoStudioView onOpenGallery={() => setView('gallery')} />
+                <VideoStudioView onOpenGallery={() => setView('gallery')} onOpenStudio={() => setView('studio')} />
               </motion.div>
             )}
             {view === 'audio' && (
@@ -817,12 +833,7 @@ function StudioWorkspace({
     setVtonEngine(def === 'fashn' || def === 'gemini' || engineSelectable(def) ? def : 'fashn')
   }, [config, engineSelectable])
   const idmWarning = engineAvail.get('fal_idm_vton')?.warningBn ?? null
-  const VTON_ENGINE_LABELS: Record<string, string> = {
-    fashn: 'FASHN Pro',
-    fal_fashn_v16: 'Fal FASHN v1.6',
-    fal_idm_vton: 'IDM-VTON ⚠',
-    gemini: 'Gemini',
-  }
+  const VTON_ENGINE_LABELS = ENGINE_LABELS_BN
 
   const defaultModel = useMemo(
     () => models.find((m) => m.isDefault) ?? models[0] ?? null,
@@ -989,12 +1000,15 @@ function StudioWorkspace({
     }
     setRunning(true)
     try {
+      const isVtonMode = mode === 'product_to_model' || mode === 'try_on'
       const result = await runStudioJob({
         mode,
-        // CS6: for single Try-On the engine picker is authoritative; the legacy
-        // provider field still drives every other mode.
-        provider: isSingleTryOn ? (vtonEngine === 'gemini' ? 'gemini' : 'fashn') : provider,
-        vtonEngine: isSingleTryOn ? vtonEngine : undefined,
+        // the engine picker is authoritative for every VTON mode (single +
+        // family); the legacy provider field drives swap/face/edit only
+        provider: isVtonMode ? (vtonEngine === 'gemini' ? 'gemini' : 'fashn') : provider,
+        vtonEngine: isVtonMode && vtonEngine !== 'gemini'
+          ? (isMultiPersonFamily && vtonEngine === 'fal_idm_vton' ? 'fal_fashn_v16' : vtonEngine)
+          : undefined,
         clothType: isSingleTryOn && clothType !== 'auto' ? clothType : undefined,
         protectedComposite: isMultiPersonFamily ? protectedComposite : undefined,
         productImagePath: productPath ?? undefined,
@@ -1052,7 +1066,7 @@ function StudioWorkspace({
           setIncludeFamily={setIncludeFamily}
           includeReel={includeReel}
           setIncludeReel={setIncludeReel}
-          bestRealism={Boolean(config?.fashnConfigured)}
+          defaultEngineLabel={ENGINE_LABELS_BN[config?.singleVtonDefault ?? 'fashn'] ?? 'FASHN Pro'}
           running={autoRunning}
           canRun={Boolean(productPath && defaultModel)}
           onRun={() => void handleAutoRun()}
@@ -1239,6 +1253,25 @@ function StudioWorkspace({
                         IDM-VTON ⚠ পরীক্ষামূলক{engineSelectable('fal_idm_vton') ? '' : ' — বন্ধ'}
                       </option>
                       <option value="gemini">Draft (Gemini)</option>
+                    </select>
+                  ) : mode === 'product_to_model' || mode === 'try_on' ? (
+                    // Every VTON mode shows the REAL engine list (owner
+                    // 2026-07-18: the old Pro/Draft dropdown hid the Fal
+                    // engines). Family chains support FASHN-direct + Fal only.
+                    <select
+                      value={vtonEngine === 'fal_idm_vton' && isMultiPersonFamily ? 'fal_fashn_v16' : vtonEngine}
+                      onChange={(e) => setVtonEngine(e.target.value as StudioEngineId)}
+                      className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
+                    >
+                      <option value="fal_fashn_v16" disabled={!engineSelectable('fal_fashn_v16')}>
+                        Fal FASHN v1.6 · কমার্শিয়াল{engineSelectable('fal_fashn_v16') ? '' : ' — বন্ধ'}
+                      </option>
+                      <option value="fashn" disabled={!config?.fashnConfigured}>
+                        FASHN Pro (direct)
+                      </option>
+                      {!isMultiPersonFamily && (
+                        <option value="gemini">Draft (Gemini)</option>
+                      )}
                     </select>
                   ) : (
                     <select
@@ -1429,7 +1462,7 @@ function AutoPanel({
   setIncludeFamily,
   includeReel,
   setIncludeReel,
-  bestRealism,
+  defaultEngineLabel,
   running,
   canRun,
   onRun,
@@ -1444,7 +1477,7 @@ function AutoPanel({
   setIncludeFamily: (v: boolean) => void
   includeReel: boolean
   setIncludeReel: (v: boolean) => void
-  bestRealism: boolean
+  defaultEngineLabel: string
   running: boolean
   canRun: boolean
   onRun: () => void
@@ -1485,7 +1518,7 @@ function AutoPanel({
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-semibold text-cream">মডেল: {defaultModel.name}</p>
               <p className="text-[10px] text-muted">
-                {bestRealism ? '🟢 FASHN — best realism engine চালু' : 'Gemini engine · FASHN_API_KEY দিলে best realism'}
+                {`🟢 ${defaultEngineLabel} — ডিফল্ট ইঞ্জিন চালু`}
               </p>
             </div>
             <span className="shrink-0 rounded-full bg-[#E07A5F]/12 px-2.5 py-1 text-[11px] font-semibold text-[#E07A5F]">বদলান</span>
@@ -1587,7 +1620,7 @@ function AutoPanel({
           )}
         </motion.button>
         <p className="text-center text-[10px] text-muted">
-          No LLM cost · ছবি render queue{includeReel ? ' · রিলে আলাদা ভিডিও খরচ' : ''}
+          ইঞ্জিন: {defaultEngineLabel} · সাপ্লায়ার ছবির প্লেট/টেক্সট অটো-ক্লিন{includeReel ? ' · রিলে আলাদা ভিডিও খরচ' : ''}
         </p>
       </div>
     </div>
@@ -2988,15 +3021,15 @@ function StudioSettingsCard() {
           />
         </label>
         <label className="flex items-center justify-between gap-2 py-1">
-          <span className="text-[11px] text-muted">সিঙ্গেল Try-On ডিফল্ট (CS6 থেকে কার্যকর)</span>
+          <span className="text-[11px] text-muted">ডিফল্ট ইঞ্জিন — সব রানে (সিঙ্গেল + ফ্যামিলি)</span>
           <select
             value={settings.singleVtonDefault}
             onChange={(e) => saveFalFlag({ singleVtonDefault: e.target.value as StudioEngineId })}
             className="rounded-lg border border-border-subtle bg-bg-1 px-2 py-1 text-[11px] text-cream"
           >
-            <option value="fashn">FASHN Pro (এখনকার)</option>
-            <option value="fal_fashn_v16">Fal FASHN v1.6</option>
-            <option value="fal_idm_vton">IDM-VTON (পরীক্ষামূলক)</option>
+            <option value="fal_fashn_v16">Fal FASHN v1.6 · কমার্শিয়াল</option>
+            <option value="fashn">FASHN Pro (direct)</option>
+            <option value="fal_idm_vton">IDM-VTON (পরীক্ষামূলক · শুধু সিঙ্গেল)</option>
           </select>
         </label>
       </div>
@@ -3290,7 +3323,7 @@ function VideoSvg({ className }: { className?: string }) {
  * Recipe (hard presets — zero prompts, zero LLM), and the VPS worker cuts it
  * into ready reels that land in the Gallery. Replaces the old OpenCut iframe.
  */
-function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
+function VideoStudioView({ onOpenGallery, onOpenStudio }: { onOpenGallery: () => void; onOpenStudio: () => void }) {
   const [uploads, setUploads] = useState<StudioVideoUpload[]>([])
   const [loadingList, setLoadingList] = useState(true)
   const [uploadPct, setUploadPct] = useState<number | null>(null)
@@ -3413,7 +3446,35 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
       <div className="mx-auto max-w-xl space-y-4">
         <div>
           <h2 className="text-sm font-bold">ভিডিও স্টুডিও</h2>
-          <p className="text-[11px] text-muted">নিজের শুট করা ভিডিও দিন — রেসিপি বেছে নিলেই রেডি রিল Gallery-তে চলে আসবে।</p>
+          <p className="text-[11px] text-muted">ভিডিওর সব কাজ এক জায়গায় — ৩টা পথ:</p>
+        </div>
+
+        {/* video hub — every entry point in ONE place (owner 2026-07-18: the
+            three video paths were scattered and impossible to find) */}
+        <div className="grid grid-cols-1 gap-2">
+          <button type="button" onClick={onOpenGallery} className="st-card flex items-center gap-3 p-3 text-left">
+            <span className="text-lg">🖼️</span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[12px] font-semibold text-cream">ছবি থেকে রিল</span>
+              <span className="block text-[10px] text-muted">গ্যালারির যেকোনো ছবি খুলে ৬s/১৬s/২৪s বাটন চাপুন (Veo)</span>
+            </span>
+            <span className="shrink-0 text-[11px] font-semibold text-[#E07A5F]">গ্যালারি →</span>
+          </button>
+          <button type="button" onClick={onOpenStudio} className="st-card flex items-center gap-3 p-3 text-left">
+            <span className="text-lg">🛍️</span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[12px] font-semibold text-cream">নতুন প্রোডাক্টের রিল</span>
+              <span className="block text-[10px] text-muted">স্টুডিওর Auto মোডে "🎬 ছোট রিলও বানাও" টগল অন করুন</span>
+            </span>
+            <span className="shrink-0 text-[11px] font-semibold text-[#E07A5F]">স্টুডিও →</span>
+          </button>
+          <div className="st-card flex items-center gap-3 p-3">
+            <span className="text-lg">🎞️</span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[12px] font-semibold text-cream">নিজের ভিডিও এডিট</span>
+              <span className="block text-[10px] text-muted">নিচে আপলোড করুন — রেসিপি বাছলেই কাট/ক্যাপশন/মিউজিকসহ রেডি রিল</span>
+            </span>
+          </div>
         </div>
 
         {/* Upload */}

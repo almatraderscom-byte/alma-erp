@@ -222,7 +222,11 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
   // a silent adult-for-child substitution.
   // Chains run when EITHER VTON path is usable (direct FASHN key, or the Fal
   // engine per the owner's 2026-07-17 directive).
-  const chainVtonEngine = await resolveChainVtonEngine()
+  // UI engine picker override (owner 2026-07-18: engine choice visible on
+  // every VTON mode); IDM never runs family — mapped to Fal upstream.
+  const chainVtonEngine = input.vtonEngine === 'fashn' || input.vtonEngine === 'fal_fashn_v16'
+    ? input.vtonEngine
+    : await resolveChainVtonEngine()
   const chainReady = fashnReady || chainVtonEngine === 'fal_fashn_v16'
   if (
     chainReady
@@ -476,7 +480,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           resolution: input.resolution,
           generationMode: input.generationMode,
           extraPrompt: extraPrompt || undefined,
-          vtonEngine: await resolveChainVtonEngine(),
+          vtonEngine: chainVtonEngine,
           conversationId: null,
         })
         jobs.push({ pendingActionId: job.pendingActionId, label: modeDef.label, type: 'image_gen' })

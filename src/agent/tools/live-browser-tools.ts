@@ -1028,9 +1028,15 @@ const growth_control_room: AgentTool = {
   name: 'growth_control_room',
   description:
     'ONE joined growth picture (read-only): approved brief + running/draft experiments + verified learnings + recent ' +
-    'ads changes (changelog) + content-calendar health + measurement truth (gaps, thin-data) + CAPI pipeline + pending ' +
-    'approvals. Each section degrades independently (available:false) — a broken source never hides the rest. ' +
-    'Use this before weekly decisions instead of six separate reports.',
+    'ads changes (changelog) + content-calendar health + measurement truth (gaps, thin-data, per-campaign ad performance) + ' +
+    'CAPI pipeline + pending approvals. Each section degrades independently (available:false) — a broken source never hides the rest. ' +
+    'Use this before weekly decisions instead of six separate reports. ' +
+    'MONEY: measurement.paid spend is in the AD ACCOUNT\'S currency (see paid.currency) — quote paid.spendLabel / ' +
+    'campaigns[].spendLabel VERBATIM; NEVER write ৳ unless currency is BDT. ' +
+    'SOURCE HONESTY: this data comes from ERP/GA4/Meta Graph API — it is NOT Meta MCP. Never tell the owner these ' +
+    'numbers came from Meta MCP; say growth রিপোর্ট / Meta Graph. ' +
+    'campaigns[].status is the CURRENT status: a PAUSED campaign\'s window spend is still real history — report it, ' +
+    'labelled paused, never as ০/nothing.',
   input_schema: {
     type: 'object' as const,
     properties: {

@@ -12,7 +12,8 @@
 //  Web-parity blocks: 4 KPI cards (Total expenses (range) / Ledger cash readout /
 //  Line items / Active categories) · Expense mix donut (web PALETTE hexes) ·
 //  Highest categories · Ledger lines list (date/title/category/৳/receipt/status) ·
-//  native add-expense sheet (receipt upload stays on the web — escape hatch).
+//  native add-expense sheet + NATIVE receipt upload (owner 2026-07-11, PhotosPicker →
+//  POST /api/finance/receipts) + native PDF/CSV export.
 //  Carried lessons: pull-to-refresh cancellation is never an error; ONE notice
 //  line, per-screen spinner only while the list is empty.
 //

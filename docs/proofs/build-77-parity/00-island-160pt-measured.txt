@@ -1,0 +1,11 @@
+Island 160pt probe — measured AFTER the origin/main merge onto the parity branch
+(commit 7c60937e). Source: scripts/island-probe/ (ImageRenderer height gate).
+PASS = lock <= 160pt, island bottom <= 92pt.
+
+MEASURE bottom approval  height=83  pt (budget 92)   PASS
+MEASURE bottom orders    height=89  pt (budget 92)   PASS
+MEASURE bottom overview  height=83  pt (budget 92)   PASS
+MEASURE lock   approval  height=156 pt (cap 160)     PASS
+MEASURE lock   orders    height=157 pt (cap 160)     PASS
+
+=> Live Activity 160pt fix (#430) intact after the merge. No clipping.

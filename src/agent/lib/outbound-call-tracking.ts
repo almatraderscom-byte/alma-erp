@@ -34,6 +34,8 @@ type OutboundRow = {
     answeredNotified?: boolean
     answeredDurationSec?: number
     retryOffered?: boolean
+    missedNotified?: boolean
+    missedStatus?: string
   } | null
   createdAt: Date | string
   resolvedAt?: Date | string | null
@@ -44,6 +46,34 @@ export function outboundWasDialed(row: OutboundRow): boolean {
   if (row.status === 'executed') return true
   if (row.status === 'failed' && row.result?.ok && row.result?.callSid) return true
   return false
+}
+
+/** How long a placed call may still be ringing before a repeat request is a new call. */
+export const OUTBOUND_RINGING_WINDOW_MS = 90_000
+
+/**
+ * Decide whether a recent same-number row should BLOCK a fresh outbound-call request.
+ *
+ * A DIALED call is not a DELIVERED one. Blocking only for "already dialed" (the old
+ * 2-hour rule) meant that after a call rang unanswered, "abar call koro" was silently
+ * swallowed while the agent reported success (live incident 2026-07-18). Block only
+ * cases where a new call would genuinely double-dial or repeat a delivered message:
+ *   - awaiting approval / queued to dial  → a second card would double-dial
+ *   - answered                            → the message reached the person
+ *   - placed seconds ago (still ringing)  → the line may be live right now
+ * A no-answer / busy / failed row is NOT blocking — the message was never delivered.
+ */
+export function isBlockingOutboundDuplicate(
+  row: Pick<OutboundRow, 'status' | 'result' | 'createdAt'>,
+  nowMs: number,
+): boolean {
+  if (row.status === 'pending' || row.status === 'approved') return true
+  if (!outboundWasDialed(row as OutboundRow)) return false
+  if (row.result?.answeredNotified) return true
+  // Explicit not-delivered verdict from the status callback → let a new call through.
+  if (row.result?.missedNotified || row.result?.missedStatus || row.result?.retryOffered) return false
+  // No verdict yet: hold only for as long as a ring can plausibly last.
+  return nowMs - new Date(row.createdAt).getTime() < OUTBOUND_RINGING_WINDOW_MS
 }
 
 export function summarizeOutboundAction(row: OutboundRow) {

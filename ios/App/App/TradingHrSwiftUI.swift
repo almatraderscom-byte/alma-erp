@@ -12,8 +12,8 @@
 //  role · employee link, shift, accounts, trades, net P/L, wallet, consistency) with a
 //  native detail sheet (HR profile, metrics, wallet, assigned accounts, that staffer's
 //  recent reports) · HR Alert Engine · 5 ranking cards · staff performance summary ·
-//  recent daily reports feed. Mutations (save profile / submit report) stay on the web
-//  escape hatch — this screen is read-only.
+//  recent daily reports feed. NATIVE WRITES (verified 2026-07-17): HR profile save
+//  (POST /api/trading/hr) and daily report submit (POST /api/trading/hr/reports).
 //  Carried lessons: lenient per-field decoding, cancellation-safe .refreshable,
 //  private renamed aurora/glass/shimmer/bento copies (parallel-session rule).
 //

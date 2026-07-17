@@ -376,7 +376,12 @@ struct PortalStaffAppView: View {
             bannerRow("🏁 আজকের চেক-আউট সম্পন্ন। আগামীকাল আবার দেখা হবে, ইনশাআল্লাহ।",
                       tint: PortalStaffColors.sky)
         } else {
-            Button { openWeb("/portal", "চেক-ইন") } label: {
+            Button {
+                // NP-7 (OP-07): canonical NATIVE check-in flow — My Desk's front-camera
+                // + GPS sheet via the single nav path (never the web page).
+                NotificationCenter.default.post(name: .almaOpenPath, object: nil,
+                                                userInfo: ["path": "/portal"])
+            } label: {
                 bannerRow("⏳ এখনো চেক-ইন করেননি — চাপ দিয়ে চেক-ইন করুন", tint: PortalOfficePalette.amber600)
             }.buttonStyle(.plain)
         }

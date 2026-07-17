@@ -289,6 +289,108 @@ struct WalletStatementScreen: View {
         return order.map { ($0, map[$0] ?? []) }
     }
 
+    // ── NP-7 (FN-03): native branded salary-slip PDF — the web MySalarySlipCard's
+    //    buildSalarySlipBreakdown() rules verbatim (SALARY_ACCRUAL / PENALTY /
+    //    approved WITHDRAWAL rows scoped to the period), rendered with
+    //    UIGraphicsPDFRenderer and handed to the system share sheet. ──
+
+    private static let approvedWithdrawalSources: Set<String> = [
+        "wallet_request", "legacy_hr_payroll", "manual_entry",
+    ]
+
+    private func periodYm(offsetMonths: Int) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM"
+        f.timeZone = TimeZone(identifier: "Asia/Dhaka")
+        let d = Calendar.current.date(byAdding: .month, value: offsetMonths, to: Date()) ?? Date()
+        return f.string(from: d)
+    }
+
+    private func periodLabel(_ ym: String) -> String {
+        let parts = ym.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 2 else { return ym }
+        let f = DateFormatter()
+        f.dateFormat = "MMMM yyyy"
+        var comps = DateComponents(); comps.year = parts[0]; comps.month = parts[1]; comps.day = 1
+        return Calendar.current.date(from: comps).map { f.string(from: $0) } ?? ym
+    }
+
+    private func slipBreakdown(_ ym: String) -> (basic: Int, penalty: Int, net: Int, withdrawn: Int, paid: Bool) {
+        var basic = 0.0, penalty = 0.0, withdrawn = 0.0
+        for e in vm.full?.entries ?? [] {
+            guard let dateStr = e.date ?? e.createdAt, dateStr.hasPrefix(ym) else { continue }
+            let amount = abs(e.signedAmount)
+            guard amount > 0 else { continue }
+            switch e.type {
+            case "SALARY_ACCRUAL": basic += amount
+            case "PENALTY": penalty += amount
+            case "WITHDRAWAL":
+                let src = (e.source ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+                if src.isEmpty || Self.approvedWithdrawalSources.contains(src) { withdrawn += amount }
+            default: break
+            }
+        }
+        let net = basic - penalty
+        return (Int(basic.rounded()), Int(penalty.rounded()), Int(net.rounded()),
+                Int(withdrawn.rounded()), withdrawn >= net && net > 0)
+    }
+
+    private var salarySlipRow: some View {
+        HStack(spacing: 8) {
+            slipButton("📄 এ মাসের স্লিপ", ym: periodYm(offsetMonths: 0))
+            slipButton("📄 গত মাসের স্লিপ", ym: periodYm(offsetMonths: -1))
+        }
+    }
+
+    private func slipButton(_ label: String, ym: String) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            shareSlip(ym: ym)
+        } label: {
+            Text(label).font(.caption.weight(.bold))
+                .frame(maxWidth: .infinity).padding(.vertical, 10)
+                .background(WSPalette.emerald600.opacity(0.10), in: Capsule())
+                .foregroundStyle(WSPalette.emerald600)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func shareSlip(ym: String) {
+        let b = slipBreakdown(ym)
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 595, height: 842))
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("salary-slip-\(ym).pdf")
+        try? renderer.writePDF(to: url) { ctx in
+            ctx.beginPage()
+            var y: CGFloat = 40
+            func draw(_ text: String, size: CGFloat, bold: Bool = false, color: UIColor = .black) {
+                let font = bold ? UIFont.boldSystemFont(ofSize: size) : UIFont.systemFont(ofSize: size)
+                (text as NSString).draw(at: CGPoint(x: 40, y: y),
+                                        withAttributes: [.font: font, .foregroundColor: color])
+                y += size + 10
+            }
+            draw("ALMA Lifestyle", size: 20, bold: true)
+            draw("Salary slip — \(periodLabel(ym))", size: 12)
+            draw("Employee: \(vm.employeeId)", size: 11)
+            y += 10
+            draw("Basic salary        ৳\(b.basic.formatted())", size: 12)
+            draw("Penalty             −৳\(b.penalty.formatted())", size: 12,
+                 color: b.penalty > 0 ? .systemRed : .black)
+            draw("Net pay             ৳\(b.net.formatted())", size: 13, bold: true)
+            draw("Withdrawn in period ৳\(b.withdrawn.formatted())", size: 12)
+            y += 6
+            draw(b.paid ? "STATUS: PAID" : "STATUS: DUE", size: 12, bold: true,
+                 color: b.paid ? .systemGreen : .systemOrange)
+            y += 20
+            draw("Generated \(ISO8601DateFormatter().string(from: Date())) · ALMA ERP", size: 8, color: .gray)
+        }
+        let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        var top = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        top?.present(av, animated: true)
+    }
+
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 10) {
@@ -299,6 +401,7 @@ struct WalletStatementScreen: View {
                     ProgressView().padding(.vertical, 60)
                 } else {
                     balanceCard
+                    salarySlipRow
                     fineSummaryCard
                     statementCard
                 }

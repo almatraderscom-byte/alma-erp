@@ -10,12 +10,14 @@
 //  client-side on issued_date||created_at YMD — native preset chips) · invoice rows
 //  (mono id · client · type + due date · PaymentStatusBadge Unpaid-muted /
 //  Partial-amber / Paid-emerald · amount · Paid green / Due amber sublines).
-//  MUTATIONS STAY WEB: create invoice, record payment and the premium PDF preview
-//  are the web escape ("ওয়েবে খুলুন" → /digital/invoices) — this screen is read-only.
+//  NATIVE WRITES (verified 2026-07-17): invoice create, payment record, PDF generation
+//  (POST /api/digital/invoices/pdf). STILL WEB (parity ledger FN-02, phase NP-7):
+//  in-app PDF preview (PDFKit/Quick Look).
 //  Carried lessons: lenient row decoding, shimmer skeletons, no global overlays.
 //
 
 import SwiftUI
+import PDFKit
 
 // MARK: - Web palette (exact hexes from globals.css / tailwind tokens)
 
@@ -1165,6 +1167,8 @@ private struct DigitalInvoiceActionsSheet: View {
     @State private var paying = false
     @State private var confirmingPay = false
     @State private var pdfURL: URL? = nil
+    @State private var previewBusy = false
+    @State private var previewFile: URL? = nil
     @State private var makingPdf = false
 
     private var taka: Int { Int(Double(payAmount.replacingOccurrences(of: ",", with: "")) ?? 0) }
@@ -1232,6 +1236,33 @@ private struct DigitalInvoiceActionsSheet: View {
 
                 // Premium PDF — native generate + iOS share sheet.
                 if let pdfURL {
+                    // NP-7 (FN-02): native in-app preview (PDFKit) + save/share.
+                    Button {
+                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                        previewBusy = true
+                        Task {
+                            defer { previewBusy = false }
+                            if let (data, _) = try? await URLSession.shared.data(from: pdfURL) {
+                                let f = FileManager.default.temporaryDirectory
+                                    .appendingPathComponent("cdit-invoice-\(invoice.id).pdf")
+                                try? data.write(to: f, options: .atomic)
+                                previewFile = f
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if previewBusy { ProgressView().controlSize(.mini) }
+                            Label("👁️ PDF দেখুন", systemImage: "doc.text.magnifyingglass")
+                                .font(.caption.weight(.bold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(previewBusy)
+                    .sheet(item: $previewFile) { f in
+                        AlmaPDFPreviewSheet(fileURL: f)
+                    }
                     ShareLink(item: pdfURL) {
                         Label("PDF শেয়ার করুন", systemImage: "square.and.arrow.up")
                             .font(.caption.weight(.bold))
@@ -1298,6 +1329,50 @@ private struct DigitalInvoiceActionsSheet: View {
                 client_name: invoice.clientName, amount: taka, payment_method: payMethod))
             UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
             if ok { dismiss() }
+        }
+    }
+}
+
+
+// MARK: - NP-7 (FN-02): PDFKit preview sheet (hosted PDF displayed natively)
+
+extension URL: Identifiable {
+    public var id: String { absoluteString }
+}
+
+@available(iOS 17.0, *)
+struct AlmaPDFPreviewSheet: View {
+    let fileURL: URL
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            AlmaPDFKitView(url: fileURL)
+                .ignoresSafeArea(edges: .bottom)
+                .navigationTitle("PDF")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) { Button("বন্ধ") { dismiss() } }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        ShareLink(item: fileURL) { Image(systemName: "square.and.arrow.up") }
+                    }
+                }
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AlmaPDFKitView: UIViewRepresentable {
+    let url: URL
+    func makeUIView(context: Context) -> PDFView {
+        let v = PDFView()
+        v.autoScales = true
+        v.document = PDFDocument(url: url)
+        return v
+    }
+    func updateUIView(_ view: PDFView, context: Context) {
+        if view.document?.documentURL != url {
+            view.document = PDFDocument(url: url)
         }
     }
 }

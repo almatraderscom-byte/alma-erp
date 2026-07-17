@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>ALMAGitCommit</key>
-	<string>b6b4d36947</string>
+	<string>fa396eae49</string>
 	<key>ALMABaseURL</key>
 	<string>$(ALMA_BASE_URL)</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>

@@ -61,9 +61,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             }
             if #available(iOS 16.1, *) {
                 Task { @MainActor in
+                    var pulseDemoActive = false
                     #if DEBUG
                     await PulseRestore.debugResetIfRequested()
+                    if #available(iOS 16.2, *) {
+                        pulseDemoActive = await PulseRestore.debugStartDemoApprovalIfRequested()
+                    }
                     #endif
+                    if !pulseDemoActive {
                     PulseRestore.reconcile()
                     PulseRestore.restartFromCache()
                     // Native panel sync (2026-07-17): the webview path 401s
@@ -71,6 +76,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                     // shared-store cookies, so the island stays truthful even
                     // then. Throttled inside; silent on failure.
                     PulseNativeSync.syncNow(reason: "active")
+                    }   // end if !pulseDemoActive
                 }
             }
         }

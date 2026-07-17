@@ -354,6 +354,10 @@ final class AnalyticsVM {
     /// web's OrdersDataContext. nil = fetch unavailable/failed → those cards hide silently.
     fileprivate var orders: [AlmaOrder]? = nil
     var preset: AnalyticsDatePreset = .last30    // web default (DateRangeContext 'last30')
+    // NP-8 (OP-06): the web's Custom preset — native start/end fields, same query.
+    var useCustomRange = false
+    var customStart = ""
+    var customEnd = ""
     var loading = false
     var error: String? = nil
     var authExpired = false
@@ -365,7 +369,10 @@ final class AnalyticsVM {
         loading = true
         error = nil
         defer { loading = false }
-        let range = preset.range()
+        var range = preset.range()
+        if useCustomRange, customStart.count == 10, customEnd.count == 10 {
+            range = (customStart, customEnd)
+        }
         do {
             let resp: AnalyticsResponse = try await AlmaAPI.shared.get(
                 "/api/analytics",
@@ -534,16 +541,42 @@ struct AnalyticsScreen: View {
     // ── Date preset chips (web DateRangeFilter) ──
 
     private var presetChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(AnalyticsDatePreset.allCases, id: \.rawValue) { p in
-                    analyticsChip(p.label, active: vm.preset == p) {
-                        vm.preset = p
-                        Task { await vm.load() }
+        VStack(alignment: .leading, spacing: 6) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(AnalyticsDatePreset.allCases, id: \.rawValue) { p in
+                        analyticsChip(p.label, active: !vm.useCustomRange && vm.preset == p) {
+                            vm.useCustomRange = false
+                            vm.preset = p
+                            Task { await vm.load() }
+                        }
+                    }
+                    analyticsChip("Custom", active: vm.useCustomRange) {
+                        vm.useCustomRange.toggle()
                     }
                 }
+                .padding(.horizontal, 2)
             }
-            .padding(.horizontal, 2)
+            // NP-8 (OP-06): custom start/end — the SAME /api/analytics query params
+            // the web Custom picker sends, with YYYY-MM-DD validation.
+            if vm.useCustomRange {
+                HStack(spacing: 6) {
+                    TextField("Start YYYY-MM-DD", text: Binding(get: { vm.customStart }, set: { vm.customStart = $0 }))
+                        .accessibilityLabel("শুরুর তারিখ")
+                    TextField("End YYYY-MM-DD", text: Binding(get: { vm.customEnd }, set: { vm.customEnd = $0 }))
+                        .accessibilityLabel("শেষ তারিখ")
+                    Button("Apply") {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        Task { await vm.load() }
+                    }
+                    .font(.caption.weight(.bold))
+                    .buttonStyle(.bordered)
+                    .disabled(vm.customStart.count != 10 || vm.customEnd.count != 10)
+                }
+                .font(.caption)
+                .textFieldStyle(.roundedBorder)
+                .keyboardType(.numbersAndPunctuation)
+            }
         }
         .padding(.top, 4)
     }

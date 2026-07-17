@@ -49,8 +49,8 @@ export interface ProfitAttribution {
 export function computeProfitAttribution(input: ProfitAttributionInput): ProfitAttribution {
   const spend =
     input.spendBdt === null
-      ? labelled(null, 'unknown', 'Meta spend not readable')
-      : labelled(input.spendBdt, 'observed', 'Meta insights spend')
+      ? labelled(null, 'unknown', 'Meta spend not comparable in BDT (not readable, or the ad account bills in another currency and no FX source exists)')
+      : labelled(input.spendBdt, 'observed', 'Meta insights spend (BDT account)')
 
   const deliveredRevenue =
     input.revenueDeliveredBdt !== null
@@ -181,8 +181,14 @@ export async function buildAttributionReport(opts: {
   ])
 
   const delivered = report?.funnel.ordersWeek.deliveredCount ?? null
+  // Profit math is BDT (ERP revenue). Ad spend is in the AD ACCOUNT'S currency —
+  // this account bills in USD, so subtracting it from taka revenue produced a
+  // silently nonsense "profit after spend" (live-found 2026-07-17). With no FX
+  // source we refuse to invent a rate: non-BDT spend is passed as unknown, which
+  // labels profitAfterSpend unknown instead of confidently wrong.
+  const spendIsBdt = report?.paid.currency === 'BDT'
   const profit = computeProfitAttribution({
-    spendBdt: report ? report.paid.totalSpendWeek : null,
+    spendBdt: report && spendIsBdt ? report.paid.totalSpendWeek : null,
     revenueDeliveredBdt: null, // ERP summary is order-level revenue; delivered-only revenue lands with the event pipeline
     revenueConfirmedBdt: report ? report.funnel.ordersWeek.totalRevenue : null,
     deliveredCount: delivered,
