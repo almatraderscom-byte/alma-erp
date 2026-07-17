@@ -11,10 +11,10 @@ import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useApprovalActions } from '@/hooks/useApprovalActions'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import {
+  BKASH_APP_URL,
   clearBkashSendPending,
   copyTextToClipboard,
   extractTrxIdFromText,
-  openBkashApp,
   readBkashSendPending,
   readClipboardText,
   saveBkashSendPending,
@@ -229,12 +229,17 @@ function ApprovalsPageInner() {
     return number
   }
 
-  /** Copy the recipient's bKash number, remember the in-flight approval, jump to bKash. */
-  async function startBkashSend() {
+  /**
+   * Copy the recipient's number and remember the in-flight approval — all synchronous,
+   * because the caller is an <a href={BKASH_APP_URL}> whose default navigation opens
+   * the bKash app. iOS only honours that Universal Link while the gesture flag is
+   * live, so nothing here may await (the original bug) and we must not preventDefault.
+   */
+  function startBkashSend() {
     if (!withdrawApprove) return
     const number = bkashPayoutNumber(withdrawApprove.row)
     if (!number) return
-    const copied = await copyTextToClipboard(number)
+    const copied = copyTextToClipboard(number)
     saveBkashSendPending({
       surface: 'approvals',
       requestId: withdrawApprove.row.id,
@@ -248,9 +253,7 @@ function ApprovalsPageInner() {
     })
     toast.success(copied
       ? 'নম্বর কপি হয়েছে — বিকাশে Send Money-তে পেস্ট করুন'
-      : `কপি করা যায়নি — বিকাশে নম্বরটি নিজে লিখুন: ${number}`)
-    // Small delay so the toast paints and the clipboard write settles before the OS switch.
-    window.setTimeout(() => openBkashApp(), 350)
+      : `কপি হয়নি — নম্বরটি নিজে লিখুন: ${number}`)
   }
 
   /** Fill the Transaction ID field from the clipboard (bKash success screen → copy → return). */
@@ -743,9 +746,17 @@ function ApprovalsPageInner() {
                     <p className="mt-1 font-mono text-sm font-bold text-gold">{number}</p>
                     {!withdrawApprove.resumedFromBkash && (
                       <div className="mt-2">
-                        <Button size="xs" variant="gold" type="button" disabled={waDisabled} onClick={() => void startBkashSend()}>
-                          নম্বর কপি করে বিকাশ খুলুন
-                        </Button>
+                        {/* A real link, not a button: iOS opens a Universal Link most
+                            reliably from an actual anchor tap. onClick only copies —
+                            the browser does the navigation. */}
+                        <a
+                          href={BKASH_APP_URL}
+                          onClick={() => { if (!waDisabled) startBkashSend() }}
+                          aria-disabled={waDisabled}
+                          className={`inline-flex items-center gap-1.5 rounded-full bg-gold px-4 py-2 text-xs font-bold text-white transition hover:bg-gold-dim ${waDisabled ? 'pointer-events-none opacity-60' : ''}`}
+                        >
+                          নম্বর কপি করে বিকাশ খুলুন →
+                        </a>
                       </div>
                     )}
                     <span className="mt-2 block text-[10px] text-muted">
