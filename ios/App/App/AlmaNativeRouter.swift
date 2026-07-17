@@ -99,7 +99,17 @@ enum AlmaNativeRouter {
         case "/agent/trading-staff": return host(TradingStaffScreen(openWeb: openWebForced), "Trading staff")
         case "/agent/known-people": return host(KnownPeopleScreen(openWeb: openWebForced), "Known people")
         case "/agent/growth": return host(AgentGrowthScreen(openWeb: openWebForced), "Growth")
-        case "/agent/staff-monitor": return host(StaffMonitorScreen(openWeb: openWebForced), "LIVE Business")
+        case "/agent/staff-monitor":
+            #if DEBUG
+            // Headless sim self-test hook: SIMCTL_CHILD_ALMA_SM_TAB=agents|system|…
+            // lands the Monitor on that tab so each tab can be screenshot-verified
+            // without driving the UI. DEBUG builds only — never ships.
+            if let raw = ProcessInfo.processInfo.environment["ALMA_SM_TAB"],
+               let t = StaffMonitorTab(rawValue: raw) {
+                return host(StaffMonitorScreen(openWeb: openWebForced, initialTab: t), "LIVE Business")
+            }
+            #endif
+            return host(StaffMonitorScreen(openWeb: openWebForced), "LIVE Business")
         // Owner feedback 2026-07-17: Live Watch is its OWN focused screen (live
         // browser hero) — visually distinct from the Monitor; same data source.
         case "/agent/live-watch":
