@@ -117,7 +117,10 @@ export async function detectOverlayTextBoxes(imageBuf) {
           body: JSON.stringify({
             contents: [{
               parts: [
-                { text: 'Detect every region of overlaid graphic text, watermark or logo in this product photo (any language, any colour), including decorative Bangla lettering. Exclude fabric embroidery patterns, buttons and natural objects. Return STRICT JSON only: {"boxes":[[ymin,xmin,ymax,xmax],...]} with coordinates on a 0-1000 scale. Empty list if none.' },
+                // canonical Gemini detection format — the model is trained on
+                // "box_2d" [ymin,xmin,ymax,xmax] 0-1000; custom shapes often
+                // come back empty (live 2026-07-17: boxes:0 on obvious text)
+                { text: 'Detect every region of overlaid graphic text, watermark or logo in this product photo (any language, any colour), including decorative Bangla lettering. Exclude fabric embroidery patterns, buttons and natural objects. Output ONLY a JSON list where each entry has the 2D bounding box in "box_2d" ([ymin, xmin, ymax, xmax], normalized 0-1000) and a short "label". Output [] if there is none.' },
                 { inline_data: { mime_type: 'image/png', data: imageBuf.toString('base64') } },
               ],
             }],
@@ -129,12 +132,30 @@ export async function detectOverlayTextBoxes(imageBuf) {
       if (!res.ok) continue
       const data = await res.json()
       const raw = (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('')
-      const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? '{}')
-      if (!Array.isArray(parsed.boxes)) continue
-      return parsed.boxes
+      // canonical: [{"box_2d":[ymin,xmin,ymax,xmax],"label":...}]; also accept
+      // the legacy {"boxes":[[...]]} shape
+      const arrMatch = raw.match(/\[[\s\S]*\]/)
+      let rawBoxes = []
+      if (arrMatch) {
+        try {
+          const list = JSON.parse(arrMatch[0])
+          if (Array.isArray(list)) {
+            rawBoxes = list.map((e) => (Array.isArray(e) ? e : e?.box_2d)).filter(Boolean)
+          }
+        } catch { /* fall through */ }
+      }
+      if (!rawBoxes.length) {
+        try {
+          const obj = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? '{}')
+          if (Array.isArray(obj.boxes)) rawBoxes = obj.boxes
+        } catch { /* fall through */ }
+      }
+      const boxes = rawBoxes
         .filter((b) => Array.isArray(b) && b.length === 4 && b.every((v) => Number.isFinite(v)))
         .map(([ymin, xmin, ymax, xmax]) => ({ x0: xmin / 1000, y0: ymin / 1000, x1: xmax / 1000, y1: ymax / 1000 }))
         .filter((b) => b.x1 > b.x0 && b.y1 > b.y0)
+      if (boxes.length) return boxes
+      // empty from this model — let the fallback model try
     } catch {
       // try the next model
     }
