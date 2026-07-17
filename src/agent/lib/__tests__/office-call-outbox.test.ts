@@ -56,10 +56,13 @@ function item(kind: 'call.ring' | 'call.cancel') {
       callUUID: 'call-1',
       channel: 'itc_call-1',
       callerName: 'Caller',
+      reason: undefined as string | undefined,
     },
     call: {
       id: 'call-1',
       businessId: 'ALMA_LIFESTYLE',
+      callerUserId: 'caller',
+      calleeUserId: 'callee',
       state: kind === 'call.ring' ? 'RINGING' : 'ENDED',
       ringExpiresAt: new Date(Date.now() + 60_000),
       maxEndsAt: new Date(Date.now() + 600_000),
@@ -154,6 +157,22 @@ describe('Office call durable delivery outbox', () => {
       expect.any(String),
       expect.any(String),
       expect.objectContaining({ type: 'office_call_cancel', callId: 'call-1' }),
+      true,
+    )
+  })
+
+  it('renders a durable missed-call notification for the callee', async () => {
+    const missed = item('call.cancel')
+    missed.payload.reason = 'missed'
+    mocks.findFirst.mockResolvedValueOnce(missed)
+    mocks.getDevices.mockResolvedValue([])
+
+    await expect(processOfficeCallOutbox({ limit: 1 })).resolves.toMatchObject({ delivered: 1 })
+    expect(mocks.pushFallback).toHaveBeenCalledWith(
+      ['callee'],
+      '📞 মিসড অফিস কল',
+      expect.stringContaining('মিস'),
+      expect.objectContaining({ type: 'office_call_missed', reason: 'missed' }),
       true,
     )
   })

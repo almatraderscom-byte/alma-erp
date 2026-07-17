@@ -13,9 +13,7 @@ import com.almatraders.erp.shell.AlmaApi
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -41,19 +39,18 @@ class OfficeCallFirebaseService : FirebaseMessagingService() {
         // A ring older than the provider TTL is never surfaced after a delay.
         if (message.sentTime > 0L && (System.currentTimeMillis() - message.sentTime) > 60_000L) return
 
-        val canonical = runBlocking(Dispatchers.IO) {
-            withTimeoutOrNull(8_000L) {
-                runCatching { AlmaApi.getObject("/api/assistant/office/calls/$callId").optJSONObject("call") }.getOrNull()
-            }
-        } ?: return
-        if (canonical.optString("state") != "RINGING" || canonical.optString("direction") != "incoming") return
-        val canonicalChannel = canonical.optString("channel")
-        if (canonicalChannel.isBlank() || canonicalChannel != data["channel"]) return
+        val channel = data["channel"].orEmpty()
+        if (channel != "itc_$callId") return
 
-        AgoraIntercom.reconcileIncoming(
+        // A high-priority FCM callback has a deliberately short execution window.
+        // Surface the validated, unexpired wake hint immediately, exactly as iOS
+        // reports PushKit to CallKit first, then reconcile canonical server truth in
+        // the process coordinator. Blocking here on an 8s network fetch made killed
+        // and Doze calls late or completely silent on a weak connection.
+        AgoraIntercom.surfaceIncomingWakeHint(
             this,
             callId,
-            canonicalChannel,
+            channel,
             data["caller"].orEmpty().ifBlank { "অফিস কল" },
         )
     }

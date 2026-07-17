@@ -313,24 +313,82 @@ object AgoraIntercom {
         emitTelemetry("client.ring_received", "ringing")
     }
 
-    /** FCM is a wake-up hint; only canonical incoming+RINGING becomes an OS call. */
+    /**
+     * Surface a provider-authenticated, schema/TTL/channel-validated wake hint without
+     * waiting for a network round-trip. Canonical state is still the source of truth:
+     * reconciliation starts immediately and closes the provisional system call if the
+     * server says it is no longer an incoming RINGING call.
+     */
+    fun surfaceIncomingWakeHint(context: Context, id: String, ch: String, caller: String) {
+        attach(context)
+        coordinatorScope.launch {
+            val normalizedId = id.lowercase()
+            val existingId = currentCallId
+            if (existingId != null && !existingId.equals(normalizedId, ignoreCase = true)) {
+                emitTelemetry("client.ring_suppressed_busy", "busy", "another_call_active")
+                return@launch
+            }
+            if (handledCallIds.contains(normalizedId) && existingId == normalizedId) {
+                refreshCanonical(normalizedId)
+                return@launch
+            }
+
+            currentCallId = normalizedId
+            currentCallVersion = null
+            callOutgoing = false
+            channel = ch
+            updateCanonicalState("RINGING")
+            surfaceIncomingCall(context, normalizedId, ch, caller)
+
+            // A transport failure leaves the short-lived provisional ring visible and
+            // the 2.5s reconciler retrying. A successful non-ringing response closes it.
+            val canonicalAvailable = refreshCanonical(normalizedId)
+            if (canonicalAvailable && (
+                    currentCallId != normalizedId ||
+                        canonicalStateValue != "RINGING" ||
+                        callOutgoing || channel != ch
+                )
+            ) {
+                OfficeCallTelecom.disconnect(normalizedId, "CANCELLED")
+                CallNotifications.cancel(context, normalizedId)
+                leaveLocal()
+            }
+        }
+    }
+
+    /** Foreground/activity/legacy-OneSignal path: verify server truth first. */
     fun reconcileIncoming(context: Context, id: String, ch: String, caller: String) {
         attach(context)
         coordinatorScope.launch {
-            if (!refreshCanonical(id)) return@launch
-            if (currentCallId != id.lowercase() || canonicalStateValue != "RINGING" || callOutgoing || channel != ch) return@launch
-            handledCallIds.add(id)
-            post {
-                callPeer = caller
-                mode = Mode.RINGING
-                statusText = "ইনকামিং কল…"
+            val normalizedId = id.lowercase()
+            val existingId = currentCallId
+            if (existingId != null && !existingId.equals(normalizedId, ignoreCase = true)) return@launch
+            if (handledCallIds.contains(normalizedId) && existingId == normalizedId) {
+                refreshCanonical(normalizedId)
+                return@launch
             }
-            OfficeCallTelecom.reportCall(context, id, caller, incoming = true)
-            val capability = CallNotifications.showIncomingCall(context, id, ch, caller)
-            post { capabilityIssue = capability.detail }
-            startCanonicalReconciliation()
-            emitTelemetry("client.ring_received", "ringing", capability.detail)
+            if (!refreshCanonical(normalizedId)) return@launch
+            if (currentCallId != normalizedId || canonicalStateValue != "RINGING" || callOutgoing || channel != ch) {
+                if (currentCallId == normalizedId) leaveLocal()
+                return@launch
+            }
+            surfaceIncomingCall(context, normalizedId, ch, caller)
         }
+    }
+
+    private fun surfaceIncomingCall(context: Context, id: String, ch: String, caller: String) {
+        handledCallIds.add(id)
+        post {
+            callPeer = caller
+            mode = Mode.RINGING
+            statusText = "ইনকামিং কল…"
+        }
+        OfficeCallTelecom.reportCall(context, id, caller, incoming = true)
+        val capability = CallNotifications.showIncomingCall(context, id, ch, caller)
+        post { capabilityIssue = capability.detail }
+        startCanonicalReconciliation()
+        startRingTimeout()
+        emitTelemetry("client.ring_received", "ringing", capability.detail)
     }
 
     /** A call was cancelled remotely (caller hung up before answer). Observed by a

@@ -161,6 +161,7 @@ async function dispatchCancel(args: {
   callId: string
   businessId: string
   targetUserId: string
+  calleeUserId: string
   payload: OutboxPayload
 }) {
   const devices = await getOfficeCallDeliveryDevices({
@@ -192,12 +193,17 @@ async function dispatchCancel(args: {
   }
   // iOS cancellation deliberately uses the regular notification/live fetch
   // path. A VoIP push is only for a new incoming call and is never used here.
+  const missedForCallee = args.payload.reason?.toUpperCase() === 'MISSED'
+    && args.targetUserId === args.calleeUserId
   const fallback = await pushStaffDevice(
     [args.targetUserId],
-    '📞 কল শেষ',
-    'কলের অবস্থা আপডেট হয়েছে।',
+    missedForCallee ? '📞 মিসড অফিস কল' : '📞 কল শেষ',
+    missedForCallee ? 'আপনি একটি অফিস ভয়েস কল মিস করেছেন।' : 'কলের অবস্থা আপডেট হয়েছে।',
     {
-      type: 'office_call_cancel',
+      // Android's call extension suppresses office_call_cancel after dismissing
+      // Telecom. A distinct type intentionally lets OneSignal render the callee's
+      // durable missed-call alert; iOS receives the same user-visible notification.
+      type: missedForCallee ? 'office_call_missed' : 'office_call_cancel',
       schemaVersion: 1,
       callId: args.callId,
       broadcastId: args.callId,
@@ -236,6 +242,7 @@ async function processClaimed(item: NonNullable<Awaited<ReturnType<typeof claimO
       callId: item.callId,
       businessId: item.call.businessId,
       targetUserId: item.targetUserId,
+      calleeUserId: item.call.calleeUserId,
       payload,
     })
     const ok = delivered.fallbackOk || delivered.results.some((result) => result.ok)

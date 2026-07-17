@@ -305,13 +305,42 @@ The word “WhatsApp-like” must become an executable checklist.
 - Incoming/outgoing/reconnecting/ended screens share one design language across web and native.
 - Permission denial screen tells the user exactly which setting prevents calls and provides a settings shortcut.
 
-### Recommended additions not currently present
+### Recommended additions and current status
 
-- Busy/call waiting policy and missed-call notification.
-- Spam/rate limiting and owner/staff blocking policy.
-- Abuse-safe call audit trail without recording media.
+- Busy/call waiting policy: implemented in the canonical participant-lock and placement policy.
+- Missed-call notification: implemented in the pre-device completeness pass; `MISSED` now produces a
+  durable user-visible native alert for the callee in addition to canonical history.
+- Spam/rate limiting and owner/staff access policy: placement rate limits and business/participant
+  authorization are implemented; a consumer-style personal block list is not part of this internal
+  Office product.
+- Abuse-safe call audit trail without recording media: implemented through redacted call events,
+  delivery outcomes and retention controls.
 - Optional voice-call media encryption with reviewed key management. Do not market “end-to-end encrypted like WhatsApp” until an independent security review proves the exact cryptographic/key-distribution design; enabling transport encryption alone is not equivalent.
 - Optional video calls only after audio SLOs pass. Then add camera permissions, speaker/video route behavior, background/PiP rules, bandwidth adaptation and the same state machine. Screen sharing/group calls should be separate later scopes, not mixed into the reliability rewrite.
+
+### Pre-device scope lock: what is and is not being promised
+
+The mandatory product in this roadmap is **WhatsApp-like 1:1 Office voice calling**, not every feature
+in the WhatsApp product. Before the consolidated physical test, the software contract includes:
+
+- iOS incoming wake through PushKit and immediate CallKit reporting while the app is foregrounded,
+  backgrounded, locked or not running; native answer/decline/end/mute and system audio ownership.
+- Android incoming wake through high-priority direct FCM, immediate Core-Telecom + CallStyle/full-screen
+  surfacing, lock-screen activity, answer/decline/end actions and ongoing microphone/phone-call foreground
+  service. Canonical reconciliation happens after the validated wake is surfaced, so a weak network does
+  not consume the short FCM execution window before the phone starts ringing.
+- Active-call survival after leaving the app: CallKit + background audio on iOS; Core-Telecom + a visible
+  foreground call service on Android; a global process-level coordinator on all clients.
+- Caller cancel, answer elsewhere, decline, missed timeout, reconnect, token renewal, multi-device stop,
+  history and a durable missed-call alert.
+
+The following are deliberately **not** part of the 1:1 voice release and must not be implied by the
+phrase “WhatsApp-like”: video calls, group calls, screen sharing, call recording, or independently
+reviewed application-level E2EE. Browser tabs also cannot promise native killed-process behavior.
+They are separate product/security projects, not safe last-minute additions to the voice reliability
+gate. OS policy still wins: iOS presentation follows the user’s CallKit settings, and Android falls
+back to a heads-up CallStyle notification when full-screen special access is denied; DND, force-stop
+and aggressive OEM battery policy cannot be bypassed by an app.
 
 ---
 

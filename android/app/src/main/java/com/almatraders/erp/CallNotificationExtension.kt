@@ -38,8 +38,8 @@ class CallNotificationExtension : INotificationServiceExtension {
         val channel = data.optString("channel").ifEmpty { "itc_$broadcastId" }
         val caller = data.optString("caller").ifEmpty { "বস — মারুফ" }
 
-        // OneSignal is a compatibility wake path only; canonical server state is
-        // fetched before any OS call or notification is surfaced.
+        // OneSignal is only a legacy compatibility route and its payload contract is
+        // looser than direct FCM, so canonical state is verified before surfacing.
         com.almatraders.erp.pages.AgoraIntercom.reconcileIncoming(
             event.context,
             broadcastId,
