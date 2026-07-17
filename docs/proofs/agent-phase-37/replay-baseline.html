@@ -1,0 +1,188 @@
+<!doctype html><html><head><meta charset="utf-8"><title>ALMA Agent Replay Baseline — Phase 31</title>
+<style>
+body{font-family:-apple-system,system-ui,sans-serif;margin:24px;background:#0d1117;color:#e6edf3}
+h1{font-size:20px} h2{font-size:16px;margin-top:28px}
+table{border-collapse:collapse;width:100%;font-size:12px;margin-top:8px}
+td,th{border:1px solid #30363d;padding:4px 8px;text-align:left}
+tr.ok td{background:#0f1c14} tr.bad td{background:#2b1214}
+.metric{display:inline-block;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 14px;margin:4px}
+.metric b{display:block;font-size:18px}
+.small{color:#8b949e;font-size:12px}
+</style></head><body>
+<h1>ALMA Agent Replay Baseline — Phase 31</h1>
+<p class="small">behaviorVersion phase31-v1 · generatedAt 2026-07-17T04:00:00.000Z · 150 cases · 149 pass / 1 baseline findings</p>
+<div>
+<span class="metric"><b>100.0%</b>fast-path</span>
+<span class="metric"><b>n/a</b>head tier</span>
+<span class="metric"><b>100.0%</b>routine intent</span>
+<span class="metric"><b>97.8%</b>pack recall</span>
+<span class="metric"><b>100.0%</b>pack precision</span>
+<span class="metric"><b>100.0%</b>continuation text</span>
+<span class="metric"><b>100.0%</b>task binding</span>
+<span class="metric"><b>100.0%</b>resume brief</span>
+<span class="metric"><b>n/a</b>listen suppression</span>
+<span class="metric"><b>100.0%</b>auto-continue</span>
+<span class="metric"><b>0</b>repeated-effect risks</span>
+</div>
+<h2>Unmeasured in this harness (honest deferral)</h2>
+<ul><li>groundedness (needs live model output)</li><li>Bangla style / naturalness (needs live model output + human rubric)</li><li>latency (needs live infrastructure)</li><li>token cost (needs live model usage)</li><li>end-to-end effect execution (fixtures replay decisions, not effects)</li></ul>
+<h2>Per category</h2>
+<table><tr><th>category</th><th>cases</th><th>pass</th><th>baseline findings</th><th>per-check</th></tr><tr><td>continuity</td><td>50</td><td>50</td><td>0</td><td>fastPath 25/25 · continuationText 31/31 · resumeBrief 40/40 · binding 49/49 · packs⊇ 5/5</td></tr>
+<tr><td>tool_selection</td><td>30</td><td>29</td><td>1</td><td>fastPath 22/22 · routineIntent 14/14 · packs⊇ 22/23 · packs∌ 3/3</td></tr>
+<tr><td>approval_ask_card</td><td>25</td><td>25</td><td>0</td><td>binding 25/25 · packs⊇ 15/15 · continuationText 3/3 · resumeBrief 1/1</td></tr>
+<tr><td>personal_listen</td><td>20</td><td>20</td><td>0</td><td>fastPath 18/18 · binding 13/13</td></tr>
+<tr><td>failure_recovery</td><td>15</td><td>15</td><td>0</td><td>autoContinue 5/5 · binding 10/10 · packs⊇ 1/1 · resumeBrief 1/1</td></tr>
+<tr><td>cross_surface</td><td>10</td><td>10</td><td>0</td><td>fastPath 5/5 · continuationText 4/4 · resumeBrief 7/7 · binding 10/10 · packs⊇ 2/2</td></tr></table>
+<h2>All cases</h2>
+<table><tr><th>id</th><th>category</th><th>trace</th><th>verdict</th><th>failed checks</th><th>skipped</th></tr>
+<tr class="ok"><td>rc-0100-cont-hya-wf-post</td><td>continuity</td><td>rt-3bdd72c1</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0101-cont-koro-wf-post</td><td>continuity</td><td>rt-9fedce33</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0102-cont-ok-wf-seo</td><td>continuity</td><td>rt-1bd76e6e</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0103-cont-continue-wf-seo</td><td>continuity</td><td>rt-b223a962</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0104-cont-chaliye-jao-wf-post</td><td>continuity</td><td>rt-5a2b41fd</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0105-cont-hmm-wf-dispatch</td><td>continuity</td><td>rt-72d1a5ce</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0106-cont-resume-wf-seo</td><td>continuity</td><td>rt-e4d65179</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0107-cont-thik-ache-wf-post</td><td>continuity</td><td>rt-88c188e0</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0108-cont-gap7h-hya-wf-post</td><td>continuity</td><td>rt-0d7be153</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0109-cont-gap7h-koro-wf-post</td><td>continuity</td><td>rt-b8a31d21</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0110-cont-gap7h-ok-wf-seo</td><td>continuity</td><td>rt-d7e4620b</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0111-cont-gap7h-continue-wf-seo</td><td>continuity</td><td>rt-9aebffff</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0112-cont-gap7h-chaliye-jao-wf-post</td><td>continuity</td><td>rt-e9d3eeda</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0113-cont-gap7h-hmm-wf-dispatch</td><td>continuity</td><td>rt-303095eb</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0114-cont-gap7h-resume-wf-seo</td><td>continuity</td><td>rt-8cb42196</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0115-cont-gap7h-thik-ache-wf-post</td><td>continuity</td><td>rt-737b1f3d</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0116-cont-gap3d-wf</td><td>continuity</td><td>rt-1e20b09a</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0117-cont-gap3d-checkpoint</td><td>continuity</td><td>rt-c66d9594</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0118-cont-gap30d-wf</td><td>continuity</td><td>rt-66544544</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0119-cont-gap30d-checkpoint</td><td>continuity</td><td>rt-e30ed5dc</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0120-cont-gap90d-wf</td><td>continuity</td><td>rt-b4ac4807</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0121-cont-gap90d-checkpoint</td><td>continuity</td><td>rt-d265659f</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0122-cont-gap30d-no-state</td><td>continuity</td><td>rt-1e05d5c1</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0123-cont-gap90d-what-were-we-doing</td><td>continuity</td><td>rt-172b0c10</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0124-cont-desired-tarpor</td><td>continuity</td><td>rt-3bf70d23</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0125-cont-desired-jekhane-chile</td><td>continuity</td><td>rt-d327093a</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0126-cont-desired-otai-koro</td><td>continuity</td><td>rt-682598aa</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0127-cont-desired-bakita-koro</td><td>continuity</td><td>rt-a7bc0f6c</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0128-cont-desired-ager-obostha</td><td>continuity</td><td>rt-eb3f9575</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0129-cont-desired-oi-kaj-ses</td><td>continuity</td><td>rt-72cce30f</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0130-cont-nostate-hya</td><td>continuity</td><td>rt-62aef416</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0131-cont-nostate-ok</td><td>continuity</td><td>rt-7d232077</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0132-cont-nostate-tarpor</td><td>continuity</td><td>rt-11e9d72a</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0133-cont-nostate-koi</td><td>continuity</td><td>rt-b064a488</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0134-cont-sticky-deepseek</td><td>continuity</td><td>rt-f511c847</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0135-cont-sticky-qwen</td><td>continuity</td><td>rt-4d5f47d1</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0136-cont-sticky-anthropic-not-inherited</td><td>continuity</td><td>rt-1501517e</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0137-cont-sticky-worker-only-not-inherited</td><td>continuity</td><td>rt-57dc33ee</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0138-cont-sticky-money-overrides</td><td>continuity</td><td>rt-c5643b1b</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0139-cont-newtask-poster</td><td>continuity</td><td>rt-0cb5e91b</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0140-cont-newtask-stock</td><td>continuity</td><td>rt-5c1ac5b2</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0141-cont-newtask-salah</td><td>continuity</td><td>rt-43b3ed80</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0142-cont-newtask-research</td><td>continuity</td><td>rt-69755001</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0143-cont-newtask-reminder</td><td>continuity</td><td>rt-a9a7e819</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0144-cont-3replies-post-ta-koi</td><td>continuity</td><td>rt-c4aac0da</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0145-cont-3replies-oita-ses-koro</td><td>continuity</td><td>rt-a4d1db3c</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0146-cont-3replies-ki-holo</td><td>continuity</td><td>rt-08605943</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0147-cont-3replies-post-hoise</td><td>continuity</td><td>rt-769d0c1c</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0148-cont-3replies-tarpor</td><td>continuity</td><td>rt-249d0f22</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0149-cont-3replies-done-koro</td><td>continuity</td><td>rt-c55c0bf9</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0150-tool-routine-sales-today</td><td>tool_selection</td><td>rt-6902e422</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0151-tool-routine-expense-today</td><td>tool_selection</td><td>rt-1710114d</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0152-tool-routine-attendance</td><td>tool_selection</td><td>rt-4277f7c9</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0153-tool-routine-staff-tasks</td><td>tool_selection</td><td>rt-e93b84a0</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0154-tool-routine-salah-times</td><td>tool_selection</td><td>rt-8afc595c</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0155-tool-routine-approvals</td><td>tool_selection</td><td>rt-ebe5de4d</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0156-tool-routine-order-status</td><td>tool_selection</td><td>rt-c80d1f35</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0157-tool-routine-orders-pending</td><td>tool_selection</td><td>rt-78943614</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0158-tool-routine-stock</td><td>tool_selection</td><td>rt-00b45c70</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0159-tool-marketing-fb-post</td><td>tool_selection</td><td>rt-dc54036c</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0160-tool-marketing-caption</td><td>tool_selection</td><td>rt-e7c0a16b</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0161-tool-marketing-boost</td><td>tool_selection</td><td>rt-38260307</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0162-tool-marketing-campaign</td><td>tool_selection</td><td>rt-1359842d</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0163-tool-marketing-poster-bn</td><td>tool_selection</td><td>rt-d3eecc6e</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0164-tool-deny-salary</td><td>tool_selection</td><td>rt-4c188a53</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0165-tool-deny-payroll</td><td>tool_selection</td><td>rt-66af4f7d</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0166-tool-deny-delete</td><td>tool_selection</td><td>rt-bbdc0a72</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0167-tool-deny-refund</td><td>tool_selection</td><td>rt-984f465e</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0168-tool-deny-fire</td><td>tool_selection</td><td>rt-4a21bc7b</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0169-tool-call-with-number</td><td>tool_selection</td><td>rt-f7e006de</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0170-tool-call-number-word</td><td>tool_selection</td><td>rt-a7a29b52</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+<tr class="bad"><td>rc-0171-tool-call-precision-negative</td><td>tool_selection</td><td>rt-b436377f</td><td>FAIL</td><td>packs⊇</td><td>—</td></tr>
+<tr class="ok"><td>rc-0172-tool-domain-finance-hisab</td><td>tool_selection</td><td>rt-86f0836c</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0173-tool-domain-erp-price</td><td>tool_selection</td><td>rt-bcc3cf8c</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0174-tool-domain-website-publish</td><td>tool_selection</td><td>rt-b71bfbcb</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0175-tool-domain-seo-audit</td><td>tool_selection</td><td>rt-f0bd7c1a</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0176-tool-domain-research-competitor</td><td>tool_selection</td><td>rt-0668e3ae</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0177-tool-domain-camera</td><td>tool_selection</td><td>rt-2748dc94</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0178-tool-domain-todo</td><td>tool_selection</td><td>rt-c01cf394</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0179-tool-domain-cost</td><td>tool_selection</td><td>rt-84a71d3a</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0180-card-answer-color-blue</td><td>approval_ask_card</td><td>rt-89a4ef99</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0181-card-answer-color-full</td><td>approval_ask_card</td><td>rt-85a870ad</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0182-card-answer-budget-num</td><td>approval_ask_card</td><td>rt-0e5f69d1</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0183-card-answer-time-answer</td><td>approval_ask_card</td><td>rt-fdd4294c</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0184-card-answer-choice-second</td><td>approval_ask_card</td><td>rt-a5cab1ef</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0185-card-approve-approve-en</td><td>approval_ask_card</td><td>rt-1d3831c8</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0186-card-approve-approve-bn</td><td>approval_ask_card</td><td>rt-a1687e6c</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0187-card-approve-ok-koro</td><td>approval_ask_card</td><td>rt-8fe262f1</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0188-card-approve-hya-only</td><td>approval_ask_card</td><td>rt-195cd80b</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0189-card-reject-na</td><td>approval_ask_card</td><td>rt-5b149b1e</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0190-card-reject-batil</td><td>approval_ask_card</td><td>rt-ceec3543</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0191-card-reject-cancel</td><td>approval_ask_card</td><td>rt-f7ee50ee</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0192-card-revise-amount</td><td>approval_ask_card</td><td>rt-d6c3bdb2</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0193-card-revise-category</td><td>approval_ask_card</td><td>rt-17ebf677</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0194-card-revise-note</td><td>approval_ask_card</td><td>rt-a6b0700a</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0195-card-duplicate-approve</td><td>approval_ask_card</td><td>rt-d3562d8d</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0196-card-stale-approve</td><td>approval_ask_card</td><td>rt-80d8dd7a</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0197-card-packs-fb-post</td><td>approval_ask_card</td><td>rt-48eaa07e</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0198-card-packs-dispatch</td><td>approval_ask_card</td><td>rt-faf88a2e</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0199-card-packs-campaign</td><td>approval_ask_card</td><td>rt-ee413c45</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0200-card-packs-browser</td><td>approval_ask_card</td><td>rt-53fcc512</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0201-card-packs-call</td><td>approval_ask_card</td><td>rt-6f6116b5</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0202-card-packs-seo</td><td>approval_ask_card</td><td>rt-40009705</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0203-card-packs-website</td><td>approval_ask_card</td><td>rt-4adcfda2</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0204-card-packs-image</td><td>approval_ask_card</td><td>rt-cad13e41</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0205-listen-mon-valo-nei</td><td>personal_listen</td><td>rt-1545e425</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0206-listen-hotash</td><td>personal_listen</td><td>rt-272cc7db</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0207-listen-kichu-valo-lage-na</td><td>personal_listen</td><td>rt-207d753c</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0208-listen-ghum</td><td>personal_listen</td><td>rt-1cfee18d</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0209-listen-eka</td><td>personal_listen</td><td>rt-8cc21906</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0210-listen-tension</td><td>personal_listen</td><td>rt-2f18ac87</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0211-listen-klanto</td><td>personal_listen</td><td>rt-4c6163b5</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0212-listen-kanna</td><td>personal_listen</td><td>rt-91bb163e</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0213-listen-mon-kharap-bn</td><td>personal_listen</td><td>rt-0aeb13ed</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0214-listen-hopeless</td><td>personal_listen</td><td>rt-2bba3344</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0215-listen-osohay</td><td>personal_listen</td><td>rt-bb0b5825</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0216-listen-mon-bosche-na</td><td>personal_listen</td><td>rt-de31b5f4</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0217-listen-mixed-sales</td><td>personal_listen</td><td>rt-1a53df08</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0218-listen-mixed-post</td><td>personal_listen</td><td>rt-d6c4b4e5</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0219-listen-mixed-hisab</td><td>personal_listen</td><td>rt-e90045ed</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0220-listen-mixed-order</td><td>personal_listen</td><td>rt-d14f3632</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0221-listen-other-customer</td><td>personal_listen</td><td>rt-99fd0446</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0222-listen-other-staff</td><td>personal_listen</td><td>rt-ea0dadd7</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0223-listen-refund-collision</td><td>personal_listen</td><td>rt-3a83d4aa</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0224-listen-followup-stays-personal</td><td>personal_listen</td><td>rt-6ebeed06</td><td>PASS</td><td>—</td><td>listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0225-fail-autocontinue-browser</td><td>failure_recovery</td><td>rt-0ecfe109</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0226-fail-autocontinue-askcard-blocks</td><td>failure_recovery</td><td>rt-38a479e8</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0227-fail-autocontinue-terminal</td><td>failure_recovery</td><td>rt-4f7fa779</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0228-fail-autocontinue-failed-probe</td><td>failure_recovery</td><td>rt-45391c7c</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0229-fail-autocontinue-no-deadline</td><td>failure_recovery</td><td>rt-089d3749</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0230-fail-class-provider</td><td>failure_recovery</td><td>rt-6c207518</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0231-fail-class-network</td><td>failure_recovery</td><td>rt-a538c086</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0232-fail-class-worker</td><td>failure_recovery</td><td>rt-568323e7</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0233-fail-class-ratelimit</td><td>failure_recovery</td><td>rt-d9bdb071</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0234-fail-class-browser-disc</td><td>failure_recovery</td><td>rt-5dc274c5</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0235-fail-class-deadline</td><td>failure_recovery</td><td>rt-03fe1504</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0236-fail-why-stopped</td><td>failure_recovery</td><td>rt-b40fbc50</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0237-fail-waiting-approval</td><td>failure_recovery</td><td>rt-c2bbe47c</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0238-fail-waiting-answer</td><td>failure_recovery</td><td>rt-2245edb8</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0239-fail-app-close-resume</td><td>failure_recovery</td><td>rt-de311309</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0240-xsurf-web-native-continue</td><td>cross_surface</td><td>rt-557ae267</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0241-xsurf-web-native-state-query</td><td>cross_surface</td><td>rt-b16a9e6b</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0242-xsurf-native-telegram-continue</td><td>cross_surface</td><td>rt-514acc18</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0243-xsurf-native-telegram-state-query</td><td>cross_surface</td><td>rt-bfa29f3c</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0244-xsurf-telegram-web-continue</td><td>cross_surface</td><td>rt-81700ad3</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0245-xsurf-telegram-web-state-query</td><td>cross_surface</td><td>rt-9f3922bf</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0246-xsurf-card-cross-surface</td><td>cross_surface</td><td>rt-582f813a</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0247-xsurf-telegram-gap-resume</td><td>cross_surface</td><td>rt-2c6119da</td><td>PASS</td><td>—</td><td>—</td></tr>
+<tr class="ok"><td>rc-0248-xsurf-listen-cross-surface</td><td>cross_surface</td><td>rt-fb7facaf</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected), listenSuppressed (resolveHead not injected)</td></tr>
+<tr class="ok"><td>rc-0249-xsurf-native-newtask-parks-web-run</td><td>cross_surface</td><td>rt-30755424</td><td>PASS</td><td>—</td><td>headTier (resolveHead not injected)</td></tr>
+</table></body></html>

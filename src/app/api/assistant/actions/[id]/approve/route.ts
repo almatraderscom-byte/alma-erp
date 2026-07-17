@@ -131,6 +131,52 @@ async function runApprove(
 
   const payload = action.payload as Record<string, unknown>
 
+  // ── Phase 34: universal bridge guard — BEFORE any effect ─────────────────
+  // 1. Approval covers exactly the DISPLAYED effect: an approve request that
+  //    carries modified effect fields is refused (revise → new card instead).
+  // 2. Card → run → expected state version binding: if the card was staged
+  //    against a run version and the run has moved on, approving produces
+  //    ZERO effects and a clear message (stale card can't fire an old plan).
+  {
+    const { guardBridgeDecision, bridgeVerdictMessageBn, resumeDecisionThread } =
+      await import('@/agent/lib/graph/action-bridge')
+    let approveBody: Record<string, unknown> = {}
+    try { approveBody = await req.clone().json() } catch { /* no body is the normal case */ }
+    const hasRevisedFields = Boolean(
+      approveBody && typeof approveBody === 'object'
+      && (approveBody.revisedPayload || approveBody.amount || approveBody.audience || approveBody.content),
+    )
+    const stagedVersion = typeof payload.expectedStateVersion === 'number' ? payload.expectedStateVersion : null
+    const runId = typeof payload.workflowRunId === 'string' ? payload.workflowRunId : null
+    let liveVersion: number | null = null
+    if (runId && stagedVersion !== null) {
+      try {
+        const run = await db.workflowRun.findUnique({ where: { id: runId }, select: { stateVersion: true } })
+        liveVersion = run?.stateVersion ?? null
+      } catch { /* unknown run → guard skips version check */ }
+    }
+    const verdict = guardBridgeDecision({
+      card: { id: actionId, status: action.status as string },
+      resume: { decision: 'approve', cardId: actionId, expectedStateVersion: liveVersion },
+      stagedStateVersion: stagedVersion,
+      liveStateVersion: liveVersion,
+      hasRevisedFields,
+    })
+    if (verdict !== 'ok') {
+      const status = verdict === 'stale_version' ? 409 : verdict === 'revision_requires_new_card' ? 409 : 409
+      return Response.json({ error: verdict, message: bridgeVerdictMessageBn(verdict) }, { status })
+    }
+    // A bridge-staged thread consumes its interrupt exactly once (double
+    // click / reconnect safety). Transport only — execution stays below.
+    const bridgeThread = (payload as { bridgeThread?: { threadId?: string } }).bridgeThread
+    if (bridgeThread?.threadId) {
+      const r = await resumeDecisionThread({ decision: 'approve', cardId: actionId, expectedStateVersion: liveVersion })
+      if (r.alreadyConsumed) {
+        return Response.json({ error: 'already_resolved', message: bridgeVerdictMessageBn('already_resolved') }, { status: 409 })
+      }
+    }
+  }
+
   // ── Execute by type ────────────────────────────────────────────────────────
 
   // Delegation approval (test mode): owner approved the transfer → run the worker

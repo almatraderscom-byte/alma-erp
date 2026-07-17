@@ -498,7 +498,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     // returns near-identical compositions; every pick is recorded.
     const [sceneWeights, recentScenes] = injectScene
       ? await Promise.all([readSceneWeights(), readRecentSceneIds()])
-      : [{}, []]
+      : [{}, [] as string[]]
     for (let i = 0; i < count; i++) {
       const picked = injectScene ? pickSceneDiverse(sceneWeights, recentScenes) : null
       if (picked) {

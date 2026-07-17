@@ -1,0 +1,32 @@
+{
+  "id": "rc-0208-listen-ghum",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "personal_listen",
+  "description": "\"ghum hocche na kal theke\" is the owner sharing his own state: listen mode — no tools, no work pivot.",
+  "transcript": [],
+  "latestMessage": "ghum hocche na kal theke",
+  "context": {
+    "gapMinutes": 30
+  },
+  "fakes": {
+    "personalClassification": "personal"
+  },
+  "expected": {
+    "intent": "personal_listen",
+    "tools": [],
+    "outcome": "Warm Bangla listening reply; zero tools; work is not resumed uninvited."
+  },
+  "expect2": {
+    "fastPath": "personal_hint",
+    "headTier": "personal",
+    "listenSuppressed": true,
+    "binding": "none"
+  },
+  "tags": [
+    "personal",
+    "listen-mode"
+  ]
+}

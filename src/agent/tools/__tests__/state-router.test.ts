@@ -82,6 +82,7 @@ const GOLDEN: Array<{ text: string; expectPack: PackKey; expectTool: string }> =
   { text: 'SEO র‍্যাংক কেমন যাচ্ছে keyword গুলোর?', expectPack: 'seo', expectTool: 'list_tracked_keywords' },
   { text: 'একটা ঈদ অফারের পোস্টার ছবি বানাও', expectPack: 'creative', expectTool: 'generate_image' },
   { text: 'কাল সকাল ৯টায় remind করো ব্যাংকে যেতে', expectPack: 'reminders', expectTool: 'set_reminder' },
+  { text: 'amake 4 tay call dio', expectPack: 'reminders', expectTool: 'set_reminder' },
   { text: 'আম্মুকে কল করে বলো ওষুধ খেতে', expectPack: 'reminders', expectTool: 'place_agent_call' },
   { text: 'agent এ কী সমস্যা হচ্ছে diagnose করো', expectPack: 'diag', expectTool: 'diagnose_issue' },
   { text: 'API credit balance কত আছে?', expectPack: 'cost', expectTool: 'get_api_balances' },

@@ -1,0 +1,39 @@
+{
+  "id": "rc-0232-fail-class-worker",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "failure_recovery",
+  "description": "worker_crash checkpoint + \"abar chalao\": resume from 'step_3_of_5' with the blocker classified — never restart from zero.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "Boss, worker প্রসেস মারা গেছে — checkpoint রেখেছি (step_3_of_5), বললে ওখান থেকেই চালাবো।"
+    }
+  ],
+  "latestMessage": "abar chalao",
+  "context": {
+    "gapMinutes": 60,
+    "checkpoint": {
+      "taskType": "long_agent_job",
+      "step": "step_3_of_5",
+      "failureClass": "worker_crash"
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "resume_from_checkpoint",
+    "outcome": "Resumes at step_3_of_5; earlier verified steps are not repeated."
+  },
+  "expect2": {
+    "binding": "checkpoint",
+    "repeatedEffectRisk": true
+  },
+  "tags": [
+    "failure",
+    "worker_crash"
+  ]
+}

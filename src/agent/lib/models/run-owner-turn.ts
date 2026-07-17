@@ -15,6 +15,8 @@ import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
 import { detectInstructionConflicts } from '@/agent/lib/intelligence/counter-propose'
 import { buildBusinessContext } from '@/agent/lib/business-brain'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
+import { detectOutboundCallIntent, buildOutboundCallIntakeBlock } from '@/agent/lib/outbound-call-intent'
+import { buildReminderTimeHintBlock } from '@/agent/lib/bangla-time'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
@@ -72,6 +74,7 @@ import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
 import { isRoutineGraphEnabled, runRoutineTurnGraph, type RoutineGraphResult } from '@/agent/lib/graph/routine-turn-graph'
 import { isActionGraphEnabled, stageExpenseActionGraph, type StageExpenseResult } from '@/agent/lib/graph/action-turn-graph'
 import { runTurnGraphShadow } from '@/agent/lib/graph/turn-graph-shadow'
+import { resolveConversationContinuity } from '@/agent/lib/continuity-resolver'
 import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
 import { contractToolFailureText, findContractToolFailure } from '@/agent/lib/contract-tool-failure'
 import {
@@ -371,6 +374,28 @@ async function* runAlternateProviderTurn(
         console.warn('[run-owner-turn] salah muhasaba reply failed:', err instanceof Error ? err.message : err)
       }
     }
+    // Outbound-call directive (parity with core.ts): "oi nambare call kore bolo…"
+    // must route to the right call tool — never a reminder/todo. This path is the
+    // one production actually runs (Gemini head), so the directive must live here too.
+    if (!intakeContextBlock && lastUserText) {
+      const callIntent = detectOutboundCallIntent(lastUserText)
+      if (callIntent.isCall) {
+        intakeContextBlock = buildOutboundCallIntakeBlock(callIntent.hasNumber, callIntent.mode)
+      }
+    }
+  }
+
+  // Reminder-to-Boss with a spoken time ("amake 4 tay call dio", "বিকাল ৫টায় মনে
+  // করিয়ে দিও"): resolve the time DETERMINISTICALLY so the head never misreads
+  // "4 tay" as "4 calls" (live-hit 2026-07-17 — happened on THIS path in personal
+  // mode, which suppressWork skips, so this step runs for personal turns too).
+  if (!listenMode && !intakeContextBlock && lastUserText) {
+    try {
+      const hint = buildReminderTimeHintBlock(lastUserText)
+      if (hint) intakeContextBlock = hint
+    } catch (err) {
+      console.warn('[run-owner-turn] reminder time hint failed:', err instanceof Error ? err.message : err)
+    }
   }
 
   // Phase 4 — resolve the CANONICAL workflow state BEFORE model routing:
@@ -482,14 +507,86 @@ async function* runAlternateProviderTurn(
     } catch { /* fail-open — the note/advance are aids, never blockers */ }
   }
 
+  // ── Roadmap 1 Phase 32: deterministic continuity resolver ─────────────────
+  // ONE conflict rule for "which work does this message belong to": explicit
+  // card reply > pending card decision > checkpoint retry > clear new task
+  // (parks the active focus) > continuation binds the active focus > clarify.
+  // Gate: AGENT_CONTINUITY_RESOLVER off|shadow|on (unset → preview on, prod
+  // shadow). Fail-open: null → exactly the legacy behaviour below.
+  let continuity: Awaited<ReturnType<typeof resolveConversationContinuity>> = null
+  if (lastUserText) {
+    continuity = await resolveConversationContinuity({
+      conversationId,
+      text: lastUserText,
+      listenMode,
+      replyToCardId: explicitAskCardId ?? matchedAskCard?.id ?? null,
+    })
+  }
+  const continuityLive = continuity?.mode === 'on'
+  if (continuityLive && continuity!.decision.binding === 'new_task' && continuity!.decision.action === 'park_and_start') {
+    // Structural parking — the old task is deliberately set aside, never mixed.
+    try {
+      const { parkActiveFocus } = await import('@/agent/lib/conversation-focus')
+      await parkActiveFocus(conversationId, 'new_task', 'resolver')
+    } catch (err) {
+      console.warn('[run-owner-turn] focus park failed open:', err instanceof Error ? err.message : err)
+    }
+  }
+
+  // ── Roadmap 1 Phase 36: interaction state + policy (behaviour as code) ────
+  // Deterministic mode ladder (crisis > listen > teaching > decision/coaching
+  // > concise status > work), emotion read, correction/repair detection.
+  // Gate AGENT_INTERACTION_LAYER: off | shadow (derive+record) | on (directive
+  // injected + commitment ledger enforced). Unset → preview on, prod shadow.
+  const interactionFlag = process.env.AGENT_INTERACTION_LAYER
+  const interactionMode2: 'off' | 'shadow' | 'on' =
+    interactionFlag === 'off' || interactionFlag === 'false' ? 'off'
+    : interactionFlag === 'on' || interactionFlag === 'true' ? 'on'
+    : interactionFlag === 'shadow' ? 'shadow'
+    : process.env.VERCEL_ENV === 'preview' ? 'on' : 'shadow'
+  let interaction: {
+    state: import('@/agent/lib/interaction-state').InteractionState
+    policy: import('@/agent/lib/interaction-policy').InteractionPolicy
+    plan: import('@/agent/lib/response-planner').ResponsePlan
+  } | null = null
+  if (interactionMode2 !== 'off' && lastUserText) {
+    try {
+      const [{ deriveInteractionState }, { policyForState }, { planResponse }] = await Promise.all([
+        import('@/agent/lib/interaction-state'),
+        import('@/agent/lib/interaction-policy'),
+        import('@/agent/lib/response-planner'),
+      ])
+      const state = deriveInteractionState({
+        text: lastUserText,
+        headTier,
+        statusQuery: continuity?.decision.action === 'explain_stop' || continuity?.decision.reason.includes('status'),
+      })
+      const policy = policyForState(state)
+      const plan = planResponse(state, policy, {
+        turnCount: rows.length,
+        hasEvidence: !listenMode,
+        willCommit: workflowRuns.length > 0,
+      })
+      interaction = { state, policy, plan }
+    } catch (err) {
+      console.warn('[run-owner-turn] interaction derive failed open:', err instanceof Error ? err.message : err)
+    }
+  }
+
   // Owner-approved gate fix (2026-07-14, layer 3): STRUCTURED STATE upgrades a
   // text-guessed read-only turn. An ask-card answer, or a continuation reply
   // ("হ্যাঁ/ok") while canonical runs are in flight, continues work the owner
   // already authorized — the intent regex must not strand it tool-less.
+  // Phase 32: the resolver's wider continuation net ("তারপর?", "baki ta koro",
+  // "যেখানে ছিলে সেখান থেকে করো") counts the same as the narrow CONTINUE_RE.
   if (!turnAuthorization.allowMutations) {
+    const resolverContinues =
+      continuityLive
+      && continuity!.decision.binding === 'active_focus'
+      && continuity!.decision.action === 'resume'
     const continuesInFlightWork =
       Boolean(matchedAskCard?.selectedOption)
-      || (workflowRuns.length > 0 && isContinuationText(lastUserText))
+      || (workflowRuns.length > 0 && (isContinuationText(lastUserText) || resolverContinues))
     if (continuesInFlightWork) {
       turnAuthorization = { allowMutations: true, reason: 'workflow_continuation' }
     }
@@ -583,6 +680,18 @@ async function* runAlternateProviderTurn(
   // a listen turn (assembled empty below), so the head physically cannot pivot
   // to work; this note shapes the tone.
   if (listenMode) volatileSections.push(LISTEN_MODE_NOTE)
+  // Phase 36: the behaviour contract for THIS turn (mode/tone/structure/
+  // repair/uncertainty/commitment rules) — live only when the layer is ON;
+  // shadow derives + records without steering. Rides right after the listen
+  // override so listen keeps top priority.
+  if (interaction && interactionMode2 === 'on') {
+    try {
+      const { buildResponseDirective } = await import('@/agent/lib/response-planner')
+      volatileSections.push(buildResponseDirective(interaction.state, interaction.policy, interaction.plan))
+    } catch (err) {
+      console.warn('[run-owner-turn] interaction directive failed open:', err instanceof Error ? err.message : err)
+    }
+  }
   // Owner-intent mutation gate note (origin/main "gate mutations by owner
   // intent"): tells the head which mutation authorization this turn carries.
   // Rides right after the listen override, before the job state.
@@ -591,6 +700,28 @@ async function* runAlternateProviderTurn(
   if (authorizationNote) volatileSections.push(authorizationNote)
   const requirementNote = !listenMode ? buildOwnerRequirementNote(ownerRequirements) : ''
   if (requirementNote) volatileSections.push(requirementNote)
+  // Phase 32 — the conversation-focus block leads the job state: the durable
+  // "where we are / what's next / what is already verified-done" record, plus
+  // this turn's resolver binding so the head knows THIS message continues that
+  // exact work (or deliberately parks it). Skipped in listen mode.
+  if (!listenMode) try {
+    const { getFocusStack, buildFocusSystemNote } = await import('@/agent/lib/conversation-focus')
+    const stack = await getFocusStack(conversationId)
+    let focusNote = buildFocusSystemNote(stack)
+    if (focusNote && continuityLive && continuity) {
+      const d = continuity.decision
+      if (d.binding === 'active_focus' && d.action === 'resume') {
+        focusNote += '\n⤷ এই বার্তাটা সক্রিয় কাজটারই ধারাবাহিকতা — নতুন করে শুরু কোরো না, ঠিক পরের বৈধ ধাপ থেকে এগোও।'
+      } else if (d.binding === 'new_task' && d.action === 'park_and_start') {
+        focusNote += '\n⤷ Boss নতুন একটা কাজ দিয়েছেন — আগের কাজটা পার্ক করা হয়েছে (হারায়নি); নতুনটা পরিষ্কারভাবে শুরু করো।'
+      } else if (d.binding === 'checkpoint') {
+        focusNote += '\n⤷ এই বার্তাটা আটকে-থাকা কাজটার resume/ব্যাখ্যা — checkpoint নোট অনুযায়ী ঠিক ওই ধাপ থেকে চালাও।'
+      }
+    }
+    if (focusNote) volatileSections.push(focusNote)
+  } catch (err) {
+    console.warn('[run-owner-turn] focus note failed open:', err instanceof Error ? err.message : err)
+  }
   // Phase 4 — the canonical WorkflowRun snapshot precedes everything else in the
   // per-turn context: the head reads the EXACT in-flight job state (status, step,
   // legal next tools) so "হ্যাঁ/continue" resumes the blocked step instead of
@@ -724,7 +855,11 @@ async function* runAlternateProviderTurn(
     ? workflowToolBinding(workflowRuns, {
         // An ask-card answer bound to a run is as deterministic as "হ্যাঁ" — the
         // owner just resolved THIS job's question (e.g. confirmed the preview).
-        continuation: isContinuationText(lastUserText) || Boolean(matchedAskCard?.workflowRunId),
+        // Phase 32: the resolver's wider continuation verdict counts too.
+        continuation:
+          isContinuationText(lastUserText)
+          || Boolean(matchedAskCard?.workflowRunId)
+          || (continuityLive && continuity?.decision.binding === 'active_focus' && continuity.decision.action === 'resume'),
       })
     : null
   const boundToolName =
@@ -797,6 +932,48 @@ async function* runAlternateProviderTurn(
     toolRouter: toolSelection.router ?? null,
     // The PLANNED loop cap — the graph paths may still zero it later this turn.
     maxIterations: MAX_TOOL_ITERATIONS,
+    // Phase 33: full 12-node owner-turn graph in shadow — graph decides,
+    // legacy executes. State loader mirrors the resolver's reads (preview-only
+    // cost; the gate keeps production off until the Phase 37 ladder).
+    conversationId,
+    turnId,
+    businessId,
+    boundToolName,
+    continuityBinding: continuity?.decision.binding ?? null,
+    allowMutations: turnAuthorization.allowMutations,
+    loadState: async () => {
+      const [{ getFocusStack }, { listUnresolvedCheckpoints }] = await Promise.all([
+        import('@/agent/lib/conversation-focus'),
+        import('@/agent/lib/checkpoint'),
+      ])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = prisma as any
+      const [stack, cps, pendingActions, askCards] = await Promise.all([
+        getFocusStack(conversationId),
+        listUnresolvedCheckpoints(conversationId),
+        db.agentPendingAction.findMany({
+          where: { conversationId, status: 'pending' },
+          orderBy: { createdAt: 'desc' }, take: 3, select: { id: true, type: true },
+        }),
+        db.agentAskCard.findMany({
+          where: { conversationId, status: 'pending' },
+          orderBy: { createdAt: 'desc' }, take: 3, select: { id: true },
+        }),
+      ])
+      return {
+        activeFocus: stack.active
+          ? { id: stack.active.id, goal: stack.active.goal, kind: stack.active.kind, status: 'active' as const, currentStep: stack.active.currentStep, completedSteps: stack.active.completedSteps }
+          : null,
+        parkedFocuses: stack.parked.map((f) => ({ id: f.id, goal: f.goal, kind: f.kind, status: 'parked' as const })),
+        pendingCards: [
+          ...(askCards as Array<{ id: string }>).map((c) => ({ id: c.id, kind: 'ask_card' as const })),
+          ...(pendingActions as Array<{ id: string; type: string }>).map((c) => ({ id: c.id, kind: 'approval' as const, actionType: c.type })),
+        ],
+        checkpoints: (cps as Array<{ checkpoint: { taskRef: string; taskType: string; currentStep?: string } }>).map((c) => ({
+          taskRef: c.checkpoint.taskRef, taskType: c.checkpoint.taskType, step: c.checkpoint.currentStep ?? 'unknown',
+        })),
+      }
+    },
   })
 
   // Phase 1 route span: what this turn's head was actually given — groups, final
@@ -814,6 +991,27 @@ async function* runAlternateProviderTurn(
     headTier,
     versions: AGENT_VERSIONS,
     extras: {
+      // Phase 36: this turn's interaction contract (mode/emotion/correction)
+      // — behaviour becomes measurable per turn, not a prompt hope.
+      interaction: interaction
+        ? {
+            layer: interactionMode2,
+            mode: interaction.state.mode,
+            emotion: interaction.state.emotion,
+            correction: interaction.state.correction,
+            tone: interaction.policy.tone,
+          }
+        : null,
+      // Phase 32: this turn's continuity decision — every trace shows which
+      // work the message was bound to and why (audit + shadow measurement).
+      continuity: continuity
+        ? {
+            mode: continuity.mode,
+            binding: continuity.decision.binding,
+            action: continuity.decision.action,
+            reason: continuity.decision.reason,
+          }
+        : null,
       router: toolSelection.router,
       packs: toolSelection.packs ?? null,
       signals: toolSelection.signals ?? null,
@@ -1732,6 +1930,64 @@ async function* runAlternateProviderTurn(
     }
 
     await touchConversationActivity(conversationId)
+
+    // ── Phase 36: commitment ledger ─────────────────────────────────────────
+    // A promised FUTURE action must be backed by durable state created this
+    // turn (open task / card / reminder / checkpoint / active run). Shadow:
+    // violations are recorded on the trace. Live: the missing focus is
+    // CREATED so the promise becomes structurally true — the roadmap's "no
+    // announced action without a durable commitment". Fail-open.
+    if (interaction && finalText.trim()) {
+      try {
+        const { checkCommitmentLedger, violatesAddressContract } = await import('@/agent/lib/interaction-policy')
+        const durableToolHit = toolRecords.some(
+          (r) =>
+            r.status === 'success'
+            && /^(track_open_task|save_task_checkpoint|set_reminder|log_|post_|propose_|prepare_|dispatch|launch_|publish_|send_|make_plan|run_)/.test(r.toolName),
+        )
+        const verdict = checkCommitmentLedger(finalText, {
+          openTaskTracked: durableToolHit,
+          cardStaged: Boolean(actionGraph?.staged) || emittedAskCards.length > 0,
+          focusCreatedOrUpdated: workflowRuns.length > 0,
+        })
+        const badAddress = violatesAddressContract(finalText)
+        if (!verdict.ok || badAddress) {
+          console.warn(
+            `[interaction-ledger] ${!verdict.ok ? `unbacked promise "${verdict.phrase}"` : ''}${badAddress ? ' banned-address' : ''} conv=${conversationId} layer=${interactionMode2}`,
+          )
+        }
+        if (!verdict.ok && interactionMode2 === 'on') {
+          const { createFocus } = await import('@/agent/lib/conversation-focus')
+          await createFocus({
+            conversationId,
+            businessId,
+            goal: `প্রতিশ্রুতি: ${finalText.slice(0, 160)}`,
+            kind: 'commitment',
+            completionCriteria: 'Boss-কে জানানো হয়েছে এবং কাজটা প্রমাণসহ শেষ',
+            cause: 'commitment_ledger',
+          })
+        }
+        void import('@/agent/lib/tool-telemetry').then((m) =>
+          m.logToolEvent({
+            toolName: '__interaction__',
+            phase: 'proof',
+            success: verdict.ok && !badAddress,
+            conversationId,
+            businessId,
+            detail: {
+              mode: interaction!.state.mode,
+              promised: verdict.promised,
+              durable: verdict.durable,
+              phrase: verdict.phrase,
+              badAddress,
+              layer: interactionMode2,
+            },
+          }),
+        ).catch(() => {})
+      } catch (err) {
+        console.warn('[run-owner-turn] commitment ledger failed open:', err instanceof Error ? err.message : err)
+      }
+    }
 
     void logCost({
       provider: providerToCostProvider(model.provider),

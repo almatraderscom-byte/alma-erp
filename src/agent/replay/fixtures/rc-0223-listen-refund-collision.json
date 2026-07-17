@@ -1,0 +1,25 @@
+{
+  "id": "rc-0223-listen-refund-collision",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "personal_listen",
+  "description": "Emotion words + refund keyword: deny keyword wins — heavy head, approval-gated.",
+  "transcript": [],
+  "latestMessage": "customer roag korche, refund dite hobe mone hoy",
+  "expected": {
+    "intent": "refund_decision",
+    "approvalRequired": true,
+    "outcome": "Heavy head handles the refund decision with a card."
+  },
+  "expect2": {
+    "fastPath": "deny_kw",
+    "headTier": "heavy",
+    "listenSuppressed": false
+  },
+  "tags": [
+    "personal",
+    "deny-collision"
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "id": "rc-0236-fail-why-stopped",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "failure_recovery",
+  "description": "\"থামলো কেন?\" must be answered from the checkpoint record (evidence), not a guess.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "Boss, নেট চলে যাওয়ায় ফর্মটা মাঝপথে আটকে গেছে — checkpoint রেখেছি।"
+    }
+  ],
+  "latestMessage": "থামলো কেন?",
+  "context": {
+    "gapMinutes": 30,
+    "checkpoint": {
+      "taskType": "browser_task",
+      "step": "fill_form",
+      "failureClass": "network_loss"
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "explain_stop",
+    "outcome": "States the classified blocker (network loss at fill_form) with evidence."
+  },
+  "expect2": {
+    "binding": "checkpoint"
+  },
+  "tags": [
+    "failure",
+    "why-stopped"
+  ]
+}

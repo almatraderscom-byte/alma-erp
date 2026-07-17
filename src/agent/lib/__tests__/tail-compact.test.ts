@@ -1,5 +1,31 @@
-import { describe, it, expect } from 'vitest'
-import { decideTailFold, estimateMessagesTokens, TAIL_COMPACT_DEFAULTS } from '@/agent/lib/tail-compact'
+import { describe, it, expect, vi } from 'vitest'
+
+// Phase 32 guard: record every prisma model applyTailCompaction touches so we
+// can assert it NEVER reaches the canonical focus/state tables and NEVER
+// deletes anything — folding chat can't destroy "where we are".
+const touchedModels = new Set<string>()
+const calledOps = new Set<string>()
+vi.mock('@/lib/prisma', () => {
+  const op = (model: string, name: string, fn: (args?: unknown) => unknown) =>
+    new Proxy(fn, { apply: (t, self, args) => { calledOps.add(`${model}.${name}`); return Reflect.apply(t, self, args) } })
+  const model = (name: string, impl: Record<string, (args?: unknown) => unknown>) =>
+    new Proxy(impl, { get: (t, p: string) => op(name, p, t[p] ?? (async () => { throw new Error(`unmocked ${name}.${p}`) })) })
+  const models: Record<string, unknown> = {
+    agentKvSetting: model('agentKvSetting', { findMany: async () => [] }),
+    agentConversation: model('agentConversation', {
+      findUnique: async () => ({ tailSummary: null, tailCompactedCount: 0 }),
+      update: async () => ({}),
+    }),
+    agentMessage: model('agentMessage', { findMany: async () => [{ role: 'user', content: 'hi' }] }),
+  }
+  return {
+    prisma: new Proxy(models, {
+      get: (t, p: string) => { touchedModels.add(p); return t[p] ?? model(p, {}) },
+    }),
+  }
+})
+
+import { decideTailFold, estimateMessagesTokens, TAIL_COMPACT_DEFAULTS, applyTailCompaction } from '@/agent/lib/tail-compact'
 import { buildSystemPromptBlocks } from '@/agent/lib/system-prompt'
 
 const cfg = TAIL_COMPACT_DEFAULTS
@@ -70,5 +96,21 @@ describe('tailSummary placement', () => {
   it('injects nothing when no summary is present (no prefix change)', () => {
     const { stable } = buildSystemPromptBlocks({ personalMode: false })
     expect(stable.map((b) => b.text).join('\n')).not.toContain('চলমান সারাংশ')
+  })
+})
+
+describe('phase 32 — compaction never deletes canonical focus state', () => {
+  it('applyTailCompaction touches only conversation/message/kv tables and never deletes', async () => {
+    touchedModels.clear()
+    calledOps.clear()
+    await applyTailCompaction('c-focus-guard')
+    const focusTables = [...touchedModels].filter((m) =>
+      /focus|workflowRun|pendingAction|askCard|openTask|checkpoint/i.test(m),
+    )
+    expect(focusTables).toEqual([])
+    const deletes = [...calledOps].filter((o) => /delete/i.test(o))
+    expect(deletes).toEqual([])
+    // Sanity: it did do its own reads.
+    expect(touchedModels.has('agentConversation')).toBe(true)
   })
 })

@@ -1,0 +1,45 @@
+{
+  "id": "rc-0202-card-packs-seo",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "approval_ask_card",
+  "description": "Answering a pending seo_fix card must load the seo pack so the resumed step's tools are present.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "card পাঠিয়েছি — সিদ্ধান্ত দিলে কাজ শেষ করবো।"
+    }
+  ],
+  "latestMessage": "হ্যাঁ",
+  "replyTo": {
+    "kind": "approval",
+    "id": "pa-seo"
+  },
+  "context": {
+    "gapMinutes": 8,
+    "pendingCard": {
+      "kind": "approval",
+      "id": "pa-seo",
+      "actionType": "seo_fix"
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "approval_grant",
+    "outcome": "The seo_fix action executes once with its pack available."
+  },
+  "expect2": {
+    "binding": "pending_card",
+    "packs": [
+      "seo"
+    ]
+  },
+  "tags": [
+    "approval",
+    "card-packs"
+  ]
+}

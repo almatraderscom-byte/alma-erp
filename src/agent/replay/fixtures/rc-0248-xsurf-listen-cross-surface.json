@@ -1,0 +1,52 @@
+{
+  "id": "rc-0248-xsurf-listen-cross-surface",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "cross_surface",
+  "description": "Personal message from telegram while web has an active run: listen mode wins on every surface.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "নতুন পাঞ্জাবির জন্য একটা ফেসবুক পোস্ট বানাও"
+    },
+    {
+      "role": "agent",
+      "text": "ছবি বানিয়েছি Boss, এখন ক্যাপশন লিখছি — draft দেখাবো।"
+    }
+  ],
+  "latestMessage": "mon ta valo nei aj",
+  "context": {
+    "gapMinutes": 200,
+    "priorSurface": "web",
+    "surface": "telegram",
+    "activeWorkflow": {
+      "kind": "fb_post_workflow",
+      "goal": "নতুন পাঞ্জাবি কালেকশনের ফেসবুক পোস্ট",
+      "status": "active",
+      "state": "draft_review",
+      "verifiedEffects": [
+        "generate_image:img-001"
+      ]
+    }
+  },
+  "fakes": {
+    "personalClassification": "personal"
+  },
+  "expected": {
+    "intent": "personal_listen",
+    "tools": [],
+    "outcome": "Listens; the web run stays parked silently."
+  },
+  "expect2": {
+    "fastPath": "personal_hint",
+    "headTier": "personal",
+    "listenSuppressed": true,
+    "binding": "none"
+  },
+  "tags": [
+    "cross-surface",
+    "listen"
+  ]
+}

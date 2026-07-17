@@ -4429,3 +4429,73 @@ model PersonalLedgerTxn {
   @@index([partyId, deletedAt, txnDate])
   @@map("personal_ledger_txns")
 }
+
+/// ── Roadmap 1 Phase 32 — Conversation Focus spine ────────────────────────────
+/// One durable answer to "where are we and what happens next" per conversation.
+/// A focus POINTS at work (WorkflowRun / checkpoint taskRef / open task) and
+/// carries the continuation contract: original goal, current step, verified
+/// completed steps, last successful effect, blocker, exact next actions and
+/// completion criteria. A small stack: at most one `active` focus per
+/// conversation plus `parked` and `awaiting_owner` entries — never "latest row
+/// wins". Additive only; chat text and summaries never replace it.
+model AgentConversationFocus {
+  id                 String    @id @default(uuid())
+  conversationId     String    @map("conversation_id")
+  businessId         String    @default("ALMA_LIFESTYLE") @map("business_id")
+  /// active | parked | awaiting_owner | done | abandoned
+  status             String    @default("active")
+  priority           Int       @default(0)
+  /// The owner's original ask, verbatim-ish (Bangla ok).
+  goal               String    @db.Text
+  /// Job family (matches WorkflowRun.kind / state-router packs where possible).
+  kind               String    @default("generic")
+  /// Canonical work pointer(s) — any may be null for untemplated work.
+  workflowRunId      String?   @map("workflow_run_id")
+  checkpointTaskRef  String?   @map("checkpoint_task_ref")
+  openTaskId         String?   @map("open_task_id")
+  pendingActionId    String?   @map("pending_action_id")
+  askCardId          String?   @map("ask_card_id")
+  /// Current step label + verified completed steps/effects (never re-run).
+  currentStep        String?   @map("current_step")
+  completedSteps     Json?     @map("completed_steps")
+  lastEffectId       String?   @map("last_effect_id")
+  /// Failure/blocker state: error class + who unblocks (owner|system|external).
+  lastErrorClass     String?   @map("last_error_class")
+  blocker            String?
+  /// Exact legal next actions (tool names / step labels) + done-when criteria.
+  nextActions        Json?     @map("next_actions")
+  completionCriteria String?   @db.Text @map("completion_criteria")
+  artifacts          Json?
+  /// Surface the focus was last touched from: web | native | telegram.
+  surface            String?
+  /// Optimistic concurrency — writers must present the version they read.
+  version            Int       @default(1)
+  leaseUntil         DateTime? @map("lease_until")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  completedAt        DateTime? @map("completed_at")
+
+  @@index([conversationId, status, updatedAt])
+  @@index([workflowRunId])
+  @@map("agent_conversation_focuses")
+}
+
+/// Append-only event log for every focus state change (audit + replay).
+model AgentFocusEvent {
+  id             String   @id @default(uuid())
+  focusId        String   @map("focus_id")
+  conversationId String   @map("conversation_id")
+  /// created | updated | parked | resumed | awaiting_owner | blocked | completed | abandoned
+  type           String
+  fromStatus     String?  @map("from_status")
+  toStatus       String?  @map("to_status")
+  version        Int
+  /// turn | approval | worker | reconcile | resolver
+  cause          String   @default("turn")
+  detail         Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([focusId, createdAt])
+  @@index([conversationId, createdAt])
+  @@map("agent_focus_events")
+}

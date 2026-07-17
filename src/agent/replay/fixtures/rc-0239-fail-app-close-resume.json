@@ -1,0 +1,53 @@
+{
+  "id": "rc-0239-fail-app-close-resume",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "failure_recovery",
+  "description": "Owner closed the app mid-run; next day \"oi kaj ta?\" must find the run via durable state.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "website er seo gulo thik koro"
+    },
+    {
+      "role": "agent",
+      "text": "অডিট শেষ Boss — ৫টা প্রোডাক্টে ফিক্স লাগবে, apply করছি।"
+    }
+  ],
+  "latestMessage": "oi kaj ta?",
+  "context": {
+    "gapMinutes": 1440,
+    "activeWorkflow": {
+      "kind": "seo_fix_batch",
+      "goal": "ওয়েবসাইটের ৫টা প্রোডাক্টের SEO ঠিক করা",
+      "status": "waiting_worker",
+      "state": "apply_fixes",
+      "verifiedEffects": [
+        "audit_product_seo:done"
+      ]
+    },
+    "checkpoint": {
+      "taskType": "seo_batch",
+      "step": "apply_fix_2",
+      "failureClass": "app_close"
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "resume_after_app_close",
+    "outcome": "Finds the run + checkpoint and resumes; no restart."
+  },
+  "expect2": {
+    "binding": "active_workflow",
+    "resumeBrief": true,
+    "repeatedEffectRisk": true
+  },
+  "tags": [
+    "failure",
+    "app-close"
+  ]
+}

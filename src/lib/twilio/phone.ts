@@ -1,6 +1,10 @@
-/** Normalize Bangladesh / E.164 phone for Twilio outbound. */
+const BN_DIGITS = '০১২৩৪৫৬৭৮৯'
+
+/** Normalize Bangladesh / E.164 phone for Twilio outbound. Accepts Bangla numerals
+ * (০-৯) — voice transcripts and Bangla-typed messages write numbers that way. */
 export function normalizeOutboundPhone(raw: string): string | null {
-  const digits = raw.replace(/[^\d+]/g, '')
+  const ascii = (raw || '').replace(/[০-৯]/g, (d) => String(BN_DIGITS.indexOf(d)))
+  const digits = ascii.replace(/[^\d+]/g, '')
   if (!digits) return null
 
   if (digits.startsWith('+')) {

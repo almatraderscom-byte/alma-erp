@@ -132,6 +132,17 @@ struct AlmaApproval: Decodable, Identifiable, Equatable {
         let accountNumberMasked: String?
         let isVerified: Bool?
         let status: String?
+        let provider: String?
+    }
+
+    /// Owner-only bKash send flow: the API reveals the full number only to
+    /// SUPER_ADMIN; a masked (starred) or missing number means no send flow.
+    var bkashPayoutNumber: String? {
+        guard type == "WALLET_WITHDRAWAL", let p = payoutSummary, p.provider == "BKASH",
+              p.status != "MISSING",
+              let number = p.accountNumber, !number.isEmpty, number != "—",
+              !number.contains("*") else { return nil }
+        return number
     }
 
     /// The slice of payloadSnapshot the web renders: leave duration/times
@@ -579,6 +590,7 @@ final class ApprovalsVM {
 @available(iOS 17.0, *)
 struct ApprovalsScreen: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
     @State private var vm = ApprovalsVM()
     @State private var view = "business"                 // business | agent (web toggle)
     @State private var selected: AlmaApproval? = nil
@@ -615,7 +627,17 @@ struct ApprovalsScreen: View {
         .refreshable {
             if view == "business" { await vm.load() } else { await vm.loadAgent() }
         }
-        .task { await vm.load() }
+        .task {
+            await vm.load()
+            restoreBkashPending()
+        }
+        // Coming back from the bKash app (or a relaunch after iOS killed us there):
+        // re-open the txn sheet for the half-done withdrawal so the owner can paste
+        // the TrxID and finish.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { restoreBkashPending() }
+        }
+        .onChange(of: vm.approvals) { _, _ in restoreBkashPending() }
         .sheet(item: $selected) { ap in
             ApprovalDetailSheet(
                 approval: ap, vm: vm,
@@ -635,7 +657,8 @@ struct ApprovalsScreen: View {
             WithdrawTxnSheet(approval: ap) { txn in
                 Task { await vm.act(ap, action: "APPROVE", transactionId: txn) }
             }
-            .presentationDetents([.height(320)])
+            // The bKash send block needs the extra height; plain txn entry keeps the old compact sheet.
+            .presentationDetents([.height(ap.bkashPayoutNumber != nil ? 520 : 320)])
         }
         .sheet(item: $reimbursing) { ap in
             ReimbursePayoutSheet(approval: ap) { mode in
@@ -648,6 +671,18 @@ struct ApprovalsScreen: View {
                 Task { await vm.agentRevise(ac, feedback: feedback) }
             }
             .presentationDetents([.height(340)])
+        }
+    }
+
+    /// Re-open the withdraw txn sheet for a half-done bKash send (owner tapped
+    /// "copy + open bKash" and left). Presents only while the approval is still
+    /// pending; once the list has loaded and it's gone, the stale marker drops.
+    private func restoreBkashPending() {
+        guard withdrawing == nil, let entry = BkashSendPendingStore.read(surface: "approvals") else { return }
+        if let ap = vm.approvals.first(where: { $0.id == entry.requestId && $0.status == "PENDING" }) {
+            withdrawing = ap
+        } else if !vm.loading && !vm.approvals.isEmpty {
+            BkashSendPendingStore.clear()
         }
     }
 
@@ -1764,7 +1799,11 @@ private struct WithdrawTxnSheet: View {
     let onConfirm: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
     @State private var txn = ""
+    /// True when the sheet re-opened after the owner came back from the bKash app.
+    @State private var resumedFromBkash = false
+    @State private var submitted = false
     @FocusState private var focused: Bool
 
     private var trimmed: String { txn.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -1774,19 +1813,71 @@ private struct WithdrawTxnSheet: View {
             Text("Approve withdrawal").font(.headline)
             Text("\(approval.requester?.name ?? approval.requestedBy ?? "—") · \(approval.businessName ?? approval.businessId ?? "Global")")
                 .font(.caption).foregroundStyle(.secondary)
+            if let number = approval.bkashPayoutNumber {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(resumedFromBkash
+                         ? "বিকাশ থেকে ফিরেছেন — TrxID পেস্ট করে অনুমোদন শেষ করুন"
+                         : "প্রাপকের বিকাশ" + (approval.payoutSummary?.accountHolder.map { " · \($0)" } ?? ""))
+                        .font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                    Text(number).font(.callout.weight(.bold)).monospaced()
+                    if !resumedFromBkash {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                            UIPasteboard.general.string = number
+                            BkashSendPendingStore.save(requestId: approval.id, surface: "approvals")
+                            if let url = URL(string: "bkash://") {
+                                UIApplication.shared.open(url)
+                            }
+                        } label: {
+                            Label("নম্বর কপি করে বিকাশ খুলুন", systemImage: "arrow.up.forward.app")
+                                .font(.caption.weight(.bold))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(ApprovalPalette.coral)
+                    }
+                    Text(resumedFromBkash
+                         ? "বিকাশের সফল স্ক্রিনে TrxID কপি করে থাকলে নিচের পেস্ট বাটনেই বসবে।"
+                         : "টাকা পাঠিয়ে অ্যাপে ফিরে এলে এই শিটটাই আবার খুলবে — তখন TrxID পেস্ট করলেই শেষ।")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(ApprovalPalette.coral.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                    .strokeBorder(ApprovalPalette.coral.opacity(0.25), lineWidth: 1))
+            }
             VStack(alignment: .leading, spacing: 6) {
                 Text("TRANSACTION ID").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
-                TextField("যে নম্বর/ID থেকে টাকা পাঠালেন", text: $txn)
-                    .focused($focused)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .padding(12)
-                    .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                HStack(spacing: 8) {
+                    TextField("যে নম্বর/ID থেকে টাকা পাঠালেন", text: $txn)
+                        .focused($focused)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .padding(12)
+                        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                    if approval.bkashPayoutNumber != nil {
+                        // UIPasteboard read is gesture-gated by iOS (paste banner) —
+                        // extract a TrxID-shaped token, never the phone number we copied.
+                        Button("পেস্ট") {
+                            if let trx = payrollExtractTrxId(UIPasteboard.general.string) {
+                                txn = trx
+                            }
+                        }
+                        .font(.caption.weight(.bold))
+                        .buttonStyle(.bordered)
+                        .tint(ApprovalPalette.coral)
+                    }
+                }
             }
             Text(trimmed.isEmpty ? "Transaction ID আবশ্যক" : "এই ID সহ staff-কে SMS পাঠানো হবে।")
                 .font(.caption2)
                 .foregroundStyle(trimmed.isEmpty ? ApprovalPalette.amber600 : Color.secondary)
             Button {
+                submitted = true
+                if BkashSendPendingStore.read(surface: "approvals")?.requestId == approval.id {
+                    BkashSendPendingStore.clear()
+                }
                 dismiss()
                 onConfirm(trimmed)
             } label: {
@@ -1801,7 +1892,28 @@ private struct WithdrawTxnSheet: View {
         }
         .padding(18)
         .presentationBackground { ApprovalsAurora() }
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            // Sheet re-opened after returning from the bKash app: switch the copy
+            // to "paste the TrxID to finish".
+            if BkashSendPendingStore.read(surface: "approvals")?.requestId == approval.id {
+                resumedFromBkash = true
+                focused = false
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // The sheet usually survives the round-trip to the bKash app (no relaunch).
+            if phase == .active, BkashSendPendingStore.read(surface: "approvals")?.requestId == approval.id {
+                resumedFromBkash = true
+            }
+        }
+        .onDisappear {
+            // Dismissed without confirming → drop the half-done marker so the sheet
+            // stops re-opening on every foreground.
+            if !submitted, BkashSendPendingStore.read(surface: "approvals")?.requestId == approval.id {
+                BkashSendPendingStore.clear()
+            }
+        }
     }
 }
 

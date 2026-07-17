@@ -1,0 +1,31 @@
+{
+  "id": "rc-0157-tool-routine-orders-pending",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "Routine read \"koto order pending?\" must hit the deterministic routine graph (intent orders_pending) on the light head.",
+  "transcript": [],
+  "latestMessage": "koto order pending?",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "routine_orders_pending",
+    "tools": [],
+    "outcome": "Answered by the routine graph with one read tool; no mutation."
+  },
+  "expect2": {
+    "fastPath": "routine_kw",
+    "routineIntent": "orders_pending",
+    "headTier": "light",
+    "packs": [
+      "erp"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "routine"
+  ]
+}

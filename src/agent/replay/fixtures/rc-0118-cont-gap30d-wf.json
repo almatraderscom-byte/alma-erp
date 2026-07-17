@@ -1,0 +1,51 @@
+{
+  "id": "rc-0118-cont-gap30d-wf",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "continuity",
+  "description": "\"করো\" after 30d: the workflow state — not memory of chat — must define the next step.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "website er seo gulo thik koro"
+    },
+    {
+      "role": "agent",
+      "text": "অডিট শেষ Boss — ৫টা প্রোডাক্টে ফিক্স লাগবে, apply করছি।"
+    }
+  ],
+  "latestMessage": "করো",
+  "context": {
+    "gapMinutes": 43200,
+    "stickyModelId": "or-deepseek-v4-flash",
+    "activeWorkflow": {
+      "kind": "seo_fix_batch",
+      "goal": "ওয়েবসাইটের ৫টা প্রোডাক্টের SEO ঠিক করা",
+      "status": "waiting_worker",
+      "state": "apply_fixes",
+      "verifiedEffects": [
+        "audit_product_seo:done"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "continue_active_work",
+    "outcome": "Resume brief present; SEO batch resumes at apply_fixes after 30d."
+  },
+  "expect2": {
+    "fastPath": "continuation",
+    "continuationText": true,
+    "binding": "active_workflow",
+    "resumeBrief": true,
+    "repeatedEffectRisk": true
+  },
+  "tags": [
+    "continuity",
+    "gap-30d"
+  ]
+}

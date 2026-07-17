@@ -1,0 +1,28 @@
+{
+  "id": "rc-0217-listen-mixed-sales",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "personal_listen",
+  "description": "Feeling + concrete work ask (\"mon kharap, tobe ajker sales ta dekhao\"): classifier must answer work — routine read runs normally.",
+  "transcript": [],
+  "latestMessage": "mon kharap, tobe ajker sales ta dekhao",
+  "fakes": {
+    "personalClassification": "work",
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "work_with_feeling",
+    "outcome": "Acknowledge the feeling briefly, then do the asked work."
+  },
+  "expect2": {
+    "fastPath": "personal_hint",
+    "headTier": "light",
+    "listenSuppressed": false
+  },
+  "tags": [
+    "personal",
+    "mixed"
+  ]
+}

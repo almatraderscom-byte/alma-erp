@@ -1,0 +1,27 @@
+{
+  "id": "rc-0173-tool-domain-erp-price",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "\"notun product er dam koto rakhbo?\" must select the erp pack.",
+  "transcript": [],
+  "latestMessage": "notun product er dam koto rakhbo?",
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "pricing_question",
+    "outcome": "The erp tools are available to the head for this turn."
+  },
+  "expect2": {
+    "packs": [
+      "erp"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "domain-pack"
+  ]
+}

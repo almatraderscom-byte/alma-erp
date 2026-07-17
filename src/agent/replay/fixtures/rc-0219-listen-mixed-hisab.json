@@ -1,0 +1,28 @@
+{
+  "id": "rc-0219-listen-mixed-hisab",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "personal_listen",
+  "description": "Feeling + concrete work ask (\"onek tension hocche, hisab ta thik ache kina dekho\"): classifier must answer work — finance read proceeds.",
+  "transcript": [],
+  "latestMessage": "onek tension hocche, hisab ta thik ache kina dekho",
+  "fakes": {
+    "personalClassification": "work",
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "work_with_feeling",
+    "outcome": "Acknowledge the feeling briefly, then do the asked work."
+  },
+  "expect2": {
+    "fastPath": "personal_hint",
+    "headTier": "light",
+    "listenSuppressed": false
+  },
+  "tags": [
+    "personal",
+    "mixed"
+  ]
+}

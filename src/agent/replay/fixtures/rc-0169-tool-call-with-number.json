@@ -1,0 +1,30 @@
+{
+  "id": "rc-0169-tool-call-with-number",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "tool_selection",
+  "description": "Explicit call instruction with a number: call intent must force the heavy head and the outbound_phone_call flow.",
+  "transcript": [],
+  "latestMessage": "01700000000 e call kore bolo delivery ready hoye geche",
+  "expected": {
+    "intent": "outbound_call",
+    "tools": [
+      "outbound_phone_call"
+    ],
+    "approvalRequired": true,
+    "outcome": "Call flow staged with confirm card; never logged as a reminder."
+  },
+  "expect2": {
+    "fastPath": "call_intent",
+    "headTier": "heavy",
+    "packs": [
+      "reminders"
+    ]
+  },
+  "tags": [
+    "tool-selection",
+    "call"
+  ]
+}

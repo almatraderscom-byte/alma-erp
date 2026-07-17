@@ -1,0 +1,46 @@
+{
+  "id": "rc-0196-card-stale-approve",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "approval_ask_card",
+  "description": "Approve on an expired/stale card: zero effects and a clear message, never a blind execute.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "card: ৫০০৳ খরচ — approve? (মেয়াদ ১ ঘণ্টা)"
+    }
+  ],
+  "latestMessage": "approve",
+  "replyTo": {
+    "kind": "approval",
+    "id": "pa-999-expired"
+  },
+  "context": {
+    "gapMinutes": 4320,
+    "pendingCard": {
+      "kind": "approval",
+      "id": "pa-999-expired",
+      "actionType": "log_expense"
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "stale_approve",
+    "forbiddenTools": [
+      "log_expense"
+    ],
+    "outcome": "Stale card produces zero effects; agent restages if still wanted."
+  },
+  "expect2": {
+    "binding": "pending_card",
+    "resumeBrief": true
+  },
+  "tags": [
+    "approval",
+    "stale"
+  ]
+}

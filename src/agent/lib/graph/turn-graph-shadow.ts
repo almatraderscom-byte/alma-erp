@@ -23,6 +23,11 @@
  */
 import { StateGraph, Annotation, START, END } from '@langchain/langgraph'
 import { classifyHeadFastPath, type HeadFastPathKind, type HeadTier } from '@/agent/lib/models/head-router'
+import {
+  runOwnerTurnGraphShadow,
+  type OwnerTurnGraphResult,
+  type OwnerTurnStateLoader,
+} from '@/agent/lib/graph/owner-turn-graph'
 
 export function isTurnGraphShadowEnabled(
   flag = process.env.AGENT_LANGGRAPH_TURN,
@@ -45,6 +50,17 @@ export interface TurnGraphShadowInput {
   toolRouter?: string | null
   /** The loop cap the legacy turn will run with. */
   maxIterations: number
+  // ── Phase 33: inputs for the FULL owner-turn graph (optional — absent on
+  // callers that only want the LG-4 fast-path shadow, e.g. old tests). ──
+  conversationId?: string
+  turnId?: string | null
+  businessId?: string
+  boundToolName?: string | null
+  /** The live continuity resolver's binding (null when it didn't run). */
+  continuityBinding?: string | null
+  allowMutations?: boolean
+  /** Reuses the turn's already-loaded durable state — zero extra DB calls. */
+  loadState?: OwnerTurnStateLoader
 }
 
 export interface TurnGraphShadowRecord {
@@ -58,6 +74,11 @@ export interface TurnGraphShadowRecord {
   toolGroups: string[]
   toolCount: number
   maxIterations: number
+  /** Phase 33: the full 12-node graph's trace + agreement (when inputs allow). */
+  graph?: {
+    trace: OwnerTurnGraphResult['trace']
+    agreement: OwnerTurnGraphResult['agreement']
+  }
 }
 
 const ShadowState = Annotation.Root({
@@ -130,6 +151,38 @@ export async function runTurnGraphShadow(
       toolGroups: [...input.toolGroups],
       toolCount: input.toolCount,
       maxIterations: input.maxIterations,
+    }
+    // Phase 33: when the caller supplies the full-turn inputs, run the REAL
+    // 12-node owner-turn graph in shadow and attach its trace + agreement.
+    // Fail-open inside; the LG-4 record above stands regardless.
+    if (input.conversationId && input.loadState) {
+      const full = await runOwnerTurnGraphShadow(
+        {
+          conversationId: input.conversationId,
+          turnId: input.turnId ?? null,
+          businessId: input.businessId ?? 'ALMA_LIFESTYLE',
+          text: input.lastUserText,
+          listenMode: input.listenMode,
+          legacy: {
+            headTier: input.headTier,
+            headVia: input.headVia,
+            toolGroups: input.toolGroups,
+            boundToolName: input.boundToolName ?? null,
+            allowMutations: input.allowMutations ?? false,
+            continuityBinding: input.continuityBinding ?? null,
+            maxIterations: input.maxIterations,
+          },
+        },
+        input.loadState,
+      )
+      if (full) {
+        record.graph = { trace: full.trace, agreement: full.agreement }
+        if (full.agreement.agree === false) {
+          console.warn(
+            `[owner-turn-graph] SHADOW DISAGREEMENT ${full.agreement.disagreements.join(',')} conv=${input.conversationId} textLen=${input.lastUserText.length}`,
+          )
+        }
+      }
     }
     // One line per DISAGREEMENT only — agreements are the overwhelming norm
     // and live in the route span; a mismatch is what needs eyes.

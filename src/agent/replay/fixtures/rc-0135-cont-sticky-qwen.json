@@ -1,0 +1,46 @@
+{
+  "id": "rc-0135-cont-sticky-qwen",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "continuity",
+  "description": "Short follow-up in a Qwen marketing thread inherits the marketing head.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "নতুন পাঞ্জাবির জন্য একটা ফেসবুক পোস্ট বানাও"
+    },
+    {
+      "role": "agent",
+      "text": "ছবি বানিয়েছি Boss, এখন ক্যাপশন লিখছি — draft দেখাবো।"
+    }
+  ],
+  "latestMessage": "তারপর?",
+  "context": {
+    "gapMinutes": 2,
+    "stickyModelId": "or-qwen3-max",
+    "activeWorkflow": {
+      "kind": "fb_post_workflow",
+      "goal": "নতুন পাঞ্জাবি কালেকশনের ফেসবুক পোস্ট",
+      "status": "active",
+      "state": "draft_review",
+      "verifiedEffects": [
+        "generate_image:img-001"
+      ]
+    }
+  },
+  "expected": {
+    "intent": "continue_active_work",
+    "outcome": "Marketing head continues the content thread."
+  },
+  "expect2": {
+    "fastPath": "continuation",
+    "headTier": "marketing",
+    "binding": "active_workflow"
+  },
+  "tags": [
+    "continuity",
+    "sticky-head"
+  ]
+}

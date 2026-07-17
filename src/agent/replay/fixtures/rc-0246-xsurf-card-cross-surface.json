@@ -1,0 +1,47 @@
+{
+  "id": "rc-0246-xsurf-card-cross-surface",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "cross_surface",
+  "description": "Approval card staged on web, answered from native: the card binding is surface-independent.",
+  "transcript": [
+    {
+      "role": "agent",
+      "text": "card পাঠিয়েছি: dispatch proposal — approve?"
+    }
+  ],
+  "latestMessage": "হ্যাঁ",
+  "replyTo": {
+    "kind": "approval",
+    "id": "pa-401"
+  },
+  "context": {
+    "gapMinutes": 45,
+    "priorSurface": "web",
+    "surface": "native",
+    "pendingCard": {
+      "kind": "approval",
+      "id": "pa-401",
+      "actionType": "staff_dispatch"
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "approval_grant",
+    "outcome": "The web-staged dispatch executes once, answered from native."
+  },
+  "expect2": {
+    "binding": "pending_card",
+    "packs": [
+      "staff_dispatch"
+    ]
+  },
+  "tags": [
+    "cross-surface",
+    "card"
+  ]
+}

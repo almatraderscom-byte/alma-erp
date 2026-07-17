@@ -1,0 +1,45 @@
+{
+  "id": "rc-0121-cont-gap90d-checkpoint",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "continuity",
+  "description": "\"abar try koro\" after 90d with an unresolved failure checkpoint: resume from the checkpointed step.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "browser diye competitor der page ta dekhe aso"
+    },
+    {
+      "role": "agent",
+      "text": "Boss, মাঝপথে টাইমআউট হয়েছে — checkpoint রেখেছি, বললে আবার চালাবো।"
+    }
+  ],
+  "latestMessage": "abar try koro",
+  "context": {
+    "gapMinutes": 129600,
+    "checkpoint": {
+      "taskType": "browser_task",
+      "step": "scrape_page_2",
+      "failureClass": "vercel_deadline"
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "resume_from_checkpoint",
+    "outcome": "Retry continues from scrape_page_2, not from the beginning."
+  },
+  "expect2": {
+    "binding": "checkpoint",
+    "resumeBrief": true,
+    "repeatedEffectRisk": true
+  },
+  "tags": [
+    "continuity",
+    "gap-90d",
+    "checkpoint"
+  ]
+}

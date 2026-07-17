@@ -1,0 +1,28 @@
+{
+  "id": "rc-0220-listen-mixed-order",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "personal_listen",
+  "description": "Feeling + concrete work ask (\"mon valo nei, order 1043 status ta bolo\"): classifier must answer work — order lookup proceeds.",
+  "transcript": [],
+  "latestMessage": "mon valo nei, order 1043 status ta bolo",
+  "fakes": {
+    "personalClassification": "work",
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "work_with_feeling",
+    "outcome": "Acknowledge the feeling briefly, then do the asked work."
+  },
+  "expect2": {
+    "fastPath": "personal_hint",
+    "headTier": "light",
+    "listenSuppressed": false
+  },
+  "tags": [
+    "personal",
+    "mixed"
+  ]
+}

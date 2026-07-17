@@ -29,11 +29,11 @@ let idCounter = 0
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     agentPendingAction: {
-      create: async ({ data }: { data: Omit<ActionRow, 'id' | 'createdAt' | 'result'> }) => {
+      create: async ({ data }: { data: Omit<ActionRow, 'id' | 'createdAt'> & { result?: Record<string, unknown> } }) => {
         const row: ActionRow = {
           ...data,
           id: `action-${++idCounter}`,
-          result: null,
+          result: data.result ?? null,
           createdAt: new Date(Date.now() + idCounter), // preserve creation order
         }
         actions.push(row)
@@ -166,53 +166,44 @@ describe('startFamilyChain', () => {
       product_image: 'uploads/panjabi.jpg',
     })
     const state = chainState(row)
-    expect(state.plan).toEqual(['garment_prep', 'adult_tryon', 'child_garment', 'child_tryon', 'pair_merge'])
+    expect(state.plan).toEqual(['garment_prep', 'adult_tryon', 'child_tryon', 'pair_merge'])
     expect(state.stepIndex).toBe(1)
     // panjabi without contrast bottom → white pajama rule must ride along
     expect(String((row.payload.fashnOptions as Record<string, unknown>).prompt)).toContain('white')
   })
 
-  it('skips the child_garment step when the cache already has one for this product+role', async () => {
+  it('NEVER plans an AI child_garment step — even when a legacy cache entry exists (owner 2026-07-17)', async () => {
     seedModels(['mother', 'daughter'])
     kv.set('tryon_child_garment:daughter:uploads/set.jpg', 'generated/child-set.png')
     await startFamilyChain({ variant: 'mother_daughter', productImagePath: 'uploads/set.jpg' })
     const state = chainState(lastAction())
     expect(state.plan).toEqual(['garment_prep', 'adult_tryon', 'child_tryon', 'pair_merge'])
-    expect(state.childGarmentPath).toBe('generated/child-set.png')
+    // the stale AI garment is ignored — the child will wear the adult garment
+    expect(state.childGarmentPath).toBeUndefined()
   })
 })
 
 describe('chain advance — father_son end to end', () => {
-  it('carries artifacts step to step and writes the child-garment cache', async () => {
+  it('carries artifacts step to step; child wears the SAME adult garment', async () => {
     seedModels(['father', 'son'])
     await startFamilyChain({ variant: 'father_son', productImagePath: 'uploads/panjabi.jpg' })
     await passPrep()
 
-    // Step 1: adult FASHN shot done
+    // Step 1: adult FASHN shot done → straight to the child try-on
     let nextId = await completeStep(lastAction(), 'generated/father-shot.png')
     expect(nextId).toBeTruthy()
     let row = lastAction()
     let state = chainState(row)
-    expect(state.plan[state.stepIndex]).toBe('child_garment')
-    expect(state.adultImagePath).toBe('generated/father-shot.png')
-    // Gemini step → worker's generateImageToStorage signature
-    expect(row.payload.referenceImageId).toBe('uploads/panjabi.jpg')
-    expect(row.payload.creativeStudio).toBe(false) // internal, keeps gallery clean
-    expect(String(row.payload.prompt)).toContain('IDENTICAL')
-
-    // Step 2: child garment done → cache written
-    nextId = await completeStep(row, 'generated/child-garment.png')
-    expect(kv.get('tryon_child_garment:son:uploads/panjabi.jpg')).toBe('generated/child-garment.png')
-    row = lastAction()
-    state = chainState(row)
     expect(state.plan[state.stepIndex]).toBe('child_tryon')
-    // child FASHN try-on dresses the SAVED son model in the generated child garment
+    expect(state.adultImagePath).toBe('generated/father-shot.png')
+    // child FASHN try-on dresses the SAVED son model in the ADULT garment —
+    // the engine sizes it to the child's body (owner 2026-07-17)
     expect(row.payload.fashnInputs).toEqual({
       model_image: 'models/son.jpg',
-      product_image: 'generated/child-garment.png',
+      product_image: 'uploads/panjabi.jpg',
     })
 
-    // Step 3: child shot done
+    // Step 2: child shot done
     nextId = await completeStep(row, 'generated/son-shot.png')
     row = lastAction()
     state = chainState(row)
@@ -238,12 +229,17 @@ describe('full_family group', () => {
     const { jobs } = await startFamilyChain({ variant: 'full_family', productImagePath: 'uploads/set.jpg' })
     expect(jobs).toHaveLength(2)
 
-    // Drive both sub-chains to their pair_merge
+    // Drive both sub-chains to their pair_merge (prep yields BOTH real pieces
+    // — মা+মেয়ে requires the daughter's own dress since 2026-07-18)
     const drive = async (startIdx: number) => {
       let row = actions[startIdx]
       let guard = 0
       while (chainState(row).plan[chainState(row).stepIndex] !== 'pair_merge' && guard++ < 6) {
-        const nextId = await completeStep(row, `generated/${row.id}.png`)
+        const step = chainState(row).plan[chainState(row).stepIndex]
+        const extra = step === 'garment_prep'
+          ? { garmentPrep: true, adultGarmentPath: `prepped/${row.id}-p1.png`, childGarmentPath: `prepped/${row.id}-p2.png` }
+          : {}
+        const nextId = await completeStep(row, step === 'garment_prep' ? '' : `generated/${row.id}.png`, extra)
         row = actions.find((a) => a.id === nextId)!
       }
       return row
@@ -298,7 +294,7 @@ describe('getChainProgress', () => {
     expect(progress).not.toBeNull()
     expect(progress!.chainStatus).toBe('running')
     expect(progress!.step).toBe(3)
-    expect(progress!.totalSteps).toBe(5)
+    expect(progress!.totalSteps).toBe(4)
   })
 })
 
@@ -313,11 +309,9 @@ describe('CS9 protected composite chain', () => {
       protectedComposite: true,
     })
     let row = await passPrep()
-    expect(chainState(row).plan).toEqual(['garment_prep', 'adult_tryon', 'child_garment', 'child_tryon', 'pair_composite'])
+    expect(chainState(row).plan).toEqual(['garment_prep', 'adult_tryon', 'child_tryon', 'pair_composite'])
 
     let nextId = await completeStep(row, 'generated/adult.png')
-    row = actions.find((a) => a.id === nextId)!
-    nextId = await completeStep(row, 'generated/child-garment.png')
     row = actions.find((a) => a.id === nextId)!
     nextId = await completeStep(row, 'generated/child.png')
     row = actions.find((a) => a.id === nextId)!
@@ -362,10 +356,15 @@ describe('CS9 protected composite chain', () => {
     })
     expect(jobs).toHaveLength(2)
 
-    // run both sub-chains to their pair_composite completion
+    // run both sub-chains to their pair_composite completion (prep yields
+    // both real pieces — the মা+মেয়ে leg needs the daughter's own dress)
     for (const job of jobs) {
       let row = actions.find((a) => a.id === job.pendingActionId)!
-      let next = await completeStep(row, `generated/${chainState(row).variant}-adult.png`)
+      let next = await completeStep(row, '', {
+        garmentPrep: true,
+        adultGarmentPath: `prepped/${chainState(row).variant}-p1.png`,
+        childGarmentPath: `prepped/${chainState(row).variant}-p2.png`,
+      })
       while (next) {
         row = actions.find((a) => a.id === next)!
         const step = chainState(row).plan[chainState(row).stepIndex]
@@ -409,13 +408,9 @@ describe('owner directive 2026-07-17 — chain VTON on Fal', () => {
 
     let nextId = await completeStep(row, 'generated/adult.png')
     row = actions.find((a) => a.id === nextId)!
-    // child garment step stays Gemini
-    expect(row.payload.provider).toBeUndefined()
-    nextId = await completeStep(row, 'generated/garment.png')
-    row = actions.find((a) => a.id === nextId)!
-    // child tryon = fal with the generated child garment
+    // child tryon = fal with the SAME adult garment (no AI child garment)
     expect(row.payload.provider).toBe('fal')
-    expect(row.payload.productImagePath).toBe('generated/garment.png')
+    expect(row.payload.productImagePath).toBe('uploads/panjabi.jpg')
     expect(row.payload.modelImagePath).toBe('models/son.jpg')
   })
 
@@ -466,18 +461,40 @@ describe('garment_prep step — reseller photos, never garment-only', () => {
     expect(row.payload.productImagePath).toBe('prepped/supplier-p2.png')
   })
 
-  it('single-person supplier photo keeps the child_garment generation step', async () => {
+  it('মা+মেয়ে without a split piece FAILS in Bangla — daughter must not wear the adult dress', async () => {
+    seedModels(['mother', 'daughter'])
+    await startFamilyChain({ variant: 'mother_daughter', productImagePath: 'uploads/merged.jpg' })
+    const row = lastAction()
+    const nextId = await completeStep(row, '', {
+      garmentPrep: true,
+      adultGarmentPath: 'prepped/merged-p1.png',
+      childGarmentPath: null, // merged blob — no daughter piece
+    })
+    expect(nextId).toBeNull()
+    const failed = lastAction()
+    expect(failed.status).toBe('failed')
+    expect(String((failed.result as Record<string, unknown>).error)).toContain('মেয়ের')
+    expect(String(failed.summary)).toContain('গার্মেন্ট আলাদা করা যায়নি')
+  })
+
+  it('single-person supplier photo → child try-on reuses the ADULT crop', async () => {
     seedModels(['father', 'son'])
     await startFamilyChain({ variant: 'father_son', productImagePath: 'uploads/one-person.jpg' })
     let row = lastAction()
-    const nextId = await completeStep(row, '', {
+    let nextId = await completeStep(row, '', {
       garmentPrep: true,
       adultGarmentPath: 'prepped/one-p1.png',
       childGarmentPath: null,
     })
     row = actions.find((a) => a.id === nextId)!
-    expect(chainState(row).plan).toContain('child_garment') // still generated
+    expect(chainState(row).plan).not.toContain('child_garment') // never generated
     // legacy direct-FASHN payload uses the adult crop
     expect((row.payload.fashnInputs as Record<string, string>).product_image).toBe('prepped/one-p1.png')
+
+    nextId = await completeStep(row, 'generated/adult.png')
+    row = actions.find((a) => a.id === nextId)!
+    // child try-on: same adult crop, engine handles the child sizing
+    expect((row.payload.fashnInputs as Record<string, string>).product_image).toBe('prepped/one-p1.png')
+    expect((row.payload.fashnInputs as Record<string, string>).model_image).toBe('models/son.jpg')
   })
 })

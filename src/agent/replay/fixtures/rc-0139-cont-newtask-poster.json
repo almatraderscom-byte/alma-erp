@@ -1,0 +1,51 @@
+{
+  "id": "rc-0139-cont-newtask-poster",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "continuity",
+  "description": "Clear new task while another workflow is active: park the old run, start the new one — never silently mix.",
+  "transcript": [
+    {
+      "role": "owner",
+      "text": "নতুন পাঞ্জাবির জন্য একটা ফেসবুক পোস্ট বানাও"
+    },
+    {
+      "role": "agent",
+      "text": "ছবি বানিয়েছি Boss, এখন ক্যাপশন লিখছি — draft দেখাবো।"
+    }
+  ],
+  "latestMessage": "এখন একটা নতুন কাজ: ঈদের পোস্টার বানাও",
+  "context": {
+    "gapMinutes": 4,
+    "stickyModelId": "or-qwen3-max",
+    "activeWorkflow": {
+      "kind": "fb_post_workflow",
+      "goal": "নতুন পাঞ্জাবি কালেকশনের ফেসবুক পোস্ট",
+      "status": "active",
+      "state": "draft_review",
+      "verifiedEffects": [
+        "generate_image:img-001"
+      ]
+    }
+  },
+  "fakes": {
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "new_task_parks_old",
+    "outcome": "Old workflow parked (not lost); new task starts cleanly."
+  },
+  "expect2": {
+    "continuationText": false,
+    "binding": "new_task",
+    "packs": [
+      "creative"
+    ]
+  },
+  "tags": [
+    "continuity",
+    "new-task-parks-old"
+  ]
+}

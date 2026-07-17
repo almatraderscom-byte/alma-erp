@@ -1,0 +1,27 @@
+{
+  "id": "rc-0221-listen-other-customer",
+  "source": {
+    "conversationId": "replay-corpus-p31",
+    "turnAt": "2026-07-17T10:00:00+06:00"
+  },
+  "category": "personal_listen",
+  "description": "Customer being upset is WORK (CS), not owner-personal.",
+  "transcript": [],
+  "latestMessage": "ekta customer khub upset delivery deri niye",
+  "fakes": {
+    "personalClassification": "work",
+    "triageTier": "light"
+  },
+  "expected": {
+    "intent": "cs_issue",
+    "outcome": "Handled as customer-service work."
+  },
+  "expect2": {
+    "headTier": "light",
+    "listenSuppressed": false
+  },
+  "tags": [
+    "personal",
+    "about-others"
+  ]
+}
