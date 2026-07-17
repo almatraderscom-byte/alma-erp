@@ -140,18 +140,8 @@ function childGarmentCacheKey(productImagePath: string, childRole: string): stri
   return `${CHILD_GARMENT_CACHE_PREFIX}${childRole}:${productImagePath}`
 }
 
-async function readChildGarmentCache(productImagePath: string, childRole: string): Promise<string | null> {
-  try {
-    const row = await db.agentKvSetting.findUnique({
-      where: { key: childGarmentCacheKey(productImagePath, childRole) },
-    })
-    const v = row?.value?.trim()
-    return v || null
-  } catch {
-    return null
-  }
-}
-
+// (read path removed 2026-07-17 — chains no longer consume AI child garments;
+// the write below only serves legacy in-flight chains' bookkeeping)
 export async function writeChildGarmentCache(
   productImagePath: string,
   childRole: string,
@@ -283,10 +273,18 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
       }
     }
 
-    case 'child_tryon':
+    case 'child_tryon': {
+      // real supplier child piece when prep split one out, otherwise the SAME
+      // adult garment — the VTON engine sizes it to the child's body itself
+      // (owner decision 2026-07-17: no AI-generated child garment, ever)
+      const childGarment = state.childGarmentPath ?? adultGarment
       if (useFalVton) {
         return {
-          payload: falVtonPayload(state.childModelPath, state.childGarmentPath),
+          payload: {
+            ...falVtonPayload(state.childModelPath, childGarment),
+            // supplier references are worn (model/mannequin) shots
+            garmentPhotoType: state.preppedChildGarmentPath || state.preppedAdultGarmentPath ? 'model' : undefined,
+          },
           summary: chainSummary(state, step),
           costEstimate: 0.075,
         }
@@ -296,7 +294,7 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
           ...base,
           provider: 'fashn',
           fashnModel: 'tryon-max',
-          fashnInputs: { model_image: state.childModelPath, product_image: state.childGarmentPath },
+          fashnInputs: { model_image: state.childModelPath, product_image: childGarment },
           fashnOptions: {
             prompt: fashnPosePrompt(
               state.scene.childPose,
@@ -315,6 +313,7 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
         summary: chainSummary(state, step),
         costEstimate: 0.25,
       }
+    }
 
     case 'pair_merge':
       return {
@@ -513,20 +512,16 @@ async function startPairChain(opts: {
   const adult = opts.models[roles.adult]!
   const child = opts.models[roles.child]!
 
-  // couple: the wife wears the ADULT product as-is — skip the child-garment
-  // generation entirely and feed the product straight into her FASHN try-on.
+  // couple: the wife wears the ADULT product as-is — feed it straight in.
   const isCouple = opts.variant === 'couple'
-  const cachedGarment = isCouple
-    ? opts.productImagePath
-    : await readChildGarmentCache(opts.productImagePath, roles.child)
   // CS9 — protected composite replaces the generative pair merge when opted in.
   const finalStep: ChainStepKind = opts.protectedComposite ? 'pair_composite' : 'pair_merge'
-  // Supplier-photo prep runs FIRST (free, local): real adult/child crops from
-  // the reseller photo; the child_garment generation step is dropped later
-  // when prep finds a real child piece.
-  const plan: ChainStepKind[] = cachedGarment
-    ? ['garment_prep', 'adult_tryon', 'child_tryon', finalStep]
-    : ['garment_prep', 'adult_tryon', 'child_garment', 'child_tryon', finalStep]
+  // Owner decision 2026-07-17: NEVER generate an AI child garment. VTON
+  // engines fit the garment to the target body themselves, so the child
+  // try-on reuses the ADULT garment reference (or the real child piece when
+  // supplier-photo prep split one out). The old child_garment step stays in
+  // the enum only for in-flight legacy chains.
+  const plan: ChainStepKind[] = ['garment_prep', 'adult_tryon', 'child_tryon', finalStep]
 
   const state: FamilyChainState = {
     chainId: randomUUID(),
@@ -540,7 +535,7 @@ async function startPairChain(opts: {
     childRole: roles.child,
     adultModelPath: adult.imagePath,
     childModelPath: child.imagePath,
-    childGarmentPath: cachedGarment ?? undefined,
+    childGarmentPath: isCouple ? opts.productImagePath : undefined,
     plan,
     stepIndex: 0,
     extraPrompt: opts.extraPrompt,
