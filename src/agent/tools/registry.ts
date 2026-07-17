@@ -778,6 +778,7 @@ export async function runRegisteredTool(
   // BLOCKED; ladder decisions (point-of-risk staging for owner-direct R3
   // writes, bounded-policy proposals) are shadow-logged until Phase 57 promotes
   // them per task class. Fail-closed for effects, fail-open for reads.
+  let guardEnvelope: import('@/agent/lib/policy/capability-token').SignedEnvelope | undefined
   {
     const { guardToolCall } = await import('@/agent/lib/policy/tool-guard')
     const guard = await guardToolCall(tool.name, input ?? {}, cap, {
@@ -809,6 +810,7 @@ export async function runRegisteredTool(
       })
       return { success: false, error: guard.error, errorCode: guard.errorCode ?? 'guard_blocked', retryable: false }
     }
+    guardEnvelope = guard.envelope
     // Shadow observability: when the constitution wanted a stricter path than
     // we enforce today, record it — Phase 57 readiness is computed from these.
     if (!guard.enforced) {
@@ -831,6 +833,33 @@ export async function runRegisteredTool(
   try {
     const handlerContext = { ...serverContext }
     delete handlerContext.turnAuthorization
+
+    // Phase 53: route direct write effects through the exactly-once effect
+    // engine (durable run + append-only ledger; ledger failure BLOCKS the
+    // write). Flag-gated OFF by default — Phase 57/58 readiness gates flip it.
+    if (process.env.AGENT_EFFECT_ENGINE === 'true' && cap.mode === 'write' && guardEnvelope) {
+      const { executeEffect } = await import('@/agent/lib/effects/action-run')
+      const outcome = await executeEffect({
+        envelope: guardEnvelope,
+        input: input ?? {},
+        execute: async () => {
+          const r = await tool.handler({ ...input, ...handlerContext })
+          return { success: r.success, data: r.data, error: r.error, errorCode: r.errorCode, retryable: r.retryable }
+        },
+      })
+      const effectResult: ToolResult = outcome.ok
+        ? { success: true, data: outcome.result }
+        : { success: false, error: outcome.error, errorCode: outcome.errorCode ?? 'effect_failed', retryable: outcome.state === 'failed_retryable' }
+      void logToolEvent({
+        ...baseEvent,
+        success: effectResult.success,
+        errorCode: effectResult.success ? undefined : effectResult.errorCode,
+        latencyMs: Date.now() - started,
+        detail: { ...capDetail, argsValidation: 'passed', effectEngine: true, effectState: outcome.state, effectReplayed: outcome.replayed },
+      })
+      return effectResult
+    }
+
     const result = await tool.handler({ ...input, ...handlerContext })
     if (result.success) {
       void logToolEvent({

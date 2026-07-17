@@ -1460,6 +1460,33 @@ const heartbeatInterval = startHeartbeatLoop({
 })
 const healthPingInterval = startHealthPingLoop()
 
+// Phase 53 — effect-outbox dispatcher (OFF by default; readiness gates flip it).
+// Dispatch posts the run back to the app's assistant surface, where the guard +
+// effect engine own execution; the worker only drives retries/dead-letter.
+if (process.env.AGENT_EFFECT_ENGINE === 'true') {
+  const { startEffectWorkerLoop } = await import('./effect-worker.mjs')
+  startEffectWorkerLoop({
+    sb: supabase,
+    dispatch: async (run) => {
+      try {
+        const res = await fetch(`${getAppUrl()}/api/assistant/internal/health`, {
+          method: 'GET',
+          headers: { 'x-agent-internal-token': getInternalToken() },
+        })
+        // Phase 54 wires real dispatch (durable task graph); until then the
+        // dispatcher only confirms app reachability and reports not-ok so rows
+        // back off instead of silently draining.
+        return res.ok
+          ? { ok: false, error: `dispatch target for tool ${run.tool} not wired yet (Phase 54)` }
+          : { ok: false, error: `app unreachable: ${res.status}` }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  })
+  console.log('[worker] Phase 53 effect-outbox dispatcher started')
+}
+
 startTwilioHttpServer()
 if (runSchedulerJobFn) setRetriggerHandler(runSchedulerJobFn)
 startDiagnosticHttpServer()
