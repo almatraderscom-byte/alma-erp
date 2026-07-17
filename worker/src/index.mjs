@@ -534,7 +534,8 @@ async function processImageGen(job) {
   if (payload.provider === 'garment_prep') {
     try {
       const { prepSupplierPhoto } = await import('./garment-prep.mjs')
-      const result = await prepSupplierPhoto({ supabase, imagePath: payload.imagePath })
+      const { logCost } = await import('./cost-log.mjs')
+      const result = await prepSupplierPhoto({ supabase, imagePath: payload.imagePath, pendingActionId, logCost })
       await callJobResult(pendingActionId, 'success', {
         garmentPrep: true,
         multiPerson: result.multiPerson,
