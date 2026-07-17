@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI, type Content, type Part } from '@google/generative-ai'
 import type { NeutralMsg, NeutralTool, NeutralToolChoice, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
 import { sanitizeSchemaForGemini } from '@/agent/lib/models/adapters/gemini-schema'
+import { resolveGenerationParams, type NeutralGenerationParams } from '@/agent/lib/models/generation-params'
 
 /**
  * Phase 3 request shaping (pure, unit-tested): map the neutral tool_choice to
@@ -16,6 +17,25 @@ export function buildGeminiToolConfig(
   if (toolChoice === 'none') return { functionCallingConfig: { mode: 'NONE' } }
   if (toolChoice === 'required') return { functionCallingConfig: { mode: 'ANY' } }
   return { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [toolChoice.name] } }
+}
+
+/**
+ * P9 — merge the shared sampling/output contract into Gemini's generationConfig
+ * alongside the existing thinking config. Returns undefined when nothing is set
+ * (AGENT_UNIFORM_SAMPLING off AND no thoughts) so the request stays byte-identical.
+ */
+function buildGeminiGenerationConfig(
+  withThoughts: boolean,
+  gen: NeutralGenerationParams,
+): Record<string, unknown> | undefined {
+  const cfg: Record<string, unknown> = {}
+  if (withThoughts) cfg.thinkingConfig = { includeThoughts: true }
+  if (gen.maxTokens !== undefined) cfg.maxOutputTokens = gen.maxTokens
+  if (gen.temperature !== undefined) {
+    cfg.temperature = gen.temperature
+    cfg.topP = gen.topP
+  }
+  return Object.keys(cfg).length ? cfg : undefined
 }
 
 export function toGeminiContents(messages: NeutralMsg[]): Content[] {
@@ -122,14 +142,13 @@ export class GoogleAdapter implements ProviderAdapter {
     // Phase 3 request controller — 'none'/'required'/named tool map to Gemini's
     // functionCallingConfig; absent/'auto' leaves the request untouched.
     const toolConfig = buildGeminiToolConfig(args.toolChoice, Boolean(functionDeclarations))
+    const gen = resolveGenerationParams({ thinking: args.thinking })
     const open = (withThoughts: boolean) => {
       const genModel = this.client.getGenerativeModel({
         model: args.apiModel,
         systemInstruction: args.system,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        generationConfig: (withThoughts
-          ? { thinkingConfig: { includeThoughts: true } }
-          : undefined) as any,
+        generationConfig: buildGeminiGenerationConfig(withThoughts, gen) as any,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         tools: (functionDeclarations ? [{ functionDeclarations }] : undefined) as any,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

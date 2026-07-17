@@ -4,9 +4,10 @@
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE } from '@/agent/config'
+import { computeHeadToolCap } from '@/agent/lib/models/head-tool-cap'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
-import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { getOfficePulse } from '@/agent/lib/office-pulse'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
@@ -57,6 +58,8 @@ import {
   buildVerificationReminder,
   detectMissingCardViolation,
   detectProseChoiceViolation,
+  detectFabricatedStatViolations,
+  detectRoboticStyleViolations,
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
@@ -688,7 +691,10 @@ async function* runAlternateProviderTurn(
   // back to DeepSeek (2026-07-13 outage, diagnosed via error.metadata.raw). Keep the
   // earliest tools (core ERP + confirm/ask flows sit at the front of the registry)
   // and drop the tail with a visible note.
-  const toolCap = model.apiModel.startsWith('x-ai/') ? 200 : Infinity
+  // P10 — the 200-tool cap must also cover the xAI-DIRECT head (provider 'xai',
+  // slug 'grok-4.20', which does NOT start with 'x-ai/'). Pure helper so parity
+  // is unit-testable (see head-tool-cap.ts).
+  const toolCap = computeHeadToolCap(model)
   let cappedTools = selectedTools
   if (selectedTools.length > toolCap) {
     const dropped = selectedTools.slice(toolCap).map((t) => t.name)
@@ -1013,10 +1019,25 @@ async function* runAlternateProviderTurn(
       // A real tool failure is a blocker, not permission to hammer the same
       // browser/action 20 more times. Stop and surface the exact error.
       const contractToolName = contractFailure ? null : requestedContractTool
+      // P3 — plan-first: bind make_plan on round 0 for clearly multi-step work,
+      // but never over an explicit contract/workflow bind, and only when make_plan
+      // is loaded and hasn't already run this turn.
+      const planBoundTool =
+        ownerRequirements.planFirst && iteration === 0
+          && iterationTools.some((t) => t.name === 'make_plan')
+          && !toolRecords.some((r) => r.toolName === 'make_plan')
+          ? 'make_plan'
+          : null
       const roundBoundToolName =
         contractToolName && iterationTools.some((t) => t.name === contractToolName)
           ? contractToolName
-          : iteration === 0 ? boundToolName : null
+          : iteration === 0 ? (boundToolName ?? planBoundTool) : null
+      // P2 — ground-before-answer: when nothing else is bound, force ANY tool on
+      // round 0 of a live-data question so the head cannot answer from memory.
+      const groundingRequiredThisRound =
+        ownerRequirements.groundingRequired && iteration === 0 && !roundBoundToolName
+          && iterationTools.length > 0
+          && !toolRecords.some((r) => r.status === 'success')
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
@@ -1038,6 +1059,14 @@ async function* runAlternateProviderTurn(
         ]
       }
 
+      // P5 — re-inject the compact constitution reminder every N tool rounds so
+      // a long tool-heavy turn (browser/agentic) doesn't drift from the core
+      // rules while the system prompt scrolls far up the context (context rot).
+      if (AGENT_CONSTITUTION && iteration > 0 && iteration % CONSTITUTION_REINJECT_EVERY === 0) {
+        // BP6 — the style line rides the same anti-drift injection (tone drifts too).
+        messages = [...messages, { role: 'user', content: AGENT_STYLE ? `${CONSTITUTION_REMINDER}\n${STYLE_REMINDER}` : CONSTITUTION_REMINDER }]
+      }
+
       for await (const ev of adapter.streamTurn({
         apiModel: model.apiModel,
         system: systemText,
@@ -1052,7 +1081,9 @@ async function* runAlternateProviderTurn(
         toolChoice:
           roundBoundToolName && iterationTools.length > 0
             ? { name: roundBoundToolName }
-            : undefined,
+            : groundingRequiredThisRound
+              ? 'required'
+              : undefined,
       })) {
         if (ev.type === 'text_delta') {
           if (thinkingText && thinkingMs == null && thinkingStartedAt) {
@@ -1169,6 +1200,14 @@ async function* runAlternateProviderTurn(
           if (violations.length === 0 && emittedAskCards.length === 0 && confirmCardsEmitted === 0) {
             violations.push(...detectMissingCardViolation(iterationText.trim()))
             violations.push(...detectProseChoiceViolation(iterationText.trim()))
+          }
+          // P1 — fabricated-stat gate (flag-gated inside → no-op when off).
+          if (violations.length === 0) {
+            violations.push(...detectFabricatedStatViolations(iterationText.trim(), ledger))
+          }
+          // BP6 — robotic-style gate (flag-gated inside → no-op when off).
+          if (violations.length === 0) {
+            violations.push(...detectRoboticStyleViolations(iterationText.trim()))
           }
           if (violations.length > 0) {
             verifyRetries++
