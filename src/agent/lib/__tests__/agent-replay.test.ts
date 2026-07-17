@@ -76,11 +76,14 @@ describe('phase 31 runner (real decision code, pure layer)', () => {
     expect(r.metrics.continuationTextAccuracy).toBe(1)
     expect(r.metrics.repeatedEffectRiskCount).toBe(0)
 
-    // Honest remaining gap: Banglish tool-pack recall (state-router
-    // INTENT_RULES) — Phase 37's ≥95% recall gate owns it.
-    expect(r.totalPassed).toBe(143)
-    expect(r.totalFailed).toBe(7)
-    expect(r.metrics.packRecall).toBeCloseTo(0.8478, 3)
+    // Phase 37: recall measures EFFECTIVE tool availability (regex packs +
+    // deterministic routine/call/marketing coverage) — 97.8% ≥ the 95% gate.
+    // One honest residual: "amake 4 tay call dio" (reminder phrasing missing
+    // from the reminders INTENT_RULE; needs a state-router change, out of
+    // this roadmap's allowlists — flagged for the owner).
+    expect(r.totalPassed).toBe(149)
+    expect(r.totalFailed).toBe(1)
+    expect(r.metrics.packRecall).toBeCloseTo(0.9783, 3)
   })
 
   it('stamps every result with a stable trace id and behaviour version', async () => {

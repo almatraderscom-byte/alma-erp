@@ -128,6 +128,80 @@ export async function getTurnGraphHealth(days = 7): Promise<TurnGraphHealth | nu
   }
 }
 
+// ── Phase 37: cutover status — every subsystem's kill switch + ladder stage ──
+
+export type SubsystemMode = 'off' | 'shadow' | 'on' | 'preview_only'
+
+export interface CutoverStatus {
+  /** Owner-tunable ladder stage (agent_kv_settings: agent_graph_rollout_stage).
+   *  shadow → synthetic → preview_canary → prod_1 → prod_10 → prod_25 →
+   *  prod_50 → prod_100 → staged_writes. Production default: shadow. */
+  stage: string
+  /** Independent kill switches (all additionally behind AGENT_ENABLED). */
+  switches: Record<string, { env: string; value: string | null; effective: SubsystemMode }>
+  /** Automated-rollback trigger counters visible offline (7d spans). */
+  rollbackSignals: {
+    wrongFocus: number
+    fastPathDisagreements: number
+    ownerGraphDisagreements: number
+    ledgerViolations: number
+  }
+  canaryReady: boolean
+  canaryVerdict: string
+}
+
+function resolveSwitch(env: string, raw: string | undefined, previewDefault: SubsystemMode): { env: string; value: string | null; effective: SubsystemMode } {
+  const v = raw?.trim() ?? null
+  let effective: SubsystemMode
+  if (v === 'false' || v === 'off') effective = 'off'
+  else if (v === 'true' || v === 'on') effective = 'on'
+  else if (v === 'shadow') effective = 'shadow'
+  else effective = process.env.VERCEL_ENV === 'preview' ? previewDefault : (env === 'AGENT_CONTINUITY_RESOLVER' || env === 'AGENT_INTERACTION_LAYER' ? 'shadow' : 'off')
+  return { env, value: v, effective }
+}
+
+/**
+ * One place that answers "what is actually live right now". Reads env +
+ * ladder stage + the offline rollback counters. Fail-open (nulls → zeros).
+ */
+export async function getCutoverStatus(days = 7): Promise<CutoverStatus> {
+  let stage = 'shadow'
+  try {
+    const row = await db.agentKvSetting.findUnique({ where: { key: 'agent_graph_rollout_stage' } })
+    if (row?.value) stage = String(row.value)
+  } catch { /* default shadow */ }
+
+  const switches = {
+    graph: resolveSwitch('AGENT_LANGGRAPH_TURN', process.env.AGENT_LANGGRAPH_TURN, 'shadow'),
+    checkpoint: resolveSwitch('AGENT_LANGGRAPH_CHECKPOINT', process.env.AGENT_LANGGRAPH_CHECKPOINT, 'on'),
+    interrupts: resolveSwitch('AGENT_LANGGRAPH_INTERRUPT', process.env.AGENT_LANGGRAPH_INTERRUPT, 'on'),
+    routine: resolveSwitch('AGENT_LANGGRAPH_ROUTINE', process.env.AGENT_LANGGRAPH_ROUTINE, 'on'),
+    continuity_resolver: resolveSwitch('AGENT_CONTINUITY_RESOLVER', process.env.AGENT_CONTINUITY_RESOLVER, 'on'),
+    interaction_layer: resolveSwitch('AGENT_INTERACTION_LAYER', process.env.AGENT_INTERACTION_LAYER, 'on'),
+  }
+
+  const rollbackSignals = { wrongFocus: 0, fastPathDisagreements: 0, ownerGraphDisagreements: 0, ledgerViolations: 0 }
+  let canaryReady = false
+  let canaryVerdict = 'no data'
+  try {
+    const h = await getTurnGraphHealth(days)
+    if (h) {
+      rollbackSignals.fastPathDisagreements = h.shadow.scored - h.shadow.agreed
+      rollbackSignals.ownerGraphDisagreements = h.ownerGraph.scored - h.ownerGraph.agreed
+      rollbackSignals.wrongFocus = h.ownerGraph.disagreements['focus_binding'] ?? 0
+      canaryReady = h.canaryReady
+      canaryVerdict = h.canaryVerdict
+    }
+    const since = new Date(Date.now() - days * 86_400_000)
+    const violations = await db.agentToolEvent.count({
+      where: { toolName: '__interaction__', success: false, createdAt: { gte: since } },
+    })
+    rollbackSignals.ledgerViolations = violations
+  } catch { /* fail-open */ }
+
+  return { stage, switches, rollbackSignals, canaryReady, canaryVerdict }
+}
+
 export interface CheckpointStoreHealth {
   totalCheckpoints: number
   totalThreads: number

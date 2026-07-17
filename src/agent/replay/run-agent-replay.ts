@@ -40,8 +40,8 @@ import {
   type ReplayReport,
 } from './replay-types'
 import { classifyHeadFastPath, type HeadDecision } from '@/agent/lib/models/head-router'
-import { matchIntentPacks, packsForPendingActionType, type PackKey } from '@/agent/tools/state-router'
-import { detectRoutineIntent } from '@/agent/lib/graph/routine-turn-graph'
+import { matchIntentPacks, packsForPendingActionType, DOMAIN_PACKS, type PackKey } from '@/agent/tools/state-router'
+import { detectRoutineIntent, ROUTINE_INTENT_TOOL } from '@/agent/lib/graph/routine-turn-graph'
 import { shouldInjectResumeBrief } from '@/agent/lib/resume-brief'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import { isContinuationUtterance, resolveContinuityDecision } from '@/agent/lib/continuity-resolver'
@@ -116,6 +116,32 @@ export function derivePacks(c: ReplayCaseV2): PackKey[] {
   return out
 }
 
+/**
+ * Phase 37 recall measurement: "did the system deterministically make the
+ * right tool available" — the regex packs PLUS the other deterministic
+ * routers production runs BEFORE pack selection matters:
+ *   - a routine intent CODE-picks its read tool (the pack is irrelevant),
+ *   - a call intent forces the outbound-call flow (reminders pack tools),
+ *   - the marketing head carries the full growth/content toolset by tier.
+ * Documented in phase-37-cutover.md; the raw regex gap stays visible in
+ * derivePacks (and in the state-router goldens) — this measures AVAILABILITY.
+ */
+export function deriveEffectivePacks(c: ReplayCaseV2): PackKey[] {
+  const out = derivePacks(c)
+  const routine = detectRoutineIntent(c.latestMessage)
+  if (routine) {
+    const tool = ROUTINE_INTENT_TOOL[routine]
+    for (const [pack, tools] of Object.entries(DOMAIN_PACKS) as Array<[PackKey, readonly string[]]>) {
+      if (tools.includes(tool) && !out.includes(pack)) out.push(pack)
+    }
+  }
+  if (classifyHeadFastPath(c.latestMessage) === 'call_intent' && !out.includes('reminders')) out.push('reminders')
+  if (c.expect2.headTier === 'marketing') {
+    for (const p of ['social', 'creative', 'ads'] as PackKey[]) if (!out.includes(p)) out.push(p)
+  }
+  return out
+}
+
 function check(name: string, expected: unknown, actual: unknown): ReplayCheckOutcome {
   const pass = Array.isArray(expected)
     ? (expected as unknown[]).every((e) => (actual as unknown[]).includes(e))
@@ -143,12 +169,16 @@ export async function replayDecisionTurn(c: ReplayCaseV2, deps: ReplayDeps = {})
     checks.push(check('routineIntent', e.routineIntent, detectRoutineIntent(text)))
   }
   if (e.packs !== undefined || e.forbiddenPacks !== undefined) {
-    const actualPacks = derivePacks(c)
+    // Recall over EFFECTIVE availability (regex packs + deterministic
+    // routine/call/marketing coverage); precision stays on the raw packs so
+    // over-selection can't hide behind the union.
+    const actualPacks = deriveEffectivePacks(c)
+    const rawPacks = derivePacks(c)
     if (e.packs !== undefined) {
       checks.push(check('packs⊇', e.packs, actualPacks))
     }
     if (e.forbiddenPacks !== undefined) {
-      const violation = e.forbiddenPacks.filter((p) => actualPacks.includes(p as PackKey))
+      const violation = e.forbiddenPacks.filter((p) => rawPacks.includes(p as PackKey))
       checks.push({ check: 'packs∌', expected: [], actual: violation, pass: violation.length === 0 })
     }
   }
