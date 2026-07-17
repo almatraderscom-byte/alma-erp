@@ -212,17 +212,17 @@ private struct PulseHeader: View {
     let mode: PulseMode
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            GoldATile(size: 42)
+        HStack(alignment: .top, spacing: 10) {
+            GoldATile(size: 32)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(title) · LIVE")
-                    .font(.system(size: 10, weight: .heavy, design: .rounded))
-                    .kerning(1.1)
+                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    .kerning(1.0)
                     .foregroundColor(PulsePalette.gold)
                     .lineLimit(1)
                 Text(state.displayHeadline)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(PulsePalette.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -314,7 +314,7 @@ private struct PulseMetric: View {
     var body: some View {
         VStack(spacing: 1) {
             Text(banglaDigits(value))
-                .font(.system(size: 19, weight: .semibold, design: .rounded))
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
                 .foregroundColor(highlighted ? tint : PulsePalette.textPrimary)
                 .contentTransition(.numericText())
                 .animation(reduceMotion ? nil : .snappy(duration: 0.35), value: value)
@@ -327,7 +327,7 @@ private struct PulseMetric: View {
                 .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(highlighted ? tint.opacity(0.14) : PulsePalette.tile.opacity(0.7))
@@ -453,7 +453,7 @@ private struct PulseCallout: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(
             // NOT a system material: the card is always the dark brand surface,
             // but `.ultraThinMaterial` follows the SYSTEM appearance — in Light
@@ -544,26 +544,24 @@ struct PulseLockScreenView: View {
         // snapshot fields, so filter the duplicate out.
         let items = state.feedItems.filter { callout == nil || $0.title != callout!.title }
 
-        VStack(alignment: .leading, spacing: 10) {
+        // HARD BUDGET: iOS caps a lock-screen Live Activity at 160pt (Apple's
+        // renderer metrics: height=Dynamic<64,160>; owner device-hit build 76 —
+        // header + tiles + MULTIPLE rows + callout ≈ 240pt clipped off the top).
+        // Fit = header(~26) + tiles(~42) + ONE contextual row(~36) + spacing/pad.
+        VStack(alignment: .leading, spacing: 6) {
             PulseHeader(title: title, state: state, mode: mode)
 
             PulseMetricsRow(state: state, mode: mode)
 
-            if !items.isEmpty {
-                VStack(spacing: 4) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        // With a callout the focus lives THERE — highlighting a
-                        // second row would split the emphasis (spec §7).
-                        PulseFeedRow(item: item, focused: callout == nil && index == 0)
-                    }
-                }
-            }
-
+            // Exactly ONE focus row: the callout when there is one, else the
+            // first feed row — never a stack (spec §7 emphasis + 160pt cap).
             if let callout {
                 callout
+            } else if let item = items.first {
+                PulseFeedRow(item: item, focused: true)
             }
         }
-        .padding(14)
+        .padding(.horizontal, 12).padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(PulseGlassBackground(tint: PulseTheme.tint(for: mode)))
     }
@@ -638,7 +636,7 @@ struct PulseExpandedBody: View {
     }
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             Group {
                 switch pageIndex {
                 case 0: approvalPage
@@ -646,12 +644,11 @@ struct PulseExpandedBody: View {
                 default: tasksPage
                 }
             }
-            footer
+            // 160pt island budget: the approval page spends its footer's
+            // points on the buttons; dots/LIVE/ALMA show on the other pages.
+            if pageIndex != 0 { footer }
         }
-        .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.white.opacity(0.03)))
+        .padding(6)
         .overlay(
             // Demo's animated aurora edge, as a static gradient ring (island
             // snapshots can't run continuous animation).
@@ -677,9 +674,9 @@ struct PulseExpandedBody: View {
             HStack(spacing: 8) {
                 Button(intent: AlmaApproveActionIntent(actionId: id, approve: true)) {
                     Text("অনুমোদন")
-                        .font(.system(size: 12.5, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 6)
                 }
                 .buttonStyle(.plain)
                 .background(
@@ -690,9 +687,9 @@ struct PulseExpandedBody: View {
 
                 Button(intent: AlmaApproveActionIntent(actionId: id, approve: false)) {
                     Text("বাতিল")
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 6)
                 }
                 .buttonStyle(.plain)
                 .background(Color.white.opacity(0.10), in: Capsule())
@@ -731,7 +728,7 @@ struct PulseExpandedBody: View {
 
     private func stepLabel(_ text: String, hot: Bool) -> some View {
         Text(text)
-            .font(.system(size: 9.5, weight: hot ? .bold : .regular))
+            .font(.system(size: 9, weight: hot ? .bold : .regular))
             .foregroundColor(hot ? PulsePalette.textPrimary : PulsePalette.textSecondary)
     }
 
@@ -741,10 +738,11 @@ struct PulseExpandedBody: View {
                  title: "আজকের বাকি কাজ \(banglaDigits(state.pendingTaskCount ?? 0))টা",
                  sub: state.displaySubtitle,
                  trailing: banglaDigits(state.pendingTaskCount ?? 0), trailingPrivate: false)
-        deckCard(icon: "🤖",
-                 title: "ALMA পাহারায় আছে",
-                 sub: "নতুন কিছু ঘটলেই island নিজে জানাবে",
-                 trailing: nil, trailingPrivate: false)
+        // Second card blew the 160pt island budget — one honest line instead.
+        Text("🤖 ALMA পাহারায় — নতুন কিছু ঘটলেই island জানাবে")
+            .font(.system(size: 9.5))
+            .foregroundColor(PulsePalette.textSecondary)
+            .lineLimit(1)
     }
 
     // ── Shared card + footer ────────────────────────────────────────────────
@@ -770,12 +768,12 @@ struct PulseExpandedBody: View {
                     .privacySensitive(trailingPrivate)
             }
         }
-        .padding(.horizontal, 11).padding(.vertical, 8)
+        .padding(.horizontal, 10).padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.white.opacity(0.06)))
         .overlay(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(PulsePalette.gold.opacity(0.26), lineWidth: 1))
     }
 
