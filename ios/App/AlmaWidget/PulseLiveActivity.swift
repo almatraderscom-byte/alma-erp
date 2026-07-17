@@ -590,7 +590,12 @@ func pulseActionableId(_ state: PulseActivityAttributes.ContentState) -> String?
 struct PulseApprovalButtons: View {
     let actionId: String
     var body: some View {
-        HStack(spacing: 8) {
+        // Each Button carries `.frame(maxWidth:.infinity)` on the BUTTON itself (not
+        // just its label) so the two split the row EVENLY at any width — a widget
+        // Button(intent:) adds system content insets, so a label-only infinity frame
+        // let each button size to content + insets and, in the narrower real Dynamic
+        // Island, the two capsules overlapped (owner device-hit build 77, 2026-07-17).
+        HStack(spacing: 10) {
             Button(intent: AlmaApproveActionIntent(actionId: actionId, approve: true)) {
                 Text("অনুমোদন")
                     .font(.system(size: 12, weight: .bold))
@@ -598,6 +603,7 @@ struct PulseApprovalButtons: View {
                     .padding(.vertical, 6)
             }
             .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
             .background(
                 LinearGradient(colors: [PulsePalette.goldBright, PulsePalette.goldDeep],
                                startPoint: .topLeading, endPoint: .bottomTrailing),
@@ -611,6 +617,7 @@ struct PulseApprovalButtons: View {
                     .padding(.vertical, 6)
             }
             .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
             .background(Color.white.opacity(0.10), in: Capsule())
             .foregroundColor(PulsePalette.textSecondary)
         }
