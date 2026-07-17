@@ -70,7 +70,7 @@ export type ItcReceipt = {
   playedAt: string | null
   confirmedAt: string | null
 }
-export type CallEndReason = 'cancelled' | 'declined' | 'missed' | 'completed'
+export type CallEndReason = 'cancelled' | 'declined' | 'missed' | 'completed' | 'failed' | 'busy' | 'push_unreachable'
 export type ItcBroadcast = {
   id: string
   kind: 'voice' | 'urgent' | 'call'
@@ -83,6 +83,10 @@ export type ItcBroadcast = {
   callerName: string | null
   endedAt: string | null
   endedReason: CallEndReason | null
+  canonicalState: string | null
+  answeredAt: string | null
+  connectedAt: string | null
+  callDurationSec: number | null
   /** This call is an incoming ring for me (I'm the callee). Server-computed. */
   incomingForMe: boolean
   /** I placed this call (I'm the caller). Server-computed. */
@@ -90,7 +94,7 @@ export type ItcBroadcast = {
   receipts: ItcReceipt[]
   mine: { deliveredAt: string | null; playedAt: string | null; confirmedAt: string | null } | null
 }
-type ItcStaff = { id: string; name: string; phone: string | null }
+type ItcStaff = { id: string; name: string; phone: string | null; imageUrl?: string | null }
 type ItcFeed = { broadcasts: ItcBroadcast[]; staff: ItcStaff[]; liveChannel?: string; serverNow?: string }
 type CanonicalCallState = 'CREATED' | 'RINGING' | 'ANSWERED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING' | 'ENDED'
 type CanonicalCallSnapshot = { state: CanonicalCallState; version: number }
@@ -1244,6 +1248,160 @@ export function IntercomTakeover({ itc }: { itc: Intercom }) {
   )
 }
 
+/* ═══════════════ dedicated calls surface ═══════════════ */
+
+type CallOutcomeTone = 'live' | 'ok' | 'miss' | 'warn'
+function callOutcome(b: ItcBroadcast): { label: string; tone: CallOutcomeTone } {
+  if (!b.endedAt) {
+    if (b.canonicalState === 'CONNECTED') return { label: 'কল চলছে', tone: 'live' }
+    if (b.canonicalState === 'RECONNECTING') return { label: 'পুনঃসংযোগ হচ্ছে', tone: 'warn' }
+    return { label: b.outgoingByMe ? 'আউটগোয়িং কল' : 'ইনকামিং কল', tone: 'live' }
+  }
+  if (b.endedReason === 'completed') return { label: 'সম্পন্ন কল', tone: 'ok' }
+  if (b.endedReason === 'declined') return { label: 'প্রত্যাখ্যাত', tone: 'miss' }
+  if (b.endedReason === 'busy') return { label: 'ব্যস্ত ছিল', tone: 'warn' }
+  if (b.endedReason === 'failed' || b.endedReason === 'push_unreachable') return { label: 'সংযোগ ব্যর্থ', tone: 'warn' }
+  return { label: b.outgoingByMe ? 'ধরা হয়নি' : 'মিসড কল', tone: 'miss' }
+}
+
+function callOtherName(b: ItcBroadcast, itc: Intercom): string {
+  if (!b.outgoingByMe) return b.callerName ?? 'বস — মারুফ'
+  if (!b.targetStaffId) return 'বস — মারুফ'
+  return itc.feed.staff.find((staff) => staff.id === b.targetStaffId)?.name ?? 'স্টাফ'
+}
+
+function callWhen(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat('bn-BD', {
+      timeZone: 'Asia/Dhaka',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(iso))
+  } catch {
+    return ''
+  }
+}
+
+function callDurationLabel(seconds: number | null): string {
+  if (seconds == null) return ''
+  if (seconds < 60) return `${bn(seconds)} সেকেন্ড`
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  return rest ? `${bn(minutes)} মিনিট ${bn(rest)} সেকেন্ড` : `${bn(minutes)} মিনিট`
+}
+
+function permissionMessage(code: string | null): string | null {
+  if (!code) return null
+  if (code === 'microphone_permission_denied') return 'মাইক্রোফোন বন্ধ আছে। Address bar-এর lock icon → Microphone → Allow করে আবার চেষ্টা করুন।'
+  if (code === 'microphone_in_use') return 'মাইক্রোফোন অন্য app/tab ব্যবহার করছে। সেটি বন্ধ করে আবার চেষ্টা করুন।'
+  if (code === 'microphone_not_found') return 'কোনো microphone পাওয়া যায়নি। Headset/device reconnect করে আবার চেষ্টা করুন।'
+  if (code === 'call_active_in_another_tab') return 'এই কলটি অন্য tab-এ চলছে। সেই tab-এ ফিরে যান বা সেটি বন্ধ করুন।'
+  return 'কল সংযোগে সমস্যা হয়েছে। Network ও browser microphone permission দেখে আবার চেষ্টা করুন।'
+}
+
+export function IntercomCallsPanel({ itc, onClose }: { itc: Intercom; onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const recent = useMemo(
+    () => [...itc.feed.broadcasts].reverse().filter((broadcast) => broadcast.kind === 'call').slice(0, 12),
+    [itc.feed.broadcasts],
+  )
+  const diagnostic = permissionMessage(itc.callApi.error)
+
+  useEffect(() => {
+    closeRef.current?.focus()
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="itc-calls-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <section className="itc-calls-panel" role="dialog" aria-modal="true" aria-labelledby="itc-calls-title">
+        <header className="itc-calls-head">
+          <div>
+            <span className="eyebrow">অফিস যোগাযোগ</span>
+            <h2 id="itc-calls-title">কল</h2>
+            <p>ইন্টারনেট দিয়ে app-to-app voice call</p>
+          </div>
+          <button ref={closeRef} className="itc-calls-close" onClick={onClose} aria-label="কল প্যানেল বন্ধ করুন">✕</button>
+        </header>
+
+        <div className="itc-call-kinds" aria-label="যোগাযোগের ধরন">
+          <div><span aria-hidden="true">📞</span><b>App voice call</b><small>দুইজনের live private কথা</small></div>
+          <div><span aria-hidden="true">☎️</span><b>Mobile call</b><small>SIM/phone network-এর কল</small></div>
+          <div><span aria-hidden="true">🎙️</span><b>Recorded PTT</b><small>চেপে ধরে voice message</small></div>
+          <div><span aria-hidden="true">📢</span><b>Live walkie-talkie</b><small>Office group-এ one-way live audio</small></div>
+        </div>
+
+        <div className="itc-calls-scroll">
+          <section aria-labelledby="itc-call-target-title">
+            <h3 id="itc-call-target-title">কাকে কল করবেন?</h3>
+            {itc.self === 'owner' ? (
+              <div className="itc-call-targets">
+                {itc.feed.staff.length === 0 && <p className="itc-calls-empty">কোনো সক্রিয় staff পাওয়া যায়নি।</p>}
+                {itc.feed.staff.map((staff) => (
+                  <article className="itc-call-target" key={staff.id}>
+                    <span className="avatar" style={staff.imageUrl ? { backgroundImage: `url(${staff.imageUrl})` } : { backgroundImage: avGrad(staff.id) }}>
+                      {staff.imageUrl ? '' : avInitial(staff.name)}
+                    </span>
+                    <span className="identity"><b>{staff.name}</b><small>Staff · app voice available</small></span>
+                    <span className="actions">
+                      {staff.phone && <a href={`tel:${staff.phone}`} aria-label={`${staff.name}-কে mobile call করুন`}>☎️<small>Mobile</small></a>}
+                      <button
+                        onClick={() => void itc.startCall(staff.id, staff.name)}
+                        disabled={itc.callStarting || !!itc.activeCallId}
+                        aria-label={`${staff.name}-কে app voice call করুন`}
+                      >📞<small>App call</small></button>
+                    </span>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <article className="itc-call-target owner">
+                <span className="avatar owner">M</span>
+                <span className="identity"><b>বস — মারুফ</b><small>Owner · app voice available</small></span>
+                <span className="actions">
+                  <button
+                    onClick={() => void itc.callOwner()}
+                    disabled={itc.callStarting || !!itc.activeCallId}
+                    aria-label="বসকে app voice call করুন"
+                  >📞<small>App call</small></button>
+                </span>
+              </article>
+            )}
+          </section>
+
+          {diagnostic && <div className="itc-call-diagnostic" role="alert">⚠️ {diagnostic}</div>}
+
+          <section aria-labelledby="itc-recent-calls-title">
+            <h3 id="itc-recent-calls-title">সাম্প্রতিক কল</h3>
+            {recent.length === 0 ? <p className="itc-calls-empty">এখনো কোনো call history নেই।</p> : (
+              <div className="itc-recent-calls">
+                {recent.map((call) => {
+                  const outcome = callOutcome(call)
+                  const other = callOtherName(call, itc)
+                  const duration = callDurationLabel(call.callDurationSec)
+                  return (
+                    <article className="itc-recent-call" key={call.id}>
+                      <span className={`direction ${outcome.tone}`} aria-hidden="true">{call.outgoingByMe ? '↗' : '↘'}</span>
+                      <span className="details"><b>{other}</b><small>{callWhen(call.createdAt)}{duration ? ` · ${duration}` : ''}</small></span>
+                      <span className={`outcome ${outcome.tone}`}>{outcome.label}</span>
+                    </article>
+                  )
+                })}
+              </div>
+            )}
+          </section>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 /* ═══════════════ live call overlay (Agora) ═══════════════ */
 
 const fmtClock = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
@@ -1380,21 +1538,22 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
   // office page stays fully interactive behind it (talk while you work).
   if (minimized) {
     return (
-      <button className={`itc-call-mini${connected ? ' live' : ''}`} onClick={() => setMinimized(false)} aria-label="কল খুলুন">
-        <span className="itc-mini-dot" />
-        <span className="itc-mini-txt">{connected ? fmtClock(callApi.callSeconds) : failed ? '⚠️' : 'রিং…'} · {callPeer || 'কল'}</span>
+      <div className={`itc-call-mini${connected ? ' live' : ''}`} role="status" aria-label="চলমান কল">
+        <button className="itc-mini-open" onClick={() => setMinimized(false)} aria-label="কল খুলুন">
+          <span className="itc-mini-dot" aria-hidden="true" />
+          <span className="itc-mini-txt">{connected ? fmtClock(callApi.callSeconds) : failed ? '⚠️' : 'রিং…'} · {callPeer || 'কল'}</span>
+        </button>
         {connected && (
-          <span
+          <button
             className={`itc-mini-mute${callApi.muted ? ' on' : ''}`}
-            role="button"
             aria-label={callApi.muted ? 'আনমিউট' : 'মিউট'}
-            onClick={(e) => { e.stopPropagation(); void callApi.toggleMute() }}
+            onClick={() => void callApi.toggleMute()}
           >
             {callApi.muted ? '🔇' : '🎤'}
-          </span>
+          </button>
         )}
-        <span className="itc-mini-end" role="button" aria-label="কল শেষ" onClick={(e) => { e.stopPropagation(); endCall() }}>✕</span>
-      </button>
+        <button className="itc-mini-end" aria-label="কল শেষ করুন" onClick={() => void endCall()}>✕</button>
+      </div>
     )
   }
 

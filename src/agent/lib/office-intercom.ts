@@ -56,6 +56,10 @@ export type IntercomBroadcast = {
    *  stops ringing / closes the call the moment this is non-null. */
   endedAt: string | null
   endedReason: CallEndReason | null
+  canonicalState: string | null
+  answeredAt: string | null
+  connectedAt: string | null
+  callDurationSec: number | null
   /** True when this call row is an INCOMING ring for the polling viewer (they are
    *  the callee and did not place it). The client rings on this — works for both
    *  owner→staff and staff→owner without the client knowing its own user id. */
@@ -531,6 +535,14 @@ export async function getIntercomFeed(
 
   const staff = await activeStaff(businessId)
   const nameOf = new Map(staff.map((s) => [s.id, s.name]))
+  const callIds = rows.filter((row) => row.kind === 'call').map((row) => row.id)
+  const canonicalCalls = isCanonicalOfficeCallEnabled() && callIds.length > 0
+    ? await prisma.officeCallSession.findMany({
+        where: { id: { in: callIds }, businessId },
+        select: { id: true, state: true, answeredAt: true, connectedAt: true, endedAt: true },
+      })
+    : []
+  const canonicalOf = new Map(canonicalCalls.map((call) => [call.id, call]))
 
   const broadcasts: IntercomBroadcast[] = rows.reverse().map((r) => {
     const receipts: IntercomReceipt[] =
@@ -545,6 +557,11 @@ export async function getIntercomFeed(
         : []
     const my = viewer.role === 'staff' ? r.receipts.find((x) => x.staffId === viewer.staffId) : undefined
     const isCall = (r.kind as IntercomKind) === 'call'
+    const canonical = canonicalOf.get(r.id)
+    const effectiveEndedAt = canonical?.endedAt ?? r.endedAt
+    const durationSec = canonical?.connectedAt && effectiveEndedAt
+      ? Math.max(0, Math.round((effectiveEndedAt.getTime() - canonical.connectedAt.getTime()) / 1000))
+      : null
     return {
       id: r.id,
       kind: (r.kind as IntercomKind) ?? 'voice',
@@ -554,8 +571,12 @@ export async function getIntercomFeed(
       transcript: r.transcript,
       targetStaffId: r.targetStaffId,
       callerName: r.callerName ?? null,
-      endedAt: r.endedAt?.toISOString() ?? null,
+      endedAt: effectiveEndedAt?.toISOString() ?? null,
       endedReason: (r.endedReason as CallEndReason | null) ?? null,
+      canonicalState: canonical?.state ?? null,
+      answeredAt: canonical?.answeredAt?.toISOString() ?? null,
+      connectedAt: canonical?.connectedAt?.toISOString() ?? null,
+      callDurationSec: durationSec,
       // I'm the callee (ring me) — a call aimed at my user id that I didn't place.
       incomingForMe: isCall && r.targetUserId === viewer.userId && r.senderUserId !== viewer.userId,
       // I placed this call (show my outgoing/waiting UI + call history on my side).

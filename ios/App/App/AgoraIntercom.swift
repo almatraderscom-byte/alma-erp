@@ -53,12 +53,27 @@ struct IntercomStaff: Decodable, Identifiable, Equatable {
 struct IntercomFeedLite: Decodable {
     let liveChannel: String
     let staff: [IntercomStaff]
+    let recentCalls: [IntercomRecentCall]
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         liveChannel = (try? c.decodeIfPresent(String.self, forKey: .liveChannel)) ?? ""
         staff = (try? c.decodeIfPresent([IntercomStaff].self, forKey: .staff)) ?? []
+        let broadcasts = (try? c.decodeIfPresent([IntercomRecentCall].self, forKey: .broadcasts)) ?? []
+        recentCalls = Array(broadcasts.filter { $0.kind == "call" }.suffix(12).reversed())
     }
-    enum CodingKeys: String, CodingKey { case liveChannel, staff }
+    enum CodingKeys: String, CodingKey { case liveChannel, staff, broadcasts }
+}
+
+struct IntercomRecentCall: Decodable, Identifiable {
+    let id: String
+    let kind: String
+    let callerName: String?
+    let outgoingByMe: Bool
+    let createdAt: String
+    let endedAt: String?
+    let endedReason: String?
+    let canonicalState: String?
+    let callDurationSec: Int?
 }
 
 private struct CanonicalCallEnvelope: Decodable { let call: CanonicalCallSnapshot }
@@ -107,6 +122,7 @@ final class OfficeCallCoordinator: NSObject {
     var statusText = ""
     var error: String? = nil
     var roster: [IntercomStaff] = []
+    var recentCalls: [IntercomRecentCall] = []
     var recording = false             // PTT voice-note is capturing right now
     var callPeer = "স্টাফ"            // who we're talking to (shown on the call screen)
     var activeCallId: String?
@@ -165,6 +181,7 @@ final class OfficeCallCoordinator: NSObject {
         do {
             let feed: IntercomFeedLite = try await AlmaAPI.shared.get("/api/assistant/office/intercom")
             roster = feed.staff
+            recentCalls = feed.recentCalls
         } catch {
             // A missing feed shouldn't block joining — the channel is deterministic below.
         }

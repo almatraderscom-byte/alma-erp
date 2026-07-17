@@ -55,6 +55,16 @@ import java.io.File
 import java.util.UUID
 
 class IntercomStaff(val id: String, val name: String, val phone: String?)
+data class IntercomRecentCall(
+    val id: String,
+    val callerName: String?,
+    val outgoingByMe: Boolean,
+    val createdAt: String,
+    val endedAt: String?,
+    val endedReason: String?,
+    val canonicalState: String?,
+    val callDurationSec: Int?,
+)
 
 object AgoraIntercom {
 
@@ -71,6 +81,7 @@ object AgoraIntercom {
     var statusText by mutableStateOf(""); private set
     var error by mutableStateOf<String?>(null); private set
     var roster by mutableStateOf<List<IntercomStaff>>(emptyList()); private set
+    var recentCalls by mutableStateOf<List<IntercomRecentCall>>(emptyList()); private set
     var callPeer by mutableStateOf("স্টাফ"); private set
     var canonicalState by mutableStateOf(""); private set
     var reconnectSeconds by mutableIntStateOf(0); private set
@@ -132,7 +143,20 @@ object AgoraIntercom {
             val staff = root.optJSONArray("staff")?.mapObjects {
                 IntercomStaff(it.str("id") ?: return@mapObjects null, it.str("name") ?: "স্টাফ", it.str("phone"))
             } ?: emptyList()
-            post { roster = staff }
+            val calls = root.optJSONArray("broadcasts")?.mapObjects {
+                if (it.str("kind") != "call") return@mapObjects null
+                IntercomRecentCall(
+                    id = it.str("id") ?: return@mapObjects null,
+                    callerName = it.str("callerName"),
+                    outgoingByMe = it.optBoolean("outgoingByMe", false),
+                    createdAt = it.str("createdAt") ?: "",
+                    endedAt = it.str("endedAt"),
+                    endedReason = it.str("endedReason"),
+                    canonicalState = it.str("canonicalState"),
+                    callDurationSec = if (it.has("callDurationSec") && !it.isNull("callDurationSec")) it.optInt("callDurationSec") else null,
+                )
+            }?.takeLast(12)?.reversed() ?: emptyList()
+            post { roster = staff; recentCalls = calls }
         } catch (_: Exception) { }
     }
 

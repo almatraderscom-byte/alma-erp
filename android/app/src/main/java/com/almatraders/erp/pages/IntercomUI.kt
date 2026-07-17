@@ -18,9 +18,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -41,6 +44,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -58,7 +65,9 @@ private val icGreen = Color(0xFF22A77A)
 @Composable
 fun IntercomLaunchCard(dark: Boolean, onOpen: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().almaGlassIntercom(dark).plainClick(onOpen).padding(14.dp),
+        Modifier.fillMaxWidth().almaGlassIntercom(dark)
+            .semantics { role = Role.Button; contentDescription = "অফিস কল খুলুন" }
+            .plainClick(onOpen).padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -66,8 +75,8 @@ fun IntercomLaunchCard(dark: Boolean, onOpen: () -> Unit) {
             Text("🎙️", fontSize = 18.sp)
         }
         Column(Modifier.weight(1f)) {
-            Text("লাইভ ইন্টারকম", color = AlmaTheme.ink(dark), fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            Text("ওয়াকি-টকি · সরাসরি কথা / ভয়েস নোট", color = AlmaTheme.inkSecondary(dark), fontSize = 11.sp)
+            Text("অফিস কল", color = AlmaTheme.ink(dark), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("App call · mobile · PTT · live walkie-talkie", color = AlmaTheme.inkSecondary(dark), fontSize = 11.sp)
         }
         Text("▶", color = icViolet, fontSize = 16.sp)
     }
@@ -117,14 +126,15 @@ fun IntercomSheet(isOwner: Boolean, dark: Boolean, onDismiss: () -> Unit) {
         containerColor = AlmaTheme.rootBg(dark),
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp),
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(
-                if (inCall) ic.callPeer else "লাইভ ইন্টারকম",
+                if (inCall) ic.callPeer else "অফিস কল",
                 color = AlmaTheme.ink(dark), fontSize = 19.sp, fontWeight = FontWeight.Bold,
             )
+            CommunicationKinds(dark)
             if (ic.statusText.isNotEmpty()) {
                 Text(ic.statusText, color = AlmaTheme.inkSecondary(dark), fontSize = 13.sp, textAlign = TextAlign.Center)
             }
@@ -140,7 +150,9 @@ fun IntercomSheet(isOwner: Boolean, dark: Boolean, onDismiss: () -> Unit) {
                     if (it == "full_screen_intent_denied_heads_up_fallback") "ফুল-স্ক্রিন কল বন্ধ — হেডস-আপ নোটিফিকেশন ব্যবহার হবে"
                     else "কল নোটিফিকেশন/ব্যাকগ্রাউন্ড অনুমতি যাচাই করুন",
                     color = Color(0xFFF59E0B), fontSize = 12.sp, textAlign = TextAlign.Center,
-                    modifier = Modifier.plainClick {
+                    modifier = Modifier
+                        .semantics { role = Role.Button; contentDescription = "কল permission settings খুলুন" }
+                        .defaultMinSize(minHeight = 48.dp).plainClick {
                         val settings = if (it == "full_screen_intent_denied_heads_up_fallback") {
                             CallNotifications.fullScreenSettingsIntent(context)
                         } else CallNotifications.notificationSettingsIntent(context)
@@ -201,7 +213,87 @@ fun IntercomSheet(isOwner: Boolean, dark: Boolean, onDismiss: () -> Unit) {
                     }
                 }
             }
+            RecentCalls(ic.recentCalls, dark)
         }
+    }
+}
+
+@Composable
+private fun CommunicationKinds(dark: Boolean) {
+    Column(
+        Modifier.fillMaxWidth().almaGlassIntercom(dark).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("যোগাযোগের ধরন", color = AlmaTheme.ink(dark), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Kind("📞", "App voice", "private live", dark, Modifier.weight(1f))
+            Kind("☎️", "Mobile", "SIM network", dark, Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Kind("🎙️", "Recorded PTT", "voice message", dark, Modifier.weight(1f))
+            Kind("📢", "Live walkie", "office live", dark, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun Kind(icon: String, title: String, detail: String, dark: Boolean, modifier: Modifier) {
+    Row(
+        modifier.background(AlmaTheme.ink(dark).copy(alpha = 0.045f), RoundedCornerShape(12.dp)).padding(9.dp)
+            .semantics(mergeDescendants = true) { contentDescription = "$title, $detail" },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(icon, fontSize = 17.sp)
+        Column { Text(title, color = AlmaTheme.ink(dark), fontSize = 11.sp, fontWeight = FontWeight.Bold); Text(detail, color = AlmaTheme.inkSecondary(dark), fontSize = 9.sp) }
+    }
+}
+
+@Composable
+private fun RecentCalls(calls: List<IntercomRecentCall>, dark: Boolean) {
+    Column(
+        Modifier.fillMaxWidth().almaGlassIntercom(dark).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("সাম্প্রতিক কল", color = AlmaTheme.ink(dark), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        if (calls.isEmpty()) Text("এখনো কোনো call history নেই।", color = AlmaTheme.inkSecondary(dark), fontSize = 11.sp)
+        calls.take(8).forEach { call ->
+            val outcome = callOutcome(call)
+            val tone = when (outcome) {
+                "সম্পন্ন", "কল চলছে" -> icGreen
+                "ব্যস্ত", "ব্যর্থ", "পুনঃসংযোগ" -> Color(0xFFF59E0B)
+                else -> icRed
+            }
+            val duration = call.callDurationSec?.let { if (it < 60) "$it সেকেন্ড" else "${it / 60} মিনিট ${it % 60} সেকেন্ড" }
+            Row(
+                Modifier.fillMaxWidth().defaultMinSize(minHeight = 44.dp)
+                    .semantics(mergeDescendants = true) { contentDescription = "${if (call.outgoingByMe) "আউটগোয়িং" else "ইনকামিং"} কল, $outcome${duration?.let { ", $it" } ?: ""}" },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                Text(if (call.outgoingByMe) "↗" else "↘", color = tone, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Column(Modifier.weight(1f)) {
+                    Text(call.callerName ?: if (call.outgoingByMe) "স্টাফ" else "বস — মারুফ", color = AlmaTheme.ink(dark), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(listOfNotNull(if (call.outgoingByMe) "আউটগোয়িং" else "ইনকামিং", duration).joinToString(" · "), color = AlmaTheme.inkSecondary(dark), fontSize = 9.sp)
+                }
+                Text(outcome, color = tone, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+private fun callOutcome(call: IntercomRecentCall): String {
+    if (call.endedAt == null) return when (call.canonicalState) {
+        "CONNECTED" -> "কল চলছে"
+        "RECONNECTING" -> "পুনঃসংযোগ"
+        else -> if (call.outgoingByMe) "আউটগোয়িং" else "ইনকামিং"
+    }
+    return when (call.endedReason) {
+        "completed" -> "সম্পন্ন"
+        "declined" -> "প্রত্যাখ্যাত"
+        "busy" -> "ব্যস্ত"
+        "failed", "push_unreachable" -> "ব্যর্থ"
+        else -> if (call.outgoingByMe) "ধরা হয়নি" else "মিসড"
     }
 }
 
@@ -214,7 +306,8 @@ private fun LiveOrb(active: Boolean, speaking: Boolean, dark: Boolean) {
                 if (!active) AlmaTheme.inkSecondary(dark).copy(alpha = 0.12f)
                 else if (speaking) icGreen.copy(alpha = 0.85f) else icViolet.copy(alpha = 0.7f),
                 CircleShape,
-            ),
+            )
+            .semantics { contentDescription = if (speaking) "কথা হচ্ছে" else if (active) "লাইভ অডিও সক্রিয়" else "অডিও বন্ধ" },
         contentAlignment = Alignment.Center,
     ) {
         Text(if (speaking) "🔊" else if (active) "🎙️" else "💤", fontSize = 34.sp)
@@ -226,6 +319,7 @@ private fun PttButton(recording: Boolean, dark: Boolean, onDown: () -> Unit, onU
     Box(
         Modifier.fillMaxWidth().height(64.dp)
             .background(if (recording) icRed else icViolet, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+            .semantics { role = Role.Button; contentDescription = if (recording) "রেকর্ডিং চলছে, ছেড়ে দিলে পাঠাবে" else "চেপে ধরে voice message রেকর্ড করুন" }
             .pointerInput(Unit) {
                 awaitEachGesture {
                     awaitFirstDown()
@@ -245,6 +339,8 @@ private fun BigBtn(label: String, tint: Color, filled: Boolean, modifier: Modifi
     Text(
         label, color = if (filled) Color.White else tint, fontSize = 14.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
         modifier = modifier
+            .defaultMinSize(minHeight = 48.dp)
+            .semantics { role = Role.Button; contentDescription = label }
             .background(if (filled) tint else tint.copy(alpha = 0.14f), RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
             .plainClick(onClick)
             .padding(vertical = 14.dp),

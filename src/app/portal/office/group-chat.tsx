@@ -6,6 +6,7 @@ import {
   IntercomDock,
   IntercomBubble,
   IntercomLiveBar,
+  IntercomCallsPanel,
   useIsNativeCallShell,
   type Intercom,
   type ItcBroadcast,
@@ -18,6 +19,7 @@ const bn = (n: number | string) => String(n).replace(/\d/g, (d) => BN[Number(d)]
 
 export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
   const [open, setOpen] = useState(false)
+  const [callsOpen, setCallsOpen] = useState(false)
   const [feed, setFeed] = useState<ChatFeed>({ businessId: '', messages: [] })
   // Live intercom (walkie-talkie) — polls its own fast feed; broadcasts merge
   // into the message list below and the owner gets the PTT dock.
@@ -225,14 +227,22 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
 
   return (
     <>
-      {!open && (
-        <div className="ohub-chathead" onClick={() => setOpen(true)} role="button" aria-label="অফিস গ্রুপ চ্যাট">
+      {!nativeCallShell && !callsOpen && (
+        <button className="ohub-callshead" onClick={() => { setOpen(false); setCallsOpen(true) }} aria-label="অফিস কল খুলুন">
+          <span aria-hidden="true">📞</span>
+          <span>কল</span>
+        </button>
+      )}
+      {!open && !callsOpen && (
+        <button className="ohub-chathead" onClick={() => setOpen(true)} aria-label="অফিস গ্রুপ চ্যাট">
           <span className="ring"></span>
           <span className="em">🤖</span>
           <span>অফিস গ্রুপ চ্যাট</span>
           {unread > 0 && <span className="badge2">{bn(unread)}</span>}
-        </div>
+        </button>
       )}
+
+      {callsOpen && <IntercomCallsPanel itc={itc} onClose={() => setCallsOpen(false)} />}
 
       {open && (
         <div className="ohub-chatpanel">
@@ -242,7 +252,7 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
               <b>অফিস গ্রুপ</b>
               <span>● Agent, আপনি, টিম</span>
             </div>
-            <button className="x" onClick={() => setOpen(false)}>
+            <button className="x" onClick={() => setOpen(false)} aria-label="অফিস গ্রুপ চ্যাট বন্ধ করুন">
               ×
             </button>
           </div>
