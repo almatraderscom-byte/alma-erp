@@ -83,6 +83,7 @@ import { SKILL_PACK_TOOLS } from './skill-pack-tools'
 import { SEO_AUDIT_TOOLS } from './seo-audit-tools'
 import { ARTIFACT_TOOLS } from './artifact-tools'
 import { META_ADS_TOOLS } from './meta-ads-tools'
+import { META_ADS_WRITE_TOOLS } from './meta-ads-write-tools'
 
 export interface ToolResult {
   success: boolean
@@ -578,6 +579,9 @@ export const TOOLS: AgentTool[] = [
   // Meta Ads MCP bridged reads (Phase MA1) — advertised via `growth`, so they
   // must be executable here (same sees-it-but-Unknown-tool footgun as above).
   ...META_ADS_TOOLS,
+  // Meta Ads MCP write tools (Phase MA3) — staged behind approval cards; inert
+  // at read tier (writeGate). Executable here so a call resolves post-approval.
+  ...META_ADS_WRITE_TOOLS,
   ...COMPETITOR_TOOLS,
   ...ADVISOR_TOOLS,
   ...OWNER_TODO_TOOLS,

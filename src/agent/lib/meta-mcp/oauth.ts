@@ -38,8 +38,28 @@ export const KV_CLIENT = 'meta_mcp_oauth:client'
 export const KV_PKCE_PREFIX = 'meta_mcp_oauth:pkce:'
 export const KV_SCOPE_TIER = 'meta_mcp_scope_tier'
 export const KV_ENABLED = 'meta_mcp_enabled'
+export const KV_MAX_DAILY_BUDGET = 'meta_mcp_max_daily_budget'
 
 export type MetaMcpScopeTier = 'read' | 'write' | 'financial'
+
+/**
+ * MA3 budget guardrail — the largest daily budget the agent may draft/edit via
+ * MCP without the owner raising the cap first. In the ad account's OWN currency
+ * (Meta's budget fields are in account currency). Default deliberately modest;
+ * owner-tunable in agent_kv_settings, no redeploy. A create/update above this is
+ * refused with a Bangla message telling the owner how to raise it.
+ */
+export const META_MCP_DEFAULT_MAX_DAILY_BUDGET = 20
+
+export async function getMetaMcpMaxDailyBudget(): Promise<number> {
+  try {
+    const row = await prisma.agentKvSetting.findUnique({ where: { key: KV_MAX_DAILY_BUDGET } })
+    const n = Number(row?.value)
+    return Number.isFinite(n) && n > 0 ? n : META_MCP_DEFAULT_MAX_DAILY_BUDGET
+  } catch {
+    return META_MCP_DEFAULT_MAX_DAILY_BUDGET
+  }
+}
 
 /**
  * Tier → Meta OAuth scopes. Authored from the live endpoint's advertised set:
@@ -118,6 +138,21 @@ export async function getMetaMcpScopeTier(): Promise<MetaMcpScopeTier> {
   } catch {
     return 'read'
   }
+}
+
+/**
+ * Set the scope tier the NEXT Connect will request (MA3 tier upgrade). The auth
+ * route calls this from its ?tier= param before building the consent URL, so the
+ * owner re-connects at read/write/financial. Invalid values fall back to read.
+ */
+export async function setMetaMcpScopeTier(tier: string): Promise<MetaMcpScopeTier> {
+  const t: MetaMcpScopeTier = tier === 'write' || tier === 'financial' ? tier : 'read'
+  await prisma.agentKvSetting.upsert({
+    where: { key: KV_SCOPE_TIER },
+    create: { key: KV_SCOPE_TIER, value: t },
+    update: { value: t },
+  })
+  return t
 }
 
 // ── kv helpers ───────────────────────────────────────────────────────────────
