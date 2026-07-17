@@ -360,8 +360,9 @@ not a production/release PASS.
 | 1 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-1.md` |
 | 2 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-2.md` |
 | 3 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-3.md` |
-| 4 | IN PROGRESS | Android process coordinator/Core-Telecom implementation and hard gate |
-| 5–7 | QUEUED; auto-continue after prior engineering PASS | — |
+| 4 | ENGINEERING PASS / DEVICE DEFERRED | `docs/office-calling-phase-evidence/phase-4.md` |
+| 5 | IN PROGRESS | Web global call coordinator/shared protocol |
+| 6–7 | QUEUED; auto-continue after prior engineering PASS | — |
 | 8 | PHYSICAL DEVICES + RELEASE GATE | Must execute every deferred row before release |
 
 ### Phase 0 — Freeze contracts, add observability, remove ambiguity
