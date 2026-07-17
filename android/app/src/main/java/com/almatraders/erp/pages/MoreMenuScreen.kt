@@ -23,6 +23,7 @@
 
 package com.almatraders.erp.pages
 
+import com.almatraders.erp.OfficeCallPushRegistration
 import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
@@ -522,9 +523,18 @@ private class MoreState {
 
     /** NextAuth sign-out: csrf → form-POST /api/auth/signout → purge session cookies
      *  from the app-global jar (URLSession/WK dance not needed — one jar on Android). */
-    suspend fun signOut() {
+    suspend fun signOut(context: Context) {
         signingOut = true
         try {
+            // Unbind this physical installation while the current account cookie
+            // still exists, so a shared phone cannot ring for the signed-out user.
+            runCatching {
+                AlmaApi.send(
+                    "DELETE",
+                    "/api/assistant/internal/call-push/register",
+                    JSONObject().put("installationId", OfficeCallPushRegistration.installationId(context)),
+                )
+            }
             withContext(Dispatchers.IO) {
                 try {
                     val client = OkHttpClient.Builder()
@@ -1566,7 +1576,7 @@ private fun MoreProfileSheet(st: MoreState, dark: Boolean, onSignedOut: () -> Un
                 TextButton(onClick = {
                     confirmSignOut = false
                     scope.launch {
-                        st.signOut()
+                        st.signOut(context)
                         onSignedOut()
                     }
                 }) { Text("সাইন আউট", color = AlmaTheme.coral, fontWeight = FontWeight.SemiBold) }

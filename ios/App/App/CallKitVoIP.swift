@@ -117,6 +117,17 @@ final class CallKitVoIP: NSObject {
         }
     }
 
+    /// Remove this installation while the current account cookie is still
+    /// valid. Sign-out calls this before NextAuth clears the session.
+    func unregisterCurrentInstallation() async {
+        struct Body: Encodable { let installationId: String }
+        struct Resp: Decodable { let ok: Bool? }
+        let _: Resp? = try? await AlmaAPI.shared.send(
+            "DELETE", "/api/assistant/internal/call-push/register",
+            body: Body(installationId: installationId))
+        registered = false
+    }
+
     // MARK: - Report an incoming call to CallKit
 
     /// Turn a VoIP payload into a native ringing call. MUST be called synchronously from the
@@ -163,13 +174,7 @@ extension CallKitVoIP: PKPushRegistryDelegate {
     func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
         registered = false
         pendingToken = nil
-        struct Body: Encodable { let installationId: String }
-        struct Resp: Decodable { let ok: Bool? }
-        Task {
-            let _: Resp? = try? await AlmaAPI.shared.send(
-                "DELETE", "/api/assistant/internal/call-push/register",
-                body: Body(installationId: installationId))
-        }
+        Task { await unregisterCurrentInstallation() }
     }
 
     func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload,
