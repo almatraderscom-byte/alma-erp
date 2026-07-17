@@ -37,11 +37,28 @@
 
 Screenshot: [phase0-ios-launch.png](phase0-ios-launch.png)
 
+## Vercel preview verification
+
+- Verification commit: `865b89e4ca82358acacf0738b65c823bd3e8fd1e`
+- Deployment: `dpl_BMcRDv45oKMhVmAAYC3oRvnMjzzK`
+- Environment: Vercel Preview (not production)
+- Preview alias: `alma-erp-git-agent-office-calling-whatsapp-maruf-s-projects2.vercel.app`
+- Final state: `READY`; GitHub Vercel status `success`
+- The repository-standard ignore script detected web-relevant changes and allowed the build.
+- Build logs confirm Prisma Client generation, successful Next.js compilation, 373-page static
+  generation, and Sentry release `865b89e4ca82358acacf0738b65c823bd3e8fd1e`.
+- Browser verification passed Vercel SSO protection and loaded the Alma ERP sign-in page from the
+  preview alias.
+- With Vercel protection bypassed, unauthenticated requests to both
+  `/api/assistant/office/calls/diagnostics` and `/api/assistant/office/calls/events` returned
+  `401 {"error":"Unauthorized"}`. This proves the deployed application auth boundary rejects the
+  requests; the rejected POST did not write an event.
+
 ## Migration status
 
-The migration is generated and schema/client compilation passes. It was **not applied** because
-this clean worktree has no `DATABASE_URL`, and no preview/production deployment is authorized.
-`migrate-on-deploy` explicitly reported `not on Vercel — skipping migrate deploy`.
+Vercel build logs show `prisma migrate deploy` connected to the configured Supabase PostgreSQL
+database, applied `20260919120000_office_call_events`, and reported `All migrations have been
+successfully applied` followed by `[migrate-on-deploy] migrations up to date`.
 
 ## Secret review
 
@@ -56,8 +73,10 @@ this clean worktree has no `DATABASE_URL`, and no preview/production deployment 
 - No physical two-iPhone/two-Android/web call was placed against this branch.
 - Therefore no real call can yet be correlated create → push → ring → answer → Agora join →
   connected → end, nor can an intentional provider/device failure be correlated.
-- The new migration/API is not on a deployed backend, by explicit no-Vercel instruction.
-- Consequently a deployed backend SHA cannot be matched to tested physical clients.
+- The migration and APIs are now deployed on the successful preview, but owner-authenticated
+  diagnostics and participant-authorized event ingestion were not exercised because this
+  verification session had no Alma ERP owner login on the preview domain.
+- The deployed backend SHA still cannot be matched to tested physical clients.
 - A visual call-specific build badge still needs validation in the physical-device diagnostics UX;
   the API and every client event already carry the build identifiers.
 
@@ -65,7 +84,7 @@ this clean worktree has no `DATABASE_URL`, and no preview/production deployment 
 
 **PHASE 0: FAIL (hard evidence incomplete) — 2026-07-17 Asia/Dhaka.**
 
-Compilation and local launch are green, but the roadmap explicitly forbids treating them as a
-PASS. Phase 1 must not start until the migration/backend can run in an authorized environment
-and one success plus one intentional failure are correlated on physical devices with matching
-build SHA. This is an evidence gate, not a code-build failure.
+Compilation, local launch, Vercel preview deployment, and database migration are green, but the
+roadmap explicitly forbids treating them as a PASS. Phase 1 must not start until one success plus
+one intentional failure are correlated on physical devices with matching build SHA. This is an
+evidence gate, not a code-build or deployment failure.
