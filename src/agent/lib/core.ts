@@ -11,12 +11,7 @@ import { detectInstructionConflicts } from '@/agent/lib/intelligence/counter-pro
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { detectOutboundCallIntent, buildOutboundCallIntakeBlock } from '@/agent/lib/outbound-call-intent'
-
-// Reminder-to-Boss phrasings that pair with a time expression (Bangla + Banglish +
-// voice-transcript variants). Deliberately narrow — the time hint only helps when
-// the message is clearly a reminder request, never general chat about numbers.
-const REMINDER_TIME_HINT_RE =
-  /remind|রিমাইন্ডার|reminder|মনে করিয়ে|মনে করায়|অ্যালার্ম|এলার্ম|alarm|জাগিয়ে|jagiye|(?:call|কল|ফোন)\s*(?:দিও|দিয়ো|dio|diyo)/i
+import { buildReminderTimeHintBlock } from '@/agent/lib/bangla-time'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
@@ -662,19 +657,10 @@ export async function* runAgentTurn(
   // করিয়ে দিও"): resolve the time DETERMINISTICALLY so the head never misreads
   // "4 tay" as "4 calls" (live-hit 2026-07-17). Only fires when it is clearly a
   // reminder (not an outbound relay call) AND a confident time expression parsed.
-  if (!intakeContextBlock && lastUserText && REMINDER_TIME_HINT_RE.test(lastUserText)) {
+  if (!intakeContextBlock && lastUserText) {
     try {
-      const { resolveBanglaTimeExpression } = await import('@/agent/lib/bangla-time')
-      const resolved = resolveBanglaTimeExpression(lastUserText)
-      if (resolved) {
-        intakeContextBlock =
-          '[REMINDER TIME — resolved deterministically]\n' +
-          `Boss's phrase "${resolved.matched}" = ${resolved.iso} (Asia/Dhaka, ${resolved.label}). ` +
-          'This is a reminder TO BOSS, not an outbound relay call to someone else. ' +
-          `Call set_reminder NOW with dueAt="${resolved.iso}". ` +
-          'If Boss asked to be CALLED (কল দিও/ফোন দিও/call dio) use tier 3 (phone-call reminder, confirm card); ' +
-          'otherwise tier 1. Do NOT use outbound_phone_call or place_agent_call for this.'
-      }
+      const hint = buildReminderTimeHintBlock(lastUserText)
+      if (hint) intakeContextBlock = hint
     } catch (err) {
       console.warn('[core] reminder time hint failed:', err instanceof Error ? err.message : err)
     }

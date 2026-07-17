@@ -236,3 +236,31 @@ export function resolveBanglaTimeExpression(textRaw: string, now = new Date()): 
   if (!due || due.getTime() <= now.getTime()) return null
   return { iso: toIsoDhaka(due), label: labelFor(due, now, part), matched }
 }
+
+/**
+ * Reminder-to-Boss phrasings that pair with a time expression (Bangla + Banglish +
+ * voice-transcript variants). Deliberately narrow — the time hint only helps when
+ * the message is clearly a reminder request, never general chat about numbers.
+ */
+export const REMINDER_TIME_HINT_RE =
+  /remind|রিমাইন্ডার|reminder|মনে করিয়ে|মনে করায়|অ্যালার্ম|এলার্ম|alarm|জাগিয়ে|jagiye|(?:call|কল|ফোন)\s*(?:দিও|দিয়ো|dio|diyo)/i
+
+/**
+ * Full deterministic intake directive for a reminder request with a resolvable
+ * time — shared by BOTH head paths (core.ts native-Claude and
+ * models/run-owner-turn.ts Gemini/alternate) so neither can drift. Returns null
+ * when the message is not reminder-shaped or no confident time parsed.
+ */
+export function buildReminderTimeHintBlock(text: string, now = new Date()): string | null {
+  if (!text || !REMINDER_TIME_HINT_RE.test(text)) return null
+  const resolved = resolveBanglaTimeExpression(text, now)
+  if (!resolved) return null
+  return (
+    '[REMINDER TIME — resolved deterministically]\n' +
+    `Boss's phrase "${resolved.matched}" = ${resolved.iso} (Asia/Dhaka, ${resolved.label}). ` +
+    'This is a reminder TO BOSS, not an outbound relay call to someone else. ' +
+    `Call set_reminder NOW with dueAt="${resolved.iso}". ` +
+    'If Boss asked to be CALLED (কল দিও/ফোন দিও/call dio) use tier 3 (phone-call reminder, confirm card); ' +
+    'otherwise tier 1. Do NOT use outbound_phone_call or place_agent_call for this.'
+  )
+}

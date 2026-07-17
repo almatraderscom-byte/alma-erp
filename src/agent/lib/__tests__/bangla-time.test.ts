@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveBanglaTimeExpression } from '@/agent/lib/bangla-time'
+import { resolveBanglaTimeExpression, buildReminderTimeHintBlock } from '@/agent/lib/bangla-time'
 
 // Fixed "now": 2026-07-17 10:00 Dhaka (04:00 UTC) — a Friday morning.
 const NOW = new Date('2026-07-17T04:00:00.000Z')
@@ -82,5 +82,19 @@ describe('precision — must NOT read counting/quantities as times', () => {
   it('empty / no time → null', () => {
     expect(iso('amake call dio')).toBeNull()
     expect(iso('')).toBeNull()
+  })
+})
+
+describe('buildReminderTimeHintBlock — the shared head directive', () => {
+  it('produces a set_reminder directive with the exact ISO for "amake 4 tay call dio"', () => {
+    const block = buildReminderTimeHintBlock('amake 4 tay call dio', NOW)
+    expect(block).toContain('set_reminder')
+    expect(block).toContain('2026-07-17T16:00:00+06:00')
+    expect(block).toContain('tier 3')
+  })
+  it('null when not reminder-shaped or no time', () => {
+    expect(buildReminderTimeHintBlock('stock koto ache?', NOW)).toBeNull()
+    expect(buildReminderTimeHintBlock('amake call dio', NOW)).toBeNull()
+    expect(buildReminderTimeHintBlock('আজকে ৪টা অর্ডার এসেছে', NOW)).toBeNull()
   })
 })
