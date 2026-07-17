@@ -445,7 +445,7 @@ export async function authorizeCanonicalAgoraLeg(args: {
   businessId: string
   userId: string
   channel: string
-}): Promise<{ ok: true; uid: number } | { ok: false; error: 'call_forbidden' | 'call_ended' | 'channel_mismatch' }> {
+}): Promise<{ ok: true; uid: number; peerUid: number } | { ok: false; error: 'call_forbidden' | 'call_ended' | 'channel_mismatch' }> {
   let session = await getCanonicalOfficeCallForParticipant(args)
   if (!session) return { ok: false, error: 'call_forbidden' }
   if (session.agoraChannel !== args.channel) return { ok: false, error: 'channel_mismatch' }
@@ -464,7 +464,9 @@ export async function authorizeCanonicalAgoraLeg(args: {
   if (session.state === 'ENDED') return { ok: false, error: 'call_ended' }
   const leg = session.legs.find((candidate) => candidate.participantUserId === args.userId)
   if (!leg) return { ok: false, error: 'call_forbidden' }
-  return { ok: true, uid: leg.agoraUid }
+  const peer = session.legs.find((candidate) => candidate.participantUserId !== args.userId)
+  if (!peer) return { ok: false, error: 'call_forbidden' }
+  return { ok: true, uid: leg.agoraUid, peerUid: peer.agoraUid }
 }
 
 /** Bounded server sweep for calls whose authoritative deadlines elapsed. */

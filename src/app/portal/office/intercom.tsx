@@ -18,6 +18,7 @@ import { useAgoraIntercom } from '@/agent/hooks/useAgoraIntercom'
 import { INTERCOM_CSS } from './intercom-css'
 
 const POLL_MS = 6_000
+const CALL_RECONCILE_MS = 12_000
 /** A call broadcast only "rings" this long; older = a missed call. */
 const CALL_RING_MS = 60_000
 
@@ -91,6 +92,25 @@ export type ItcBroadcast = {
 }
 type ItcStaff = { id: string; name: string; phone: string | null }
 type ItcFeed = { broadcasts: ItcBroadcast[]; staff: ItcStaff[]; liveChannel?: string; serverNow?: string }
+type CanonicalCallState = 'CREATED' | 'RINGING' | 'ANSWERED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING' | 'ENDED'
+type CanonicalCallSnapshot = { state: CanonicalCallState; version: number }
+
+async function canonicalSnapshot(callId: string): Promise<CanonicalCallSnapshot | null> {
+  const response = await fetch(`/api/assistant/office/calls/${encodeURIComponent(callId)}`, { cache: 'no-store' })
+  if (response.status === 404) return null // feature flag off / legacy call
+  if (!response.ok) throw new Error(`canonical_${response.status}`)
+  const body = (await response.json()) as { call?: CanonicalCallSnapshot }
+  return body.call ?? null
+}
+
+async function canonicalTransition(callId: string, state: CanonicalCallState, expectedVersion: number): Promise<boolean> {
+  const response = await fetch(`/api/assistant/office/calls/${encodeURIComponent(callId)}/transition`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state, reason: null, expectedVersion }),
+  })
+  return response.ok
+}
 
 /** iOS WKWebView records mp4/aac; Chrome webm/opus. Probe in that spirit. */
 function pickRecorderMime(): string {
@@ -143,6 +163,8 @@ export function useIntercom(self: 'owner' | 'staff') {
   const [activeCallId, setActiveCallId] = useState<string | null>(null)
   const [callPeer, setCallPeer] = useState<string>('')
   const [callStarting, setCallStarting] = useState(false)
+  const callStartRef = useRef(false)
+  const answerRef = useRef(false)
   // Live walkie-talkie channel (real-time PTT). Owner publishes; staff listen.
   const liveApi = useAgoraIntercom()
   const liveChannel = feed.liveChannel ?? ''
@@ -189,6 +211,40 @@ export function useIntercom(self: 'owner' | 'staff') {
       document.removeEventListener('visibilitychange', onVis)
     }
   }, [load])
+
+  // Canonical call state arrives over an authenticated SSE stream. A bounded
+  // 12-second poll remains as the safety net for browsers/proxies without SSE.
+  // Both live above the route tree, so route changes do not interrupt them.
+  useEffect(() => {
+    if (!activeCallId || typeof window === 'undefined') return
+    const callId = activeCallId
+    const fallback = setInterval(() => { void load() }, CALL_RECONCILE_MS)
+    const onOnline = () => { void load() }
+    window.addEventListener('online', onOnline)
+    let stream: EventSource | null = null
+    if (typeof EventSource !== 'undefined') {
+      stream = new EventSource(`/api/assistant/office/calls/${encodeURIComponent(callId)}/stream`)
+      stream.addEventListener('call', (event) => {
+        void load()
+        try {
+          const data = JSON.parse((event as MessageEvent<string>).data) as { state?: string }
+          if (data.state === 'ENDED') stream?.close()
+        } catch {
+          // The fallback poll still reconciles malformed/partial frames.
+        }
+      })
+      stream.onerror = () => {
+        // A legacy/unsupported deployment may return 404. Do not let EventSource
+        // reconnect forever; the bounded fallback poll remains authoritative.
+        stream?.close()
+      }
+    }
+    return () => {
+      clearInterval(fallback)
+      window.removeEventListener('online', onOnline)
+      stream?.close()
+    }
+  }, [activeCallId, load])
 
   /* ── owner: PTT recording ── */
   const cleanupRec = useCallback(() => {
@@ -363,17 +419,53 @@ export function useIntercom(self: 'owner' | 'staff') {
 
   /** Tell the server a call is over so the OTHER side stops ringing instantly. */
   const postEnd = useCallback((broadcastId: string, reason: CallEndReason) => {
-    void fetch('/api/assistant/office/intercom/end', {
+    return fetch('/api/assistant/office/intercom/end', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ broadcastId, reason }),
-    }).catch(() => {})
+    }).then(() => undefined).catch(() => undefined)
+  }, [])
+
+  const markCanonicalAnswered = useCallback(async (callId: string) => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const current = await canonicalSnapshot(callId)
+        if (!current || current.state === 'ANSWERED' || current.state === 'CONNECTING' || current.state === 'CONNECTED') return true
+        if (current.state !== 'RINGING') return false
+        if (await canonicalTransition(callId, 'ANSWERED', current.version)) return true
+      } catch {
+        // Re-read and retry a version/network race.
+      }
+    }
+    return false
+  }, [])
+
+  const promoteCanonicalConnected = useCallback(async (callId: string) => {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      try {
+        const current = await canonicalSnapshot(callId)
+        if (!current || current.state === 'CONNECTED') return
+        if (current.state === 'ENDED') return
+        if (current.state === 'ANSWERED') {
+          await canonicalTransition(callId, 'CONNECTING', current.version)
+          continue
+        }
+        if (current.state === 'CONNECTING' || current.state === 'RECONNECTING') {
+          await canonicalTransition(callId, 'CONNECTED', current.version)
+          continue
+        }
+      } catch {
+        // Bounded retry below reconciles version/network races.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
   }, [])
 
   // Owner rings ONE staff: create a call broadcast, then join its channel.
   const startCall = useCallback(
     async (staffId: string, staffName: string) => {
-      if (callStarting || activeCallId) return
+      if (callStartRef.current || callStarting || activeCallId) return
+      callStartRef.current = true
       setCallStarting(true)
       setError(null)
       tapHaptic()
@@ -381,7 +473,7 @@ export function useIntercom(self: 'owner' | 'staff') {
         const res = await fetch('/api/assistant/office/intercom', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ kind: 'call', targetStaffId: staffId }),
+          body: JSON.stringify({ kind: 'call', targetStaffId: staffId, idempotencyKey: crypto.randomUUID() }),
         })
         if (!res.ok) {
           setError('কল শুরু করা যায়নি')
@@ -394,6 +486,7 @@ export function useIntercom(self: 'owner' | 'staff') {
         await callApi.join(callChannel(id))
         void load()
       } finally {
+        callStartRef.current = false
         setCallStarting(false)
       }
     },
@@ -403,7 +496,8 @@ export function useIntercom(self: 'owner' | 'staff') {
   // Staff rings the owner (bidirectional calling). No targetStaffId → the server
   // routes it to the owner's devices; the owner's app rings just like WhatsApp.
   const callOwner = useCallback(async () => {
-    if (callStarting || activeCallId) return
+    if (callStartRef.current || callStarting || activeCallId) return
+    callStartRef.current = true
     setCallStarting(true)
     setError(null)
     tapHaptic()
@@ -411,7 +505,7 @@ export function useIntercom(self: 'owner' | 'staff') {
       const res = await fetch('/api/assistant/office/intercom', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'call' }),
+        body: JSON.stringify({ kind: 'call', idempotencyKey: crypto.randomUUID() }),
       })
       if (!res.ok) {
         setError('কল শুরু করা যায়নি')
@@ -424,6 +518,7 @@ export function useIntercom(self: 'owner' | 'staff') {
       await callApi.join(callChannel(id))
       void load()
     } finally {
+      callStartRef.current = false
       setCallStarting(false)
     }
   }, [callStarting, activeCallId, callApi, load])
@@ -431,16 +526,55 @@ export function useIntercom(self: 'owner' | 'staff') {
   // Answer an incoming call (owner or staff): stop the ring + join the channel.
   const answerCall = useCallback(
     async (b: ItcBroadcast) => {
-      if (activeCallId) return
+      if (answerRef.current || activeCallId) return
+      answerRef.current = true
       successHaptic()
       setCallPeer(b.callerName ?? 'বস — মারুফ')
       everConnectedRef.current = false
       setActiveCallId(b.id)
       if (b.mine) void confirm(b.id) // owner→staff answer receipt (staff→owner has none)
-      await callApi.join(callChannel(b.id))
+      try {
+        if (!await markCanonicalAnswered(b.id)) {
+          setError('কলের অবস্থা নিশ্চিত করা যায়নি — আবার চেষ্টা করুন')
+          setActiveCallId(null)
+          return
+        }
+        await callApi.join(callChannel(b.id))
+      } finally {
+        answerRef.current = false
+      }
     },
-    [activeCallId, callApi, confirm],
+    [activeCallId, callApi, confirm, markCanonicalAnswered],
   )
+
+  // Browser reload cannot preserve a MediaStream, but the canonical leg remains
+  // recoverable: the user explicitly resumes it from the global call surface.
+  const resumeCall = useCallback(async (b: ItcBroadcast) => {
+    if (answerRef.current || activeCallId) return
+    answerRef.current = true
+    const peer = b.targetStaffId
+      ? feed.staff.find((staff) => staff.id === b.targetStaffId)?.name ?? 'স্টাফ'
+      : 'বস — মারুফ'
+    try {
+      const canonical = await canonicalSnapshot(b.id).catch(() => null)
+      if (canonical?.state === 'ENDED') {
+        await load()
+        return
+      }
+      everConnectedRef.current = canonical != null && ['CONNECTED', 'RECONNECTING'].includes(canonical.state)
+      setCallPeer(peer)
+      setActiveCallId(b.id)
+      await callApi.join(callChannel(b.id))
+    } finally {
+      answerRef.current = false
+    }
+  }, [activeCallId, callApi, feed.staff, load])
+
+  const dismissRecoverableCall = useCallback(async (b: ItcBroadcast) => {
+    const canonical = await canonicalSnapshot(b.id).catch(() => null)
+    await postEnd(b.id, canonical && ['CONNECTED', 'RECONNECTING', 'CONNECTING', 'ANSWERED'].includes(canonical.state) ? 'completed' : 'cancelled')
+    await load()
+  }, [load, postEnd])
 
   // Decline an incoming call: never joins. Tell the server → caller's ring stops
   // and the row is recorded as a declined/missed call in both feeds.
@@ -495,11 +629,24 @@ export function useIntercom(self: 'owner' | 'staff') {
     if (callApi.remoteJoined) {
       wasConnectedRef.current = true
       everConnectedRef.current = true
+      if (activeCallId && callApi.state === 'in-call') void promoteCanonicalConnected(activeCallId)
     } else if (wasConnectedRef.current && activeCallId) {
       wasConnectedRef.current = false
       endCall('completed')
     }
-  }, [callApi.remoteJoined, activeCallId, endCall])
+  }, [callApi.remoteJoined, callApi.state, activeCallId, endCall, promoteCanonicalConnected])
+
+  useEffect(() => {
+    if (!activeCallId || callApi.state !== 'reconnecting') return
+    void (async () => {
+      try {
+        const current = await canonicalSnapshot(activeCallId)
+        if (current?.state === 'CONNECTED') await canonicalTransition(activeCallId, 'RECONNECTING', current.version)
+      } catch {
+        // SSE + fallback polling still reconcile this transient state.
+      }
+    })()
+  }, [activeCallId, callApi.state])
 
   // The peer ended the call (cancelled before answer / declined / hung up): the
   // server stamped endedAt + pushed a cancel, and our poll picked it up. Close
@@ -573,6 +720,8 @@ export function useIntercom(self: 'owner' | 'staff') {
     startCall,
     callOwner,
     answerCall,
+    resumeCall,
+    dismissRecoverableCall,
     declineCall,
     endCall,
     // live walkie-talkie
@@ -1100,7 +1249,7 @@ export function IntercomTakeover({ itc }: { itc: Intercom }) {
 const fmtClock = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 
 export function IntercomCall({ itc }: { itc: Intercom }) {
-  const { feed, activeCallId, callPeer, callApi, endCall, answerCall, declineCall, nowMs } = itc
+  const { feed, activeCallId, callPeer, callApi, endCall, answerCall, resumeCall, dismissRecoverableCall, declineCall, nowMs } = itc
   const nativeCallShell = useIsNativeCallShell()
   // Minimize the in-call overlay to a small pill so the rest of the office page
   // is usable while talking (WhatsApp-style multitask). Reset on a new call.
@@ -1126,6 +1275,10 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
       ) ?? null
     )
   }, [activeCallId, nativeCallShell, feed.broadcasts, nowMs])
+  const recoverable = useMemo(() => {
+    if (activeCallId || nativeCallShell) return null
+    return feed.broadcasts.find((b) => b.kind === 'call' && b.outgoingByMe && !b.endedAt) ?? null
+  }, [activeCallId, nativeCallShell, feed.broadcasts])
 
   // Ring tone + vibration while an incoming call is pending.
   const ringRef = useRef<{ ctx: AudioContext; stop: () => void } | null>(null)
@@ -1194,12 +1347,34 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
     )
   }
 
+  if (recoverable) {
+    const peer = recoverable.targetStaffId
+      ? feed.staff.find((staff) => staff.id === recoverable.targetStaffId)?.name ?? 'স্টাফ'
+      : 'বস — মারুফ'
+    return (
+      <div className="itc-call incoming" role="alertdialog" aria-label="কল পুনরুদ্ধার করুন">
+        <div className="itc-call-top">
+          <div className="itc-tk-av">{avInitial(peer)}</div>
+          <div className="itc-call-who">{peer}</div>
+          <div className="itc-call-sub">ব্রাউজার রিলোড হয়েছে — কলটি এখনো পুনরুদ্ধারযোগ্য</div>
+        </div>
+        <div className="itc-call-btns">
+          <button className="itc-cbtn decline" onClick={() => void dismissRecoverableCall(recoverable)} aria-label="কল শেষ করুন">✕</button>
+          <button className="itc-cbtn accept" onClick={() => void resumeCall(recoverable)} aria-label="কল-এ ফিরুন">↻</button>
+        </div>
+        <div className="itc-call-labels"><span>শেষ করুন</span><span>কল-এ ফিরুন</span></div>
+      </div>
+    )
+  }
+
   // ── active call (owner or staff, once we've joined) ──
   // On iOS the native call screen renders this instead — keep the web one dark.
   if (!activeCallId || nativeCallShell) return null
   const st = callApi.state
   const connected = callApi.remoteJoined
   const failed = st === 'error'
+  const networkScore = Math.max(callApi.networkQuality.uplink, callApi.networkQuality.downlink)
+  const networkLabel = networkScore === 0 ? '' : networkScore <= 2 ? 'নেটওয়ার্ক ভালো' : networkScore <= 4 ? 'নেটওয়ার্ক দুর্বল' : 'সংযোগ খুব দুর্বল'
 
   // Minimized: a compact floating pill — tap to expand, ✕ to end. The rest of the
   // office page stays fully interactive behind it (talk while you work).
@@ -1239,10 +1414,38 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
               : '⚠️ কল সংযোগে সমস্যা'
             : connected
               ? '🟢 কল চলছে — লাইভ অডিও'
-              : '📞 রিং হচ্ছে…'}
+              : st === 'reconnecting'
+                ? '🟡 পুনরায় সংযোগ হচ্ছে…'
+                : '📞 রিং হচ্ছে…'}
         </div>
         {connected && <div className="itc-call-timer">{fmtClock(callApi.callSeconds)}</div>}
+        {connected && networkLabel && (
+          <div className={`itc-call-net${networkScore >= 4 ? ' weak' : ''}`}>{networkLabel}</div>
+        )}
       </div>
+
+      {connected && (callApi.microphones.length > 1 || callApi.outputs.length > 1) && (
+        <div className="itc-call-devices" aria-label="অডিও ডিভাইস">
+          {callApi.microphones.length > 1 && (
+            <label>
+              <span>🎤 মাইক</span>
+              <select value={callApi.selectedMicrophone} onChange={(event) => void callApi.selectMicrophone(event.target.value)}>
+                <option value="">সিস্টেম ডিফল্ট</option>
+                {callApi.microphones.map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label}</option>)}
+              </select>
+            </label>
+          )}
+          {callApi.outputs.length > 1 && (
+            <label>
+              <span>🔊 স্পিকার</span>
+              <select value={callApi.selectedOutput} onChange={(event) => void callApi.selectOutput(event.target.value)}>
+                <option value="">সিস্টেম ডিফল্ট</option>
+                {callApi.outputs.map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
+      )}
 
       <div className="itc-call-actions">
         {connected && (

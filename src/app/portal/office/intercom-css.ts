@@ -282,6 +282,12 @@ export const INTERCOM_CSS = `
 .itc-call-who{font-size:24px;font-weight:800;letter-spacing:-.01em}
 .itc-call-sub{font-size:13.5px;color:#AEB2C0;margin-top:8px;display:flex;align-items:center;gap:7px;justify-content:center}
 .itc-call-timer{font-size:17px;font-weight:800;color:#6ee7b7;margin-top:14px;font-variant-numeric:tabular-nums;letter-spacing:.03em}
+.itc-call-net{font-size:11.5px;color:#86efac;margin-top:7px}.itc-call-net.weak{color:#fbbf24}
+.itc-call-devices{width:min(360px,90vw);display:grid;gap:9px;padding:12px;border:1px solid rgba(255,255,255,.12);
+  border-radius:16px;background:rgba(255,255,255,.055);text-align:left}
+.itc-call-devices label{display:grid;grid-template-columns:82px minmax(0,1fr);align-items:center;gap:9px;font-size:12px;color:#c9ccd5}
+.itc-call-devices select{min-width:0;width:100%;border-radius:10px;border:1px solid rgba(255,255,255,.14);padding:8px 9px;
+  color:#f7f8fc;background:#171923;font:inherit;outline:none}
 .itc-call-btns{display:flex;gap:72px;margin-bottom:6px}
 .itc-cbtn{width:70px;height:70px;border-radius:50%;border:0;font-size:27px;cursor:pointer;color:#fff;
   display:grid;place-items:center;transition:transform .15s;font-family:inherit;-webkit-tap-highlight-color:transparent}

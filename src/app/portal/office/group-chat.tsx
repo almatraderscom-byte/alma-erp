@@ -3,17 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatFeed, ChatMessage } from '@/agent/lib/office-chat'
 import {
-  useIntercom,
   IntercomDock,
   IntercomBubble,
-  IntercomTakeover,
-  IntercomStyle,
-  IntercomCall,
   IntercomLiveBar,
   useIsNativeCallShell,
   type Intercom,
   type ItcBroadcast,
 } from './intercom'
+import { useOfficeCommunication } from '@/agent/components/OfficeCommunicationProvider'
 
 const POLL_MS = 15_000
 const BN = '০১২৩৪৫৬৭৮৯'
@@ -24,7 +21,7 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
   const [feed, setFeed] = useState<ChatFeed>({ businessId: '', messages: [] })
   // Live intercom (walkie-talkie) — polls its own fast feed; broadcasts merge
   // into the message list below and the owner gets the PTT dock.
-  const itc = useIntercom(self)
+  const itc = useOfficeCommunication()
   const nativeCallShell = useIsNativeCallShell()
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -228,9 +225,6 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
 
   return (
     <>
-      <IntercomStyle />
-      {self === 'staff' && <IntercomTakeover itc={itc} />}
-      <IntercomCall itc={itc} />
       {!open && (
         <div className="ohub-chathead" onClick={() => setOpen(true)} role="button" aria-label="অফিস গ্রুপ চ্যাট">
           <span className="ring"></span>

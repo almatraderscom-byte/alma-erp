@@ -59,6 +59,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'invalid_call_channel' }, { status: 400 })
   }
   let uid = 0
+  let peerUid: number | null = null
   if (callId) {
     const canonicalExists = isCanonicalOfficeCallEnabled()
       ? await prisma.officeCallSession.findUnique({ where: { id: callId }, select: { id: true } })
@@ -75,6 +76,7 @@ export async function POST(req: NextRequest) {
         return Response.json({ error: authorized.error }, { status })
       }
       uid = authorized.uid
+      peerUid = authorized.peerUid
     } else {
       const participant = await prisma.officeIntercomBroadcast.findFirst({
         where: {
@@ -125,6 +127,7 @@ export async function POST(req: NextRequest) {
     channel,
     token,
     uid,
+    peerUid,
     expiresAt: new Date(privilegeExpireTs * 1000).toISOString(),
   })
 }
