@@ -290,6 +290,51 @@ final class SystemDiagnosticsVM {
         if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .cancelled { return true }
         return (error as? URLError)?.code == .cancelled
     }
+
+    // ── NP-5 (AD-04): the web page's POST actions — process_queue / retry_failed /
+    //    retry_single, exact bodies, per-action busy state + response counts,
+    //    reload after every run. ──
+
+    var actionBusy: String? = nil          // "process" | "retry_failed" | "retry-<id>"
+    var actionNotice: String? = nil
+
+    func runAction(_ action: String, busyKey: String, extra: [String: Int] = [:], id: String? = nil) async {
+        guard actionBusy == nil else { return }
+        actionBusy = busyKey
+        defer { actionBusy = nil }
+        struct Body: Encodable {
+            let business_id: String
+            let action: String
+            var limit: Int? = nil
+            var id: String? = nil
+        }
+        struct Resp: Decodable {
+            let processed: Int?
+            let requeued: Int?
+            let message: String?
+            private enum Keys: String, CodingKey { case processed, requeued, message, data }
+            init(from decoder: Decoder) throws {
+                let root = try decoder.container(keyedBy: Keys.self)
+                let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+                processed = try? c.decodeIfPresent(Int.self, forKey: .processed)
+                requeued = try? c.decodeIfPresent(Int.self, forKey: .requeued)
+                message = try? c.decodeIfPresent(String.self, forKey: .message)
+            }
+        }
+        do {
+            let r: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/operations/system-diagnostics",
+                body: Body(business_id: businessId, action: action, limit: extra["limit"], id: id))
+            var bits: [String] = []
+            if let p = r.processed { bits.append("processed \(p)") }
+            if let q = r.requeued { bits.append("requeued \(q)") }
+            actionNotice = "✓ \(bits.isEmpty ? (r.message ?? "done") : bits.joined(separator: " · "))"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            actionNotice = "✗ ব্যর্থ: \(error.localizedDescription)"
+        }
+        await load()
+    }
 }
 
 // MARK: - Screen
@@ -640,6 +685,21 @@ struct SystemDiagnosticsScreen: View {
                     .font(.caption.weight(.bold).monospaced())
                     .lineLimit(1)
                 Spacer()
+                // NP-5 (AD-04): retry single — FAILED rows only (web parity).
+                if row.status == "FAILED" {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        Task { await vm.runAction("retry_single", busyKey: "retry-\(row.id)", id: row.id) }
+                    } label: {
+                        Text(vm.actionBusy == "retry-\(row.id)" ? "⏳" : "⟳ Retry")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(SysDiagPalette.amber600)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(SysDiagPalette.amber600.opacity(0.12), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.actionBusy != nil)
+                }
                 Text(row.status)
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(SysDiagPalette.queueStatus(row.status))
@@ -708,15 +768,39 @@ struct SystemDiagnosticsScreen: View {
         }
     }
 
-    /// The web page's mutating actions (Process now / Retry failed / Retry single)
-    /// intentionally live ONLY behind this escape hatch.
+    /// NP-5 (AD-04): Process now / Retry failed run NATIVELY (retry-single sits on
+    /// each queue row). Response counts + reload per action; per-button spinners.
     private var webEscape: some View {
-        Button {
-            openWeb("/operations/system-diagnostics", "System diagnostics")
-        } label: {
-            Label("সব অ্যাকশন (Process/Retry সহ) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    Task { await vm.runAction("process_queue", busyKey: "process", extra: ["limit": 30]) }
+                } label: {
+                    Text(vm.actionBusy == "process" ? "⏳ Processing…" : "▶️ Process queue")
+                        .font(.caption.weight(.bold)).frame(maxWidth: .infinity).padding(.vertical, 10)
+                        .background(SysDiagPalette.emerald600.opacity(0.12), in: Capsule())
+                        .foregroundStyle(SysDiagPalette.emerald600)
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.actionBusy != nil)
+                Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    Task { await vm.runAction("retry_failed", busyKey: "retry_failed", extra: ["limit": 50]) }
+                } label: {
+                    Text(vm.actionBusy == "retry_failed" ? "⏳ Retrying…" : "⟳ Retry failed")
+                        .font(.caption.weight(.bold)).frame(maxWidth: .infinity).padding(.vertical, 10)
+                        .background(SysDiagPalette.amber600.opacity(0.12), in: Capsule())
+                        .foregroundStyle(SysDiagPalette.amber600)
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.actionBusy != nil)
+            }
+            if let notice = vm.actionNotice {
+                Text(notice).font(.caption2)
+                    .foregroundStyle(notice.hasPrefix("✓") ? SysDiagPalette.emerald600 : SysDiagPalette.red500)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)

@@ -1,16 +1,16 @@
 //
 //  SettingsUsersSwiftUI.swift
-//  ALMA ERP — the Settings ▸ Users screen as a native SwiftUI screen (READ-ONLY).
+//  ALMA ERP — Settings ▸ Users as a native SwiftUI screen (FULL admin parity, NP-5).
 //
-//  Mirrors the web /settings/users page's read surface — same endpoint, same colours:
-//    GET /api/users   → { users: [...] }   (SUPER_ADMIN / ADMIN only)
-//  Native blocks: KPI strip (accounts / active / inactive) · role filter chips ·
-//  user rows (initials avatar, role capsule, active dot, business scope, HR ID) ·
-//  detail sheet with role-capability hint.
-//
-//  ⚠️ STRICTLY READ-ONLY BY DESIGN: creating users, editing accounts, changing
-//  roles, permissions and password resets are access-control writes — they ALL stay
-//  on the web page via the escape hatch. This file must never gain a POST/PATCH.
+//  Mirrors the web /settings/users page — same endpoints, same payloads:
+//    GET   /api/users                      → { users: [...] }  (SUPER_ADMIN / ADMIN only)
+//    POST  /api/users                      → create {email,password,name,phone,role,
+//                                            businessAccess,employeeIdGas,active,joiningDate,salaryHint}
+//    PATCH /api/users/{id}                 → edit same fields · {active} toggle (confirm)
+//    POST  /api/users/{id}/reset-password  → admin reset {password} (confirm + arm toggle)
+//  Role gates stay on the SERVER (the routes 403 non-admin); the UI reloads server
+//  truth after every write (owner-sanctioned NP-5 — the old read-only rule is
+//  superseded by the 2026-07-17 parity roadmap).
 //
 
 import SwiftUI
@@ -184,15 +184,167 @@ final class SettingsUsersVM {
         if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .cancelled { return true }
         return (error as? URLError)?.code == .cancelled
     }
+
+    // ── NP-5 (AD-01): admin mutations — the web page's exact payloads. Role
+    //    gates live on the server (/api/users 403s non-admin); the UI reloads
+    //    server truth after every write. ──
+
+    var saving = false
+    var actionError: String? = nil
+
+    struct UserFormFields {
+        var name = ""
+        var email = ""
+        var phone = ""
+        var role = "STAFF"
+        var businesses: Set<String> = ["ALMA_LIFESTYLE"]
+        var employeeIdGas = ""
+        var joiningDate = ""
+        var salaryHint = ""
+        var password = ""      // create only
+
+        static func from(_ u: SettingsUserRow) -> UserFormFields {
+            var f = UserFormFields()
+            f.name = u.name
+            f.email = u.email ?? ""
+            f.phone = u.phone ?? ""
+            f.role = u.role
+            f.businesses = Set(u.businessAccess.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+            f.employeeIdGas = u.employeeIdGas ?? ""
+            f.joiningDate = u.joiningDate ?? ""
+            f.salaryHint = u.salaryHint.map(String.init) ?? ""
+            return f
+        }
+    }
+
+    private struct UserBody: Encodable {
+        var email: String? = nil
+        var password: String? = nil
+        var name: String? = nil
+        var phone: String? = nil
+        var role: String? = nil
+        var businessAccess: String? = nil
+        var employeeIdGas: String? = nil
+        var active: Bool? = nil
+        var joiningDate: String? = nil
+        var salaryHint: Int? = nil
+    }
+
+    private func body(from f: UserFormFields, create: Bool) -> UserBody {
+        UserBody(
+            email: create ? f.email.trimmingCharacters(in: .whitespaces).lowercased()
+                          : (f.email.isEmpty ? nil : f.email.trimmingCharacters(in: .whitespaces).lowercased()),
+            password: create ? f.password : nil,
+            name: f.name.trimmingCharacters(in: .whitespaces),
+            phone: f.phone.trimmingCharacters(in: .whitespaces),
+            role: f.role,
+            businessAccess: f.businesses.sorted().joined(separator: ","),
+            employeeIdGas: f.employeeIdGas.trimmingCharacters(in: .whitespaces).isEmpty
+                ? nil : f.employeeIdGas.trimmingCharacters(in: .whitespaces),
+            active: create ? true : nil,
+            joiningDate: f.joiningDate.trimmingCharacters(in: .whitespaces).isEmpty
+                ? nil : f.joiningDate.trimmingCharacters(in: .whitespaces),
+            salaryHint: Int(f.salaryHint))
+    }
+
+    private struct WriteResp: Decodable { let ok: Bool?; let error: String? }
+
+    /// POST /api/users — returns true on success (sheet closes on true only).
+    func createUser(_ f: UserFormFields) async -> Bool {
+        guard !saving else { return false }
+        saving = true
+        defer { saving = false }
+        do {
+            let _: WriteResp = try await AlmaAPI.shared.send("POST", "/api/users", body: body(from: f, create: true))
+            actionError = nil
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await load()
+            return true
+        } catch {
+            actionError = "Create ব্যর্থ: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// PATCH /api/users/{id}.
+    func patchUser(_ id: String, _ f: UserFormFields) async -> Bool {
+        guard !saving else { return false }
+        saving = true
+        defer { saving = false }
+        do {
+            let _: WriteResp = try await AlmaAPI.shared.send("PATCH", "/api/users/\(id)", body: body(from: f, create: false))
+            actionError = nil
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await load()
+            return true
+        } catch {
+            actionError = "Save ব্যর্থ: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// PATCH /api/users/{id} {active} — deactivate/reactivate (confirm in UI).
+    func setActive(_ id: String, _ active: Bool) async {
+        guard !saving else { return }
+        saving = true
+        defer { saving = false }
+        struct Body: Encodable { let active: Bool }
+        do {
+            let _: WriteResp = try await AlmaAPI.shared.send("PATCH", "/api/users/\(id)", body: Body(active: active))
+            actionError = nil
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            actionError = "পরিবর্তন ব্যর্থ: \(error.localizedDescription)"
+        }
+        await load()
+    }
+
+    /// POST /api/users/{id}/reset-password {password} (admin reset, confirm in UI).
+    func resetPassword(_ id: String, password: String) async -> Bool {
+        guard !saving, password.count >= 8 else {
+            actionError = "Password must be at least 8 characters"
+            return false
+        }
+        saving = true
+        defer { saving = false }
+        struct Body: Encodable { let password: String }
+        do {
+            let _: WriteResp = try await AlmaAPI.shared.send(
+                "POST", "/api/users/\(id)/reset-password", body: Body(password: password))
+            actionError = nil
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            return true
+        } catch {
+            actionError = "Reset ব্যর্থ: \(error.localizedDescription)"
+            return false
+        }
+    }
 }
 
 // MARK: - Screen
+
+@available(iOS 17.0, *)
+/// NP-5 (AD-01): create/edit form mode — sheet(item:) needs Identifiable.
+enum SettingsUserFormMode: Identifiable {
+    case create
+    case edit(SettingsUserRow)
+    var id: String {
+        switch self {
+        case .create: return "create"
+        case .edit(let u): return "edit-\(u.id)"
+        }
+    }
+}
 
 @available(iOS 17.0, *)
 struct SettingsUsersScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = SettingsUsersVM()
     @State private var selected: SettingsUserRow? = nil
+    @State private var formMode: SettingsUserFormMode? = nil
+    @State private var resetTarget: SettingsUserRow? = nil
+    @State private var confirmActive: SettingsUserRow? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -201,6 +353,26 @@ struct SettingsUsersScreen: View {
                 if vm.authExpired { authCard }
                 if let err = vm.error { errorCard(err) }
                 kpiStrip
+                // NP-5 (AD-01): native create — server enforces the admin role gate.
+                if !vm.authExpired {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                        formMode = .create
+                    } label: {
+                        Label("নতুন অ্যাকাউন্ট", systemImage: "person.badge.plus")
+                            .font(.footnote.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(SettingsUsersPalette.coral.opacity(0.12), in: Capsule())
+                            .foregroundStyle(SettingsUsersPalette.accentText(colorScheme))
+                            .overlay(Capsule().strokeBorder(SettingsUsersPalette.coral.opacity(0.35), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+                if let err = vm.actionError {
+                    Text(err).font(.caption2).foregroundStyle(SettingsUsersPalette.red500)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 roleChips
                 if vm.loading && vm.users.isEmpty { loadingRows }
                 ForEach(vm.filtered) { user in
@@ -220,9 +392,47 @@ struct SettingsUsersScreen: View {
         .refreshable { await vm.load() }
         .task { await vm.load() }
         .sheet(item: $selected) { user in
-            SettingsUserDetailSheet(user: user, openWeb: openWeb)
+            SettingsUserDetailSheet(
+                user: user,
+                openWeb: openWeb,
+                onEdit: {
+                    selected = nil
+                    formMode = .edit(user)
+                },
+                onToggleActive: {
+                    selected = nil
+                    confirmActive = user
+                },
+                onResetPassword: {
+                    selected = nil
+                    resetTarget = user
+                })
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $formMode) { mode in
+            SettingsUserFormSheet(vm: vm, mode: mode) { formMode = nil }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $resetTarget) { user in
+            SettingsUserResetSheet(vm: vm, user: user) { resetTarget = nil }
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
+        // Deactivation is high-impact → Bangla confirm (roadmap AD-01).
+        .confirmationDialog(
+            confirmActive.map { $0.active ? "\($0.name) — অ্যাকাউন্ট বন্ধ করবেন?" : "\($0.name) — আবার চালু করবেন?" } ?? "",
+            isPresented: Binding(get: { confirmActive != nil }, set: { if !$0 { confirmActive = nil } }),
+            titleVisibility: .visible,
+            presenting: confirmActive
+        ) { user in
+            Button(user.active ? "বন্ধ করুন" : "চালু করুন", role: user.active ? .destructive : nil) {
+                Task { await vm.setActive(user.id, !user.active) }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: { user in
+            Text(user.active ? "বন্ধ করলে \(user.name) আর লগইন করতে পারবে না।" : "\(user.name) আবার লগইন করতে পারবে।")
         }
     }
 
@@ -437,6 +647,10 @@ private struct SettingsUserRowCard: View {
 private struct SettingsUserDetailSheet: View {
     let user: SettingsUserRow
     let openWeb: (_ path: String, _ title: String) -> Void
+    // NP-5 (AD-01): admin actions — handled by the screen (sheets + confirms).
+    var onEdit: () -> Void = {}
+    var onToggleActive: () -> Void = {}
+    var onResetPassword: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
@@ -446,11 +660,50 @@ private struct SettingsUserDetailSheet: View {
                 header
                 infoRows
                 roleHintCard
+                adminActions
                 webLink
             }
             .padding(18)
         }
         .presentationBackground { SettingsUsersAurora() }
+    }
+
+    /// NP-5 (AD-01): edit / active toggle / admin password reset.
+    private var adminActions: some View {
+        VStack(spacing: 8) {
+            Button {
+                UISelectionFeedbackGenerator().selectionChanged()
+                onEdit()
+            } label: {
+                Label("এডিট করুন", systemImage: "pencil")
+                    .font(.footnote.weight(.bold)).frame(maxWidth: .infinity).padding(.vertical, 10)
+                    .background(SettingsUsersPalette.coral.opacity(0.12), in: Capsule())
+                    .foregroundStyle(SettingsUsersPalette.accentText(colorScheme))
+            }
+            .buttonStyle(.plain)
+            HStack(spacing: 8) {
+                Button {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    onToggleActive()
+                } label: {
+                    Text(user.active ? "🚫 বন্ধ করুন" : "🟢 চালু করুন")
+                        .font(.caption.weight(.bold)).frame(maxWidth: .infinity).padding(.vertical, 9)
+                        .background((user.active ? SettingsUsersPalette.red500 : SettingsUsersPalette.emerald600).opacity(0.10), in: Capsule())
+                        .foregroundStyle(user.active ? SettingsUsersPalette.red500 : SettingsUsersPalette.emerald600)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    onResetPassword()
+                } label: {
+                    Text("🔑 পাসওয়ার্ড রিসেট")
+                        .font(.caption.weight(.bold)).frame(maxWidth: .infinity).padding(.vertical, 9)
+                        .background(SettingsUsersPalette.goldLt.opacity(0.12), in: Capsule())
+                        .foregroundStyle(SettingsUsersPalette.accentText(colorScheme))
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     private var header: some View {
@@ -714,4 +967,129 @@ private extension View {
 @available(iOS 17.0, *)
 #Preview("Settings Users — Light") {
     SettingsUsersScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - NP-5 (AD-01): create/edit form + admin reset-password sheets
+
+@available(iOS 17.0, *)
+private struct SettingsUserFormSheet: View {
+    let vm: SettingsUsersVM
+    let mode: SettingsUserFormMode
+    let onDone: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var f = SettingsUsersVM.UserFormFields()
+
+    private var isCreate: Bool { if case .create = mode { return true }; return false }
+    private static let roles = ["SUPER_ADMIN", "ADMIN", "HR", "STAFF", "VIEWER"]
+    private static let businesses: [(id: String, label: String)] = [
+        ("ALMA_LIFESTYLE", "Alma Lifestyle"),
+        ("CREATIVE_DIGITAL_IT", "CDIT"),
+        ("ALMA_TRADING", "Alma Trading"),
+    ]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("অ্যাকাউন্ট") {
+                    TextField("নাম", text: $f.name)
+                    TextField("Email", text: $f.email)
+                        .keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .disabled(!isCreate)
+                    TextField("ফোন", text: $f.phone).keyboardType(.phonePad)
+                    if isCreate {
+                        SecureField("Password (কমপক্ষে ৮ অক্ষর)", text: $f.password)
+                            .textContentType(.newPassword)
+                    }
+                }
+                Section("Role") {
+                    Picker("Role", selection: $f.role) {
+                        ForEach(Self.roles, id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ")).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                }
+                Section("Business access (কমপক্ষে ১টা)") {
+                    ForEach(Self.businesses, id: \.id) { biz in
+                        Toggle(biz.label, isOn: Binding(
+                            get: { f.businesses.contains(biz.id) },
+                            set: { on in
+                                if on { f.businesses.insert(biz.id) } else { f.businesses.remove(biz.id) }
+                            }))
+                    }
+                }
+                Section("HR লিঙ্ক (ঐচ্ছিক)") {
+                    TextField("Employee ID (GAS)", text: $f.employeeIdGas)
+                        .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                    TextField("Joining date (YYYY-MM-DD)", text: $f.joiningDate)
+                        .keyboardType(.numbersAndPunctuation)
+                    TextField("Salary hint (৳)", text: $f.salaryHint).keyboardType(.numberPad)
+                }
+                if let err = vm.actionError {
+                    Section { Text(err).font(.caption).foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle(isCreate ? "Create account" : "Edit account")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("বাতিল") { onDone() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(vm.saving ? "সেভ…" : "সেভ") {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        Task {
+                            let ok: Bool
+                            switch mode {
+                            case .create: ok = await vm.createUser(f)
+                            case .edit(let u): ok = await vm.patchUser(u.id, f)
+                            }
+                            if ok { onDone() }
+                        }
+                    }
+                    .disabled(vm.saving || f.name.trimmingCharacters(in: .whitespaces).isEmpty
+                              || f.businesses.isEmpty
+                              || (isCreate && (f.email.isEmpty || f.password.count < 8)))
+                }
+            }
+            .onAppear {
+                if case .edit(let u) = mode { f = SettingsUsersVM.UserFormFields.from(u) }
+            }
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct SettingsUserResetSheet: View {
+    let vm: SettingsUsersVM
+    let user: SettingsUserRow
+    let onDone: () -> Void
+    @State private var password = ""
+    @State private var confirmArmed = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("\(user.name) — নতুন পাসওয়ার্ড") {
+                    SecureField("At least 8 characters", text: $password)
+                        .textContentType(.newPassword)
+                }
+                Section {
+                    // Roadmap AD-01: reset requires an explicit confirm step.
+                    Toggle("আমি নিশ্চিত — পাসওয়ার্ড বদলাতে চাই", isOn: $confirmArmed)
+                }
+                if let err = vm.actionError {
+                    Section { Text(err).font(.caption).foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle("Password reset")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("বাতিল") { onDone() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(vm.saving ? "…" : "রিসেট") {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        Task { if await vm.resetPassword(user.id, password: password) { onDone() } }
+                    }
+                    .disabled(vm.saving || password.count < 8 || !confirmArmed)
+                }
+            }
+        }
+    }
 }

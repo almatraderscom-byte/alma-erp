@@ -265,6 +265,134 @@ final class BusinessArchiveVM {
         if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .cancelled { return true }
         return (error as? URLError)?.code == .cancelled
     }
+
+    // ── NP-5 (AD-03): dry-run → typed-phrase execute → restore (web payloads verbatim,
+    //    Super-Admin enforced by the routes). ──
+
+    var running: String? = nil            // "preview" | "archive" | "restore-<id>"
+    var actionNotice: String? = nil
+    var previewRows: [(label: String, count: Int)] = []
+    var previewTotal = 0
+    var expectedPhrase = ""
+
+    private struct PreviewResp: Decodable {
+        struct Mod: Decodable {
+            let label: String?
+            let moduleKey: String?
+            let count: Int?
+            let recordCount: Int?
+            private enum Keys: String, CodingKey { case label, moduleKey, count, recordCount }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: Keys.self)
+                label = try? c.decodeIfPresent(String.self, forKey: .label)
+                moduleKey = try? c.decodeIfPresent(String.self, forKey: .moduleKey)
+                count = try? c.decodeIfPresent(Int.self, forKey: .count)
+                recordCount = try? c.decodeIfPresent(Int.self, forKey: .recordCount)
+            }
+        }
+        let modules: [Mod]
+        let totalRecords: Int
+        let confirmationPhrase: String
+        let warning: String?
+        private enum Keys: String, CodingKey { case ok, data, preview, confirmationPhrase, warning }
+        private enum PKeys: String, CodingKey { case modules, totalRecords }
+        init(from decoder: Decoder) throws {
+            let root = try decoder.container(keyedBy: Keys.self)
+            let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+            let p = try? c.nestedContainer(keyedBy: PKeys.self, forKey: .preview)
+            modules = (try? p?.decodeIfPresent([Mod].self, forKey: .modules)) ?? []
+            totalRecords = (try? p?.decodeIfPresent(Int.self, forKey: .totalRecords)) ?? 0
+            confirmationPhrase = (try? c.decodeIfPresent(String.self, forKey: .confirmationPhrase)) ?? ""
+            warning = try? c.decodeIfPresent(String.self, forKey: .warning)
+        }
+    }
+
+    /// POST /api/business-archive/preview {business_id, module_keys} → dry-run counts + phrase.
+    func runPreview(selected: [String]) async {
+        guard running == nil, !selected.isEmpty else { return }
+        running = "preview"
+        defer { running = nil }
+        struct Body: Encodable { let business_id: String; let module_keys: [String] }
+        do {
+            let r: PreviewResp = try await AlmaAPI.shared.send(
+                "POST", "/api/business-archive/preview", body: Body(business_id: businessId, module_keys: selected))
+            if let w = r.warning, !w.isEmpty {
+                actionNotice = "✗ \(w)"
+                return
+            }
+            previewRows = r.modules.map { (($0.label ?? $0.moduleKey ?? "—"), ($0.count ?? $0.recordCount ?? 0)) }
+            previewTotal = r.totalRecords
+            expectedPhrase = r.confirmationPhrase
+            actionNotice = "✓ Dry run ready — নিচের কাউন্ট দেখুন"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            actionNotice = "✗ Preview ব্যর্থ: \(error.localizedDescription)"
+        }
+    }
+
+    /// POST /api/business-archive/execute — typed confirmation phrase required.
+    func runArchive(selected: [String], batchName: String, confirmation: String) async -> Bool {
+        guard running == nil, !selected.isEmpty, !batchName.isEmpty, !confirmation.isEmpty else { return false }
+        running = "archive"
+        defer { running = nil }
+        struct Body: Encodable {
+            let business_id: String
+            let module_keys: [String]
+            let batch_name: String
+            let confirmation: String
+        }
+        struct Resp: Decodable {
+            let recordCount: Int?
+            private enum Keys: String, CodingKey { case ok, data, recordCount }
+            init(from decoder: Decoder) throws {
+                let root = try decoder.container(keyedBy: Keys.self)
+                let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+                recordCount = try? c.decodeIfPresent(Int.self, forKey: .recordCount)
+            }
+        }
+        do {
+            let r: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/business-archive/execute",
+                body: Body(business_id: businessId, module_keys: selected,
+                           batch_name: batchName, confirmation: confirmation))
+            actionNotice = "✓ Archived \(r.recordCount ?? 0) records (soft archive — recoverable)"
+            previewRows = []
+            previewTotal = 0
+            expectedPhrase = ""
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await load()
+            return true
+        } catch {
+            actionNotice = "✗ Archive ব্যর্থ: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// POST /api/business-archive/restore {batch_id}.
+    func restore(batchId: String) async {
+        guard running == nil else { return }
+        running = "restore-\(batchId)"
+        defer { running = nil }
+        struct Body: Encodable { let batch_id: String }
+        struct Resp: Decodable {
+            let restored: Int?
+            private enum Keys: String, CodingKey { case ok, data, restored }
+            init(from decoder: Decoder) throws {
+                let root = try decoder.container(keyedBy: Keys.self)
+                let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+                restored = try? c.decodeIfPresent(Int.self, forKey: .restored)
+            }
+        }
+        do {
+            let r: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/business-archive/restore", body: Body(batch_id: batchId))
+            actionNotice = "✓ Restored \(r.restored ?? 0) records"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            actionNotice = "✗ Restore ব্যর্থ: \(error.localizedDescription)"
+        }
+        await load()
+    }
 }
 
 // MARK: - Screen
@@ -273,6 +401,7 @@ final class BusinessArchiveVM {
 struct BusinessArchiveScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = BusinessArchiveVM()
+    @State private var showRunSheet = false
     @State private var selectedModule: BusinessArchiveModule? = nil
     @State private var selectedBatch: BusinessArchiveBatch? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
@@ -304,8 +433,16 @@ struct BusinessArchiveScreen: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showRunSheet) {
+            BusinessArchiveRunSheet(vm: vm) { showRunSheet = false }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
         .sheet(item: $selectedBatch) { b in
-            BusinessArchiveBatchSheet(batch: b, openWeb: openWeb)
+            BusinessArchiveBatchSheet(batch: b, openWeb: openWeb, onRestore: { batchId in
+                selectedBatch = nil
+                Task { await vm.restore(batchId: batchId) }
+            })
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -478,16 +615,30 @@ struct BusinessArchiveScreen: View {
         }
     }
 
+    /// NP-5 (AD-03): archive runs NATIVELY — dry-run + typed phrase in a sheet.
     private var webEscape: some View {
-        Button {
-            openWeb("/operations/business-archive", "Business archive")
-        } label: {
-            Label("আর্কাইভ / রিস্টোর করতে — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+        VStack(spacing: 6) {
+            if let notice = vm.actionNotice {
+                Text(notice).font(.caption2)
+                    .foregroundStyle(notice.hasPrefix("✓") ? BusinessArchivePalette.emerald600
+                                                           : BusinessArchivePalette.red500)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Button {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                showRunSheet = true
+            } label: {
+                Label("🗄️ Archive চালান (dry run → confirm)", systemImage: "archivebox")
+                    .font(.footnote.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 11)
+                    .background(BusinessArchivePalette.coral.opacity(0.12), in: Capsule())
+                    .foregroundStyle(BusinessArchivePalette.coral)
+                    .overlay(Capsule().strokeBorder(BusinessArchivePalette.coral.opacity(0.35), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.authExpired || !vm.schemaReady)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
         .padding(.vertical, 6)
     }
 }
@@ -704,10 +855,14 @@ private struct BusinessArchiveModuleSheet: View {
 
 @available(iOS 17.0, *)
 private struct BusinessArchiveBatchSheet: View {
+    // NP-5 (AD-03): native restore callback (screen owns the VM call).
+
     let batch: BusinessArchiveBatch
     let openWeb: (_ path: String, _ title: String) -> Void
+    var onRestore: (String) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @State private var confirmRestore = false
 
     var body: some View {
         ScrollView {
@@ -743,21 +898,25 @@ private struct BusinessArchiveBatchSheet: View {
                 .businessArchiveGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
                 if batch.status == "COMPLETED" {
-                    Text("Restore batch চালাতে ওয়েব পেজ ব্যবহার করুন — এই স্ক্রিনটি শুধু দেখার জন্য।")
-                        .font(.caption2).foregroundStyle(.secondary)
+                    // NP-5 (AD-03): native restore with confirm.
+                    Button {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        confirmRestore = true
+                    } label: {
+                        Label("Restore batch", systemImage: "arrow.uturn.backward.circle")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity).padding(.vertical, 4)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(BusinessArchivePalette.emerald600)
+                    .confirmationDialog("এই batch-এর সব রেকর্ড restore করবেন?",
+                                        isPresented: $confirmRestore, titleVisibility: .visible) {
+                        Button("Restore", role: .destructive) { onRestore(batch.id) }
+                        Button("বাতিল", role: .cancel) {}
+                    } message: {
+                        Text("\(batch.name ?? "—") — \(batch.recordCount ?? 0) records ফিরে আসবে।")
+                    }
                 }
-
-                Button {
-                    dismiss()
-                    openWeb("/operations/business-archive", "Business archive")
-                } label: {
-                    Label(batch.status == "COMPLETED" ? "Restore — ওয়েবে খুলুন" : "Archive Control — ওয়েবে খুলুন",
-                          systemImage: "safari")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity).padding(.vertical, 4)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(BusinessArchivePalette.coral)
             }
             .padding(18)
         }
@@ -914,4 +1073,90 @@ private extension View {
 @available(iOS 17.0, *)
 #Preview("Business archive — Light") {
     BusinessArchiveScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - NP-5 (AD-03): archive run sheet — module select → dry run → typed phrase → execute
+
+@available(iOS 17.0, *)
+private struct BusinessArchiveRunSheet: View {
+    let vm: BusinessArchiveVM
+    let onDone: () -> Void
+    @State private var selected: Set<String> = []
+    @State private var batchName = ""
+    @State private var confirmation = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Modules (soft archive — recoverable)") {
+                    ForEach(vm.modules) { m in
+                        let available = vm.stat(for: m.key)?.available != false
+                        Toggle(isOn: Binding(
+                            get: { selected.contains(m.key) },
+                            set: { on in if on { selected.insert(m.key) } else { selected.remove(m.key) } })) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(m.label ?? m.key)
+                                Text("active \(vm.stat(for: m.key)?.activeCount ?? 0)")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                        .disabled(!available)
+                    }
+                }
+                Section("Batch") {
+                    TextField("Batch name", text: $batchName)
+                }
+                Section {
+                    Button(vm.running == "preview" ? "⏳ Dry run…" : "🔍 Dry run preview") {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        Task { await vm.runPreview(selected: Array(selected)) }
+                    }
+                    .disabled(vm.running != nil || selected.isEmpty)
+                    if !vm.previewRows.isEmpty {
+                        ForEach(Array(vm.previewRows.enumerated()), id: \.offset) { _, row in
+                            HStack {
+                                Text(row.label).font(.caption)
+                                Spacer()
+                                Text("\(row.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            }
+                        }
+                        HStack {
+                            Text("TOTAL").font(.caption.weight(.bold))
+                            Spacer()
+                            Text("\(vm.previewTotal)").font(.caption.weight(.bold).monospacedDigit())
+                        }
+                    }
+                }
+                if !vm.expectedPhrase.isEmpty {
+                    Section("Confirmation — টাইপ করুন: \(vm.expectedPhrase)") {
+                        TextField("Confirmation phrase", text: $confirmation)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        Button(vm.running == "archive" ? "⏳ Archiving…" : "🗄️ Execute archive") {
+                            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                            Task {
+                                if await vm.runArchive(selected: Array(selected),
+                                                       batchName: batchName,
+                                                       confirmation: confirmation) {
+                                    onDone()
+                                }
+                            }
+                        }
+                        .foregroundStyle(.red)
+                        // Typed-phrase gate (roadmap AD-03): exact match required.
+                        .disabled(vm.running != nil || batchName.trimmingCharacters(in: .whitespaces).isEmpty
+                                  || confirmation != vm.expectedPhrase)
+                    }
+                }
+                if let notice = vm.actionNotice {
+                    Section { Text(notice).font(.caption) }
+                }
+            }
+            .navigationTitle("Archive Control")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("বন্ধ") { onDone() } }
+            }
+        }
+    }
 }

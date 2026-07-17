@@ -581,7 +581,7 @@
       "title": "Settings → Users admin",
       "route": "/settings/users",
       "priority": "P1",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-5",
       "webSource": [
         "src/app/settings/users/"
@@ -594,40 +594,42 @@
           "id": "AD-01.read",
           "title": "User list/permissions view",
           "kind": "read",
-          "state": "native"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-01.create",
           "title": "Create user",
           "kind": "write",
           "roleGate": "SUPER_ADMIN",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-01.edit",
           "title": "Edit name/role/business access/HR link/active state (confirm on deactivate)",
           "kind": "write",
           "roleGate": "SUPER_ADMIN",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-01.reset",
           "title": "Admin reset-password (confirm)",
           "kind": "write",
           "roleGate": "SUPER_ADMIN",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         }
-      ]
+      ],
+      "notes": "NP-5 DONE: create/edit (full field form), active toggle w/ Bangla confirm, admin reset-password (arm toggle + confirm). Server enforces role gates; reload after every write."
     },
     {
       "id": "AD-02",
       "title": "Supplier import",
       "route": "/inventory/supplier-import",
       "priority": "P1",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-5",
       "webSource": [
         "src/app/inventory/supplier-import/"
@@ -640,14 +642,15 @@
           "id": "AD-02.read",
           "title": "Catalog/batch state read",
           "kind": "read",
-          "state": "native"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-02.input",
           "title": "Paste/file/clipboard input + JSON validation + preview diff + duplicate warnings",
           "kind": "upload",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-02.commit",
@@ -655,17 +658,18 @@
           "kind": "write",
           "roleGate": "admin",
           "api": "POST /api/supplier-import/commit",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         }
-      ]
+      ],
+      "notes": "NP-5 DONE: paste/clipboard/file JSON input, validate (array|{items}), duplicate preview vs catalog+in-file (sku/name), selectable commit POST /api/supplier-import/commit, result summary (created/skipped/errors)."
     },
     {
       "id": "AD-03",
       "title": "Business archive",
       "route": "/operations/business-archive",
       "priority": "P1",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-5",
       "webSource": [
         "src/app/operations/business-archive/"
@@ -678,40 +682,42 @@
           "id": "AD-03.read",
           "title": "Archive state read",
           "kind": "read",
-          "state": "native"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-03.dryrun",
           "title": "Dry-run preview",
           "kind": "read",
           "roleGate": "SUPER_ADMIN",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-03.execute",
           "title": "Execute with typed confirmation + progress + audit result",
           "kind": "write",
           "roleGate": "SUPER_ADMIN",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-03.restore",
           "title": "Restore batch",
           "kind": "write",
           "roleGate": "SUPER_ADMIN",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         }
-      ]
+      ],
+      "notes": "NP-5 DONE: dry-run preview (module counts + server confirmationPhrase), typed-phrase-gated execute, batch restore w/ confirm; audit result shown; SUPER_ADMIN enforced by routes."
     },
     {
       "id": "AD-04",
       "title": "System diagnostics",
       "route": "/operations/system-diagnostics",
       "priority": "P1",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-5",
       "webSource": [
         "src/app/operations/system-diagnostics/"
@@ -724,24 +730,26 @@
           "id": "AD-04.read",
           "title": "Diagnostics read",
           "kind": "read",
-          "state": "native"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-04.process",
           "title": "Process queue / retry failed / retry single (per-action spinner + counts + reload)",
           "kind": "write",
           "roleGate": "admin",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         }
-      ]
+      ],
+      "notes": "NP-5 DONE: process_queue/retry_failed (limit bodies) + per-row retry_single on FAILED rows; per-action spinner + response counts + reload."
     },
     {
       "id": "AD-05",
       "title": "Payment accounts",
       "route": "/portal/payment-accounts",
       "priority": "P1",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-5",
       "webSource": [
         "src/app/portal/payment-accounts/"
@@ -754,37 +762,39 @@
           "id": "AD-05.read",
           "title": "Masked card read",
           "kind": "read",
-          "state": "native"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-05.create",
           "title": "Mobile/bank account creation + edit/upsert + set default",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-05.reveal",
           "title": "Secure reveal/hide (Face ID/device auth + server authorization)",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-05.delete",
           "title": "Delete (Face ID/device auth + confirm)",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         }
-      ]
+      ],
+      "notes": "NP-5 DONE: mobile/bank create forms, set-default PATCH, DELETE with Face ID + confirm, reveal via LocalAuthentication + server reveal fetch (masked by default)."
     },
     {
       "id": "AD-06",
       "title": "Branding settings",
       "route": "/settings/branding",
       "priority": "P1",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-5",
       "webSource": [
         "src/app/settings/branding/"
@@ -797,23 +807,25 @@
           "id": "AD-06.upload",
           "title": "Logo/favicon upload",
           "kind": "upload",
-          "state": "native"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-06.fields",
           "title": "Company/tagline/phone/email/site/address/Facebook + colors + invoice prefix + watermark + footer, save validation",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         }
-      ]
+      ],
+      "notes": "NP-5 DONE: full field editor (company/tagline/contact/colors/invoice prefix/watermark+opacity validation/footers) via POST /api/branding action:save; logo/favicon upload was already native."
     },
     {
       "id": "AD-07",
       "title": "Telegram ops settings",
       "route": "/settings/telegram-ops",
       "priority": "P1",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-5",
       "webSource": [
         "src/app/settings/telegram-ops/"
@@ -835,17 +847,18 @@
           "kind": "write",
           "roleGate": "owner",
           "api": "PATCH /api/settings/telegram-ops",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         }
-      ]
+      ],
+      "notes": "NP-5 DONE: owner chat IDs field, 4 schedule minute fields (submit-save), 11 alert toggles — PATCH web save() payloads; reload = server echo."
     },
     {
       "id": "AD-08",
       "title": "Notification settings — push health",
       "route": "/settings/notifications",
       "priority": "P2",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-5",
       "webSource": [
         "src/app/settings/notifications/"
@@ -858,24 +871,26 @@
           "id": "AD-08.broadcast",
           "title": "Broadcast composer/stats",
           "kind": "write",
-          "state": "native"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         },
         {
           "id": "AD-08.pushhealth",
           "title": "Device push-health surface",
           "kind": "read",
           "api": "GET /api/notifications/push-health?scope=all",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         }
-      ]
+      ],
+      "notes": "NP-5 DONE: push-health board (verdict pills OK/WEB_ONLY/DEAD/NEVER + per-device lines) from GET /api/notifications/push-health?scope=all."
     },
     {
       "id": "AD-09",
       "title": "Session settings routing",
       "route": "/settings/session",
       "priority": "P2",
-      "state": "routing",
+      "state": "native",
       "plannedPhase": "NP-5",
       "webSource": [
         "src/app/settings/session/"
@@ -889,10 +904,11 @@
           "id": "AD-09.route",
           "title": "Session page presents the existing native More profile sheet controls (no web escape)",
           "kind": "navigation",
-          "state": "missing",
-          "plannedPhase": "NP-5"
+          "state": "native",
+          "verify": "role-gate + live write cross-check batched to NP-9 owner-approved session"
         }
-      ]
+      ],
+      "notes": "NP-5 DONE: session page embeds the SAME native profile controls (name/phone PATCH /api/users/me + password POST /api/users/me/password) — web escape removed."
     },
     {
       "id": "TR-01",
@@ -1556,7 +1572,7 @@
     "AttendanceSwiftUI.swift": 4,
     "AuditSwiftUI.swift": 3,
     "BriefingSwiftUI.swift": 3,
-    "BusinessArchiveSwiftUI.swift": 4,
+    "BusinessArchiveSwiftUI.swift": 2,
     "CatalogImagesSwiftUI.swift": 1,
     "CreativeStudioSwiftUI.swift": 3,
     "CreditUsageSwiftUI.swift": 1,
@@ -1577,23 +1593,23 @@
     "OfficeFundSwiftUI.swift": 3,
     "OrderCreateSwiftUI.swift": 1,
     "OrdersSwiftUI.swift": 3,
-    "PaymentAccountsSwiftUI.swift": 3,
+    "PaymentAccountsSwiftUI.swift": 2,
     "PayrollSwiftUI.swift": 3,
     "PortalExpenseSwiftUI.swift": 3,
     "PortalOfficeSwiftUI.swift": 4,
     "PortalStaffOfficeSwiftUI.swift": 1,
     "PortalSwiftUI.swift": 5,
-    "SettingsBrandingSwiftUI.swift": 2,
+    "SettingsBrandingSwiftUI.swift": 1,
     "SettingsDatabaseSwiftUI.swift": 2,
     "SettingsNotificationsSwiftUI.swift": 3,
-    "SettingsSessionSwiftUI.swift": 2,
+    "SettingsSessionSwiftUI.swift": 1,
     "SettingsSmsSwiftUI.swift": 2,
     "SettingsTelegramSwiftUI.swift": 2,
     "SettingsUsersSwiftUI.swift": 3,
     "StaffMonitorSwiftUI.swift": 2,
     "SubscriptionsSwiftUI.swift": 1,
-    "SupplierImportSwiftUI.swift": 4,
-    "SystemDiagnosticsSwiftUI.swift": 2,
+    "SupplierImportSwiftUI.swift": 3,
+    "SystemDiagnosticsSwiftUI.swift": 1,
     "TargetControlSwiftUI.swift": 3,
     "TaskSpotlightSwiftUI.swift": 3,
     "TradingAccountsSwiftUI.swift": 3,

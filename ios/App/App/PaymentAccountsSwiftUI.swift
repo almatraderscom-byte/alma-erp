@@ -14,6 +14,7 @@
 //
 
 import SwiftUI
+import LocalAuthentication
 
 // MARK: - Web palette (exact hexes from globals.css / tailwind tokens)
 
@@ -179,6 +180,156 @@ final class PaymentAccountsVM {
     }
 
     /// Copies the MASKED number only — the full number never reaches this screen.
+    // ── NP-5 (AD-05): full secure management — the web PaymentAccountsPanel's
+    //    exact payloads. Reveal + delete are gated behind LocalAuthentication
+    //    (Face ID / passcode) IN ADDITION to server authorization. ──
+
+    var saving = false
+    var revealBusy: String? = nil
+    var revealedNumbers: [String: String] = [:]   // method id → full number (session-only)
+
+    private struct WriteResp: Decodable { let ok: Bool?; let error: String? }
+
+    struct MobileForm {
+        var provider = "BKASH"       // BKASH | NAGAD | ROCKET | OTHER
+        var usageType = "PERSONAL"   // PERSONAL | BUSINESS
+        var holder = ""
+        var number = ""
+    }
+    struct BankForm {
+        var bankName = ""
+        var branchName = ""
+        var holder = ""
+        var number = ""
+        var routing = ""
+    }
+
+    /// POST /api/employee/payment-methods — MOBILE_BANKING (web submitMobile body).
+    func addMobile(_ f: MobileForm) async -> Bool {
+        guard !saving else { return false }
+        saving = true
+        defer { saving = false }
+        struct Body: Encodable {
+            let business_id: String, type: String, provider: String, usage_type: String
+            let account_holder_name: String, account_number: String, is_primary: Bool
+        }
+        do {
+            let _: WriteResp = try await AlmaAPI.shared.send(
+                "POST", "/api/employee/payment-methods",
+                body: Body(business_id: businessId, type: "MOBILE_BANKING", provider: f.provider,
+                           usage_type: f.usageType, account_holder_name: f.holder,
+                           account_number: f.number, is_primary: true))
+            notice = "Mobile account saved"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await load()
+            return true
+        } catch {
+            self.error = "Save ব্যর্থ: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// POST — BANK_ACCOUNT (web submitBank body; primary only when list empty).
+    func addBank(_ f: BankForm) async -> Bool {
+        guard !saving else { return false }
+        saving = true
+        defer { saving = false }
+        struct Body: Encodable {
+            let business_id: String, type: String, bank_name: String, branch_name: String
+            let account_holder_name: String, account_number: String, routing_number: String
+            let is_primary: Bool
+        }
+        do {
+            let _: WriteResp = try await AlmaAPI.shared.send(
+                "POST", "/api/employee/payment-methods",
+                body: Body(business_id: businessId, type: "BANK_ACCOUNT", bank_name: f.bankName,
+                           branch_name: f.branchName, account_holder_name: f.holder,
+                           account_number: f.number, routing_number: f.routing,
+                           is_primary: methods.isEmpty))
+            notice = "Bank account saved"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await load()
+            return true
+        } catch {
+            self.error = "Save ব্যর্থ: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// PATCH /{id} {is_primary:true} — set default payout.
+    func setPrimary(_ id: String) async {
+        guard !saving else { return }
+        saving = true
+        defer { saving = false }
+        struct Body: Encodable { let is_primary: Bool }
+        do {
+            let _: WriteResp = try await AlmaAPI.shared.send(
+                "PATCH", "/api/employee/payment-methods/\(id)", body: Body(is_primary: true))
+            notice = "Default payout updated"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            self.error = "পরিবর্তন ব্যর্থ: \(error.localizedDescription)"
+        }
+        await load()
+    }
+
+    /// DELETE /{id} — device-auth + confirm handled by the UI before calling.
+    func remove(_ id: String) async {
+        guard !saving else { return }
+        saving = true
+        defer { saving = false }
+        struct Empty: Decodable { let ok: Bool? }
+        do {
+            let _: Empty = try await AlmaAPI.shared.send("DELETE", "/api/employee/payment-methods/\(id)")
+            notice = "Account removed"
+            revealedNumbers[id] = nil
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            self.error = "Remove ব্যর্থ: \(error.localizedDescription)"
+        }
+        await load()
+    }
+
+    /// Reveal the full number: Face ID / passcode FIRST, then a reveal fetch
+    /// (server authorization — GET with reveal=1 falls back to the list value).
+    @MainActor
+    func reveal(_ m: PaymentAccountMethod) async {
+        guard revealBusy == nil else { return }
+        if revealedNumbers[m.id] != nil {
+            revealedNumbers[m.id] = nil    // hide again
+            return
+        }
+        revealBusy = m.id
+        defer { revealBusy = nil }
+        let ctx = LAContext()
+        ctx.localizedFallbackTitle = "Passcode"
+        do {
+            let ok = try await ctx.evaluatePolicy(
+                .deviceOwnerAuthentication,
+                localizedReason: "অ্যাকাউন্ট নম্বর দেখতে পরিচয় নিশ্চিত করুন")
+            guard ok else { return }
+        } catch { return }
+        struct Resp: Decodable {
+            let methods: [PaymentAccountMethod]
+            private enum Keys: String, CodingKey { case ok, data, methods }
+            init(from decoder: Decoder) throws {
+                let root = try decoder.container(keyedBy: Keys.self)
+                let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+                methods = (try? c.decode([PaymentAccountMethod].self, forKey: .methods)) ?? []
+            }
+        }
+        if let r: Resp = try? await AlmaAPI.shared.get(
+            "/api/employee/payment-methods",
+            query: ["business_id": businessId, "reveal": "1"]),
+           let full = r.methods.first(where: { $0.id == m.id })?.accountNumber, !full.isEmpty {
+            revealedNumbers[m.id] = full
+        } else if let n = m.accountNumber, !n.isEmpty {
+            revealedNumbers[m.id] = n
+        } else {
+            self.error = "পুরো নম্বর আনা যায়নি"
+        }
+    }
+
     func copyMasked(_ m: PaymentAccountMethod) {
         UIPasteboard.general.string = m.maskedNumber
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -196,6 +347,9 @@ final class PaymentAccountsVM {
 struct PaymentAccountsScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = PaymentAccountsVM()
+    @State private var showMobileForm = false
+    @State private var showBankForm = false
+    @State private var deleteTarget: PaymentAccountMethod? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -208,7 +362,44 @@ struct PaymentAccountsScreen: View {
                 if let ok = vm.notice { noticeCard(ok, tone: .success) }
                 if vm.loading && vm.methods.isEmpty { loadingRows }
                 ForEach(vm.methods) { m in
-                    PaymentAccountCard(method: m) { vm.copyMasked(m) }
+                    VStack(spacing: 6) {
+                        PaymentAccountCard(method: m) { vm.copyMasked(m) }
+                        // NP-5 (AD-05): reveal (Face ID) · set default · remove (Face ID + confirm).
+                        HStack(spacing: 8) {
+                            Button {
+                                UISelectionFeedbackGenerator().selectionChanged()
+                                Task { await vm.reveal(m) }
+                            } label: {
+                                Text(vm.revealBusy == m.id ? "⏳" :
+                                     (vm.revealedNumbers[m.id] != nil ? "🙈 লুকান" : "👁️ দেখুন"))
+                                    .font(.caption2.weight(.bold))
+                            }
+                            .buttonStyle(.bordered)
+                            if let full = vm.revealedNumbers[m.id] {
+                                Text(full).font(.caption.monospaced().weight(.bold))
+                                    .textSelection(.enabled)
+                            }
+                            Spacer()
+                            if m.isPrimary != true {
+                                Button {
+                                    UISelectionFeedbackGenerator().selectionChanged()
+                                    Task { await vm.setPrimary(m.id) }
+                                } label: {
+                                    Text("⭐️ Default").font(.caption2.weight(.bold))
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                            Button(role: .destructive) {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                deleteTarget = m
+                            } label: {
+                                Text("🗑️").font(.caption2)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        .disabled(vm.saving)
+                        .padding(.horizontal, 4)
+                    }
                 }
                 if !vm.loading && vm.methods.isEmpty && vm.error == nil && !vm.authExpired {
                     emptyState
@@ -224,6 +415,34 @@ struct PaymentAccountsScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .sheet(isPresented: $showMobileForm) {
+            PaymentMobileFormSheet(vm: vm) { showMobileForm = false }
+                .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showBankForm) {
+            PaymentBankFormSheet(vm: vm) { showBankForm = false }
+                .presentationDetents([.medium, .large])
+        }
+        // Delete: device auth + Bangla confirm (AD-05 high-risk action).
+        .confirmationDialog(
+            deleteTarget.map { "\($0.label) — মুছে ফেলবেন?" } ?? "",
+            isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
+            titleVisibility: .visible,
+            presenting: deleteTarget
+        ) { m in
+            Button("মুছুন", role: .destructive) {
+                Task {
+                    let ctx = LAContext()
+                    if (try? await ctx.evaluatePolicy(.deviceOwnerAuthentication,
+                                                      localizedReason: "অ্যাকাউন্ট মুছতে পরিচয় নিশ্চিত করুন")) == true {
+                        await vm.remove(m.id)
+                    }
+                }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: { m in
+            Text("\(m.maskedNumber) — এই payout অ্যাকাউন্টটি মুছে যাবে।")
+        }
     }
 
     /// Web panel header as the bento dark hero (owner spec 2026-07-08) — COUNTS ONLY
@@ -271,9 +490,9 @@ struct PaymentAccountsScreen: View {
         .padding(.bottom, 20)
     }
 
-    /// Security note — the native screen is deliberately view-only.
+    /// NP-5 (AD-05): full native management — reveal/delete are Face ID-gated.
     private var readOnlyStrip: some View {
-        Label("নিরাপত্তার জন্য অ্যাকাউন্ট যোগ / পরিবর্তন / মুছে ফেলা শুধু ওয়েবে হয়।", systemImage: "lock.shield")
+        Label("নম্বর দেখা ও ডিলিট — Face ID/পাসকোড দিয়ে সুরক্ষিত। সার্ভারের অনুমতিও লাগে।", systemImage: "lock.shield")
             .font(.caption2)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -282,15 +501,28 @@ struct PaymentAccountsScreen: View {
     }
 
     private var webEscape: some View {
-        Button {
-            openWeb("/portal/payment-accounts", "Payment accounts")
-        } label: {
-            Label("সব অপশন (Add · Set default · Remove) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+        HStack(spacing: 8) {
+            Button {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                showMobileForm = true
+            } label: {
+                Text("📱 Mobile account").font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                    .background(PaymentAccountPalette.coral.opacity(0.12), in: Capsule())
+                    .foregroundStyle(PaymentAccountPalette.coral)
+            }
+            .buttonStyle(.plain)
+            Button {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                showBankForm = true
+            } label: {
+                Text("🏦 Bank account").font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                    .background(PaymentAccountPalette.emerald600.opacity(0.12), in: Capsule())
+                    .foregroundStyle(PaymentAccountPalette.emerald600)
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
         .padding(.vertical, 6)
     }
 
@@ -689,4 +921,77 @@ private struct PayBentoHeroCard: View {
 @available(iOS 17.0, *)
 #Preview("Payment accounts — Light") {
     PaymentAccountsScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - NP-5 (AD-05): add-account form sheets (web submitMobile/submitBank parity)
+
+@available(iOS 17.0, *)
+private struct PaymentMobileFormSheet: View {
+    let vm: PaymentAccountsVM
+    let onDone: () -> Void
+    @State private var f = PaymentAccountsVM.MobileForm()
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Mobile banking") {
+                    Picker("Provider", selection: $f.provider) {
+                        Text("bKash").tag("BKASH")
+                        Text("Nagad").tag("NAGAD")
+                        Text("Rocket").tag("ROCKET")
+                        Text("Other").tag("OTHER")
+                    }
+                    Picker("ব্যবহার", selection: $f.usageType) {
+                        Text("Personal").tag("PERSONAL")
+                        Text("Business").tag("BUSINESS")
+                    }
+                    TextField("Account holder name", text: $f.holder)
+                    TextField("Account number", text: $f.number).keyboardType(.phonePad)
+                }
+            }
+            .navigationTitle("Mobile account")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("বাতিল") { onDone() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(vm.saving ? "…" : "সেভ") {
+                        Task { if await vm.addMobile(f) { onDone() } }
+                    }
+                    .disabled(vm.saving || f.holder.isEmpty || f.number.isEmpty)
+                }
+            }
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct PaymentBankFormSheet: View {
+    let vm: PaymentAccountsVM
+    let onDone: () -> Void
+    @State private var f = PaymentAccountsVM.BankForm()
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Bank account") {
+                    TextField("Bank name", text: $f.bankName)
+                    TextField("Branch name", text: $f.branchName)
+                    TextField("Account holder name", text: $f.holder)
+                    TextField("Account number", text: $f.number).keyboardType(.numberPad)
+                    TextField("Routing number", text: $f.routing).keyboardType(.numberPad)
+                }
+            }
+            .navigationTitle("Bank account")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("বাতিল") { onDone() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(vm.saving ? "…" : "সেভ") {
+                        Task { if await vm.addBank(f) { onDone() } }
+                    }
+                    .disabled(vm.saving || f.bankName.isEmpty || f.holder.isEmpty || f.number.isEmpty)
+                }
+            }
+        }
+    }
 }

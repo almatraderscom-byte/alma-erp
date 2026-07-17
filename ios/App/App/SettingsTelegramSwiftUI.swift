@@ -10,10 +10,10 @@
 //  last success) · owner-routing diagnostics (chat IDs monospace) · recipients & master
 //  switch (read-only) · schedule (BD) · alert toggles (read-only) · queue 7-day chips ·
 //  last failure · recent queue rows.
-//  NATIVE WRITES (verified 2026-07-17): process queue (POST …/health), test message
-//  (POST …/test), retry failed/single (POST …/retry), master enable (PATCH
-//  /api/settings/telegram-ops). STILL WEB (parity ledger AD-07, phase NP-5): owner
-//  chat IDs, full schedule values, per-alert toggles.
+//  NATIVE WRITES (NP-5, AD-07 complete): process queue (POST …/health), test message
+//  (POST …/test), retry failed/single (POST …/retry), master enable + owner chat IDs
+//  + schedule minutes + per-alert toggles (PATCH /api/settings/telegram-ops, the web
+//  save() {business_id, <field>} payloads verbatim; reload = server echo).
 //  Carried lessons: lenient decoding, ONE loading state, never a global overlay.
 //
 
@@ -462,6 +462,66 @@ final class SettingsTelegramVM {
         } catch { toast = error.localizedDescription }
     }
 
+    // NP-5 (AD-07): owner chat IDs + schedule + per-alert toggles — the web save()
+    // payload verbatim ({business_id, <camelCase field>: value}); reload = echo.
+    struct ConfigPatch: Encodable {
+        let business_id: String
+        var ownerChatIds: String? = nil
+        var officeStartMinutes: Int? = nil
+        var gracePeriodMinutes: Int? = nil
+        var checkoutCutoffMinutes: Int? = nil
+        var earlyLeaveMinutes: Int? = nil
+        var alertAttendanceCheckIn: Bool? = nil
+        var alertAttendanceLate: Bool? = nil
+        var alertAttendanceAbsent: Bool? = nil
+        var alertAttendanceCheckOut: Bool? = nil
+        var alertAttendanceNoCheckout: Bool? = nil
+        var alertAttendanceEarlyLeave: Bool? = nil
+        var alertAttendanceSuspicious: Bool? = nil
+        var alertTradingScreenshot: Bool? = nil
+        var alertTradingDeleteRequest: Bool? = nil
+        var alertWorkflowLifecycle: Bool? = nil
+        var alertOpsDailySummary: Bool? = nil
+    }
+
+    var configSaving = false
+
+    func saveConfig(_ mutate: (inout ConfigPatch) -> Void) async {
+        guard !configSaving else { return }
+        configSaving = true
+        defer { configSaving = false }
+        var patch = ConfigPatch(business_id: businessId)
+        mutate(&patch)
+        struct Resp: Decodable { let ok: Bool? }
+        do {
+            let _: Resp = try await AlmaAPI.shared.send("PATCH", "/api/settings/telegram-ops", body: patch)
+            toast = "Saved"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            toast = "Save ব্যর্থ: \(error.localizedDescription)"
+        }
+        await load()
+    }
+
+    func alertToggle(_ key: String, _ on: Bool) async {
+        await saveConfig { p in
+            switch key {
+            case "alertAttendanceCheckIn": p.alertAttendanceCheckIn = on
+            case "alertAttendanceLate": p.alertAttendanceLate = on
+            case "alertAttendanceAbsent": p.alertAttendanceAbsent = on
+            case "alertAttendanceCheckOut": p.alertAttendanceCheckOut = on
+            case "alertAttendanceNoCheckout": p.alertAttendanceNoCheckout = on
+            case "alertAttendanceEarlyLeave": p.alertAttendanceEarlyLeave = on
+            case "alertAttendanceSuspicious": p.alertAttendanceSuspicious = on
+            case "alertTradingScreenshot": p.alertTradingScreenshot = on
+            case "alertTradingDeleteRequest": p.alertTradingDeleteRequest = on
+            case "alertWorkflowLifecycle": p.alertWorkflowLifecycle = on
+            case "alertOpsDailySummary": p.alertOpsDailySummary = on
+            default: break
+            }
+        }
+    }
+
     func setEnabled(_ enabled: Bool) async {
         struct Resp: Decodable { let ok: Bool? }
         do {
@@ -480,6 +540,7 @@ final class SettingsTelegramVM {
 struct SettingsTelegramScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = SettingsTelegramVM()
+    @State private var ownerChatIdsDraft = ""    // NP-5 (AD-07)
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -695,12 +756,25 @@ struct SettingsTelegramScreen: View {
                                                        : SettingsTelegramPalette.red500).opacity(0.12),
                                     in: Capsule())
                 }
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Owner chat IDs (comma-separated). Env fallback: TELEGRAM_OWNER_CHAT_IDS")
                         .font(.caption2).foregroundStyle(.secondary)
-                    Text((s.ownerChatIds?.isEmpty == false) ? s.ownerChatIds! : "—")
-                        .font(.footnote.monospaced())
-                        .foregroundStyle(SettingsTelegramPalette.accentText(colorScheme))
+                    // NP-5 (AD-07): editable — saves the web's {ownerChatIds} patch.
+                    HStack(spacing: 8) {
+                        TextField("123456789, 987654321", text: $ownerChatIdsDraft)
+                            .font(.footnote.monospaced())
+                            .textFieldStyle(.roundedBorder)
+                            .keyboardType(.numbersAndPunctuation)
+                            .autocorrectionDisabled()
+                        Button(vm.configSaving ? "…" : "সেভ") {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            Task { await vm.saveConfig { $0.ownerChatIds = ownerChatIdsDraft } }
+                        }
+                        .font(.caption.weight(.bold))
+                        .buttonStyle(.bordered)
+                        .disabled(vm.configSaving)
+                    }
+                    .onAppear { ownerChatIdsDraft = s.ownerChatIds ?? "" }
                 }
 
                 Text("Schedule (BD)")
@@ -708,20 +782,33 @@ struct SettingsTelegramScreen: View {
                     .padding(.top, 2)
                 Text("Office \(SettingsTelegramFormat.minutesToTimeLabel(s.officeStartMinutes ?? 0)) · grace +\(s.gracePeriodMinutes ?? 0)m · no-checkout \(SettingsTelegramFormat.minutesToTimeLabel(s.checkoutCutoffMinutes ?? 0))")
                     .font(.caption2).foregroundStyle(.secondary)
+                // NP-5 (AD-07): editable schedule — web onBlur-save parity (save on submit).
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())],
                           spacing: 8) {
-                    scheduleCell("Office start (min)", s.officeStartMinutes)
-                    scheduleCell("Grace (min)", s.gracePeriodMinutes)
-                    scheduleCell("Checkout cutoff (min)", s.checkoutCutoffMinutes)
-                    scheduleCell("Early leave under (min)", s.earlyLeaveMinutes)
+                    scheduleField("Office start (min)", s.officeStartMinutes) { v in
+                        Task { await vm.saveConfig { $0.officeStartMinutes = v } }
+                    }
+                    scheduleField("Grace (min)", s.gracePeriodMinutes) { v in
+                        Task { await vm.saveConfig { $0.gracePeriodMinutes = v } }
+                    }
+                    scheduleField("Checkout cutoff (min)", s.checkoutCutoffMinutes) { v in
+                        Task { await vm.saveConfig { $0.checkoutCutoffMinutes = v } }
+                    }
+                    scheduleField("Early leave under (min)", s.earlyLeaveMinutes) { v in
+                        Task { await vm.saveConfig { $0.earlyLeaveMinutes = v } }
+                    }
                 }
-                Text("পরিবর্তন করতে ওয়েব পেজ ব্যবহার করুন — এখানে শুধু দেখা যায়।")
-                    .font(.caption2).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
             .settingsTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
+    }
+
+    /// NP-5 (AD-07): editable schedule cell — commits the web {field: minutes} patch
+    /// on submit (keyboard done), mirroring the web's onBlur save.
+    private func scheduleField(_ label: String, _ value: Int?, onCommit: @escaping (Int) -> Void) -> some View {
+        SettingsTelegramScheduleField(label: label, value: value, disabled: vm.configSaving, onCommit: onCommit)
     }
 
     private func scheduleCell(_ label: String, _ value: Int?) -> some View {
@@ -750,9 +837,14 @@ struct SettingsTelegramScreen: View {
                     HStack(spacing: 8) {
                         Text(t.label).font(.footnote)
                         Spacer()
-                        Image(systemName: on ? "checkmark.circle.fill" : "xmark.circle")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(on ? SettingsTelegramPalette.emerald600 : Color.secondary)
+                        // NP-5 (AD-07): live toggle — web checkbox save parity.
+                        Toggle("", isOn: Binding(get: { on }, set: { newOn in
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            Task { await vm.alertToggle(t.key, newOn) }
+                        }))
+                        .labelsHidden()
+                        .tint(SettingsTelegramPalette.emerald600)
+                        .disabled(vm.configSaving)
                     }
                     .padding(.horizontal, 12).padding(.vertical, 9)
                     .background(Color.white.opacity(colorScheme == .dark ? 0.04 : 0.3),
@@ -1093,4 +1185,45 @@ private extension View {
 @available(iOS 17.0, *)
 #Preview("Telegram Ops — Light") {
     SettingsTelegramScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+
+/// NP-5 (AD-07): one editable minutes field (own state so typing doesn't re-render the card).
+@available(iOS 17.0, *)
+private struct SettingsTelegramScheduleField: View {
+    let label: String
+    let value: Int?
+    let disabled: Bool
+    let onCommit: (Int) -> Void
+    @State private var draft = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
+            TextField("0", text: $draft)
+                .font(.footnote.monospaced().weight(.semibold))
+                .keyboardType(.numberPad)
+                .textFieldStyle(.roundedBorder)
+                .disabled(disabled)
+                .onSubmit { commit() }
+                .submitLabel(.done)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { draft = value.map(String.init) ?? "" }
+        .onChange(of: value) { _, new in draft = new.map(String.init) ?? "" }
+        .overlay(alignment: .topTrailing) {
+            if Int(draft) != value, let _ = Int(draft) {
+                Button("সেভ") { commit() }
+                    .font(.system(size: 10, weight: .bold))
+                    .buttonStyle(.bordered)
+                    .disabled(disabled)
+            }
+        }
+    }
+
+    private func commit() {
+        guard let v = Int(draft), v != value else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        onCommit(v)
+    }
 }
