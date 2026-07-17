@@ -82,6 +82,7 @@ import { WORKBENCH_TOOLS } from './workbench-tools'
 import { SKILL_PACK_TOOLS } from './skill-pack-tools'
 import { SEO_AUDIT_TOOLS } from './seo-audit-tools'
 import { ARTIFACT_TOOLS } from './artifact-tools'
+import { META_ADS_TOOLS } from './meta-ads-tools'
 
 export interface ToolResult {
   success: boolean
@@ -574,6 +575,9 @@ export const TOOLS: AgentTool[] = [
   // MUST also live in this execution pool, otherwise the head sees them but a call returns
   // "Unknown tool" (same footgun the place_agent_call comment above warns about).
   ...GROWTH_TOOLS,
+  // Meta Ads MCP bridged reads (Phase MA1) — advertised via `growth`, so they
+  // must be executable here (same sees-it-but-Unknown-tool footgun as above).
+  ...META_ADS_TOOLS,
   ...COMPETITOR_TOOLS,
   ...ADVISOR_TOOLS,
   ...OWNER_TODO_TOOLS,

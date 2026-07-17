@@ -9,6 +9,7 @@
  * Money is BDT whole-taka (roundMoney) in every business calculation.
  */
 import { roundMoney } from '@/lib/money'
+import { formatAdSpend, roundAdSpend } from '@/agent/lib/ads/insights'
 import { runGa4Report, isGa4Configured } from '@/agent/lib/ga4'
 import { gatherMarketingReportData } from '@/agent/lib/marketing/report'
 
@@ -41,8 +42,29 @@ export interface MeasurementHealth {
   }
   paid: {
     observed: boolean
-    spendBdt: number
+    /**
+     * Spend in the AD ACCOUNT'S OWN currency (see `currency`) — NOT taka.
+     * Deliberately NOT named *Bdt: the old `spendBdt` name made the head print
+     * "৳12" for a real $11.49 week (live-hit 2026-07-17). `spendLabel` is the
+     * ready-to-quote string; quote it verbatim rather than re-formatting.
+     */
+    spend: number
+    currency: string
+    spendLabel: string
+    /** The ad account actually read — a wrong META_AD_ACCOUNT_ID shows here instead of hiding as 0. */
+    accountId: string | null
     campaignsWithData: number
+    /** Per-campaign performance detail — without this "ad performance কেমন?" cannot be answered. */
+    campaigns: Array<{
+      name: string
+      spend: number
+      spendLabel: string
+      impressions: number
+      clicks: number
+      ctrPct: number
+      /** TRUE current status (ACTIVE/PAUSED) — a paused campaign's history is still real spend. */
+      status: string
+    }>
   }
   gaps: DataGap[]
   /** True when core decisions should not be made from this data alone. */
@@ -83,26 +105,27 @@ export function detectFunnelBreak(orders: number, delivered: number | null, wind
 
 /** Spend without analytics (or vice versa) makes attribution guesswork. */
 export function detectAttributionGaps(input: {
-  spendBdt: number
+  /** Ad spend in the account's own currency — sign/zero is all this uses. */
+  spend: number
   ga4Observed: boolean
   orders: number
 }): DataGap[] {
   const gaps: DataGap[] = []
-  if (input.spendBdt > 0 && !input.ga4Observed) {
+  if (input.spend > 0 && !input.ga4Observed) {
     gaps.push({
       kind: 'missing_analytics',
       severity: 'high',
       detail: 'Ad spend is flowing but GA4 is not readable — no independent traffic/conversion signal to check Meta claims against.',
     })
   }
-  if (input.spendBdt > 0 && input.orders > 0) {
+  if (input.spend > 0 && input.orders > 0) {
     gaps.push({
       kind: 'attribution_uncertain',
       severity: 'low',
       detail: 'Spend and orders both observed, but no event-level join exists yet (Pixel/CAPI + UTM lineage is Phase 43). Treat channel attribution as directional.',
     })
   }
-  if (input.spendBdt === 0 && input.orders > 0) {
+  if (input.spend === 0 && input.orders > 0) {
     gaps.push({
       kind: 'missing_spend',
       severity: 'medium',
@@ -142,7 +165,10 @@ export async function assessMeasurementHealth(windowDays = 7): Promise<Measureme
   const orders = report?.funnel.ordersWeek.totalOrders ?? 0
   const delivered = report?.funnel.ordersWeek.deliveredCount ?? null
   const revenueBdt = roundMoney(report?.funnel.ordersWeek.totalRevenue ?? 0)
-  const spendBdt = roundMoney(report?.paid.totalSpendWeek ?? 0)
+  // NOT roundMoney(): that is whole-taka law and turned a real $11.49 into 11
+  // (live-hit 2026-07-17). Ad spend rounds in ITS OWN currency.
+  const paidCurrency = report?.paid.currency ?? 'USD'
+  const spend = roundAdSpend(report?.paid.totalSpendWeek ?? 0, paidCurrency)
   const campaignsWithData = report?.paid.campaigns.filter((c) => c.hasData).length ?? 0
 
   const gaps: DataGap[] = []
@@ -150,7 +176,7 @@ export async function assessMeasurementHealth(windowDays = 7): Promise<Measureme
   if (thinOrders) gaps.push(thinOrders)
   const funnelBreak = detectFunnelBreak(orders, delivered, days)
   if (funnelBreak) gaps.push(funnelBreak)
-  gaps.push(...detectAttributionGaps({ spendBdt, ga4Observed, orders }))
+  gaps.push(...detectAttributionGaps({ spend, ga4Observed, orders }))
   if (!ga4Configured) {
     gaps.push({
       kind: 'missing_analytics',
@@ -164,7 +190,23 @@ export async function assessMeasurementHealth(windowDays = 7): Promise<Measureme
     windowDays: days,
     erp: { observed: report !== null, orders, delivered, revenueBdt },
     analytics: { ga4Configured, observed: ga4Observed, sessions, keyEvents },
-    paid: { observed: report !== null && report.paid.campaigns.length > 0, spendBdt, campaignsWithData },
+    paid: {
+      observed: report !== null && report.paid.campaigns.length > 0,
+      spend,
+      currency: paidCurrency,
+      spendLabel: formatAdSpend(spend, paidCurrency),
+      accountId: report?.paid.accountId ?? null,
+      campaignsWithData,
+      campaigns: (report?.paid.campaigns ?? []).map((c) => ({
+        name: c.name,
+        spend: c.spendWeek,
+        spendLabel: formatAdSpend(c.spendWeek, paidCurrency),
+        impressions: c.impressionsWeek,
+        clicks: c.clicksWeek,
+        ctrPct: c.ctrWeekPct,
+        status: c.effectiveStatus,
+      })),
+    },
     gaps,
     thinData: Boolean(thinOrders) || campaignsWithData === 0,
   }

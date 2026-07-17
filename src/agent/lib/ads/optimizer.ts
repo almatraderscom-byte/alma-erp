@@ -38,8 +38,8 @@ export interface AdRecommendation {
   metrics?: {
     spendWeek: number
     roasWeek: number
-    ctrToday: number
-    ctrWeek: number
+    ctrTodayPct: number
+    ctrWeekPct: number
     dailyBudgetBdt: number
     status: string
     objective?: string
@@ -65,7 +65,7 @@ function guardrailVerdict(m: CampaignMetrics): AdVerdict {
   if (!m.hasEnoughData) return 'hold'
 
   const { TARGET_ROAS, SCALE_ROAS, WINNER_ROAS, KILL_ROAS, CTR_FATIGUE_RATIO } = OPTIMIZER_THRESHOLDS
-  const ctrStable = m.ctrWeek <= 0 || m.ctrToday >= m.ctrWeek * CTR_FATIGUE_RATIO
+  const ctrStable = m.ctrWeekPct <= 0 || m.ctrTodayPct >= m.ctrWeekPct * CTR_FATIGUE_RATIO
 
   if (m.roasWeek >= WINNER_ROAS && ctrStable) return 'duplicate'
   if (m.roasWeek >= SCALE_ROAS && ctrStable) return 'scale'
@@ -113,8 +113,8 @@ function metricsTable(metrics: CampaignMetrics[]): string {
       currency: m.currency,
       objective: m.objective,
       roasWeek: Number(m.roasWeek.toFixed(2)),
-      ctrTodayPct: Number((m.ctrToday * 100).toFixed(2)),
-      ctrWeekPct: Number((m.ctrWeek * 100).toFixed(2)),
+      ctrTodayPct: Number(m.ctrTodayPct.toFixed(2)),
+      ctrWeekPct: Number(m.ctrWeekPct.toFixed(2)),
       dailyBudgetBdt: m.dailyBudgetBdt,
       enoughData: m.hasEnoughData,
       guardrail: guardrailVerdict(m),
@@ -180,8 +180,8 @@ function curSym(m: CampaignMetrics): string {
 
 function draftReason(m: CampaignMetrics, verdict: AdVerdict): string {
   const roas = m.roasWeek.toFixed(1)
-  const ctrT = (m.ctrToday * 100).toFixed(2)
-  const ctrW = (m.ctrWeek * 100).toFixed(2)
+  const ctrT = m.ctrTodayPct.toFixed(2)
+  const ctrW = m.ctrWeekPct.toFixed(2)
   switch (verdict) {
     case 'scale':
       return `ROAS ${roas}x, CTR ${ctrT}% (৭-দিন ${ctrW}%) — স্থিতিশীল; বাজেট +${OPTIMIZER_THRESHOLDS.SCALE_DELTA_PCT}% (ছোট ধাপে scale)।`
@@ -221,8 +221,8 @@ export async function analyzeAdCampaigns(): Promise<{
       metrics: {
         spendWeek: m.spendWeek,
         roasWeek: m.roasWeek,
-        ctrToday: m.ctrToday,
-        ctrWeek: m.ctrWeek,
+        ctrTodayPct: m.ctrTodayPct,
+        ctrWeekPct: m.ctrWeekPct,
         dailyBudgetBdt: m.dailyBudgetBdt,
         status: m.effectiveStatus,
         objective: m.objective,
@@ -440,7 +440,7 @@ export async function recordRecommendationOutcomes(recommendations: AdRecommenda
       campaignName: rec.name,
       angle,
       roas: rec.metrics.roasWeek,
-      ctr: rec.metrics.ctrToday,
+      ctr: rec.metrics.ctrTodayPct,
       spendBdt: rec.metrics.spendWeek,
       verdict: rec.verdict,
     })
@@ -448,7 +448,7 @@ export async function recordRecommendationOutcomes(recommendations: AdRecommenda
       await writeWinningAngleToPlaybook({
         angle,
         roas: rec.metrics.roasWeek,
-        ctr: rec.metrics.ctrToday,
+        ctr: rec.metrics.ctrTodayPct,
         campaignName: rec.name,
       })
     }

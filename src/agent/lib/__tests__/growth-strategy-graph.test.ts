@@ -17,7 +17,7 @@ const measurement = (over: Partial<MeasurementHealth> = {}): MeasurementHealth =
   windowDays: 7,
   erp: { observed: true, orders: 20, delivered: 14, revenueBdt: 40000 },
   analytics: { ga4Configured: true, observed: true, sessions: 900, keyEvents: 40 },
-  paid: { observed: true, spendBdt: 8000, campaignsWithData: 2 },
+  paid: { observed: true, spend: 8000, currency: 'BDT', spendLabel: '৳8,000', accountId: 'act_test', campaignsWithData: 2, campaigns: [] },
   gaps: [],
   thinData: false,
   ...over,
@@ -90,7 +90,7 @@ describe('prioritizeBottleneck — deterministic funnel diagnosis', () => {
   })
 
   it('spend with zero orders → conversion', () => {
-    const m = measurement({ erp: { observed: true, orders: 0, delivered: 0, revenueBdt: 0 }, paid: { observed: true, spendBdt: 5000, campaignsWithData: 1 } })
+    const m = measurement({ erp: { observed: true, orders: 0, delivered: 0, revenueBdt: 0 }, paid: { observed: true, spend: 5000, currency: 'BDT', spendLabel: '৳5,000', accountId: 'act_test', campaignsWithData: 1, campaigns: [] } })
     expect(prioritizeBottleneck(inputs({ measurement: m })).stage).toBe('conversion')
   })
 
@@ -131,10 +131,10 @@ describe('assembleProposal — evidence-backed, never generic', () => {
       inputs({ measurement: measurement({ thinData: true }) }),
       inputs({ measurement: measurement({ erp: { observed: true, orders: 30, delivered: 6, revenueBdt: 60000 } }) }),
       inputs(),
-      inputs({ measurement: measurement({ paid: { observed: true, spendBdt: 0, campaignsWithData: 0 }, thinData: true }) }),
+      inputs({ measurement: measurement({ paid: { observed: true, spend: 0, currency: 'BDT', spendLabel: '৳0', accountId: 'act_test', campaignsWithData: 0, campaigns: [] }, thinData: true }) }),
       inputs({ measurement: measurement({ erp: { observed: true, orders: 100, delivered: 90, revenueBdt: 200000 } }) }),
       inputs({ measurement: measurement({ erp: { observed: true, orders: 8, delivered: 2, revenueBdt: 12000 } }) }),
-      inputs({ measurement: measurement({ erp: { observed: false, orders: 0, delivered: null, revenueBdt: 0 }, paid: { observed: false, spendBdt: 0, campaignsWithData: 0 } }) }),
+      inputs({ measurement: measurement({ erp: { observed: false, orders: 0, delivered: null, revenueBdt: 0 }, paid: { observed: false, spend: 0, currency: 'BDT', spendLabel: '৳0', accountId: 'act_test', campaignsWithData: 0, campaigns: [] } }) }),
     ]
     const proposals = scenarios.map((s) => assembleProposal(s))
     const stages = new Set(proposals.map((p) => p.bottleneck.stage))
