@@ -212,6 +212,7 @@ struct SupplierImportScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = SupplierImportVM()
     @State private var selected: SupplierImportBatch? = nil
+    @State private var showImportSheet = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -238,6 +239,15 @@ struct SupplierImportScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .sheet(isPresented: $showImportSheet) {
+            SupplierImportRunSheet(
+                catalogSkus: Set(vm.products.compactMap { $0.sku?.lowercased() }),
+                catalogNames: Set(vm.products.map { $0.name.lowercased() }),
+                onDone: { showImportSheet = false },
+                onCommitted: { Task { await vm.load() } })
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
         .sheet(item: $selected) { batch in
             SupplierImportBatchSheet(batch: batch, openWeb: openWeb)
                 .presentationDetents([.medium, .large])
@@ -429,16 +439,22 @@ struct SupplierImportScreen: View {
         .padding(.bottom, 20)
     }
 
+    /// NP-5 (AD-02): the import itself runs NATIVELY (paste/file → validate →
+    /// duplicate preview → selectable commit → result summary).
     private var webEscape: some View {
         Button {
-            openWeb("/inventory/supplier-import", "Supplier import")
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            showImportSheet = true
         } label: {
-            Label("সব অপশন (ইমপোর্ট সহ) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
+            Label("📦 JSON ইমপোর্ট চালান", systemImage: "square.and.arrow.down")
+                .font(.footnote.weight(.bold))
                 .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(SupplierImportPalette.coral.opacity(0.12), in: Capsule())
+                .foregroundStyle(SupplierImportPalette.coral)
+                .overlay(Capsule().strokeBorder(SupplierImportPalette.coral.opacity(0.35), lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
         .padding(.vertical, 6)
     }
 }
@@ -871,4 +887,234 @@ private struct SupBentoHeroCard: View {
 @available(iOS 17.0, *)
 #Preview("Supplier import — Light") {
     SupplierImportScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - NP-5 (AD-02): native JSON import — paste/file → validate → preview → commit
+
+@available(iOS 17.0, *)
+private struct SupplierImportRunSheet: View {
+    let catalogSkus: Set<String>
+    let catalogNames: Set<String>
+    let onDone: () -> Void
+    let onCommitted: () -> Void
+
+    private struct DraftRow: Identifiable {
+        let id = UUID()
+        let raw: [String: Any]
+        let name: String
+        let sku: String?
+        let price: String
+        let duplicate: String?    // duplicate_sku | duplicate_name | invalid | nil
+        var selected: Bool
+    }
+
+    @State private var rawJson = ""
+    @State private var rows: [DraftRow] = []
+    @State private var parseError: String? = nil
+    @State private var skipDuplicateNames = true
+    @State private var committing = false
+    @State private var result: (created: Int, skipped: Int, errors: [String])? = nil
+    @State private var showFilePicker = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("JSON ইনপুট (array বা {items:[…]} — alma-supplier-import-v1)") {
+                    TextEditor(text: $rawJson)
+                        .font(.caption.monospaced())
+                        .frame(minHeight: 110)
+                        .autocorrectionDisabled()
+                    HStack(spacing: 10) {
+                        Button("📋 Paste") {
+                            if let t = UIPasteboard.general.string { rawJson = t }
+                        }
+                        Button("📄 ফাইল") { showFilePicker = true }
+                        Spacer()
+                        Button("✅ Validate") { parse() }
+                            .disabled(rawJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    .font(.caption.weight(.bold))
+                    if let err = parseError {
+                        Text(err).font(.caption2).foregroundStyle(.red)
+                    }
+                }
+                if !rows.isEmpty {
+                    Section("Preview — \(rows.count) rows · \(rows.filter(\.selected).count) selected · duplicates deselected") {
+                        ForEach($rows) { $row in
+                            Toggle(isOn: $row.selected) {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(row.name).font(.caption.weight(.semibold)).lineLimit(1)
+                                    HStack(spacing: 6) {
+                                        if let sku = row.sku {
+                                            Text(sku).font(.system(size: 9).monospaced()).foregroundStyle(.secondary)
+                                        }
+                                        Text(row.price).font(.system(size: 9)).foregroundStyle(.secondary)
+                                        if let dup = row.duplicate {
+                                            Text(dup.replacingOccurrences(of: "_", with: " "))
+                                                .font(.system(size: 8, weight: .bold))
+                                                .foregroundStyle(.orange)
+                                        }
+                                    }
+                                }
+                            }
+                            .disabled(row.duplicate == "invalid")
+                        }
+                    }
+                    Section {
+                        Toggle("সার্ভারে duplicate নামও স্কিপ করবে", isOn: $skipDuplicateNames)
+                        Button(committing ? "⏳ Importing… (৩ মিনিট পর্যন্ত লাগতে পারে)" : "📦 Import \(rows.filter(\.selected).count) items") {
+                            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                            Task { await commit() }
+                        }
+                        .disabled(committing || rows.filter(\.selected).isEmpty)
+                    }
+                }
+                if let r = result {
+                    Section("ফলাফল") {
+                        Text("✓ Created \(r.created) · Skipped \(r.skipped) · Errors \(r.errors.count)")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(r.errors.isEmpty ? .green : .orange)
+                        ForEach(Array(r.errors.prefix(8).enumerated()), id: \.offset) { _, e in
+                            Text(e).font(.caption2).foregroundStyle(.red)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Supplier import")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("বন্ধ") { onDone() } }
+            }
+            .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.json, .plainText]) { res in
+                if case .success(let url) = res {
+                    let secured = url.startAccessingSecurityScopedResource()
+                    defer { if secured { url.stopAccessingSecurityScopedResource() } }
+                    if let t = try? String(contentsOf: url, encoding: .utf8) { rawJson = t }
+                }
+            }
+        }
+    }
+
+    /// Web parseJsonFile + enrichDrafts essentials: array or {items}; duplicate
+    /// detection by sku/name against the catalog AND within the file itself.
+    private func parse() {
+        parseError = nil
+        result = nil
+        rows = []
+        guard let data = rawJson.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) else {
+            parseError = "JSON পড়া যায়নি — ফরম্যাট চেক করুন।"
+            return
+        }
+        let list: [[String: Any]]
+        if let arr = json as? [[String: Any]] {
+            list = arr
+        } else if let obj = json as? [String: Any], let items = obj["items"] as? [[String: Any]] {
+            list = items
+        } else {
+            parseError = "JSON must be an array of products or an object with an \"items\" array (e.g. alma-supplier-import-v1)"
+            return
+        }
+        var seenSku = Set<String>()
+        var seenName = Set<String>()
+        rows = list.map { raw in
+            let name = String(describing: raw["name"] ?? raw["product"] ?? "").trimmingCharacters(in: .whitespaces)
+            let sku = (raw["sku"] as? String)?.trimmingCharacters(in: .whitespaces)
+            let priceVal = raw["price"] ?? raw["default_price"] ?? ""
+            var dup: String? = nil
+            if name.isEmpty { dup = "invalid" }
+            let ls = sku?.lowercased() ?? ""
+            let ln = name.lowercased()
+            if dup == nil, !ls.isEmpty, catalogSkus.contains(ls) || seenSku.contains(ls) { dup = "duplicate_sku" }
+            if dup == nil, catalogNames.contains(ln) || seenName.contains(ln) { dup = "duplicate_name" }
+            if !ls.isEmpty { seenSku.insert(ls) }
+            if !ln.isEmpty { seenName.insert(ln) }
+            return DraftRow(raw: raw, name: name.isEmpty ? "(নাম নেই)" : name, sku: sku,
+                            price: "৳\(priceVal)", duplicate: dup, selected: dup == nil)
+        }
+        if rows.isEmpty { parseError = "কোনো row পাওয়া যায়নি।" }
+    }
+
+    /// POST /api/supplier-import/commit {items, skip_duplicate_names} — the web
+    /// hook's exact payload; long timeout tolerated by the app's URLSession.
+    private func commit() async {
+        guard !committing else { return }
+        committing = true
+        defer { committing = false }
+        let items = rows.filter { $0.selected && $0.duplicate != "invalid" }
+            .map { SIJSON($0.raw) }
+        struct Body: Encodable {
+            let items: [SIJSON]
+            let skip_duplicate_names: Bool
+        }
+        struct Resp: Decodable {
+            let created: [String]
+            let skipped: [Skip]
+            let errors: [Err]
+            struct Skip: Decodable { let sku: String?; let reason: String? }
+            struct Err: Decodable { let sku: String?; let message: String? }
+            private enum Keys: String, CodingKey { case ok, data, created, skipped, errors }
+            init(from decoder: Decoder) throws {
+                let root = try decoder.container(keyedBy: Keys.self)
+                let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+                created = (try? c.decodeIfPresent([String].self, forKey: .created)) ?? []
+                skipped = (try? c.decodeIfPresent([Skip].self, forKey: .skipped)) ?? []
+                errors = (try? c.decodeIfPresent([Err].self, forKey: .errors)) ?? []
+            }
+        }
+        do {
+            let r: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/supplier-import/commit",
+                body: Body(items: items, skip_duplicate_names: skipDuplicateNames))
+            result = (r.created.count, r.skipped.count,
+                      r.errors.map { "\($0.sku ?? "?"): \($0.message ?? "error")" })
+            UINotificationFeedbackGenerator().notificationOccurred(r.errors.isEmpty ? .success : .warning)
+            onCommitted()
+        } catch {
+            result = (0, 0, ["Commit ব্যর্থ: \(error.localizedDescription)"])
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+        }
+    }
+}
+
+
+/// Minimal JSON-any → Encodable bridge (the import rows carry arbitrary supplier
+/// fields; they must reach the server VERBATIM — no field allowlist here).
+private enum SIJSON: Encodable {
+    case null
+    case bool(Bool)
+    case int(Int)
+    case double(Double)
+    case string(String)
+    case array([SIJSON])
+    case object([String: SIJSON])
+
+    init(_ any: Any) {
+        switch any {
+        case let b as Bool: self = .bool(b)
+        case let i as Int: self = .int(i)
+        case let d as Double: self = .double(d)
+        case let s as String: self = .string(s)
+        case let a as [Any]: self = .array(a.map(SIJSON.init))
+        case let o as [String: Any]: self = .object(o.mapValues(SIJSON.init))
+        case let n as NSNumber:
+            if CFGetTypeID(n) == CFBooleanGetTypeID() { self = .bool(n.boolValue) }
+            else if n.doubleValue == n.doubleValue.rounded(), abs(n.doubleValue) < 1e15 { self = .int(n.intValue) }
+            else { self = .double(n.doubleValue) }
+        default: self = .null
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .null: try c.encodeNil()
+        case .bool(let b): try c.encode(b)
+        case .int(let i): try c.encode(i)
+        case .double(let d): try c.encode(d)
+        case .string(let s): try c.encode(s)
+        case .array(let a): try c.encode(a)
+        case .object(let o): try c.encode(o)
+        }
+    }
 }

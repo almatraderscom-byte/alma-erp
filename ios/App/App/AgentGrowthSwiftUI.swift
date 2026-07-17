@@ -31,6 +31,7 @@ private enum AgentGrowthPalette {
     static let sky400 = Color(red: 0.220, green: 0.741, blue: 0.973)         // #38BDF8
     static let amber400 = Color(red: 0.984, green: 0.749, blue: 0.141)       // #FBBF24
     static let googleBlue = Color(red: 0.259, green: 0.522, blue: 0.957)     // #4285F4
+    static let metaBlue = Color(red: 0.031, green: 0.404, blue: 1.000)       // Meta #0866FF
 
     /// The web's accent-tinted text reads gold-dim on cream, gold-lt over dark aurora.
     static func accentText(_ scheme: ColorScheme) -> Color {
@@ -247,15 +248,71 @@ private enum AgentGrowthFlex {
 
 // MARK: - View model
 
+/// GET /api/assistant/meta-mcp/status → the growth "Connect Meta Ads" card (Phase MA1):
+/// enabled? connected? which scope tier? token health? live ad-account + tool count.
+struct AgentGrowthMetaStatus: Decodable, Equatable {
+    let enabled: Bool
+    let connected: Bool
+    let tier: String?
+    let tokenHealth: String?          // none|valid|expiring_soon|refreshable|reconnect_needed
+    let remoteToolCount: Int?
+    let adAccounts: [AdAccount]?
+    let probeError: String?
+
+    struct AdAccount: Decodable, Equatable { let id: String?; let name: String? }
+
+    private enum Keys: String, CodingKey {
+        case enabled, connected, tier, tokenHealth, remoteToolCount, adAccounts, probeError
+    }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: Keys.self)
+        enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        connected = (try? c.decodeIfPresent(Bool.self, forKey: .connected)) ?? false
+        tier = try? c.decodeIfPresent(String.self, forKey: .tier)
+        tokenHealth = try? c.decodeIfPresent(String.self, forKey: .tokenHealth)
+        remoteToolCount = try? c.decodeIfPresent(Int.self, forKey: .remoteToolCount)
+        adAccounts = try? c.decodeIfPresent([AdAccount].self, forKey: .adAccounts)
+        probeError = try? c.decodeIfPresent(String.self, forKey: .probeError)
+    }
+    /// Bengali one-liner for the token-health chip.
+    var tokenHealthLabel: String {
+        switch tokenHealth {
+        case "valid": return "টোকেন ঠিক আছে"
+        case "expiring_soon": return "টোকেন শিগগিরই শেষ"
+        case "refreshable": return "টোকেন রিফ্রেশ হবে"
+        case "reconnect_needed": return "আবার connect দরকার"
+        default: return "টোকেন নেই"
+        }
+    }
+}
+
 @available(iOS 17.0, *)
 @Observable
 final class AgentGrowthVM {
     var gsc: AgentGrowthGscStatus? = nil
     var features: AgentGrowthFeatureStatus? = nil
+    var meta: AgentGrowthMetaStatus? = nil   // Meta Ads MCP card (owner 2026-07-17)
     var loading = false            // GSC card (web `loading`)
     var featuresLoading = false    // feature board loads independently (web parity)
+    var disconnecting = false      // NP-4: native disconnect in flight
     var error: String? = nil
     var authExpired = false
+
+    /// NP-4 (AG-10): DELETE /api/assistant/growth/gsc-status (web payload), then
+    /// re-fetch — the refreshed server state is what the card shows.
+    func disconnect() async {
+        guard !disconnecting else { return }
+        disconnecting = true
+        defer { disconnecting = false }
+        struct Resp: Decodable { let ok: Bool? }
+        do {
+            let _: Resp = try await AlmaAPI.shared.send("DELETE", "/api/assistant/growth/gsc-status")
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            self.error = "বিচ্ছিন্ন করা যায়নি: \(error.localizedDescription)"
+        }
+        await load()
+    }
 
     /// Same order as the web: GSC status first, then the slower live-probe board —
     /// the second fetch never holds up the first card.
@@ -290,6 +347,11 @@ final class AgentGrowthVM {
             if Self.isCancellation(error) { return }
             // The board shows its own inline warn line when `features` stays nil.
         }
+
+        // Meta Ads MCP status (owner 2026-07-17): surface the merged Meta Ads MCP
+        // backend as a growth card. The route owner-gates itself (403 for non-owners),
+        // so `try?` leaves `meta` nil and the card simply doesn't render for them.
+        meta = try? await AlmaAPI.shared.get("/api/assistant/meta-mcp/status")
     }
 
     /// SwiftUI .refreshable cancels the task when the gesture ends — that's not an
@@ -307,6 +369,12 @@ final class AgentGrowthVM {
 struct AgentGrowthScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = AgentGrowthVM()
+    // NP-4 (AG-10): native connect (ASWebAuthenticationSession) + disconnect state.
+    @State private var connectBusy = false
+    @State private var connectResult: String? = nil
+    @State private var metaConnectBusy = false
+    @State private var metaConnectResult: String? = nil
+    @State private var confirmDisconnect = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -317,6 +385,7 @@ struct AgentGrowthScreen: View {
                 if let err = vm.error { warnCard(err) }
                 summaryChips
                 gscCard
+                metaCard
                 featureBoard
                 webEscape
                 Color.clear.frame(height: 8)
@@ -458,14 +527,56 @@ struct AgentGrowthScreen: View {
                         Text("এই account-এ কোনো Search Console property নেই।")
                             .font(.caption2).foregroundStyle(AgentGrowthPalette.amber400)
                     }
+
+                    // NP-4 (AG-10): native disconnect — DELETE gsc-status, then
+                    // refresh; UI shows the server's refreshed state.
+                    Button {
+                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                        confirmDisconnect = true
+                    } label: {
+                        Text(vm.disconnecting ? "বিচ্ছিন্ন হচ্ছে…" : "Google সংযোগ বিচ্ছিন্ন করুন")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AgentGrowthPalette.red500)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background(AgentGrowthPalette.red500.opacity(0.08), in: Capsule())
+                            .overlay(Capsule().strokeBorder(
+                                AgentGrowthPalette.red500.opacity(0.28), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.disconnecting)
+                    .confirmationDialog("Google Search Console বিচ্ছিন্ন করবেন?",
+                                        isPresented: $confirmDisconnect, titleVisibility: .visible) {
+                        Button("বিচ্ছিন্ন করুন", role: .destructive) {
+                            Task { await vm.disconnect() }
+                        }
+                        Button("বাতিল", role: .cancel) {}
+                    } message: {
+                        Text("GSC/GA4/GBP ডেটা ফিচারগুলো বন্ধ হয়ে যাবে — আবার connect করা যাবে।")
+                    }
                 }
             } else {
-                // Connect = Google OAuth redirect — must run in the web view.
+                // NP-4 (AG-10): Google consent runs in ASWebAuthenticationSession
+                // (system handoff EX-04) — never an internal WKWebView. The session
+                // ends back on /agent/growth?gsc=…; we read the status and refresh.
                 Button {
                     UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                    openWeb("/agent/growth", "Growth")
+                    if #available(iOS 17.4, *) {
+                        connectBusy = true
+                        AlmaWebAuthSession.shared.start(
+                            startPath: "/api/assistant/growth/gsc-auth",
+                            callbackPath: "/agent/growth"
+                        ) { items in
+                            connectBusy = false
+                            let status = items?.first { $0.name == "gsc" }?.value
+                            connectResult = status
+                            Task { await vm.load() }
+                        }
+                    } else {
+                        openWeb("/agent/growth", "Growth")   // pre-17.4 fallback
+                    }
                 } label: {
-                    Text("Google Search Console যুক্ত করুন")
+                    Text(connectBusy ? "Google-এ যাচ্ছে…" : "Google Search Console যুক্ত করুন")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AgentGrowthPalette.googleBlue)
                         .frame(maxWidth: .infinity)
@@ -475,11 +586,126 @@ struct AgentGrowthScreen: View {
                             AgentGrowthPalette.googleBlue.opacity(0.30), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .disabled(connectBusy)
+                if let r = connectResult, r != "connected" {
+                    Text("সংযোগ হয়নি (\(r)) — আবার চেষ্টা করুন।")
+                        .font(.caption2).foregroundStyle(AgentGrowthPalette.amber400)
+                }
             }
         } else if !vm.loading {
             Text("স্ট্যাটাস আনা যায়নি — পেজ রিফ্রেশ করুন।")
                 .font(.caption).foregroundStyle(AgentGrowthPalette.amber400)
         }
+    }
+
+    // ── Meta Ads (MCP) card — owner 2026-07-17: surface the merged MA1–MA4 backend ──
+    //    (GET /api/assistant/meta-mcp/status + OAuth connect at /api/assistant/meta-mcp/auth).
+    //    Owner-gated server-side, so it renders only when a status actually came back.
+
+    @ViewBuilder private var metaCard: some View {
+        if let m = vm.meta {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: "megaphone.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AgentGrowthPalette.metaBlue)
+                        .frame(width: 36, height: 36)
+                        .background(AgentGrowthPalette.metaBlue.opacity(0.10),
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Meta Ads (MCP)").font(.footnote.weight(.bold))
+                        Text("Facebook/Instagram বিজ্ঞাপনের আসল ডেটা — MCP দিয়ে সরাসরি Meta থেকে")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                metaBody(m)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .agentGrowthGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        }
+    }
+
+    @ViewBuilder private func metaBody(_ m: AgentGrowthMetaStatus) -> some View {
+        if !m.enabled {
+            amberBox("Meta MCP এখনো চালু নেই — owner সেটিংসে MCP enable করলে এখানে connect আসবে।")
+        } else if m.connected {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("যুক্ত আছে ✓")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AgentGrowthPalette.emerald400)
+                        Text(m.tokenHealthLabel).font(.caption2)
+                            .foregroundStyle(AgentGrowthPalette.emerald400.opacity(0.75))
+                    }
+                    Spacer()
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundStyle(AgentGrowthPalette.emerald400)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .background(AgentGrowthPalette.emerald400.opacity(0.07),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                    .strokeBorder(AgentGrowthPalette.emerald400.opacity(0.25), lineWidth: 1))
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        if let tier = m.tier, !tier.isEmpty { metaChip("Tier: \(tier)") }
+                        if let n = m.remoteToolCount { metaChip("\(n) টুল লাইভ") }
+                        if let a = m.adAccounts { metaChip("\(a.count) অ্যাড অ্যাকাউন্ট") }
+                    }
+                }
+                if let name = m.adAccounts?.first?.name, !name.isEmpty {
+                    Text("যেমন: \(name)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+                if let err = m.probeError, !err.isEmpty {
+                    Text("লাইভ প্রোব সমস্যা: \(err)")
+                        .font(.caption2).foregroundStyle(AgentGrowthPalette.amber400)
+                }
+            }
+        } else {
+            // Not connected → Meta consent in ASWebAuthenticationSession (same system
+            // handoff the GSC card uses); the flow ends on /agent/growth?meta=…
+            Button {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                if #available(iOS 17.4, *) {
+                    metaConnectBusy = true
+                    AlmaWebAuthSession.shared.start(
+                        startPath: "/api/assistant/meta-mcp/auth",
+                        callbackPath: "/agent/growth"
+                    ) { items in
+                        metaConnectBusy = false
+                        metaConnectResult = items?.first { $0.name == "meta" }?.value
+                        Task { await vm.load() }
+                    }
+                } else {
+                    openWeb("/agent/growth", "Growth")
+                }
+            } label: {
+                Text(metaConnectBusy ? "Meta-তে যাচ্ছে…" : "Meta Ads যুক্ত করুন")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AgentGrowthPalette.metaBlue)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(AgentGrowthPalette.metaBlue.opacity(0.08), in: Capsule())
+                    .overlay(Capsule().strokeBorder(AgentGrowthPalette.metaBlue.opacity(0.30), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .disabled(metaConnectBusy)
+            if let r = metaConnectResult, r != "connected" {
+                Text("সংযোগ হয়নি (\(r)) — আবার চেষ্টা করুন।")
+                    .font(.caption2).foregroundStyle(AgentGrowthPalette.amber400)
+            }
+        }
+    }
+
+    private func metaChip(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(Color.white.opacity(colorScheme == .dark ? 0.07 : 0.4), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.35), lineWidth: 1))
     }
 
     // ── Growth feature status board (web Features 1–8 board, verbatim strings) ──

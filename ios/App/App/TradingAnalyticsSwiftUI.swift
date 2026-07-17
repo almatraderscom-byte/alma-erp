@@ -368,6 +368,12 @@ private enum TradingAnalyticsPreset: String, CaseIterable {
 private final class TradingAnalyticsVM {
     var data: TradingAnalyticsPayload? = nil
     var preset: TradingAnalyticsPreset = .last30     // web default (today−29d … today)
+    // NP-6 (TR-05): custom range + ROI bounds (web filter card parity).
+    var customStart = ""
+    var customEnd = ""
+    var useCustomRange = false
+    var minRoi = ""
+    var maxRoi = ""
     var staffId: String? = nil                       // web default '' (all staff)
     var accountId: String? = nil                     // web default '' (all accounts)
     var status = "ALL"                               // web default 'ALL'
@@ -387,16 +393,20 @@ private final class TradingAnalyticsVM {
         error = nil
         defer { loading = false }
         let range = preset.range()
+        let start = useCustomRange && customStart.count == 10 ? customStart : range.start
+        let end = useCustomRange && customEnd.count == 10 ? customEnd : range.end
         do {
             let resp: TradingAnalyticsPayload = try await AlmaAPI.shared.get(
                 "/api/trading/analytics",
                 query: [
-                    "startDate": range.start,
-                    "endDate": range.end,
+                    "startDate": start,
+                    "endDate": end,
                     "staffId": staffId,
                     "accountId": accountId,
                     "status": status,
                     "profitability": profitability,
+                    "minRoi": minRoi.isEmpty ? nil : minRoi,
+                    "maxRoi": maxRoi.isEmpty ? nil : maxRoi,
                 ])
             withAnimation(.spring(duration: 0.4, bounce: 0.15)) { data = resp }
             authExpired = false
@@ -488,16 +498,46 @@ struct TradingAnalyticsScreen: View {
     // ── Date preset chips (web date inputs, re-set as native presets) ──
 
     private var presetChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(TradingAnalyticsPreset.allCases, id: \.rawValue) { p in
-                    chip(p.label, active: vm.preset == p) {
-                        vm.preset = p
-                        Task { await vm.load() }
+        VStack(alignment: .leading, spacing: 6) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(TradingAnalyticsPreset.allCases, id: \.rawValue) { p in
+                        chip(p.label, active: !vm.useCustomRange && vm.preset == p) {
+                            vm.useCustomRange = false
+                            vm.preset = p
+                            Task { await vm.load() }
+                        }
+                    }
+                    chip("Custom", active: vm.useCustomRange) {
+                        vm.useCustomRange.toggle()
                     }
                 }
+                .padding(.horizontal, 2)
             }
-            .padding(.horizontal, 2)
+            // NP-6 (TR-05): custom start/end + min/max ROI — the web's exact query params.
+            if vm.useCustomRange {
+                HStack(spacing: 6) {
+                    TextField("Start YYYY-MM-DD", text: Binding(get: { vm.customStart }, set: { vm.customStart = $0 }))
+                    TextField("End YYYY-MM-DD", text: Binding(get: { vm.customEnd }, set: { vm.customEnd = $0 }))
+                }
+                .font(.caption)
+                .textFieldStyle(.roundedBorder)
+                .keyboardType(.numbersAndPunctuation)
+                HStack(spacing: 6) {
+                    TextField("Min ROI %", text: Binding(get: { vm.minRoi }, set: { vm.minRoi = $0 }))
+                    TextField("Max ROI %", text: Binding(get: { vm.maxRoi }, set: { vm.maxRoi = $0 }))
+                    Button("Apply") {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        Task { await vm.load() }
+                    }
+                    .font(.caption.weight(.bold))
+                    .buttonStyle(.bordered)
+                    .disabled(vm.customStart.count != 10 || vm.customEnd.count != 10)
+                }
+                .font(.caption)
+                .textFieldStyle(.roundedBorder)
+                .keyboardType(.decimalPad)
+            }
         }
         .padding(.top, 4)
     }
@@ -930,17 +970,77 @@ struct TradingAnalyticsScreen: View {
         }
     }
 
+    /// NP-6 (TR-05): native CSV + PDF export via share sheet (web columns verbatim:
+    /// Account · Staff · Status · Health · Net Profit BDT · ROI %). CSV opens in
+    /// Excel/Numbers — the web's XLSX carries the same columns (FN-04 resolution).
     private var webEscape: some View {
-        Button {
-            openWeb("/trading/analytics", "Trading analytics")
-        } label: {
-            Label("সব অপশন — ওয়েবে খুলুন (CSV/Excel/PDF এক্সপোর্ট)", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+        HStack(spacing: 8) {
+            Button {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                exportShare(csv: true)
+            } label: {
+                Text("📄 CSV").font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                    .background(TradingAnalyticsPalette.tradingGreen.opacity(0.13), in: Capsule())
+                    .foregroundStyle(TradingAnalyticsPalette.tradingGreen)
+            }
+            .buttonStyle(.plain)
+            Button {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                exportShare(csv: false)
+            } label: {
+                Text("🧾 PDF").font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                    .background(TradingAnalyticsPalette.tradingGreen.opacity(0.13), in: Capsule())
+                    .foregroundStyle(TradingAnalyticsPalette.tradingGreen)
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
         .padding(.vertical, 6)
+    }
+
+    private func exportShare(csv: Bool) {
+        let rows = vm.searchedRows
+        guard !rows.isEmpty else { return }
+        let url: URL
+        if csv {
+            var text = "Account,Staff,Status,Health,Net Profit BDT,ROI %\n"
+            for r in rows {
+                let cells = [r.accountTitle, r.assignedUserName, r.status, r.health,
+                             String(Int(r.netProfit.rounded())), String(format: "%.2f", r.roi)]
+                text += cells.map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"" }
+                    .joined(separator: ",") + "\n"
+            }
+            url = FileManager.default.temporaryDirectory.appendingPathComponent("alma-trading-analytics.csv")
+            try? text.data(using: .utf8)?.write(to: url, options: .atomic)
+        } else {
+            // Simple A4 PDF: title + KPIs + report rows (web exportPdf content parity).
+            let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 595, height: 842))
+            url = FileManager.default.temporaryDirectory.appendingPathComponent("alma-trading-analytics.pdf")
+            try? renderer.writePDF(to: url) { ctx in
+                ctx.beginPage()
+                var y: CGFloat = 32
+                func draw(_ text: String, size: CGFloat, bold: Bool = false) {
+                    let font = bold ? UIFont.boldSystemFont(ofSize: size) : UIFont.systemFont(ofSize: size)
+                    (text as NSString).draw(at: CGPoint(x: 32, y: y), withAttributes: [.font: font])
+                    y += size + 8
+                    if y > 800 { ctx.beginPage(); y = 32 }
+                }
+                draw("Alma Trading Analytics Report", size: 18, bold: true)
+                if let k = vm.data?.kpis {
+                    draw("Managed capital: BDT \(Int(k.totalManagedCapital.rounded()).formatted()) · Monthly net: BDT \(Int(k.monthlyNet.rounded()).formatted())", size: 10)
+                }
+                y += 6
+                for r in rows.prefix(40) {
+                    draw("\(r.accountTitle) — \(r.assignedUserName) · \(r.status) · \(r.health) · Net BDT \(Int(r.netProfit.rounded()).formatted()) · ROI \(String(format: "%.2f", r.roi))%", size: 9)
+                }
+            }
+        }
+        let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        var top = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        top?.present(av, animated: true)
     }
 }
 

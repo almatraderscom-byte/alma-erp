@@ -2,7 +2,7 @@
 //  TargetControlSwiftUI.swift
 //  ALMA ERP — Trading Target Control as a native SwiftUI screen (web /trading/target-control parity).
 //
-//  Mirrors the web page read-only — same endpoints, same numbers, same blocks:
+//  Mirrors the web page — same endpoints, same numbers, same blocks:
 //    GET /api/trading/volume-targets?date=YYYY-MM-DD            → { date, targets, canManage }
 //    GET /api/trading/volume-targets/settings                   → { settings: { autoPenaltyEnabled, defaultPenaltyBdt }, canManage }
 //    GET /api/trading/volume-targets/analytics?month=YYYY-MM    → { analytics | summary, canManage }
@@ -10,9 +10,10 @@
 //  Analytics / Settings) · month KPI board (Targets / Met green / Missed red /
 //  Ignored) · per-account target cards with actual-vs-target progress bars +
 //  status/penalty pills · analytics penalty totals (super admin payload) ·
-//  read-only auto-penalty settings. ALL mutations (set target, recalc, apply /
-//  waive penalty, ignore, delete, save settings) stay on the web escape hatch —
-//  this screen is a monitor, not a control panel.
+//  auto-penalty settings. NATIVE WRITES (verified 2026-07-17): create/set target
+//  (POST /api/trading/volume-targets), per-target actions incl. penalty apply/waive/
+//  ignore (POST …/{id}/actions), delete (DELETE …/{id}), settings save (PATCH
+//  …/settings). This is a control panel now, not just a monitor.
 //  Carried lessons: lenient row decoding, ONE spinner pattern, no global overlays.
 //
 

@@ -39,6 +39,16 @@ enum AlmaNativeRouter {
             return h
         }
 
+        // NP-4 (AU-02): the reset link is the ONE route whose query must survive —
+        // the token rides ?token=… and lives only in view state (never logged).
+        if clean == "/reset-password" {
+            let token = path.split(separator: "?").dropFirst().first.flatMap {
+                URLComponents(string: "https://x/?\($0)")?.queryItems?
+                    .first { $0.name == "token" }?.value
+            }
+            return host(ResetPasswordScreen(token: token, openWeb: openWebForced), "Reset password")
+        }
+
         switch clean {
         // Cases are appended batch-by-batch as pages migrate (S6 marathon).
         case "/", "/dashboard": return host(DashboardScreen(openWeb: openWebForced), "Dashboard")
@@ -89,7 +99,26 @@ enum AlmaNativeRouter {
         case "/agent/trading-staff": return host(TradingStaffScreen(openWeb: openWebForced), "Trading staff")
         case "/agent/known-people": return host(KnownPeopleScreen(openWeb: openWebForced), "Known people")
         case "/agent/growth": return host(AgentGrowthScreen(openWeb: openWebForced), "Growth")
-        case "/agent/staff-monitor": return host(StaffMonitorScreen(openWeb: openWebForced), "Staff monitor")
+        case "/agent/staff-monitor":
+            #if DEBUG
+            // Headless sim self-test hook: SIMCTL_CHILD_ALMA_SM_TAB=agents|system|…
+            // lands the Monitor on that tab so each tab can be screenshot-verified
+            // without driving the UI. DEBUG builds only — never ships.
+            if let raw = ProcessInfo.processInfo.environment["ALMA_SM_TAB"],
+               let t = StaffMonitorTab(rawValue: raw) {
+                return host(StaffMonitorScreen(openWeb: openWebForced, initialTab: t), "LIVE Business")
+            }
+            #endif
+            return host(StaffMonitorScreen(openWeb: openWebForced), "LIVE Business")
+        // Owner feedback 2026-07-17: Live Watch is its OWN focused screen (live
+        // browser hero) — visually distinct from the Monitor; same data source.
+        case "/agent/live-watch":
+            return host(LiveWatchScreen(openWeb: openWebForced), "Live Watch")
+        // NP-1 (AG-09): canonical Agent Hub — every Agent surface in one visible menu.
+        case "/agent/hub": return host(AgentHubScreen(openWeb: openWebForced), "Agent Hub")
+        // NP-4 (AU-01 / FN-01): native auth recovery + wallet deep link.
+        case "/forgot-password": return host(ForgotPasswordScreen(openWeb: openWebForced), "Password reset")
+        case "/portal/wallet": return host(PortalWalletRouteScreen(openWeb: openWebForced), "ওয়ালেট")
         // Trading business (S7 batch — Trading + Digital go native, 2026-07-10)
         case "/trading": return host(TradingHomeScreen(openWeb: openWebForced), "Trading")
         case "/trading/accounts": return host(TradingAccountsScreen(openWeb: openWebForced), "Trading accounts")

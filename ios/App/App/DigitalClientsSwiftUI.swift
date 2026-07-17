@@ -10,8 +10,9 @@
 //  service, phone · email, id, notes preview). Detail (sheet): billing summary
 //  (status badge + payment progress bar + value/paid/due rows) · contact card ·
 //  projects with per-project payment progress · payment history table.
-//  Mutations (add client / project / payment) stay on the web escape hatch —
-//  this screen is read-only. CDIT accent: blue (0.42, 0.56, 0.88) hero accent.
+//  NATIVE WRITES: client create + payment record + NP-7 (OP-08) contextual
+//  "create project from client detail" (prefilled native sheet, POST /api/digital/projects).
+//  CDIT accent: blue (0.42, 0.56, 0.88) hero accent.
 //  Carried lessons: lenient row decoding, ONE spinner pattern, no global overlays.
 //
 
@@ -594,6 +595,7 @@ private struct DigitalClientsDetailSheet: View {
     @State private var detail: DigitalClientsDetail? = nil
     @State private var loading = true
     @State private var showPayment = false
+    @State private var showNewProject = false
 
     var body: some View {
         ScrollView {
@@ -609,6 +611,7 @@ private struct DigitalClientsDetailSheet: View {
                 } else {
                     billingCard
                     recordPaymentButton
+                    createProjectButton
                     contactCard
                     projectsCard
                     historyCard
@@ -627,6 +630,28 @@ private struct DigitalClientsDetailSheet: View {
                 Task { detail = await vm.detail(id: client.id) }
             }
         }
+        .sheet(isPresented: $showNewProject) {
+            DigitalClientsProjectSheet(clientId: client.id, clientName: client.name) {
+                Task { detail = await vm.detail(id: client.id) }
+            }
+            .presentationDetents([.medium, .large])
+        }
+    }
+
+    /// NP-7 (OP-08): contextual "Create project" — prefilled native sheet
+    /// (the web page's "internal detail link" escape is gone).
+    private var createProjectButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showNewProject = true
+        } label: {
+            Label("➕ নতুন প্রজেক্ট (এই ক্লায়েন্টে)", systemImage: "folder.badge.plus")
+                .font(.caption.weight(.bold))
+                .frame(maxWidth: .infinity).padding(.vertical, 10)
+                .background(DigitalClientsPalette.cditBlue.opacity(0.12), in: Capsule())
+                .foregroundStyle(DigitalClientsPalette.cditBlue)
+        }
+        .buttonStyle(.plain)
     }
 
     /// Web client-detail "Record payment" — native sheet (owner 2026-07-11).
@@ -1354,6 +1379,96 @@ struct DigitalClientsPaymentSheet: View {
                 amount: taka, payment_method: method))
             UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
             if ok { onDone?(); dismiss() } else { errorText = vm.toast }
+        }
+    }
+}
+
+
+// MARK: - NP-7 (OP-08): prefilled project create (web + New Project payload verbatim)
+
+@available(iOS 17.0, *)
+private struct DigitalClientsProjectSheet: View {
+    let clientId: String
+    let clientName: String
+    let onCreated: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var serviceType = ""
+    @State private var amount = ""
+    @State private var startDate = ""
+    @State private var deadline = ""
+    @State private var busy = false
+    @State private var errorText: String? = nil
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Client: \(clientName)") {
+                    TextField("Project name", text: $name)
+                    TextField("Service type", text: $serviceType)
+                    TextField("Total amount ৳", text: $amount).keyboardType(.numberPad)
+                    TextField("Start date YYYY-MM-DD", text: $startDate).keyboardType(.numbersAndPunctuation)
+                    TextField("Deadline YYYY-MM-DD (ঐচ্ছিক)", text: $deadline).keyboardType(.numbersAndPunctuation)
+                }
+                if let err = errorText {
+                    Section { Text(err).font(.caption).foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle("New project")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("বাতিল") { dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(busy ? "…" : "Create") {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        Task { await create() }
+                    }
+                    .disabled(busy || name.trimmingCharacters(in: .whitespaces).isEmpty
+                              || Int(amount) == nil)
+                }
+            }
+            .onAppear {
+                let f = DateFormatter()
+                f.dateFormat = "yyyy-MM-dd"
+                f.timeZone = TimeZone(identifier: "Asia/Dhaka")
+                startDate = f.string(from: Date())
+            }
+        }
+    }
+
+    private func create() async {
+        busy = true
+        defer { busy = false }
+        // Same body DigitalProjectsSwiftUI posts (web + New Project form parity).
+        struct Body: Encodable {
+            let project_name: String
+            let title: String
+            let client_id: String
+            let client_name: String
+            let service_type: String
+            let total_amount: Int
+            let currency = "BDT"
+            let start_date: String
+            let status = "Lead"
+            let deadline: String
+            let assigned_to = ""
+            let priority = "Medium"
+            let business_id = "CREATIVE_DIGITAL_IT"
+        }
+        struct Resp: Decodable { let ok: Bool?; let error: String? }
+        do {
+            let trimmed = name.trimmingCharacters(in: .whitespaces)
+            let _: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/digital/projects",
+                body: Body(project_name: trimmed, title: trimmed, client_id: clientId,
+                           client_name: clientName, service_type: serviceType,
+                           total_amount: Int(amount) ?? 0, start_date: startDate,
+                           deadline: deadline))
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            onCreated()
+            dismiss()
+        } catch {
+            errorText = "Create ব্যর্থ: \(error.localizedDescription)"
         }
     }
 }

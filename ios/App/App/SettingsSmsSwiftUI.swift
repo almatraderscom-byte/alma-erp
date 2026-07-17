@@ -1,6 +1,6 @@
 //
 //  SettingsSmsSwiftUI.swift
-//  ALMA ERP — the /settings/sms page as a native SwiftUI screen (read-only).
+//  ALMA ERP — the /settings/sms page as a native SwiftUI screen (read + native actions).
 //
 //  Mirrors the web /settings/sms page — same endpoints, same colours, same blocks:
 //    GET /api/sms/logs?business_id=…&status=…  → { logs, stats, catalog, setting }
@@ -9,7 +9,9 @@
 //  business chips · 5 KPI cards (Total/Delivered/Failed/Queued/Success) · SMS type
 //  catalog (read-only, enabled ticks from setting.enabledTypes) · log rows with
 //  delivery-status pills (sent/delivered emerald · failed red · queued/pending amber).
-//  Sending test SMS, retry/report, and editing types stay on the web escape hatch.
+//  NATIVE WRITES (verified 2026-07-17): master enable + enabled types (PATCH
+//  /api/sms/logs), test SMS (POST /api/sms/test), retry (POST /api/sms/retry),
+//  report (POST /api/sms/report). No web escape needed for these actions.
 //  Carried lessons: lenient decoding, ONE list shimmer, never a global overlay.
 //
 

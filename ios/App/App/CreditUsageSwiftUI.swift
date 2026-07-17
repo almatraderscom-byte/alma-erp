@@ -25,7 +25,8 @@
 //
 //  Data (all live, owner-only, cookie-bridged via AlmaAPI):
 //    GET /api/assistant/costs/summary · /balances · /logs.
-//  Budget config / CSV stay on the web — footer escape opens /agent/costs.
+//  Budget config is NATIVE (owner 2026-07-11: web saveBudget PUT parity). Only CSV
+//  export/share + total reconciliation remain web (parity ledger AG-11, phase NP-4).
 //  Parallel-session rule: page-owned material/aurora helpers (no cross-page imports).
 //
 
@@ -608,6 +609,7 @@ struct CreditUsageScreen: View {
     @State private var editingBudget = false
     @State private var budgetDailyDraft = ""
     @State private var budgetMonthlyDraft = ""
+    @State private var csvExporting = false   // NP-4 (AG-11) native CSV export
     let openWeb: (_ path: String, _ title: String) -> Void
 
     /// Live mode: ~10s auto-refresh of the first log page while ON (green dot pulses).
@@ -1260,11 +1262,40 @@ struct CreditUsageScreen: View {
     private var loadingRows: some View {
         ForEach(0..<3, id: \.self) { _ in Color.clear.frame(height: 120).cuSolid(scheme, corner: 18).cuShimmer() }
     }
+    // NP-4 (AG-11): native CSV export — the web page's GET /api/assistant/costs/export
+    // fetched raw, written to a temp .csv and handed to the system share sheet.
+    // Budget config went native 2026-07-11, so no web escape remains on this page.
     private var webEscape: some View {
-        Button { openWeb("/agent/costs", "Costs") } label: {
-            Label("বাজেট কনফিগ / CSV — ওয়েবে খুলুন", systemImage: "safari").font(.footnote).frame(maxWidth: .infinity).padding(.vertical, 12)
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            Task { await exportCSV() }
+        } label: {
+            Label(csvExporting ? "CSV তৈরি হচ্ছে…" : "CSV এক্সপোর্ট / শেয়ার",
+                  systemImage: "square.and.arrow.up")
+                .font(.footnote).frame(maxWidth: .infinity).padding(.vertical, 12)
         }
         .buttonStyle(CUPress()).foregroundStyle(.secondary).cuGlass(scheme, corner: 14).padding(.top, 2)
+        .disabled(csvExporting)
+    }
+
+    @MainActor private func exportCSV() async {
+        guard !csvExporting else { return }
+        csvExporting = true
+        defer { csvExporting = false }
+        do {
+            let data = try await AlmaAPI.shared.getRaw("/api/assistant/costs/export")
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("alma-ai-costs-export.csv")
+            try data.write(to: url, options: .atomic)
+            let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            var top = UIApplication.shared.connectedScenes
+                .compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.rootViewController
+            while let presented = top?.presentedViewController { top = presented }
+            top?.present(av, animated: true)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+        }
     }
 }
 
@@ -1485,24 +1516,28 @@ private struct CUAurora: View {
 private extension View {
     /// SOLID: opaque content surface for dense data (no translucency — 2026 HIG).
     func cuSolid(_ s: ColorScheme, corner: CGFloat = 16) -> some View {
+        // Translucent glass (was opaque near-black) so the page aurora shows through —
+        // provider cards / stat tiles / model card were the last black offenders
+        // (owner feedback 2026-07-17).
         self
-            .background((s == .dark ? Color(red: 0.078, green: 0.071, blue: 0.114) : .white),
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .background(Color.white.opacity(s == .dark ? 0.05 : 0.5),
                         in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .strokeBorder(Color.white.opacity(s == .dark ? 0.055 : 0.6), lineWidth: 1))
-            .shadow(color: .black.opacity(s == .dark ? 0.4 : 0.08), radius: 14, y: 8)
+                .strokeBorder(Color.white.opacity(s == .dark ? 0.09 : 0.6), lineWidth: 1))
+            .shadow(color: .black.opacity(s == .dark ? 0.26 : 0.07), radius: 14, y: 8)
     }
     /// RAISED: a step above solid — the hero. Gentle gradient + deeper shadow.
     func cuRaised(_ s: ColorScheme, corner: CGFloat = 22) -> some View {
+        // Translucent glass (was opaque near-black) so the page aurora shows through —
+        // theme-consistent with the other agent screens (owner feedback 2026-07-17).
         self
-            .background(
-                (s == .dark
-                 ? LinearGradient(colors: [Color(red: 0.106, green: 0.094, blue: 0.149), Color(red: 0.078, green: 0.063, blue: 0.098)], startPoint: .top, endPoint: .bottom)
-                 : LinearGradient(colors: [.white, .white], startPoint: .top, endPoint: .bottom)),
-                in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .background(Color.white.opacity(s == .dark ? 0.05 : 0.55),
+                        in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .strokeBorder(Color.white.opacity(s == .dark ? 0.07 : 0.7), lineWidth: 1))
-            .shadow(color: .black.opacity(s == .dark ? 0.5 : 0.12), radius: 22, y: 12)
+                .strokeBorder(Color.white.opacity(s == .dark ? 0.09 : 0.7), lineWidth: 1))
+            .shadow(color: .black.opacity(s == .dark ? 0.30 : 0.10), radius: 20, y: 11)
     }
     /// GLASS: translucent floating control (liquid-glass) — nav/segment/chip/sheet.
     func cuGlass(_ s: ColorScheme, corner: CGFloat = 14) -> some View {

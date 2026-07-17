@@ -62,6 +62,44 @@ enum PulseRestore {
         }
         note("debug_reset")
     }
+
+    /// Sim-testing hook (DEBUG only): launching with ALMA_PULSE_DEMO=approval starts a
+    /// FRESH, ACTIONABLE approval Live Activity (a real `erp:` id) so the lock card AND
+    /// the expanded Dynamic Island show the অনুমোদন/বাতিল buttons — owner verify
+    /// 2026-07-17. In real use those buttons appear whenever there is a *featured*
+    /// pending approval (pulse-snapshot sends `erp:<id>`); the sim's cached snapshot
+    /// usually has none ("০টা অনুরোধ"), which is why the island shows only text there.
+    /// Returns true when it started the demo, so launch skips the cache restore/sync.
+    @available(iOS 16.2, *)
+    static func debugStartDemoApprovalIfRequested() async -> Bool {
+        #if canImport(ActivityKit)
+        guard ProcessInfo.processInfo.environment["ALMA_PULSE_DEMO"] == "approval" else { return false }
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { note("demo_activities_disabled"); return false }
+        for activity in Activity<PulseActivityAttributes>.activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+        let json = #"""
+        {"mode":"approval","headline":"আপনার অনুমোদন দরকার","subtitle":"১টা অনুরোধ অপেক্ষায় · এখনই সিদ্ধান্ত দিন","pendingTaskCount":40,"approvalCount":1,"runningOrderCount":1,"orderProgress":0.5,"pendingApprovals":1,"openTasks":40,"approvalId":"erp:demo-approval-000","approvalTitle":"ওয়ালেট উত্তোলন — টেস্ট","approvalCounterparty":"PAYROLL · এখন","approvalAmountText":"৳৭,৪০০"}
+        """#
+        guard let data = json.data(using: .utf8),
+              let state = try? JSONDecoder().decode(PulseActivityAttributes.ContentState.self, from: data) else {
+            note("demo_decode_failed"); return false
+        }
+        do {
+            _ = try Activity.request(
+                attributes: PulseActivityAttributes(title: "ALMA"),
+                content: ActivityContent(state: state, staleDate: nil),
+                pushType: nil)
+            note("debug_demo_approval")
+            return true
+        } catch {
+            note("demo_request_failed: \(error.localizedDescription)")
+            return false
+        }
+        #else
+        return false
+        #endif
+    }
     #endif
 
     @available(iOS 16.1, *)

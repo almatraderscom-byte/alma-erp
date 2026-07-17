@@ -22,11 +22,13 @@
 //  iOS re-set: personal dashboard cards — greeting, my balance, my tasks with
 //  status circles, attendance summary — plus NATIVE request sheets (wallet
 //  withdraw/advance, leave apply, checkout exception) with confirm dialogs.
-//  Check-in / check-out stays on the web (selfie camera + GPS geofence).
+//  Check-in / check-out is NATIVE (verified 2026-07-17): front-camera selfie + GPS
+//  via POST /api/attendance/check-in and /api/attendance/check-out.
 //  Carried lessons: lenient per-field decoding, ONE load path, no global overlay.
 //
 
 import SwiftUI
+import PhotosUI
 
 // MARK: - Web palette (exact hexes from globals.css / tailwind tokens)
 
@@ -694,9 +696,10 @@ final class PortalVM {
 
     /// Web PenaltyAppealModal submit: POST /api/attendance/waivers
     /// { business_id, attendance_record_id, reason, request_type,
-    ///   requested_reduction_amount? } — attachment stays a web-only extra.
+    ///   requested_reduction_amount?, attachment_data_url? } — NP-7: attachment is native too.
     func submitPenaltyAppeal(recordId: String, requestType: String,
-                             reason: String, partialAmount: Int?) async {
+                             reason: String, partialAmount: Int?,
+                             attachmentDataUrl: String? = nil) async {
         var body: [String: AnyEncodable] = [
             "business_id": AnyEncodable(Self.businessId),
             "attendance_record_id": AnyEncodable(recordId),
@@ -706,6 +709,8 @@ final class PortalVM {
         if requestType == "PARTIAL_REDUCE" {
             body["requested_reduction_amount"] = AnyEncodable(partialAmount ?? 0)
         }
+        // NP-7 (OP-02): optional proof screenshot — web attachment_data_url parity.
+        if let a = attachmentDataUrl { body["attachment_data_url"] = AnyEncodable(a) }
         _ = await act("appeal", path: "/api/attendance/waivers", body: body,
                       success: "Penalty review request submitted")
     }
@@ -897,11 +902,12 @@ struct PortalScreen: View {
                 penaltyAmount: vm.attendance?.today?.penaltyAmount ?? 0,
                 lateMinutes: vm.attendance?.today?.lateMinutes ?? 0,
                 attendanceDate: vm.attendance?.today?.attendanceDate
-            ) { requestType, reason, partialAmount in
+            ) { requestType, reason, partialAmount, attachmentDataUrl in
                 guard let recordId = vm.attendance?.today?.id else { return }
                 Task {
                     await vm.submitPenaltyAppeal(recordId: recordId, requestType: requestType,
-                                                 reason: reason, partialAmount: partialAmount)
+                                                 reason: reason, partialAmount: partialAmount,
+                                                 attachmentDataUrl: attachmentDataUrl)
                 }
             }
             .presentationDetents([.large])
@@ -2207,13 +2213,17 @@ private struct PortalAppealSheet: View {
     let penaltyAmount: Int
     let lateMinutes: Int
     let attendanceDate: String?
-    let onSubmit: (_ requestType: String, _ reason: String, _ partialAmount: Int?) -> Void
+    let onSubmit: (_ requestType: String, _ reason: String, _ partialAmount: Int?,
+                   _ attachmentDataUrl: String?) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var requestType = "FULL_WAIVE"
     @State private var reason = ""
     @State private var partialAmount = ""
     @State private var confirmSend = false
+    // NP-7 (OP-02): optional proof screenshot (compressed jpeg → data URL).
+    @State private var attachItem: PhotosPickerItem? = nil
+    @State private var attachDataUrl: String? = nil
 
     /// Web REQUEST_TYPES verbatim (label + hint).
     private static let types: [(String, String, String)] = [
@@ -2289,9 +2299,43 @@ private struct PortalAppealSheet: View {
                     }
                 }
 
-                // Proof-photo attach is a web-only extra (file picker + data URL).
-                Text("ছবি/প্রমাণ যোগ করতে চাইলে ওয়েব ভার্সনে আবেদন করুন।")
+                // NP-7 (OP-02): optional proof screenshot — web attachment_data_url parity.
+                PhotosPicker(selection: $attachItem, matching: .images) {
+                    Label(attachDataUrl == nil ? "📎 প্রমাণ স্ক্রিনশট যোগ করুন (ঐচ্ছিক)" : "📎 স্ক্রিনশট যুক্ত ✓",
+                          systemImage: "paperclip")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(attachDataUrl == nil ? Color.secondary : PortalPalette.emerald600)
+                }
+                .onChange(of: attachItem) { _, item in
+                    guard let item else { attachDataUrl = nil; return }
+                    Task {
+                        if let data = try? await item.loadTransferable(type: Data.self),
+                           let img = UIImage(data: data) {
+                            // Compression: long edge ≤1280, jpeg 0.7 → base64 data URL.
+                            let longest = max(img.size.width, img.size.height)
+                            let scaled: UIImage
+                            if longest > 1280 {
+                                let k = 1280 / longest
+                                let sz = CGSize(width: img.size.width * k, height: img.size.height * k)
+                                scaled = UIGraphicsImageRenderer(size: sz).image { _ in
+                                    img.draw(in: CGRect(origin: .zero, size: sz))
+                                }
+                            } else {
+                                scaled = img
+                            }
+                            if let jpeg = scaled.jpegData(compressionQuality: 0.7) {
+                                attachDataUrl = "data:image/jpeg;base64," + jpeg.base64EncodedString()
+                            }
+                        }
+                    }
+                }
+                if attachDataUrl != nil {
+                    Button("স্ক্রিনশট বাদ দিন") {
+                        attachItem = nil
+                        attachDataUrl = nil
+                    }
                     .font(.caption2).foregroundStyle(.secondary)
+                }
 
                 Button {
                     confirmSend = true
@@ -2308,7 +2352,8 @@ private struct PortalAppealSheet: View {
                     Button("আবেদন পাঠান") {
                         dismiss()
                         onSubmit(requestType, reasonTrimmed,
-                                 requestType == "PARTIAL_REDUCE" ? partialValue : nil)
+                                 requestType == "PARTIAL_REDUCE" ? partialValue : nil,
+                                 attachDataUrl)
                     }
                     Button("বাতিল", role: .cancel) {}
                 }

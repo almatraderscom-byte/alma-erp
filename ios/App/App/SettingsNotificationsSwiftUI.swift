@@ -231,6 +231,63 @@ final class SettingsNotifVM {
             && !(target == "USER" && targetUserId.isEmpty)
     }
 
+    // ── NP-5 (AD-08): device push-health (web /api/notifications/push-health?scope=all) ──
+
+    struct PushHealthDevice: Decodable {
+        let type: String
+        let enabled: Bool
+        let deviceModel: String?
+        let deviceOs: String?
+        private enum Keys: String, CodingKey { case type, enabled, deviceModel, deviceOs }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            type = (try? c.decodeIfPresent(String.self, forKey: .type)) ?? ""
+            enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+            deviceModel = try? c.decodeIfPresent(String.self, forKey: .deviceModel)
+            deviceOs = try? c.decodeIfPresent(String.self, forKey: .deviceOs)
+        }
+    }
+    struct PushHealthUser: Decodable, Identifiable {
+        let userId: String
+        let name: String
+        let role: String
+        let devices: [PushHealthDevice]
+        let nativeEnabled: Bool
+        let verdict: String        // OK | WEB_ONLY | DEAD | NEVER_REGISTERED
+        var id: String { userId }
+        private enum Keys: String, CodingKey { case userId, name, role, devices, nativeEnabled, verdict }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            userId = (try? c.decodeIfPresent(String.self, forKey: .userId)) ?? UUID().uuidString
+            name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? "—"
+            role = (try? c.decodeIfPresent(String.self, forKey: .role)) ?? ""
+            devices = (try? c.decodeIfPresent([PushHealthDevice].self, forKey: .devices)) ?? []
+            nativeEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .nativeEnabled)) ?? false
+            verdict = (try? c.decodeIfPresent(String.self, forKey: .verdict)) ?? "NEVER_REGISTERED"
+        }
+    }
+
+    var pushHealth: [PushHealthUser] = []
+    var healthLoading = false
+
+    func loadHealth() async {
+        healthLoading = true
+        defer { healthLoading = false }
+        struct Resp: Decodable {
+            let users: [PushHealthUser]
+            private enum Keys: String, CodingKey { case ok, data, users }
+            init(from decoder: Decoder) throws {
+                let root = try decoder.container(keyedBy: Keys.self)
+                let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+                users = (try? c.decodeIfPresent([PushHealthUser].self, forKey: .users)) ?? []
+            }
+        }
+        if let r: Resp = try? await AlmaAPI.shared.get("/api/notifications/push-health",
+                                                       query: ["scope": "all"]) {
+            pushHealth = r.users
+        }
+    }
+
     func load() async {
         loading = true
         error = nil
@@ -323,6 +380,7 @@ struct SettingsNotifScreen: View {
                 if vm.loading && vm.totals == nil { loadingRows } else { kpiStrip }
                 appLockRow
                 composerCard
+                pushHealthCard
                 dashboardCard
                 webEscape
                 Color.clear.frame(height: 8)
@@ -333,7 +391,10 @@ struct SettingsNotifScreen: View {
         .background(SettingsNotifAurora())
         .claudeTopFade()
         .refreshable { await vm.load() }
-        .task { await vm.load() }
+        .task {
+            await vm.load()
+            await vm.loadHealth()
+        }
     }
 
     // ── Header (web PageHeader parity) ──
@@ -606,6 +667,58 @@ struct SettingsNotifScreen: View {
             Color.clear.frame(height: 76)
                 .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .settingsNotifShimmer()
+        }
+    }
+
+    /// NP-5 (AD-08): device push-health board (web verdict pills + device lines).
+    @ViewBuilder private var pushHealthCard: some View {
+        if !vm.pushHealth.isEmpty || vm.healthLoading {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("📲 Push health")
+                        .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                    Spacer()
+                    if vm.healthLoading { ProgressView().controlSize(.mini) }
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        Task { await vm.loadHealth() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                ForEach(vm.pushHealth) { u in
+                    let (label, color): (String, Color) = {
+                        switch u.verdict {
+                        case "OK": return ("🟢 OK", SettingsNotifPalette.emerald600)
+                        case "WEB_ONLY": return ("🌐 WEB ONLY", SettingsNotifPalette.amber600)
+                        case "DEAD": return ("🔴 DEAD", SettingsNotifPalette.red500)
+                        default: return ("⚫️ NEVER", Color.secondary)
+                        }
+                    }()
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(u.name).font(.caption.weight(.bold))
+                            Text(u.role).font(.system(size: 9)).foregroundStyle(.secondary)
+                            Spacer()
+                            Text(label)
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(color)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(color.opacity(0.10), in: Capsule())
+                        }
+                        ForEach(Array(u.devices.enumerated()), id: \.offset) { _, d in
+                            Text("\(d.enabled ? "🟢" : "⚫️") \(d.type.replacingOccurrences(of: "Push", with: "")) \(d.deviceModel ?? "") \(d.deviceOs ?? "")")
+                                .font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 3)
+                    if u.id != vm.pushHealth.last?.id { Divider().opacity(0.3) }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
