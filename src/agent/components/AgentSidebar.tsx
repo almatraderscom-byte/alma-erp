@@ -202,6 +202,13 @@ export default function AgentSidebar({
           >
             🔍
           </a>
+          <a
+            href="/agent?monitor=graph"
+            className="rounded-full border border-border-subtle bg-white/[0.04] px-2 py-0.5 text-[9px] text-muted transition-all hover:border-[#9D8CFF]/40 hover:bg-[#9D8CFF]/10 hover:text-[#9D8CFF]"
+            title="Graph Health — রোলআউট/kill-switch অবস্থা"
+          >
+            🧬
+          </a>
         </div>
         {isMobile && (
           <button onClick={onClose} className="rounded-lg p-1.5 text-muted hover:text-muted-hi">✕</button>

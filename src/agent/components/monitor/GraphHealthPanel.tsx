@@ -29,7 +29,10 @@ export default async function GraphHealthPanel() {
 
   return (
     <div style={{ maxWidth: 880, margin: '24px auto', padding: 16, fontFamily: 'system-ui', color: '#e6edf3', background: '#0d1117', borderRadius: 12 }}>
-      <h1 style={{ fontSize: 20, marginBottom: 4 }}>Graph Health — রোলআউট অবস্থা</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h1 style={{ fontSize: 20, marginBottom: 4 }}>🧬 Graph Health — রোলআউট অবস্থা</h1>
+        <a href="/agent" style={{ color: '#79c0ff', fontSize: 13, textDecoration: 'none' }}>← চ্যাটে ফিরুন</a>
+      </div>
       <p style={{ color: '#8b949e', fontSize: 13 }}>
         Ladder stage: <b style={{ color: '#79c0ff' }}>{cutover?.stage ?? 'shadow'}</b> · Canary: {cutover?.canaryVerdict ?? '—'}
       </p>
