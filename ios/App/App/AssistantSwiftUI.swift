@@ -6254,6 +6254,18 @@ struct AgentThinkingRow: View {
 
 // MARK: - Composer (web AgentComposer parity)
 
+/// NP-3 (AG-07.staff): staff quick actions on the LIVE Business Monitor prefill
+/// the chat composer — the web's `/agent?draft=…` deep link, natively. The
+/// pending text survives even if the composer isn't mounted yet (tab not built).
+enum AlmaComposerPrefill {
+    static var pending: String? = nil
+    static let note = Notification.Name("almaComposerPrefill")
+    @MainActor static func set(_ text: String) {
+        pending = text
+        NotificationCenter.default.post(name: note, object: nil)
+    }
+}
+
 @available(iOS 17.0, *)
 struct AgentComposerView: View {
     @Bindable var vm: AssistantVM
@@ -6296,6 +6308,10 @@ struct AgentComposerView: View {
             draft = draft.isEmpty ? newValue : draft + " " + newValue
             Task { @MainActor in vm.dictatedText = "" }
         }
+        // NP-3: Monitor staff quick actions prefill the composer (web /agent?draft=…).
+        .onAppear { consumePrefill() }
+        .onReceive(NotificationCenter.default.publisher(for: AlmaComposerPrefill.note)
+            .receive(on: DispatchQueue.main)) { _ in consumePrefill() }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             Task {
@@ -6309,6 +6325,14 @@ struct AgentComposerView: View {
     }
 
     /// Recording bar — web parity: ✕ cancel, live 34-bar waveform, mm:ss, ✓ confirm.
+    /// Pull a pending Monitor quick-action command into the composer (NP-3).
+    private func consumePrefill() {
+        guard let text = AlmaComposerPrefill.pending else { return }
+        AlmaComposerPrefill.pending = nil
+        draft = text
+        focused = true
+    }
+
     @ViewBuilder private func recordingBar(_ pal: AgentPalette) -> some View {
         HStack(spacing: 8) {
             Button {

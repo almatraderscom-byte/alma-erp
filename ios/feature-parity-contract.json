@@ -254,22 +254,25 @@
       "title": "Monitor five tabs (Overview/Agents/Staff/Feed/System)",
       "route": "/agent/staff-monitor",
       "priority": "P0",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-3",
       "webSource": [
         "src/agent/components/AgentStaffMonitor.tsx",
         "src/agent/components/monitor/"
       ],
       "nativeSource": [
-        "ios/App/App/StaffMonitorSwiftUI.swift"
+        "ios/App/App/StaffMonitorSwiftUI.swift",
+        "ios/App/App/StaffMonitorAgentsSwiftUI.swift",
+        "ios/App/App/StaffMonitorSystemSwiftUI.swift"
       ],
       "actions": [
         {
           "id": "AG-07.overview",
           "title": "Overview: KPI strip, alerts, quick actions, top staff, live/archive state",
           "kind": "read",
-          "state": "missing",
-          "plannedPhase": "NP-3"
+          "state": "native",
+          "notes": "NP-3: 6-KPI grid (duties/staff/ack/approvals/AI-cost/failures) + dismissible alert panel + quick actions (deploy/retrigger/NTFY-all/pending) + top staff + refresh meta.",
+          "verify": "live cross-check batched to NP-9 owner-approved sim session"
         },
         {
           "id": "AG-07.quickactions",
@@ -277,8 +280,9 @@
           "kind": "write",
           "roleGate": "owner",
           "api": "existing /api/agent/staff-monitor* action routes (consume unchanged)",
-          "state": "missing",
-          "plannedPhase": "NP-3"
+          "state": "native",
+          "notes": "NP-3: deploy worker (3-retry + verified-commit line), retrigger menu (failed-first + full DUTY_TO_JOB), NTFY/escalate all.",
+          "verify": "live cross-check batched to NP-9 owner-approved sim session"
         },
         {
           "id": "AG-07.staff",
@@ -286,8 +290,9 @@
           "kind": "write",
           "roleGate": "owner",
           "api": "GET/PATCH /api/assistant/staff-toggles + existing monitor routes",
-          "state": "missing",
-          "plannedPhase": "NP-3"
+          "state": "native",
+          "notes": "NP-3: expandable staff hub (caps/geo/alerts), geo-fence PATCH toggle, staff-task toggles (GET/PATCH staff-toggles), chat-prefill quick actions (AlmaComposerPrefill), productivity alerts.",
+          "verify": "live cross-check batched to NP-9 owner-approved sim session"
         },
         {
           "id": "AG-07.feed",
@@ -295,8 +300,9 @@
           "kind": "write",
           "roleGate": "owner",
           "api": "existing /api/assistant/actions/* approval routes",
-          "state": "missing",
-          "plannedPhase": "NP-3"
+          "state": "native",
+          "notes": "NP-3: per-row + bulk escalate (POST escalate), approvals approve/reject (dedicated staff_auto_message route + assistant actions route, 409/410=success), reminders/todos cards, feed paging.",
+          "verify": "live cross-check batched to NP-9 owner-approved sim session"
         },
         {
           "id": "AG-07.system",
@@ -304,17 +310,20 @@
           "kind": "write",
           "roleGate": "owner",
           "api": "existing /api/agent/* monitor routes (consume unchanged)",
-          "state": "missing",
-          "plannedPhase": "NP-3"
+          "state": "native",
+          "notes": "NP-3: duty category rows + toggle + retrigger, Salah timeline + time-config editor, native voice switches, trust tier menu, brain+prompt-cache, health scan + auto-fix request/approve/reject, services chips, deploy card, build badge.",
+          "verify": "live cross-check batched to NP-9 owner-approved sim session"
         },
         {
           "id": "AG-07.history",
           "title": "Historical date read-only mode",
           "kind": "read",
-          "state": "missing",
-          "plannedPhase": "NP-3"
+          "state": "native",
+          "notes": "NP-3: historical dates hide live-only blocks (isLive gates on every mutating card).",
+          "verify": "live cross-check batched to NP-9 owner-approved sim session"
         }
-      ]
+      ],
+      "notes": "NP-3 DONE — every AgentStaffMonitor.tsx / monitor/ component has a native equivalent; see per-action notes."
     },
     {
       "id": "AG-08",
@@ -1569,7 +1578,7 @@
     "SettingsSmsSwiftUI.swift": 2,
     "SettingsTelegramSwiftUI.swift": 2,
     "SettingsUsersSwiftUI.swift": 3,
-    "StaffMonitorSwiftUI.swift": 3,
+    "StaffMonitorSwiftUI.swift": 2,
     "SubscriptionsSwiftUI.swift": 1,
     "SupplierImportSwiftUI.swift": 4,
     "SystemDiagnosticsSwiftUI.swift": 2,

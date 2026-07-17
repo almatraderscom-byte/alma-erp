@@ -211,6 +211,125 @@ struct StaffMonitorFeedRow: Decodable, Identifiable, Equatable {
     }
 }
 
+/// Web AgentDutyRow.
+struct StaffMonitorDuty: Decodable, Identifiable {
+    let id: String
+    let duty: String
+    let label: String
+    let status: String
+    let detail: String?
+    let ranAt: String?
+    let time: String?
+    private enum Keys: String, CodingKey { case id, duty, label, status, detail, ranAt, time }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
+        duty = (try? c.decodeIfPresent(String.self, forKey: .duty)) ?? ""
+        label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? duty
+        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "pending"
+        detail = try? c.decodeIfPresent(String.self, forKey: .detail)
+        ranAt = try? c.decodeIfPresent(String.self, forKey: .ranAt)
+        time = try? c.decodeIfPresent(String.self, forKey: .time)
+    }
+}
+
+/// Web SalahDutyRow.
+struct StaffMonitorSalah: Decodable, Identifiable {
+    let waqt: String
+    let label: String
+    let scheduledTime: String
+    let status: String
+    let doneTime: String?
+    let reminders: Int
+    var id: String { waqt }
+    private enum Keys: String, CodingKey { case waqt, label, scheduledTime, status, doneTime, reminders }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        waqt = (try? c.decodeIfPresent(String.self, forKey: .waqt)) ?? UUID().uuidString
+        label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? waqt
+        scheduledTime = (try? c.decodeIfPresent(String.self, forKey: .scheduledTime)) ?? ""
+        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "pending"
+        doneTime = try? c.decodeIfPresent(String.self, forKey: .doneTime)
+        reminders = staffMonitorFlexInt(c, .reminders) ?? 0
+    }
+}
+
+/// Web ContinuousServiceHealth.
+struct StaffMonitorService: Decodable, Identifiable {
+    let key: String
+    let label: String
+    let healthy: Bool
+    var id: String { key }
+    private enum Keys: String, CodingKey { case key, label, healthy }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        key = (try? c.decodeIfPresent(String.self, forKey: .key)) ?? UUID().uuidString
+        label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? key
+        healthy = (try? c.decodeIfPresent(Bool.self, forKey: .healthy)) ?? false
+    }
+}
+
+/// Web MonitorWarning.
+struct StaffMonitorWarning: Decodable {
+    let severity: String
+    let kind: String
+    let message: String
+    private enum Keys: String, CodingKey { case severity, kind, message }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        severity = (try? c.decodeIfPresent(String.self, forKey: .severity)) ?? "warn"
+        kind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? ""
+        message = (try? c.decodeIfPresent(String.self, forKey: .message)) ?? ""
+    }
+}
+
+/// Web PendingApprovalRow.
+struct StaffMonitorApproval: Decodable, Identifiable {
+    let id: String
+    let type: String
+    let summary: String
+    let createdAt: String?
+    let staffName: String?
+    private enum Keys: String, CodingKey { case id, type, summary, createdAt, staffName }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
+        type = (try? c.decodeIfPresent(String.self, forKey: .type)) ?? ""
+        summary = (try? c.decodeIfPresent(String.self, forKey: .summary)) ?? ""
+        createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
+        staffName = try? c.decodeIfPresent(String.self, forKey: .staffName)
+    }
+}
+
+/// Web ActiveReminderRow / ActiveTodoRow (feed tab cards).
+struct StaffMonitorReminder: Decodable, Identifiable {
+    let id: String
+    let title: String
+    let dueAt: String?
+    private enum Keys: String, CodingKey { case id, title, dueAt }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
+        title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? ""
+        dueAt = try? c.decodeIfPresent(String.self, forKey: .dueAt)
+    }
+}
+
+struct StaffMonitorTodo: Decodable, Identifiable {
+    let id: String
+    let title: String
+    let priority: String
+    let dueHint: String?
+    private enum Keys: String, CodingKey { case id, title, priority, dueHint }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
+        title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? ""
+        priority = (try? c.decodeIfPresent(String.self, forKey: .priority)) ?? ""
+        dueHint = try? c.decodeIfPresent(String.self, forKey: .dueHint)
+    }
+}
+
 /// GET /api/agent/staff-monitor — flat JSON (decode a `{ ok, data }` wrapper too,
 /// defensively, matching the app's other screens).
 struct StaffMonitorData: Decodable {
@@ -223,12 +342,26 @@ struct StaffMonitorData: Decodable {
     let feed: [StaffMonitorFeedRow]
     let historyFeed: [StaffMonitorFeedRow]
     let unackedMessages: [StaffMonitorFeedRow]
+    let failures: [StaffMonitorFeedRow]
     let geoFenceMonitoringEnabled: Bool?
     let generatedAt: String?
+    // NP-3 additions (web payload fields the tabs render)
+    let agentDuties: [StaffMonitorDuty]
+    let salahDuties: [StaffMonitorSalah]
+    let continuousServices: [StaffMonitorService]
+    let warnings: [StaffMonitorWarning]
+    let pendingApprovals: [StaffMonitorApproval]
+    let activeReminders: [StaffMonitorReminder]
+    let activeTodos: [StaffMonitorTodo]
+    var dutyEnabled: [String: Bool]
+    let dutyTimeOverrides: [String: String]
 
     private enum Keys: String, CodingKey {
         case ok, data, today, isHistorical, historyDates, staffSummaries, geoStatus
-        case productivityAlerts, feed, historyFeed, unackedMessages, geoFenceMonitoringEnabled, generatedAt
+        case productivityAlerts, feed, historyFeed, unackedMessages, failures
+        case geoFenceMonitoringEnabled, generatedAt
+        case agentDuties, salahDuties, continuousServices, warnings, pendingApprovals
+        case activeReminders, activeTodos, dutyEnabled, dutyTimeOverrides
     }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
@@ -242,8 +375,18 @@ struct StaffMonitorData: Decodable {
         feed = (try? c.decodeIfPresent([StaffMonitorFeedRow].self, forKey: .feed)) ?? []
         historyFeed = (try? c.decodeIfPresent([StaffMonitorFeedRow].self, forKey: .historyFeed)) ?? []
         unackedMessages = (try? c.decodeIfPresent([StaffMonitorFeedRow].self, forKey: .unackedMessages)) ?? []
+        failures = (try? c.decodeIfPresent([StaffMonitorFeedRow].self, forKey: .failures)) ?? []
         geoFenceMonitoringEnabled = try? c.decodeIfPresent(Bool.self, forKey: .geoFenceMonitoringEnabled)
         generatedAt = try? c.decodeIfPresent(String.self, forKey: .generatedAt)
+        agentDuties = (try? c.decodeIfPresent([StaffMonitorDuty].self, forKey: .agentDuties)) ?? []
+        salahDuties = (try? c.decodeIfPresent([StaffMonitorSalah].self, forKey: .salahDuties)) ?? []
+        continuousServices = (try? c.decodeIfPresent([StaffMonitorService].self, forKey: .continuousServices)) ?? []
+        warnings = (try? c.decodeIfPresent([StaffMonitorWarning].self, forKey: .warnings)) ?? []
+        pendingApprovals = (try? c.decodeIfPresent([StaffMonitorApproval].self, forKey: .pendingApprovals)) ?? []
+        activeReminders = (try? c.decodeIfPresent([StaffMonitorReminder].self, forKey: .activeReminders)) ?? []
+        activeTodos = (try? c.decodeIfPresent([StaffMonitorTodo].self, forKey: .activeTodos)) ?? []
+        dutyEnabled = (try? c.decodeIfPresent([String: Bool].self, forKey: .dutyEnabled)) ?? [:]
+        dutyTimeOverrides = (try? c.decodeIfPresent([String: String].self, forKey: .dutyTimeOverrides)) ?? [:]
     }
 }
 
@@ -350,11 +493,16 @@ enum StaffMonitorTab: String, CaseIterable {
 @available(iOS 17.0, *)
 struct StaffMonitorScreen: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
     @State private var vm = StaffMonitorVM()
     @State private var controlsVM = StaffMonitorControlsVM()
+    @State private var ops = StaffMonitorOpsStore()
     @State private var selected: StaffMonitorSummary? = nil
     @State private var tab: StaffMonitorTab
     @State private var feedExpanded = false
+    @State private var expandedStaff: String? = nil
+    /// Web MonitorAlertPanel parity: dismissals key on alert CONTENT, session-scoped.
+    @State private var dismissedAlerts: Set<String> = []
     let openWeb: (_ path: String, _ title: String) -> Void
 
     /// `initialTab` lets deep links land on a specific tab — /agent/live-watch
@@ -388,25 +536,60 @@ struct StaffMonitorScreen: View {
             }
         }
         .background(StaffMonitorAurora())
+        .overlay(alignment: .top) { toastOverlay }
         .task {
             await vm.load()
             await controlsVM.loadAll()
+            await controlsVM.loadOps(ops)
             // Web parity: auto-refresh every 10s while live (staff payload + the
             // emergency live-browser watch state). SwiftUI cancels this task when
             // the screen leaves the hierarchy — no orphan timers (roadmap §4.9).
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 if Task.isCancelled { break }
+                guard scenePhase == .active else { continue }
                 if vm.isLive {
                     await vm.load(silent: true)
                     await controlsVM.refreshWatch()
                 }
             }
         }
+        .task {
+            // Web parity: health scan refresh every 60s while live + foregrounded.
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                if Task.isCancelled { break }
+                guard scenePhase == .active, vm.isLive else { continue }
+                await controlsVM.loadHealthScan(ops)
+            }
+        }
         .sheet(item: $selected) { s in
             StaffMonitorDetailSheet(summary: s, vm: vm, openWeb: openWeb)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+    }
+
+    /// Web toast parity: fixed top banner, auto-clears after ~4.5s.
+    @ViewBuilder private var toastOverlay: some View {
+        if let t = ops.toast {
+            HStack(spacing: 6) {
+                Text(t.ok ? "✓" : "⚠")
+                Text(t.msg).lineLimit(2)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(t.ok ? StaffMonitorPalette.emerald600 : StaffMonitorPalette.red500)
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(
+                (t.ok ? StaffMonitorPalette.emerald600 : StaffMonitorPalette.red500).opacity(0.35), lineWidth: 1))
+            .padding(.top, 6)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .task {
+                try? await Task.sleep(nanoseconds: 4_500_000_000)
+                withAnimation { ops.toast = nil }
+            }
+            .onTapGesture { withAnimation { ops.toast = nil } }
         }
     }
 
@@ -470,9 +653,12 @@ struct StaffMonitorScreen: View {
         let unacked = vm.data?.unackedMessages.count ?? 0
         let staffCount = vm.data?.staffSummaries.count ?? 0
         let feedCount = feedRows.count
+        let approvals = vm.data?.pendingApprovals.count ?? 0
+        let failures = vm.data?.failures.count ?? 0
+        let alertCount = unacked + approvals + failures   // web MonitorTabs badge rule
         func badge(for t: StaffMonitorTab) -> Int? {
             switch t {
-            case .overview: return unacked > 0 ? unacked : nil
+            case .overview: return alertCount > 0 ? alertCount : nil
             case .staff: return staffCount > 0 ? staffCount : nil
             case .feed: return feedCount > 0 ? feedCount : nil
             default: return nil
@@ -534,12 +720,13 @@ struct StaffMonitorScreen: View {
         }
     }
 
-    // ── OVERVIEW: KPIs + actionable alert summary + top staff + refresh meta ──
+    // ── OVERVIEW: alerts + 6-KPI grid + quick actions + top staff + refresh meta ──
 
     @ViewBuilder private var overviewTab: some View {
-        if vm.data != nil {
-            kpiStrip
-            overviewAlertCard
+        if let d = vm.data {
+            alertPanel(d)
+            kpiGrid(d)
+            if vm.isLive { quickActionsCard(d) }
             topStaffSection
             Text(metaLine)
                 .font(.caption2).foregroundStyle(.secondary)
@@ -548,49 +735,228 @@ struct StaffMonitorScreen: View {
         }
     }
 
-    /// Actionable alert summary, or a COMPACT all-clear line (roadmap §4.2: empty
-    /// states collapse — they never occupy the rest of the page).
-    @ViewBuilder private var overviewAlertCard: some View {
-        let unacked = vm.data?.unackedMessages.count ?? 0
-        let alerts = vm.data?.productivityAlerts.count ?? 0
-        if unacked > 0 || alerts > 0 {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("🔔 অ্যালার্ট")
-                    .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
-                if unacked > 0 {
-                    alertRow("⏳ \(unacked)টা মেসেজ এখনো acknowledge হয়নি",
-                             StaffMonitorPalette.amber600) { tab = .feed }
-                }
-                if alerts > 0 {
-                    alertRow("⚡ \(alerts)টা প্রোডাক্টিভিটি অ্যালার্ট",
-                             StaffMonitorPalette.red500) { tab = .staff }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-            .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
-        } else if vm.data != nil {
+    /// Web MonitorAlertPanel parity: system warnings + delivery failures +
+    /// many-unacked, dismissible (content-keyed), with a dismiss-all row. Empty
+    /// state collapses to one compact line (§4.2).
+    @ViewBuilder private func alertPanel(_ d: StaffMonitorData) -> some View {
+        let alerts = buildAlerts(d).filter { !dismissedAlerts.contains($0.id) }
+        if alerts.isEmpty {
             Label("সব ঠিক আছে — কোনো অ্যালার্ট নেই", systemImage: "checkmark.circle")
                 .font(.caption).foregroundStyle(StaffMonitorPalette.emerald600)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
                 .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                if alerts.count > 1 {
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        withAnimation { dismissedAlerts.formUnion(alerts.map(\.id)) }
+                    } label: {
+                        Text("✕ সব বন্ধ করুন (\(alerts.count))")
+                            .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                ForEach(alerts, id: \.id) { a in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(a.critical ? "🚨" : "⚠️").font(.caption)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(a.title).font(.caption.weight(.medium))
+                                .foregroundStyle(a.critical ? StaffMonitorPalette.red500 : StaffMonitorPalette.amber600)
+                            if let detail = a.detail {
+                                Text(detail).font(.system(size: 9)).foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer(minLength: 4)
+                        Button {
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            withAnimation { dismissedAlerts.insert(a.id) }
+                        } label: {
+                            Image(systemName: "xmark").font(.system(size: 9)).foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(10)
+                    .background((a.critical ? StaffMonitorPalette.red500 : StaffMonitorPalette.amber600).opacity(0.07),
+                                in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
         }
     }
 
-    private func alertRow(_ text: String, _ color: Color, action: @escaping () -> Void) -> some View {
+    private struct MonitorAlert { let id: String; let critical: Bool; let title: String; let detail: String? }
+
+    /// Web MonitorAlertPanel alert-building rules verbatim.
+    private func buildAlerts(_ d: StaffMonitorData) -> [MonitorAlert] {
+        var out: [MonitorAlert] = []
+        for w in d.warnings {
+            let detail: String? =
+                w.kind == "worker_heartbeat" ? "Fix: SSH to VPS → pm2 restart agent-worker" :
+                w.kind == "duty_failed" ? "System ট্যাবে failed duty খুলে retrigger করুন" :
+                w.kind == "duty_missed" ? "Duty was not run in its time window" : nil
+            out.append(MonitorAlert(id: "warn-\(w.kind)-\(w.message)",
+                                    critical: w.severity == "critical", title: w.message, detail: detail))
+        }
+        if vm.isLive, !d.failures.isEmpty {
+            out.append(MonitorAlert(
+                id: "delivery-failures", critical: false,
+                title: "\(d.failures.count) delivery failure\(d.failures.count > 1 ? "s" : "") detected",
+                detail: d.failures.prefix(2).map { "\($0.staffName ?? "—")" }.joined(separator: " · ")))
+        }
+        if vm.isLive, d.unackedMessages.count > 3 {
+            out.append(MonitorAlert(
+                id: "many-unacked", critical: false,
+                title: "\(d.unackedMessages.count) messages unseen by staff",
+                detail: "Consider sending critical NTFY alerts"))
+        }
+        return out
+    }
+
+    /// Web MonitorKPIStrip parity: Agent Duties · Staff Active · Pending Ack ·
+    /// Approvals · AI Cost · Failures (3×2 grid).
+    private func kpiGrid(_ d: StaffMonitorData) -> some View {
+        let totalDuties = d.agentDuties.count
+        let doneDuties = d.agentDuties.filter { $0.status == "done" }.count
+        let failedDuties = d.agentDuties.filter { $0.status == "failed" || $0.status == "missed" }.count
+        let unacked = d.unackedMessages.count
+        let approvals = d.pendingApprovals.count
+        let cost = ops.brain.map { String(format: "$%.2f", $0.todayCostUsd) } ?? "—"
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+            kpiCell("AGENT DUTIES", "\(doneDuties)/\(totalDuties)",
+                    failedDuties > 0 ? "\(failedDuties) failed" : "on track",
+                    failedDuties > 0 ? StaffMonitorPalette.red500 : StaffMonitorPalette.emerald600) { tab = .system }
+            kpiCell("STAFF ACTIVE", "\(d.staffSummaries.count)", "tracked today",
+                    Color(red: 0.831, green: 0.659, blue: 0.294)) { tab = .staff }
+            kpiCell("PENDING ACK", "\(unacked)", "unseen msgs",
+                    unacked > 0 ? StaffMonitorPalette.amber600 : StaffMonitorPalette.emerald600) { tab = .feed }
+            kpiCell("APPROVALS", "\(approvals)", approvals > 0 ? "waiting" : "all clear",
+                    approvals > 0 ? StaffMonitorPalette.amber600 : StaffMonitorPalette.emerald600) { tab = .feed }
+            kpiCell("AI COST", cost, "USD today", StaffMonitorPalette.coral) { tab = .agents }
+            kpiCell("FAILURES", "\(d.failures.count)", "delivery",
+                    d.failures.isEmpty ? StaffMonitorPalette.emerald600 : StaffMonitorPalette.red500) { tab = .feed }
+        }
+    }
+
+    private func kpiCell(_ label: String, _ value: String, _ sub: String, _ tint: Color,
+                         action: @escaping () -> Void) -> some View {
         Button {
             UISelectionFeedbackGenerator().selectionChanged()
             action()
         } label: {
-            HStack {
-                Text(text).font(.caption.weight(.semibold)).foregroundStyle(color)
-                Spacer()
-                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label).font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                Text(value).font(.headline.weight(.black).monospacedDigit()).foregroundStyle(tint)
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                Text(sub).font(.system(size: 8)).foregroundStyle(.secondary).lineLimit(1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// Web MonitorQuickActions parity: Deploy Worker · Retrigger Duty (searchable
+    /// menu) · NTFY All · pending badge · last-deploy line.
+    private func quickActionsCard(_ d: StaffMonitorData) -> some View {
+        let failedDuties = d.agentDuties.filter { $0.status == "failed" || $0.status == "missed" }
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("⚡ Quick Actions")
+                .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+            HStack(spacing: 8) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    Task { await controlsVM.deployWorker(ops) }
+                } label: {
+                    Text(ops.deploying ? "Deploying…" : "🚀 Deploy Worker")
+                        .font(.system(size: 11, weight: .bold))
+                        .padding(.horizontal, 11).padding(.vertical, 8)
+                        .background(StaffMonitorPalette.teal.opacity(0.13), in: Capsule())
+                        .foregroundStyle(StaffMonitorPalette.teal)
+                }
+                .buttonStyle(.plain)
+                .disabled(ops.deploying)
+                Menu {
+                    // Failed duties first (web badge), then everything else.
+                    ForEach(failedDuties) { duty in
+                        Button("✗ \(duty.label)") {
+                            Task { await controlsVM.retrigger(ops, dutyKey: duty.duty) }
+                        }
+                    }
+                    Divider()
+                    ForEach(smDutyToJob.keys.sorted(), id: \.self) { key in
+                        Button(key.replacingOccurrences(of: "_", with: " ")) {
+                            Task { await controlsVM.retrigger(ops, dutyKey: key) }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(ops.retriggering ? "⏳…" : "⟳ Retrigger")
+                            .font(.system(size: 11, weight: .bold))
+                        if !failedDuties.isEmpty {
+                            Text("\(failedDuties.count)")
+                                .font(.system(size: 8, weight: .bold))
+                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                .background(StaffMonitorPalette.red500.opacity(0.15), in: Capsule())
+                                .foregroundStyle(StaffMonitorPalette.red500)
+                        }
+                    }
+                    .padding(.horizontal, 11).padding(.vertical, 8)
+                    .background(StaffMonitorPalette.coral.opacity(0.10), in: Capsule())
+                    .foregroundStyle(StaffMonitorPalette.coral)
+                }
+                .disabled(ops.retriggering)
+                Spacer()
+            }
+            HStack(spacing: 8) {
+                if !d.unackedMessages.isEmpty {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        Task {
+                            for m in d.unackedMessages { await controlsVM.escalate(ops, row: m) }
+                        }
+                    } label: {
+                        Text("🔔 NTFY All (\(d.unackedMessages.count))")
+                            .font(.system(size: 11, weight: .bold))
+                            .padding(.horizontal, 11).padding(.vertical, 8)
+                            .background(StaffMonitorPalette.red500.opacity(0.10), in: Capsule())
+                            .foregroundStyle(StaffMonitorPalette.red500)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(ops.escalatingId != nil)
+                }
+                if !d.pendingApprovals.isEmpty {
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        tab = .feed
+                    } label: {
+                        Text("⏳ \(d.pendingApprovals.count) Pending")
+                            .font(.system(size: 11, weight: .bold))
+                            .padding(.horizontal, 11).padding(.vertical, 8)
+                            .background(Color(red: 0.831, green: 0.659, blue: 0.294).opacity(0.10), in: Capsule())
+                            .foregroundStyle(Color(red: 0.831, green: 0.659, blue: 0.294))
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+            }
+            if let msg = ops.deployMsg {
+                Text(msg).font(.system(size: 9))
+                    .foregroundStyle(msg.hasPrefix("✓") ? StaffMonitorPalette.emerald600
+                                     : msg.hasPrefix("⚠") ? StaffMonitorPalette.amber600
+                                     : StaffMonitorPalette.red500)
+            }
+            if let t = smClock(ops.lastDeploy) {
+                Text("Last deploy: \(t)").font(.system(size: 9)).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     /// Compact top staff (web MonitorStaffCards on Overview): top 3 by progress,
@@ -640,14 +1006,193 @@ struct StaffMonitorScreen: View {
         }
     }
 
-    // ── STAFF: full cards + geo + productivity ──
+    // ── STAFF: expandable hub rows (caps/geo/alerts/quick actions) + surveillance ──
 
     @ViewBuilder private var staffTab: some View {
-        geoFenceNote
         staffCards
-        alertsSection
+        if vm.isLive { surveillanceCard }
         if let d = vm.data, !vm.loading, d.staffSummaries.isEmpty, vm.error == nil, !vm.authExpired {
             emptyState
+        }
+    }
+
+    /// Web MonitorStaffHub quick actions — Bangla command deep-linked into the
+    /// NATIVE chat composer (prefill, never auto-send: agent + confirm-card flow).
+    private func runStaffAction(_ command: String) {
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        AlmaComposerPrefill.set(command)
+        NotificationCenter.default.post(name: .almaOpenPath, object: nil, userInfo: ["path": "/agent"])
+    }
+
+    /// Per-staff expandable detail (web MonitorStaffHub expanded block).
+    @ViewBuilder private func staffExpandedDetail(_ s: StaffMonitorSummary) -> some View {
+        let cap = ops.staffCaps.first { $0.staffId == s.staffId }
+        let geo = vm.geo(for: s.staffId)
+        let alerts = vm.alerts(for: s.staffId)
+        VStack(alignment: .leading, spacing: 6) {
+            if let cap {
+                HStack(spacing: 6) {
+                    Text("দক্ষতা \(cap.overallCompletionRate)%").font(.caption2.weight(.bold))
+                    if !cap.strongTypes.isEmpty {
+                        Text("💪 \(cap.strongTypes.joined(separator: ", "))")
+                            .font(.system(size: 9)).foregroundStyle(StaffMonitorPalette.emerald600).lineLimit(1)
+                    }
+                    if !cap.weakTypes.isEmpty {
+                        Text("📈 \(cap.weakTypes.joined(separator: ", "))")
+                            .font(.system(size: 9)).foregroundStyle(StaffMonitorPalette.red500).lineLimit(1)
+                    }
+                }
+            }
+            if let geo {
+                let g = StaffMonitorPalette.geo(geo.status)
+                HStack(spacing: 6) {
+                    Text("\(g.icon) \(g.text)\(geo.status == "outside" ? (geo.distanceM.map { " (\($0)m)" } ?? "") : "")")
+                        .font(.caption2.weight(.medium)).foregroundStyle(g.color)
+                    if let link = geo.mapsLink, let url = URL(string: link) {
+                        Link("📍 ম্যাপ", destination: url)
+                            .font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            ForEach(Array(alerts.enumerated()), id: \.offset) { _, a in
+                Text("⚡ \(a.message)").font(.system(size: 10)).foregroundStyle(StaffMonitorPalette.amber600)
+            }
+            if cap == nil && geo == nil && alerts.isEmpty {
+                Text("এই স্টাফের অতিরিক্ত ডেটা এখনও নেই।").font(.caption2).foregroundStyle(.secondary)
+            }
+            // Web quickActions() — Bangla commands verbatim, chat-prefill flow.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    staffQuickChip("📋 টাস্ক দাও", "\(s.staffName)কে নতুন টাস্ক দাও: ")
+                    staffQuickChip("💬 মেসেজ", "\(s.staffName)কে একটা মেসেজ পাঠাও: ")
+                    staffQuickChip("✅ প্রুফ যাচাই", "\(s.staffName) আজকে যেসব কাজের প্রুফ দিয়েছে সেগুলো যাচাই করো।")
+                    staffQuickChip("📈 পারফরম্যান্স", "\(s.staffName)-এর এই সপ্তাহের পারফরম্যান্স রিভিউ দাও।")
+                    staffQuickChip("📍 লোকেশন", "\(s.staffName) এখন কোথায় আছে?")
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        selected = s
+                    } label: {
+                        Text("👁️ বিস্তারিত")
+                            .font(.system(size: 10, weight: .semibold))
+                            .padding(.horizontal, 9).padding(.vertical, 6)
+                            .background(Color.primary.opacity(0.05), in: Capsule())
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(12)
+    }
+
+    private func staffQuickChip(_ label: String, _ command: String) -> some View {
+        Button {
+            runStaffAction(command)
+        } label: {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .padding(.horizontal, 9).padding(.vertical, 6)
+                .background(StaffMonitorPalette.coral.opacity(0.10), in: Capsule())
+                .foregroundStyle(StaffMonitorPalette.accentText(colorScheme))
+                .overlay(Capsule().strokeBorder(StaffMonitorPalette.coral.opacity(0.3), lineWidth: 0.8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Web "Live Surveillance" card: geo-fence toggle + per-staff geo chips +
+    /// productivity alerts + staff task controls (GET/PATCH staff-toggles).
+    @ViewBuilder private var surveillanceCard: some View {
+        if let d = vm.data {
+            let tracking = d.geoFenceMonitoringEnabled ?? true
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("📡 Live Surveillance")
+                        .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                    Spacer()
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        Task {
+                            _ = await controlsVM.toggleGeoFence(ops, enabled: !tracking)
+                            await vm.load(silent: true)   // server truth refresh (web loadLive parity)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Circle().fill(tracking ? StaffMonitorPalette.emerald600 : Color.secondary)
+                                .frame(width: 7, height: 7)
+                            Text(tracking ? "Tracking ON" : "Tracking OFF")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(tracking ? StaffMonitorPalette.emerald600 : .secondary)
+                        }
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .background((tracking ? StaffMonitorPalette.emerald600 : Color.secondary).opacity(0.08), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(ops.geoToggling)
+                }
+                if tracking {
+                    if d.geoStatus.isEmpty {
+                        Text("কোনো staff location ডেটা নেই।").font(.caption2).foregroundStyle(.secondary)
+                    } else {
+                        FlowLayoutSM(spacing: 6) {
+                            ForEach(d.geoStatus, id: \.staffId) { g in
+                                let info = StaffMonitorPalette.geo(g.status)
+                                HStack(spacing: 4) {
+                                    Text(info.icon).font(.system(size: 10))
+                                    Text(g.staffName ?? "—").font(.system(size: 10, weight: .semibold))
+                                    if g.status == "outside", let dM = g.distanceM {
+                                        Text("(\(dM)m)").font(.system(size: 9))
+                                    }
+                                }
+                                .foregroundStyle(info.color)
+                                .padding(.horizontal, 8).padding(.vertical, 5)
+                                .background(info.color.opacity(0.08), in: Capsule())
+                            }
+                        }
+                    }
+                } else {
+                    Text("Office time-এ continuous location tracking বন্ধ। Attendance check-in/out-এ location এখনও বাধ্যতামূলক।")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                if !d.productivityAlerts.isEmpty {
+                    Divider().opacity(0.4)
+                    Text("⚡ Productivity")
+                        .font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                    ForEach(Array(d.productivityAlerts.enumerated()), id: \.offset) { _, a in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(a.staffName ?? "—").font(.caption2.weight(.bold))
+                            Text(a.message).font(.caption2).foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+                if !ops.toggleDefs.isEmpty {
+                    Divider().opacity(0.4)
+                    Text("🎛️ Staff Task Controls")
+                        .font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                    ForEach(ops.toggleDefs) { def in
+                        let enabled = ops.toggles[def.key] != false
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(def.label).font(.caption.weight(.bold))
+                                Text(def.hint).font(.system(size: 9)).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            if ops.staffTaskToggling == def.key { ProgressView().controlSize(.mini) }
+                            Toggle("", isOn: Binding(get: { enabled }, set: { on in
+                                UISelectionFeedbackGenerator().selectionChanged()
+                                Task { await controlsVM.toggleStaffTask(ops, key: def.key, enabled: on) }
+                            }))
+                            .labelsHidden()
+                            .tint(StaffMonitorPalette.emerald600)
+                            .disabled(ops.staffTaskToggling != nil)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
@@ -663,10 +1208,45 @@ struct StaffMonitorScreen: View {
         let unacked = vm.data?.unackedMessages ?? []
         if !unacked.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("⏳ Pending Ack (\(unacked.count))")
-                    .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                HStack {
+                    Text("⏳ Pending Ack (\(unacked.count))")
+                        .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                    Spacer()
+                    // Web "🔔 Notify All" — escalate every unacked message in turn.
+                    if vm.isLive {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            Task { for m in unacked { await controlsVM.escalate(ops, row: m) } }
+                        } label: {
+                            Text("🔔 Notify All")
+                                .font(.system(size: 10, weight: .bold))
+                                .padding(.horizontal, 9).padding(.vertical, 5)
+                                .background(StaffMonitorPalette.red500.opacity(0.10), in: Capsule())
+                                .foregroundStyle(StaffMonitorPalette.red500)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(ops.escalatingId != nil)
+                    }
+                }
                 ForEach(unacked.prefix(10)) { m in
                     StaffMonitorFeedCardRow(m: m, scheme: colorScheme)
+                    if vm.isLive {
+                        HStack {
+                            Spacer()
+                            Button {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                Task { await controlsVM.escalate(ops, row: m) }
+                            } label: {
+                                Text(ops.escalatingId == m.id ? "⏳…" : "🔔 Critical NTFY")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .padding(.horizontal, 8).padding(.vertical, 4)
+                                    .background(StaffMonitorPalette.red500.opacity(0.10), in: Capsule())
+                                    .foregroundStyle(StaffMonitorPalette.red500)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(ops.escalatingId != nil)
+                        }
+                    }
                     if m.id != unacked.prefix(10).last?.id { Divider().opacity(0.4) }
                 }
             }
@@ -674,6 +1254,8 @@ struct StaffMonitorScreen: View {
             .padding(14)
             .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
+        approvalsCard
+        remindersTodosCard
         VStack(alignment: .leading, spacing: 10) {
             Text("📨 Message Feed")
                 .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
@@ -703,25 +1285,120 @@ struct StaffMonitorScreen: View {
         .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
-    // ── SYSTEM: duty/Salah/trust/brain/health/deploy land in NP-3 — compact note ──
+    // ── FEED: pending approvals + reminders/todos (web cards) ──
+
+    @ViewBuilder private var approvalsCard: some View {
+        let approvals = vm.data?.pendingApprovals ?? []
+        if !approvals.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("⏳ Pending Approvals (48h) · \(approvals.count)")
+                    .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                ForEach(approvals) { a in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(a.type.replacingOccurrences(of: "_", with: " "))
+                            .font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
+                        Text(a.summary).font(.caption).lineLimit(3)
+                        HStack(spacing: 8) {
+                            if let ago = StaffMonitorFormat.timeAgo(a.createdAt) {
+                                Text(ago).font(.system(size: 9)).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if ops.approvingId == a.id {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                    Task {
+                                        await controlsVM.decideApproval(ops, id: a.id, type: a.type, approve: true)
+                                        await vm.load(silent: true)
+                                    }
+                                } label: {
+                                    Text("✓ Approve").font(.system(size: 10, weight: .bold))
+                                        .padding(.horizontal, 10).padding(.vertical, 5)
+                                        .background(StaffMonitorPalette.emerald600.opacity(0.12), in: Capsule())
+                                        .foregroundStyle(StaffMonitorPalette.emerald600)
+                                }
+                                .buttonStyle(.plain)
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                    Task {
+                                        await controlsVM.decideApproval(ops, id: a.id, type: a.type, approve: false)
+                                        await vm.load(silent: true)
+                                    }
+                                } label: {
+                                    Text("✗ Reject").font(.system(size: 10, weight: .bold))
+                                        .padding(.horizontal, 10).padding(.vertical, 5)
+                                        .background(StaffMonitorPalette.red500.opacity(0.12), in: Capsule())
+                                        .foregroundStyle(StaffMonitorPalette.red500)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 3)
+                    if a.id != approvals.last?.id { Divider().opacity(0.4) }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        }
+    }
+
+    @ViewBuilder private var remindersTodosCard: some View {
+        let reminders = vm.data?.activeReminders ?? []
+        let todos = vm.data?.activeTodos ?? []
+        if !reminders.isEmpty || !todos.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                if !reminders.isEmpty {
+                    Text("⏰ Active Reminders (\(reminders.count))")
+                        .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                    ForEach(reminders) { r in
+                        HStack(spacing: 6) {
+                            Text(r.title).font(.caption).lineLimit(1)
+                            Spacer()
+                            if let t = StaffMonitorFormat.clock(r.dueAt) {
+                                Text(t).font(.system(size: 9).monospacedDigit()).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                if !todos.isEmpty {
+                    if !reminders.isEmpty { Divider().opacity(0.4) }
+                    Text("📝 To-dos (\(todos.count))")
+                        .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                    ForEach(todos) { t in
+                        HStack(spacing: 6) {
+                            Text(t.title).font(.caption).lineLimit(1)
+                            Spacer()
+                            if let hint = t.dueHint {
+                                Text(hint).font(.system(size: 9)).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        }
+    }
+
+    // ── SYSTEM: full owner control room (StaffMonitorSystemSwiftUI.swift) ──
 
     private var systemTab: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("⚙️ System")
-                .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
-            Text("ডিউটি টাইমলাইন · সালাহ · ট্রাস্ট · ব্রেন · হেলথ স্ক্যান · ডিপ্লয় — native ভার্সন NP-3 তে আসছে।")
-                .font(.caption).foregroundStyle(.secondary)
-            // Contract AG-07.system (plannedPhase NP-3): explicitly unfinished phase
-            // item — the ONLY sanctioned internal web escape on this screen.
-            Button { openWeb("/agent/staff-monitor", "LIVE Business") } label: {
-                Label("আপাতত ওয়েবে খুলুন", systemImage: "safari").font(.caption2)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        StaffMonitorSystemTab(
+            vm: controlsVM,
+            ops: ops,
+            duties: vm.data?.agentDuties ?? [],
+            salahDuties: vm.data?.salahDuties ?? [],
+            services: vm.data?.continuousServices ?? [],
+            dutyEnabled: vm.data?.dutyEnabled ?? [:],
+            dutyTimeOverrides: vm.data?.dutyTimeOverrides ?? [:],
+            isLive: vm.isLive,
+            onDutyEnabledEcho: { echo in
+                vm.data?.dutyEnabled = echo
+            })
     }
 
     private var metaLine: String {
@@ -778,59 +1455,28 @@ struct StaffMonitorScreen: View {
         }
     }
 
-    // ── KPI strip: active staff / tasks / unacked (web header badges + alert count) ──
-
-    private var kpiStrip: some View {
-        let tasks = vm.tasksDoneTotal
-        let unacked = vm.data?.unackedMessages.count ?? 0
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                kpiCard("ACTIVE", "\(vm.activeCount)",
-                        vm.activeCount > 0 ? StaffMonitorPalette.emerald600 : .primary)
-                kpiCard("TASKS", "\(tasks.done)/\(tasks.total)", .primary)
-                kpiCard("UNACKED", "\(unacked)",
-                        unacked > 0 ? StaffMonitorPalette.amber600 : .primary)
-                kpiCard("STAFF", "\(vm.data?.staffSummaries.count ?? 0)",
-                        StaffMonitorPalette.accentText(colorScheme))
-            }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 1)
-        }
-    }
-
-    private func kpiCard(_ label: String, _ value: String, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text(value).font(.headline.weight(.bold)).foregroundStyle(tint)
-        }
-        .frame(minWidth: 84, alignment: .leading)
-        .padding(12)
-        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
-    }
-
-    // ── Geo-fence OFF note (web Bangla string verbatim) ──
-
-    @ViewBuilder private var geoFenceNote: some View {
-        if vm.data?.geoFenceMonitoringEnabled == false {
-            Label("Office time-এ continuous location tracking বন্ধ। Attendance check-in/out-এ location এখনও বাধ্যতামূলক।",
-                  systemImage: "location.slash")
-                .font(.caption).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
-        }
-    }
-
     // ── Staff cards ──
 
     @ViewBuilder private var staffCards: some View {
         if let summaries = vm.data?.staffSummaries, !summaries.isEmpty {
             ForEach(summaries) { s in
-                StaffMonitorCard(
-                    summary: s,
-                    geo: vm.geo(for: s.staffId),
-                    alertCount: vm.alerts(for: s.staffId).count,
-                    onTap: { selected = s })
+                VStack(spacing: 0) {
+                    StaffMonitorCard(
+                        summary: s,
+                        geo: vm.geo(for: s.staffId),
+                        alertCount: vm.alerts(for: s.staffId).count,
+                        onTap: {
+                            withAnimation(.easeOut(duration: 0.18)) {
+                                expandedStaff = expandedStaff == s.staffId ? nil : s.staffId
+                            }
+                        })
+                    // Web MonitorStaffHub: tap expands caps/geo/alerts + quick actions.
+                    if expandedStaff == s.staffId {
+                        staffExpandedDetail(s)
+                            .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                            .padding(.top, 2)
+                    }
+                }
             }
         }
     }
