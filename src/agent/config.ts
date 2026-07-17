@@ -61,6 +61,37 @@ export const HEAD_TOOL_BUDGET = Number(process.env.HEAD_TOOL_BUDGET) || 2
  */
 export const MARKETING_HEAD_TOOL_BUDGET = Number(process.env.MARKETING_HEAD_TOOL_BUDGET) || 5
 
+/**
+ * ─── BEHAVIOUR PARITY LAYER (model-agnostic) ────────────────────────────────
+ * Deterministic discipline that applies EQUALLY to whatever head model is
+ * selected (Grok / DeepSeek / Gemini / Claude), so the "feel" comes from the
+ * harness, not the model. Every flag defaults to the CURRENT behaviour, so
+ * merging changes nothing in production until the owner opts in.
+ * Full design: docs/BEHAVIOUR_PARITY_LAYER_PLAN.md.
+ */
+
+// P9 — one shared sampling/output contract across ALL adapters, so the same
+// prompt behaves the same everywhere instead of each provider's accidental
+// default. OFF by default (set AGENT_UNIFORM_SAMPLING=on to enable).
+export const AGENT_UNIFORM_SAMPLING = process.env.AGENT_UNIFORM_SAMPLING === 'on'
+export const GENERATION_DEFAULTS = {
+  temperature: Number(process.env.AGENT_TEMPERATURE ?? '0.7'),
+  topP: Number(process.env.AGENT_TOP_P ?? '0.95'),
+  maxTokens: Number(process.env.AGENT_MAX_TOKENS ?? '8192'),
+} as const
+
+// P8 — salvage malformed tool-call JSON args (weak models emit them often)
+// instead of passing `{_raw}` into a guaranteed schema failure. Only activates
+// ON a parse failure, so it is pure upside; ON by default (set
+// AGENT_TOOLCALL_REPAIR=off to restore the raw passthrough).
+export const AGENT_TOOLCALL_REPAIR = process.env.AGENT_TOOLCALL_REPAIR !== 'off'
+
+// P10 — apply the same tool cap the OpenRouter path already enforces to the
+// xAI-DIRECT head too, so the owner's Grok head never silently carries an
+// oversized toolset the xAI API rejects. ON by default (correctness fix; set
+// AGENT_HEAD_PARITY=off to restore the slug-only cap).
+export const AGENT_HEAD_PARITY = process.env.AGENT_HEAD_PARITY !== 'off'
+
 // Phase prompt specifies budget_tokens values for reference.
 // budget_tokens is deprecated on claude-sonnet-4-6; we use thinking: {type:'adaptive'}
 // and map to output_config.effort levels instead (off → no thinking param, low → medium, high → high).

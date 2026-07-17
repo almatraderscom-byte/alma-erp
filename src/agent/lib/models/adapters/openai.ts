@@ -5,6 +5,13 @@ import type {
   ChatCompletionTool,
 } from 'openai/resources/chat/completions'
 import type { NeutralMsg, NeutralTool, NeutralToolChoice, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
+import { resolveGenerationParams, toOpenAiGenerationParams } from '@/agent/lib/models/generation-params'
+import { repairToolArgs } from '@/agent/lib/models/tool-arg-repair'
+import { AGENT_UNIFORM_SAMPLING } from '@/agent/config'
+
+/** P9 — honest marker appended when a reply is cut at max_tokens (finish_reason
+ * 'length'), so the owner never sees a silent mid-sentence stop. */
+const TRUNCATION_NOTE = '\n\n…(উত্তরটি দৈর্ঘ্যসীমায় কেটে গেছে — বাকিটা পেতে "continue" লিখুন)'
 
 /**
  * Phase 3 request shaping (pure, unit-tested): map the neutral tool_choice /
@@ -224,8 +231,12 @@ export class OpenAiAdapter implements ProviderAdapter {
     const providerPrefs = this.requireParameters && args.tools.length > 0
       ? { provider: { require_parameters: true } }
       : {}
+    // P9 — shared sampling/output contract (temperature/top_p/max_tokens). When
+    // AGENT_UNIFORM_SAMPLING is off this is {} → exact pre-parity request.
+    const genParams = toOpenAiGenerationParams(resolveGenerationParams({ thinking: args.thinking }))
     const baseParams = {
       model: modelSlug,
+      ...genParams,
       messages: toOpenAiMessages(args.system, args.messages, cachePrefix),
       tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
       stream: true as const,
@@ -350,15 +361,22 @@ export class OpenAiAdapter implements ProviderAdapter {
       if (choice?.finish_reason === 'tool_calls' || choice?.finish_reason === 'stop') {
         for (const buf of toolBuffers.values()) {
           if (!buf.name) continue
-          let parsed: Record<string, unknown> = {}
-          try {
-            parsed = JSON.parse(buf.args || '{}') as Record<string, unknown>
-          } catch {
-            parsed = { _raw: buf.args }
-          }
+          // P8 — salvage recoverable malformed args (markdown fences, trailing
+          // commas, single quotes, a truncated brace — which weak heads emit far
+          // more than frontier models) so the call just succeeds. If it is truly
+          // unrecoverable, emit the SINGLE-KEY `{_raw}` marker that
+          // tool-contract.ts already converts into a retryable self-repair error
+          // (never the misleading "unknown field _raw"). Pre-P8 that marker fired
+          // even for trivially-fixable JSON, burning a whole extra model round.
+          const repair = repairToolArgs(buf.args)
+          const parsed: Record<string, unknown> = repair.ok ? repair.value : { _raw: repair.raw }
           yield { type: 'tool_input', id: buf.id, input: parsed }
         }
         toolBuffers.clear()
+      }
+
+      if (choice?.finish_reason === 'length' && AGENT_UNIFORM_SAMPLING) {
+        yield { type: 'text_delta', text: TRUNCATION_NOTE }
       }
 
       if (chunk.usage) {
