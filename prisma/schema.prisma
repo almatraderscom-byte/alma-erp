@@ -2121,6 +2121,35 @@ model WorkflowRunEvent {
   @@map("workflow_run_events")
 }
 
+/// Phase 56 — one row per connected external/internal service (the personal/
+/// business OS adapter registry state). An adapter is NEVER 'ready' from OAuth
+/// success alone — readiness requires its sandbox cases to pass first.
+model AgentServiceConnection {
+  id            String    @id @default(uuid())
+  /// Adapter id, e.g. 'personal-records', 'erp-orders'.
+  service       String    @unique
+  /// personal | business
+  scope         String
+  /// disconnected | sandbox | connected | paused | revoked
+  status        String    @default("disconnected")
+  /// Least-privilege grants actually held (adapter capability ops subset).
+  grantedOps    Json      @map("granted_ops")
+  /// sandbox_pending | sandbox_passed | ready
+  readiness     String    @default("sandbox_pending")
+  health        Json?
+  /// Retention window for data cached from this service.
+  retentionDays Int       @default(90) @map("retention_days")
+  connectedAt   DateTime? @map("connected_at")
+  pausedAt      DateTime? @map("paused_at")
+  revokedAt     DateTime? @map("revoked_at")
+  dataDeletedAt DateTime? @map("data_deleted_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([scope, status])
+  @@map("agent_service_connections")
+}
+
 /// Phase 53 — one row per intended EXTERNAL EFFECT (the exactly-once unit).
 /// State machine: proposed → policy_checked → awaiting_approval|claimed →
 /// executing → verifying → succeeded; repair/terminal: denied, expired,
