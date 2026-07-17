@@ -12,6 +12,7 @@ import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { detectOutboundCallIntent, buildOutboundCallIntakeBlock } from '@/agent/lib/outbound-call-intent'
 import { buildReminderTimeHintBlock } from '@/agent/lib/bangla-time'
+import { detectVoiceProviderRequest } from '@/agent/lib/voice-provider-intent'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
@@ -635,6 +636,10 @@ export async function* runAgentTurn(
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
   const turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
+  // Which call voice Boss asked for — resolved from his OWN words and handed to the
+  // call tool through server context (server wins over model args). Scans the last 3
+  // messages because the call flow is routinely split ("ElevenLabs ভয়েসে…" → number).
+  const ownerVoicePref = detectVoiceProviderRequest(recentUserTexts.slice(-3))
 
   const now = new Date()
   let teachingBlock: string | undefined
@@ -1341,8 +1346,8 @@ export async function* runAgentTurn(
         }
         const started = Date.now()
         const result = personalMode
-          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization })
-          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization })
+          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref })
+          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization, ownerVoicePref })
         return { tb, result, durationMs: Date.now() - started }
       }
 

@@ -17,6 +17,7 @@ import { buildBusinessContext } from '@/agent/lib/business-brain'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { detectOutboundCallIntent, buildOutboundCallIntakeBlock } from '@/agent/lib/outbound-call-intent'
 import { buildReminderTimeHintBlock } from '@/agent/lib/bangla-time'
+import { detectVoiceProviderRequest } from '@/agent/lib/voice-provider-intent'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
@@ -341,6 +342,10 @@ async function* runAlternateProviderTurn(
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
   let turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
   const ownerRequirements = deriveOwnerTurnRequirements(lastUserText)
+  // Which call voice Boss asked for — resolved from his OWN words and handed to the
+  // call tool through server context (server wins over model args). Scans the last 3
+  // messages because the call flow is routinely split ("ElevenLabs ভয়েসে…" → number).
+  const ownerVoicePref = detectVoiceProviderRequest(recentUserTexts.slice(-3))
 
   const now = new Date()
   // Salah conscience-nudge + nightly muhasaba must work on this cheap-head path too
@@ -1538,7 +1543,7 @@ async function* runAlternateProviderTurn(
         yield { type: 'tool_start', id: call.id, name: call.name, input: call.input }
         const started = Date.now()
         const result = personalMode
-          ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization })
+          ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization, ownerVoicePref })
           : await executeTool(call.name, call.input, {
             conversationId,
             businessId,
@@ -1546,6 +1551,7 @@ async function* runAlternateProviderTurn(
             turnId,
             turnAuthorization,
             driveClientSeoBatch,
+            ownerVoicePref,
           })
         const durationMs = Date.now() - started
 
