@@ -237,8 +237,8 @@ class SarvamCall {
         body: JSON.stringify({
           text: text.slice(0, 400),
           target_language_code: process.env.VOICE_RELAY_STT_LANGUAGE || 'bn-IN',
-          model: TTS_MODEL(),
-          speaker: TTS_SPEAKER(),
+          model: this.params.ttsModel || TTS_MODEL(),     // per-call override (falls back to env default)
+          speaker: this.params.speaker || TTS_SPEAKER(),   // per-call override → owner can A/B any voice
           speech_sample_rate: 8000,
         }),
       })

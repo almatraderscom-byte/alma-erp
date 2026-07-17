@@ -119,7 +119,9 @@ export async function processOutboundCall(payload) {
     force: true,
     skipAutoRetry: true,
     playOnce: true, // full message spoken once, then hangup — no truncation/repetition
-    ttsProvider: payload.ttsProvider === 'elevenlabs' ? 'elevenlabs' : 'google',
+    ttsProvider: payload.ttsProvider === 'elevenlabs' ? 'elevenlabs'
+               : payload.ttsProvider === 'google' ? 'google'
+               : 'sarvam', // default — Sarvam Bulbul (owner decision 2026-07-18)
     voiceProfile: payload.voiceGender === 'female' ? 'female' : 'male',
   })
   if (!result.ok) throw new Error(result.error ?? 'call failed')

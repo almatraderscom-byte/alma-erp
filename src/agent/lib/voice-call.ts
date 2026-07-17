@@ -17,6 +17,7 @@
 import { createHmac } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { normalizeOutboundPhone } from '@/lib/twilio/phone'
+import { sarvamVoiceFor } from '@/agent/lib/voice-provider-intent'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -33,9 +34,10 @@ const RELAY_TTS_VOICE = 'bn-IN-Chirp3-HD-Charon'
 const RELAY_STT_HINTS =
   'সেল,বিক্রি,অর্ডার,ডেলিভারি,পেমেন্ট,বাকি,টাকা,কাস্টমার,স্টক,দোকান,আজকে,কালকে,কত,দাম,প্রোডাক্ট,ছবি,পোস্ট,মিটিং,রিমাইন্ডার,বস'
 
-/** Which engine runs two-way calls: ElevenLabs ConvAI (legacy) or Twilio
- * ConversationRelay + Gemini + Google Charon voice (better Bangla accent). */
-export type VoiceCallProvider = 'elevenlabs' | 'relay'
+/** Which engine runs two-way calls: ElevenLabs ConvAI (legacy), Twilio
+ * ConversationRelay + Gemini + Google Charon (relay), or Twilio Media Streams →
+ * our Sarvam pipeline (saaras:v3 STT + Gemini + Bulbul TTS, owner's chosen voice). */
+export type VoiceCallProvider = 'elevenlabs' | 'relay' | 'sarvam'
 
 export interface VoiceCallConfig {
   enabled: boolean
@@ -55,7 +57,10 @@ export interface VoiceCallConfig {
 
 /** Read + validate config from env. `enabled` is false unless everything required is present. */
 export function getVoiceCallConfig(): VoiceCallConfig {
-  const provider: VoiceCallProvider = process.env.VOICE_CALL_PROVIDER === 'relay' ? 'relay' : 'elevenlabs'
+  const provider: VoiceCallProvider =
+    process.env.VOICE_CALL_PROVIDER === 'sarvam' ? 'sarvam'
+      : process.env.VOICE_CALL_PROVIDER === 'relay' ? 'relay'
+        : 'elevenlabs'
   const apiKey = process.env.ELEVENLABS_API_KEY ?? ''
   const agentId = process.env.ELEVENLABS_AGENT_ID ?? ''
   const agentPhoneNumberId = process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID ?? ''
@@ -69,7 +74,7 @@ export function getVoiceCallConfig(): VoiceCallConfig {
   const internalToken = process.env.AGENT_INTERNAL_TOKEN ?? ''
   const enabled =
     killSwitch &&
-    (provider === 'relay'
+    (provider === 'relay' || provider === 'sarvam'
       ? Boolean(relayWssUrl && twilioAccountSid && twilioAuthToken && twilioFromNumber && internalToken)
       : Boolean(apiKey && agentId && agentPhoneNumberId))
   return {
@@ -93,7 +98,7 @@ export function voiceCallUnavailableReason(config = getVoiceCallConfig()): strin
   if (process.env.VOICE_CALL_ENABLED !== 'true') {
     return 'ভয়েস কল বন্ধ আছে (VOICE_CALL_ENABLED off)। চালু করতে owner সেটিং লাগবে।'
   }
-  if (config.provider === 'relay') {
+  if (config.provider === 'relay' || config.provider === 'sarvam') {
     if (!config.relayWssUrl) return 'VOICE_RELAY_PUBLIC_WSS_URL সেট করা নেই — VPS relay-এর পাবলিক wss ঠিকানা বসান।'
     if (!config.twilioAccountSid || !config.twilioAuthToken) return 'TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN সেট করা নেই।'
     if (!config.twilioFromNumber) return 'TWILIO_FROM_NUMBER সেট করা নেই।'
@@ -131,6 +136,9 @@ export interface PlaceCallInput {
   /** First line the agent speaks when the person picks up (Bangla). */
   firstMessage: string
   conversationId?: string | null
+  /** Sarvam two-way path only: male → ashutosh/bulbul:v3, female → anushka/bulbul:v2.
+   * Resolved from Boss's words (voice-provider-intent). Defaults to female. */
+  voiceGender?: 'male' | 'female'
 }
 
 export interface PlaceCallResult {
@@ -173,6 +181,10 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
       conversationId: input.conversationId ?? null,
     },
   })
+
+  if (config.provider === 'sarvam') {
+    return placeSarvamMediaCall(config, record.id, toNumber, firstMessage, purpose, input.recipientName, input.voiceGender)
+  }
 
   if (config.provider === 'relay') {
     return placeRelayCall(config, record.id, toNumber, firstMessage, purpose, input.recipientName)
@@ -378,6 +390,85 @@ async function placeRelayCall(
         // told to dial — readable from the DB when a 64102 needs root-causing.
         summary: `relay ws: ${base}`,
       },
+    })
+    return { ok: true, callRecordId, callSid: data.sid }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'failed', summary: `কল দেওয়া যায়নি: ${msg}` },
+    }).catch(() => {})
+    return { ok: false, error: `কল দেওয়া যায়নি: ${msg}`, callRecordId }
+  }
+}
+
+/**
+ * Two-way call via Twilio Media Streams → our Sarvam pipeline (worker/src/voice-relay/
+ * sarvam-media.mjs on /media): Sarvam saaras:v3 STT + Gemini + Sarvam Bulbul TTS in the
+ * owner's chosen voice. This is the voice the owner approved on live telephony samples —
+ * far better Bangla than the ConversationRelay (Google/Deepgram) path. Media Streams
+ * can't carry the token in the URL, so id/exp/t ride as <Parameter> and are verified on
+ * the 'start' frame (see sarvam-media.mjs). Voice = SARVAM_VOICE[voiceGender]:
+ * male → ashutosh/bulbul:v3, female → anushka/bulbul:v2 (speaker + model travel together).
+ */
+async function placeSarvamMediaCall(
+  config: VoiceCallConfig,
+  callRecordId: string,
+  toNumber: string,
+  firstMessage: string,
+  purpose: string,
+  recipientName: string | undefined,
+  voiceGender: 'male' | 'female' | undefined,
+): Promise<PlaceCallResult> {
+  try {
+    const exp = Date.now() + 15 * 60_000
+    const t = createHmac('sha256', config.internalToken)
+      .update(`relay:${callRecordId}:${exp}`)
+      .digest('hex')
+    // relayWssUrl may end in /relay, /media, or nothing — normalise then append /media.
+    const base = config.relayWssUrl.replace(/\/(relay|media)$/, '')
+    const wssUrl = `${base}/media`
+    const voice = sarvamVoiceFor(voiceGender)
+
+    const twiml =
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<Response><Connect>` +
+      `<Stream url="${escapeXmlAttr(wssUrl)}">` +
+      `<Parameter name="id" value="${escapeXmlAttr(callRecordId)}"/>` +
+      `<Parameter name="exp" value="${exp}"/>` +
+      `<Parameter name="t" value="${t}"/>` +
+      `<Parameter name="firstMessage" value="${escapeXmlAttr(firstMessage)}"/>` +
+      `<Parameter name="purpose" value="${escapeXmlAttr(purpose)}"/>` +
+      `<Parameter name="recipientName" value="${escapeXmlAttr(recipientName ?? '')}"/>` +
+      `<Parameter name="speaker" value="${escapeXmlAttr(voice.speaker)}"/>` +
+      `<Parameter name="ttsModel" value="${escapeXmlAttr(voice.model)}"/>` +
+      `</Stream></Connect></Response>`
+
+    const body = new URLSearchParams({
+      To: toNumber,
+      From: config.twilioFromNumber,
+      Twiml: twiml,
+      Timeout: '45',
+    })
+    const auth = Buffer.from(`${config.twilioAccountSid}:${config.twilioAuthToken}`).toString('base64')
+    const res = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${config.twilioAccountSid}/Calls.json`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${auth}` },
+        body,
+        signal: AbortSignal.timeout(30_000),
+      },
+    )
+    const data = (await res.json().catch(() => ({}))) as { sid?: string; message?: string }
+    if (!res.ok || !data.sid) {
+      const err = `Twilio ${res.status}: ${data.message ?? 'call create failed'}`
+      await db.agentVoiceCall.update({ where: { id: callRecordId }, data: { status: 'failed', summary: err } })
+      return { ok: false, error: err, callRecordId }
+    }
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'ringing', callSid: data.sid, summary: `sarvam media: ${voice.speaker}/${voice.model}` },
     })
     return { ok: true, callRecordId, callSid: data.sid }
   } catch (err) {
