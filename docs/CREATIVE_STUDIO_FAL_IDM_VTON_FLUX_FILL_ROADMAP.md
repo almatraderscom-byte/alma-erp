@@ -221,7 +221,7 @@ Cost facts to surface in the UI, not hard-code without a model-price configurati
 | CS8 | `agent-phase-cs8` | Professional single/product pipeline and localized repair | READY FOR OWNER |
 | CS9 | `agent-phase-cs9` | Family/couple/full-family protected compositing | READY FOR OWNER |
 | CS10 | `agent-phase-cs10` | QC 2.0, golden evaluation and model comparison | READY FOR OWNER |
-| CS11 | `agent-phase-cs11` | Short-video and owner-shot video hardening | TODO |
+| CS11 | `agent-phase-cs11` | Short-video and owner-shot video hardening | READY FOR OWNER |
 | CS12 | `agent-phase-cs12` | Observability, rollout controls and final E2E certification | TODO |
 
 The roadmap file itself is allowed in every phase only for updating that phase's status/checklist. Do not rewrite future phase scope while implementing the current phase unless the owner explicitly approves a roadmap change.
@@ -706,6 +706,24 @@ The roadmap file itself is allowed in every phase only for updating that phase's
 - Generated reel shows reference consistency metadata.
 - Chrome preview proof covers one owner-shot reel and one generated short reel or an evidence-backed provider blocker.
 - Update CS11 status to `READY FOR OWNER` and stop. Do not begin CS12.
+
+### CS11 verification notes (2026-07-17, branch `agent-phase-cs11`, tag `pre-agent-phase-cs11`, PR #424 — owner-directed same-session continuation + merge)
+
+**Status: READY FOR OWNER (merged; live-verified on production despite a GitHub+Vercel outage window mid-verification)**
+
+- **Deterministic video QC** (`worker/src/video-qc.mjs`): ffprobe duration/stream validity, blackdetect, freezedetect, abrupt/frozen-ending warnings, loudnorm measurement; narrow mechanical frame-vs-reference check (fail-open). Gates BOTH generated (Veo) and owner-shot (ffmpeg) outputs — critical black/frozen/corrupt is rejected with ONE bounded regeneration for Veo.
+- **Durable Veo**: operation NAME persisted to kv (`veo_op:<id>`) immediately — restart/Redis loss resumes the same paid generation; cost scales with attempts and ships in the result.
+- **Live proofs (production):**
+  - Owner-shot recipe reel (product_showcase 15s, captions, original audio) — executed, gallery line "ভিডিও QC পাস · 15s", 4 sharpness-ordered cover candidates, **costUsd 0** (ffmpeg-only).
+  - Generated Veo reel (4s, from the approved FLUX Fill still) — executed first attempt, **$0.60 actual**, gallery line "ভিডিও QC পাস · 4s · লাউডনেস −18.3 LUFS" (raw Veo measured; owner-shot finishing normalizes to −14 LUFS/−1 dBTP on every audio path).
+  - Duplicate upload fixture — same bytes registered twice: second returns `duplicate:true`, points at the ONE existing record with the Bangla notice, extra storage object cleaned; test entries removed after proof.
+- **Owner-safe errors**: all video worker failure paths now emit Bangla codes (raw → worker logs); gallery masks legacy raw ffmpeg/internal strings at read time.
+- Caption safe-area constants + cover-order + sanitization live as pure tested spec in video-recipes.ts (worker mirrors).
+- Decision note: the optional `internal/video-qc` route was not created — the worker holds GEMINI_API_KEY and calls the narrow frame-check directly (fewer moving parts); revisit in CS12 if the check should be centrally rate-limited.
+- Checks: type-check PASS, build PASS, vitest 114/114, worker syntax-checked.
+- Real spend this phase: **$0.60** (one 4s Veo generation; everything else ffmpeg = $0).
+- Environment note: a GitHub outage (Unicorn 503s) froze Vercel GitHub-linked deploys mid-phase (official Vercel incident); worker-side proofs ran on time, web-side proofs completed after the queue drained.
+- Deviations (owner-directed): same-session continuation; Claude merged PR #424 and redeployed the VPS worker under standing permission.
 
 ---
 
