@@ -29,11 +29,11 @@ let idCounter = 0
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     agentPendingAction: {
-      create: async ({ data }: { data: Omit<ActionRow, 'id' | 'createdAt' | 'result'> }) => {
+      create: async ({ data }: { data: Omit<ActionRow, 'id' | 'createdAt'> & { result?: Record<string, unknown> } }) => {
         const row: ActionRow = {
           ...data,
           id: `action-${++idCounter}`,
-          result: null,
+          result: data.result ?? null,
           createdAt: new Date(Date.now() + idCounter), // preserve creation order
         }
         actions.push(row)
@@ -229,12 +229,17 @@ describe('full_family group', () => {
     const { jobs } = await startFamilyChain({ variant: 'full_family', productImagePath: 'uploads/set.jpg' })
     expect(jobs).toHaveLength(2)
 
-    // Drive both sub-chains to their pair_merge
+    // Drive both sub-chains to their pair_merge (prep yields BOTH real pieces
+    // — মা+মেয়ে requires the daughter's own dress since 2026-07-18)
     const drive = async (startIdx: number) => {
       let row = actions[startIdx]
       let guard = 0
       while (chainState(row).plan[chainState(row).stepIndex] !== 'pair_merge' && guard++ < 6) {
-        const nextId = await completeStep(row, `generated/${row.id}.png`)
+        const step = chainState(row).plan[chainState(row).stepIndex]
+        const extra = step === 'garment_prep'
+          ? { garmentPrep: true, adultGarmentPath: `prepped/${row.id}-p1.png`, childGarmentPath: `prepped/${row.id}-p2.png` }
+          : {}
+        const nextId = await completeStep(row, step === 'garment_prep' ? '' : `generated/${row.id}.png`, extra)
         row = actions.find((a) => a.id === nextId)!
       }
       return row
@@ -351,10 +356,15 @@ describe('CS9 protected composite chain', () => {
     })
     expect(jobs).toHaveLength(2)
 
-    // run both sub-chains to their pair_composite completion
+    // run both sub-chains to their pair_composite completion (prep yields
+    // both real pieces — the মা+মেয়ে leg needs the daughter's own dress)
     for (const job of jobs) {
       let row = actions.find((a) => a.id === job.pendingActionId)!
-      let next = await completeStep(row, `generated/${chainState(row).variant}-adult.png`)
+      let next = await completeStep(row, '', {
+        garmentPrep: true,
+        adultGarmentPath: `prepped/${chainState(row).variant}-p1.png`,
+        childGarmentPath: `prepped/${chainState(row).variant}-p2.png`,
+      })
       while (next) {
         row = actions.find((a) => a.id === next)!
         const step = chainState(row).plan[chainState(row).stepIndex]
@@ -449,6 +459,22 @@ describe('garment_prep step — reseller photos, never garment-only', () => {
     row = actions.find((a) => a.id === nextId)!
     // child try-on garment = the REAL supplier child piece
     expect(row.payload.productImagePath).toBe('prepped/supplier-p2.png')
+  })
+
+  it('মা+মেয়ে without a split piece FAILS in Bangla — daughter must not wear the adult dress', async () => {
+    seedModels(['mother', 'daughter'])
+    await startFamilyChain({ variant: 'mother_daughter', productImagePath: 'uploads/merged.jpg' })
+    const row = lastAction()
+    const nextId = await completeStep(row, '', {
+      garmentPrep: true,
+      adultGarmentPath: 'prepped/merged-p1.png',
+      childGarmentPath: null, // merged blob — no daughter piece
+    })
+    expect(nextId).toBeNull()
+    const failed = lastAction()
+    expect(failed.status).toBe('failed')
+    expect(String((failed.result as Record<string, unknown>).error)).toContain('মেয়ের')
+    expect(String(failed.summary)).toContain('গার্মেন্ট আলাদা করা যায়নি')
   })
 
   it('single-person supplier photo → child try-on reuses the ADULT crop', async () => {
