@@ -209,6 +209,14 @@ const csReplyQueue = new Queue('cs-reply', {
   defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 4000 } },
 })
 
+// Phase 35: durable specialist fan-out jobs (>30s). attempts:3 — the runner
+// checkpoints after every brief, so a retry RESUMES (completed-set skip),
+// never duplicates work.
+const agentGraphQueue = new Queue('agent-graph-run', {
+  connection,
+  defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+})
+
 // Phase A: browser-agent tasks. The main worker only ENQUEUES here; the separate
 // alma-browser-worker PM2 process (Playwright) consumes this queue so its memory
 // footprint / crashes never take down the main worker.
@@ -291,6 +299,12 @@ async function pollPendingJobs() {
       } else if (job.type === 'browser_action') {
         await browserTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
         console.log(`[worker] enqueued browser task for action ${job.id}`)
+        handled = true
+      } else if (job.type === 'agent_graph_run') {
+        // Phase 35: durable multi-specialist fan-out (>30s work). jobId =
+        // pendingActionId → BullMQ dedupes duplicate deliveries at the queue.
+        await agentGraphQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        console.log(`[worker] enqueued agent-graph-run for action ${job.id}`)
         handled = true
       }
 
@@ -1012,6 +1026,79 @@ async function sweepWorkbenchWorkspaces() {
 }
 await sweepWorkbenchWorkspaces()
 const workbenchJanitorInterval = setInterval(sweepWorkbenchWorkspaces, 6 * 60 * 60 * 1000)
+
+// ── Phase 35: durable specialist fan-out consumer ────────────────────────────
+// The runner (agent-graph-run.mjs) owns the durable contract: checkpoint after
+// every brief, resume skips completed briefs, heartbeat, cancellation,
+// deadline checkpoint. Each brief executes as ONE self-contained internal
+// turn via the chat route (same mechanism as run-streamed-turn) — the worker
+// stays modelless and the app keeps every guard.
+const agentGraphWorker = new Worker('agent-graph-run', async (job) => {
+  const { pendingActionId, payload } = job.data
+  const { createAgentGraphRunner } = await import('./agent-graph-run.mjs')
+
+  const readRow = async (cols) => {
+    const { data } = await supabase
+      .from('agent_pending_actions')
+      .select(cols)
+      .eq('id', pendingActionId)
+      .maybeSingle()
+    return data ?? null
+  }
+  const mergeResult = async (patch) => {
+    const row = await readRow('result')
+    const result = { ...(row?.result ?? {}), ...patch }
+    await supabase.from('agent_pending_actions').update({ result }).eq('id', pendingActionId)
+  }
+
+  const runner = createAgentGraphRunner({
+    runBrief: async (brief) => {
+      const res = await fetch(`${getAppUrl()}/api/assistant/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
+        body: JSON.stringify({
+          conversationId: payload?.conversationId ?? brief.conversationId ?? null,
+          message:
+            `[INTERNAL SPECIALIST BRIEF — role: ${brief.role}]\n` +
+            `${brief.task}\n` +
+            `শুধু তথ্যভিত্তিক ফলাফল দাও (findings/evidence/অনিশ্চয়তা/পরের ধাপের প্রস্তাব) — মালিককে সরাসরি সম্বোধন নয়।`,
+          internalControl: true,
+        }),
+        signal: AbortSignal.timeout(5 * 60_000),
+      })
+      if (!res.ok) return { success: false, summary: '', error: `chat_http_${res.status}` }
+      const data = await res.json().catch(() => ({}))
+      const summary = typeof data?.reply === 'string' ? data.reply : (data?.text ?? '')
+      return { success: Boolean(summary), summary, error: summary ? undefined : 'empty_reply' }
+    },
+    saveProgress: async (progress) => mergeResult({ graphRunProgress: progress }),
+    loadProgress: async () => {
+      const row = await readRow('result')
+      return row?.result?.graphRunProgress ?? null
+    },
+    heartbeat: async () => mergeResult({ graphRunHeartbeatAt: new Date().toISOString() }),
+    isCancelled: async () => {
+      const row = await readRow('status')
+      return ['rejected', 'cancelled', 'expired'].includes(row?.status ?? '')
+    },
+  })
+
+  const result = await runner(payload ?? {})
+  if (result.status === 'done') {
+    await callJobResult(pendingActionId, 'success', { findings: result.findings, resumedFrom: result.resumedFrom })
+    console.log(`[agent-graph-run] ${pendingActionId} done: ${result.findings.length} findings (resumedFrom=${result.resumedFrom})`)
+  } else if (result.status === 'cancelled') {
+    await callJobResult(pendingActionId, 'failed', undefined, 'cancelled_by_owner')
+    console.log(`[agent-graph-run] ${pendingActionId} cancelled by owner`)
+  } else {
+    // Deadline checkpoint: requeue the tail — the completed-set skip resumes.
+    await agentGraphQueue.add('run', job.data, { jobId: `${pendingActionId}:r${Date.now()}` })
+    console.log(`[agent-graph-run] ${pendingActionId} deadline checkpoint — ${result.remaining} briefs requeued`)
+  }
+}, { connection, concurrency: 1, lockDuration: 30 * 60 * 1000 })
+agentGraphWorker.on('failed', (job, err) => {
+  console.error(`[agent-graph-run] job ${job?.id} failed:`, err?.message)
+})
 
 const longTaskWorker = new Worker('long-agent-task', async (job) => {
   // A2: owner web turn enqueued by /api/assistant/turn. Identified by turnId.

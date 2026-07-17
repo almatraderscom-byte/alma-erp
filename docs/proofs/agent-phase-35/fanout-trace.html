@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Phase 35 proof — specialist fan-out</title>
+<style>body{font-family:-apple-system,system-ui;margin:24px;background:#0d1117;color:#e6edf3}h1{font-size:19px}
+table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #30363d;padding:6px 10px;text-align:left}
+.ok{color:#3fb950;font-weight:700}.bad{color:#f85149;font-weight:700}pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;white-space:pre-wrap;font-size:13px}</style></head><body>
+<h1>Phase 35 — LangGraph Send fan-out (3 specialists, read-only branches) → fan-in reconcile</h1>
+<table><tr><th>role</th><th>success</th><th>findings</th><th>evidence</th><th>error</th></tr>
+<tr><td>researcher</td><td class="ok">true</td><td>Competitor rara 3-4% discount charche, panjabi sales bere geche bazar-e</td><td>tool:research_competitor, tool:web_research</td><td>—</td></tr>
+<tr><td>analyst</td><td class="ok">true</td><td>Amader sales 12% বেড়ে গেছে, top SKU: Premium Panjabi Navy</td><td>tool:get_sales_summary, tool:get_orders</td><td>—</td></tr>
+<tr><td>seo</td><td class="bad">false</td><td>—</td><td>—</td><td>rate_limit</td></tr></table>
+<p>succeeded=2 · failed=1 (দৃশ্যমান, sibling evidence অটুট) · conflicts=0</p>
+<h2 style="font-size:15px">Head brief (fan-in — the head writes the ONE Bangla answer from this)</h2>
+<pre>[SPECIALIST FAN-OUT ফলাফল — head একমাত্র উত্তরদাতা]
+• [researcher] Competitor rara 3-4% discount charche, panjabi sales bere geche bazar-e
+• [analyst] Amader sales 12% বেড়ে গেছে, top SKU: Premium Panjabi Navy
+• [seo] ব্যর্থ (rate_limit) — এই শাখার তথ্য নেই, বাকিদের প্রমাণ অটুট</pre>
+<p style="color:#8b949e;font-size:12px">Parallel branches run readOnly=true by construction (memory/effect writers filtered). Durable >30s path: agent_graph_run queue (worker) — checkpoint/resume contract proven in worker tests. Generated 2026-07-17.</p>
+</body></html>
