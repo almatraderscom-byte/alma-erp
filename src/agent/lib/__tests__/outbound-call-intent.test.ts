@@ -37,6 +37,28 @@ describe('detectOutboundCallIntent', () => {
     expect(isOutboundCallIntent('aj koto sale holo?')).toBe(false)
     expect(isOutboundCallIntent('স্টক কত আছে?')).toBe(false)
   })
+
+  it('word boundaries: "কল" inside সকল/নকল and "cal" inside local do not fire', () => {
+    expect(isOutboundCallIntent('সকল স্টাফকে বলো কাজ শেষ করতে')).toBe(false)
+    expect(isOutboundCallIntent('local dealer ke details bolo')).toBe(false)
+    expect(isOutboundCallIntent('নকল প্রোডাক্ট নিয়ে বলো কী করা যায়')).toBe(false)
+  })
+
+  it('reads Bangla-numeral phone numbers (voice transcripts write ০-৯)', () => {
+    const r = detectOutboundCallIntent('০১৯৪৯৪৮৯৫৪৮ এই নাম্বারে কল করে বলবে আমি আসছি')
+    expect(r.isCall).toBe(true)
+    expect(r.hasNumber).toBe(true)
+  })
+
+  it('classifies TWO-WAY when Boss expects something back', () => {
+    expect(detectOutboundCallIntent('01949489548 এ কল করে জিজ্ঞেস করো কখন আসবে').mode).toBe('two_way')
+    expect(detectOutboundCallIntent('oi number e call kore jene nao dam koto, tarpor janabe').mode).toBe('two_way')
+  })
+
+  it('classifies ONE-WAY for pure announcements', () => {
+    expect(detectOutboundCallIntent('01949489548 এ কল করে জানিয়ে দাও আমি ৮টায় আসব').mode).toBe('one_way')
+    expect(detectOutboundCallIntent('oi nambare call kore bole dao dokan bondho').mode).toBe('one_way')
+  })
 })
 
 describe('textHasBdNumber', () => {

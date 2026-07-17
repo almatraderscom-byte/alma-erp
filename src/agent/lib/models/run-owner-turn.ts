@@ -15,6 +15,8 @@ import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
 import { detectInstructionConflicts } from '@/agent/lib/intelligence/counter-propose'
 import { buildBusinessContext } from '@/agent/lib/business-brain'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
+import { detectOutboundCallIntent, buildOutboundCallIntakeBlock } from '@/agent/lib/outbound-call-intent'
+import { buildReminderTimeHintBlock } from '@/agent/lib/bangla-time'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
@@ -371,6 +373,28 @@ async function* runAlternateProviderTurn(
       } catch (err) {
         console.warn('[run-owner-turn] salah muhasaba reply failed:', err instanceof Error ? err.message : err)
       }
+    }
+    // Outbound-call directive (parity with core.ts): "oi nambare call kore bolo…"
+    // must route to the right call tool — never a reminder/todo. This path is the
+    // one production actually runs (Gemini head), so the directive must live here too.
+    if (!intakeContextBlock && lastUserText) {
+      const callIntent = detectOutboundCallIntent(lastUserText)
+      if (callIntent.isCall) {
+        intakeContextBlock = buildOutboundCallIntakeBlock(callIntent.hasNumber, callIntent.mode)
+      }
+    }
+  }
+
+  // Reminder-to-Boss with a spoken time ("amake 4 tay call dio", "বিকাল ৫টায় মনে
+  // করিয়ে দিও"): resolve the time DETERMINISTICALLY so the head never misreads
+  // "4 tay" as "4 calls" (live-hit 2026-07-17 — happened on THIS path in personal
+  // mode, which suppressWork skips, so this step runs for personal turns too).
+  if (!listenMode && !intakeContextBlock && lastUserText) {
+    try {
+      const hint = buildReminderTimeHintBlock(lastUserText)
+      if (hint) intakeContextBlock = hint
+    } catch (err) {
+      console.warn('[run-owner-turn] reminder time hint failed:', err instanceof Error ? err.message : err)
     }
   }
 
