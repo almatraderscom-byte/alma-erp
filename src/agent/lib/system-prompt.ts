@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk'
 import type { RecalledTurn } from '@/agent/lib/message-recall'
 import { OWNER_TASK_REMINDER_RULES, STAFF_TASK_AWARENESS_RULES } from '@/agent/lib/owner-active-tasks-context'
 import { PERSONAL_ADVISOR_PROMPT } from '@/agent/lib/personal-prompt'
+import { AGENT_CONSTITUTION } from '@/agent/config'
 import { WEBSITE_ROLE_PROMPT } from '@/agent/tools/website-tools'
 import { RESEARCH_ROLE_PROMPT } from '@/agent/tools/research-tools'
 import { SEO_ROLE_PROMPT } from '@/agent/tools/seo-tools'
@@ -601,6 +602,31 @@ export interface PromptModule {
   core?: boolean
 }
 
+/**
+ * P6 (behaviour-parity) — the CONSTITUTION: a distilled, always-first behaviour
+ * contract that EVERY head model (Grok / DeepSeek / Gemini / Claude) receives
+ * identically, so the disciplined "feel" comes from the harness, not the model.
+ * It restates the non-negotiables the fuller modules elaborate, but as a single
+ * short anchor at the very top of the prompt (and re-injected mid-turn against
+ * context rot). Gated by AGENT_CONSTITUTION — off = the exact current prompt.
+ * Keep it SHORT (salient) and reference no tool by a name that may not load.
+ */
+export const CONSTITUTION_RULE = `# সংবিধান — সবার আগে (behaviour contract; whatever model you are, these are non-negotiable)
+তুমি যে মডেলেই চলো না কেন, নিচের নিয়মগুলো ভাঙার চেয়ে ধীর/সাবধানী হওয়া ভালো:
+1. সততা: না জানলে "জানি না" বলো। বানানো তথ্য/সংখ্যা/উৎস কখনো নয়। তেল বা স্তুতি নয় — সত্য > ব্যস্ত দেখানো > মালিককে খুশি করা।
+2. আগে দেখো, পরে বলো: লাইভ ডেটা (অর্ডার/স্টক/ব্যালান্স/আজকের সংখ্যা) নিয়ে দাবির আগে টুল দিয়ে পড়ো — স্মৃতি থেকে অনুমান নয়।
+3. দাবির আগে যাচাই: "হয়ে গেছে / পাঠিয়েছি / সেভ করেছি / সেট করেছি" — এমন কথা বলার আগে আসল টুল কল করে ফল দেখো; না করলে বোলো না।
+4. জটিল কাজ (≥৩ ধাপ): আগে ছোট প্ল্যান, তারপর ধাপে ধাপে করো, শেষে নিজে যাচাই করো।
+5. অপরিবর্তনীয় / টাকা / বাইরে-যাওয়া কাজ: আগে confirm-কার্ড দাও — নিজে থেকে করে ফেলো না।
+6. অস্পষ্ট অথচ গুরুত্বপূর্ণ হলে অনুমান কোরো না — একটাই সংক্ষিপ্ত প্রশ্ন (ask কার্ড) করে নিশ্চিত হও।
+7. ভাষা: বাংলা, মালিককে "Boss"; সংক্ষিপ্ত ও সরাসরি, আসল উত্তরটা শেষে।
+
+`
+
+/** P5 — the ultra-compact re-injection reminder (kept tiny; salience, not detail). */
+export const CONSTITUTION_REMINDER =
+  '[মনে রাখো — সংবিধান বলবৎ: বানানো তথ্য নয়, দাবির আগে টুল দিয়ে যাচাই, অপরিবর্তনীয়/টাকার কাজে আগে confirm-কার্ড, না জানলে "জানি না"।]'
+
 export const PROMPT_MODULES: PromptModule[] = [
   { id: 'system_core_identity', cls: 'core_identity', version: '2026.07.14', text: SYSTEM_CORE_IDENTITY, core: true },
   { id: 'memory_first', cls: 'memory_context', version: '2026.07.14', text: MEMORY_FIRST_RULE },
@@ -735,7 +761,8 @@ function buildLifestyleRolePrompts(groups?: ToolGroupName[]): string {
 
 function buildLifestyleStaticPrompt(groups?: ToolGroupName[], toolNames?: string[]): string {
   return (
-    compileOrdered(LIFESTYLE_HEAD_ORDER, groups, toolNames)
+    (AGENT_CONSTITUTION ? CONSTITUTION_RULE : '')
+    + compileOrdered(LIFESTYLE_HEAD_ORDER, groups, toolNames)
     + buildLifestyleRolePrompts(groups)
     + LIFESTYLE_PLANNING_BLOCK
     + compileOrdered(LIFESTYLE_TAIL_ORDER, groups, toolNames)
@@ -748,7 +775,8 @@ function buildLifestyleStaticPrompt(groups?: ToolGroupName[], toolNames?: string
  * brand/competitor) and uses TRADING_OPERATIONS_RULE instead.
  */
 const TRADING_STATIC_PROMPT =
-  SYSTEM_CORE
+  (AGENT_CONSTITUTION ? CONSTITUTION_RULE : '')
+  + SYSTEM_CORE
   + SALAH_ACCOUNTABILITY_RULE
   + FINANCE_INTENT_RULE
   + HONESTY_ACCOUNTABILITY_RULE

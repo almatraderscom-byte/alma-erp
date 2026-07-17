@@ -4,9 +4,9 @@
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_HEAD_PARITY } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_HEAD_PARITY, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
-import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { getOfficePulse } from '@/agent/lib/office-pulse'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
@@ -1041,6 +1041,13 @@ async function* runAlternateProviderTurn(
               'নয়তো বাকি কাজটা delegate_to_specialist দিয়ে specialist worker-কে দাও — নিজে আর টুল spree কোরো না।',
           },
         ]
+      }
+
+      // P5 — re-inject the compact constitution reminder every N tool rounds so
+      // a long tool-heavy turn (browser/agentic) doesn't drift from the core
+      // rules while the system prompt scrolls far up the context (context rot).
+      if (AGENT_CONSTITUTION && iteration > 0 && iteration % CONSTITUTION_REINJECT_EVERY === 0) {
+        messages = [...messages, { role: 'user', content: CONSTITUTION_REMINDER }]
       }
 
       for await (const ev of adapter.streamTurn({

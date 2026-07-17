@@ -92,6 +92,14 @@ export const AGENT_TOOLCALL_REPAIR = process.env.AGENT_TOOLCALL_REPAIR !== 'off'
 // AGENT_HEAD_PARITY=off to restore the slug-only cap).
 export const AGENT_HEAD_PARITY = process.env.AGENT_HEAD_PARITY !== 'off'
 
+// P6/P5 — the distilled, always-first CONSTITUTION (one behaviour contract every
+// model follows identically) plus in-turn re-injection so a long tool-heavy turn
+// doesn't drift from the rules. OFF by default (set AGENT_CONSTITUTION=on).
+export const AGENT_CONSTITUTION = process.env.AGENT_CONSTITUTION === 'on'
+// Re-inject the compact core rules every N tool ROUNDS within a single long turn
+// (context-rot mitigation). Only matters for long turns (browser/agentic).
+export const CONSTITUTION_REINJECT_EVERY = Number(process.env.CONSTITUTION_REINJECT_EVERY) || 6
+
 // Phase prompt specifies budget_tokens values for reference.
 // budget_tokens is deprecated on claude-sonnet-4-6; we use thinking: {type:'adaptive'}
 // and map to output_config.effort levels instead (off → no thinking param, low → medium, high → high).
