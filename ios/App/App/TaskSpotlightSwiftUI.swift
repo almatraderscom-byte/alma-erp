@@ -252,6 +252,80 @@ final class TaskSpotlightVM {
         return (error as? URLError)?.code == .cancelled
     }
 
+    // ── NP-7 (OP-03): native task creation — the web createTask payload verbatim ──
+
+    struct AssigneeOption: Decodable, Identifiable {
+        let id: String
+        let name: String
+        private enum Keys: String, CodingKey { case id, name }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
+            name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? "—"
+        }
+    }
+
+    var assignees: [AssigneeOption] = []
+    var creating = false
+
+    func loadAssignees(businessId: String = "ALMA_LIFESTYLE") async {
+        struct Resp: Decodable {
+            let users: [AssigneeOption]
+            private enum Keys: String, CodingKey { case ok, data, users, assignees }
+            init(from decoder: Decoder) throws {
+                let root = try decoder.container(keyedBy: Keys.self)
+                let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+                users = (try? c.decodeIfPresent([AssigneeOption].self, forKey: .users))
+                    ?? (try? c.decodeIfPresent([AssigneeOption].self, forKey: .assignees)) ?? []
+            }
+        }
+        if let r: Resp = try? await AlmaAPI.shared.get(
+            "/api/operational-tasks/assignees", query: ["business_id": businessId]) {
+            assignees = r.users
+        }
+    }
+
+    /// POST /api/operational-tasks — web createTask body verbatim.
+    func createTask(title: String, description: String, priority: String,
+                    deadline: String, bannerUrl: String, ackRequired: Bool,
+                    allowDismiss: Bool, assigneeIds: [String],
+                    businessId: String = "ALMA_LIFESTYLE") async -> Bool {
+        guard !creating, !title.isEmpty, !description.isEmpty, !assigneeIds.isEmpty else {
+            error = "Title, description, and at least one assignee required"
+            return false
+        }
+        creating = true
+        defer { creating = false }
+        struct Body: Encodable {
+            let title: String
+            let description: String
+            let priority: String
+            let deadline: String?
+            let banner_image_url: String?
+            let acknowledgment_required: Bool
+            let allow_dismiss: Bool
+            let business_id: String
+            let assignee_user_ids: [String]
+        }
+        struct Resp: Decodable { let ok: Bool?; let error: String? }
+        do {
+            let _: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/operational-tasks",
+                body: Body(title: title, description: description, priority: priority,
+                           deadline: deadline.isEmpty ? nil : deadline,
+                           banner_image_url: bannerUrl.isEmpty ? nil : bannerUrl,
+                           acknowledgment_required: ackRequired, allow_dismiss: allowDismiss,
+                           business_id: businessId, assignee_user_ids: assigneeIds))
+            notice = "Task spotlight published"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await load()
+            return true
+        } catch {
+            self.error = "Create ব্যর্থ: \(error.localizedDescription)"
+            return false
+        }
+    }
+
     /// PATCH {action: "archive"} — same body the web archiveTask sends.
     func archive(_ task: TaskSpotlightTask) async {
         guard !busyTaskIds.contains(task.id) else { return }
@@ -298,6 +372,7 @@ struct TaskSpotlightScreen: View {
     @State private var vm = TaskSpotlightVM()
     @State private var selected: TaskSpotlightTask? = nil
     @State private var archiving: TaskSpotlightTask? = nil
+    @State private var showCreate = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -456,17 +531,101 @@ struct TaskSpotlightScreen: View {
         }
     }
 
+    /// NP-7 (OP-03): task creation runs natively.
     private var webEscape: some View {
         Button {
-            openWeb("/operations/task-spotlight", "Task Spotlight")
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            showCreate = true
         } label: {
-            Label("সব অপশন (নতুন টাস্ক তৈরি সহ) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
+            Label("✨ নতুন Task Spotlight তৈরি করুন", systemImage: "plus.circle")
+                .font(.footnote.weight(.bold))
                 .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(TaskSpotlightPalette.coral.opacity(0.12), in: Capsule())
+                .foregroundStyle(TaskSpotlightPalette.coral)
+                .overlay(Capsule().strokeBorder(TaskSpotlightPalette.coral.opacity(0.35), lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
         .padding(.vertical, 6)
+        .sheet(isPresented: $showCreate) {
+            TaskSpotlightCreateSheet(vm: vm) { showCreate = false }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+// MARK: - NP-7 (OP-03): create sheet (web form parity)
+
+@available(iOS 17.0, *)
+private struct TaskSpotlightCreateSheet: View {
+    let vm: TaskSpotlightVM
+    let onDone: () -> Void
+    @State private var title = ""
+    @State private var descriptionText = ""
+    @State private var priority = "NORMAL"
+    @State private var deadline = ""
+    @State private var bannerUrl = ""
+    @State private var ackRequired = true
+    @State private var allowDismiss = false
+    @State private var assigneeIds: Set<String> = []
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("টাস্ক") {
+                    TextField("Title", text: $title)
+                    TextField("Description", text: $descriptionText, axis: .vertical).lineLimit(3...6)
+                    Picker("Priority", selection: $priority) {
+                        Text("Normal").tag("NORMAL")
+                        Text("High").tag("HIGH")
+                        Text("Urgent").tag("URGENT")
+                    }
+                    TextField("Deadline YYYY-MM-DD (ঐচ্ছিক)", text: $deadline)
+                        .keyboardType(.numbersAndPunctuation)
+                    TextField("Banner image URL (ঐচ্ছিক)", text: $bannerUrl)
+                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Toggle("Acknowledgment required", isOn: $ackRequired)
+                    Toggle("Allow dismiss", isOn: $allowDismiss)
+                }
+                Section("Assignees (কমপক্ষে ১ জন) — \(assigneeIds.count) selected") {
+                    if vm.assignees.isEmpty {
+                        Text("লোড হচ্ছে…").font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(vm.assignees) { u in
+                        Toggle(u.name, isOn: Binding(
+                            get: { assigneeIds.contains(u.id) },
+                            set: { on in if on { assigneeIds.insert(u.id) } else { assigneeIds.remove(u.id) } }))
+                    }
+                }
+                if let err = vm.error {
+                    Section { Text(err).font(.caption).foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle("New spotlight")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("বাতিল") { onDone() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(vm.creating ? "…" : "Publish") {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        Task {
+                            if await vm.createTask(title: title, description: descriptionText,
+                                                   priority: priority, deadline: deadline,
+                                                   bannerUrl: bannerUrl, ackRequired: ackRequired,
+                                                   allowDismiss: allowDismiss,
+                                                   assigneeIds: Array(assigneeIds)) {
+                                onDone()
+                            }
+                        }
+                    }
+                    .disabled(vm.creating || title.trimmingCharacters(in: .whitespaces).isEmpty
+                              || descriptionText.trimmingCharacters(in: .whitespaces).isEmpty
+                              || assigneeIds.isEmpty)
+                }
+            }
+            .task { await vm.loadAssignees() }
+        }
     }
 }
 

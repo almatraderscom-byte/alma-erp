@@ -28,6 +28,7 @@
 //
 
 import SwiftUI
+import PhotosUI
 
 // MARK: - Web palette (exact hexes from globals.css / tailwind tokens)
 
@@ -1187,6 +1188,10 @@ private struct EmployeeDetailSheet: View {
     @State private var resetTarget: EmployeeAttendanceRecord? = nil
     @State private var showResetConfirm = false
     @State private var slipShare: EmployeeSlipFile? = nil
+    // NP-7 (OP-05): native profile-photo upload state.
+    @State private var photoItem: PhotosPickerItem? = nil
+    @State private var photoBusy = false
+    @State private var photoNotice: String? = nil
 
     var body: some View {
         ScrollView {
@@ -1665,6 +1670,46 @@ private struct EmployeeDetailSheet: View {
         }
     }
 
+    /// NP-7 (OP-05): square-crop + resize (512 main / 96 thumb) → base64 data URLs →
+    /// POST /api/users/{userId}/profile-image — the web uploader's exact body.
+    private func uploadProfilePhoto(userId: String, item: PhotosPickerItem) async {
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let img = UIImage(data: data) else {
+            photoNotice = "✗ ছবি পড়া যায়নি"
+            return
+        }
+        func squared(_ source: UIImage, side: CGFloat) -> UIImage {
+            let minSide = min(source.size.width, source.size.height)
+            let origin = CGPoint(x: (source.size.width - minSide) / 2,
+                                 y: (source.size.height - minSide) / 2)
+            let cropRect = CGRect(origin: origin, size: CGSize(width: minSide, height: minSide))
+            let cropped = source.cgImage?.cropping(to: CGRect(
+                x: cropRect.origin.x * source.scale, y: cropRect.origin.y * source.scale,
+                width: cropRect.size.width * source.scale, height: cropRect.size.height * source.scale))
+                .map { UIImage(cgImage: $0) } ?? source
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side))
+            return renderer.image { _ in cropped.draw(in: CGRect(x: 0, y: 0, width: side, height: side)) }
+        }
+        guard let main = squared(img, side: 512).jpegData(compressionQuality: 0.85),
+              let thumb = squared(img, side: 96).jpegData(compressionQuality: 0.8) else {
+            photoNotice = "✗ ছবি প্রসেস করা যায়নি"
+            return
+        }
+        struct Body: Encodable { let image_data_url: String; let thumb_data_url: String }
+        struct Resp: Decodable { let ok: Bool?; let profileImageUrl: String?; let error: String? }
+        do {
+            let _: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/users/\(userId)/profile-image",
+                body: Body(image_data_url: "data:image/jpeg;base64," + main.base64EncodedString(),
+                           thumb_data_url: "data:image/jpeg;base64," + thumb.base64EncodedString()))
+            photoNotice = "✓ প্রোফাইল ছবি আপডেট হয়েছে"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await listVM.load()
+        } catch {
+            photoNotice = "✗ Upload ব্যর্থ: \(error.localizedDescription)"
+        }
+    }
+
     /// Native salary slip (owner 2026-07-11) — month menu → on-device PDF → share.
     /// Only the profile-photo upload remains on the web page.
     private var webLink: some View {
@@ -1689,17 +1734,36 @@ private struct EmployeeDetailSheet: View {
                                 in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             }
             .buttonStyle(.plain)
-            Button {
-                dismiss()
-                let encoded = employee.empId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? employee.empId
-                openWeb("/employees/\(encoded)", employee.name)
-            } label: {
-                Text("ওয়েব ভার্সন (ছবি আপলোড)")
-                    .font(.caption2)
-                    .underline()
+            // NP-7 (OP-05): NATIVE profile-photo upload — the web ProfilePhotoUploader
+            // payload verbatim: POST /api/users/{id}/profile-image {image_data_url,
+            // thumb_data_url}. Needs the linked ERP user; unlinked employees show why.
+            if let userId = linkedUserId {
+                PhotosPicker(selection: $photoItem, matching: .images) {
+                    Label(photoBusy ? "আপলোড হচ্ছে…" : "📷 প্রোফাইল ছবি বদলান",
+                          systemImage: "person.crop.circle.badge.plus")
+                        .font(.caption.weight(.bold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 9)
+                        .background(Color.primary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                }
+                .disabled(photoBusy)
+                .onChange(of: photoItem) { _, item in
+                    guard let item else { return }
+                    Task {
+                        photoBusy = true
+                        defer { photoBusy = false }
+                        await uploadProfilePhoto(userId: userId, item: item)
+                        photoItem = nil
+                    }
+                }
+                if let n = photoNotice {
+                    Text(n).font(.caption2)
+                        .foregroundStyle(n.hasPrefix("✓") ? EmployeePalette.emerald600 : EmployeePalette.red500)
+                }
+            } else {
+                Text("ছবি আপলোড করতে আগে ERP অ্যাকাউন্ট লিঙ্ক করুন (Link বাটন)।")
+                    .font(.caption2).foregroundStyle(.tertiary)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.tertiary)
         }
         .padding(.top, 2)
         .sheet(item: $slipShare) { wrap in

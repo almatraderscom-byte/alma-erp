@@ -1158,7 +1158,7 @@
       "title": "Invoice PDF preview",
       "route": "/invoices",
       "priority": "P2",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-7",
       "webSource": [
         "src/app/invoices/"
@@ -1177,9 +1177,8 @@
           "id": "FN-02.preview",
           "title": "Hosted PDF via PDFKit/Quick Look + save/share",
           "kind": "read",
-          "state": "missing",
-          "plannedPhase": "NP-7",
-          "notes": "public share URL stays approved web (EX-02)"
+          "state": "native",
+          "notes": "NP-7 DONE: hosted pdf_url fetched → PDFKit preview sheet (pinch/zoom) + share; public share URL stays approved web (EX-02)."
         }
       ]
     },
@@ -1188,7 +1187,7 @@
       "title": "Salary slip PDFs (per-employee + My Desk)",
       "route": "/employees",
       "priority": "P2",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-7",
       "webSource": [
         "src/app/employees/",
@@ -1209,8 +1208,8 @@
           "id": "FN-03.slip",
           "title": "Branded per-employee/My Desk salary-slip PDF display/share natively",
           "kind": "export",
-          "state": "missing",
-          "plannedPhase": "NP-7"
+          "state": "native",
+          "notes": "NP-7 DONE: My Desk wallet slip buttons (this/last month) — web buildSalarySlipBreakdown rules verbatim (SALARY_ACCRUAL/PENALTY/approved WITHDRAWAL) → native A4 PDF → share. Admin per-employee slip was ALREADY native (EmployeeSlipPdf — audit stale-comment caveat)."
         }
       ]
     },
@@ -1244,7 +1243,7 @@
       "title": "Office task proof submission",
       "route": "/portal/office",
       "priority": "P1",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-7",
       "webSource": [
         "src/app/portal/office/"
@@ -1263,8 +1262,8 @@
           "id": "OP-01.submit",
           "title": "Camera/PhotosPicker proof upload + preview/remove + task submit + progress + retry",
           "kind": "upload",
-          "state": "missing",
-          "plannedPhase": "NP-7"
+          "state": "native",
+          "notes": "NP-7 DONE: main Office screen — PhotosPicker (≤5, compressed ≤1600px jpeg) → office/upload multipart → staff-action proof (existing PortalStaffOffice submitProof reused; retry per image, per-task busy). Web escape removed."
         }
       ]
     },
@@ -1273,7 +1272,7 @@
       "title": "Penalty appeal attachment",
       "route": "/portal",
       "priority": "P2",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-7",
       "webSource": [
         "src/app/portal/"
@@ -1292,8 +1291,8 @@
           "id": "OP-02.attach",
           "title": "Optional proof screenshot picker/compression + attachment_data_url parity",
           "kind": "upload",
-          "state": "missing",
-          "plannedPhase": "NP-7"
+          "state": "native",
+          "notes": "NP-7 DONE: appeal sheet PhotosPicker → ≤1280px jpeg base64 data URL → attachment_data_url on waivers POST."
         }
       ]
     },
@@ -1302,7 +1301,7 @@
       "title": "Task Spotlight creation",
       "route": "/operations/task-spotlight",
       "priority": "P2",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-7",
       "webSource": [
         "src/app/operations/task-spotlight/"
@@ -1321,8 +1320,8 @@
           "id": "OP-03.create",
           "title": "Task creation: multi-assignee picker, priority/deadline/options, banner URL or native upload, validation, post-create refresh",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-7"
+          "state": "native",
+          "notes": "NP-7 DONE: full create sheet (title/desc/priority/deadline/banner URL/ack/dismiss + multi-assignee from /api/operational-tasks/assignees), web POST body verbatim, post-create reload."
         }
       ]
     },
@@ -1331,7 +1330,7 @@
       "title": "Inventory media/bulk",
       "route": "/inventory",
       "priority": "P2",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-7",
       "webSource": [
         "src/app/inventory/"
@@ -1350,8 +1349,8 @@
           "id": "OP-04.media",
           "title": "Product photo upload + collection/grid workflows + bulk add/edit",
           "kind": "upload",
-          "state": "missing",
-          "plannedPhase": "NP-7"
+          "state": "native",
+          "notes": "NP-7 DONE: image_url field added to native product create (the web AddProductModal has URL-only photo input — no upload API exists on web; collections/bulk have no web UI beyond supplier-import AD-02)."
         }
       ]
     },
@@ -1360,7 +1359,7 @@
       "title": "Employee media + salary slip entry",
       "route": "/employees",
       "priority": "P2",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-7",
       "webSource": [
         "src/app/employees/"
@@ -1379,15 +1378,15 @@
           "id": "OP-05.photo",
           "title": "Admin employee profile-photo upload/change",
           "kind": "upload",
-          "state": "missing",
-          "plannedPhase": "NP-7"
+          "state": "native",
+          "notes": "NP-7 DONE: linked-user gate + PhotosPicker → square 512/96 jpeg data URLs → POST /api/users/{id}/profile-image (web uploader body verbatim). Unlinked employees see the why."
         },
         {
           "id": "OP-05.slip",
           "title": "Native salary-slip entry point",
           "kind": "navigation",
-          "state": "missing",
-          "plannedPhase": "NP-7"
+          "state": "native",
+          "notes": "ALREADY NATIVE (EmployeeSlipPdf month menu, pre-existing) — revalidated, not rebuilt."
         }
       ]
     },
@@ -1425,7 +1424,7 @@
       "title": "Portal/Office alternate-entry cleanup",
       "route": "/portal/staff-office",
       "priority": "P2",
-      "state": "ux",
+      "state": "native",
       "plannedPhase": "NP-7",
       "webSource": [
         "src/app/portal/"
@@ -1439,8 +1438,8 @@
           "id": "OP-07.canonical",
           "title": "Every check-in/proof entry routes to the canonical native flow; stale comments removed",
           "kind": "navigation",
-          "state": "missing",
-          "plannedPhase": "NP-7"
+          "state": "native",
+          "notes": "NP-7 DONE: staff-office check-in banner now posts .almaOpenPath(\"/portal\") → canonical native front-camera+GPS flow; stale web link gone."
         }
       ]
     },
@@ -1449,7 +1448,7 @@
       "title": "Contextual CDIT actions",
       "route": "/digital/clients",
       "priority": "P3",
-      "state": "ux",
+      "state": "native",
       "plannedPhase": "NP-7",
       "webSource": [
         "src/app/digital/"
@@ -1463,8 +1462,8 @@
           "id": "OP-08.create",
           "title": "'Create project' in client detail (prefilled native sheet); remove internal web detail links",
           "kind": "navigation",
-          "state": "missing",
-          "plannedPhase": "NP-7"
+          "state": "native",
+          "notes": "NP-7 DONE: client detail \"নতুন প্রজেক্ট\" prefilled native sheet (web + New Project payload verbatim incl. status Lead/priority Medium/BDT)."
         }
       ]
     },
@@ -1589,7 +1588,7 @@
     "DigitalHomeSwiftUI.swift": 3,
     "DigitalInvoicesSwiftUI.swift": 3,
     "DigitalProjectsSwiftUI.swift": 4,
-    "EmployeesSwiftUI.swift": 3,
+    "EmployeesSwiftUI.swift": 2,
     "ExpensesSwiftUI.swift": 4,
     "FinanceSwiftUI.swift": 3,
     "InsightsSwiftUI.swift": 3,
@@ -1603,8 +1602,7 @@
     "PaymentAccountsSwiftUI.swift": 2,
     "PayrollSwiftUI.swift": 3,
     "PortalExpenseSwiftUI.swift": 3,
-    "PortalOfficeSwiftUI.swift": 4,
-    "PortalStaffOfficeSwiftUI.swift": 1,
+    "PortalOfficeSwiftUI.swift": 3,
     "PortalSwiftUI.swift": 5,
     "SettingsBrandingSwiftUI.swift": 1,
     "SettingsDatabaseSwiftUI.swift": 2,
@@ -1618,7 +1616,7 @@
     "SupplierImportSwiftUI.swift": 3,
     "SystemDiagnosticsSwiftUI.swift": 1,
     "TargetControlSwiftUI.swift": 3,
-    "TaskSpotlightSwiftUI.swift": 3,
+    "TaskSpotlightSwiftUI.swift": 2,
     "TradingAccountsSwiftUI.swift": 3,
     "TradingAnalyticsSwiftUI.swift": 1,
     "TradingHomeSwiftUI.swift": 7,
