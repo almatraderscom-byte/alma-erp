@@ -128,7 +128,9 @@ export async function POST(req: NextRequest) {
     try {
       const { advanceFamilyChain } = await import('@/lib/tryon/family-chain')
       const storagePath = typeof data?.storagePath === 'string' ? data.storagePath : undefined
-      const nextId = await advanceFamilyChain(action, storagePath)
+      // pass the FRESH result (garment_prep crops ride it) — `action` was
+      // fetched before the update above
+      const nextId = await advanceFamilyChain({ ...action, result: data ?? undefined }, storagePath)
       if (nextId) console.log(`[job-result] family chain advanced ${pendingActionId} → ${nextId}`)
     } catch (chainErr) {
       console.error('[job-result] family chain advance failed:', chainErr)
