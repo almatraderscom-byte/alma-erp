@@ -222,7 +222,10 @@ async function inpaintTextBoxes({ supabase, pendingActionId, cropPng, boxes, ima
     const input = buildFluxFillInput({
       imageDataUri: toUri(cropPng),
       maskDataUri: toUri(maskBuf),
-      prompt: 'Remove the overlaid marketing text completely. Reconstruct the clean fabric texture and plain background exactly as they would look without the text. No new objects, no text, no logos.',
+      // Fill paints WHAT THE PROMPT DESCRIBES — an instruction like "remove
+      // the text" gets rendered as those literal words (live 2026-07-17).
+      // Describe the desired content instead.
+      prompt: 'seamless continuation of the surrounding fabric and plain background, smooth clean surface, photorealistic',
     })
     const fingerprint = falInputFingerprint(FLUX_FILL_ENDPOINT, {
       purpose: 'garment-prep-text-inpaint',
