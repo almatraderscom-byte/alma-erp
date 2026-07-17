@@ -18,7 +18,7 @@ vi.mock('@/agent/lib/fetch-retry', () => ({
 
 let mockFetch: (url: string) => Promise<Response>
 
-import { fetchCampaignMetricsWindow, minSpendForCurrency } from '../insights'
+import { fetchCampaignMetricsWindow, minSpendForCurrency, roundAdSpend, formatAdSpend } from '../insights'
 
 function jsonRes(body: unknown): Promise<Response> {
   return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))
@@ -94,5 +94,32 @@ describe('minSpendForCurrency', () => {
     expect(minSpendForCurrency('BDT')).toBe(500)
     expect(minSpendForCurrency('USD')).toBe(5)
     expect(minSpendForCurrency('EUR')).toBe(5)
+  })
+})
+
+describe('CTR scale', () => {
+  it('carries Meta CTR as a PERCENT, never a 0–1 ratio (the 479% lie)', async () => {
+    const win = await fetchCampaignMetricsWindow(7)
+    // Meta sent ctr: '4.79' meaning 4.79% — a *100 anywhere makes it 479%.
+    expect(win.campaigns[0].ctrWeekPct).toBeCloseTo(4.79)
+    expect(win.campaigns[0].ctrWeekPct).toBeLessThan(100)
+  })
+})
+
+describe('roundAdSpend / formatAdSpend', () => {
+  it('keeps cents for dollar-class currencies ($11.49 must never become 11 or 12)', () => {
+    expect(roundAdSpend(11.49, 'USD')).toBe(11.49)
+    expect(roundAdSpend(11.485, 'EUR')).toBe(11.49)
+  })
+
+  it('keeps taka whole (ERP money law)', () => {
+    expect(roundAdSpend(1399.6, 'BDT')).toBe(1400)
+  })
+
+  it('labels money in the ACCOUNT currency — never a bare ৳ on dollars', () => {
+    expect(formatAdSpend(11.49, 'USD')).toBe('$11.49')
+    expect(formatAdSpend(1400, 'BDT')).toBe('৳1,400')
+    expect(formatAdSpend(9.5, 'EUR')).toBe('€9.50')
+    expect(formatAdSpend(5, 'AED')).toBe('AED 5.00')
   })
 })

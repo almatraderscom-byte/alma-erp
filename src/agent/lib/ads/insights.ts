@@ -54,8 +54,11 @@ export type CampaignMetrics = {
   impressionsWeek: number
   clicksToday: number
   clicksWeek: number
-  ctrToday: number
-  ctrWeek: number
+  /** CTR as a PERCENT, exactly as Meta reports it (4.79 = 4.79%) — never a 0–1 ratio.
+   *  The old names invited a `* 100` at every call site and printed 479% for a
+   *  real 4.79% week (live-hit 2026-07-17). */
+  ctrTodayPct: number
+  ctrWeekPct: number
   cpcToday: number
   roasToday: number
   roasWeek: number
@@ -79,6 +82,24 @@ export const INSIGHT_MIN_IMPRESSIONS = 1000
 export function minSpendForCurrency(currency: string): number {
   if (currency === 'BDT') return INSIGHT_MIN_SPEND_BDT
   return 5 // USD/EUR-class: ~৳500-600
+}
+
+/**
+ * Round an ad-spend amount in ITS OWN currency. Taka is whole-unit (ERP money
+ * law, roundMoney); dollar-class currencies keep cents — rounding $11.48 to a
+ * whole number reported "12" for a real $11.48 week (live-hit 2026-07-17).
+ * Never apply roundMoney() to a non-BDT ad amount.
+ */
+export function roundAdSpend(amount: number, currency: string): number {
+  if (currency === 'BDT') return Math.round(amount)
+  return Math.round(amount * 100) / 100
+}
+
+/** Owner-facing money label in the ad account's real currency — never a bare ৳. */
+export function formatAdSpend(amount: number, currency: string): string {
+  if (currency === 'BDT') return `৳${Math.round(amount).toLocaleString('en-US')}`
+  const symbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : `${currency} `
+  return `${symbol}${(Math.round(amount * 100) / 100).toFixed(2)}`
 }
 
 export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
@@ -141,8 +162,8 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
       const impressionsWeek = safeNum(weekInsight.impressions)
       const clicksToday = safeNum(todayInsight.clicks)
       const clicksWeek = safeNum(weekInsight.clicks)
-      const ctrToday = safeNum(todayInsight.ctr)
-      const ctrWeek = safeNum(weekInsight.ctr)
+      const ctrTodayPct = safeNum(todayInsight.ctr)
+      const ctrWeekPct = safeNum(weekInsight.ctr)
       const cpcToday = safeNum(todayInsight.cpc)
 
       const roasToday = spendToday > 0
@@ -183,8 +204,8 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
         impressionsWeek,
         clicksToday,
         clicksWeek,
-        ctrToday,
-        ctrWeek,
+        ctrTodayPct,
+        ctrWeekPct,
         cpcToday,
         roasToday,
         roasWeek,
@@ -283,8 +304,8 @@ export async function fetchCampaignMetricsWindow(windowDays = 7): Promise<Campai
       impressionsWeek: safeNum(row.impressions),
       clicksToday: safeNum(todayRow.clicks),
       clicksWeek: safeNum(row.clicks),
-      ctrToday: safeNum(todayRow.ctr),
-      ctrWeek: safeNum(row.ctr),
+      ctrTodayPct: safeNum(todayRow.ctr),
+      ctrWeekPct: safeNum(row.ctr),
       cpcToday: safeNum(todayRow.cpc),
       roasToday: spendToday > 0
         ? purchaseValueFromActions(todayRow.actions as Array<{ action_type?: string; value?: string }>) / spendToday

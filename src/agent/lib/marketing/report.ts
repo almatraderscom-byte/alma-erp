@@ -4,7 +4,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { agentSmartText } from '@/agent/lib/llm-text'
-import { fetchCampaignMetricsWindow, type CampaignMetricsWindow } from '@/agent/lib/ads/insights'
+import { fetchCampaignMetricsWindow, roundAdSpend, type CampaignMetricsWindow } from '@/agent/lib/ads/insights'
 import { getTopCreativeAngles } from '@/agent/lib/ads/creative-performance'
 import { getCsAnalyticsSummary } from '@/agent/lib/cs/analytics'
 import { buildMarketingIntel } from '@/lib/content-intelligence'
@@ -47,7 +47,17 @@ export type MarketingReportData = {
     currency: string
     /** The ad account actually read (env META_AD_ACCOUNT_ID) — surfaces misconfig instead of silent 0. */
     accountId: string | null
-    campaigns: Array<{ name: string; spendWeek: number; roasWeek: number; ctrWeekPct: number; hasData: boolean; effectiveStatus: string }>
+    campaigns: Array<{
+      name: string
+      spendWeek: number
+      roasWeek: number
+      ctrWeekPct: number
+      hasData: boolean
+      effectiveStatus: string
+      /** Performance detail — without these the head cannot answer "ad performance" at all. */
+      impressionsWeek: number
+      clicksWeek: number
+    }>
     bestCampaign: string | null
     worstCampaign: string | null
     topAngles: Array<{ angle: string; avgRoas: number; count: number }>
@@ -131,16 +141,20 @@ export async function gatherMarketingReportData(days = 7): Promise<MarketingRepo
     periodDays: days,
     generatedAt: new Date().toISOString(),
     paid: {
-      totalSpendWeek: Math.round(totalSpendWeek),
+      // Currency-aware: Math.round() on a USD amount reported "12" for a real
+      // $11.48 week (live-hit 2026-07-17). Taka stays whole per ERP money law.
+      totalSpendWeek: roundAdSpend(totalSpendWeek, paidWindow.currency),
       currency: paidWindow.currency,
       accountId: paidWindow.accountId || null,
       campaigns: campaigns.map((m) => ({
         name: m.name,
-        spendWeek: Math.round(m.spendWeek),
+        spendWeek: roundAdSpend(m.spendWeek, paidWindow.currency),
         roasWeek: Number(m.roasWeek.toFixed(2)),
-        ctrWeekPct: Number((m.ctrWeek * 100).toFixed(2)),
+        ctrWeekPct: Number(m.ctrWeekPct.toFixed(2)),
         hasData: m.hasEnoughData,
         effectiveStatus: m.effectiveStatus,
+        impressionsWeek: m.impressionsWeek,
+        clicksWeek: m.clicksWeek,
       })),
       bestCampaign: sorted[0]?.name ?? null,
       worstCampaign: sorted.length > 1 ? sorted[sorted.length - 1]?.name ?? null : null,
