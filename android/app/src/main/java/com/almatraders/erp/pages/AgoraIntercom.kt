@@ -37,10 +37,14 @@ import io.agora.rtc2.IRtcEngineEventHandler
 import io.agora.rtc2.RtcEngine
 import io.agora.rtc2.RtcEngineConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.UUID
 
 class IntercomStaff(val id: String, val name: String, val phone: String?)
 
@@ -66,10 +70,12 @@ object AgoraIntercom {
     private var engine: RtcEngine? = null
     private var appId: String? = null
     private var channel: String? = null
+    private var currentCallId: String? = null
     private val remoteUids = HashSet<Int>()
     private var callTicker: Runnable? = null
     private var ringTimeout: Runnable? = null
     private val handledCallIds = HashSet<String>()
+    private val telemetryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var recorder: MediaRecorder? = null
     private var recordFile: File? = null
@@ -146,6 +152,9 @@ object AgoraIntercom {
     }
 
     suspend fun startCall(ch: String, outgoing: Boolean) {
+        currentCallId = callIdFromChannel(ch)
+        emitTelemetry(if (outgoing) "client.join_started" else "client.answer_pressed", "connecting")
+        if (!outgoing) emitTelemetry("client.join_started", "connecting")
         post { error = null; mode = Mode.RINGING; callSeconds = 0; statusText = if (outgoing) "রিং হচ্ছে…" else "কল ধরছেন…" }
         remoteUids.clear()
         ringtone.stop()
@@ -157,6 +166,7 @@ object AgoraIntercom {
                 appContext?.let { ringtone.play(it, IntercomRingtone.Kind.RINGBACK) }
             }
         } catch (e: Exception) {
+            emitTelemetry("client.media_error", "error", messageFor(e))
             post { error = messageFor(e); statusText = "" }
             leave()
         }
@@ -189,7 +199,11 @@ object AgoraIntercom {
         } catch (_: Exception) { null }
     }
 
-    fun markCallHandled(id: String) { handledCallIds.add(id) }
+    fun markCallHandled(id: String) {
+        handledCallIds.add(id)
+        currentCallId = id
+        emitTelemetry("client.ring_received", "ringing")
+    }
 
     /** A call was cancelled remotely (caller hung up before answer). Observed by a
      *  live IncomingCallActivity so it closes instantly instead of ringing to timeout. */
@@ -206,6 +220,7 @@ object AgoraIntercom {
     }
 
     fun leave() {
+        emitTelemetry("client.leave_started", "leaving")
         engine?.leaveChannel()
         appContext?.let { com.almatraders.erp.IntercomForegroundService.stop(it) }
         stopCallTicker()
@@ -216,6 +231,8 @@ object AgoraIntercom {
         post {
             mode = Mode.IDLE; connected = false; remoteSpeaking = false; localSpeaking = false; statusText = ""
         }
+        emitTelemetry("client.local_left", "ended")
+        currentCallId = null
     }
 
     // ── PTT voice note ──────────────────────────────────────────────────────────
@@ -334,6 +351,7 @@ object AgoraIntercom {
     private val handler = object : IRtcEngineEventHandler() {
         override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) {
             post { connected = true }
+            emitTelemetry("client.local_joined", "connecting")
         }
         override fun onUserJoined(uid: Int, elapsed: Int) {
             remoteUids.add(uid)
@@ -343,12 +361,14 @@ object AgoraIntercom {
                     stopRingTimeout(); ringtone.stop(); startCallTicker()
                 }
             }
+            emitTelemetry("client.peer_joined", "in-call")
         }
         override fun onUserOffline(uid: Int, reason: Int) {
             remoteUids.remove(uid)
             post {
                 remoteSpeaking = false
                 if ((mode == Mode.CALLING || mode == Mode.RINGING) && remoteUids.isEmpty()) {
+                    emitTelemetry("client.peer_left", "reconnecting")
                     statusText = "কল শেষ"; leave()
                 }
             }
@@ -361,6 +381,7 @@ object AgoraIntercom {
         }
         override fun onError(err: Int) {
             post { error = "Agora ত্রুটি ($err)" }
+            emitTelemetry("client.media_error", "error", "agora_$err")
         }
     }
 
@@ -385,13 +406,42 @@ object AgoraIntercom {
             }
         }
         ringTimeout = r
-        main.postDelayed(r, 45_000)
+        main.postDelayed(r, 60_000)
     }
     private fun stopRingTimeout() { ringTimeout?.let { main.removeCallbacks(it) }; ringTimeout = null }
 
     private fun messageFor(e: Exception): String {
         val raw = e.message ?: "সংযোগ ব্যর্থ"
         return if (raw.contains("agora_unconfigured")) "Agora কনফিগার করা নেই (সার্ভার কী দরকার)।" else raw
+    }
+
+    private fun callIdFromChannel(value: String): String? {
+        if (!value.startsWith("itc_") || value.startsWith("itc_live_")) return null
+        val candidate = value.removePrefix("itc_")
+        return runCatching { UUID.fromString(candidate).toString() }.getOrNull()
+    }
+
+    private fun emitTelemetry(event: String, state: String, detail: String? = null) {
+        val callId = currentCallId ?: return
+        val context = appContext ?: return
+        val androidId = runCatching {
+            android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+        }.getOrNull()
+        val packageInfo = runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
+        @Suppress("DEPRECATION")
+        val versionCode = packageInfo?.let {
+            if (Build.VERSION.SDK_INT >= 28) it.longVersionCode else it.versionCode.toLong()
+        }
+        val body = JSONObject()
+            .put("callId", callId)
+            .put("event", event)
+            .put("platform", "android")
+            .put("deviceId", androidId)
+            .put("appBuild", "${packageInfo?.versionName ?: "unknown"} (${versionCode ?: 0})")
+            .put("state", state)
+            .put("occurredAt", java.time.Instant.now().toString())
+        if (detail != null) body.put("metadata", JSONObject().put("code", detail.take(160)))
+        telemetryScope.launch { runCatching { AlmaApi.send("POST", "/api/assistant/office/calls/events", body) } }
     }
 }
 

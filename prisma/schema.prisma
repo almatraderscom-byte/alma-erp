@@ -4367,6 +4367,35 @@ model OfficeIntercomBroadcast {
   @@map("office_intercom_broadcasts")
 }
 
+/// Append-only, non-secret event ledger for tracing one office call across the
+/// server, wake-push providers, web, iOS, Android, and Agora. It deliberately
+/// has no foreign key so diagnostics survive a future call-session migration or
+/// cleanup of the legacy intercom row.
+model OfficeCallEvent {
+  id          String   @id @default(uuid())
+  callId      String   @map("call_id")
+  businessId  String   @map("business_id")
+  actorUserId String?  @map("actor_user_id")
+  deviceId    String?  @map("device_id")
+  source      String
+  platform    String?
+  appBuild    String?  @map("app_build")
+  buildSha    String?  @map("build_sha")
+  event       String
+  state       String?
+  provider    String?
+  success     Boolean?
+  latencyMs   Int?     @map("latency_ms")
+  metadata    Json?
+  occurredAt  DateTime @default(now()) @map("occurred_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([callId, occurredAt(sort: Asc)])
+  @@index([businessId, occurredAt(sort: Desc)])
+  @@index([event, occurredAt(sort: Desc)])
+  @@map("office_call_events")
+}
+
 /// Per-staff receipt for one intercom broadcast.
 model OfficeIntercomReceipt {
   id          String                  @id @default(uuid())

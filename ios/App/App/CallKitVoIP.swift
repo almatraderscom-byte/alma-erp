@@ -200,7 +200,7 @@ extension CallKitVoIP: CXProviderDelegate {
         calls[action.callUUID] = nil
         Task { @MainActor in
             if let call, AgoraIntercom.shared.mode == .idle {
-                // Declined before answering — stop the ring on other devices too.
+                // Legacy receipt acknowledgement; endCall/cancel is what stops other devices.
                 AgoraIntercom.shared.confirmCallReceipt(call.broadcastId)
             }
             AgoraIntercom.shared.leave()

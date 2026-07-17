@@ -16,6 +16,10 @@ import { pushStaffPing, pushStaffDevice } from '@/agent/lib/office-notify'
 import { getCallPushTargets } from '@/agent/lib/call-push'
 import { sendVoipCall } from '@/agent/lib/apns-voip'
 import { sendFcmCall } from '@/agent/lib/fcm-call'
+import {
+  safeRecordOfficeCallEvent,
+  summarizeCallDelivery,
+} from '@/agent/lib/office-call-observability'
 
 /** 'voice' = PTT audio · 'urgent' = full-volume text alert · 'call' = live VoIP ring (Agora channel = itc_<broadcastId>). */
 export type IntercomKind = 'voice' | 'urgent' | 'call'
@@ -183,6 +187,21 @@ export async function createIntercomBroadcast(args: {
     select: { id: true, createdAt: true },
   })
 
+  if (isCall) {
+    await safeRecordOfficeCallEvent({
+      callId: row.id,
+      businessId: args.businessId,
+      actorUserId: args.senderUserId,
+      source: 'server',
+      event: 'call.created',
+      state: 'ringing',
+      metadata: {
+        direction: args.targetStaffId ? 'owner_to_staff' : 'staff_to_owner',
+        hasTargetUser: Boolean(callTargetUserId),
+      },
+    })
+  }
+
   // Best-effort push so a closed app still gets a ping. Never blocks the send.
   const callerName = args.callerName ?? OWNER_LABEL
   const title =
@@ -209,7 +228,27 @@ export async function createIntercomBroadcast(args: {
   const pushes: Promise<unknown>[] = [
     // Telegram/ntfy fallback only reaches staff (owner has no staff ping row).
     ...(isCall ? [] : targets.map((t) => pushStaffPing(t, title, body))),
-    pushStaffDevice(deviceUserIds, title, body, callData, highPriority),
+    (async () => {
+      const startedAt = Date.now()
+      const result = await pushStaffDevice(deviceUserIds, title, body, callData, highPriority)
+      if (isCall) {
+        await safeRecordOfficeCallEvent({
+          callId: row.id,
+          businessId: args.businessId,
+          source: 'server',
+          event: 'push.completed',
+          provider: 'onesignal',
+          success: result.ok,
+          latencyMs: Date.now() - startedAt,
+          metadata: {
+            attempted: result.attempted,
+            status: result.status,
+            reason: result.reason,
+          },
+        })
+      }
+      return result
+    })(),
   ]
 
   // A live call additionally fires the real wake layer: an APNs VoIP push (iOS
@@ -228,12 +267,54 @@ export async function createIntercomBroadcast(args: {
       (async () => {
         try {
           const { voip, fcm } = await getCallPushTargets(deviceUserIds)
-          await Promise.allSettled([
-            voip.length ? sendVoipCall(voip, voipPayload) : Promise.resolve([]),
-            fcm.length ? sendFcmCall(fcm, voipPayload) : Promise.resolve([]),
-          ])
+          await safeRecordOfficeCallEvent({
+            callId: row.id,
+            businessId: args.businessId,
+            source: 'server',
+            event: 'push.targets_resolved',
+            metadata: { targetUsers: deviceUserIds.length, apnsVoip: voip.length, fcm: fcm.length },
+          })
+          const apnsStartedAt = Date.now()
+          const apnsPromise = (voip.length ? sendVoipCall(voip, voipPayload) : Promise.resolve([])).then(async (results) => {
+            const summary = summarizeCallDelivery(results)
+            await safeRecordOfficeCallEvent({
+              callId: row.id,
+              businessId: args.businessId,
+              source: 'server',
+              event: 'push.completed',
+              provider: 'apns_voip',
+              success: summary.failed === 0 && summary.attempted > 0,
+              latencyMs: Date.now() - apnsStartedAt,
+              metadata: summary,
+            })
+            return results
+          })
+          const fcmStartedAt = Date.now()
+          const fcmPromise = (fcm.length ? sendFcmCall(fcm, voipPayload) : Promise.resolve([])).then(async (results) => {
+            const summary = summarizeCallDelivery(results)
+            await safeRecordOfficeCallEvent({
+              callId: row.id,
+              businessId: args.businessId,
+              source: 'server',
+              event: 'push.completed',
+              provider: 'fcm',
+              success: summary.failed === 0 && summary.attempted > 0,
+              latencyMs: Date.now() - fcmStartedAt,
+              metadata: summary,
+            })
+            return results
+          })
+          await Promise.allSettled([apnsPromise, fcmPromise])
         } catch (err) {
           console.warn('[office-intercom] call wake push failed:', (err as Error)?.message)
+          await safeRecordOfficeCallEvent({
+            callId: row.id,
+            businessId: args.businessId,
+            source: 'server',
+            event: 'push.dispatch_failed',
+            success: false,
+            metadata: { stage: 'target_resolution_or_dispatch' },
+          })
         }
       })(),
     )
@@ -262,7 +343,27 @@ export async function endCall(args: {
     where: { id: args.broadcastId, businessId: args.businessId, kind: 'call', endedAt: null },
     data: { endedAt: new Date(), endedReason: args.reason },
   })
-  if (claimed.count === 0) return { ok: true, alreadyEnded: true }
+  if (claimed.count === 0) {
+    await safeRecordOfficeCallEvent({
+      callId: args.broadcastId,
+      businessId: args.businessId,
+      actorUserId: args.actorUserId,
+      source: 'server',
+      event: 'call.end_duplicate',
+      metadata: { attemptedReason: args.reason },
+    })
+    return { ok: true, alreadyEnded: true }
+  }
+
+  await safeRecordOfficeCallEvent({
+    callId: args.broadcastId,
+    businessId: args.businessId,
+    actorUserId: args.actorUserId,
+    source: 'server',
+    event: 'call.ended',
+    state: 'ended',
+    metadata: { reason: args.reason },
+  })
 
   const row = await prisma.officeIntercomBroadcast.findFirst({
     where: { id: args.broadcastId, businessId: args.businessId },

@@ -303,7 +303,7 @@ struct IncomingCallView: View {
             HStack(spacing: 60) {
                 VStack(spacing: 8) {
                     circleBtn("phone.down.fill", tint: PortalOfficePalette.red500, big: true) {
-                        ic.confirmCallReceipt(incoming.broadcastId)   // stop other devices' ring
+                        ic.confirmCallReceipt(incoming.broadcastId)   // legacy answer/history acknowledgement
                         ic.stopRinging(); ic.leave(); dismiss()
                     }
                     Text("প্রত্যাখ্যান").font(.caption).foregroundStyle(.white.opacity(0.8))

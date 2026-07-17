@@ -19,6 +19,7 @@
  * satisfied because join() is invoked from a tap.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { emitWebOfficeCallEvent } from '@/agent/lib/office-call-client-events'
 
 // Loosely-typed handles — we avoid importing the SDK's types at module scope so
 // nothing from agora-rtc-sdk-ng is pulled into the server bundle.
@@ -75,6 +76,7 @@ export function useAgoraCall(): UseAgoraCall {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // Pending "peer really gone" timer — armed on user-left, cancelled on rejoin.
   const remoteGraceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const channelRef = useRef<string | null>(null)
   // Guards against setState after unmount (the hook must be safe to tear down).
   const mountedRef = useRef(true)
 
@@ -128,7 +130,11 @@ export function useAgoraCall(): UseAgoraCall {
   }, [clearTimer, clearRemoteGrace])
 
   const leave = useCallback(async () => {
+    const channel = channelRef.current
+    if (channel) emitWebOfficeCallEvent({ channel, event: 'client.leave_started', state: 'leaving' })
     await teardown()
+    if (channel) emitWebOfficeCallEvent({ channel, event: 'client.local_left', state: 'ended' })
+    channelRef.current = null
     safeSet(setRemoteJoined, false)
     safeSet(setMuted, false)
     safeSet(setCallSeconds, 0)
@@ -145,6 +151,8 @@ export function useAgoraCall(): UseAgoraCall {
       }
       // Fresh call — clear any prior session first.
       await teardown()
+      channelRef.current = ch
+      emitWebOfficeCallEvent({ channel: ch, event: 'client.join_started', state: 'connecting' })
       safeSet(setError, null)
       safeSet(setRemoteJoined, false)
       safeSet(setMuted, false)
@@ -190,6 +198,7 @@ export function useAgoraCall(): UseAgoraCall {
             setRemoteJoined(true)
             setState('in-call')
           }
+          emitWebOfficeCallEvent({ channel: ch, event: 'client.peer_joined', state: 'in-call' })
         })
         client.on('user-left', () => {
           // Don't hang up on a transient leave — hold for a grace window and only
@@ -198,6 +207,7 @@ export function useAgoraCall(): UseAgoraCall {
           remoteGraceRef.current = setTimeout(() => {
             remoteGraceRef.current = null
             safeSet(setRemoteJoined, false)
+            emitWebOfficeCallEvent({ channel: ch, event: 'client.peer_left', state: 'reconnecting' })
           }, REMOTE_LEFT_GRACE_MS)
         })
         // Remote audio → subscribe + play (re-fires after an unmute too).
@@ -220,6 +230,7 @@ export function useAgoraCall(): UseAgoraCall {
 
         // 4) Join the channel (uid 0 → Agora assigns one).
         await client.join(appId, ch, token, uid ?? null)
+        emitWebOfficeCallEvent({ channel: ch, event: 'client.local_joined', state: 'connecting' })
 
         // 5) Publish our microphone — HD voice (48 kHz mono, high bitrate) with
         // echo cancellation / noise suppression / auto gain all explicitly on.
@@ -244,6 +255,12 @@ export function useAgoraCall(): UseAgoraCall {
         await teardown()
         safeSet(setError, msg)
         safeSet(setState, 'error')
+        emitWebOfficeCallEvent({
+          channel: ch,
+          event: 'client.media_error',
+          state: 'error',
+          metadata: { code: msg },
+        })
       }
     },
     [teardown, safeSet, clearRemoteGrace],
@@ -284,6 +301,20 @@ export function useAgoraCall(): UseAgoraCall {
       void teardown()
     }
   }, [teardown])
+
+  useEffect(() => {
+    const onVisibility = () => {
+      const channel = channelRef.current
+      if (!channel) return
+      emitWebOfficeCallEvent({
+        channel,
+        event: document.hidden ? 'client.app_backgrounded' : 'client.app_foregrounded',
+        state,
+      })
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [state])
 
   return { state, join, leave, muted, toggleMute, remoteJoined, error, callSeconds }
 }

@@ -17,23 +17,36 @@ import { RtcTokenBuilder, RtcRole } from 'agora-token'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { resolveSessionStaff } from '@/agent/lib/office-staff'
+import { prisma } from '@/lib/prisma'
+import {
+  callIdFromAgoraChannel,
+  OFFICE_CALL_TIMING,
+  safeRecordOfficeCallEvent,
+} from '@/agent/lib/office-call-observability'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const TOKEN_TTL_SEC = 3600 // 1 hour — a call session is short; the client re-mints if needed.
+const TOKEN_TTL_SEC = OFFICE_CALL_TIMING.tokenTtlSec
+const DEFAULT_BUSINESS = 'ALMA_LIFESTYLE'
 
 type Caller =
-  | { ok: true }
+  | { ok: true; userId: string; businessId: string }
   | { ok: false; error: string; code: number }
 
 /** Owner OR active staff may mint a call token; anyone else is 401. */
 async function identify(req: NextRequest): Promise<Caller> {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return { ok: false, error: 'unauthorized', code: 401 }
-  if (isSystemOwner(token)) return { ok: true }
+  if (isSystemOwner(token)) {
+    return {
+      ok: true,
+      userId: token.sub,
+      businessId: req.nextUrl.searchParams.get('businessId')?.trim() || DEFAULT_BUSINESS,
+    }
+  }
   const staff = await resolveSessionStaff(token.sub)
-  if (staff) return { ok: true }
+  if (staff) return { ok: true, userId: token.sub, businessId: staff.businessId }
   return { ok: false, error: 'unauthorized', code: 401 }
 }
 
@@ -60,6 +73,23 @@ export async function POST(req: NextRequest) {
   const channel = body.channel?.trim()
   if (!channel) return Response.json({ error: 'channel_required' }, { status: 400 })
 
+  const callId = callIdFromAgoraChannel(channel)
+  if (channel.startsWith('itc_') && !channel.startsWith('itc_live_') && !callId) {
+    return Response.json({ error: 'invalid_call_channel' }, { status: 400 })
+  }
+  if (callId) {
+    const participant = await prisma.officeIntercomBroadcast.findFirst({
+      where: {
+        id: callId,
+        businessId: id.businessId,
+        kind: 'call',
+        OR: [{ senderUserId: id.userId }, { targetUserId: id.userId }],
+      },
+      select: { id: true },
+    })
+    if (!participant) return Response.json({ error: 'call_forbidden' }, { status: 403 })
+  }
+
   // uid = 0 → let Agora assign a uid at join time (fine for a 1:1 intercom call).
   const uid = 0
   const now = Math.floor(Date.now() / 1000)
@@ -80,6 +110,18 @@ export async function POST(req: NextRequest) {
     const detail = err instanceof Error ? err.message : 'unknown token error'
     console.error('[office/intercom/call-token] token build failed:', detail)
     return Response.json({ error: 'token_build_failed', detail }, { status: 500 })
+  }
+
+  if (callId) {
+    await safeRecordOfficeCallEvent({
+      callId,
+      businessId: id.businessId,
+      actorUserId: id.userId,
+      source: 'server',
+      event: 'agora.token_minted',
+      success: true,
+      metadata: { ttlSec: TOKEN_TTL_SEC },
+    })
   }
 
   return Response.json({ appId, channel, token, uid })

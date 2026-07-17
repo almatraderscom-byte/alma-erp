@@ -16,6 +16,7 @@
 import Foundation
 import AVFoundation
 import AgoraRtcKit
+import UIKit
 
 // MARK: - Server contracts
 
@@ -97,6 +98,7 @@ final class AgoraIntercom: NSObject {
     @ObservationIgnored private var engine: AgoraRtcEngineKit?
     @ObservationIgnored private var appId: String?
     @ObservationIgnored private var channel: String?
+    @ObservationIgnored private var currentCallId: String?
     @ObservationIgnored private var callTimer: Timer?
     @ObservationIgnored private var ringTimer: Timer?
     @ObservationIgnored private var remoteUids = Set<UInt>()   // remote parties currently on the call channel
@@ -146,6 +148,9 @@ final class AgoraIntercom: NSObject {
     /// join-completion delegate can flip us to `.calling` without a race.
     @MainActor
     func startCall(channel ch: String, outgoing: Bool) async {
+        currentCallId = Self.callId(from: ch)
+        emitTelemetry(outgoing ? "client.join_started" : "client.answer_pressed", state: "connecting")
+        if !outgoing { emitTelemetry("client.join_started", state: "connecting") }
         error = nil
         mode = .ringing
         remoteUids.removeAll()
@@ -162,6 +167,7 @@ final class AgoraIntercom: NSObject {
             }
         } catch {
             self.error = message(for: error)
+            emitTelemetry("client.media_error", state: "error", detail: message(for: error))
             statusText = ""
             leave()
         }
@@ -206,6 +212,7 @@ final class AgoraIntercom: NSObject {
 
     @MainActor
     func leave() {
+        emitTelemetry("client.leave_started", state: "leaving")
         engine?.leaveChannel(nil)
         stopCallTimer()
         stopRingTimeout()
@@ -217,6 +224,8 @@ final class AgoraIntercom: NSObject {
         remoteUids.removeAll()
         channel = nil
         statusText = ""          // never leave a stale "রিং হচ্ছে…" behind the owner view
+        emitTelemetry("client.local_left", state: "ended")
+        currentCallId = nil
     }
 
     // ── App-wide incoming call (staff) ────────────────────────────────────────
@@ -263,11 +272,15 @@ final class AgoraIntercom: NSObject {
     }
 
     /// Mark a call surfaced (answered or declined) so we don't re-ring it every poll.
-    @MainActor func markCallHandled(_ broadcastId: String) { handledCallIds.insert(broadcastId) }
+    @MainActor func markCallHandled(_ broadcastId: String) {
+        handledCallIds.insert(broadcastId)
+        currentCallId = broadcastId
+        emitTelemetry("client.ring_received", state: "ringing")
+    }
 
-    /// Confirm the call receipt server-side (stops the ring on the staff's OTHER
-    /// devices — the web office rings the same call — and flips the owner's chat
-    /// log line from "মিসড কল" to "ধরা হয়েছে"). Fire-and-forget.
+    /// Confirm the legacy receipt server-side so the owner's chat history can show
+    /// "ধরা হয়েছে". This is history/ack metadata only; canonical end/cancel events,
+    /// not a receipt, are responsible for dismissing rings on other devices.
     func confirmCallReceipt(_ broadcastId: String) {
         struct Body: Encodable { let broadcastId: String; let action = "confirmed" }
         struct Ok: Decodable { let ok: Bool? }
@@ -500,6 +513,46 @@ final class AgoraIntercom: NSObject {
     }
 
     enum IntercomError: Error { case micDenied, callFailed }
+
+    private static func callId(from channel: String) -> String? {
+        guard channel.hasPrefix("itc_") && !channel.hasPrefix("itc_live_") else { return nil }
+        let candidate = String(channel.dropFirst(4))
+        return UUID(uuidString: candidate) == nil ? nil : candidate.lowercased()
+    }
+
+    private func emitTelemetry(_ event: String, state: String, detail: String? = nil) {
+        guard let callId = currentCallId else { return }
+        struct Body: Encodable {
+            let callId: String
+            let event: String
+            let platform: String
+            let deviceId: String?
+            let appBuild: String
+            let buildSha: String?
+            let state: String
+            let metadata: [String: String]?
+            let occurredAt: String
+        }
+        struct Ack: Decodable { let ok: Bool? }
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
+        let build = info?["CFBundleVersion"] as? String ?? "unknown"
+        let body = Body(
+            callId: callId,
+            event: event,
+            platform: "ios",
+            deviceId: UIDevice.current.identifierForVendor?.uuidString,
+            appBuild: "\(version) (\(build))",
+            buildSha: info?["ALMAGitCommit"] as? String,
+            state: state,
+            metadata: detail.map { ["code": String($0.prefix(160))] },
+            occurredAt: ISO8601DateFormatter().string(from: Date())
+        )
+        Task {
+            let _: Ack? = try? await AlmaAPI.shared.send(
+                "POST", "/api/assistant/office/calls/events", body: body)
+        }
+    }
 }
 
 // MARK: - Agora delegate
@@ -507,7 +560,10 @@ final class AgoraIntercom: NSObject {
 @available(iOS 17.0, *)
 extension AgoraIntercom: AgoraRtcEngineDelegate {
     func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinChannel channel: String, withUid uid: UInt, elapsed: Int) {
-        Task { @MainActor in self.connected = true }
+        Task { @MainActor in
+            self.connected = true
+            self.emitTelemetry("client.local_joined", state: "connecting")
+        }
     }
 
     /// A REMOTE party joined the channel. For a 1:1 call this is "the other side answered" —
@@ -522,6 +578,7 @@ extension AgoraIntercom: AgoraRtcEngineDelegate {
                 self.ringtone.stop()          // both sides connected — silence the ring
                 self.startCallTimer()
             }
+            self.emitTelemetry("client.peer_joined", state: "in-call")
         }
     }
 
@@ -547,6 +604,7 @@ extension AgoraIntercom: AgoraRtcEngineDelegate {
             self.remoteSpeaking = false
             // In a 1:1 call, the other side leaving = hang up. End the call on our side too.
             if (self.mode == .calling || self.mode == .ringing), self.remoteUids.isEmpty {
+                self.emitTelemetry("client.peer_left", state: "reconnecting")
                 self.statusText = "কল শেষ"
                 self.leave()
             }
@@ -554,7 +612,10 @@ extension AgoraIntercom: AgoraRtcEngineDelegate {
     }
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, didOccurError errorCode: AgoraErrorCode) {
-        Task { @MainActor in self.error = "Agora ত্রুটি (\(errorCode.rawValue))" }
+        Task { @MainActor in
+            self.error = "Agora ত্রুটি (\(errorCode.rawValue))"
+            self.emitTelemetry("client.media_error", state: "error", detail: "agora_\(errorCode.rawValue)")
+        }
     }
 }
 
