@@ -17,6 +17,8 @@ const db = prisma as any
 export interface AdsDigest {
   ok: boolean
   activeCampaigns: number
+  /** Ad-account billing currency — spendWeekBdt is actually in THIS (field name is legacy). */
+  currency: string
   spendWeekBdt: number
   impressionsWeek: number
   clicksWeek: number
@@ -55,10 +57,14 @@ function bdt(n: number): string {
 
 async function buildAdsDigest(): Promise<AdsDigest> {
   try {
-    const { fetchActiveCampaignMetrics } = await import('@/agent/lib/ads/insights')
-    const rows = await fetchActiveCampaignMetrics()
+    // Weekly digest is HISTORICAL — must include campaigns paused mid-week
+    // (live-found 2026-07-17: ACTIVE-only read reported ৳0 for a week with
+    // real spend because the owner paused the campaign that morning).
+    const { fetchCampaignMetricsWindow } = await import('@/agent/lib/ads/insights')
+    const win = await fetchCampaignMetricsWindow(7)
+    const rows = win.campaigns
     if (rows.length === 0) {
-      return { ok: true, activeCampaigns: 0, spendWeekBdt: 0, impressionsWeek: 0, clicksWeek: 0, avgRoasWeek: 0, topCampaign: null }
+      return { ok: true, activeCampaigns: 0, currency: win.currency, spendWeekBdt: 0, impressionsWeek: 0, clicksWeek: 0, avgRoasWeek: 0, topCampaign: null }
     }
     const spendWeekBdt = rows.reduce((s, r) => s + r.spendWeek, 0)
     const impressionsWeek = rows.reduce((s, r) => s + r.impressionsWeek, 0)
@@ -71,6 +77,7 @@ async function buildAdsDigest(): Promise<AdsDigest> {
     return {
       ok: true,
       activeCampaigns: rows.length,
+      currency: win.currency,
       spendWeekBdt,
       impressionsWeek,
       clicksWeek,
@@ -81,6 +88,7 @@ async function buildAdsDigest(): Promise<AdsDigest> {
     return {
       ok: false,
       activeCampaigns: 0,
+      currency: 'USD',
       spendWeekBdt: 0,
       impressionsWeek: 0,
       clicksWeek: 0,
@@ -136,10 +144,13 @@ function composeText(d: {
     lines.push('📣 বিজ্ঞাপন: এই সপ্তাহে কোনো active campaign ছিল না।')
   } else {
     lines.push(`📣 বিজ্ঞাপন (${d.ads.activeCampaigns}টি active):`)
-    lines.push(`  • খরচ: ${bdt(d.ads.spendWeekBdt)} | ইমপ্রেশন: ${d.ads.impressionsWeek.toLocaleString('en-US')} | ক্লিক: ${d.ads.clicksWeek.toLocaleString('en-US')}`)
+    // Spend is in the AD ACCOUNT'S currency (USD here) — the old hardcoded ৳
+    // label showed "৳11" where Ads Manager said $11.48 (live-hit 2026-07-17).
+    const money = (n: number) => (d.ads.currency === 'BDT' ? bdt(n) : `${d.ads.currency} ${n.toFixed(2)}`)
+    lines.push(`  • খরচ: ${money(d.ads.spendWeekBdt)} | ইমপ্রেশন: ${d.ads.impressionsWeek.toLocaleString('en-US')} | ক্লিক: ${d.ads.clicksWeek.toLocaleString('en-US')}`)
     lines.push(`  • গড় ROAS: ${d.ads.avgRoasWeek.toFixed(2)}x`)
     if (d.ads.topCampaign) {
-      lines.push(`  • টপ: ${d.ads.topCampaign.name} — ${bdt(d.ads.topCampaign.spendWeek)}, ROAS ${d.ads.topCampaign.roasWeek.toFixed(2)}x`)
+      lines.push(`  • টপ: ${d.ads.topCampaign.name} — ${money(d.ads.topCampaign.spendWeek)}, ROAS ${d.ads.topCampaign.roasWeek.toFixed(2)}x`)
     }
   }
   lines.push('')

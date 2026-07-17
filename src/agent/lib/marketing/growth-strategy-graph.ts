@@ -73,7 +73,7 @@ export function loadBusinessTruth(inputs: StrategyInputs): EvidencedStatement[] 
   if (m.paid.observed) {
     facts.push({
       kind: 'fact',
-      text: `Meta spend ৳${m.paid.spendBdt}, campaigns with decision-grade data: ${m.paid.campaignsWithData}`,
+      text: `Meta spend ${m.paid.spendLabel}, campaigns with decision-grade data: ${m.paid.campaignsWithData}`,
       source: 'Meta insights',
       observedAt: m.generatedAt,
     })
@@ -117,7 +117,7 @@ export function prioritizeBottleneck(inputs: StrategyInputs): StrategyProposal['
   if (m.gaps.some((g) => g.kind === 'funnel_break' && g.severity === 'high')) {
     return { stage: 'delivery', why: 'Orders exist but none delivered — the COD leg (or its reporting) is broken.', severity: 'high' }
   }
-  if (m.paid.spendBdt > 0 && m.erp.orders === 0) {
+  if (m.paid.spend > 0 && m.erp.orders === 0) {
     return { stage: 'conversion', why: 'Spend is flowing with zero orders — creative/offer/landing mismatch.', severity: 'high' }
   }
   if (m.thinData) {
@@ -198,7 +198,7 @@ export function proposeOptions(
           title: 'Pause paid, push organic + Messenger while diagnosing',
           rationale: [{ kind: 'recommendation', text: 'Stop the bleed if spend efficiency is unproven.' }],
           assumptions: ['organic reach nonzero'],
-          forecast: [{ metric: 'spend saved (BDT/week)', low: 0, high: Math.max(0, Math.round(inputs.measurement.paid.spendBdt)), window: 'weekly' }],
+          forecast: [{ metric: `spend saved (${inputs.measurement.paid.currency}/week)`, low: 0, high: Math.max(0, inputs.measurement.paid.spend), window: 'weekly' }],
           risks: ['loses learning-phase momentum'],
           effort: 'low',
         }),

@@ -107,14 +107,14 @@ describe('measurement-health gap detectors', () => {
   })
 
   it('attribution gaps: spend without GA4 = high; spend+orders = uncertain (low); orders without spend = medium', () => {
-    const gaps = detectAttributionGaps({ spendBdt: 5000, ga4Observed: false, orders: 12 })
+    const gaps = detectAttributionGaps({ spend: 5000, ga4Observed: false, orders: 12 })
     expect(gaps.map((g) => g.kind)).toContain('missing_analytics')
     expect(gaps.map((g) => g.kind)).toContain('attribution_uncertain')
 
-    const organicOnly = detectAttributionGaps({ spendBdt: 0, ga4Observed: true, orders: 8 })
+    const organicOnly = detectAttributionGaps({ spend: 0, ga4Observed: true, orders: 8 })
     expect(organicOnly.map((g) => g.kind)).toEqual(['missing_spend'])
 
-    const clean = detectAttributionGaps({ spendBdt: 0, ga4Observed: true, orders: 0 })
+    const clean = detectAttributionGaps({ spend: 0, ga4Observed: true, orders: 0 })
     expect(clean).toEqual([])
   })
 })

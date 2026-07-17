@@ -89,6 +89,12 @@ vi.mock('@/agent/lib/urgent-rate-limit', () => ({
 vi.mock('@/agent/lib/outbound-call-tracking', () => ({
   summarizeOutboundAction: vi.fn().mockReturnValue({}),
   outboundWasDialed: vi.fn().mockReturnValue(false),
+  OUTBOUND_RINGING_WINDOW_MS: 90_000,
+  // Mirror the real predicate closely enough for the dedup contract: a not-yet-dialed
+  // draft (pending) or an in-flight call (approved) blocks; anything else does not.
+  isBlockingOutboundDuplicate: vi
+    .fn()
+    .mockImplementation((r: { status?: string }) => r?.status === 'pending' || r?.status === 'approved'),
 }))
 vi.mock('@/lib/twilio/phone', () => ({
   normalizeOutboundPhone: vi.fn().mockImplementation((p: string) => p),

@@ -720,7 +720,11 @@ const get_financial_health: AgentTool = {
   description:
     'CFO-style financial snapshot: revenue, expenses by category, ad spend & ROI caveats, gross/net profit, margin, ' +
     'WoW trends, per-product/channel breakdown, and flags (thin margin, rising costs, poor ad ROI). Use for financial questions, ' +
-    '"business er financial obostha", profit/expense/ROI analysis. Says clearly if cost data is missing — never guesses margin.',
+    '"business er financial obostha", profit/expense/ROI analysis. Says clearly if cost data is missing — never guesses margin. ' +
+    'MONEY: if the result carries `adSpendTruth`, the ad account does NOT bill in taka — quote adSpendTruth.label verbatim ' +
+    '(never ৳ for it) and treat adSpend/netProfit/marginPct as unreliable (they mixed currencies); say that honestly. ' +
+    'This tool reads ERP + Meta Graph API — it is NOT Meta MCP; never attribute these numbers to Meta MCP. ' +
+    'It is also NOT an ads-performance report: for impressions/clicks/CTR use the growth/ads tools instead.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -732,7 +736,37 @@ const get_financial_health: AgentTool = {
       const days = Number(input.days ?? 30)
       const { analyzeFinancials } = await import('@/lib/financial-intelligence')
       const health = await analyzeFinancials({ days })
-      return { success: true, data: health }
+
+      // Currency truth (live-found 2026-07-17). The ERP financial lib fetches
+      // Meta ad spend and runs it through whole-taka roundMoney(), then folds it
+      // into a BDT net profit. This ad account bills in USD, so BOTH the ৳ label
+      // ("ad spend ৳12" for a real $11.49) and the netProfit arithmetic
+      // (৳ revenue − $ spend) are wrong. Fixing that lives in ERP-shared code —
+      // out of this phase's scope — so the agent tool refuses to pass the lie on:
+      // it reports the true spend in its real currency and marks the taka-mixed
+      // numbers unreliable instead of letting the head quote them.
+      let adSpendTruth: Record<string, unknown> | null = null
+      try {
+        const { fetchCampaignMetricsWindow, formatAdSpend } = await import('@/agent/lib/ads/insights')
+        const win = await fetchCampaignMetricsWindow(Math.min(Math.max(days, 1), 90))
+        const trueSpend = win.campaigns.reduce((s, c) => s + c.spendWeek, 0)
+        if (win.currency !== 'BDT') {
+          adSpendTruth = {
+            amount: Math.round(trueSpend * 100) / 100,
+            currency: win.currency,
+            label: formatAdSpend(trueSpend, win.currency),
+            accountId: win.accountId,
+            warning:
+              `Ad spend is in ${win.currency}, NOT taka. Quote adSpendTruth.label verbatim — never write ৳ for it. ` +
+              `The ERP fields adSpend / netProfit / marginPct mixed this ${win.currency} number into taka maths, so ` +
+              `treat those three as UNRELIABLE and say so honestly instead of quoting them.`,
+          }
+        }
+      } catch (e) {
+        console.warn('[get_financial_health] ad-spend currency probe failed:', e instanceof Error ? e.message : e)
+      }
+
+      return { success: true, data: adSpendTruth ? { ...health, adSpendTruth } : health }
     } catch (err) {
       return { success: false, error: String(err) }
     }

@@ -237,7 +237,10 @@ const INTENT_RULES: Array<{ pack: PackKey; re: RegExp }> = [
   { pack: 'staff_read', re: /staff|স্টাফ|হাজিরা|attendance|lunch|leave|ছুটি|handover|report card|কে কী করছে|কাজ (করছে|হয়েছে|হলো)|task.*(status|হয়েছে|holo|hoise)/i },
   { pack: 'erp', re: /order|অর্ডার|stock|স্টক|inventory|product|প্রোডাক্ট|দাম|price|sales|বিক্রি|sell|customer|কাস্টমার|reorder|return|রিটার্ন|dashboard/i },
   { pack: 'social', re: /facebook|fb|post|পোস্ট|instagram|insta|messenger|inbox|ইনবক্স|comment|কমেন্ট|reply|পেজ|page/i },
-  { pack: 'ads', re: /\bads?\b|advert|বুস্ট|boost|campaign|ক্যাম্পেইন|roas|budget.*(ad|campaign)|audience|lookalike|retarget/i },
+  // Ad-metric words route to `ads` (recommend_ad_actions has the per-campaign
+  // impressions/clicks/CTR) — live-hit 2026-07-17: an ads-performance question
+  // fell to `finance` on "খরচ" and answered from a tool that has no CTR.
+  { pack: 'ads', re: /\bads?\b|advert|বুস্ট|boost|campaign|ক্যাম্পেইন|roas|budget.*(ad|campaign)|audience|lookalike|retarget|অ্যাড|এড|impression|ইমপ্রেশন|\bctr\b|সিটিআর|clicks?|ক্লিক|reach|রিচ|অ্যাড.*(পারফরম্যান্স|খরচ)|পারফরম্যান্স/i },
   { pack: 'browser', re: /browser|ব্রাউজার|chrome|খুলে দেখ|website.*(খোল|open)|login কর|সাইটে (যাও|ঢোক)|live.*(দেখ|browser)/i },
   { pack: 'website', re: /almatraders|আমাদের (সাইট|website)|publish|আনপাবলিশ|catalog|ক্যাটালগ|featured|ওয়েবসাইটে/i },
   { pack: 'seo', re: /seo|এসইও|keyword|কিওয়ার্ড|rank|র‍্যাংক|google.*(দেখা|position)|indexing|search console|ga4|analytics|অডিট/i },

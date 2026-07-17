@@ -25,6 +25,8 @@ import { COMPETITOR_TOOLS } from './competitor-tools'
 import { RESEARCH_TOOLS } from './research-tools'
 import { ADVISOR_TOOLS } from './advisor-tools'
 import { MARKETING_TOOLS } from './marketing-tools'
+import { META_ADS_TOOLS, META_ADS_CATALOG_TOOLS } from './meta-ads-tools'
+import { META_ADS_WRITE_TOOLS } from './meta-ads-write-tools'
 import { WEBSITE_TOOLS } from './website-tools'
 import { CATALOG_TOOLS } from './catalog-tools'
 import { SALAH_TOOLS } from './salah-tools'
@@ -129,8 +131,12 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
   // get_marketing_history also rides in `growth` (it lives in staff-tools): the
   // marketing head carries growth but NOT staff, and needs the "last promoted"
   // read for post planning — without this it was expected-but-unavailable there.
-  growth: [...ADS_TOOLS, ...MARKETING_TOOLS, ...SEO_TOOLS, ...ANALYTICS_TOOLS, ...CAMPAIGN_TOOLS, ...GBP_TOOLS, ...GROWTH_TOOLS, ...COMPETITOR_TOOLS, ...RESEARCH_TOOLS, ...ADVISOR_TOOLS, ...REFERENCE_TOOLS, ...SIMULATE_TOOLS, get_marketing_history],
-  website: [...WEBSITE_TOOLS, ...CATALOG_TOOLS],
+  growth: [...ADS_TOOLS, ...MARKETING_TOOLS, ...META_ADS_TOOLS, ...META_ADS_WRITE_TOOLS, ...SEO_TOOLS, ...ANALYTICS_TOOLS, ...CAMPAIGN_TOOLS, ...GBP_TOOLS, ...GROWTH_TOOLS, ...COMPETITOR_TOOLS, ...RESEARCH_TOOLS, ...ADVISOR_TOOLS, ...REFERENCE_TOOLS, ...SIMULATE_TOOLS, get_marketing_history],
+  // MA2 (plan §5): Meta catalog reads ride in `website` too — product/stock and
+  // product-ads questions land here, and the head needs Meta's catalog truth
+  // (diagnostics, feed rules, product sets) next to our own catalog. They are
+  // read-only + kill-switched; they answer "MCP বন্ধ/connect নেই" when off.
+  website: [...WEBSITE_TOOLS, ...CATALOG_TOOLS, ...META_ADS_CATALOG_TOOLS],
   salah: [...SALAH_TOOLS],
   diag: [...DIAGNOSTIC_TOOLS],
   vision: [...VISION_TOOLS],

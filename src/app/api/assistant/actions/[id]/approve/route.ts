@@ -1589,6 +1589,85 @@ async function runApprove(
     }
   }
 
+  // Phase MA3 — Meta Ads MCP write tools (create/update/catalog + activate).
+  // The staging tool (meta-ads-write-tools.ts) already enforced kill switch +
+  // connection + write tier + budget cap BEFORE this card existed. On Approve we
+  // execute the exact remote call; Meta creates entities PAUSED, so only
+  // meta_ads:ads_activate_entity actually starts spend.
+  if (action.type.startsWith('meta_ads:')) {
+    const { remoteName, args } = payload as { remoteName: string; args?: Record<string, unknown> }
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) return Response.json({ error: 'already_resolved' }, { status: 409 })
+
+    const activating = remoteName === 'ads_activate_entity'
+    try {
+      const { metaMcpCallTool } = await import('@/agent/lib/meta-mcp/client')
+      const { logToolEvent } = await import('@/agent/lib/tool-telemetry')
+      const result = await metaMcpCallTool(String(remoteName), (args ?? {}) as Record<string, unknown>)
+      const text = (result.content ?? [])
+        .filter((c) => c.type === 'text' && typeof c.text === 'string')
+        .map((c) => c.text as string)
+        .join('\n')
+
+      if (result.isError) {
+        await db.agentPendingAction.update({
+          where: { id: actionId },
+          data: { status: 'failed', result: { error: text.slice(0, 500) } },
+        })
+        void logToolEvent({
+          toolName: `meta_ads:${remoteName}`,
+          success: false,
+          phase: 'approval',
+          conversationId: action.conversationId,
+          detail: { error: text.slice(0, 200) },
+        })
+        await appendConversationNote(db, action, `⚠️ Meta লেখা-কাজ ব্যর্থ: ${text.slice(0, 200)}`)
+        return Response.json({ error: text.slice(0, 300) || 'meta_mcp_write_failed' }, { status: 502 })
+      }
+
+      let parsed: unknown = result.structuredContent
+      if (parsed === undefined) {
+        try {
+          parsed = text ? JSON.parse(text) : null
+        } catch {
+          parsed = text
+        }
+      }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', resolvedAt: new Date(), result: { remoteName, data: parsed } },
+      })
+      // "Cost-log": Meta MCP calls are free, so the audit trail is this telemetry
+      // row + the executed pending-action record (plan §6 "cost-log every write").
+      void logToolEvent({
+        toolName: `meta_ads:${remoteName}`,
+        success: true,
+        phase: 'approval',
+        conversationId: action.conversationId,
+        detail: { activating },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        activating
+          ? '🔴 Meta অ্যাড ACTIVE করা হয়েছে — খরচ শুরু হলো।'
+          : '✅ Meta-তে PAUSED অবস্থায় তৈরি/আপডেট হয়েছে — activate না করা পর্যন্ত খরচ শুরু হবে না।',
+      )
+      return Response.json({ success: true, remoteName, activating })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg.slice(0, 500) } },
+      })
+      await appendConversationNote(db, action, `⚠️ Meta লেখা-কাজ ব্যর্থ: ${errMsg.slice(0, 200)}`)
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
   if (action.type === 'create_retargeting_audience') {
     const { name, page, retentionDays } = payload as {
       name: string; page?: string; retentionDays?: number

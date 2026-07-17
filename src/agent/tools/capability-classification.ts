@@ -274,6 +274,44 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   draft_gbp_reply: stage('gbp', 'high'),
   draft_gbp_post: stage('gbp', 'high'),
 
+  // ── Meta Ads MCP bridged reads (Phase MA1) — official mcp.facebook.com/ads ─
+  // Read-only slice only; the 6 write tools arrive in MA3 behind approval cards
+  // (capability map: src/agent/lib/meta-mcp/bridge.ts).
+  meta_ads_list_tools: read('meta_ads'),
+  meta_ads_get_ad_accounts: read('meta_ads'),
+  meta_ads_get_ad_entities: read('meta_ads'),
+  meta_ads_get_pages_for_business: read('meta_ads'),
+  meta_ads_catalog_get_catalogs: read('meta_ads'),
+  meta_ads_catalog_get_details: read('meta_ads'),
+  meta_ads_catalog_get_diagnostics: read('meta_ads'),
+  meta_ads_catalog_get_feed_rules: read('meta_ads'),
+  meta_ads_catalog_get_product_details: read('meta_ads'),
+  meta_ads_catalog_get_product_feed_details: read('meta_ads'),
+  meta_ads_catalog_get_product_set_products: read('meta_ads'),
+  meta_ads_catalog_get_product_sets: read('meta_ads'),
+  meta_ads_catalog_get_products: read('meta_ads'),
+  meta_ads_get_dataset_details: read('meta_ads'),
+  meta_ads_get_dataset_quality: read('meta_ads'),
+  meta_ads_get_dataset_stats: read('meta_ads'),
+  meta_ads_get_errors: read('meta_ads'),
+  meta_ads_insights_advertiser_context: read('meta_ads'),
+  meta_ads_insights_anomaly_signal: read('meta_ads'),
+  meta_ads_insights_auction_ranking_benchmarks: read('meta_ads'),
+  meta_ads_insights_industry_benchmark: read('meta_ads'),
+  meta_ads_insights_performance_trend: read('meta_ads'),
+  meta_ads_get_opportunity_score: read('meta_ads'),
+  meta_ads_get_help_article: read('meta_ads'),
+
+  // ── Meta Ads MCP write tools (Phase MA3) — staged behind approval cards ─────
+  // Creates/edits stage a card (mode 'stage' → staged_card); Meta makes entities
+  // PAUSED. activate is the money switch — before_execute + HIGH risk.
+  meta_ads_create_campaign: stage('meta_ads', 'high'),
+  meta_ads_create_ad_set: stage('meta_ads', 'high'),
+  meta_ads_create_ad: stage('meta_ads', 'high'),
+  meta_ads_update_entity: stage('meta_ads', 'high'),
+  meta_ads_catalog_create: stage('meta_ads', 'medium'),
+  meta_ads_activate_entity: { domain: 'meta_ads', mode: 'stage', risk: 'high', approval: 'before_execute', proof: 'external' },
+
   // ── growth autopilot / content calendar ────────────────────────────────────
   schedule_content: stage('growth'),
   schedule_content_batch: stage('growth'),

@@ -15,6 +15,28 @@ type GscStatus = {
 const CONNECT_URL = '/api/assistant/growth/gsc-auth'
 const STATUS_URL = '/api/assistant/growth/gsc-status'
 const FEATURE_STATUS_URL = '/api/assistant/growth/feature-status'
+const META_CONNECT_URL = '/api/assistant/meta-mcp/auth'
+const META_STATUS_URL = '/api/assistant/meta-mcp/status'
+
+type MetaMcpStatus = {
+  envEnabled: boolean
+  kvEnabled: boolean
+  enabled: boolean
+  connected: boolean
+  tier: 'read' | 'write' | 'financial'
+  connectedAt: string | null
+  tokenHealth: string
+  registeredReadTools: number
+  remoteToolCount: number | null
+  adAccounts: Array<{ id?: string; name?: string }> | null
+  probeError: string | null
+  health?: {
+    last24h: { calls: number; ok: number; failed: number; successRate: number | null }
+    last7d: { calls: number; ok: number; failed: number; successRate: number | null }
+    lastSuccessAt: string | null
+    lastError: { code: string | null; toolName: string } | null
+  }
+}
 
 type FeatureStatus = {
   generatedAt?: string
@@ -77,8 +99,33 @@ function bannerFor(flag: string | null): { text: string; tone: 'ok' | 'warn' } |
   }
 }
 
+function metaBannerFor(flag: string | null): { text: string; tone: 'ok' | 'warn' } | null {
+  switch (flag) {
+    case 'connected':
+      return { text: 'Meta Ads যুক্ত হয়েছে ✓ (read-only)', tone: 'ok' }
+    case 'denied':
+      return { text: 'Meta অনুমতি বাতিল হয়েছে — আবার চেষ্টা করুন।', tone: 'warn' }
+    case 'error':
+      return { text: 'Meta সংযোগে সমস্যা হয়েছে — আবার চেষ্টা করুন।', tone: 'warn' }
+    case 'no_code':
+      return { text: 'Meta থেকে code আসেনি — আবার চেষ্টা করুন।', tone: 'warn' }
+    case 'disabled':
+      return { text: 'Meta Ads MCP সার্ভারে চালু নেই (META_MCP_ENABLED)।', tone: 'warn' }
+    default:
+      return null
+  }
+}
+
+const META_TIER_LABEL: Record<string, string> = {
+  read: 'read-only — শুধু রিপোর্ট/ইনসাইট, টাকার কোনো ঝুঁকি নেই',
+  write: 'read/write — ক্যাম্পেইন তৈরি (Approve-কার্ডের পেছনে)',
+  financial: 'read/write/financial — বাজেটসহ (Approve-কার্ডের পেছনে)',
+}
+
 export default function GrowthConnections() {
   const [gsc, setGsc] = useState<GscStatus | null>(null)
+  const [meta, setMeta] = useState<MetaMcpStatus | null>(null)
+  const [metaLoading, setMetaLoading] = useState(true)
   const [features, setFeatures] = useState<FeatureStatus | null>(null)
   const [featuresLoading, setFeaturesLoading] = useState(true)
   const [loading, setLoading] = useState(true)
@@ -93,6 +140,17 @@ export default function GrowthConnections() {
       /* ignore */
     } finally {
       setLoading(false)
+    }
+    // Meta Ads MCP status probes the live server when connected — loads
+    // independently so it never holds up the GSC card (and vice versa).
+    setMetaLoading(true)
+    try {
+      const res = await fetch(META_STATUS_URL, { cache: 'no-store' })
+      if (res.ok) setMeta(await res.json())
+    } catch {
+      /* ignore */
+    } finally {
+      setMetaLoading(false)
     }
     // The feature board probes live APIs (GA4/GBP/storefront) — slower, so it
     // loads independently and never holds up the GSC card.
@@ -110,7 +168,7 @@ export default function GrowthConnections() {
   useEffect(() => {
     // Surface the OAuth callback result, then clean the URL.
     const params = new URLSearchParams(window.location.search)
-    const b = bannerFor(params.get('gsc'))
+    const b = bannerFor(params.get('gsc')) ?? metaBannerFor(params.get('meta'))
     if (b) {
       setBanner(b)
       window.history.replaceState(null, '', '/agent/growth')
@@ -122,6 +180,15 @@ export default function GrowthConnections() {
     try {
       await fetch(STATUS_URL, { method: 'DELETE' })
       setGsc((s) => (s ? { ...s, connected: false, email: null, connectedAt: null, sites: null } : s))
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const onMetaDisconnect = useCallback(async () => {
+    try {
+      await fetch(META_STATUS_URL, { method: 'DELETE' })
+      setMeta((s) => (s ? { ...s, connected: false, connectedAt: null, adAccounts: null, tokenHealth: 'none' } : s))
     } catch {
       /* ignore */
     }
@@ -222,6 +289,120 @@ export default function GrowthConnections() {
           >
             Google Search Console যুক্ত করুন
           </a>
+        )}
+      </div>
+
+      {/* Meta Ads (official MCP) card — Phase MA1, read-only */}
+      <div className="glass-panel rounded-2xl border border-border-subtle p-4">
+        <div className="mb-3 flex items-center gap-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#0866FF]/10 text-[#0866FF]">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 17l4-9 4 7 3-5 4 7" />
+              <path d="M3 21h18" />
+            </svg>
+          </div>
+          <div className="min-w-0">
+            <p className="text-[13px] font-bold text-cream">Meta Ads (অফিসিয়াল MCP)</p>
+            <p className="text-[11px] text-muted">আসল অ্যাড ডেটা — পারফরম্যান্স ট্রেন্ড, বেঞ্চমার্ক, ক্যাটালগ, ডায়াগনস্টিকস</p>
+          </div>
+        </div>
+
+        {metaLoading ? (
+          <p className="text-[12px] text-muted">লোড হচ্ছে…</p>
+        ) : !meta ? (
+          <p className="text-[12px] text-amber-400">স্ট্যাটাস আনা যায়নি — পেজ রিফ্রেশ করুন।</p>
+        ) : !meta.envEnabled ? (
+          <div className="rounded-xl border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2.5 text-[11px] leading-relaxed text-amber-400">
+            চালু নেই। Vercel-এ <code className="font-mono">META_MCP_ENABLED=true</code> সেট করুন — তারপর এখান থেকে connect করা যাবে।
+          </div>
+        ) : !meta.kvEnabled ? (
+          <div className="rounded-xl border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2.5 text-[11px] leading-relaxed text-amber-400">
+            এজেন্ট-সেটিংসে বন্ধ করা আছে (<code className="font-mono">meta_mcp_enabled=off</code>)। চ্যাটে এজেন্টকে চালু করতে বলুন।
+          </div>
+        ) : meta.connected ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between rounded-xl border border-emerald-400/25 bg-emerald-400/[0.07] px-3 py-2.5">
+              <div className="min-w-0">
+                <p className="text-[12px] font-semibold text-emerald-400">
+                  যুক্ত আছে ✓ — {meta.tier === 'read' ? 'read-only' : meta.tier}
+                </p>
+                <p className="truncate text-[10px] text-emerald-400/70">{META_TIER_LABEL[meta.tier] ?? ''}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void onMetaDisconnect()}
+                className="shrink-0 text-[11px] font-semibold text-muted transition-colors hover:text-cream"
+              >
+                বিচ্ছিন্ন করুন
+              </button>
+            </div>
+
+            {meta.tokenHealth === 'reconnect_needed' && (
+              <p className="text-[11px] text-amber-400">Token-এর মেয়াদ শেষ — আবার connect করুন।</p>
+            )}
+
+            {meta.adAccounts && meta.adAccounts.length > 0 ? (
+              <div>
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">Ad accounts</p>
+                <ul className="space-y-1">
+                  {meta.adAccounts.map((a, i) => (
+                    <li key={a.id ?? i} className="truncate rounded-lg bg-card/60 px-2 py-1 font-mono text-[11px] text-cream">
+                      {a.name ?? a.id ?? 'account'}
+                      {a.name && a.id ? ` (${a.id})` : ''}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : meta.probeError ? (
+              <p className="text-[11px] text-amber-400">Ad account তালিকা আনা যায়নি: {meta.probeError}</p>
+            ) : null}
+
+            <p className="text-[11px] text-muted">
+              {meta.registeredReadTools}টি read টুল এজেন্টে যুক্ত
+              {meta.remoteToolCount != null ? ` — Meta সার্ভারে মোট ${meta.remoteToolCount}টি` : ''}।
+            </p>
+
+            {/* MA4 observability — MCP call health from telemetry. */}
+            {meta.health && meta.health.last7d.calls > 0 && (
+              <p className="text-[10px] text-muted">
+                📊 গত ৭ দিনে {meta.health.last7d.calls}টি MCP কল · সফল {meta.health.last7d.successRate ?? 0}%
+                {meta.health.lastSuccessAt
+                  ? ` · শেষ সফল ${new Date(meta.health.lastSuccessAt).toLocaleDateString('bn-BD')}`
+                  : ''}
+                {meta.health.lastError ? ` · শেষ এরর: ${meta.health.lastError.code ?? 'unknown'}` : ''}
+              </p>
+            )}
+
+            {/* MA3 tier upgrade — re-connect at write scope to draft campaigns.
+                Every write still lands as a PAUSED Approve-card; nothing spends
+                without the owner. Shown once connected, only while still read-only. */}
+            {meta.tier === 'read' && (
+              <a
+                href={`${META_CONNECT_URL}?tier=write`}
+                className="flex items-center justify-center gap-2 rounded-xl border border-amber-400/30 bg-amber-400/[0.08] px-3 py-2 text-[11px] font-semibold text-amber-400 transition-all hover:bg-amber-400/[0.14]"
+              >
+                লেখা-অনুমতি যোগ করুন (ক্যাম্পেইন তৈরি — Approve-কার্ডের পেছনে)
+              </a>
+            )}
+            {meta.tier !== 'read' && (
+              <p className="text-[11px] font-semibold text-emerald-400/80">
+                লেখা-অনুমতি সক্রিয় — ক্যাম্পেইন তৈরি/এডিট Approve-কার্ডের পেছনে, activate আলাদা লাল কার্ডে।
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <a
+              href={META_CONNECT_URL}
+              className="flex items-center justify-center gap-2 rounded-xl border border-[#0866FF]/30 bg-[#0866FF]/[0.08] px-3 py-2.5 text-[12px] font-semibold text-[#0866FF] transition-all hover:bg-[#0866FF]/[0.14]"
+            >
+              Meta Ads যুক্ত করুন (read-only)
+            </a>
+            <p className="text-[11px] leading-relaxed text-muted">
+              এক ক্লিকে Meta-র Business অনুমতি — শুধু-পড়া (রিপোর্ট/ইনসাইট), টাকার কোনো ঝুঁকি নেই। পরে Business
+              Suite → Business Integrations থেকে যেকোনো সময় revoke করা যায়।
+            </p>
+          </div>
         )}
       </div>
 
