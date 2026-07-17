@@ -36,17 +36,19 @@
 | Browser proof (a) Connect flow | **PASS** — owner connected live on the preview (Chrome-MCP screenshots): card shows **"যুক্ত আছে ✓ — read-only"**; token stored in kv; token verified VALID against Graph API (listed the owner's 3 ad accounts) |
 | Browser proof (b) live insights answer via MCP | **BLOCKED BY META** — see below; not a code defect |
 
-## Live finding (2026-07-17): Meta's MCP is closed to third-party clients today
+## Live findings (2026-07-17) — final state after Meta's own-app onboarding
 
-Proven chain, each step live-tested:
-1. Dynamic client registration → `400 invalid_client_metadata: "Dynamic registration is not available for this client"`.
-2. Classic app requesting `ads_mcp_management` → dialog rejects: "Invalid Scopes" (scope is internal to Meta's own pre-registered MCP clients — claude.ai/ChatGPT).
-3. Owner's app WITHOUT that scope → OAuth completes, token valid on Graph API (`/me/adaccounts` returns 3 accounts), but `mcp.facebook.com/ads` answers `401 {"title":"This resource is restricted to certain users…"}`.
-4. Same wall hit by Claude Code CLI (anthropics/claude-code#55002, #57191, #58054) and OpenAI Codex (openai/codex#24103) — no user-side workaround as of July 2026; the fix must come from Meta (client allowlist / `is_ads_mcp_enabled` rollout).
+The blocker chain was solved LIVE during the session, each step proven:
+1. Dynamic client registration is refused for third parties — **the app-id fallback is the sanctioned path** (Meta doc: pass your app id as OAuth client id).
+2. `ads_mcp_management` requires the **"Create & manage ads with ads MCP server" use case** on the app (found via Meta's "Start building today" email → get-started doc). Owner added it to ALMA AI AGENT; the consent dialog then accepts the scope (verified).
+3. Owner reconnected read-only: **the MCP connection is LIVE** — `tools/list` returns **82 tools** (all 29 plan names present + 53 new since the plan), and `ads_get_ad_accounts` returns real account data through the MCP.
+4. **Remaining Meta gate — per-ad-account rollout:** every insights call answers `is_ads_mcp_enabled: false` / "Ads MCP is gradually being rolled out. Please check back at a later date." on all 3 of the owner's ad accounts (incl. act_1236291335314468 where the live $11.48 campaign ran). Nothing user-side can force this; the bridge surfaces Meta's message verbatim and degrades gracefully.
 
-**Consequences:** MA1's own surface is fully built, kill-switched, and proven up to Meta's gate. The bridge works the day Meta opens third-party access — zero further code needed on the happy path. Old Graph-API ads tools are untouched and keep serving insights (the connect token itself already works there). MA2 can proceed with Graph-API-preferred sources; the MCP-preferred switch stays ready behind the same tools.
+## Live-found agent bug (pre-existing, NOT introduced by MA1 — fix awaits owner approval)
 
-**Owner follow-ups (no urgency):** check the "Start building today" email for any business-onboarding/allowlist link for Ads MCP; alternatively the owner can connect claude.ai's own Meta Ads connector for personal use — that path uses Meta's whitelisted client and works today.
+Acceptance chat test ("গত ৭ দিনের অ্যাড পারফরম্যান্স কেমন?") exposed: the head answered from **`growth_control_room`** (old Graph path) while CLAIMING "Meta MCP থেকে লাইভ চেক", and reported spend **৳0** — Ads Manager truth was **$11.48 / 49,801 impressions** in act_1236291335314468. Two defects: (a) old ads tools read the wrong/default ad account; (b) false source attribution the claim-verifier didn't catch. Proposed fixes (owner approval pending, MA2 scope): correct ad-account resolution for the legacy ads tools + source-claim honesty check.
+
+**Consequences:** MA1's surface is fully built, kill-switched, and proven to the deepest point Meta currently allows. When Meta flips `is_ads_mcp_enabled` for the accounts, insights flow with zero further code. MA2 proceeds with Graph-API-preferred sources and the account-resolution fix above.
 
 ## Ambiguities + decisions made
 
