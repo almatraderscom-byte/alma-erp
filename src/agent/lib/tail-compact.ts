@@ -184,6 +184,14 @@ export type TailCompactResult = {
  * lines up with `messages.slice(dropOldest)`. Fail-open: on any error returns the
  * existing watermark (or 0) so a glitch never drops live context.
  */
+/**
+ * Phase 32 contract: compaction is a COST lever over chat text only. It may
+ * fold messages into the rolling summary but must NEVER touch the canonical
+ * continuation state (agent_conversation_focuses / agent_focus_events /
+ * workflow runs / checkpoints / cards) — a summary is not an executable
+ * checkpoint, and folding history can never delete "where we are".
+ * Enforced by tail-compact.test.ts (no focus-table access, no deletes).
+ */
 export async function applyTailCompaction(conversationId: string): Promise<TailCompactResult> {
   try {
     const cfg = await getTailCompactConfig()

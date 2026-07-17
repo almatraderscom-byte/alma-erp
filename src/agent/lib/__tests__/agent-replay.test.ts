@@ -63,21 +63,24 @@ describe('phase 31 runner (real decision code, pure layer)', () => {
     const r = await runReplayCorpus(FIXTURES, { now: REPLAY_NOW })
     expect(r.totalCases).toBe(150)
 
-    // Invariants that must stay perfect — a drop is a live regression:
+    // Invariants that must stay perfect — a drop is a live regression.
+    // Phase 31 baseline was binding 70.1% / continuation 81.6% / 23 repeated-
+    // effect risks; Phase 32's continuity resolver closed all three, so they
+    // are now locked as invariants (roadmap gate: binding ≥99%, risks 0).
     expect(r.metrics.fastPathAccuracy).toBe(1)
     expect(r.metrics.routineIntentAccuracy).toBe(1)
     expect(r.metrics.packPrecision).toBe(1)
     expect(r.metrics.resumeBriefAccuracy).toBe(1)
     expect(r.metrics.autoContinueAccuracy).toBe(1)
+    expect(r.metrics.bindingAccuracy).toBe(1)
+    expect(r.metrics.continuationTextAccuracy).toBe(1)
+    expect(r.metrics.repeatedEffectRiskCount).toBe(0)
 
-    // Honest baseline (Phase 31): binding is the roadmap's core gap — 70.1%
-    // against the Phase 32 target of ≥99%. Locked so movement is visible.
-    expect(r.totalPassed).toBe(110)
-    expect(r.totalFailed).toBe(40)
-    expect(r.metrics.bindingAccuracy).toBeCloseTo(0.7009, 3)
-    expect(r.metrics.continuationTextAccuracy).toBeCloseTo(0.8158, 3)
+    // Honest remaining gap: Banglish tool-pack recall (state-router
+    // INTENT_RULES) — Phase 37's ≥95% recall gate owns it.
+    expect(r.totalPassed).toBe(143)
+    expect(r.totalFailed).toBe(7)
     expect(r.metrics.packRecall).toBeCloseTo(0.8478, 3)
-    expect(r.metrics.repeatedEffectRiskCount).toBe(23)
   })
 
   it('stamps every result with a stable trace id and behaviour version', async () => {
@@ -90,25 +93,26 @@ describe('phase 31 runner (real decision code, pure layer)', () => {
     }
   })
 
-  it('named scenario "2-3 replies later": current code loses the active run (baseline finding)', async () => {
+  it('named scenario "2-3 replies later": the resolver binds "post ta koi?" back to the active run (fixed in Phase 32)', async () => {
     const r = await runReplayCorpus(FIXTURES, { now: REPLAY_NOW })
     const c = r.results.find((x) => x.id === 'rc-0144-cont-3replies-post-ta-koi')
     expect(c).toBeDefined()
-    // "post ta koi?" binds to a NEW task today instead of the active post
-    // workflow — the owner's exact complaint, now measured.
+    // Phase 31 measured this as the owner's "forgot after 2-3 replies" bug
+    // (bound to new_task); the continuity resolver now binds the active run.
     const binding = c!.checks.find((k) => k.check === 'binding')
     expect(binding?.expected).toBe('active_workflow')
-    expect(binding?.actual).toBe('new_task')
-    expect(binding?.pass).toBe(false)
+    expect(binding?.actual).toBe('active_workflow')
+    expect(binding?.pass).toBe(true)
   })
 
-  it('named scenario "three days later": checkpoint resume is not deterministically bound (baseline finding)', async () => {
+  it('named scenario "three days later": checkpoint resume is deterministically bound (fixed in Phase 32)', async () => {
     const r = await runReplayCorpus(FIXTURES, { now: REPLAY_NOW })
     const c = r.results.find((x) => x.id === 'rc-0117-cont-gap3d-checkpoint')
     expect(c).toBeDefined()
     const binding = c!.checks.find((k) => k.check === 'binding')
     expect(binding?.expected).toBe('checkpoint')
-    expect(binding?.actual).toBe('none')
+    expect(binding?.actual).toBe('checkpoint')
+    expect(binding?.pass).toBe(true)
     // The gap rule itself works: resume brief IS injected after 3 days.
     const brief = c!.checks.find((k) => k.check === 'resumeBrief')
     expect(brief?.pass).toBe(true)

@@ -40,10 +40,11 @@ import {
   type ReplayReport,
 } from './replay-types'
 import { classifyHeadFastPath, type HeadDecision } from '@/agent/lib/models/head-router'
-import { isContinuationText, matchIntentPacks, packsForPendingActionType, type PackKey } from '@/agent/tools/state-router'
+import { matchIntentPacks, packsForPendingActionType, type PackKey } from '@/agent/tools/state-router'
 import { detectRoutineIntent } from '@/agent/lib/graph/routine-turn-graph'
 import { shouldInjectResumeBrief } from '@/agent/lib/resume-brief'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
+import { isContinuationUtterance, resolveContinuityDecision } from '@/agent/lib/continuity-resolver'
 
 /** Fixed "now" for deterministic replay (matches fixtures' turnAt). */
 export const REPLAY_NOW = new Date('2026-07-17T10:00:00+06:00')
@@ -70,22 +71,39 @@ export interface ReplayDeps {
 export type Binding = 'active_workflow' | 'pending_card' | 'checkpoint' | 'new_task' | 'none'
 
 /**
- * Transcription of the deterministic binding gates production code has TODAY
- * (see module doc). Listen suppression uses the fixture's fake classifier
- * verdict — the same value the mocked classifier returns in Layer B.
+ * Phase 32: binding now executes the REAL continuity resolver core
+ * (resolveContinuityDecision) over the fixture's declared durable state —
+ * the same pure function production runs. Listen suppression uses the
+ * fixture's fake classifier verdict — the same value the mocked classifier
+ * returns to the real head router in Layer B.
+ * (Phase 31 shipped this as a transcription of the then-existing gates; the
+ * resolver replaced it, exactly as the baseline doc said it would.)
  */
 export function deriveCurrentBinding(c: ReplayCaseV2): Binding {
   const text = c.latestMessage
   const listenConfirmed =
     c.fakes?.personalClassification === 'personal' && classifyHeadFastPath(text) === 'personal_hint'
-  if (listenConfirmed) return 'none'
-  if (c.replyTo && c.context?.pendingCard && c.replyTo.id === c.context.pendingCard.id) {
-    return 'pending_card'
-  }
-  if (c.context?.activeWorkflow && isContinuationText(text)) return 'active_workflow'
-  const packs = matchIntentPacks(text)
-  if (packs.length > 0 && !isContinuationText(text)) return 'new_task'
-  return 'none'
+  const d = resolveContinuityDecision({
+    text,
+    listenMode: listenConfirmed,
+    replyToCardId: c.replyTo?.id ?? null,
+    pendingCards: c.context?.pendingCard
+      ? [{ id: c.context.pendingCard.id, kind: c.context.pendingCard.kind, actionType: c.context.pendingCard.actionType ?? null }]
+      : [],
+    activeFocus: c.context?.activeWorkflow
+      ? {
+          goal: c.context.activeWorkflow.goal,
+          kind: c.context.activeWorkflow.kind,
+          status: 'active',
+          currentStep: c.context.activeWorkflow.state,
+          completedSteps: c.context.activeWorkflow.verifiedEffects ?? [],
+        }
+      : null,
+    checkpoints: c.context?.checkpoint
+      ? [{ taskType: c.context.checkpoint.taskType, step: c.context.checkpoint.step, failureClass: c.context.checkpoint.failureClass }]
+      : [],
+  })
+  return d.binding === 'active_focus' ? 'active_workflow' : d.binding
 }
 
 /** Pack selection as the live turn sees it: card-type packs ∪ text packs. */
@@ -117,7 +135,9 @@ export async function replayDecisionTurn(c: ReplayCaseV2, deps: ReplayDeps = {})
     checks.push(check('fastPath', e.fastPath, classifyHeadFastPath(text)))
   }
   if (e.continuationText !== undefined) {
-    checks.push(check('continuationText', e.continuationText, isContinuationText(text)))
+    // Phase 32: the system's continuation recognizer is now the resolver's
+    // wide net (isContinuationUtterance), superseding the narrow CONTINUE_RE.
+    checks.push(check('continuationText', e.continuationText, isContinuationUtterance(text)))
   }
   if (e.routineIntent !== undefined) {
     checks.push(check('routineIntent', e.routineIntent, detectRoutineIntent(text)))

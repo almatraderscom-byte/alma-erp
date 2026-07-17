@@ -69,6 +69,7 @@ import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
 import { isRoutineGraphEnabled, runRoutineTurnGraph, type RoutineGraphResult } from '@/agent/lib/graph/routine-turn-graph'
 import { isActionGraphEnabled, stageExpenseActionGraph, type StageExpenseResult } from '@/agent/lib/graph/action-turn-graph'
 import { runTurnGraphShadow } from '@/agent/lib/graph/turn-graph-shadow'
+import { resolveConversationContinuity } from '@/agent/lib/continuity-resolver'
 import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
 import { contractToolFailureText, findContractToolFailure } from '@/agent/lib/contract-tool-failure'
 import {
@@ -479,14 +480,46 @@ async function* runAlternateProviderTurn(
     } catch { /* fail-open — the note/advance are aids, never blockers */ }
   }
 
+  // ── Roadmap 1 Phase 32: deterministic continuity resolver ─────────────────
+  // ONE conflict rule for "which work does this message belong to": explicit
+  // card reply > pending card decision > checkpoint retry > clear new task
+  // (parks the active focus) > continuation binds the active focus > clarify.
+  // Gate: AGENT_CONTINUITY_RESOLVER off|shadow|on (unset → preview on, prod
+  // shadow). Fail-open: null → exactly the legacy behaviour below.
+  let continuity: Awaited<ReturnType<typeof resolveConversationContinuity>> = null
+  if (lastUserText) {
+    continuity = await resolveConversationContinuity({
+      conversationId,
+      text: lastUserText,
+      listenMode,
+      replyToCardId: explicitAskCardId ?? matchedAskCard?.id ?? null,
+    })
+  }
+  const continuityLive = continuity?.mode === 'on'
+  if (continuityLive && continuity!.decision.binding === 'new_task' && continuity!.decision.action === 'park_and_start') {
+    // Structural parking — the old task is deliberately set aside, never mixed.
+    try {
+      const { parkActiveFocus } = await import('@/agent/lib/conversation-focus')
+      await parkActiveFocus(conversationId, 'new_task', 'resolver')
+    } catch (err) {
+      console.warn('[run-owner-turn] focus park failed open:', err instanceof Error ? err.message : err)
+    }
+  }
+
   // Owner-approved gate fix (2026-07-14, layer 3): STRUCTURED STATE upgrades a
   // text-guessed read-only turn. An ask-card answer, or a continuation reply
   // ("হ্যাঁ/ok") while canonical runs are in flight, continues work the owner
   // already authorized — the intent regex must not strand it tool-less.
+  // Phase 32: the resolver's wider continuation net ("তারপর?", "baki ta koro",
+  // "যেখানে ছিলে সেখান থেকে করো") counts the same as the narrow CONTINUE_RE.
   if (!turnAuthorization.allowMutations) {
+    const resolverContinues =
+      continuityLive
+      && continuity!.decision.binding === 'active_focus'
+      && continuity!.decision.action === 'resume'
     const continuesInFlightWork =
       Boolean(matchedAskCard?.selectedOption)
-      || (workflowRuns.length > 0 && isContinuationText(lastUserText))
+      || (workflowRuns.length > 0 && (isContinuationText(lastUserText) || resolverContinues))
     if (continuesInFlightWork) {
       turnAuthorization = { allowMutations: true, reason: 'workflow_continuation' }
     }
@@ -588,6 +621,28 @@ async function* runAlternateProviderTurn(
   if (authorizationNote) volatileSections.push(authorizationNote)
   const requirementNote = !listenMode ? buildOwnerRequirementNote(ownerRequirements) : ''
   if (requirementNote) volatileSections.push(requirementNote)
+  // Phase 32 — the conversation-focus block leads the job state: the durable
+  // "where we are / what's next / what is already verified-done" record, plus
+  // this turn's resolver binding so the head knows THIS message continues that
+  // exact work (or deliberately parks it). Skipped in listen mode.
+  if (!listenMode) try {
+    const { getFocusStack, buildFocusSystemNote } = await import('@/agent/lib/conversation-focus')
+    const stack = await getFocusStack(conversationId)
+    let focusNote = buildFocusSystemNote(stack)
+    if (focusNote && continuityLive && continuity) {
+      const d = continuity.decision
+      if (d.binding === 'active_focus' && d.action === 'resume') {
+        focusNote += '\n⤷ এই বার্তাটা সক্রিয় কাজটারই ধারাবাহিকতা — নতুন করে শুরু কোরো না, ঠিক পরের বৈধ ধাপ থেকে এগোও।'
+      } else if (d.binding === 'new_task' && d.action === 'park_and_start') {
+        focusNote += '\n⤷ Boss নতুন একটা কাজ দিয়েছেন — আগের কাজটা পার্ক করা হয়েছে (হারায়নি); নতুনটা পরিষ্কারভাবে শুরু করো।'
+      } else if (d.binding === 'checkpoint') {
+        focusNote += '\n⤷ এই বার্তাটা আটকে-থাকা কাজটার resume/ব্যাখ্যা — checkpoint নোট অনুযায়ী ঠিক ওই ধাপ থেকে চালাও।'
+      }
+    }
+    if (focusNote) volatileSections.push(focusNote)
+  } catch (err) {
+    console.warn('[run-owner-turn] focus note failed open:', err instanceof Error ? err.message : err)
+  }
   // Phase 4 — the canonical WorkflowRun snapshot precedes everything else in the
   // per-turn context: the head reads the EXACT in-flight job state (status, step,
   // legal next tools) so "হ্যাঁ/continue" resumes the blocked step instead of
@@ -718,7 +773,11 @@ async function* runAlternateProviderTurn(
     ? workflowToolBinding(workflowRuns, {
         // An ask-card answer bound to a run is as deterministic as "হ্যাঁ" — the
         // owner just resolved THIS job's question (e.g. confirmed the preview).
-        continuation: isContinuationText(lastUserText) || Boolean(matchedAskCard?.workflowRunId),
+        // Phase 32: the resolver's wider continuation verdict counts too.
+        continuation:
+          isContinuationText(lastUserText)
+          || Boolean(matchedAskCard?.workflowRunId)
+          || (continuityLive && continuity?.decision.binding === 'active_focus' && continuity.decision.action === 'resume'),
       })
     : null
   const boundToolName =
@@ -808,6 +867,16 @@ async function* runAlternateProviderTurn(
     headTier,
     versions: AGENT_VERSIONS,
     extras: {
+      // Phase 32: this turn's continuity decision — every trace shows which
+      // work the message was bound to and why (audit + shadow measurement).
+      continuity: continuity
+        ? {
+            mode: continuity.mode,
+            binding: continuity.decision.binding,
+            action: continuity.decision.action,
+            reason: continuity.decision.reason,
+          }
+        : null,
       router: toolSelection.router,
       packs: toolSelection.packs ?? null,
       signals: toolSelection.signals ?? null,

@@ -83,6 +83,29 @@ export async function buildResumeBrief(
 
     const lines: string[] = []
 
+    // Phase 32: the FOCUS STACK leads the brief — it is the canonical
+    // continuation contract (goal, step, verified-done, blocker, exact next
+    // actions), not a reconstruction. Runs/cards/tasks below stay as detail.
+    try {
+      const { getFocusStack } = await import('@/agent/lib/conversation-focus')
+      const stack = await getFocusStack(conversationId)
+      if (stack.active) {
+        const f = stack.active
+        lines.push(
+          `• ফোকাস (সক্রিয়): "${f.goal.slice(0, 80)}" → ধাপ: ${f.currentStep ?? 'শুরু'}` +
+          (f.nextActions.length ? ` → পরের ধাপ: ${f.nextActions.slice(0, 3).join(', ')}` : '') +
+          (f.completedSteps.length ? ` (সম্পন্ন: ${f.completedSteps.slice(-3).join(', ')} — আবার নয়)` : ''),
+        )
+        if (f.blocker) lines.push(`• ফোকাস আটকে: ${f.blocker === 'owner' ? 'Boss-এর সিদ্ধান্তের অপেক্ষায়' : f.blocker}${f.lastErrorClass ? ` (${f.lastErrorClass})` : ''}`)
+      }
+      for (const f of stack.awaitingOwner.slice(0, 2)) {
+        lines.push(`• ফোকাস (Boss-এর অপেক্ষায়): "${f.goal.slice(0, 70)}"`)
+      }
+      for (const f of stack.parked.slice(0, 2)) {
+        lines.push(`• ফোকাস (পার্ক করা): "${f.goal.slice(0, 70)}"`)
+      }
+    } catch { /* focus lines are an upgrade, never a dependency */ }
+
     for (const r of runs as Array<{ kind: string; goal: string; status: string; state: string }>) {
       const label = getTemplateStep(r.kind, r.state)?.labelBn ?? r.state
       const waiting =

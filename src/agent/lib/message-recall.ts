@@ -78,6 +78,12 @@ export function embedMessageInBackground(messageId: string, content: unknown): v
  * verbatim window). Fail-open: returns [] on any error or when embeddings are
  * unavailable — recall is an enhancement, never a hard dependency.
  */
+/**
+ * Phase 32 contract: recall is ADVISORY ONLY. It may enrich the per-turn
+ * brief, but the continuity resolver (continuity-resolver.ts) takes no recall
+ * input by construction — semantic similarity can never select or mutate a
+ * high-risk binding (card/checkpoint/focus). Do not add recall inputs there.
+ */
 export async function retrieveRelevantOldTurns(
   conversationId: string,
   userMessage: string,

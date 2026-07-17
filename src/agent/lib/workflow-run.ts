@@ -111,6 +111,28 @@ export async function createWorkflowRun(input: {
   await mirrorWorkflowRunTransition({
     runId: row.id, kind: row.kind, status: row.status, state: row.state, event: null,
   })
+  // Phase 32: every templated run gets a conversation-focus row automatically —
+  // the durable "where we are" record the continuity resolver binds to.
+  // Fail-open: focus is the continuation layer, the run stays canonical.
+  try {
+    const { ensureFocusForWorkflowRun } = await import('@/agent/lib/conversation-focus')
+    await ensureFocusForWorkflowRun(
+      {
+        id: row.id,
+        conversationId: row.conversationId,
+        businessId: input.businessId,
+        kind: row.kind,
+        goal: row.goal,
+        status: row.status,
+        state: row.state,
+        nextAllowedTools: (row.nextAllowedTools as string[] | null) ?? null,
+        pendingActionId: row.pendingActionId,
+      },
+      input.cause ?? 'turn',
+    )
+  } catch (err) {
+    console.warn('[workflow-run] focus ensure failed open:', err instanceof Error ? err.message : err)
+  }
   return toView(row)
 }
 
@@ -190,6 +212,24 @@ export async function transitionWorkflowRun(opts: {
       stateVersion: opts.expectedVersion + 1,
     },
   })
+
+  // Phase 32: mirror the transition onto the run's focus row (step/status/
+  // blocker) so the continuation contract is always current. Fail-open.
+  try {
+    const { syncFocusWithWorkflowRun } = await import('@/agent/lib/conversation-focus')
+    await syncFocusWithWorkflowRun(
+      {
+        id: opts.runId,
+        status: toStatus,
+        state: toState,
+        nextAllowedTools: opts.nextAllowedTools,
+        pendingActionId: opts.pendingActionId ?? undefined,
+      },
+      opts.cause,
+    )
+  } catch (err) {
+    console.warn('[workflow-run] focus sync failed open:', err instanceof Error ? err.message : err)
+  }
 
   if (terminal) await closeLinkedFragments(opts.runId, toStatus, opts.cause)
   // Auto post-mortem (owner ask 2026-07-16: "ভুল থেকে নিজে শেখা"): a FAILED run

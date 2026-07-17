@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Phase 32 proof — exact resume after gap</title>
+<style>body{font-family:-apple-system,system-ui;margin:24px;background:#0d1117;color:#e6edf3}
+table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #30363d;padding:6px 10px;text-align:left;vertical-align:top}
+.ok{color:#3fb950;font-weight:700}.bad{color:#f85149;font-weight:700}h1{font-size:19px}
+.focus{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;margin:14px 0;font-size:13px}
+.verdict{font-size:16px;margin:16px 0;padding:12px;border-radius:8px;border:1px solid #30363d;background:#0f1c14}</style></head><body>
+<h1>Phase 32 — continuity resolver scenario (real code, deterministic)</h1>
+<p>Roadmap gate: multi-step task → ≥3 unrelated replies → gap → «যেখানে ছিলে সেখান থেকে করো» → resume the NEXT step, never the verified one.</p>
+<div class="focus"><b>Durable focus record</b> (agent_conversation_focuses): goal="নতুন পাঞ্জাবি কালেকশনের ফেসবুক পোস্ট" · kind=fb_post_workflow · step=<b>draft_review</b> · verified-done=<b>generate_image:img-001</b> (আর চালানো নিষেধ)</div>
+<table><tr><th>turn</th><th>message</th><th>gap</th><th>resume brief?</th><th>resolver binding</th><th>action</th><th>reason</th><th>forbidden effects</th></tr>
+<tr><td>1. Boss</td><td>নতুন পাঞ্জাবির জন্য একটা ফেসবুক পোস্ট বানাও</td><td>0m</td><td>—</td><td><b>new_task</b></td><td>proceed</td><td>new_task_no_prior_focus</td><td>—</td></tr>
+<tr><td>2. Boss</td><td>accha aj brishti hobe naki?</td><td>2m</td><td>—</td><td><b>none</b></td><td>proceed</td><td>no_binding_signals</td><td>generate_image:img-001</td></tr>
+<tr><td>3. Boss</td><td>dokan e AC ta thik ache to?</td><td>3m</td><td>—</td><td><b>none</b></td><td>proceed</td><td>no_binding_signals</td><td>generate_image:img-001</td></tr>
+<tr><td>4. Boss</td><td>lunch e ki khawa jay bolo to</td><td>1m</td><td>—</td><td><b>new_task</b></td><td>proceed</td><td>side_question_keeps_focus</td><td>generate_image:img-001</td></tr>
+<tr><td>5. Boss (৩ দিন পরে)</td><td>যেখানে ছিলে সেখান থেকে করো</td><td>3d</td><td>YES</td><td><b>active_focus</b></td><td>resume</td><td>continuation_binds_active_focus</td><td>generate_image:img-001</td></tr>
+</table>
+<div class="verdict"><span class="ok">PASS</span> — «যেখানে ছিলে সেখান থেকে করো» ৩টা অন্য প্রসঙ্গ + ৩ দিনের gap-এর পরেও ঠিক আগের কাজটাতেই bind হলো (active_focus/resume), resume brief এলো, এবং verified ধাপ generate_image:img-001 আবার চালানো নিষিদ্ধ তালিকায় — অর্থাৎ পরের ধাপ (draft_review → post) থেকেই কাজ এগোবে, ছবি আবার বানানো হবে না।</div>
+<p style="color:#8b949e;font-size:12px">Every decision above is a live call into src/agent/lib/continuity-resolver.ts (resolveContinuityDecision) + resume-brief.ts (shouldInjectResumeBrief) — no mockup. Generated 2026-07-20T04:00:00.000Z.</p>
+</body></html>
