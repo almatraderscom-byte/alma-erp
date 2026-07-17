@@ -1014,6 +1014,21 @@ await sweepWorkbenchWorkspaces()
 const workbenchJanitorInterval = setInterval(sweepWorkbenchWorkspaces, 6 * 60 * 60 * 1000)
 
 const longTaskWorker = new Worker('long-agent-task', async (job) => {
+  // Phase 54: durable task graph run — leased, checkpointed, crash-resumable.
+  // BullMQ retries are SAFE here (unlike turns): every node checkpoints and
+  // effect nodes are exactly-once, so a re-delivery resumes instead of
+  // duplicating work.
+  if (job.name === 'durable-task' && job.data?.workflowRunId) {
+    const { runDurableTaskOnWorker } = await import('./agent-task-runner.mjs')
+    const result = await runDurableTaskOnWorker({ sb: supabase, runId: job.data.workflowRunId })
+    console.log(`[worker] durable-task ${job.data.workflowRunId} → ${result.status} (${result.completed.length} nodes)`)
+    if (result.status === 'blocked' || result.status === 'lease_unavailable') {
+      // Let BullMQ's backoff retry resume it later.
+      throw new Error(`durable task ${result.status}: ${result.blocker ?? 'lease held elsewhere'}`)
+    }
+    return
+  }
+
   // A2: owner web turn enqueued by /api/assistant/turn. Identified by turnId.
   // Runs the turn via the chat route in stream mode and republishes events to
   // Redis + the agent_turn_events log so the client can tail/replay it.

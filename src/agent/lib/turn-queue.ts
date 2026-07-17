@@ -125,3 +125,50 @@ export async function enqueueTurnJob(data: TurnJobData): Promise<string | null> 
     return null
   }
 }
+
+// ── Phase 54 — durable task graph handoff ────────────────────────────────────
+
+export interface DurableTaskJobData {
+  workflowRunId: string
+  graph: string
+  conversationId: string | null
+}
+
+/** Pure builder for the durable-task job payload (unit-testable, no Redis). */
+export function buildDurableTaskJobData(
+  workflowRunId: string | null,
+  graph: string | null,
+  conversationId?: string | null,
+): DurableTaskJobData | null {
+  if (!workflowRunId || !graph) return null
+  return { workflowRunId, graph, conversationId: conversationId ?? null }
+}
+
+/**
+ * Enqueue a durable task graph run for VPS execution on the SAME
+ * `long-agent-task` queue (job name 'durable-task'). UNLIKE turns, durable
+ * tasks ARE safe to retry: every node checkpoints and effect nodes ride the
+ * Phase 53 exactly-once engine — so BullMQ retries/stalls resume instead of
+ * duplicating. Deterministic jobId prevents double-enqueue.
+ */
+export async function enqueueDurableTask(data: DurableTaskJobData): Promise<string | null> {
+  const url = longTaskRedisUrl()
+  if (!url) return null
+  try {
+    const { Queue } = await import('bullmq')
+    const queue = new Queue('long-agent-task', {
+      connection: { url },
+      defaultJobOptions: {},
+    })
+    const job = await queue.add('durable-task', data, {
+      jobId: `dtask-${data.workflowRunId}`,
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 15_000 },
+    })
+    await queue.close()
+    return job.id ?? null
+  } catch (err) {
+    console.warn('[turn-queue] enqueueDurableTask failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
