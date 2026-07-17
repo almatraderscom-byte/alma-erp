@@ -13,6 +13,10 @@
  */
 
 export type BkashSendPending = {
+  /** Which screen owns this half-done send — its id spaces differ (walletRequest
+   *  id on /payroll vs approvalRequest id on /approvals), so each surface only
+   *  restores its own. */
+  surface: 'payroll' | 'approvals'
   requestId: string
   employeeId: string
   businessId: string

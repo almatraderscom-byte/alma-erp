@@ -144,7 +144,7 @@ export default function PayrollPage() {
     if (!ownerBkashFlow) return
     const restore = () => {
       const pending = readBkashSendPending()
-      if (!pending) return
+      if (!pending || pending.surface !== 'payroll') return
       setReview(prev => prev ?? {
         id: pending.requestId,
         action: 'APPROVE',
@@ -421,6 +421,7 @@ export default function PayrollPage() {
     const approved = roundMoney(Number(review.approvedAmount || review.requestedAmount))
     const copied = await copyTextToClipboard(review.payout.accountNumber)
     saveBkashSendPending({
+      surface: 'payroll',
       requestId: review.id,
       employeeId: review.employeeId || '',
       businessId: review.businessId || '',

@@ -228,24 +228,28 @@ enum BkashSendPendingStore {
     private static let ttl: TimeInterval = 12 * 60 * 60
 
     struct Entry: Codable {
+        /// Owning screen — id spaces differ (walletRequest id on Payroll vs
+        /// approvalRequest id on Approvals), so each surface restores only its own.
+        var surface: String? = "payroll"
         let requestId: String
         let startedAt: Date
     }
 
-    static func save(requestId: String) {
-        let entry = Entry(requestId: requestId, startedAt: Date())
+    static func save(requestId: String, surface: String = "payroll") {
+        let entry = Entry(surface: surface, requestId: requestId, startedAt: Date())
         if let data = try? JSONEncoder().encode(entry) {
             UserDefaults.standard.set(data, forKey: key)
         }
     }
 
-    static func read() -> Entry? {
+    static func read(surface: String = "payroll") -> Entry? {
         guard let data = UserDefaults.standard.data(forKey: key),
               let entry = try? JSONDecoder().decode(Entry.self, from: data) else { return nil }
         guard Date().timeIntervalSince(entry.startedAt) < ttl else {
             clear()
             return nil
         }
+        guard (entry.surface ?? "payroll") == surface else { return nil }
         return entry
     }
 
