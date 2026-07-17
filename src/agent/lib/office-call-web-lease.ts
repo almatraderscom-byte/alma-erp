@@ -39,21 +39,26 @@ export async function acquireWebCallLease(callId: string, onLost: () => void): P
   if (lockManager?.request) {
     let releaseHold: (() => void) | null = null
     const hold = new Promise<void>((resolve) => { releaseHold = resolve })
-    return await new Promise<(() => void) | null>((resolve) => {
-      void lockManager.request(`alma-office-call:${callId}`, { mode: 'exclusive', ifAvailable: true }, async (lock) => {
-        if (!lock) {
-          resolve(null)
-          return
-        }
-        let released = false
-        resolve(() => {
-          if (released) return
-          released = true
-          releaseHold?.()
-        })
-        await hold
-      }).catch(() => resolve(null))
-    })
+    try {
+      return await new Promise<(() => void) | null>((resolve, reject) => {
+        void lockManager.request(`alma-office-call:${callId}`, { mode: 'exclusive', ifAvailable: true }, async (lock) => {
+          if (!lock) {
+            resolve(null)
+            return
+          }
+          let released = false
+          resolve(() => {
+            if (released) return
+            released = true
+            releaseHold?.()
+          })
+          await hold
+        }).catch(reject)
+      })
+    } catch {
+      // A partially implemented Web Locks API must not disable calling. Fall
+      // through to the bounded storage lease instead.
+    }
   }
 
   const owner = tabId()
