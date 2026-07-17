@@ -39,6 +39,16 @@ enum AlmaNativeRouter {
             return h
         }
 
+        // NP-4 (AU-02): the reset link is the ONE route whose query must survive —
+        // the token rides ?token=… and lives only in view state (never logged).
+        if clean == "/reset-password" {
+            let token = path.split(separator: "?").dropFirst().first.flatMap {
+                URLComponents(string: "https://x/?\($0)")?.queryItems?
+                    .first { $0.name == "token" }?.value
+            }
+            return host(ResetPasswordScreen(token: token, openWeb: openWebForced), "Reset password")
+        }
+
         switch clean {
         // Cases are appended batch-by-batch as pages migrate (S6 marathon).
         case "/", "/dashboard": return host(DashboardScreen(openWeb: openWebForced), "Dashboard")
@@ -96,6 +106,9 @@ enum AlmaNativeRouter {
             return host(StaffMonitorScreen(openWeb: openWebForced, initialTab: .agents), "Live Watch")
         // NP-1 (AG-09): canonical Agent Hub — every Agent surface in one visible menu.
         case "/agent/hub": return host(AgentHubScreen(openWeb: openWebForced), "Agent Hub")
+        // NP-4 (AU-01 / FN-01): native auth recovery + wallet deep link.
+        case "/forgot-password": return host(ForgotPasswordScreen(openWeb: openWebForced), "Password reset")
+        case "/portal/wallet": return host(PortalWalletRouteScreen(openWeb: openWebForced), "ওয়ালেট")
         // Trading business (S7 batch — Trading + Digital go native, 2026-07-10)
         case "/trading": return host(TradingHomeScreen(openWeb: openWebForced), "Trading")
         case "/trading/accounts": return host(TradingAccountsScreen(openWeb: openWebForced), "Trading accounts")

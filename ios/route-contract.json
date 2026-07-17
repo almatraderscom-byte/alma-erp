@@ -287,10 +287,10 @@
     {
       "path": "/forgot-password",
       "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Target: native shell + secure handoff (IOSP-7).",
-      "gapPhase": "IOSP-7"
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "notes": "NP-4 (AU-01): native email submit with anti-enumeration copy (POST /api/auth/forgot-password).",
+      "screen": "ForgotPasswordScreen"
     },
     {
       "path": "/insights",
@@ -403,10 +403,10 @@
     {
       "path": "/portal/wallet",
       "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "IOSP-1 decision: explicit temporary-web exception (AlmaNavCoordinator.temporaryWebRoutes, telemetry route.webAllowed). Wallet mutations are financially sensitive — native build belongs with the IOSP-6/7 finance parity batch, not a routing phase.",
-      "gapPhase": "IOSP-7"
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "notes": "NP-4 (FN-01): resolves the signed-in employee (GET /api/users/me) and shows the existing native WalletStatementScreen.",
+      "screen": "PortalWalletRouteScreen"
     },
     {
       "path": "/privacy-policy",
@@ -417,10 +417,10 @@
     {
       "path": "/reset-password",
       "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Deep-link sensitive; target native reset completion with secure token handling (IOSP-7).",
-      "gapPhase": "IOSP-7"
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "notes": "NP-4 (AU-02): deep-link token route (queryCapableRoutes) — token in view state only, POST /api/auth/reset-password, returns to native login.",
+      "screen": "ResetPasswordScreen"
     },
     {
       "path": "/settings/branding",

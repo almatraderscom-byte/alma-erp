@@ -386,7 +386,7 @@
       "title": "Agent Growth (GSC)",
       "route": "/agent/growth",
       "priority": "P1",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-4",
       "webSource": [
         "src/app/agent/growth/"
@@ -399,31 +399,33 @@
           "id": "AG-10.status",
           "title": "Growth status read",
           "kind": "read",
-          "state": "native"
+          "state": "native",
+          "verify": "OAuth round-trip = owner-hardware check at NP-9 (simulator cannot complete Google consent)"
         },
         {
           "id": "AG-10.connect",
           "title": "Google connect via ASWebAuthenticationSession",
           "kind": "oauth",
-          "state": "missing",
-          "plannedPhase": "NP-4"
+          "state": "native",
+          "verify": "OAuth round-trip = owner-hardware check at NP-9 (simulator cannot complete Google consent)"
         },
         {
           "id": "AG-10.disconnect",
           "title": "Native disconnect + status refresh",
           "kind": "write",
           "api": "DELETE (web growth disconnect endpoint)",
-          "state": "missing",
-          "plannedPhase": "NP-4"
+          "state": "native",
+          "verify": "OAuth round-trip = owner-hardware check at NP-9 (simulator cannot complete Google consent)"
         }
-      ]
+      ],
+      "notes": "NP-4 DONE: connect via ASWebAuthenticationSession (https callback /agent/growth?gsc=…, iOS 17.4+; pre-17.4 falls back to web escape) + native DELETE disconnect with confirm + status refresh."
     },
     {
       "id": "AG-11",
       "title": "Agent Costs / Credit Usage",
       "route": "/agent/costs",
       "priority": "P2",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-4",
       "webSource": [
         "src/app/agent/costs/"
@@ -450,17 +452,18 @@
           "id": "AG-11.csv",
           "title": "CSV export/share + ledger total reconciliation",
           "kind": "export",
-          "state": "missing",
-          "plannedPhase": "NP-4"
+          "state": "native",
+          "verify": "CSV totals reconciliation vs web ledger at NP-9 live session"
         }
-      ]
+      ],
+      "notes": "NP-4 DONE: budget config was already native; CSV now exported natively (GET /api/assistant/costs/export → temp .csv → system share sheet)."
     },
     {
       "id": "AG-12",
       "title": "Creative Studio remainder",
       "route": "/agent/creative-studio",
       "priority": "P2",
-      "state": "partial",
+      "state": "native",
       "plannedPhase": "NP-4",
       "webSource": [
         "src/app/agent/creative-studio/"
@@ -481,18 +484,19 @@
           "id": "AG-12.editor",
           "title": "Drag/resize Lifestyle Editor controls",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-4"
+          "state": "native",
+          "verify": "CSLifestyleEditorSwiftUI.swift: dragStart/CSELayout geometry — full drag/resize implementation pre-existed"
         },
         {
           "id": "AG-12.drive",
           "title": "Drive authorization / tool rows that open whole web Studio",
           "kind": "oauth",
-          "state": "missing",
-          "plannedPhase": "NP-4",
-          "notes": "OAuth may use system auth session"
+          "state": "native",
+          "notes": "OAuth may use system auth session",
+          "verify": "OAuth round-trip = owner-hardware check at NP-9"
         }
-      ]
+      ],
+      "notes": "NP-4: Drive connect/disconnect native via ASWebAuthenticationSession + DELETE drive-status. Lifestyle Editor drag/resize was ALREADY native (CSLifestyleEditorSwiftUI drag geometry verified in code — the audit's own stale-comment caveat applied to its finding)."
     },
     {
       "id": "AG-13",
@@ -500,7 +504,7 @@
       "route": "/agent/creative-studio-demo",
       "priority": "P2",
       "state": "retired",
-      "plannedPhase": "NP-4",
+      "plannedPhase": "NP-8",
       "webSource": [
         "src/app/agent/creative-studio-demo/"
       ],
@@ -511,59 +515,66 @@
           "title": "Remove from production navigation + route contract",
           "kind": "navigation",
           "state": "retired",
-          "plannedPhase": "NP-4"
+          "plannedPhase": "NP-4",
+          "notes": "iOS never routes here (temporary-web, fail-loud). The web page.tsx deletion is DEFERRED TO THE MERGE: this branch must stay ios/docs/scripts-ios-only so Vercel never builds it (owner constraint). Remove src/app/agent/creative-studio-demo/ in the merge commit or a follow-up main PR."
         }
-      ]
+      ],
+      "notes": "iOS never routes here (temporary-web, fail-loud). The web page.tsx deletion is DEFERRED TO THE MERGE: this branch must stay ios/docs/scripts-ios-only so Vercel never builds it (owner constraint). Remove src/app/agent/creative-studio-demo/ in the merge commit or a follow-up main PR."
     },
     {
       "id": "AU-01",
       "title": "Forgot password",
       "route": "/forgot-password",
       "priority": "P1",
-      "state": "missing",
+      "state": "native",
       "plannedPhase": "NP-4",
       "webSource": [
         "src/app/forgot-password/"
       ],
-      "nativeSource": [],
+      "nativeSource": [
+        "ios/App/App/NativeAuthRecoverySwiftUI.swift"
+      ],
       "actions": [
         {
           "id": "AU-01.submit",
           "title": "Native email submit, neutral success, anti-enumeration copy",
           "kind": "write",
           "api": "web forgot-password endpoint (reuse verbatim)",
-          "state": "missing",
-          "plannedPhase": "NP-4"
+          "state": "native"
         }
-      ]
+      ],
+      "notes": "NP-4 DONE: ForgotPasswordScreen — POST /api/auth/forgot-password, neutral anti-enumeration copy, native login link."
     },
     {
       "id": "AU-02",
       "title": "Reset password",
       "route": "/reset-password",
       "priority": "P1",
-      "state": "missing",
+      "state": "native",
       "plannedPhase": "NP-4",
       "webSource": [
         "src/app/reset-password/"
       ],
-      "nativeSource": [],
+      "nativeSource": [
+        "ios/App/App/NativeAuthRecoverySwiftUI.swift"
+      ],
       "actions": [
         {
           "id": "AU-02.deeplink",
           "title": "Universal/custom deep-link token handling (secure, no logging)",
           "kind": "deep-link",
-          "state": "missing",
-          "plannedPhase": "NP-4"
+          "state": "native",
+          "verify": "deep-link fixture at NP-9 (ALMA_NAV_SELFTEST route /reset-password?token=test)"
         },
         {
           "id": "AU-02.submit",
           "title": "Validate expiry, submit new password, clear sensitive state, return to login",
           "kind": "write",
-          "state": "missing",
-          "plannedPhase": "NP-4"
+          "state": "native",
+          "verify": "deep-link fixture at NP-9 (ALMA_NAV_SELFTEST route /reset-password?token=test)"
         }
-      ]
+      ],
+      "notes": "NP-4 DONE: ResetPasswordScreen — queryCapableRoutes carries ?token natively (view-state only, never logged), POST /api/auth/reset-password, clears password, returns to native login."
     },
     {
       "id": "AD-01",
@@ -1100,12 +1111,13 @@
       "title": "Portal wallet deep link",
       "route": "/portal/wallet",
       "priority": "P1",
-      "state": "routing",
+      "state": "native",
       "plannedPhase": "NP-4",
       "webSource": [
         "src/app/portal/wallet/"
       ],
       "nativeSource": [
+        "ios/App/App/NativeAuthRecoverySwiftUI.swift",
         "ios/App/App/WalletStatementSwiftUI.swift"
       ],
       "actions": [
@@ -1113,10 +1125,10 @@
           "id": "FN-01.route",
           "title": "Route contract → native WalletStatementScreen (auto-present via Portal)",
           "kind": "deep-link",
-          "state": "missing",
-          "plannedPhase": "NP-4"
+          "state": "native"
         }
-      ]
+      ],
+      "notes": "NP-4 DONE: PortalWalletRouteScreen resolves the employee (GET /api/users/me) → WalletStatementScreen; route contract native."
     },
     {
       "id": "FN-02",
@@ -1546,8 +1558,8 @@
     "BriefingSwiftUI.swift": 3,
     "BusinessArchiveSwiftUI.swift": 4,
     "CatalogImagesSwiftUI.swift": 1,
-    "CreativeStudioSwiftUI.swift": 2,
-    "CreditUsageSwiftUI.swift": 2,
+    "CreativeStudioSwiftUI.swift": 3,
+    "CreditUsageSwiftUI.swift": 1,
     "CrmSwiftUI.swift": 3,
     "DashboardSwiftUI.swift": 6,
     "DigitalClientsSwiftUI.swift": 3,
@@ -1561,7 +1573,7 @@
     "InventorySwiftUI.swift": 5,
     "InvoicesSwiftUI.swift": 6,
     "KnownPeopleSwiftUI.swift": 1,
-    "NativeLoginSwiftUI.swift": 2,
+    "NativeLoginSwiftUI.swift": 1,
     "OfficeFundSwiftUI.swift": 3,
     "OrderCreateSwiftUI.swift": 1,
     "OrdersSwiftUI.swift": 3,

@@ -254,8 +254,25 @@ final class AgentGrowthVM {
     var features: AgentGrowthFeatureStatus? = nil
     var loading = false            // GSC card (web `loading`)
     var featuresLoading = false    // feature board loads independently (web parity)
+    var disconnecting = false      // NP-4: native disconnect in flight
     var error: String? = nil
     var authExpired = false
+
+    /// NP-4 (AG-10): DELETE /api/assistant/growth/gsc-status (web payload), then
+    /// re-fetch — the refreshed server state is what the card shows.
+    func disconnect() async {
+        guard !disconnecting else { return }
+        disconnecting = true
+        defer { disconnecting = false }
+        struct Resp: Decodable { let ok: Bool? }
+        do {
+            let _: Resp = try await AlmaAPI.shared.send("DELETE", "/api/assistant/growth/gsc-status")
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            self.error = "বিচ্ছিন্ন করা যায়নি: \(error.localizedDescription)"
+        }
+        await load()
+    }
 
     /// Same order as the web: GSC status first, then the slower live-probe board —
     /// the second fetch never holds up the first card.
@@ -307,6 +324,10 @@ final class AgentGrowthVM {
 struct AgentGrowthScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = AgentGrowthVM()
+    // NP-4 (AG-10): native connect (ASWebAuthenticationSession) + disconnect state.
+    @State private var connectBusy = false
+    @State private var connectResult: String? = nil
+    @State private var confirmDisconnect = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -458,14 +479,56 @@ struct AgentGrowthScreen: View {
                         Text("এই account-এ কোনো Search Console property নেই।")
                             .font(.caption2).foregroundStyle(AgentGrowthPalette.amber400)
                     }
+
+                    // NP-4 (AG-10): native disconnect — DELETE gsc-status, then
+                    // refresh; UI shows the server's refreshed state.
+                    Button {
+                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                        confirmDisconnect = true
+                    } label: {
+                        Text(vm.disconnecting ? "বিচ্ছিন্ন হচ্ছে…" : "Google সংযোগ বিচ্ছিন্ন করুন")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AgentGrowthPalette.red500)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background(AgentGrowthPalette.red500.opacity(0.08), in: Capsule())
+                            .overlay(Capsule().strokeBorder(
+                                AgentGrowthPalette.red500.opacity(0.28), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.disconnecting)
+                    .confirmationDialog("Google Search Console বিচ্ছিন্ন করবেন?",
+                                        isPresented: $confirmDisconnect, titleVisibility: .visible) {
+                        Button("বিচ্ছিন্ন করুন", role: .destructive) {
+                            Task { await vm.disconnect() }
+                        }
+                        Button("বাতিল", role: .cancel) {}
+                    } message: {
+                        Text("GSC/GA4/GBP ডেটা ফিচারগুলো বন্ধ হয়ে যাবে — আবার connect করা যাবে।")
+                    }
                 }
             } else {
-                // Connect = Google OAuth redirect — must run in the web view.
+                // NP-4 (AG-10): Google consent runs in ASWebAuthenticationSession
+                // (system handoff EX-04) — never an internal WKWebView. The session
+                // ends back on /agent/growth?gsc=…; we read the status and refresh.
                 Button {
                     UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                    openWeb("/agent/growth", "Growth")
+                    if #available(iOS 17.4, *) {
+                        connectBusy = true
+                        AlmaWebAuthSession.shared.start(
+                            startPath: "/api/assistant/growth/gsc-auth",
+                            callbackPath: "/agent/growth"
+                        ) { items in
+                            connectBusy = false
+                            let status = items?.first { $0.name == "gsc" }?.value
+                            connectResult = status
+                            Task { await vm.load() }
+                        }
+                    } else {
+                        openWeb("/agent/growth", "Growth")   // pre-17.4 fallback
+                    }
                 } label: {
-                    Text("Google Search Console যুক্ত করুন")
+                    Text(connectBusy ? "Google-এ যাচ্ছে…" : "Google Search Console যুক্ত করুন")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AgentGrowthPalette.googleBlue)
                         .frame(maxWidth: .infinity)
@@ -475,6 +538,11 @@ struct AgentGrowthScreen: View {
                             AgentGrowthPalette.googleBlue.opacity(0.30), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .disabled(connectBusy)
+                if let r = connectResult, r != "connected" {
+                    Text("সংযোগ হয়নি (\(r)) — আবার চেষ্টা করুন।")
+                        .font(.caption2).foregroundStyle(AgentGrowthPalette.amber400)
+                }
             }
         } else if !vm.loading {
             Text("স্ট্যাটাস আনা যায়নি — পেজ রিফ্রেশ করুন।")

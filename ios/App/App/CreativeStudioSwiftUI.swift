@@ -2738,6 +2738,10 @@ private struct CSLibraryTab: View {
     @State private var finishedUrl: String?
     @State private var logoPicked: PhotosPickerItem?
     @State private var logoSaving = false
+    // NP-4 (AG-12.drive): native Drive connect state
+    @State private var driveConnected = false
+    @State private var driveEmail: String? = nil
+    @State private var driveBusy = false
 
     private var realModels: [CSModel] { vm.models.filter { !$0.id.hasPrefix("sm-") } }
 
@@ -2765,8 +2769,11 @@ private struct CSLibraryTab: View {
                 CSSectionHeader(title: "আরও", trailing: nil, action: nil).padding(.horizontal, 18)
                 VStack(spacing: 10) {
                     // ড্র্যাগ-এডিটর এখন পুরো নেটিভ — Gallery-তে যেকোনো ছবির "এডিটর" বাটনে।
-                    toolRow("☁️ Google Drive", "ছবি/ভিডিও অটো-ব্যাকআপ (ওয়েবে connect)", "arrow.up.doc")
+                    // NP-4 (AG-12.drive): Drive connect runs in ASWebAuthenticationSession
+                    // (system handoff) — the whole web Studio no longer opens for it.
+                    driveRow
                 }.padding(.horizontal, 18)
+                .task { await loadDriveStatus() }
                 Color.clear.frame(height: 110)
             }
         }
@@ -3000,6 +3007,79 @@ private struct CSLibraryTab: View {
             }
         }
         .padding(14).csGlass(scheme, corner: 18)
+    }
+
+    // ── NP-4 (AG-12.drive): native Google Drive connect/disconnect ──
+
+    @ViewBuilder private var driveRow: some View {
+        let pal = AgentPalette(scheme)
+        VStack(spacing: 8) {
+            HStack(spacing: 13) {
+                Image(systemName: "arrow.up.doc").font(.system(size: 17))
+                    .foregroundStyle(AgentPalette.coralLt).frame(width: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("☁️ Google Drive").font(.system(size: 14.5, weight: .bold)).foregroundStyle(pal.ink)
+                    Text(driveConnected
+                         ? "যুক্ত ✓\(driveEmail.map { " · \($0)" } ?? "") — ছবি/ভিডিও অটো-ব্যাকআপ চালু"
+                         : "ছবি/ভিডিও অটো-ব্যাকআপ — connect করুন")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(driveConnected ? AgentPalette.teal : pal.muted)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if driveBusy {
+                    ProgressView().controlSize(.small)
+                } else if driveConnected {
+                    Button {
+                        CSHaptic.tap()
+                        Task { await driveDisconnect() }
+                    } label: {
+                        Text("বিচ্ছিন্ন").font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color(red: 0.937, green: 0.267, blue: 0.267))
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Color(red: 0.937, green: 0.267, blue: 0.267).opacity(0.10), in: Capsule())
+                    }.buttonStyle(.plain)
+                } else {
+                    Button {
+                        CSHaptic.tap()
+                        driveConnect()
+                    } label: {
+                        Text("Connect").font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(AgentPalette.coralLt)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(AgentPalette.coral.opacity(0.12), in: Capsule())
+                    }.buttonStyle(.plain)
+                }
+            }.padding(14).csGlass(scheme, corner: AlmaSwiftTheme.rCard)
+        }
+    }
+
+    private func loadDriveStatus() async {
+        struct Resp: Decodable { let connected: Bool?; let email: String? }
+        if let r: Resp = try? await AlmaAPI.shared.get("/api/assistant/creative-studio/drive-status") {
+            driveConnected = r.connected == true
+            driveEmail = r.email
+        }
+    }
+
+    private func driveConnect() {
+        guard #available(iOS 17.4, *) else { openWeb(CS_WEB_PATH, "Creative Studio"); return }
+        driveBusy = true
+        AlmaWebAuthSession.shared.start(
+            startPath: "/api/assistant/creative-studio/drive-auth",
+            callbackPath: "/agent"
+        ) { _ in
+            driveBusy = false
+            Task { await loadDriveStatus() }
+        }
+    }
+
+    private func driveDisconnect() async {
+        driveBusy = true
+        defer { driveBusy = false }
+        struct Resp: Decodable { let ok: Bool? }
+        let _: Resp? = try? await AlmaAPI.shared.send("DELETE", "/api/assistant/creative-studio/drive-status")
+        await loadDriveStatus()
     }
 
     private func toolRow(_ title: String, _ sub: String, _ icon: String) -> some View {

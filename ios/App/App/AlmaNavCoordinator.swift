@@ -38,11 +38,15 @@ enum AlmaNavCoordinator {
     /// temporary-web: owner-approved embedded-web debt, each with a decision phase.
     /// Expiry reviews happen in the phase noted in route-contract.json.
     static let temporaryWebRoutes: Set<String> = [
-        // NP-1: /agent/live-watch went NATIVE (Monitor → Agents tab, AG-08).
-        "/portal/wallet",             // NP-4: route to native WalletStatementScreen (FN-01)
-        "/forgot-password",           // NP-4: native forgot-password form (AU-01)
-        "/reset-password",            // NP-4: native reset completion (AU-02)
-        "/agent/creative-studio-demo" // NP-4: retire from production (AG-13)
+        // NP-1: /agent/live-watch NATIVE (Monitor → Agents tab, AG-08).
+        // NP-4: /portal/wallet, /forgot-password, /reset-password NATIVE.
+        "/agent/creative-studio-demo" // NP-8: retire (web-page removal rides the merge — this branch must not trigger Vercel builds)
+    ]
+
+    /// NP-4 (AU-02): typed QUERY routes — these native screens accept their query
+    /// string (reset token), so a query no longer forces the web page for them.
+    static let queryCapableRoutes: Set<String> = [
+        "/reset-password"
     ]
 
     /// public-web-allowed: public informational/share pages — web is correct.
@@ -86,6 +90,11 @@ enum AlmaNavCoordinator {
         // /employees/{id} already do), the query keeps its web page — but as an
         // EXPLICIT, telemetry-logged decision, not a silent fallthrough.
         if hasQuery {
+            // NP-4: typed query routes go native WITH their query (reset token).
+            if queryCapableRoutes.contains(bare),
+               let native = AlmaNativeRouter.screen(for: path, openWebForced: openWebForced) {
+                return .native(native)
+            }
             if AlmaNativeRouter.screen(for: bare, openWebForced: { _, _ in }) != nil
                 || tabRootIndex[bare] != nil {
                 return .web(reason: "query-context")

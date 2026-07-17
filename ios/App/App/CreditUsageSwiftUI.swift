@@ -609,6 +609,7 @@ struct CreditUsageScreen: View {
     @State private var editingBudget = false
     @State private var budgetDailyDraft = ""
     @State private var budgetMonthlyDraft = ""
+    @State private var csvExporting = false   // NP-4 (AG-11) native CSV export
     let openWeb: (_ path: String, _ title: String) -> Void
 
     /// Live mode: ~10s auto-refresh of the first log page while ON (green dot pulses).
@@ -1261,11 +1262,40 @@ struct CreditUsageScreen: View {
     private var loadingRows: some View {
         ForEach(0..<3, id: \.self) { _ in Color.clear.frame(height: 120).cuSolid(scheme, corner: 18).cuShimmer() }
     }
+    // NP-4 (AG-11): native CSV export — the web page's GET /api/assistant/costs/export
+    // fetched raw, written to a temp .csv and handed to the system share sheet.
+    // Budget config went native 2026-07-11, so no web escape remains on this page.
     private var webEscape: some View {
-        Button { openWeb("/agent/costs", "Costs") } label: {
-            Label("বাজেট কনফিগ / CSV — ওয়েবে খুলুন", systemImage: "safari").font(.footnote).frame(maxWidth: .infinity).padding(.vertical, 12)
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            Task { await exportCSV() }
+        } label: {
+            Label(csvExporting ? "CSV তৈরি হচ্ছে…" : "CSV এক্সপোর্ট / শেয়ার",
+                  systemImage: "square.and.arrow.up")
+                .font(.footnote).frame(maxWidth: .infinity).padding(.vertical, 12)
         }
         .buttonStyle(CUPress()).foregroundStyle(.secondary).cuGlass(scheme, corner: 14).padding(.top, 2)
+        .disabled(csvExporting)
+    }
+
+    @MainActor private func exportCSV() async {
+        guard !csvExporting else { return }
+        csvExporting = true
+        defer { csvExporting = false }
+        do {
+            let data = try await AlmaAPI.shared.getRaw("/api/assistant/costs/export")
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("alma-ai-costs-export.csv")
+            try data.write(to: url, options: .atomic)
+            let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            var top = UIApplication.shared.connectedScenes
+                .compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.rootViewController
+            while let presented = top?.presentedViewController { top = presented }
+            top?.present(av, animated: true)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+        }
     }
 }
 
