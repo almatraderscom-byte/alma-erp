@@ -283,6 +283,32 @@ extension LiveActivityBridgePlugin {
         alert: AlertConfiguration?,
         call: CAPPluginCall
     ) {
+        let outcome = applyCore(state: state, title: title, alert: alert)
+        switch outcome {
+        case .updated:
+            call.resolve(["started": true, "updated": true, "alerted": alert != nil])
+        case .started:
+            call.resolve(["started": true, "updated": false])
+        case .failed(let message):
+            call.resolve(["started": false, "reason": "request_failed", "error": message])
+        }
+    }
+
+    enum ApplyOutcome {
+        case updated
+        case started
+        case failed(String)
+    }
+
+    /// Call-free core so the NATIVE sync path (PulseNativeSync — the fix for
+    /// the webview-401 outage 2026-07-17) drives the exact same pipeline as a
+    /// webview update. One implementation, two entry points.
+    @discardableResult
+    static func applyCore(
+        state: PulseActivityAttributes.ContentState,
+        title: String,
+        alert: AlertConfiguration?
+    ) -> ApplyOutcome {
         let staleDate = state.staleAfterDate
 
         if let activity = Activity<PulseActivityAttributes>.activities.first {
@@ -299,8 +325,7 @@ extension LiveActivityBridgePlugin {
                 }
             }
             Self.breadcrumb("updated")
-            call.resolve(["started": true, "updated": true, "alerted": alert != nil])
-            return
+            return .updated
         }
 
         let attributes = PulseActivityAttributes(title: title)
@@ -321,14 +346,10 @@ extension LiveActivityBridgePlugin {
             }
             observePushToken(of: activity)
             Self.breadcrumb("started")
-            call.resolve(["started": true, "updated": false])
+            return .started
         } catch {
             Self.breadcrumb("request_failed: \(error.localizedDescription)")
-            call.resolve([
-                "started": false,
-                "reason": "request_failed",
-                "error": error.localizedDescription
-            ])
+            return .failed(error.localizedDescription)
         }
     }
 

@@ -980,6 +980,11 @@ final class AssistantVM {
     var conversationTitle: String = "ALMA AI"
     var messages: [AgentChatMessage] = []
     var loadingHistory = false
+    // Awakening animation bridge (spec): bumped when a DIFFERENT conversation is
+    // opened from the drawer so the screen replays the session-opening character;
+    // readyTick fires once its history has loaded (success is gated on this).
+    private(set) var restoreTick = 0
+    private(set) var restoreReadyTick = 0
 
     // Streaming state
     var isStreaming = false
@@ -1969,6 +1974,7 @@ final class AssistantVM {
 
     func openConversation(_ id: String) async {
         guard id != conversationId else { return }
+        restoreTick += 1     // screen replays the session-opening awakening
         stopStreaming(cancelServer: false)
         conversationId = id
         modelId = conversations.first { $0.id == id }?.modelId   // pinned model follows the chat
@@ -1980,6 +1986,7 @@ final class AssistantVM {
         openTasks = []
         artifacts = []
         await loadMessages(showSpinner: true)
+        restoreReadyTick += 1   // history loaded → awakening may resolve to success
         await loadArtifacts()
         let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/active-conversation",
                                                             body: ["conversationId": id])
@@ -2909,7 +2916,7 @@ final class AssistantVM {
         var rows: [AgentChatMessage] = []
         for i in 0..<38 {
             if i % 2 == 0 {
-                var u = AgentChatMessage(id: "fix-u-\(i)", role: .user,
+                let u = AgentChatMessage(id: "fix-u-\(i)", role: .user,
                                          text: i % 4 == 0 ? "আজকের sales koto holo? আর কালকের plan টা দাও" : bnShort)
                 rows.append(u)
             } else {
@@ -3315,7 +3322,7 @@ final class AssistantVM {
             var final = results
             final.append("\(ok ? "✅" : "❌") buffer coalesce+order")
             let passed = final.allSatisfy { $0.hasPrefix("✅") }
-            var m = AgentChatMessage(id: "unittest-\(UUID().uuidString)", role: .assistant,
+            let m = AgentChatMessage(id: "unittest-\(UUID().uuidString)", role: .assistant,
                                      text: (passed ? "প্রোটোকল ইউনিট টেস্ট: সব পাশ ✅" : "প্রোটোকল ইউনিট টেস্ট: FAIL ❌")
                                         + "\n\n" + final.joined(separator: "\n"))
             self.messages.append(m)
@@ -3501,7 +3508,7 @@ final class AssistantVM {
 
     func attachImage(_ image: UIImage) {
         guard let jpeg = image.jpegData(compressionQuality: 0.85) else { return }
-        var file = PendingFile(image: image)
+        let file = PendingFile(image: image)
         pendingFiles.append(file)
         let fileId = file.id
         Task { [weak self] in
@@ -4651,6 +4658,7 @@ struct AgentThoughtProcessSheet: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(pal.muted)
+                        .accessibilityLabel("বন্ধ করুন")
                         .frame(width: 32, height: 32)
                         .background(Color.white.opacity(0.06), in: Circle())
                 }
@@ -5286,12 +5294,15 @@ struct AgentMessageActions: View {
 @available(iOS 17.0, *)
 struct AgentPlayingBars: View {
     @State private var up = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion // IOSP-5
     var body: some View {
         HStack(spacing: 2.5) {
             Capsule().fill(AgentPalette.coral).frame(width: 3, height: up ? 13 : 6)
             Capsule().fill(AgentPalette.coral).frame(width: 3, height: up ? 6 : 13)
         }
         .onAppear {
+            // IOSP-5: Reduce Motion → hold the equalizer still (no perpetual loop).
+            guard !reduceMotion else { return }
             withAnimation(.easeInOut(duration: 0.35).repeatForever(autoreverses: true)) { up = true }
         }
     }
@@ -5600,6 +5611,7 @@ struct AgentAskCardView: View {
                         if let idx = pageIndex, pageCount > 1 {
                             Button { onPrev?() } label: {
                                 Image(systemName: "chevron.left")
+                                    .accessibilityLabel("আগের পাতা")
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(idx > 0 ? pal.ink : pal.muted.opacity(0.35))
                                     .frame(width: 28, height: 28)
@@ -5610,6 +5622,7 @@ struct AgentAskCardView: View {
                                 .foregroundStyle(pal.muted)
                             Button { onNext?() } label: {
                                 Image(systemName: "chevron.right")
+                                    .accessibilityLabel("পরের পাতা")
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(idx < pageCount - 1 ? pal.ink : pal.muted.opacity(0.35))
                                     .frame(width: 28, height: 28)
@@ -5623,6 +5636,7 @@ struct AgentAskCardView: View {
                                 onClose()
                             } label: {
                                 Image(systemName: "xmark")
+                                    .accessibilityLabel("কার্ড বন্ধ করুন")
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(pal.muted)
                                     .frame(width: 28, height: 28)
@@ -6346,6 +6360,7 @@ struct AgentComposerView: View {
                             }
                         Button { vm.removePendingFile(f.id) } label: {
                             Image(systemName: "xmark")
+                                .accessibilityLabel("ফাইল সরান")
                                 .font(.system(size: 8, weight: .bold))
                                 .foregroundStyle(.white)
                                 .frame(width: 18, height: 18)
@@ -6773,6 +6788,7 @@ struct AgentSideDrawer: View {
                 if !search.isEmpty {
                     Button { search = "" } label: {
                         Image(systemName: "xmark.circle.fill")
+                            .accessibilityLabel("সার্চ মুছুন")
                             .font(.system(size: 13)).foregroundStyle(pal.muted.opacity(0.7))
                     }
                 }
@@ -7201,6 +7217,7 @@ struct AgentEmptyStateView: View {
 /// (Owner rule 2026-07-07: every approval ask = 3 buttons, never 2 — everywhere.)
 @available(iOS 17.0, *)
 struct AgentOpenTasksChipView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion // IOSP-5
     @Bindable var vm: AssistantVM
     let pal: AgentPalette
     @State private var showSheet = false
@@ -7221,6 +7238,7 @@ struct AgentOpenTasksChipView: View {
                     Circle().fill(AgentPalette.coral).frame(width: 7, height: 7)
                 }
                 .onAppear {
+                    guard !reduceMotion else { return } // IOSP-5: no perpetual ping under Reduce Motion
                     withAnimation(.easeOut(duration: 1.1).repeatForever(autoreverses: false)) { ping = true }
                 }
                 Text("\(almaBn(vm.openTasks.count))টা কাজ বাকি")
@@ -7260,6 +7278,7 @@ struct AgentPendingTasksSheet: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(pal.muted)
+                        .accessibilityLabel("বন্ধ করুন")
                         .frame(width: 32, height: 32)
                         .background(Color.white.opacity(0.08), in: Circle())
                 }
@@ -8615,6 +8634,7 @@ private struct AgentBackgroundTaskDetailSheet: View {
 /// only while a plan exists — this is a chat surface, not a page.
 @available(iOS 17.0, *)
 private struct AgentPlanDriveCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion // IOSP-5
     @Bindable var vm: AssistantVM
     let pal: AgentPalette
     @State private var expanded: Set<String> = []
@@ -8672,6 +8692,7 @@ private struct AgentPlanDriveCard: View {
                     .frame(width: 7, height: 7)
             }
             .onAppear {
+                guard !reduceMotion else { return } // IOSP-5: no perpetual ping under Reduce Motion
                 withAnimation(.easeOut(duration: 1.2).repeatForever(autoreverses: false)) { ping = true }
             }
             Text("এজেন্ট লাইভ ডেস্ক")
@@ -9082,6 +9103,7 @@ struct AssistantScreen: View {
     @State private var vm = AssistantVM()
     @Namespace private var backgroundTaskNamespace
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion // IOSP-5
     @State private var nearBottom = true
     /// Own-send anchors the user's message to the viewport top; tail-follow
     /// handlers stand down until this instant so they don't yank to the bottom
@@ -9099,6 +9121,10 @@ struct AssistantScreen: View {
     @State private var debugViewer: PortalImagePreview?
     @State private var showBackgroundTasks = false
     @State private var backgroundTaskDetent: PresentationDetent = .medium
+    // Agent animations (spec ALMA_NATIVE_IOS_AGENT_ANIMATIONS_SPEC.md): session-
+    // opening awakening overlay + hidden pull-to-refresh. Pure additive layers.
+    @State private var awakening = AgentAwakeningModel()
+    @State private var agentPull = AgentPullState()
 
     let openWeb: (_ path: String, _ title: String) -> Void
     /// Wired by makeAssistantTab so the native bar buttons drive this screen.
@@ -9214,6 +9240,12 @@ struct AssistantScreen: View {
                                 onToolTap: { tool in toolSheet = tool },
                                 onActivitySheet: { activitySheet = $0 })
                             .modifier(AgentRowDebugOverlay(message: msg))
+                            // IOSP-5: Reduce Motion → new rows appear without the
+                            // slide/offset (a plain fade), calmer for motion-sensitive users.
+                            .transition(reduceMotion
+                                ? .opacity
+                                : .asymmetric(insertion: .opacity.combined(with: .offset(y: 12)),
+                                              removal: .opacity))
                         }
                         // A brand-new chat intentionally has no reply footer.
                         // ALMA identity + Background Tasks belong to a settled
@@ -9223,8 +9255,18 @@ struct AssistantScreen: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 10)
                     .background(scrollOffsetReader)
+                    // IOSP-5: no spring on message-count change under Reduce Motion.
+                    .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.8), value: vm.messages.count)
                 }
                 .coordinateSpace(name: "agentscroll")
+                // Hidden pull-to-refresh (spec §3): exactly 0pt at idle, revealed
+                // only by top-edge overscroll; release above threshold reloads the
+                // REAL conversation once. Off while the awakening overlay owns the
+                // screen. iOS 18+ scroll APIs; on 17 the modifier is inert.
+                .modifier(AgentPullToRefreshModifier(
+                    state: agentPull,
+                    isEnabled: !awakening.isActive,
+                    refresh: { @MainActor in await vm.loadMessages() }))
                 // Owner 2026-07-07: tap on any empty spot dismisses the keyboard
                 // (buttons/rows inside still win their own taps).
                 .onTapGesture {
@@ -9349,6 +9391,17 @@ struct AssistantScreen: View {
             }
         }
         .claudeTopFade()
+        // Pull stage ABOVE the top fade (under it, the fade's blur washes it out).
+        .overlay(alignment: .top) { AgentPullStage(state: agentPull) }
+        // Session-opening awakening (spec §2): centered in the content area only —
+        // the ZStack's frame already excludes the composer inset below and the
+        // native header above, so neither is ever covered.
+        .overlay { AgentAwakeningOverlay(model: awakening) }
+        // Opening a DIFFERENT existing conversation from the drawer replays the
+        // awakening (owner 2026-07-17: not only on app launch). Success stays
+        // gated on the real history load (restoreReadyTick).
+        .onChange(of: vm.restoreTick) { _, _ in awakening.restart(sessionNeedsRestore: true) }
+        .onChange(of: vm.restoreReadyTick) { _, _ in awakening.markReady(hasContent: !vm.messages.isEmpty) }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             AgentComposerView(vm: vm, openWeb: openWeb)
@@ -9431,7 +9484,54 @@ struct AssistantScreen: View {
                 vm.runDebugUnitTests()
                 return
             }
+            #if DEBUG
+            // Animation logic selftest (pull math / hysteresis / reducer gating).
+            AgentAnimSelfTest.runIfRequested()
+            // ALMA_ANIM_DEMO=1 — hold readiness ~9s so every awakening phase can
+            // be screenshotted headlessly, then hand over to the real session.
+            if argFlag("ALMA_ANIM_DEMO") {
+                awakening.begin(sessionNeedsRestore: true)
+                await vm.bootstrap()
+                try? await Task.sleep(nanoseconds: 9_000_000_000)
+                awakening.markReady(hasContent: true)
+                return
+            }
+            // ALMA_ANIM_OPENDEMO=1 — headless proof of the drawer path: after
+            // bootstrap, open a DIFFERENT existing conversation via the SAME
+            // vm.openConversation the drawer row calls → the awakening must
+            // replay over it (owner feedback 2026-07-17).
+            if argFlag("ALMA_ANIM_OPENDEMO") {
+                await vm.bootstrap()
+                await vm.loadConversations()   // the drawer loads this list on open
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                if let other = vm.conversations.first(where: { $0.id != vm.conversationId })
+                    ?? vm.conversations.first {
+                    await vm.openConversation(other.id)
+                }
+                return
+            }
+            // ALMA_ANIM_PULLDEMO=1 — drive the REAL pull state machine headlessly
+            // (scrub ramp → armed → release → real loadMessages → celebrate) so the
+            // stage can be screenshotted without a finger. Gesture wiring itself is
+            // owner-verified by a live drag in the sim.
+            if argFlag("ALMA_ANIM_PULLDEMO") {
+                await vm.bootstrap()
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                for step in stride(from: CGFloat(0), through: 195, by: 6.5) {
+                    agentPull.dragChanged(rawPull: step)
+                    try? await Task.sleep(nanoseconds: 90_000_000)
+                }
+                try? await Task.sleep(nanoseconds: 2_200_000_000)   // armed hold
+                agentPull.dragEnded { @MainActor in await vm.loadMessages() }
+                return
+            }
+            #endif
+            // Awakening overlay: only when an existing session must restore (the
+            // message list is still empty at first appear). Success is gated on
+            // the REAL bootstrap finishing below.
+            awakening.begin(sessionNeedsRestore: vm.messages.isEmpty)
             await vm.bootstrap()
+            awakening.markReady(hasContent: !vm.messages.isEmpty)
         }
         .fullScreenCover(isPresented: $vm.showSidebar) {
             AgentSideDrawer(vm: vm, openWeb: openWeb)
@@ -9647,28 +9747,22 @@ extension AlmaTabBarController {
         }
         if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *) {
             let navRef = WeakRef<UINavigationController>()
-            let pool = contentPool
             let hooks = AssistantBarHooks()
+            // IOSP-1: the Assistant screen's link-outs go through the same smartOpen
+            // as every other tab root — its auth card's openWeb("/login") now lands
+            // on the NATIVE login screen (owner decision 2026-07-11) instead of the
+            // web login this closure used to force.
             let screen = AssistantScreen(
-                openWeb: { [weak self] path, title in
-                    guard let self else { return }
-                    let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!,
-                                                      processPool: pool,
-                                                      tabTitle: title, systemImage: "sparkles",
-                                                      hideWebHeader: true)
-                    vc.hidesBottomBarWhenPushed = false
-                    navRef.value?.pushViewController(vc, animated: true)
-                    _ = self // keep the capture list shape consistent with SwiftUIShell
-                },
+                openWeb: smartOpen(origin: "/agent", navRef: navRef, icon: "sparkles"),
                 barHooks: hooks)
             let host = AlmaHostingController(rootView: screen)
             host.title = "ALMA AI"
             // The exact Claude bar the web Assistant had: glass hamburger + coral compose.
             host.navigationItem.leftBarButtonItem = AlmaWebTabViewController.glassBarButton(
-                icon: "line.3.horizontal", target: hooks, action: #selector(AssistantBarHooks.menuTapped),
+                icon: "line.3.horizontal", label: "চ্যাট হিস্টরি", target: hooks, action: #selector(AssistantBarHooks.menuTapped),
                 light: !AlmaTheme.isDark)
             host.navigationItem.rightBarButtonItem = AlmaWebTabViewController.coralBarButton(
-                icon: "plus", target: hooks, action: #selector(AssistantBarHooks.newChatTapped))
+                icon: "plus", label: "নতুন চ্যাট", target: hooks, action: #selector(AssistantBarHooks.newChatTapped))
             objc_setAssociatedObject(host, &assistantBarHooksKey, hooks, .OBJC_ASSOCIATION_RETAIN)
             let nav = Self.darkNav(root: host, tabTitle: "Assistant", icon: "sparkles", largeTitles: false)
             navRef.value = nav
@@ -9676,37 +9770,14 @@ extension AlmaTabBarController {
             // The AssistiveTouch-style floating sub-page nav the web Assistant tab had
             // (owner: it must survive the native migration) — the proven UIKit
             // AgentAssistiveNav, overlaid on the hosting view. "Chat" returns to the
-            // native chat (pops any pushed web screen); the rest push web sub-pages.
-            func webPushItem(_ title: String, _ path: String) -> AgentAssistiveNav.Item {
-                AgentAssistiveNav.Item(title: title, icon: Self.assistantSectionIcon(title)) {
-                    let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!,
-                                                      processPool: pool,
-                                                      tabTitle: title, systemImage: "sparkles",
-                                                      hideWebHeader: true)
-                    vc.hidesBottomBarWhenPushed = false
-                    navRef.value?.pushViewController(vc, animated: true)
-                }
-            }
-            // Prefer the NATIVE screen (AlmaNativeRouter) when SwiftUI screens are on;
-            // fall back to the web tab exactly like webPushItem otherwise. Without this the
-            // assistive "Studio" tab always opened the web page even though the native
-            // Creative Studio ships in the build (owner report, build 62).
+            // native chat (pops any pushed web screen).
+            // IOSP-1: assistive-nav pushes route through the SAME coordinator as every
+            // other link (pushSmart → AlmaNavCoordinator) — native when migrated,
+            // allowlisted web with telemetry otherwise. Replaces this file's private
+            // router-consult copy so there is exactly one navigation decision point.
             func nativePushItem(_ title: String, _ path: String) -> AgentAssistiveNav.Item {
-                AgentAssistiveNav.Item(title: title, icon: Self.assistantSectionIcon(title)) {
-                    let pushWeb: (_ p: String, _ t: String) -> Void = { p, t in
-                        let vc = AlmaWebTabViewController(url: URL(string: Self.base + p)!,
-                                                          processPool: pool, tabTitle: t,
-                                                          systemImage: "sparkles", hideWebHeader: true)
-                        vc.hidesBottomBarWhenPushed = false
-                        navRef.value?.pushViewController(vc, animated: true)
-                    }
-                    if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *),
-                       let native = AlmaNativeRouter.screen(for: path, openWebForced: pushWeb) {
-                        native.hidesBottomBarWhenPushed = false
-                        navRef.value?.pushViewController(native, animated: true)
-                    } else {
-                        pushWeb(path, title)
-                    }
+                AgentAssistiveNav.Item(title: title, icon: Self.assistantSectionIcon(title)) { [weak self] in
+                    self?.pushSmart(on: navRef.value, path: path, title: title, icon: "sparkles")
                 }
             }
             let assistive = AgentAssistiveNav(items: [
@@ -9730,7 +9801,7 @@ extension AlmaTabBarController {
         // Web fallback — the pre-S6b Assistant tab, unchanged.
         func agentURL(_ p: String) -> URL { URL(string: Self.base + p)! }
         let assistant = AlmaWebTabViewController(
-            url: agentURL("/agent"), processPool: contentPool,
+            url: agentURL("/agent"),
             tabTitle: "Assistant", systemImage: "sparkles",
             hideWebHeader: true,
             agentSegments: [

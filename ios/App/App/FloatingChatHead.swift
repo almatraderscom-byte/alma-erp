@@ -49,13 +49,11 @@ final class FloatingChatHead {
     /// Create the overlay window + head. Safe to call more than once (no-op after first).
     func install() {
         guard overlay == nil else { return }
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive }) ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
-        else { return }
+        // IOSP-2: shared scene lookup + z-order via AlmaOverlayCoordinator.
+        guard let scene = AlmaOverlayCoordinator.shared.foregroundScene() else { return }
 
         let w = PassthroughWindow(windowScene: scene)
-        w.windowLevel = .normal + 1          // above the app, below system alerts
+        w.windowLevel = AlmaOverlayCoordinator.Level.chatHead
         w.backgroundColor = .clear
         let root = UIViewController()
         root.view.backgroundColor = .clear
@@ -72,7 +70,41 @@ final class FloatingChatHead {
 
         overlay = w
         DispatchQueue.main.async { [weak self] in self?.placeInitial() }
+        // IOSP-2: when the keyboard rises (or the tab-bar exclusion changes), lift
+        // the head above it so it never sits under the keyboard/composer.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(exclusionChanged),
+            name: AlmaOverlayCoordinator.keyboardDidChange, object: nil)
         startCallWatch()
+    }
+
+    #if DEBUG
+    /// IOSP-2 test hook: park the head at the bottom exclusion edge so a subsequent
+    /// keyboard-raise visibly lifts it (proves the exclusion actually moves it).
+    func debugParkAtBottomEdge() {
+        guard let w = overlay, let b = button else { return }
+        let maxY = AlmaOverlayCoordinator.shared.maxCenterY(inWindow: w, overlayHeight: size)
+        b.center = CGPoint(x: b.center.x, y: maxY)
+        AlmaPerfLog.event("chatHead.parked", "y=\(Int(maxY)) winH=\(Int(w.bounds.height)) kb=\(Int(AlmaOverlayCoordinator.shared.keyboardHeight))")
+    }
+    #endif
+
+    /// Re-clamp the head into the current exclusion zone (keyboard/tab bar).
+    @objc private func exclusionChanged() {
+        guard let w = overlay, let b = button else { return }
+        let minY = w.safeAreaInsets.top + size / 2 + 44
+        let maxY = AlmaOverlayCoordinator.shared.maxCenterY(inWindow: w, overlayHeight: size)
+        let y = min(max(b.center.y, minY), max(minY, maxY))
+        #if DEBUG
+        AlmaPerfLog.event("chatHead.exclusion", "from=\(Int(b.center.y)) to=\(Int(y)) maxY=\(Int(maxY)) kb=\(Int(AlmaOverlayCoordinator.shared.keyboardHeight))")
+        #endif
+        guard abs(y - b.center.y) > 0.5 else { return }
+        let animate = !AlmaOverlayCoordinator.shared.reduceMotion
+        UIView.animate(withDuration: animate ? 0.26 : 0, delay: 0,
+                       usingSpringWithDamping: 0.8, initialSpringVelocity: 0.4,
+                       options: [.allowUserInteraction]) {
+            b.center = CGPoint(x: b.center.x, y: y)
+        }
     }
 
     // ── App-wide incoming-call ring ───────────────────────────────────────────
@@ -80,10 +112,36 @@ final class FloatingChatHead {
     // incoming call (native, loud) wherever they are — not only on the intercom tab.
 
     private func startCallWatch() {
+        // IOSP-4: the 3s intercom poll is scene-aware. Foregrounded it keeps 3s so a
+        // staff call rings promptly (owner's WhatsApp-style requirement); when the
+        // app is backgrounded there is no UI to ring and PushKit/CallKit VoIP
+        // (CallKitVoIP.start()) already delivers background calls — so the timer is
+        // SUSPENDED in the background and resumed on foreground. This removes the
+        // app-wide 3s polling whenever the related UI can't be active. (Full
+        // push-only replacement foreground is a server-realtime change tracked for
+        // a later phase — see the IOSP-4 report's evidence-backed exception.)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(resumeCallWatch),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(suspendCallWatch),
+            name: UIApplication.didEnterBackgroundNotification, object: nil)
+        resumeCallWatch()
+    }
+
+    @objc private func resumeCallWatch() {
         guard callWatch == nil else { return }
+        AlmaPerfLog.event("callWatch.resume")
         callWatch = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.pollIncoming() }
         }
+    }
+
+    @objc private func suspendCallWatch() {
+        guard callWatch != nil else { return }
+        AlmaPerfLog.event("callWatch.suspend")
+        callWatch?.invalidate()
+        callWatch = nil
     }
 
     @MainActor private func pollIncoming() async {
@@ -110,8 +168,10 @@ final class FloatingChatHead {
         let inset = w.safeAreaInsets
         let savedY = CGFloat(UserDefaults.standard.double(forKey: posKey))
         let minY = inset.top + size / 2 + 44
-        let maxY = w.bounds.height - inset.bottom - size / 2 - 70
-        let y = savedY > 0 ? min(max(savedY, minY), maxY) : w.bounds.height * 0.60
+        // IOSP-2: bottom clamp is now the shared tab-bar/keyboard exclusion, not a
+        // magic -70. Keeps the head off the tab bar and above any live keyboard.
+        let maxY = AlmaOverlayCoordinator.shared.maxCenterY(inWindow: w, overlayHeight: size)
+        let y = savedY > 0 ? min(max(savedY, minY), max(minY, maxY)) : w.bounds.height * 0.60
         b.center = CGPoint(x: w.bounds.width - margin - size / 2, y: y)
     }
 
@@ -121,9 +181,10 @@ final class FloatingChatHead {
         onRight = center.x >= w.bounds.width / 2
         let x = onRight ? w.bounds.width - margin - size / 2 : margin + size / 2
         let minY = inset.top + size / 2 + 44
-        let maxY = w.bounds.height - inset.bottom - size / 2 - 70
-        let y = min(max(center.y, minY), maxY)
-        UIView.animate(withDuration: 0.38, delay: 0, usingSpringWithDamping: 0.62,
+        let maxY = AlmaOverlayCoordinator.shared.maxCenterY(inWindow: w, overlayHeight: size)
+        let y = min(max(center.y, minY), max(minY, maxY))
+        let animate = !AlmaOverlayCoordinator.shared.reduceMotion
+        UIView.animate(withDuration: animate ? 0.38 : 0, delay: 0, usingSpringWithDamping: 0.62,
                        initialSpringVelocity: 0.6, options: [.allowUserInteraction]) {
             b.center = CGPoint(x: x, y: y)
         }

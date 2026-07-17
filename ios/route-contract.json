@@ -1,0 +1,519 @@
+{
+  "$schema": "./route-contract.schema.json",
+  "version": 1,
+  "generatedFor": "IOSP-6 core ERP native parity audit (branch agent-phase-23; baseline agent-phase-16)",
+  "generatedDate": "2026-07-16",
+  "classifications": {
+    "native-required": "Internal ALMA workflow; embedded-web fallback is a test failure once its phase ships.",
+    "system-handoff": "OAuth / phone / mail / files / share sheet / external browser.",
+    "public-web-allowed": "Public informational or share page; web is the correct surface.",
+    "temporary-web": "Owner-approved web debt with an expiry/decision phase."
+  },
+  "nativeHandlerValues": {
+    "native": "AlmaNativeRouter (or root tab) returns a SwiftUI screen for this path today.",
+    "web": "Path currently opens WKWebView.",
+    "tab": "Reachable natively only as a root tab; the exact router has no case (deep-link gap)."
+  },
+  "routes": [
+    {
+      "path": "/",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "DashboardScreen"
+    },
+    {
+      "path": "/dashboard",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "DashboardScreen",
+      "notes": "iOS alias; no web page.tsx"
+    },
+    {
+      "path": "/login",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "NativeLoginScreen"
+    },
+    {
+      "path": "/activity",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "ActivityScreen"
+    },
+    {
+      "path": "/agent",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "tab",
+      "notes": "Resolved IOSP-1: AlmaNavCoordinator.tabRootIndex maps /agent to the native Agent tab; pushes and deep links select the tab instead of missing to web."
+    },
+    {
+      "path": "/agent/catalog-images",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "CatalogImagesScreen"
+    },
+    {
+      "path": "/agent/costs",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "CreditUsageScreen"
+    },
+    {
+      "path": "/agent/credit-usage",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "CreditUsageScreen",
+      "notes": "iOS alias of /agent/costs; no web page.tsx"
+    },
+    {
+      "path": "/agent/subscriptions",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "SubscriptionsScreen",
+      "notes": "no standalone web page.tsx; native screen exists"
+    },
+    {
+      "path": "/agent/creative-studio",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "CreativeStudioScreen"
+    },
+    {
+      "path": "/agent/creative-studio-demo",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Dev/demo route; exclude from production navigation or remove in a later phase.",
+      "gapPhase": "IOSP-7"
+    },
+    {
+      "path": "/agent/growth",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "AgentGrowthScreen",
+      "notes": "OAuth connect/disconnect inside remain system-handoff."
+    },
+    {
+      "path": "/agent/known-people",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "KnownPeopleScreen"
+    },
+    {
+      "path": "/agent/live-watch",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "IOSP-1 decision: explicit temporary-web exception (AlmaNavCoordinator.temporaryWebRoutes, telemetry route.webAllowed). Live-browser console is a heavy web surface; native-or-retire decision in IOSP-7.",
+      "gapPhase": "IOSP-7"
+    },
+    {
+      "path": "/agent/staff-monitor",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "StaffMonitorScreen"
+    },
+    {
+      "path": "/agent/trading-staff",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "TradingStaffScreen"
+    },
+    {
+      "path": "/agent/whatsapp",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "AgentWhatsappScreen"
+    },
+    {
+      "path": "/analytics",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "AnalyticsScreen"
+    },
+    {
+      "path": "/app/download",
+      "pattern": "exact",
+      "classification": "public-web-allowed",
+      "nativeHandler": "web"
+    },
+    {
+      "path": "/approvals",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "ApprovalsScreen"
+    },
+    {
+      "path": "/attendance",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "AttendanceScreen",
+      "notes": "Selfie REVIEW (approve/reject verdict, PATCH /api/attendance/selfies/{id}) is native. Only selfie CAPTURE (device camera) stays web — device-dependent, candidate for a dedicated native-camera phase (IOSP-7)."
+    },
+    {
+      "path": "/audit",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "AuditScreen"
+    },
+    {
+      "path": "/briefing",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "BriefingScreen"
+    },
+    {
+      "path": "/crm",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "CrmScreen"
+    },
+    {
+      "path": "/digital",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "DigitalHomeScreen"
+    },
+    {
+      "path": "/digital/clients",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "DigitalClientsScreen"
+    },
+    {
+      "path": "/digital/clients/[id]",
+      "pattern": "dynamic",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "DigitalClientsScreen(focusClientId:)",
+      "notes": "Handled via pathParam fallback in AlmaNativeRouter."
+    },
+    {
+      "path": "/digital/finance",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "FinanceScreen",
+      "notes": "Server redirect to /finance; router serves Finance directly."
+    },
+    {
+      "path": "/digital/invoices",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "DigitalInvoicesScreen"
+    },
+    {
+      "path": "/digital/projects",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "DigitalProjectsScreen"
+    },
+    {
+      "path": "/employees",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "EmployeesScreen"
+    },
+    {
+      "path": "/employees/[id]",
+      "pattern": "dynamic",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "EmployeesScreen(focusEmpId:)",
+      "notes": "Handled via pathParam fallback in AlmaNativeRouter."
+    },
+    {
+      "path": "/expenses",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "ExpensesScreen"
+    },
+    {
+      "path": "/finance",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "FinanceScreen"
+    },
+    {
+      "path": "/finance/office-fund",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "OfficeFundScreen"
+    },
+    {
+      "path": "/finance/personal-ledger",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "PersonalLedgerScreen"
+    },
+    {
+      "path": "/forgot-password",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Target: native shell + secure handoff (IOSP-7).",
+      "gapPhase": "IOSP-7"
+    },
+    {
+      "path": "/insights",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "InsightsScreen"
+    },
+    {
+      "path": "/inventory",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "InventoryScreen"
+    },
+    {
+      "path": "/inventory/supplier-import",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "SupplierImportScreen",
+      "notes": "Native SupplierImportScreen present; bulk image upload capture is device/web (IOSP-7)."
+    },
+    {
+      "path": "/invoice",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "InvoicesScreen"
+    },
+    {
+      "path": "/invoice/share/[slug]",
+      "pattern": "dynamic",
+      "classification": "public-web-allowed",
+      "nativeHandler": "web",
+      "notes": "Public share page; web is correct."
+    },
+    {
+      "path": "/operations/business-archive",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "BusinessArchiveScreen",
+      "notes": "Archive/restore reachable; verify native mutation vs web in IOSP-7."
+    },
+    {
+      "path": "/operations/system-diagnostics",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "SystemDiagnosticsScreen"
+    },
+    {
+      "path": "/operations/task-spotlight",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "TaskSpotlightScreen"
+    },
+    {
+      "path": "/orders",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "OrdersScreen",
+      "notes": "Native OrderDetailSheet covers detail + status advance/cancel/return + edit + delete-request + invoice (role-gated, ports web order-access.ts). 4 native mutations. Residual 'ওয়েবে খুলুন' is the sanctioned same-page web fallback (roadmap §4.4)."
+    },
+    {
+      "path": "/orders/new",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "OrderCreateSheet"
+    },
+    {
+      "path": "/payroll",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "PayrollScreen"
+    },
+    {
+      "path": "/portal",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "PortalScreen"
+    },
+    {
+      "path": "/portal/expense",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "PortalExpenseScreen"
+    },
+    {
+      "path": "/portal/office",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "PortalOfficeScreen"
+    },
+    {
+      "path": "/portal/payment-accounts",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "PaymentAccountsScreen"
+    },
+    {
+      "path": "/portal/wallet",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "IOSP-1 decision: explicit temporary-web exception (AlmaNavCoordinator.temporaryWebRoutes, telemetry route.webAllowed). Wallet mutations are financially sensitive — native build belongs with the IOSP-6/7 finance parity batch, not a routing phase.",
+      "gapPhase": "IOSP-7"
+    },
+    {
+      "path": "/privacy-policy",
+      "pattern": "exact",
+      "classification": "public-web-allowed",
+      "nativeHandler": "web"
+    },
+    {
+      "path": "/reset-password",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Deep-link sensitive; target native reset completion with secure token handling (IOSP-7).",
+      "gapPhase": "IOSP-7"
+    },
+    {
+      "path": "/settings/branding",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "SettingsBrandingScreen"
+    },
+    {
+      "path": "/settings/database",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "SettingsDatabaseScreen"
+    },
+    {
+      "path": "/settings/notifications",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "SettingsNotifScreen"
+    },
+    {
+      "path": "/settings/session",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "SettingsSessionScreen"
+    },
+    {
+      "path": "/settings/sms",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "SettingsSmsScreen",
+      "notes": "Native SettingsSmsScreen; SMS send test may remain web (IOSP-7)."
+    },
+    {
+      "path": "/settings/telegram-ops",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "SettingsTelegramScreen"
+    },
+    {
+      "path": "/settings/users",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "SettingsUsersScreen",
+      "notes": "Native SettingsUsersScreen; password/role edit deep flow verify in IOSP-7."
+    },
+    {
+      "path": "/trading",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "TradingHomeScreen"
+    },
+    {
+      "path": "/trading/accounts",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "TradingAccountsScreen"
+    },
+    {
+      "path": "/trading/accounts/[id]",
+      "pattern": "dynamic",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "TradingAccountsScreen(focusAccountId:)",
+      "notes": "Resolved IOSP-1: pathParam dynamic route opens the native list with that account's detail sheet focused."
+    },
+    {
+      "path": "/trading/analytics",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "TradingAnalyticsScreen"
+    },
+    {
+      "path": "/trading/hr",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "TradingHrScreen"
+    },
+    {
+      "path": "/trading/target-control",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "TargetControlScreen"
+    },
+    {
+      "path": "/trading/telegram",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "TradingTelegramScreen"
+    }
+  ]
+}

@@ -205,6 +205,7 @@ struct TaskSpotlightActionResponse: Decodable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class TaskSpotlightVM {
     var tasks: [TaskSpotlightTask] = []
     var statusFilter = "ACTIVE"              // ACTIVE | ARCHIVED | ALL (client-side)

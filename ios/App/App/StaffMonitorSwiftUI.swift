@@ -494,6 +494,7 @@ private enum StaffMonitorControlAction {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 private final class StaffMonitorControlsVM {
     var controls: StaffMonitorAgentControls? = nil
     var watch: StaffMonitorWatchFeed? = nil

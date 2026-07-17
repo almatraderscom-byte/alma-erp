@@ -508,6 +508,9 @@ struct TradingAccountsScreen: View {
     @State private var editing: TradingAccountsRow? = nil
     @State private var archiving: TradingAccountsRow? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
+    /// IOSP-1 typed deep link (/trading/accounts/{id}): auto-open this account's
+    /// detail sheet once the list loads — same pattern as EmployeesScreen.focusEmpId.
+    var focusAccountId: String? = nil
 
     var body: some View {
         ScrollView {
@@ -543,7 +546,13 @@ struct TradingAccountsScreen: View {
         .background(TradingAccountsAurora())
         .claudeTopFade()
         .refreshable { await vm.load() }
-        .task { await vm.load(); await vm.loadStaff() }
+        .task {
+            await vm.load(); await vm.loadStaff()
+            // Deep link: auto-open the focused account once the list is in.
+            if let fid = focusAccountId, selected == nil {
+                selected = vm.accounts.first { $0.id == fid }
+            }
+        }
         .sheet(item: $selected) { a in
             TradingAccountsDetailSheet(row: a, vm: vm, openWeb: openWeb)
                 .presentationDetents([.medium, .large])

@@ -253,6 +253,7 @@ private let officeFundPayoutMethods = ["bKash", "Nagad", "Rocket", "ব্যা
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class OfficeFundVM {
     // Fund
     var summary: OfficeFundSummary? = nil
