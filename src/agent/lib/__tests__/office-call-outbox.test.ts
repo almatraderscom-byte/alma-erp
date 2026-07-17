@@ -104,6 +104,12 @@ describe('Office call durable delivery outbox', () => {
       target: 'ENDED',
       reason: 'PUSH_UNREACHABLE',
     }))
+    expect(mocks.recordEvent).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'push.completed',
+      provider: 'none',
+      success: false,
+      metadata: expect.objectContaining({ reasons: { no_eligible_device: 1 } }),
+    }))
   })
 
   it('backs off a transient provider failure without falsely ending the call', async () => {

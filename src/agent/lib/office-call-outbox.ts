@@ -258,6 +258,17 @@ async function processClaimed(item: NonNullable<Awaited<ReturnType<typeof claimO
     targetUserId: item.targetUserId,
     payload,
   })
+  if (results.length === 0) {
+    await safeRecordOfficeCallEvent({
+      callId: item.callId,
+      businessId: item.call.businessId,
+      source: 'server',
+      event: 'push.completed',
+      provider: 'none',
+      success: false,
+      metadata: { attempted: 0, succeeded: 0, failed: 0, reasons: { no_eligible_device: 1 } },
+    })
+  }
   const succeeded = results.some((result) => result.ok)
   const error = succeeded ? null : canonicalFailure(results)
   const dead = !succeeded && (item.attempts >= MAX_ATTEMPTS || error !== 'provider_transient_failure')
