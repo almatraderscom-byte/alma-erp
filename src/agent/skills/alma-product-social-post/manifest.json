@@ -1,0 +1,20 @@
+{
+  "name": "alma-product-social-post",
+  "description": "পণ্যের সোশ্যাল পোস্ট তৈরি: ছবি + বাংলা ক্যাপশন — পোস্ট owner-gated, brand/Islamic guardrail।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "medium",
+  "requiredCapabilities": [
+    "get_product",
+    "generate_image",
+    "list_creative_studio_assets",
+    "post_to_facebook"
+  ],
+  "networkPolicy": "allowlist",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 5,
+  "status": "draft"
+}

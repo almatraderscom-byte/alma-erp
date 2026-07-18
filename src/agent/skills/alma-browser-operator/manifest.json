@@ -1,0 +1,20 @@
+{
+  "name": "alma-browser-operator",
+  "description": "লাইভ ব্রাউজারে দেখে-ক্লিক করে কাজ — final send/pay/publish code-blocked, credential owner-এর।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE", "ALMA_TRADING", "CDIT"],
+  "riskTier": "high",
+  "requiredCapabilities": [
+    "live_browser_look",
+    "live_browser_act",
+    "live_browser_trust",
+    "list_browser_recipes"
+  ],
+  "networkPolicy": "open",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 8,
+  "status": "draft"
+}

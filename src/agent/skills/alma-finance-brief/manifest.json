@@ -1,0 +1,22 @@
+{
+  "name": "alma-finance-brief",
+  "description": "Boss-এর জন্য আর্থিক সারসংক্ষেপ: বিক্রি, খরচ, ledger, health — এক জায়গায়, read-only।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE", "ALMA_TRADING", "CDIT"],
+  "riskTier": "low",
+  "requiredCapabilities": [
+    "get_financial_health",
+    "get_sales_summary",
+    "get_expense_summary",
+    "get_ledger_balances",
+    "list_recent_transactions",
+    "list_bills"
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "none",
+  "approvalPolicy": "inherit",
+  "maxSteps": 6,
+  "status": "draft"
+}
