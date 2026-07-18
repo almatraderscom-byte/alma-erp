@@ -22,7 +22,7 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectOwnerHeadTools, packsForPendingActionType, isContinuationText } from '@/agent/tools/state-router'
+import { selectOwnerHeadTools, packsForPendingActionType, isContinuationText, matchIntentPacks } from '@/agent/tools/state-router'
 import { workflowToolBinding } from '@/agent/lib/workflow-templates'
 import {
   reconcileConversationWorkflows,
@@ -528,13 +528,28 @@ async function* runAlternateProviderTurn(
     })
   }
   const continuityLive = continuity?.mode === 'on'
-  if (continuityLive && continuity!.decision.binding === 'new_task' && continuity!.decision.action === 'park_and_start') {
-    // Structural parking — the old task is deliberately set aside, never mixed.
+  // ── Phase 62: UNIVERSAL task intake ──────────────────────────────────────
+  // On a clear NEW task, create a durable focus for it — whether or not it is a
+  // templated workflow (closes GAP-02: ordinary advisory/research/marketing
+  // tasks previously got no task cursor). ensureFocusForOwnerTask parks any
+  // prior active focus internally and is idempotent per turn (turnId key), so a
+  // worker re-run never forks a duplicate. Gated on continuityLive so shadow/off
+  // keep pure legacy behaviour; fail-open.
+  if (continuityLive && lastUserText && continuity!.decision.binding === 'new_task') {
     try {
-      const { parkActiveFocus } = await import('@/agent/lib/conversation-focus')
-      await parkActiveFocus(conversationId, 'new_task', 'resolver')
+      const { ensureFocusForOwnerTask } = await import('@/agent/lib/conversation-focus')
+      const kind = matchIntentPacks(lastUserText)[0] ?? 'generic'
+      await ensureFocusForOwnerTask({
+        conversationId,
+        businessId,
+        goal: lastUserText,
+        kind,
+        surface: telegramFastPath ? 'telegram' : 'web',
+        intakeTurnId: turnId ?? '',
+        cause: 'resolver',
+      })
     } catch (err) {
-      console.warn('[run-owner-turn] focus park failed open:', err instanceof Error ? err.message : err)
+      console.warn('[run-owner-turn] focus intake failed open:', err instanceof Error ? err.message : err)
     }
   }
 
@@ -1963,15 +1978,20 @@ async function* runAlternateProviderTurn(
           )
         }
         if (!verdict.ok && interactionMode2 === 'on') {
-          const { createFocus } = await import('@/agent/lib/conversation-focus')
-          await createFocus({
-            conversationId,
-            businessId,
-            goal: `প্রতিশ্রুতি: ${finalText.slice(0, 160)}`,
-            kind: 'commitment',
-            completionCriteria: 'Boss-কে জানানো হয়েছে এবং কাজটা প্রমাণসহ শেষ',
-            cause: 'commitment_ledger',
-          })
+          const { createFocus, getFocusStack } = await import('@/agent/lib/conversation-focus')
+          // Phase 62: if universal intake already created a task focus this turn,
+          // the promise is already backed — don't fork a second 'commitment' focus.
+          const stack = await getFocusStack(conversationId)
+          if (!stack.active) {
+            await createFocus({
+              conversationId,
+              businessId,
+              goal: `প্রতিশ্রুতি: ${finalText.slice(0, 160)}`,
+              kind: 'commitment',
+              completionCriteria: 'Boss-কে জানানো হয়েছে এবং কাজটা প্রমাণসহ শেষ',
+              cause: 'commitment_ledger',
+            })
+          }
         }
         void import('@/agent/lib/tool-telemetry').then((m) =>
           m.logToolEvent({
@@ -1992,6 +2012,51 @@ async function* runAlternateProviderTurn(
         ).catch(() => {})
       } catch (err) {
         console.warn('[run-owner-turn] commitment ledger failed open:', err instanceof Error ? err.message : err)
+      }
+    }
+
+    // ── Phase 62: score the binding outcome + advance the task focus cursor ───
+    // recordBindingOutcome writes durable real-production evidence (the ≥98%
+    // correct-binding gate is measured on THIS stream, not synthetic fixtures).
+    // advanceOwnerTaskFocus moves the non-templated focus's step/blocker so a
+    // later "আগের কাজটা চালাও / ৭ দিন পরে" resumes the exact next action. Both
+    // fail-open and never block the turn.
+    if (continuity && lastUserText) {
+      try {
+        const { recordBindingOutcome } = await import('@/agent/lib/continuity-outcome')
+        await recordBindingOutcome({
+          conversationId,
+          businessId,
+          turnId,
+          observation: {
+            binding: continuity.decision.binding,
+            action: continuity.decision.action,
+            ownerCorrectedPrior: interaction?.state.correction ?? false,
+          },
+          reason: continuity.decision.reason,
+        })
+      } catch (err) {
+        console.warn('[run-owner-turn] binding-outcome record failed open:', err instanceof Error ? err.message : err)
+      }
+    }
+    if (continuityLive) {
+      try {
+        const { advanceOwnerTaskFocus } = await import('@/agent/lib/conversation-focus')
+        const lastDurable = [...toolRecords].reverse().find(
+          (r) => r.status === 'success'
+            && /^(track_open_task|save_task_checkpoint|set_reminder|post_|propose_|prepare_|dispatch|launch_|publish_|send_|make_plan|run_)/.test(r.toolName),
+        )
+        const awaitingOwner = emittedAskCards.length > 0 || Boolean(actionGraph?.staged)
+        await advanceOwnerTaskFocus({
+          conversationId,
+          currentStep: lastDurable ? lastDurable.toolName : undefined,
+          addCompletedStep: lastDurable ? lastDurable.toolName : null,
+          awaitingOwner,
+          blocker: awaitingOwner ? 'owner' : null,
+          cause: 'turn',
+        })
+      } catch (err) {
+        console.warn('[run-owner-turn] focus advance failed open:', err instanceof Error ? err.message : err)
       }
     }
 

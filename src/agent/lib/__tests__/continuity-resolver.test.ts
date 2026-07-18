@@ -206,3 +206,56 @@ describe('gate', () => {
     expect(continuityResolverMode(undefined, 'production')).toBe('shadow')
   })
 })
+
+describe('Phase 62 — universal intake trigger (new_task binding)', () => {
+  it('a clear new task with NO prior focus binds new_task/proceed → intake creates a focus', () => {
+    const d = resolveContinuityDecision(input({ text: 'নতুন শাড়ির জন্য একটা ফেসবুক পোস্ট বানাও', activeFocus: null }))
+    expect(d.binding).toBe('new_task')
+    // No prior focus → proceed (intake still creates the durable focus for it).
+    expect(d.action).toBe('proceed')
+  })
+
+  it('a clear NEW imperative task while another is active parks and starts → intake forks a new focus', () => {
+    const d = resolveContinuityDecision(input({ text: 'নতুন শাড়ির জন্য একটা ফেসবুক পোস্ট বানাও', activeFocus: FOCUS }))
+    expect(d.binding).toBe('new_task')
+    expect(d.action).toBe('park_and_start')
+  })
+
+  it('a passing side-question does NOT park the active focus (no spurious intake)', () => {
+    const d = resolveContinuityDecision(input({ text: 'আজকে আবহাওয়া কেমন বলো তো', activeFocus: FOCUS }))
+    // Either it keeps the focus (proceed, side-question) or binds back to it —
+    // the one thing it must never do is silently abandon the active work.
+    expect(d.action === 'park_and_start').toBe(false)
+  })
+})
+
+describe('Phase 62 — long mixed follow-up resumes (does not park)', () => {
+  it('"আগের কাজটা চালাও, কিন্তু নতুন শর্ত যোগ করো …" resumes the active focus', () => {
+    const d = resolveContinuityDecision(input({
+      text: 'আগের কাজটা চালাও, কিন্তু নতুন এই শর্তটা যোগ করো যেন প্রতিটা প্রোডাক্টে মেটা টাইটেল ৬০ অক্ষরের নিচে থাকে',
+      activeFocus: FOCUS,
+    }))
+    expect(d.binding).toBe('active_focus')
+    expect(d.action).toBe('resume')
+    expect(d.reason).toBe('resume_lead_references_active_focus')
+  })
+
+  it('the same lead resumes a single parked focus when nothing is active', () => {
+    const parked = { ...FOCUS, status: 'parked' as const }
+    const d = resolveContinuityDecision(input({
+      text: 'আগের কাজটা চালিয়ে যাও, তবে এবার দাম গুলোও আপডেট করো',
+      activeFocus: null,
+      parkedFocuses: [parked],
+    }))
+    expect(d.binding).toBe('active_focus')
+    expect(d.action).toBe('resume')
+  })
+
+  it('does NOT fire without a prior focus (no false resume)', () => {
+    const d = resolveContinuityDecision(input({
+      text: 'আগের কাজটা চালাও, কিন্তু নতুন শর্ত যোগ করো',
+      activeFocus: null,
+    }))
+    expect(d.binding).not.toBe('active_focus')
+  })
+})

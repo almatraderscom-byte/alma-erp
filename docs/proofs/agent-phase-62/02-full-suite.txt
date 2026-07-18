@@ -1,0 +1,2 @@
+Full agent suite (regression — the owner-turn path was edited):
+181 files / 2307 tests PASS. bindingAccuracy===1 held; corpus baseline count 150 intact.

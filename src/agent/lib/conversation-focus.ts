@@ -146,6 +146,8 @@ export async function createFocus(input: {
   nextActions?: string[]
   completionCriteria?: string | null
   surface?: string | null
+  /** Small JSON side-channel (e.g. { intakeTurnId } for idempotent intake). */
+  artifacts?: Record<string, unknown>
   status?: Extract<FocusStatus, 'active' | 'awaiting_owner'>
   cause?: string
 }): Promise<FocusView | null> {
@@ -168,6 +170,7 @@ export async function createFocus(input: {
         nextActions: input.nextActions ?? undefined,
         completionCriteria: input.completionCriteria ?? null,
         surface: input.surface ?? null,
+        artifacts: input.artifacts ?? undefined,
       },
       select: SELECT,
     })
@@ -414,6 +417,139 @@ export async function recordVerifiedEffect(focusId: string, effectId: string, st
     })
   } catch (err) {
     console.warn('[conversation-focus] effect record failed open:', err instanceof Error ? err.message : err)
+  }
+}
+
+/**
+ * Phase 62 — UNIVERSAL task intake. Deterministically create/attach a durable
+ * focus for an ordinary non-trivial work request, whether or not it is a
+ * templated workflow. This closes GAP-02 (focus previously existed only for
+ * WorkflowRuns + unbacked promises), so any normal advisory/research/marketing
+ * task also gets an exact task cursor that survives gaps and reconnects.
+ *
+ * Idempotent per turn: `intakeTurnId` is stored in `artifacts`, and a re-run of
+ * the same turn (worker fallback / reconnect) returns the existing focus instead
+ * of creating a duplicate. Also skips creation when the current active focus is
+ * really the same work (high goal overlap) — that is a continuation, not a new
+ * task. Fail-open: any error → null (legacy behaviour, no focus).
+ */
+export async function ensureFocusForOwnerTask(input: {
+  conversationId: string
+  businessId?: string
+  goal: string
+  kind?: string
+  surface?: string | null
+  /** Stable per-turn id (turnId) — idempotency key. */
+  intakeTurnId: string
+  completionCriteria?: string | null
+  cause?: string
+}): Promise<FocusView | null> {
+  const goal = (input.goal ?? '').trim()
+  // Trivial/empty text never gets a durable task record.
+  if (goal.length < 3) return null
+  try {
+    // Idempotency + de-dup: look at recent focuses in this conversation.
+    const recent: Array<Record<string, unknown>> = await db.agentConversationFocus.findMany({
+      where: {
+        conversationId: input.conversationId,
+        status: { in: ['active', 'parked', 'awaiting_owner'] },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 12,
+      select: { ...SELECT, artifacts: true },
+    })
+    for (const r of recent) {
+      const art = (r.artifacts ?? {}) as { intakeTurnId?: string }
+      if (art.intakeTurnId && art.intakeTurnId === input.intakeTurnId) {
+        // Same turn already created this focus — return it, never duplicate.
+        return toView(r)
+      }
+    }
+    // If the current active focus is essentially the same work, this message is
+    // a continuation of it, not a new task — don't fork a near-duplicate focus.
+    const active = recent.find((r) => r.status === 'active')
+    if (active && goalsOverlapStrongly(goal, String(active.goal ?? ''))) {
+      return toView(active)
+    }
+    return await createFocus({
+      conversationId: input.conversationId,
+      businessId: input.businessId,
+      goal,
+      kind: input.kind ?? 'generic',
+      surface: input.surface ?? null,
+      completionCriteria: input.completionCriteria ?? null,
+      artifacts: { intakeTurnId: input.intakeTurnId },
+      status: 'active',
+      cause: input.cause ?? 'owner_task_intake',
+    })
+  } catch (err) {
+    console.warn('[conversation-focus] owner-task intake failed open:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+/** ≥50% of the shorter goal's content tokens (len≥3) shared → same work. */
+function goalsOverlapStrongly(a: string, b: string): boolean {
+  const toks = (s: string): Set<string> =>
+    new Set(s.toLowerCase().split(/[^\p{L}\p{M}\p{N}]+/u).filter((w) => w.length >= 3))
+  const ta = toks(a)
+  const tb = toks(b)
+  if (ta.size === 0 || tb.size === 0) return false
+  let shared = 0
+  for (const w of ta) if (tb.has(w)) shared++
+  return shared / Math.min(ta.size, tb.size) >= 0.5
+}
+
+/**
+ * Phase 62 — advance the active NON-templated focus at end of turn. Templated
+ * (workflow-backed) focuses are advanced by syncFocusWithWorkflowRun; this
+ * covers ordinary intake focuses so their cursor stays real: current step,
+ * newly verified completed steps, and blocker/awaiting state. Fail-open.
+ *
+ * Completion is NEVER inferred from model prose — callers pass an explicit
+ * `complete` only when the claim verifier + postcondition both hold (see
+ * continuity-outcome.canCompleteFocus).
+ */
+export async function advanceOwnerTaskFocus(opts: {
+  conversationId: string
+  currentStep?: string | null
+  addCompletedStep?: string | null
+  blocker?: string | null
+  awaitingOwner?: boolean
+  complete?: boolean
+  cause?: string
+}): Promise<void> {
+  try {
+    const active: Record<string, unknown> | null = await db.agentConversationFocus.findFirst({
+      where: { conversationId: opts.conversationId, status: 'active' },
+      select: { ...SELECT, workflowRunId: true },
+    })
+    if (!active) return
+    // Workflow-backed focuses are owned by the workflow sync path.
+    if (active.workflowRunId) return
+    const done = new Set<string>(Array.isArray(active.completedSteps) ? (active.completedSteps as string[]) : [])
+    if (opts.addCompletedStep) done.add(opts.addCompletedStep)
+    const nextStatus: FocusStatus = opts.complete
+      ? 'done'
+      : opts.awaitingOwner
+        ? 'awaiting_owner'
+        : 'active'
+    await updateFocus({
+      focusId: active.id as string,
+      expectedVersion: active.version as number,
+      patch: {
+        status: nextStatus,
+        ...(opts.currentStep !== undefined ? { currentStep: opts.currentStep } : {}),
+        ...(opts.addCompletedStep ? { completedSteps: [...done] } : {}),
+        ...(opts.blocker !== undefined ? { blocker: opts.blocker } : {}),
+      },
+      cause: opts.cause ?? 'turn',
+      eventType: opts.complete ? 'completed' : opts.awaitingOwner ? 'awaiting_owner' : 'updated',
+    }).catch((err) => {
+      if (!(err instanceof FocusVersionConflictError)) throw err
+    })
+  } catch (err) {
+    console.warn('[conversation-focus] advance-owner-task failed open:', err instanceof Error ? err.message : err)
   }
 }
 
