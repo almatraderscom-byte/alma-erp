@@ -1,0 +1,16 @@
+{
+  "name": "alma-research",
+  "description": "একটি ব্যবসায়িক প্রশ্নের উত্তর একাধিক স্বাধীন source থেকে cross-check করে, cited Bangla brief আকারে।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE", "ALMA_TRADING", "CDIT"],
+  "riskTier": "low",
+  "requiredCapabilities": ["confirm_oxylabs_spend", "web_research", "live_browser_look", "research_competitor"],
+  "networkPolicy": "allowlist",
+  "writePolicy": "none",
+  "approvalPolicy": "inherit",
+  "entryWorkflow": "skill_pack:research",
+  "maxSteps": 8,
+  "status": "draft"
+}

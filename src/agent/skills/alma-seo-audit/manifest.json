@@ -1,0 +1,27 @@
+{
+  "name": "alma-seo-audit",
+  "description": "almatraders.com-এর মাসিক-মানের SEO readout: on-page audit, search performance, keyword, prioritized fix।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "low",
+  "requiredCapabilities": [
+    "audit_product_seo",
+    "get_website_health",
+    "get_search_console_performance",
+    "get_indexing_status",
+    "get_ga4_report",
+    "list_tracked_keywords",
+    "research_seo_keywords",
+    "confirm_oxylabs_spend",
+    "run_workbench_task",
+    "check_workbench_task"
+  ],
+  "networkPolicy": "allowlist",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "inherit",
+  "entryWorkflow": "skill_pack:seo",
+  "maxSteps": 8,
+  "status": "draft"
+}

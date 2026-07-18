@@ -1,0 +1,25 @@
+{
+  "name": "alma-client-seo",
+  "description": "যেকোনো website end-to-end SEO audit + owner-gated execution — critical/login/irreversible সব ধাপ owner-এর হাতে।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["CDIT"],
+  "riskTier": "high",
+  "requiredCapabilities": [
+    "run_website_seo_audit",
+    "check_website_seo_audit",
+    "confirm_oxylabs_spend",
+    "research_seo_keywords",
+    "research_competitor",
+    "run_workbench_task",
+    "check_workbench_task",
+    "draft_seo_fixes"
+  ],
+  "networkPolicy": "allowlist",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "entryWorkflow": "skill_pack:client_seo",
+  "maxSteps": 6,
+  "status": "draft"
+}
