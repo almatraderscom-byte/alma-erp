@@ -49,8 +49,16 @@ jobs:
             set -e
             cd /opt/alma-erp
             git fetch --all --prune
+            # Self-heal: scripts first created live on the box (e.g. gemini-live-bot.mjs,
+            # ngs-*.mjs from the infosoftbd calling work) later landed in git via a PR, so
+            # they now sit as UNTRACKED files that block 'git pull' ("would be overwritten").
+            # Remove untracked-but-not-ignored files under worker/scripts so the tracked
+            # versions can land. -x is intentionally NOT passed, so .env / gitignored runtime
+            # state is preserved.
+            git clean -fd worker/scripts || true
+            # Hard-align to the remote ref (discards stray tracked edits made on the box).
             git checkout -f "$REF"
-            git pull --ff-only origin "$REF"
+            git reset --hard "origin/$REF"
             echo "worker now at: \$(git rev-parse --short HEAD)"
             cd worker && npm ci --omit=dev
             pm2 restart alma-agent-worker --update-env
