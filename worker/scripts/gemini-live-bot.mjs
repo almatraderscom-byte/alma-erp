@@ -23,6 +23,7 @@ const PORT = Number(process.env.GLIVE_PORT || 8766)
 const MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview'
 const NATIVE = /native-audio/i.test(MODEL)
 const VOICE = process.env.GEMINI_LIVE_VOICE || 'Charon' // male; female = Aoede
+const SUMMARY_MODEL = process.env.GEMINI_SUMMARY_MODEL || 'gemini-2.5-flash' // post-call Bangla summary (cheap text model)
 const MAX_MIN = Number(process.env.GLIVE_MAX_MIN || 8)
 // NGS API creds — needed to actually HANG UP the PSTN call (closing our WS does not
 // end it). PUT /api/v1/call/{call_id} with <Hangup/>.
@@ -109,6 +110,25 @@ class Call {
     this.hangingUp = false
     this.callerSpoke = false     // arm the goodbye→hangup only after the caller has spoken once
     this.startedAt = 0
+    this.turns = []              // [{role:'agent'|'caller', message}] accumulated transcript
+    this.curRole = null          // speaker of the in-progress turn being accumulated
+    this.curText = ''            // in-progress turn text (fragments merged until speaker flips)
+    this.reported = false        // post-call report fires exactly once
+  }
+
+  // Merge streaming transcription fragments into speaker-segmented turns. Called with
+  // 'agent' (model outputTranscription) or 'caller' (inputTranscription); flushes the
+  // previous turn whenever the speaker flips.
+  accum(role, text) {
+    if (!text) return
+    if (this.curRole && this.curRole !== role) this.flushTurn()
+    this.curRole = role
+    this.curText += text
+  }
+  flushTurn() {
+    const msg = this.curText.trim()
+    if (this.curRole && msg) this.turns.push({ role: this.curRole, message: msg })
+    this.curRole = null; this.curText = ''
   }
 
   async openLive(isReconnect = false) {
@@ -177,6 +197,7 @@ class Call {
     if (sc?.outputTranscription?.text) {
       const t = sc.outputTranscription.text
       process.stdout.write(`[glive ${this.id} SAY] ${t}\n`)
+      this.accum('agent', t)
       this.outText = (this.outText + t).slice(-80)
       // Goodbye → hang up once it plays — BUT only after the caller has actually spoken
       // at least once (or a long call has run). Without this the model saying "আল্লাহ
@@ -191,6 +212,7 @@ class Call {
     }
     if (sc?.inputTranscription?.text) {
       this.callerSpoke = true
+      this.accum('caller', sc.inputTranscription.text)
       process.stdout.write(`[glive ${this.id} HEARD] ${sc.inputTranscription.text}\n`)
     }
   }
@@ -243,6 +265,48 @@ class Call {
     } catch (e) { console.log(`[glive] ${this.id} NGS hangup err ${e?.message}`) }
   }
 
+  // Best-effort 1-2 line Bangla summary of the call. Never throws — the transcript
+  // alone is useful, so any failure just returns null and the report goes without it.
+  async summarize(transcript) {
+    try {
+      const convo = transcript.map((t) => `${t.role === 'agent' ? 'এজেন্ট' : 'অন্য পক্ষ'}: ${t.message}`).join('\n')
+      const purpose = this.params?.purpose ? `\nকলের উদ্দেশ্য ছিল: ${this.params.purpose}\n` : ''
+      const r = await genai.models.generateContent({
+        model: SUMMARY_MODEL,
+        contents: `নিচের ফোনালাপটির ১-২ লাইনে পরিষ্কার বাংলা সারাংশ দাও — কী কথা হলো, কোনো সিদ্ধান্ত/কাজ থাকলে তা সহ। শুধু সারাংশ, বাড়তি কিছু নয়।${purpose}\nকথোপকথন:\n${convo}`,
+      })
+      const text = (r?.text || '').trim()
+      return text ? text.slice(0, 1000) : null
+    } catch (e) { console.log(`[glive] ${this.id} summarize err ${e?.message || e}`); return null }
+  }
+
+  // Post-call report → owner (mirrors the ElevenLabs/relay webhook): update the
+  // agent_voice_calls row + push the owner a Bangla transcript + summary. Fires once,
+  // fire-and-forget from close(). callRecordId = the `id` param (the DB row id in prod).
+  async sendReport() {
+    if (this.reported) return
+    this.reported = true
+    this.flushTurn()
+    const callRecordId = this.params?.id
+    const APP_URL = (process.env.APP_URL || '').replace(/\/$/, '')
+    if (!callRecordId || !APP_URL || !AUTH_TOKEN || this.turns.length === 0) {
+      console.log(`[glive] ${this.id} report skipped (id=${callRecordId ? 'y' : 'n'} app=${APP_URL ? 'y' : 'n'} turns=${this.turns.length})`)
+      return
+    }
+    const durationSecs = this.startedAt ? Math.max(0, Math.round((Date.now() - this.startedAt) / 1000)) : null
+    const status = this.callerSpoke ? 'completed' : 'no_answer'
+    const summary = await this.summarize(this.turns)
+    try {
+      const res = await fetch(`${APP_URL}/api/assistant/voice-call/relay-report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+        body: JSON.stringify({ callRecordId, callSid: this.callId, transcript: this.turns, summary, durationSecs, status }),
+        signal: AbortSignal.timeout(20_000),
+      })
+      console.log(`[glive] ${this.id} report POST ${res.status} (turns=${this.turns.length} dur=${durationSecs}s sum=${summary ? 'y' : 'n'})`)
+    } catch (e) { console.log(`[glive] ${this.id} report err ${e?.message || e}`) }
+  }
+
   onNgs(raw) {
     let m; try { m = JSON.parse(raw.toString()) } catch { return }
     switch (m.event) {
@@ -287,6 +351,9 @@ class Call {
   close() {
     if (this.closed) return
     this.closed = true
+    // Post-call transcript + Bangla summary to the owner (fire-and-forget; runs once).
+    // Kicked off BEFORE teardown so it captures the accumulated turns.
+    void this.sendReport()
     for (const t of [this.drainer, this.diag, this.maxTimer, this._hangTimer]) if (t) clearInterval(t)
     try { this.live?.close() } catch { /* */ }
     try { this.ws?.close() } catch { /* */ }

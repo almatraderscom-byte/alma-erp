@@ -28,7 +28,7 @@ const VOICE = env.CALL_VOICE || 'Charon' // male; female = Aoede
 const RECIPIENT = env.GLIVE_RECIPIENT || 'Maruf boss'
 const PURPOSE = env.CALL_PURPOSE || 'এটি একটি টেস্ট কল — Phase 0 auth যাচাই। বসকে সংক্ষেপে সালাম দিয়ে জিজ্ঞেস করো কেমন আছেন, দুই-এক লাইন কথা বলো, তারপর বস চাইলে ভদ্রভাবে কল শেষ করো।'
 
-const id = 'glive-' + Date.now()
+const id = env.GLIVE_ID || 'glive-' + Date.now() // GLIVE_ID = a real agent_voice_calls row id → tests the full post-call report
 const exp = Date.now() + 15 * 60 * 1000
 const t = createHmac('sha256', env.AGENT_INTERNAL_TOKEN).update(`relay:${id}:${exp}`).digest('hex')
 const P = (n, v) => `<parameter name="${esc(n)}" value="${esc(v)}"/>`
