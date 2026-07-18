@@ -7,6 +7,10 @@ without changing ERP finance, payroll, inventory, attendance, orders, or the leg
 `/api/agent/*` surface. The current Office-PC scripts remain compatible; the updated
 templates are ready for a later, separately approved physical deployment.
 
+Before the approval preview, current `origin/main` (`517cf42b`) was merged into the
+phase branch. The upstream files do not overlap the Phase 65 change set; the final
+three-dot diff against current main remains restricted to the 22 locked files.
+
 ## What changed
 
 ### Office call safety and UI
@@ -55,14 +59,14 @@ templates are ready for a later, separately approved physical deployment.
 | Gate | Result | Evidence |
 | --- | --- | --- |
 | Focused Office/camera tests | PASS | 6 files, 31 tests |
-| Full test suite | PASS | 221 files, 2,625 tests |
+| Full test suite | PASS | 221 files, 2,627 tests |
 | TypeScript | PASS | `npm run type-check` |
 | Prisma schema | PASS | `prisma validate` with a non-production build URL |
 | Lint | PASS | No errors; existing repository warnings remain |
 | Production build | PASS | Local build; deploy migration correctly skipped off Vercel |
 | Whitespace safety | PASS | `git diff --check` |
 | Locked-file scope | PASS | Only Phase 65 prompt files changed |
-| Vercel preview | PENDING | Recorded after branch push |
+| Vercel preview | PENDING | Rebuilt from the latest-main integration tip |
 | Owner-Chrome browser proof | PENDING | Recorded after live preview exercise |
 | Physical camera proof | NOT IN PHASE | Requires later Office-PC/hardware session |
 
@@ -76,8 +80,9 @@ templates are ready for a later, separately approved physical deployment.
 
 ## Decisions and boundaries
 
-- No main merge, production deploy, Office-PC change, secret rotation, or environment
-  change was performed.
+- No push or merge into the `main` branch, production deploy, Office-PC change,
+  secret rotation, or environment change was performed. Current `origin/main` was
+  merged only into the isolated phase branch to protect concurrent work.
 - No claim of physical speaker playback or staff audio capture is made. Those require
   human hearing/microphone proof at the office.
 - Preview URL and browser screenshot proof are added only after the exact branch build
