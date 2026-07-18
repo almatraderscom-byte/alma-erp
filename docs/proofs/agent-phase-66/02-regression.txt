@@ -1,0 +1,1 @@
+Coverage + full suite: pool-coverage/manifest/guard-coverage green; src/agent 184 files / 2336 tests PASS; tsc 0 errors.

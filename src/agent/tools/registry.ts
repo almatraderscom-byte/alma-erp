@@ -45,6 +45,8 @@ import { GROWTH_TOOLS } from './growth-tools'
 import { COMPETITOR_TOOLS } from './competitor-tools'
 import { ADVISOR_TOOLS } from './advisor-tools'
 import { FAMILY_TOOLS, place_agent_call } from './personal-tools'
+import { PERSONAL_OS_TOOLS } from './personal-os-tools'
+import { BUSINESS_OS_TOOLS } from './business-os-tools'
 import { OWNER_TODO_TOOLS } from './owner-todo-tools'
 import { TRYON_TOOLS } from './tryon-tools'
 import { STUDIO_TOOLS } from './studio-tools'
@@ -612,6 +614,11 @@ export const TOOLS: AgentTool[] = [
   ...APPOINTMENT_TOOLS,
   ...HEALTH_TOOLS,
   ...DOCUMENT_TOOLS,
+  // Phase 66: Personal/Business OS adapter tools — reachable by the head now
+  // (GAP-06). read + private-stage only; they refuse gracefully when the named
+  // adapter is not connected, so exposure is safe before any bootstrap.
+  ...PERSONAL_OS_TOOLS,
+  ...BUSINESS_OS_TOOLS,
 ]
 
 // Staff-facing registry: excludes finance, salah, and personal-scope tools.

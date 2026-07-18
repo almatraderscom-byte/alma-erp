@@ -455,4 +455,13 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   create_order_draft: { domain: 'cs', mode: 'write', risk: 'medium', routing: 'customer' },
   get_customer_order_status: { domain: 'cs', mode: 'read', risk: 'low', routing: 'customer' },
   handoff_to_human: { domain: 'cs', mode: 'write', risk: 'medium', routing: 'customer' },
+
+  // ── Phase 66: Personal/Business OS tools (adapter surface) ──────────────────
+  // read = query a connected adapter; stage = produce a PRIVATE draft only.
+  // Neither performs an external effect (the adapter's write op is separate and
+  // rides the Phase 65 effect engine), so these are read/stage — safe to expose.
+  personal_os_read: read('personal'),
+  personal_os_stage: stage('personal'),
+  business_os_read: read('erp'),
+  business_os_stage: stage('erp'),
 }

@@ -34,6 +34,8 @@ import { DIAGNOSTIC_TOOLS } from './diagnostic-tools'
 import { REMINDER_TOOLS } from './reminder-tools'
 import { ASK_TOOLS } from './ask-tools'
 import { OWNER_TODO_TOOLS } from './owner-todo-tools'
+import { PERSONAL_OS_TOOLS } from './personal-os-tools'
+import { BUSINESS_OS_TOOLS } from './business-os-tools'
 import { PLAYBOOK_TOOLS } from './playbook-tools'
 import { LEARNING_TOOLS } from './learning-tools'
 import { REFERENCE_TOOLS } from './reference-tools'
@@ -121,7 +123,7 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     ...CAMERA_TOOLS,
   ],
   staff: [...STAFF_TOOLS, ...SETTINGS_TOOLS],
-  erp: [...ERP_TOOLS, ...CONFIRM_TOOLS, ...LOCATION_TOOLS, ...ORDER_AUTONOMY_TOOLS],
+  erp: [...ERP_TOOLS, ...CONFIRM_TOOLS, ...LOCATION_TOOLS, ...ORDER_AUTONOMY_TOOLS, ...BUSINESS_OS_TOOLS],
   finance: [...FINANCE_TOOLS, ...SIMULATE_TOOLS, ...FINANCE_AUTONOMY_TOOLS],
   cs: [...OWNER_CUSTOMER_INTEL_TOOLS, ...CS_AUTONOMY_TOOLS],
   // STUDIO_TOOLS (run_creative_studio / check_studio_job) ride in `content`:
@@ -141,7 +143,7 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
   diag: [...DIAGNOSTIC_TOOLS],
   vision: [...VISION_TOOLS],
   trading: [...TRADING_EXTENSION_TOOLS],
-  personal: [...PERSONAL_SAFE_TOOLS],
+  personal: [...PERSONAL_SAFE_TOOLS, ...PERSONAL_OS_TOOLS],
   // Lazy group: API-credit / subscription bookkeeping. Owner-initiated only and
   // keyword-distinctive, so it's gated out of the always-on base group to shave
   // ~520 tok off the cold cache-write on every other turn.
