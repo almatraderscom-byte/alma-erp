@@ -1,0 +1,22 @@
+{
+  "name": "alma-product-listing",
+  "description": "পণ্য ওয়েবসাইটে লিস্ট করা: title/meta/desc/alt তৈরি — publish/update owner-gated।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "medium",
+  "requiredCapabilities": [
+    "get_product",
+    "get_website_catalog",
+    "audit_product_seo",
+    "update_product_web",
+    "publish_product",
+    "unpublish_product"
+  ],
+  "networkPolicy": "allowlist",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 5,
+  "status": "draft"
+}

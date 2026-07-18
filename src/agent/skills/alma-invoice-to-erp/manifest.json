@@ -1,0 +1,21 @@
+{
+  "name": "alma-invoice-to-erp",
+  "description": "ইনভয়েস/বিলের ছবি-ডক থেকে তথ্য বের করে ERP-তে তোলার খসড়া — এন্ট্রি owner-gated।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE", "CDIT"],
+  "riskTier": "medium",
+  "requiredCapabilities": [
+    "get_document",
+    "search_documents",
+    "list_bills",
+    "list_recent_transactions",
+    "log_expense"
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 5,
+  "status": "draft"
+}
