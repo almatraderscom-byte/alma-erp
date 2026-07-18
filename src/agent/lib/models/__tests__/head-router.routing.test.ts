@@ -64,10 +64,10 @@ describe('resolveHeadModelId — routine fast-path', () => {
       personalMode: false,
       businessId: 'ALMA_LIFESTYLE',
     })
-    // Owner command (2026-07): heavy head is Gemini 3.1 Pro (Anthropic credits dead).
-    // The real invariant is the tier — money/sensitive must never fall to the cheap head.
+    // Owner command (2026-07-18): heavy head is Grok 4.20 (Gemini off). The real
+    // invariant is the tier — money/sensitive must never fall to the cheap head.
     expect(decision.tier).toBe('heavy')
-    expect(decision.modelId).toBe('gemini-3.1-pro')
+    expect(decision.modelId).toBe('xai-grok-4.20')
   })
 })
 
@@ -108,7 +108,7 @@ describe('resolveHeadModelId — explicit model selection vs Auto', () => {
           businessId: 'ALMA_LIFESTYLE',
         })
         expect(decision.tier).toBe('heavy')
-        expect(decision.modelId).toBe('gemini-3.1-pro')
+        expect(decision.modelId).toBe('xai-grok-4.20')
         expect(decision.via).toBe('anthropic_down_explicit_redirect')
       }
     })

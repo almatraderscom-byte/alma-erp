@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
 import { assertModelOverrideNotAllowed } from '@/agent/lib/models/guard'
 import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, isSelectableModelId, isKnownModelId } from '@/agent/lib/models/registry'
+import { getDefaultHeadModelId } from '@/agent/lib/models/routing-config'
 import { describeAttachments, hasVisualAttachment, buildVisionNoteBlock } from '@/agent/lib/attachment-vision'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { setOwnerSessionConversation } from '@/agent/lib/owner-session'
@@ -137,6 +138,13 @@ export async function POST(req: NextRequest) {
     !isInternalCall && typeof body.modelId === 'string' && isSelectableModelId(body.modelId.trim())
       ? body.modelId.trim()
       : null
+
+  // Owner rule 2026-07-18: the owner's chosen head model runs as head and does ALL
+  // the work (Gemini head off, Grok 4.20 the default). New/unpinned conversations +
+  // Telegram fall back to this KV-tuned default instead of Sonnet/auto. Picking a
+  // concrete model in the selector still overrides it; picking 'auto' restores the
+  // cheap cost-routing for that conversation.
+  const defaultHeadModelId = await getDefaultHeadModelId()
 
   if (!isInternalCall) {
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
@@ -309,7 +317,7 @@ export async function POST(req: NextRequest) {
           return Response.json({ error: 'forbidden_conversation' }, { status: 403 })
         }
       }
-      conversationModelId = conv.modelId ?? DEFAULT_MODEL_ID
+      conversationModelId = conv.modelId ?? defaultHeadModelId
       personalMode = isPersonalProject(conv.project) || personalMode
       projectSystemInstructions = personalMode
         ? null
@@ -352,8 +360,9 @@ export async function POST(req: NextRequest) {
           ? null
           : await inheritConversationBusinessId(requestedProjectId)
         if (inherited) businessId = inherited
-        // New web conversation persists the owner's pick (or 'auto'); Telegram stays Sonnet.
-        conversationModelId = isInternalCall ? DEFAULT_MODEL_ID : (ownerSelectedModelId ?? AUTO_MODEL_ID)
+        // New conversation persists the owner's pick; with no explicit pick BOTH web
+        // and Telegram default to the owner's head model (Grok) so it does all the work.
+        conversationModelId = isInternalCall ? defaultHeadModelId : (ownerSelectedModelId ?? defaultHeadModelId)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const conv: { id: string } = await (prisma as any).agentConversation.create({
           data: {
@@ -634,7 +643,7 @@ export async function POST(req: NextRequest) {
     telegramFastPath,
     businessId,
     modelId: isInternalCall
-      ? DEFAULT_MODEL_ID
+      ? defaultHeadModelId
       : (resumeModelId ?? conversationModelId),
     signal: turnAbort.signal,
     turnId,

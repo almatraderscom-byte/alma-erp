@@ -103,9 +103,9 @@ describe('resolveHeadModelId — Rule 1 thread stickiness', () => {
       conversationId: CONV,
     })
     expect(decision.via).not.toBe('sticky_followup')
-    // Re-triages UP to the heavy head — now Gemini 3.1 Pro (owner command, 2026-07).
+    // Re-triages UP to the heavy head — now Grok 4.20 (owner command, 2026-07-18: Gemini off).
     expect(decision.tier).toBe('heavy')
-    expect(decision.modelId).toBe('gemini-3.1-pro')
+    expect(decision.modelId).toBe('xai-grok-4.20')
   })
 
   it('a money keyword still forces the heavy head even on a short cheap-thread follow-up', async () => {
@@ -117,10 +117,10 @@ describe('resolveHeadModelId — Rule 1 thread stickiness', () => {
       businessId: 'ALMA_LIFESTYLE',
       conversationId: CONV,
     })
-    // Owner command (2026-07): heavy head is Gemini 3.1 Pro. Invariant preserved:
-    // a money keyword never stays on the cheap DeepSeek head.
+    // Owner command (2026-07-18): heavy head is Grok 4.20 (Gemini off). Invariant
+    // preserved: a money keyword never stays on the cheap DeepSeek head.
     expect(decision.tier).toBe('heavy')
-    expect(decision.modelId).toBe('gemini-3.1-pro')
+    expect(decision.modelId).toBe('xai-grok-4.20')
     expect(decision.via).toBe('deny_kw')
   })
 

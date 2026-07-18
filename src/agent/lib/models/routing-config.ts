@@ -8,7 +8,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
-import { isKnownModelId, isAnthropicModel, DEFAULT_MODEL_ID } from '@/agent/lib/models/registry'
+import { isKnownModelId, isAnthropicModel, getModel, DEFAULT_MODEL_ID } from '@/agent/lib/models/registry'
 
 export type TaskTier = 'critical' | 'heavy' | 'light'
 
@@ -29,6 +29,15 @@ export interface ModelRoutingConfig {
   heavyModelId: string
   /** Sub-agent CRITICAL tier — Claude only (CS/finance/staff/scheduler). */
   criticalSubagentModelId: string
+  /**
+   * Owner's DEFAULT head model — the model that runs as head (and does ALL the
+   * work, no cost-triage) for a new/unpinned conversation and for Telegram. Owner
+   * rule 2026-07-18: "ami jei model select kori setai head hoye shob kaj koruk,
+   * normally Grok" → default Grok 4.20. Owner-tunable, no redeploy. Must be a
+   * head-pickable, tool-using model. Picking 'auto' in the model selector still
+   * restores the cheap cost-routing for that conversation.
+   */
+  defaultHeadModelId: string
 }
 
 const KEYS = {
@@ -40,7 +49,18 @@ const KEYS = {
   lightModelId: 'model.routing.tier.lightModelId',
   heavyModelId: 'model.routing.tier.heavyModelId',
   criticalSubagentModelId: 'model.routing.tier.criticalSubagentModelId',
+  defaultHeadModelId: 'model.routing.defaultHeadModelId',
 } as const
+
+/** Fallback head when nothing is configured — owner rule 2026-07-18: Grok 4.20. */
+export const DEFAULT_HEAD_MODEL_ID = 'xai-grok-4.20'
+
+/** A model id is usable as the owner's head only if it drives the full toolset. */
+function isValidHeadModelId(id: string | undefined | null): boolean {
+  if (!id || !isKnownModelId(id)) return false
+  const m = getModel(id)
+  return m.supportsTools === true && m.headPickable !== false
+}
 
 export const ROUTING_DEFAULTS: ModelRoutingConfig = {
   opusEnabled: true,
@@ -51,6 +71,7 @@ export const ROUTING_DEFAULTS: ModelRoutingConfig = {
   lightModelId: 'or-glm-4-32b',
   heavyModelId: 'or-gemini-2.5-flash-lite',
   criticalSubagentModelId: DEFAULT_MODEL_ID,
+  defaultHeadModelId: DEFAULT_HEAD_MODEL_ID,
 }
 
 export async function getModelRoutingConfig(): Promise<ModelRoutingConfig> {
@@ -78,6 +99,11 @@ export async function getModelRoutingConfig(): Promise<ModelRoutingConfig> {
       criticalSubagentModelId = rawCriticalSub
     }
 
+    const rawDefaultHead = map.get(KEYS.defaultHeadModelId)
+    const defaultHeadModelId = isValidHeadModelId(rawDefaultHead)
+      ? (rawDefaultHead as string)
+      : ROUTING_DEFAULTS.defaultHeadModelId
+
     return {
       opusEnabled: map.has(KEYS.opusEnabled) ? map.get(KEYS.opusEnabled) === 'true' : ROUTING_DEFAULTS.opusEnabled,
       opusDailyCap: num(KEYS.opusDailyCap, ROUTING_DEFAULTS.opusDailyCap, true),
@@ -87,9 +113,24 @@ export async function getModelRoutingConfig(): Promise<ModelRoutingConfig> {
       lightModelId,
       heavyModelId,
       criticalSubagentModelId,
+      defaultHeadModelId,
     }
   } catch {
     return { ...ROUTING_DEFAULTS }
+  }
+}
+
+/**
+ * The owner's DEFAULT head model id (KV-tunable, no redeploy) — used by the chat
+ * route for new/unpinned conversations + Telegram, and by the head router's heavy
+ * fallback. Cheap standalone reader so callers don't pull the whole config.
+ */
+export async function getDefaultHeadModelId(): Promise<string> {
+  try {
+    const row = await prisma.agentKvSetting.findUnique({ where: { key: KEYS.defaultHeadModelId } })
+    return isValidHeadModelId(row?.value) ? (row!.value as string) : ROUTING_DEFAULTS.defaultHeadModelId
+  } catch {
+    return ROUTING_DEFAULTS.defaultHeadModelId
   }
 }
 
@@ -117,6 +158,9 @@ export async function setModelRoutingConfig(patch: Partial<ModelRoutingConfig>):
     isAnthropicModel(patch.criticalSubagentModelId)
   ) {
     entries.push([KEYS.criticalSubagentModelId, patch.criticalSubagentModelId])
+  }
+  if (patch.defaultHeadModelId !== undefined && isValidHeadModelId(patch.defaultHeadModelId)) {
+    entries.push([KEYS.defaultHeadModelId, patch.defaultHeadModelId])
   }
   await Promise.all(
     entries.map(([key, value]) =>
