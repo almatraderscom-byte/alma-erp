@@ -106,6 +106,17 @@ export async function GET(req: NextRequest) {
     }
   } catch { /* health must never fail on the effects block */ }
 
+  // Phase 61 — machine-readable production truth (release identity + feature
+  // matrix). Gated by ?truth=true so the frequent worker liveness ping stays
+  // cheap and byte-identical; fail-open so health never breaks on this block.
+  let truth: unknown = null
+  if (req.nextUrl.searchParams.get('truth') === 'true') {
+    try {
+      const { getProductionTruth } = await import('@/agent/lib/production-truth')
+      truth = await getProductionTruth()
+    } catch { /* truth is best-effort; null (not fabricated) on failure */ }
+  }
+
   return NextResponse.json({
     ok: db,
     db,
@@ -114,6 +125,7 @@ export async function GET(req: NextRequest) {
     securityQuarantine,
     graph,
     effects,
+    ...(truth ? { truth } : {}),
     timestamp: now.toISOString(),
   })
 }

@@ -11,6 +11,7 @@ import {
   getCheckpointStoreHealth,
   getCutoverStatus,
 } from '@/agent/lib/graph/graph-health'
+import { getProductionTruth, type EffectiveMode } from '@/agent/lib/production-truth'
 
 function pct(v: number): string {
   return `${(v * 100).toFixed(1)}%`
@@ -20,11 +21,32 @@ const MODE_BN: Record<string, string> = {
   off: 'বন্ধ', shadow: 'শ্যাডো (দেখে, চালায় না)', on: 'চালু', preview_only: 'শুধু প্রিভিউ',
 }
 
+// Phase 61 — six honest states for the feature truth matrix. Only `live` is
+// green; `unknown`/`broken` are red; nothing amber is mistaken for a pass.
+const TRUTH_MODE: Record<EffectiveMode, { bn: string; color: string }> = {
+  live: { bn: 'চালু ও ব্যবহৃত', color: '#3fb950' },
+  shadow: { bn: 'শ্যাডো', color: '#d29922' },
+  off: { bn: 'বন্ধ', color: '#8b949e' },
+  unwired: { bn: 'কোড আছে, সংযোগ নেই', color: '#f85149' },
+  broken: { bn: 'ভাঙা', color: '#f85149' },
+  unused: { bn: 'চালু, ব্যবহার নেই', color: '#d29922' },
+  unknown: { bn: 'অজানা', color: '#f85149' },
+}
+
+function ago(iso: string | null): string {
+  if (!iso) return '—'
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000)
+  if (mins < 60) return `${mins} মিনিট আগে`
+  if (mins < 1440) return `${Math.round(mins / 60)} ঘণ্টা আগে`
+  return `${Math.round(mins / 1440)} দিন আগে`
+}
+
 export default async function GraphHealthPanel() {
-  const [health, store, cutover] = await Promise.all([
+  const [health, store, cutover, truth] = await Promise.all([
     getTurnGraphHealth(7).catch(() => null),
     getCheckpointStoreHealth().catch(() => null),
     getCutoverStatus(7).catch(() => null),
+    getProductionTruth().catch(() => null),
   ])
 
   return (
@@ -36,6 +58,59 @@ export default async function GraphHealthPanel() {
       <p style={{ color: '#8b949e', fontSize: 13 }}>
         Ladder stage: <b style={{ color: '#79c0ff' }}>{cutover?.stage ?? 'shadow'}</b> · Canary: {cutover?.canaryVerdict ?? '—'}
       </p>
+
+      {/* Phase 61 — Release identity + feature truth matrix. Distinguishes
+          merged / deployed / reachable / enabled-used / outcome so no feature
+          reads "done" from a green name alone. */}
+      <h2 style={{ fontSize: 15, marginTop: 18 }}>🏷️ এই বিল্ডের পরিচয় (release identity)</h2>
+      {truth ? (
+        <div style={{ fontSize: 13, lineHeight: 1.8, background: '#161b22', border: '1px solid #30363d', borderRadius: 8, padding: '10px 12px' }}>
+          <div>SHA: <b style={{ color: truth.release.shaProven ? '#3fb950' : '#f85149' }}>{truth.release.app.commitShort ?? 'unknown (local/preview)'}</b> · env: <b>{truth.release.app.environment}</b>{truth.release.app.branch ? <> · branch: {truth.release.app.branch}</> : null}</div>
+          <div>Migration head: <b>{truth.release.migrationHead === 'unknown' ? 'unknown' : truth.release.migrationHead.name}</b></div>
+          <div>Workers: {truth.release.workers.length === 0 ? 'কোনো heartbeat নেই' : truth.release.workers.map((w) => `${w.service} (${w.alive ? 'live' : `${w.ageMinutes ?? '—'}m`})`).join(' · ')} <span style={{ color: '#8b949e' }}>· worker SHA: unknown</span></div>
+        </div>
+      ) : (
+        <p style={{ color: '#8b949e', fontSize: 13 }}>Production truth পড়া যায়নি।</p>
+      )}
+
+      {truth && (
+        <>
+          <h2 style={{ fontSize: 15, marginTop: 18 }}>
+            📊 ফিচার সত্য-ম্যাট্রিক্স —
+            <span style={{ color: '#3fb950' }}> {truth.summary.live} live</span> ·
+            <span style={{ color: '#d29922' }}> {truth.summary.shadow + truth.summary.unused} শ্যাডো/অব্যবহৃত</span> ·
+            <span style={{ color: '#f85149' }}> {truth.summary.unwired + truth.summary.broken + truth.summary.unknown} সংযোগহীন/ভাঙা/অজানা</span> ·
+            <span style={{ color: '#8b949e' }}> {truth.summary.off} বন্ধ</span>
+          </h2>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: '#8b949e', textAlign: 'left' }}>
+                <th style={{ padding: '4px 8px' }}>ফিচার</th>
+                <th style={{ padding: '4px 8px' }}>অবস্থা</th>
+                <th style={{ padding: '4px 8px' }}>৭ দিনে</th>
+                <th style={{ padding: '4px 8px' }}>শেষ ব্যবহার</th>
+                <th style={{ padding: '4px 8px' }}>ব্লকার</th>
+              </tr>
+            </thead>
+            <tbody>
+              {truth.features.map((f) => (
+                <tr key={f.id}>
+                  <td style={{ border: '1px solid #30363d', padding: '5px 8px', fontWeight: 600 }}>{f.labelBn}</td>
+                  <td style={{ border: '1px solid #30363d', padding: '5px 8px', fontWeight: 700, color: TRUTH_MODE[f.effectiveMode].color, whiteSpace: 'nowrap' }}>
+                    {TRUTH_MODE[f.effectiveMode].bn}
+                  </td>
+                  <td style={{ border: '1px solid #30363d', padding: '5px 8px', textAlign: 'right' }}>{f.use7d}</td>
+                  <td style={{ border: '1px solid #30363d', padding: '5px 8px', color: '#8b949e', whiteSpace: 'nowrap' }}>{ago(f.lastRealUse)}</td>
+                  <td style={{ border: '1px solid #30363d', padding: '5px 8px', color: '#8b949e' }}>{f.blocker ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p style={{ color: '#8b949e', fontSize: 11, marginTop: 6 }}>
+            নিয়ম: শুধু “চালু ও ব্যবহৃত” = সবুজ। “অজানা/ভাঙা/সংযোগহীন” সবসময় লাল — কোনো config মিসিং থাকলে কখনো সবুজ দেখাবে না।
+          </p>
+        </>
+      )}
 
       <h2 style={{ fontSize: 15, marginTop: 18 }}>Kill switches (প্রতিটা আলাদা, সবগুলো AGENT_ENABLED-এর নিচে)</h2>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>

@@ -1,0 +1,21 @@
+Live run against a real (but stale-cred) prod DB — proves fail-open: EVERY probe degrades to unknown/unused, ZERO go green.
+This is the Phase 61 exit gate: 'a deliberately missing config stays red/unknown, never green.'
+
+  305   const on = process.env.AGENT_EFFECT_ENGINE?.trim() === 'true'
+=== RELEASE ===
+=== SUMMARY === {"live":0,"shadow":0,"off":0,"unwired":0,"broken":0,"unused":1,"unknown":13,"total":14}
+=== FEATURES ===
+UNKNOWN  | langgraph        | 7d=0 | যাচাই করা যায়নি: শ্যাডো ট্রেস পড়া যায়নি
+UNKNOWN  | continuity       | 7d=0 | যাচাই করা যায়নি: focus রেকর্ড পড়া যায়নি
+UNKNOWN  | interaction      | 7d=0 | যাচাই করা যায়নি: ইভেন্ট পড়া যায়নি
+UNKNOWN  | effect_engine    | 7d=0 | যাচাই করা যায়নি: action run পড়া যায়নি
+UNKNOWN  | durable_queue    | 7d=0 | যাচাই করা যায়নি: workflow_runs পড়া যায়নি
+UNKNOWN  | autonomy_ladder  | 7d=0 | যাচাই করা যায়নি: rollout KV পড়া যায়নি
+UNKNOWN  | service_adapters | 7d=0 | যাচাই করা যায়নি: connection পড়া যায়নি
+UNKNOWN  | growth_brief     | 7d=0 | যাচাই করা যায়নি: brief পড়া যায়নি
+UNKNOWN  | experiments      | 7d=0 | যাচাই করা যায়নি: experiment পড়া যায়নি
+UNKNOWN  | capi             | 7d=0 | যাচাই করা যায়নি: marketing event পড়া যায়নি
+UNKNOWN  | instagram        | 7d=0 | IG Professional link যাচাই করা যায়নি — owner-এর Meta UI অ্যাকশন লাগবে (Phase 63)
+UNKNOWN  | browser_runner   | 7d=0 | যাচাই করা যায়নি: browser device পড়া যায়নি
+UNUSED   | heartbeat        | 7d=0 | কোনো heartbeat রেকর্ড নেই
+UNKNOWN  | content_engine   | 7d=0 | যাচাই করা যায়নি: duty log পড়া যায়নি
