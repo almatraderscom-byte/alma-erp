@@ -877,10 +877,18 @@ export async function runRegisteredTool(
     const handlerContext = { ...serverContext }
     delete handlerContext.turnAuthorization
 
-    // Phase 53: route direct write effects through the exactly-once effect
-    // engine (durable run + append-only ledger; ledger failure BLOCKS the
-    // write). Flag-gated OFF by default — Phase 57/58 readiness gates flip it.
-    if (process.env.AGENT_EFFECT_ENGINE === 'true' && cap.mode === 'write' && guardEnvelope) {
+    // Phase 53/65: route direct write effects through the exactly-once effect
+    // engine (durable run + append-only ledger; ledger failure BLOCKS the write
+    // — there is NO direct-handler fallback). Phase 65 replaces the binary
+    // all-writes flip with a master switch + per-task-class canary so ONE R1
+    // class can pilot the engine. Selection is computed once here.
+    const effectSel = cap.mode === 'write' && guardEnvelope
+      ? (await import('@/agent/lib/effects/action-run')).effectEngineSelectionFromEnv(
+          'write',
+          (await import('@/agent/lib/autonomy-task-catalog')).taskClassForTool(tool.name, cap).taskClass,
+        )
+      : { use: false, reason: 'not_eligible' }
+    if (effectSel.use && cap.mode === 'write' && guardEnvelope) {
       const { executeEffect } = await import('@/agent/lib/effects/action-run')
       const outcome = await executeEffect({
         envelope: guardEnvelope,
@@ -898,7 +906,7 @@ export async function runRegisteredTool(
         success: effectResult.success,
         errorCode: effectResult.success ? undefined : effectResult.errorCode,
         latencyMs: Date.now() - started,
-        detail: { ...capDetail, argsValidation: 'passed', effectEngine: true, effectState: outcome.state, effectReplayed: outcome.replayed },
+        detail: { ...capDetail, argsValidation: 'passed', effectEngine: true, effectSelection: effectSel.reason, effectState: outcome.state, effectReplayed: outcome.replayed },
       })
       if (ladderTaskClass) void feedLadderOutcome(ladderTaskClass, effectResult.success)
       return effectResult

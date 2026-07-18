@@ -25,6 +25,56 @@
 import type { SignedEnvelope } from '@/agent/lib/policy/capability-token'
 import { appendLedger, defaultEffectDb, type ActionRunRow, type EffectDb } from './effect-ledger'
 
+// ── Phase 65: effect-engine SELECTION (master switch + per-class canary) ──────
+// Replaces the binary "AGENT_EFFECT_ENGINE=true flips ALL write tools at once"
+// (the audit's "unreviewed mass cutover" risk). Now:
+//   AGENT_EFFECT_ENGINE = off | false | unset → engine OFF (unchanged default)
+//                       = on  | true          → ALL writes (back-compat)
+//                       = canary              → only classes in
+//                                               AGENT_EFFECT_ENGINE_CLASSES
+// so ONE internal R1 class can pilot the engine without touching every write.
+
+export interface EffectEngineSelection {
+  use: boolean
+  reason: string
+}
+
+/**
+ * Decide whether THIS write should ride the exactly-once effect engine. Pure —
+ * env is passed in so it is fully testable. Reads/stages never use the engine.
+ */
+export function effectEngineSelection(opts: {
+  toolMode: 'read' | 'stage' | 'write'
+  taskClass?: string
+  flag?: string
+  canaryClasses?: string
+}): EffectEngineSelection {
+  if (opts.toolMode !== 'write') return { use: false, reason: 'not_a_write' }
+  const flag = (opts.flag ?? '').trim().toLowerCase()
+  if (flag === 'on' || flag === 'true') return { use: true, reason: 'master_on' }
+  if (flag !== 'canary') return { use: false, reason: 'master_off' }
+  const allowed = new Set(
+    (opts.canaryClasses ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  )
+  if (opts.taskClass && allowed.has(opts.taskClass)) {
+    return { use: true, reason: `canary:${opts.taskClass}` }
+  }
+  return { use: false, reason: 'canary_class_not_selected' }
+}
+
+/** Reads the live env into an effect-engine selection for a write tool. */
+export function effectEngineSelectionFromEnv(toolMode: 'read' | 'stage' | 'write', taskClass?: string): EffectEngineSelection {
+  return effectEngineSelection({
+    toolMode,
+    taskClass,
+    flag: process.env.AGENT_EFFECT_ENGINE,
+    canaryClasses: process.env.AGENT_EFFECT_ENGINE_CLASSES,
+  })
+}
+
 export const ACTION_RUN_STATES = [
   'proposed',
   'policy_checked',
