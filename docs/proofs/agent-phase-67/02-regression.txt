@@ -1,0 +1,1 @@
+Full agent suite: 185 files / 2344 tests PASS; tsc 0 errors. Existing browser diagnostics + success-criteria intact.

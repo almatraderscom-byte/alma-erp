@@ -95,6 +95,96 @@ export function evaluateCriteria(criteria: SuccessCriterion[], state: FinalState
   return { passed: results.every((r) => r.passed), results }
 }
 
+// ── Phase 67: the pre-execution TASK CONTRACT ────────────────────────────────
+// Every browser task must declare, BEFORE any action: which domains it may
+// touch, whether it is read or write, its success criteria, the actions it must
+// never take, and the conditions that hand control to the owner. Each step is
+// then checked against this contract — cross-domain navigation, a prohibited
+// action, or a handoff trigger stops the autonomous run deterministically.
+
+/** Actions that ALWAYS interrupt to the owner, regardless of task (roadmap). */
+export const ALWAYS_HANDOFF_ACTIONS = [
+  'password', 'mfa', 'otp', 'captcha', 'account_recovery',
+  'permission_grant', 'security_setting', 'legal_accept', 'payment', 'final_submit',
+] as const
+
+export interface BrowserTaskContract {
+  /** Registrable domains this task may touch (e.g. ['facebook.com']). */
+  targetDomains: string[]
+  /** Read-only or write-capable — a read task may never take a write action. */
+  scope: 'read' | 'write'
+  criteria: SuccessCriterion[]
+  /** Action ids this task must never take (task-specific prohibitions). */
+  prohibitedActions: string[]
+  /** Extra owner-handoff triggers on top of ALWAYS_HANDOFF_ACTIONS. */
+  ownerHandoffTriggers: string[]
+}
+
+/** Reduce a URL/host to its registrable-ish domain for scope comparison. */
+export function domainOf(urlOrHost: string): string {
+  let host = (urlOrHost ?? '').trim().toLowerCase()
+  try {
+    if (host.includes('://')) host = new URL(host).hostname
+  } catch { /* fall through with raw */ }
+  host = host.replace(/^www\./, '').split('/')[0].split(':')[0]
+  return host
+}
+
+/** A domain is in scope if it equals or is a subdomain of an allowed domain. */
+export function domainInScope(domain: string, allowed: string[]): boolean {
+  const d = domainOf(domain)
+  return allowed.some((a) => {
+    const base = domainOf(a)
+    return d === base || d.endsWith(`.${base}`)
+  })
+}
+
+/** Structural validation of the contract (declared before execution). */
+export function validateContract(contract: Partial<BrowserTaskContract> | null | undefined): CriteriaValidation {
+  const errors: string[] = []
+  if (!contract || typeof contract !== 'object') return { ok: false, errors: ['task contract is required before any browser action'] }
+  if (!Array.isArray(contract.targetDomains) || contract.targetDomains.length === 0) {
+    errors.push('targetDomains: at least one in-scope domain is required')
+  }
+  if (contract.scope !== 'read' && contract.scope !== 'write') errors.push("scope must be 'read' or 'write'")
+  const cv = validateCriteria(contract.criteria)
+  if (!cv.ok) errors.push(...cv.errors)
+  return { ok: errors.length === 0, errors }
+}
+
+export interface StepDecision {
+  allowed: boolean
+  requiresHandoff: boolean
+  reason: string
+}
+
+/**
+ * Enforce the contract on ONE proposed step. Order matters: cross-domain and
+ * prohibited actions BLOCK; always/owner-handoff triggers interrupt to the
+ * owner; a write action under a read scope blocks. Pure + deterministic.
+ */
+export function checkStepAgainstContract(
+  contract: BrowserTaskContract,
+  step: { domain: string; action: string; isWrite?: boolean },
+): StepDecision {
+  const action = (step.action ?? '').trim().toLowerCase()
+
+  if (!domainInScope(step.domain, contract.targetDomains)) {
+    return { allowed: false, requiresHandoff: false, reason: `cross-domain: ${domainOf(step.domain)} not in task scope` }
+  }
+  if (contract.prohibitedActions.map((a) => a.toLowerCase()).includes(action)) {
+    return { allowed: false, requiresHandoff: false, reason: `prohibited action for this task: ${action}` }
+  }
+  if (step.isWrite && contract.scope === 'read') {
+    return { allowed: false, requiresHandoff: false, reason: 'write action attempted under a read-only task scope' }
+  }
+  const handoff = new Set<string>([...ALWAYS_HANDOFF_ACTIONS, ...contract.ownerHandoffTriggers.map((a) => a.toLowerCase())])
+  if (handoff.has(action)) {
+    return { allowed: false, requiresHandoff: true, reason: `owner handoff required for: ${action}` }
+  }
+  return { allowed: true, requiresHandoff: false, reason: 'in scope' }
+}
+
 export interface BrowserCheckpoint {
   url: string | null
   tab: string | null
