@@ -356,15 +356,19 @@ class Call {
     }
     const durationSecs = this.startedAt ? Math.max(0, Math.round((Date.now() - this.startedAt) / 1000)) : null
     const status = this.callerSpoke ? 'completed' : 'no_answer'
+    // Estimated ৳ cost so the owner can manage spend (Gemini Live in/out + BD trunk ≈
+    // ৳2.5–4.5/min; env-tunable). Rounded up to the minute the way carriers bill.
+    const perMin = Number(process.env.GLIVE_COST_PER_MIN_BDT || 3.5)
+    const costBdt = durationSecs != null ? Math.round(Math.ceil(durationSecs / 60) * perMin) : null
     const summary = await this.summarize(this.turns)
     try {
       const res = await fetch(`${APP_URL}/api/assistant/voice-call/relay-report`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-        body: JSON.stringify({ callRecordId, callSid: this.callId, transcript: this.turns, summary, durationSecs, status }),
+        body: JSON.stringify({ callRecordId, callSid: this.callId, transcript: this.turns, summary, durationSecs, status, costBdt, provider: 'ngs' }),
         signal: AbortSignal.timeout(20_000),
       })
-      console.log(`[glive] ${this.id} report POST ${res.status} (turns=${this.turns.length} dur=${durationSecs}s sum=${summary ? 'y' : 'n'})`)
+      console.log(`[glive] ${this.id} report POST ${res.status} (turns=${this.turns.length} dur=${durationSecs}s sum=${summary ? 'y' : 'n'} cost=৳${costBdt})`)
     } catch (e) { console.log(`[glive] ${this.id} report err ${e?.message || e}`) }
   }
 
