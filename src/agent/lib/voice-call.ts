@@ -37,7 +37,7 @@ const RELAY_STT_HINTS =
 /** Which engine runs two-way calls: ElevenLabs ConvAI (legacy), Twilio
  * ConversationRelay + Gemini + Google Charon (relay), or Twilio Media Streams →
  * our Sarvam pipeline (saaras:v3 STT + Gemini + Bulbul TTS, owner's chosen voice). */
-export type VoiceCallProvider = 'elevenlabs' | 'relay' | 'sarvam'
+export type VoiceCallProvider = 'elevenlabs' | 'relay' | 'sarvam' | 'ngs'
 
 export interface VoiceCallConfig {
   enabled: boolean
@@ -53,14 +53,21 @@ export interface VoiceCallConfig {
   twilioAuthToken: string
   twilioFromNumber: string
   internalToken: string
+  /** ngs provider only — infosoftbd (NextGenSwitch) BD number + Gemini Live bot */
+  ngsApiBase: string
+  ngsApiKey: string
+  ngsApiSecret: string
+  ngsFrom: string
+  ngsLiveWsUrl: string
 }
 
 /** Read + validate config from env. `enabled` is false unless everything required is present. */
 export function getVoiceCallConfig(): VoiceCallConfig {
   const provider: VoiceCallProvider =
-    process.env.VOICE_CALL_PROVIDER === 'sarvam' ? 'sarvam'
-      : process.env.VOICE_CALL_PROVIDER === 'relay' ? 'relay'
-        : 'elevenlabs'
+    process.env.VOICE_CALL_PROVIDER === 'ngs' ? 'ngs'
+      : process.env.VOICE_CALL_PROVIDER === 'sarvam' ? 'sarvam'
+        : process.env.VOICE_CALL_PROVIDER === 'relay' ? 'relay'
+          : 'elevenlabs'
   const apiKey = process.env.ELEVENLABS_API_KEY ?? ''
   const agentId = process.env.ELEVENLABS_AGENT_ID ?? ''
   const agentPhoneNumberId = process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID ?? ''
@@ -72,11 +79,19 @@ export function getVoiceCallConfig(): VoiceCallConfig {
   const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN ?? ''
   const twilioFromNumber = process.env.TWILIO_FROM_NUMBER ?? ''
   const internalToken = process.env.AGENT_INTERNAL_TOKEN ?? ''
+  // ngs = infosoftbd (NextGenSwitch) BD number; two-way runs on the Gemini Live bot.
+  const ngsApiBase = (process.env.NGS_API_BASE ?? 'https://alma-traders.infosoftbd.com').replace(/\/$/, '')
+  const ngsApiKey = process.env.NGS_API_KEY ?? ''
+  const ngsApiSecret = process.env.NGS_API_SECRET ?? ''
+  const ngsFrom = process.env.NGS_FROM ?? '2323'
+  const ngsLiveWsUrl = process.env.NGS_LIVE_WS_URL ?? '' // e.g. ws://31.97.237.40:8766/ws
   const enabled =
     killSwitch &&
-    (provider === 'relay' || provider === 'sarvam'
-      ? Boolean(relayWssUrl && twilioAccountSid && twilioAuthToken && twilioFromNumber && internalToken)
-      : Boolean(apiKey && agentId && agentPhoneNumberId))
+    (provider === 'ngs'
+      ? Boolean(ngsApiKey && ngsApiSecret && ngsLiveWsUrl)
+      : provider === 'relay' || provider === 'sarvam'
+        ? Boolean(relayWssUrl && twilioAccountSid && twilioAuthToken && twilioFromNumber && internalToken)
+        : Boolean(apiKey && agentId && agentPhoneNumberId))
   return {
     enabled,
     provider,
@@ -90,6 +105,11 @@ export function getVoiceCallConfig(): VoiceCallConfig {
     twilioAuthToken,
     twilioFromNumber,
     internalToken,
+    ngsApiBase,
+    ngsApiKey,
+    ngsApiSecret,
+    ngsFrom,
+    ngsLiveWsUrl,
   }
 }
 
@@ -97,6 +117,11 @@ export function getVoiceCallConfig(): VoiceCallConfig {
 export function voiceCallUnavailableReason(config = getVoiceCallConfig()): string | null {
   if (process.env.VOICE_CALL_ENABLED !== 'true') {
     return 'ভয়েস কল বন্ধ আছে (VOICE_CALL_ENABLED off)। চালু করতে owner সেটিং লাগবে।'
+  }
+  if (config.provider === 'ngs') {
+    if (!config.ngsApiKey || !config.ngsApiSecret) return 'NGS_API_KEY / NGS_API_SECRET সেট করা নেই (infosoftbd Programmable Voice API)।'
+    if (!config.ngsLiveWsUrl) return 'NGS_LIVE_WS_URL সেট করা নেই — Gemini Live bot-এর ws ঠিকানা বসান (যেমন ws://31.97.237.40:8766/ws)।'
+    return null
   }
   if (config.provider === 'relay' || config.provider === 'sarvam') {
     if (!config.relayWssUrl) return 'VOICE_RELAY_PUBLIC_WSS_URL সেট করা নেই — VPS relay-এর পাবলিক wss ঠিকানা বসান।'
@@ -181,6 +206,10 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
       conversationId: input.conversationId ?? null,
     },
   })
+
+  if (config.provider === 'ngs') {
+    return placeNgsLiveCall(config, record.id, toNumber, purpose, input.recipientName, input.voiceGender)
+  }
 
   if (config.provider === 'sarvam') {
     return placeSarvamMediaCall(config, record.id, toNumber, firstMessage, purpose, input.recipientName, input.voiceGender)
@@ -471,6 +500,65 @@ async function placeSarvamMediaCall(
       data: { status: 'ringing', callSid: data.sid, summary: `sarvam media: ${voice.speaker}/${voice.model}` },
     })
     return { ok: true, callRecordId, callSid: data.sid }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'failed', summary: `কল দেওয়া যায়নি: ${msg}` },
+    }).catch(() => {})
+    return { ok: false, error: `কল দেওয়া যায়নি: ${msg}`, callRecordId }
+  }
+}
+
+/**
+ * Two-way call via infosoftbd (NextGenSwitch) BD number → our Gemini Live bot
+ * (worker/scripts/gemini-live-bot.mjs): gemini-3.1-flash-live realtime speech-to-speech,
+ * native barge-in, empathetic Bangla, DELETE-based hang-up. Owner-locked 2026-07-18 as
+ * the two-way engine (male=Charon, female=Aoede). Places the call via the NGS
+ * Programmable Voice API and points <Connect><Stream> at the bot's ws URL.
+ */
+async function placeNgsLiveCall(
+  config: VoiceCallConfig,
+  callRecordId: string,
+  toNumber: string,
+  purpose: string,
+  recipientName: string | undefined,
+  voiceGender: 'male' | 'female' | undefined,
+): Promise<PlaceCallResult> {
+  try {
+    const exp = Date.now() + 15 * 60_000
+    const t = createHmac('sha256', config.internalToken).update(`relay:${callRecordId}:${exp}`).digest('hex')
+    const voice = voiceGender === 'female' ? 'Aoede' : 'Charon'
+    const P = (n: string, v: string) => `<parameter name="${escapeXmlAttr(n)}" value="${escapeXmlAttr(v)}"/>`
+    const responseXml =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      `<response><connect><stream name="alma" url="${escapeXmlAttr(config.ngsLiveWsUrl)}">` +
+      P('id', callRecordId) + P('exp', String(exp)) + P('t', t) +
+      P('purpose', purpose) + P('recipientName', recipientName ?? '') + P('voice', voice) +
+      '</stream></connect></response>'
+
+    const body = new URLSearchParams({ to: toNumber, from: config.ngsFrom, responseXml })
+    const res = await fetch(`${config.ngsApiBase}/api/v1/call`, {
+      method: 'POST',
+      headers: {
+        'X-Authorization': config.ngsApiKey,
+        'X-Authorization-Secret': config.ngsApiSecret,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body,
+      signal: AbortSignal.timeout(30_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as { call_id?: string; status?: string }
+    if (!res.ok || !data.call_id) {
+      const err = `NGS ${res.status}: ${JSON.stringify(data).slice(0, 160)}`
+      await db.agentVoiceCall.update({ where: { id: callRecordId }, data: { status: 'failed', summary: err } })
+      return { ok: false, error: err, callRecordId }
+    }
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'ringing', callSid: data.call_id, summary: `ngs live: ${voice}` },
+    })
+    return { ok: true, callRecordId, callSid: data.call_id }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     await db.agentVoiceCall.update({

@@ -513,10 +513,13 @@ export function startVoiceRelayServer() {
     // /relay = ConversationRelay (Google/Deepgram); /media = Sarvam Media Streams.
     const isRelay = url.pathname === '/relay'
     const isMedia = url.pathname === '/media'
-    // Twilio Media Streams does NOT forward the URL query string to <Stream>, so the
-    // token can't ride the URL there — /media carries it in <Parameter> and verifies
-    // on the 'start' frame instead (see sarvam-media.mjs). /relay keeps URL-token auth.
-    const bad = (!isRelay && !isMedia) ? `bad path ${url.pathname}` : (isRelay && !verifyRelayToken(id, exp, t)) ? 'token verify failed' : null
+    // /ngs-media = NextGenSwitch (infosoftbd) <stream> — same Sarvam pipeline as Twilio
+    // /media, different frame dialect (streamId vs streamSid), auto-detected in SarvamCall.
+    const isNgsMedia = url.pathname === '/ngs-media'
+    // Media Streams does NOT forward the URL query string to <Stream>, so the token can't
+    // ride the URL there — /media & /ngs-media carry it in <Parameter> and verify on the
+    // 'start' frame instead (see sarvam-media.mjs). /relay keeps URL-token auth.
+    const bad = (!isRelay && !isMedia && !isNgsMedia) ? `bad path ${url.pathname}` : (isRelay && !verifyRelayToken(id, exp, t)) ? 'token verify failed' : null
     if (bad) {
       noteUpgrade({ ok: false, reason: bad, id: id ?? null, from })
       console.warn(`[voice-relay] upgrade rejected (${bad}) from ${from}`)
@@ -525,7 +528,7 @@ export function startVoiceRelayServer() {
       return
     }
     noteUpgrade({ ok: true, id, from, path: url.pathname })
-    if (isMedia) {
+    if (isMedia || isNgsMedia) {
       handleSarvamMediaUpgrade({ req, socket, head, wss, verifyRelayToken })
       return
     }

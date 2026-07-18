@@ -113,6 +113,8 @@ class SarvamCall {
     this.verifyToken = verifyToken
     this.callRecordId = null
     this.streamSid = null
+    this.isNgs = false           // NextGenSwitch (infosoftbd) dialect
+    this.streamKey = 'streamSid' // Twilio uses streamSid; NGS uses streamId
     this.params = {}
     this.history = []
     this.startedAt = Date.now()
@@ -261,16 +263,47 @@ class SarvamCall {
     if (this.ended || !this.streamSid) return
     this._buf = null // drop any half-collected caller audio; we're taking the floor
     const mu = pcm16ToMuLaw(pcm)
-    for (let off = 0; off < mu.length; off += 160) {
-      let frame = mu.subarray(off, off + 160)
-      if (frame.length < 160) frame = Buffer.concat([frame, Buffer.alloc(160 - frame.length, 0xff)]) // μ-law silence pad
-      this.sendTwilio({ event: 'media', streamSid: this.streamSid, media: { payload: frame.toString('base64') } })
-    }
     this._markSeq = (this._markSeq || 0) + 1
     const name = 'm' + this._markSeq
     this._marks = this._marks || new Set()
     this._marks.add(name)
     this.speaking = true
+
+    if (this.isNgs) {
+      // Twilio buffers a whole line and plays it on its own clock; NGS has no such
+      // jitter buffer, so bursting a line overruns it and the owner hears "ঝিরঝির".
+      // Send CLOCK-DRIVEN in real time instead: keep ~100 ms of audio ahead of the wall
+      // clock, checked every 10 ms. Being clock-driven (send whatever is *due*, not a
+      // fixed 20 ms pacer) makes it robust to the busy worker event loop — the very
+      // jitter that made 20 ms pacing static on Twilio. NGS doesn't echo marks, so the
+      // floor is released once the last frame is queued (+ a short playout tail).
+      if (this._pacer) clearInterval(this._pacer)
+      const FB = 160, FMS = 20, LEAD = 5
+      let sent = 0
+      const start = Date.now()
+      this._pacer = setInterval(() => {
+        if (this.ended) { clearInterval(this._pacer); this._pacer = null; return }
+        const due = Math.floor((Date.now() - start) / FMS) + LEAD
+        while (sent < due && sent * FB < mu.length) {
+          let frame = mu.subarray(sent * FB, sent * FB + FB)
+          if (frame.length < FB) frame = Buffer.concat([frame, Buffer.alloc(FB - frame.length, 0xff)])
+          this.sendTwilio({ event: 'media', [this.streamKey]: this.streamSid, media: { payload: frame.toString('base64') } })
+          sent++
+        }
+        if (sent * FB >= mu.length) {
+          clearInterval(this._pacer); this._pacer = null
+          setTimeout(() => { if (this._marks?.has(name)) this.onMark(name) }, 250)
+        }
+      }, 10)
+      return
+    }
+
+    // Twilio: hand the whole line over AT ONCE — it buffers and plays on its own clock.
+    for (let off = 0; off < mu.length; off += 160) {
+      let frame = mu.subarray(off, off + 160)
+      if (frame.length < 160) frame = Buffer.concat([frame, Buffer.alloc(160 - frame.length, 0xff)]) // μ-law silence pad
+      this.sendTwilio({ event: 'media', streamSid: this.streamSid, media: { payload: frame.toString('base64') } })
+    }
     this.sendTwilio({ event: 'mark', streamSid: this.streamSid, mark: { name } })
   }
 
@@ -283,15 +316,20 @@ class SarvamCall {
     }
   }
 
-  haltPlayback() { this.speaking = false; this._marks?.clear() }
+  haltPlayback() {
+    this.speaking = false
+    if (this._pacer) { clearInterval(this._pacer); this._pacer = null }
+    this._marks?.clear()
+  }
 
-  /** Caller barged in — abort generation and cut Twilio's buffered audio at once. */
+  /** Caller barged in — abort generation and cut buffered/queued audio at once. */
   bargeIn() {
     this.pendingGen?.abort()
+    if (this._pacer) { clearInterval(this._pacer); this._pacer = null } // stop the NGS pacer
     this._marks?.clear()
     if (this.speaking) {
       this.speaking = false
-      this.sendTwilio({ event: 'clear', streamSid: this.streamSid })
+      this.sendTwilio({ event: 'clear', [this.streamKey]: this.streamSid })
     }
   }
 
@@ -301,8 +339,13 @@ class SarvamCall {
     try { msg = JSON.parse(raw.toString()) } catch { return }
     switch (msg.event) {
       case 'start': {
-        this.streamSid = msg.start?.streamSid ?? msg.streamSid
-        this.params = msg.start?.customParameters ?? {}
+        // NextGenSwitch (infosoftbd) puts streamId + call_id + params at the top level;
+        // Twilio nests them under start.streamSid / start.customParameters. Detect the
+        // dialect once and normalise, so ONE Sarvam pipeline serves both carriers.
+        this.isNgs = !msg.start && Boolean(msg.streamId)
+        this.streamKey = this.isNgs ? 'streamId' : 'streamSid'
+        this.streamSid = msg.start?.streamSid ?? msg.streamSid ?? msg.streamId
+        this.params = msg.start?.customParameters ?? msg.params ?? {}
         // Media Streams can't carry the token in the URL, so verify it from the
         // <Parameter> values now. Reject anything that isn't ours.
         const okTok = this.verifyToken?.(this.params.id, Number(this.params.exp), this.params.t)
@@ -311,7 +354,7 @@ class SarvamCall {
           this.close()
           return
         }
-        this.callRecordId = this.params.id ?? null
+        this.callRecordId = this.params.id ?? msg.call_id ?? null
         console.log(`[sarvam-media] verified — call ${this.callRecordId}`)
         this.openStt()
         if (this.params.firstMessage) this.say(this.params.firstMessage)
