@@ -12,6 +12,7 @@ import {
   getCutoverStatus,
 } from '@/agent/lib/graph/graph-health'
 import { getProductionTruth, type EffectiveMode } from '@/agent/lib/production-truth'
+import { computeOwnerBenefitScorecard } from '@/agent/lib/owner-benefit-scorecard'
 
 function pct(v: number): string {
   return `${(v * 100).toFixed(1)}%`
@@ -42,11 +43,12 @@ function ago(iso: string | null): string {
 }
 
 export default async function GraphHealthPanel() {
-  const [health, store, cutover, truth] = await Promise.all([
+  const [health, store, cutover, truth, scorecard] = await Promise.all([
     getTurnGraphHealth(7).catch(() => null),
     getCheckpointStoreHealth().catch(() => null),
     getCutoverStatus(7).catch(() => null),
     getProductionTruth().catch(() => null),
+    computeOwnerBenefitScorecard(7).catch(() => null),
   ])
 
   return (
@@ -71,6 +73,23 @@ export default async function GraphHealthPanel() {
         </div>
       ) : (
         <p style={{ color: '#8b949e', fontSize: 13 }}>Production truth পড়া যায়নি।</p>
+      )}
+
+      {scorecard && (
+        <>
+          <h2 style={{ fontSize: 15, marginTop: 18 }}>🎯 মালিক-লাভ স্কোরকার্ড (গত ৭ দিন)</h2>
+          <div style={{ fontSize: 13, lineHeight: 1.9, background: '#161b22', border: '1px solid #30363d', borderRadius: 8, padding: '10px 12px' }}>
+            <div>ধারাবাহিকতা: <b>{scorecard.continuity.scoredTurns}</b> টার্ন স্কোর করা · সঠিক binding <b style={{ color: scorecard.continuity.meetsGate ? '#3fb950' : '#d29922' }}>{(scorecard.continuity.correctBindingRate * 100).toFixed(1)}%</b> · Boss সংশোধন করেছেন <b>{scorecard.continuity.ownerCorrections}</b> বার</div>
+            <div>অটোনমি: সক্রিয় শ্রেণি <b>{scorecard.autonomy.activeClasses}</b> · ডুপ্লিকেট effect <b style={{ color: scorecard.autonomy.duplicateExternalEffects ? '#f85149' : '#3fb950' }}>{scorecard.autonomy.duplicateExternalEffects}</b> · অজানা effect <b style={{ color: scorecard.autonomy.unknownEffects ? '#f85149' : '#3fb950' }}>{scorecard.autonomy.unknownEffects}</b></div>
+            <div>ব্যবসায়িক ফলাফল (COD/refund/profit): <b style={{ color: '#8b949e' }}>অজানা — সত্যিকারের data ছাড়া ROI বানানো হয় না</b></div>
+            {scorecard.rollbackActions.length > 0 && (
+              <div style={{ color: '#f85149' }}>⚠️ স্বয়ংক্রিয় rollback: {scorecard.rollbackActions.map((a) => a.reason).join('; ')}</div>
+            )}
+            {scorecard.topBlockers.length > 0 && (
+              <div style={{ color: '#8b949e' }}>শীর্ষ ব্লকার: {scorecard.topBlockers.join(' · ')}</div>
+            )}
+          </div>
+        </>
       )}
 
       {truth && (
