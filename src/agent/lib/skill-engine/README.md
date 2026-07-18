@@ -19,15 +19,27 @@ completion-proof stay in code — never inside a downloadable skill.
   - `../../skills/alma-owner-daily-briefing/` — first Alma-native skill (status `draft`).
   - Tests: `__tests__/loader.test.ts`.
 
-- **B1-integration (NEXT).** Wire discovery+selection into `run-owner-turn` / the
-  modular prompt compiler (`system-prompt.ts`): inject the ≤3 activated skill bodies
-  into the volatile block; feed the live tool registry as `knownCapabilities`; reuse
-  the deterministic completion-gate from `skill-packs/runner.ts`.
-- **B2.** Migrate the 5 hard packs (research/seo/marketing/website/client_seo) into
-  this format — keep their completion gates.
-- **B3.** Author the first ~12 Alma-native skills (see roadmap list).
-- **B4.** GitHub import policy: pin commit → scan (injection/secrets) → map to Alma
-  capabilities → no-secret sandbox eval → shadow → canary → active; one-click rollback.
+- **B1-integration (DONE).** `runtime.ts` wired into `run-owner-turn` + `core.ts` +
+  `system-prompt.ts` (volatile `activeSkillsBlock`), gated by `SKILL_ENGINE_ENABLED`
+  (default OFF). Vercel file-tracing added for `src/agent/skills/**`.
+- **B2 (DONE).** The 5 hard packs migrated to SKILL.md packages; `skill-packs/packs.ts`
+  + its completion gate kept intact. `skills-integrity.test.ts` drift-guards every
+  shipped skill against the live registry.
+- **B3 (PARTIAL).** 12 skill packages shipped: owner-daily-briefing, research, seo-audit,
+  marketing, website, client-seo, finance-brief, staff-dispatch, customer-support,
+  agent-incident-diagnosis, product-social-post, browser-operator. **Queued:**
+  meta-campaign-launch, audience-builder, product-listing, invoice-to-erp.
+- **B4 (security core DONE).** `import-scan.ts` — static gate: injection/secret/exfil
+  scan of prose, danger scan of scripts, Alma import-rule enforcement (pinned commit,
+  names-only secrets, mapped capabilities, forced draft) → block/review/ok + contentHash.
+  **Remaining (owner-gated workbench wiring):** live commit-pinned fetch, no-secret
+  sandbox eval run, shadow→canary→active lifecycle store, one-click rollback.
+
+## Enabling (owner)
+
+The engine is OFF. To try it: set `SKILL_ENGINE_ENABLED=true`, flip a skill's manifest
+`status` to `active`, verify selection on a preview, then promote. All skills ship as
+`draft` (never auto-active).
 
 ## Selection acceptance gates (from the roadmap — enforce as B1-integration lands)
 
