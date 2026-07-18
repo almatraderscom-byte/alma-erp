@@ -49,6 +49,9 @@ export async function POST(req: NextRequest) {
     summary?: string | null
     durationSecs?: number | null
     status?: string
+    /** Optional estimated call cost in whole BDT (ngs/Gemini Live path sends this). */
+    costBdt?: number | null
+    provider?: string | null
   }
   try {
     body = await req.json()
@@ -66,6 +69,7 @@ export async function POST(req: NextRequest) {
   const summary = typeof body.summary === 'string' ? body.summary.slice(0, 2000) : null
   const durationSecs = Number.isFinite(body.durationSecs) ? Math.max(0, Math.round(Number(body.durationSecs))) : null
   const status = body.status === 'no_answer' ? 'no_answer' : 'completed'
+  const costBdt = Number.isFinite(body.costBdt) ? Math.max(0, Math.round(Number(body.costBdt))) : null
 
   await db.agentVoiceCall.update({
     where: { id: callRecordId },
@@ -76,6 +80,7 @@ export async function POST(req: NextRequest) {
       durationSecs,
       callSid: record.callSid ?? body.callSid ?? null,
       endedAt: new Date(),
+      ...(costBdt != null ? { costCredits: costBdt } : {}),
     },
   })
 
@@ -87,8 +92,10 @@ export async function POST(req: NextRequest) {
       .filter((t) => t.message)
       .map((t) => `${t.role === 'agent' ? '🗣️ এজেন্ট' : '👤 ' + who}: ${t.message}`)
       .join('\n')
+    const costLine = costBdt != null ? `💸 আনুমানিক খরচ: ৳${costBdt}\n` : ''
     const message =
-      `📞 কল শেষ — ${who}${mins ? ` (${mins})` : ''}\n\n` +
+      `📞 কল শেষ — ${who}${mins ? ` (${mins})` : ''}\n` +
+      costLine + '\n' +
       (summary ? `সারাংশ: ${summary}\n\n` : '') +
       (lines ? `কথোপকথন:\n${lines}`.slice(0, 1500) : 'কেউ কথা বলেনি / কল ধরা হয়নি।')
     await notifyOwner({ tier: 2, title: `কল শেষ — ${who}`, message, category: 'report' })

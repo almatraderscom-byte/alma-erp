@@ -1275,6 +1275,7 @@ async function runApprove(
       purpose?: string
       firstMessage?: string
       voiceGender?: 'male' | 'female'
+      callType?: 'owner' | 'staff' | 'contact'
     }
     const result = await placeOutboundCall({
       toNumber: String(p.toNumber ?? p.phone ?? ''),
@@ -1282,6 +1283,7 @@ async function runApprove(
       purpose: String(p.purpose ?? ''),
       firstMessage: String(p.firstMessage ?? ''),
       voiceGender: p.voiceGender === 'male' ? 'male' : 'female',
+      callType: p.callType === 'staff' ? 'staff' : p.callType === 'contact' ? 'contact' : 'owner',
       conversationId: resolveConversationId(action),
     })
     if (!result.ok) {

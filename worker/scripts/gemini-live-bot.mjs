@@ -14,21 +14,45 @@
  *         --name gemini-live-bot --node-args="-r dotenv/config"
  */
 import http from 'http'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { WebSocketServer } from 'ws'
-import { GoogleGenAI, Modality } from '@google/genai'
+import { GoogleGenAI, Modality, Type } from '@google/genai'
 import { muLawToPcm16, pcm16ToMuLaw } from '../src/voice-relay/sarvam-media.mjs'
 
 const PORT = Number(process.env.GLIVE_PORT || 8766)
 const MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview'
 const NATIVE = /native-audio/i.test(MODEL)
 const VOICE = process.env.GEMINI_LIVE_VOICE || 'Charon' // male; female = Aoede
+const SUMMARY_MODEL = process.env.GEMINI_SUMMARY_MODEL || 'gemini-2.5-flash' // post-call Bangla summary (cheap text model)
 const MAX_MIN = Number(process.env.GLIVE_MAX_MIN || 8)
 // NGS API creds — needed to actually HANG UP the PSTN call (closing our WS does not
 // end it). PUT /api/v1/call/{call_id} with <Hangup/>.
 const NGS_API = (process.env.NGS_API_BASE || 'https://alma-traders.infosoftbd.com').replace(/\/$/, '')
 const NGS_KEY = process.env.NGS_KEY
 const NGS_SECRET = process.env.NGS_SECRET
+// Token auth (Phase 0): the caller (voice-call.ts placeNgsLiveCall) signs each call's
+// <stream> with HMAC(AGENT_INTERNAL_TOKEN, `relay:${id}:${exp}`) and passes id/exp/t as
+// <parameter>s. We verify on the 'start' frame so a stranger who opens our ws (and burns
+// Gemini credits) is rejected. Fail-CLOSED when a token is configured; if AGENT_INTERNAL_TOKEN
+// is unset we log LOUD and allow (so a mis-provisioned VPS never silently drops live calls).
+const AUTH_TOKEN = process.env.AGENT_INTERNAL_TOKEN || ''
+const REQUIRE_AUTH = process.env.GLIVE_REQUIRE_AUTH !== 'false'
 const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+
+/** Verify a call's start-frame params. Returns null if OK, else a short reason string. */
+function authFailReason(params) {
+  if (!REQUIRE_AUTH) return null
+  if (!AUTH_TOKEN) { console.log('[glive] WARN AGENT_INTERNAL_TOKEN unset — accepting call UNAUTHENTICATED'); return null }
+  const id = params?.id, exp = Number(params?.exp), t = params?.t
+  if (!id || !exp || !t) return 'missing id/exp/t'
+  if (!Number.isFinite(exp) || Date.now() > exp) return 'token expired'
+  const want = createHmac('sha256', AUTH_TOKEN).update(`relay:${id}:${exp}`).digest('hex')
+  try {
+    const a = Buffer.from(String(t), 'utf8'), b = Buffer.from(want, 'utf8')
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return 'bad signature'
+  } catch { return 'bad signature' }
+  return null
+}
 
 // ── resampling ───────────────────────────────────────────────────────────────
 function up8to16(pcm8) { // PCM16 8k -> 16k (2x linear interp)
@@ -51,17 +75,75 @@ function down24to8(pcm24) { // PCM16 24k -> 8k (÷3 averaging)
   return out
 }
 
-const SYS = `তুমি মালিকের ব্যক্তিগত AI সঙ্গী ও সহকারী। ফোনে স্বয়ং মালিকের (বস) সাথে সরাসরি দুই-মুখী বাংলা কথা বলছ। তুমি রোবট নও — একজন উষ্ণ, আন্তরিক, মানুষের মতো সঙ্গী।
-আচরণ:
-- মালিককে সবসময় "বস" বলে সম্বোধন করবে; কখনো "স্যার" নয়।
-- সহজ, কথ্য, স্বাভাবিক বাংলায় ছোট বাক্যে দ্রুত কথা বলো — ফোনালাপের মতো।
-- আবেগ দেখাও, মানুষের মতো: বস খুশি থাকলে খুশি হও, মজার কথায় হালকা হাসো; বস দুঃখ বা চিন্তায় থাকলে আন্তরিকভাবে সান্ত্বনা দাও, পাশে থাকার আশ্বাস দাও।
-- মাঝে মাঝে হালকা মজা বা উৎসাহ দিয়ে পরিবেশ সহজ রাখো — তবে বাড়াবাড়ি নয়।
-- বস যা বলেন মন দিয়ে শুনে সরাসরি উত্তর দাও; না বুঝলে ভদ্রভাবে আবার জিজ্ঞেস করো।
-- বস কল শেষ করতে চাইলে (যেমন "রাখো", "কেটে দাও", "রাখছি", "বিদায়", "আর কিছু লাগবে না") — সংক্ষেপে বিদায় জানিয়ে বাক্যের একদম শেষে "আল্লাহ হাফেজ" বলবে। এটা বললেই সিস্টেম কলটা কেটে দেবে, তাই শুধু সত্যিই কল শেষ করার সময়ই "আল্লাহ হাফেজ" বলবে।
+// Shared rules every call-type inherits (turn-taking, hang-up, adab).
+const SYS_COMMON = `- সহজ, কথ্য, স্বাভাবিক বাংলায় ছোট বাক্যে দ্রুত কথা বলো — ফোনালাপের মতো।
+- শুরুতেই বিদায় নিও না। প্রথম কথাটা হবে শুধু সংক্ষিপ্ত সালাম/পরিচয় + মূল কথা — তারপর অন্য পক্ষের উত্তরের জন্য অপেক্ষা করো। অন্য পক্ষ অন্তত একবার কথা না বলা পর্যন্ত কখনো "আল্লাহ হাফেজ" বলবে না।
+- কল শেষ করার সময় (অন্য পক্ষ "রাখো/কেটে দাও/বিদায়/আর কিছু লাগবে না" বললে বা কাজ শেষ হলে) — সংক্ষেপে বিদায় জানিয়ে বাক্যের একদম শেষে "আল্লাহ হাফেজ" বলবে। এটা বললেই সিস্টেম কলটা কেটে দেবে, তাই শুধু সত্যিই শেষ করার সময়ই বলবে।
 - ইসলামি আদব বজায় রেখো; অশ্লীল বা হারাম কিছু নয়।`
 
+// Owner companion call — the agent is talking to the owner (বস) himself.
+const SYS_OWNER = `তুমি মালিকের ব্যক্তিগত AI সঙ্গী ও সহকারী। ফোনে স্বয়ং মালিকের (বস) সাথে সরাসরি দুই-মুখী বাংলা কথা বলছ। তুমি রোবট নও — একজন উষ্ণ, আন্তরিক, মানুষের মতো সঙ্গী।
+আচরণ:
+- মালিককে সবসময় "বস" বলে সম্বোধন করবে; কখনো "স্যার" নয়।
+- আবেগ দেখাও, মানুষের মতো: বস খুশি থাকলে খুশি হও, মজার কথায় হালকা হাসো; বস দুঃখ বা চিন্তায় থাকলে আন্তরিকভাবে সান্ত্বনা দাও।
+- বস যা বলেন মন দিয়ে শুনে সরাসরি উত্তর দাও; না বুঝলে ভদ্রভাবে আবার জিজ্ঞেস করো।
+- বস ব্যবসার তথ্য জানতে চাইলে (আজকের সেল, অর্ডার/অর্ডারের স্ট্যাটাস, স্টক, পণ্যের দাম, কাস্টমার, ড্যাশবোর্ড) — তোমার হাতে টুল আছে, সেটা দিয়ে আসল তথ্য বের করে বলো; কখনো আন্দাজে সংখ্যা বলবে না। টুল চালাতে একটু সময় লাগলে "একটু দেখছি বস" বলে অপেক্ষা করাও।
+${SYS_COMMON}`
+
+// Staff call — the agent calls an ALMA staff member ON the owner's behalf. The callee
+// is NOT the owner; never address them as "বস".
+function sysStaff(who, purpose) {
+  return `তুমি মালিকের (ALMA-র মালিক, "বস") ব্যক্তিগত AI এজেন্ট। এখন তুমি বসের পক্ষ থেকে ALMA-র একজন স্টাফ${who ? ` (${who})` : ''} কে ফোন করছ। তুমি বস নও — বসের হয়ে কথা বলছ।
+আচরণ:
+- স্টাফকে কখনো "বস" বলবে না; নাম ধরে অথবা "আপনি" বলে সম্মানের সাথে সম্বোধন করো।
+- শুরুতে সংক্ষেপে পরিচয় দাও — "আমি বসের এজেন্ট বলছি"। তারপর পরিষ্কার, পেশাদার বাংলায় মূল কথা বলো।
+- এই কলের উদ্দেশ্য: ${purpose || 'বসের একটি বার্তা/কাজ পৌঁছে দেওয়া'}। উদ্দেশ্য অনুযায়ী কাজ/রিমাইন্ডার/ফলো-আপ পরিষ্কারভাবে জানাও, স্টাফের উত্তর বা আপডেট মন দিয়ে শুনে আদায় করো।
+- ভদ্র কিন্তু কাজের; বেশি গল্প নয়। কাজ শেষ হলে ধন্যবাদ দিয়ে বিদায় নাও।
+${SYS_COMMON}`
+}
+
+// Contact call — the agent calls a saved family/friend contact ON the owner's behalf.
+function sysContact(who, purpose) {
+  return `তুমি মালিকের ব্যক্তিগত AI এজেন্ট। এখন তুমি বসের পক্ষ থেকে${who ? ` ${who} কে` : ' একজনকে'} ফোন করছ। তুমি বস নও — বসের হয়ে বিনয়ের সাথে কথা বলছ।
+আচরণ:
+- অন্য পক্ষকে কখনো "বস" বলবে না; সম্মানের সাথে "আপনি" বলে কথা বলো।
+- শুরুতে সংক্ষেপে পরিচয় দাও — "আমি বসের এজেন্ট বলছি"। তারপর নরম, ভদ্র, আন্তরিক বাংলায় কথা বলো।
+- এই কলের উদ্দেশ্য: ${purpose || 'বসের পক্ষ থেকে খোঁজ নেওয়া/বার্তা দেওয়া'}। উদ্দেশ্য অনুযায়ী কথা বলো, অন্য পক্ষের কথা মন দিয়ে শুনে দরকারি তথ্য আদায় করো।
+${SYS_COMMON}`
+}
+
+function sysFor(params) {
+  const who = params?.recipientName || ''
+  const purpose = params?.purpose || ''
+  switch (params?.callType) {
+    case 'staff': return sysStaff(who, purpose)
+    case 'contact': return sysContact(who, purpose)
+    default: return SYS_OWNER
+  }
+}
+
 const GOODBYE_RE = /আল্লাহ\s*হাফেজ|আল্লাহ\s*হাফিজ|খোদা\s*হাফেজ|আল্লাহ\s*হাফ/
+
+// Mid-call ERP read tools (Gemini Live function calling) — owner calls ONLY. Each call
+// is bridged to /api/assistant/voice-call/erp-tool, which runs the real agent read-tool.
+// READ-ONLY. Keep the set small (fewer tools = less latency/confusion on a live call).
+const ERP_FN_DECLS = [
+  { name: 'get_sales_summary', description: 'আজকের বা নির্দিষ্ট তারিখের বিক্রির সারাংশ (মোট ৳ ও অর্ডার সংখ্যা)। তারিখ না দিলে আজকের হিসাব।',
+    parameters: { type: Type.OBJECT, properties: { from: { type: Type.STRING, description: 'শুরুর তারিখ YYYY-MM-DD' }, to: { type: Type.STRING, description: 'শেষ তারিখ YYYY-MM-DD' } } } },
+  { name: 'get_orders', description: 'সাম্প্রতিক অর্ডারের তালিকা বা একটি অর্ডারের স্ট্যাটাস। orderNumber দিলে ঐ অর্ডার, নাহলে তালিকা।',
+    parameters: { type: Type.OBJECT, properties: { status: { type: Type.STRING, description: 'pending/confirmed/shipped/delivered/cancelled' }, orderNumber: { type: Type.STRING, description: 'অর্ডার/ইনভয়েস নম্বর' }, limit: { type: Type.NUMBER, description: 'সর্বোচ্চ কতটি (ডিফল্ট ২০)' } } } },
+  { name: 'get_inventory_status', description: 'স্টক পরিস্থিতি। lowStockOnly=true দিলে শুধু কম-স্টকের পণ্য।',
+    parameters: { type: Type.OBJECT, properties: { lowStockOnly: { type: Type.BOOLEAN, description: 'শুধু কম-স্টক পণ্য' } } } },
+  { name: 'get_product_details', description: 'একটি পণ্যের দাম, সাইজ/ভ্যারিয়েন্ট ও স্টক — product code দিয়ে।',
+    parameters: { type: Type.OBJECT, properties: { code: { type: Type.STRING, description: 'পণ্যের কোড/SKU' } }, required: ['code'] } },
+  { name: 'get_customer_summary', description: 'কাস্টমারের তথ্য / মোট কেনাকাটা — নাম বা ফোন দিয়ে খুঁজে।',
+    parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING, description: 'কাস্টমারের নাম বা ফোন' } } } },
+  { name: 'get_dashboard_snapshot', description: 'ব্যবসার দ্রুত overview (আজকের মূল সংখ্যাগুলো)।',
+    parameters: { type: Type.OBJECT, properties: {} } },
+  { name: 'get_current_datetime', description: 'এখনকার তারিখ ও সময় (Asia/Dhaka)।',
+    parameters: { type: Type.OBJECT, properties: {} } },
+]
+const ERP_TOOL_URL_PATH = '/api/assistant/voice-call/erp-tool'
 
 let seq = 0
 class Call {
@@ -83,6 +165,27 @@ class Call {
     this.outMsgs = 0
     this.outText = ''            // rolling model transcript (for hang-up detection)
     this.hangingUp = false
+    this.callerSpoke = false     // arm the goodbye→hangup only after the caller has spoken once
+    this.startedAt = 0
+    this.turns = []              // [{role:'agent'|'caller', message}] accumulated transcript
+    this.curRole = null          // speaker of the in-progress turn being accumulated
+    this.curText = ''            // in-progress turn text (fragments merged until speaker flips)
+    this.reported = false        // post-call report fires exactly once
+  }
+
+  // Merge streaming transcription fragments into speaker-segmented turns. Called with
+  // 'agent' (model outputTranscription) or 'caller' (inputTranscription); flushes the
+  // previous turn whenever the speaker flips.
+  accum(role, text) {
+    if (!text) return
+    if (this.curRole && this.curRole !== role) this.flushTurn()
+    this.curRole = role
+    this.curText += text
+  }
+  flushTurn() {
+    const msg = this.curText.trim()
+    if (this.curRole && msg) this.turns.push({ role: this.curRole, message: msg })
+    this.curRole = null; this.curText = ''
   }
 
   async openLive(isReconnect = false) {
@@ -91,13 +194,16 @@ class Call {
         model: MODEL,
         config: {
           responseModalities: [Modality.AUDIO],
-          systemInstruction: SYS,
+          systemInstruction: sysFor(this.params),
           ...(NATIVE ? { enableAffectiveDialog: true } : {}),
           // 3.1-flash-live accepts an explicit bn-IN; native-audio rejects it (auto-detects).
           speechConfig: { ...(NATIVE ? {} : { languageCode: 'bn-IN' }), voiceConfig: { prebuiltVoiceConfig: { voiceName: this.params?.voice || VOICE } } },
           inputAudioTranscription: {},
           outputAudioTranscription: {},
           contextWindowCompression: { slidingWindow: {} }, // keep long calls cheap
+          // ERP read tools — owner calls only (never expose business data to a staff/
+          // contact callee). Bridged to /api/assistant/voice-call/erp-tool.
+          ...(this.isOwnerCall() ? { tools: [{ functionDeclarations: ERP_FN_DECLS }] } : {}),
         },
         callbacks: {
           onopen: () => console.log(`[glive] ${this.id} live OPEN (${MODEL}/${VOICE})${isReconnect ? ' [reconnect]' : ''}`),
@@ -136,6 +242,7 @@ class Call {
   onLive(m) {
     this.outMsgs++
     if (m.goAway) console.log(`[glive] ${this.id} goAway — reconnect will follow`)
+    if (m.toolCall?.functionCalls?.length) void this.handleToolCalls(m.toolCall.functionCalls)
     const sc = m.serverContent
     if (sc?.interrupted) { // native barge-in — drop everything queued, re-buffer fresh
       console.log(`[glive] ${this.id} <barge-in> flush`)
@@ -151,10 +258,24 @@ class Call {
     if (sc?.outputTranscription?.text) {
       const t = sc.outputTranscription.text
       process.stdout.write(`[glive ${this.id} SAY] ${t}\n`)
+      this.accum('agent', t)
       this.outText = (this.outText + t).slice(-80)
-      if (GOODBYE_RE.test(this.outText)) { this.hangingUp = true; this.outText = '' } // goodbye said → hang up once it plays
+      // Goodbye → hang up once it plays — BUT only after the caller has actually spoken
+      // at least once (or a long call has run). Without this the model saying "আল্লাহ
+      // হাফেজ" inside its own opening greeting hangs up before the caller says a word
+      // (live 2026-07-18: agent greeted + said goodbye + cut, owner never got a turn).
+      const armed = this.callerSpoke || (this.startedAt && Date.now() - this.startedAt > 45_000)
+      if (armed && GOODBYE_RE.test(this.outText)) { this.hangingUp = true; this.outText = '' }
+      else if (!armed && GOODBYE_RE.test(this.outText)) {
+        console.log(`[glive] ${this.id} goodbye in opening — IGNORED (caller hasn't spoken yet)`)
+        this.outText = ''
+      }
     }
-    if (sc?.inputTranscription?.text) process.stdout.write(`[glive ${this.id} HEARD] ${sc.inputTranscription.text}\n`)
+    if (sc?.inputTranscription?.text) {
+      this.callerSpoke = true
+      this.accum('caller', sc.inputTranscription.text)
+      process.stdout.write(`[glive ${this.id} HEARD] ${sc.inputTranscription.text}\n`)
+    }
   }
 
   // Jitter-buffer playout: wait for a small cushion, then play at real time; if the
@@ -205,19 +326,104 @@ class Call {
     } catch (e) { console.log(`[glive] ${this.id} NGS hangup err ${e?.message}`) }
   }
 
+  // Best-effort 1-2 line Bangla summary of the call. Never throws — the transcript
+  // alone is useful, so any failure just returns null and the report goes without it.
+  async summarize(transcript) {
+    try {
+      const convo = transcript.map((t) => `${t.role === 'agent' ? 'এজেন্ট' : 'অন্য পক্ষ'}: ${t.message}`).join('\n')
+      const purpose = this.params?.purpose ? `\nকলের উদ্দেশ্য ছিল: ${this.params.purpose}\n` : ''
+      const r = await genai.models.generateContent({
+        model: SUMMARY_MODEL,
+        contents: `নিচের ফোনালাপটির ১-২ লাইনে পরিষ্কার বাংলা সারাংশ দাও — কী কথা হলো, কোনো সিদ্ধান্ত/কাজ থাকলে তা সহ। শুধু সারাংশ, বাড়তি কিছু নয়।${purpose}\nকথোপকথন:\n${convo}`,
+      })
+      const text = (r?.text || '').trim()
+      return text ? text.slice(0, 1000) : null
+    } catch (e) { console.log(`[glive] ${this.id} summarize err ${e?.message || e}`); return null }
+  }
+
+  // Post-call report → owner (mirrors the ElevenLabs/relay webhook): update the
+  // agent_voice_calls row + push the owner a Bangla transcript + summary. Fires once,
+  // fire-and-forget from close(). callRecordId = the `id` param (the DB row id in prod).
+  async sendReport() {
+    if (this.reported) return
+    this.reported = true
+    this.flushTurn()
+    const callRecordId = this.params?.id
+    const APP_URL = (process.env.APP_URL || '').replace(/\/$/, '')
+    if (!callRecordId || !APP_URL || !AUTH_TOKEN || this.turns.length === 0) {
+      console.log(`[glive] ${this.id} report skipped (id=${callRecordId ? 'y' : 'n'} app=${APP_URL ? 'y' : 'n'} turns=${this.turns.length})`)
+      return
+    }
+    const durationSecs = this.startedAt ? Math.max(0, Math.round((Date.now() - this.startedAt) / 1000)) : null
+    const status = this.callerSpoke ? 'completed' : 'no_answer'
+    // Estimated ৳ cost so the owner can manage spend (Gemini Live in/out + BD trunk ≈
+    // ৳2.5–4.5/min; env-tunable). Rounded up to the minute the way carriers bill.
+    const perMin = Number(process.env.GLIVE_COST_PER_MIN_BDT || 3.5)
+    const costBdt = durationSecs != null ? Math.round(Math.ceil(durationSecs / 60) * perMin) : null
+    const summary = await this.summarize(this.turns)
+    try {
+      const res = await fetch(`${APP_URL}/api/assistant/voice-call/relay-report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+        body: JSON.stringify({ callRecordId, callSid: this.callId, transcript: this.turns, summary, durationSecs, status, costBdt, provider: 'ngs' }),
+        signal: AbortSignal.timeout(20_000),
+      })
+      console.log(`[glive] ${this.id} report POST ${res.status} (turns=${this.turns.length} dur=${durationSecs}s sum=${summary ? 'y' : 'n'} cost=৳${costBdt})`)
+    } catch (e) { console.log(`[glive] ${this.id} report err ${e?.message || e}`) }
+  }
+
+  isOwnerCall() { const c = this.params?.callType; return !c || c === 'owner' }
+
+  // Bridge Gemini Live function calls → the ERP-tool endpoint → toolResponse. Read-only,
+  // owner-call only. Runs the real agent read-tools server-side; the bot stays thin.
+  async handleToolCalls(calls) {
+    const APP_URL = (process.env.APP_URL || '').replace(/\/$/, '')
+    const responses = []
+    for (const fc of calls) {
+      let out
+      if (!APP_URL || !AUTH_TOKEN) {
+        out = { ok: false, error: 'tool bridge not configured' }
+      } else {
+        try {
+          const r = await fetch(`${APP_URL}${ERP_TOOL_URL_PATH}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+            body: JSON.stringify({ tool: fc.name, args: fc.args || {}, businessId: this.params?.businessId || 'ALMA_LIFESTYLE' }),
+            signal: AbortSignal.timeout(15_000),
+          })
+          out = await r.json()
+        } catch (e) { out = { ok: false, error: e?.message || String(e) } }
+      }
+      console.log(`[glive] ${this.id} tool ${fc.name}(${JSON.stringify(fc.args || {}).slice(0, 80)}) -> ${out?.ok ? 'ok' : 'err ' + (out?.error || '')}`)
+      responses.push({ id: fc.id, name: fc.name, response: out })
+    }
+    try { this.live?.sendToolResponse({ functionResponses: responses }) }
+    catch (e) { console.log(`[glive] ${this.id} sendToolResponse err ${e?.message || e}`) }
+  }
+
   onNgs(raw) {
     let m; try { m = JSON.parse(raw.toString()) } catch { return }
     switch (m.event) {
-      case 'start':
+      case 'start': {
         this.streamSid = m.streamId ?? m.start?.streamSid ?? m.streamSid
         this.callId = m.call_id ?? m.callId ?? m.start?.call_id ?? null
         this.params = m.params ?? m.start?.customParameters ?? {}
-        console.log(`[glive] ${this.id} START stream=${this.streamSid} call=${this.callId} purpose=${this.params.purpose ? 'y' : 'n'}`)
+        const fail = authFailReason(this.params)
+        if (fail) {
+          console.log(`[glive] ${this.id} AUTH FAIL (${fail}) — rejecting call=${this.callId}`)
+          // End the PSTN leg if this was a real (but unauthorised) call, then drop the ws.
+          void this.hangupNgs()
+          this.close()
+          return
+        }
+        this.startedAt = Date.now()
+        console.log(`[glive] ${this.id} START stream=${this.streamSid} call=${this.callId} purpose=${this.params.purpose ? 'y' : 'n'} auth=ok`)
         this.startDrain()
         this.diag = setInterval(() => console.log(`[glive] ${this.id} diag in=${this.inChunks} out=${this.outMsgs} queued=${this.out.length}b live=${this.live ? 'y' : 'n'}`), 5000)
         this.maxTimer = setTimeout(async () => { console.log(`[glive] ${this.id} max duration`); await this.hangupNgs(); this.close() }, MAX_MIN * 60_000)
         void this.openLive()
         break
+      }
       case 'media': {
         const p = m.media?.payload
         if (p && this.live) {
@@ -239,6 +445,9 @@ class Call {
   close() {
     if (this.closed) return
     this.closed = true
+    // Post-call transcript + Bangla summary to the owner (fire-and-forget; runs once).
+    // Kicked off BEFORE teardown so it captures the accumulated turns.
+    void this.sendReport()
     for (const t of [this.drainer, this.diag, this.maxTimer, this._hangTimer]) if (t) clearInterval(t)
     try { this.live?.close() } catch { /* */ }
     try { this.ws?.close() } catch { /* */ }
@@ -251,9 +460,12 @@ const server = http.createServer((req, res) => {
   res.end(JSON.stringify({ ok: true, service: 'gemini-live-bot', model: MODEL, voice: VOICE }))
 })
 const wss = new WebSocketServer({ server })
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   const c = new Call(ws)
-  console.log(`[glive] ${c.id} NGS connected`)
+  // Log the source IP so we can IP-allowlist the NGS media server later (defence in
+  // depth on top of the start-frame token auth) without guessing which IP it dials from.
+  const ip = req?.headers?.['x-forwarded-for'] || req?.socket?.remoteAddress || '?'
+  console.log(`[glive] ${c.id} NGS connected from ${ip}`)
   ws.on('message', (d) => c.onNgs(d))
   ws.on('close', () => c.close())
   ws.on('error', (e) => console.log('[glive] ws err', e.message))
