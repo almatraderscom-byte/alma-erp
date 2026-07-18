@@ -352,6 +352,66 @@ async function scheduleSalahCallRetries({
 }
 
 /**
+ * One-way message call over the infosoftbd (NextGenSwitch) BD number — same TTS voice
+ * as the Twilio path, but the receiver sees the local BD caller-ID (09649777738) instead
+ * of the US +1 number. Mirrors the proven one-way recipe (memory / ngs-test-call.mjs):
+ * Sarvam/Google TTS → 8 kHz WAV → Supabase → **clean HTTPS signed URL** (the worker
+ * proxy URL returns NGS "No route found"; a Supabase signed URL works) → NGS
+ * /api/v1/call with <play>…</play><hangup/>. No retry/cooldown/salah logic here — this
+ * is the simple message-delivery path; salah + ghost-retry stay on Twilio.
+ *
+ * Creds: NGS_KEY/NGS_SECRET (bot-style) or NGS_API_KEY/NGS_API_SECRET (voice-call.ts-style).
+ * @returns {Promise<{ok:boolean, callSid?:string, error?:string}>}
+ */
+export async function makeNgsCall(text, opts = {}) {
+  const apiBase = (process.env.NGS_API_BASE || 'https://alma-traders.infosoftbd.com').replace(/\/$/, '')
+  const key = process.env.NGS_KEY || process.env.NGS_API_KEY
+  const secret = process.env.NGS_SECRET || process.env.NGS_API_SECRET
+  const from = process.env.NGS_FROM || '2323'
+  const toNumber = opts.toNumber ?? process.env.NGS_TO ?? process.env.TWILIO_TO_NUMBER
+  if (!key || !secret || !toNumber) {
+    return { ok: false, error: 'NGS one-way env missing (NGS_KEY/NGS_SECRET + destination)' }
+  }
+  const speechText = text.slice(0, MESSAGE_CALL_TEXT_LIMIT)
+  const esc = (s) => String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+  try {
+    const mp3Buffer = await synthesizeCallAudio(speechText, opts)
+    const wavBuffer = await mp3ToTelephonyWav(mp3Buffer)
+    const supabase = getSupabase()
+    const storagePath = `calls/ngs_${Date.now()}.wav`
+    const { error: uploadErr } = await supabase.storage
+      .from('agent-files')
+      .upload(storagePath, wavBuffer, { contentType: 'audio/wav', upsert: true })
+    if (uploadErr) throw new Error(`Supabase upload: ${uploadErr.message}`)
+    // Clean HTTPS signed URL — the proxy URL (with query args) makes NGS reply "No route found".
+    const { data: signed, error: signErr } = await supabase.storage
+      .from('agent-files')
+      .createSignedUrl(storagePath, 3600)
+    if (signErr || !signed?.signedUrl) throw new Error(`signed url: ${signErr?.message ?? 'none'}`)
+    // Exact tags from the proven one-way recipe (ngs-live-call.mjs): capitalized
+    // <Response><Play>…</Play><Hangup/>. (Two-way uses lowercase <connect><stream>.)
+    const responseXml =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      `<Response><Play>${esc(signed.signedUrl)}</Play><Hangup/></Response>`
+    const res = await fetch(`${apiBase}/api/v1/call`, {
+      method: 'POST',
+      headers: { 'X-Authorization': key, 'X-Authorization-Secret': secret, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ to: toNumber, from, responseXml }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.call_id) {
+      return { ok: false, error: `NGS ${res.status}: ${JSON.stringify(data).slice(0, 160)}` }
+    }
+    console.log(`[ngs] one-way call placed ${data.call_id} → ${toNumber}`)
+    return { ok: true, callSid: data.call_id }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+}
+
+/**
  * @param {string} text
  * @param {{ force?: boolean, salah?: boolean, purpose?: 'salah', skipAutoRetry?: boolean, playOnce?: boolean, toNumber?: string, salahDate?: string, salahWaqt?: string }} opts
  *   - playOnce: message-delivery call — speak the FULL message exactly once, then hang up.
@@ -371,6 +431,16 @@ export async function makeTwilioCall(text, opts = {}) {
   if (lock.locked) {
     console.log(`[twilio] call blocked — owner call lock until ${lock.until?.toISOString()} (${lock.source})`)
     return { ok: false, error: 'owner_call_locked', skipped: true }
+  }
+
+  // One-way carrier switch (Phase 5): route non-salah message/alert calls over the BD
+  // number when ONE_WAY_CALL_PROVIDER=ngs. Salah stays on Twilio (its 3m/5m/5m retry +
+  // confirm-block logic is Twilio-specific). Owner-call-lock above is already honoured.
+  // Default OFF → unchanged Twilio behaviour.
+  if (process.env.ONE_WAY_CALL_PROVIDER === 'ngs' && !salah) {
+    const ngs = await makeNgsCall(text, opts)
+    if (ngs.ok) return ngs
+    console.warn('[ngs] one-way failed → falling back to Twilio:', ngs.error)
   }
 
   if (salah && salahDate && salahWaqt) {
