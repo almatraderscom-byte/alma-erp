@@ -14,6 +14,7 @@
  *         --name gemini-live-bot --node-args="-r dotenv/config"
  */
 import http from 'http'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { GoogleGenAI, Modality } from '@google/genai'
 import { muLawToPcm16, pcm16ToMuLaw } from '../src/voice-relay/sarvam-media.mjs'
@@ -28,7 +29,29 @@ const MAX_MIN = Number(process.env.GLIVE_MAX_MIN || 8)
 const NGS_API = (process.env.NGS_API_BASE || 'https://alma-traders.infosoftbd.com').replace(/\/$/, '')
 const NGS_KEY = process.env.NGS_KEY
 const NGS_SECRET = process.env.NGS_SECRET
+// Token auth (Phase 0): the caller (voice-call.ts placeNgsLiveCall) signs each call's
+// <stream> with HMAC(AGENT_INTERNAL_TOKEN, `relay:${id}:${exp}`) and passes id/exp/t as
+// <parameter>s. We verify on the 'start' frame so a stranger who opens our ws (and burns
+// Gemini credits) is rejected. Fail-CLOSED when a token is configured; if AGENT_INTERNAL_TOKEN
+// is unset we log LOUD and allow (so a mis-provisioned VPS never silently drops live calls).
+const AUTH_TOKEN = process.env.AGENT_INTERNAL_TOKEN || ''
+const REQUIRE_AUTH = process.env.GLIVE_REQUIRE_AUTH !== 'false'
 const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+
+/** Verify a call's start-frame params. Returns null if OK, else a short reason string. */
+function authFailReason(params) {
+  if (!REQUIRE_AUTH) return null
+  if (!AUTH_TOKEN) { console.log('[glive] WARN AGENT_INTERNAL_TOKEN unset — accepting call UNAUTHENTICATED'); return null }
+  const id = params?.id, exp = Number(params?.exp), t = params?.t
+  if (!id || !exp || !t) return 'missing id/exp/t'
+  if (!Number.isFinite(exp) || Date.now() > exp) return 'token expired'
+  const want = createHmac('sha256', AUTH_TOKEN).update(`relay:${id}:${exp}`).digest('hex')
+  try {
+    const a = Buffer.from(String(t), 'utf8'), b = Buffer.from(want, 'utf8')
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return 'bad signature'
+  } catch { return 'bad signature' }
+  return null
+}
 
 // ── resampling ───────────────────────────────────────────────────────────────
 function up8to16(pcm8) { // PCM16 8k -> 16k (2x linear interp)
@@ -208,16 +231,25 @@ class Call {
   onNgs(raw) {
     let m; try { m = JSON.parse(raw.toString()) } catch { return }
     switch (m.event) {
-      case 'start':
+      case 'start': {
         this.streamSid = m.streamId ?? m.start?.streamSid ?? m.streamSid
         this.callId = m.call_id ?? m.callId ?? m.start?.call_id ?? null
         this.params = m.params ?? m.start?.customParameters ?? {}
-        console.log(`[glive] ${this.id} START stream=${this.streamSid} call=${this.callId} purpose=${this.params.purpose ? 'y' : 'n'}`)
+        const fail = authFailReason(this.params)
+        if (fail) {
+          console.log(`[glive] ${this.id} AUTH FAIL (${fail}) — rejecting call=${this.callId}`)
+          // End the PSTN leg if this was a real (but unauthorised) call, then drop the ws.
+          void this.hangupNgs()
+          this.close()
+          return
+        }
+        console.log(`[glive] ${this.id} START stream=${this.streamSid} call=${this.callId} purpose=${this.params.purpose ? 'y' : 'n'} auth=ok`)
         this.startDrain()
         this.diag = setInterval(() => console.log(`[glive] ${this.id} diag in=${this.inChunks} out=${this.outMsgs} queued=${this.out.length}b live=${this.live ? 'y' : 'n'}`), 5000)
         this.maxTimer = setTimeout(async () => { console.log(`[glive] ${this.id} max duration`); await this.hangupNgs(); this.close() }, MAX_MIN * 60_000)
         void this.openLive()
         break
+      }
       case 'media': {
         const p = m.media?.payload
         if (p && this.live) {
@@ -251,9 +283,12 @@ const server = http.createServer((req, res) => {
   res.end(JSON.stringify({ ok: true, service: 'gemini-live-bot', model: MODEL, voice: VOICE }))
 })
 const wss = new WebSocketServer({ server })
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   const c = new Call(ws)
-  console.log(`[glive] ${c.id} NGS connected`)
+  // Log the source IP so we can IP-allowlist the NGS media server later (defence in
+  // depth on top of the start-frame token auth) without guessing which IP it dials from.
+  const ip = req?.headers?.['x-forwarded-for'] || req?.socket?.remoteAddress || '?'
+  console.log(`[glive] ${c.id} NGS connected from ${ip}`)
   ws.on('message', (d) => c.onNgs(d))
   ws.on('close', () => c.close())
   ws.on('error', (e) => console.log('[glive] ws err', e.message))
