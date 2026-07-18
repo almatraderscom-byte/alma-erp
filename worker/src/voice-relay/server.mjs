@@ -29,6 +29,7 @@ import { WebSocketServer } from 'ws'
 import { GoogleGenAI } from '@google/genai'
 import { logCost } from '../cost-log.mjs'
 import { isUnintelligibleTranscript, endSignalFromCaller, isHangupConfirmation } from './transcript-guard.mjs'
+import { handleSarvamMediaUpgrade } from './sarvam-media.mjs'
 
 const RELAY_MODEL = () => process.env.VOICE_RELAY_MODEL_ID || 'gemini-3.5-flash'
 const MAX_CALL_MINUTES = () => Number(process.env.VOICE_CALL_MAX_MINUTES) || 10
@@ -509,15 +510,25 @@ export function startVoiceRelayServer() {
     const exp = Number(url.searchParams.get('exp'))
     const t = url.searchParams.get('t')?.trim() ?? ''
     const from = req.headers['x-forwarded-for'] ?? req.socket?.remoteAddress ?? '?'
-    if (url.pathname !== '/relay' || !verifyRelayToken(id, exp, t)) {
-      const reason = url.pathname !== '/relay' ? `bad path ${url.pathname}` : 'token verify failed'
-      noteUpgrade({ ok: false, reason, id: id ?? null, from })
-      console.warn(`[voice-relay] upgrade rejected (${reason}) from ${from}`)
+    // /relay = ConversationRelay (Google/Deepgram); /media = Sarvam Media Streams.
+    const isRelay = url.pathname === '/relay'
+    const isMedia = url.pathname === '/media'
+    // Twilio Media Streams does NOT forward the URL query string to <Stream>, so the
+    // token can't ride the URL there — /media carries it in <Parameter> and verifies
+    // on the 'start' frame instead (see sarvam-media.mjs). /relay keeps URL-token auth.
+    const bad = (!isRelay && !isMedia) ? `bad path ${url.pathname}` : (isRelay && !verifyRelayToken(id, exp, t)) ? 'token verify failed' : null
+    if (bad) {
+      noteUpgrade({ ok: false, reason: bad, id: id ?? null, from })
+      console.warn(`[voice-relay] upgrade rejected (${bad}) from ${from}`)
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
       socket.destroy()
       return
     }
-    noteUpgrade({ ok: true, id, from })
+    noteUpgrade({ ok: true, id, from, path: url.pathname })
+    if (isMedia) {
+      handleSarvamMediaUpgrade({ req, socket, head, wss, verifyRelayToken })
+      return
+    }
     wss.handleUpgrade(req, socket, head, (ws) => {
       const session = new RelaySession(ws, id, genai)
       console.log(`[voice-relay] session open — call ${id}`)

@@ -191,12 +191,16 @@ export const place_agent_call: AgentTool = {
       if (!phone) return { success: false, error: 'নম্বরটি ঠিক নয় — 01XXXXXXXXX বা +880… দিন।' }
 
       const firstMessage = String(input.firstMessage ?? '').trim() || 'আসসালামু আলাইকুম, কেমন আছেন?'
+      // Voice = Boss's words (male → ashutosh/v3, female → anushka/v2). Resolved from his
+      // recent messages via the server-injected ownerVoicePref; silence → female default.
+      const pref = input.ownerVoicePref as { gender?: 'male' | 'female' } | undefined
+      const voiceGender: 'male' | 'female' = pref?.gender === 'male' ? 'male' : 'female'
       const who = recipientName ?? phone
       const action = await db.agentPendingAction.create({
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'agent_voice_call',
-          payload: { phone, toNumber: phone, recipientName, purpose, firstMessage },
+          payload: { phone, toNumber: phone, recipientName, purpose, firstMessage, voiceGender },
           summary: `📞 ${who} কে লাইভ কল — "${purpose.slice(0, 60)}"`,
           costEstimate: 0.5,
           status: 'pending',

@@ -316,13 +316,13 @@ const outbound_phone_call: AgentTool = {
       message: { type: 'string', description: 'Exact message to speak on the call' },
       ttsProvider: {
         type: 'string',
-        enum: ['google', 'elevenlabs'],
-        description: 'google = default. elevenlabs when Boss asks for ElevenLabs voice on the call.',
+        enum: ['sarvam', 'google', 'elevenlabs'],
+        description: 'sarvam = default (most natural Bangla). google (Charon) or elevenlabs ONLY when Boss names them.',
       },
       voiceGender: {
         type: 'string',
         enum: ['male', 'female'],
-        description: 'Only when ttsProvider=elevenlabs. male=Charlie, female=River. Default male.',
+        description: 'sarvam: female=anushka (default), male=abhilash. elevenlabs: male=Charlie, female=River.',
       },
       conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
@@ -344,19 +344,26 @@ const outbound_phone_call: AgentTool = {
       // VOICE = Boss's words, not the model's guess. `ownerVoicePref` arrives via the
       // tool's SERVER context (which wins over model args), resolved by regex from his
       // recent messages. Prod audit found the model picked ElevenLabs 11 of 12 times
-      // — ~18× Google's cost — despite "google = default" in this tool's description.
-      // Only Boss naming ElevenLabs buys the expensive voice. No context (scheduler /
-      // heartbeat path) → keep the model's value, which already defaults to google.
+      // — ~18× the cost — despite the default in this tool's description. Default is now
+      // Sarvam Bulbul (best Bangla, owner decision 2026-07-18); only Boss naming
+      // ElevenLabs/Google buys those. No context (scheduler / heartbeat path) → keep the
+      // model's value, which already defaults to sarvam.
       const pref = input.ownerVoicePref as OwnerVoicePref | undefined
-      const ttsProvider: 'google' | 'elevenlabs' = pref
+      const ttsProvider: 'google' | 'elevenlabs' | 'sarvam' = pref
         ? pref.provider
-        : input.ttsProvider === 'elevenlabs' ? 'elevenlabs' : 'google'
+        : input.ttsProvider === 'elevenlabs' ? 'elevenlabs'
+          : input.ttsProvider === 'google' ? 'google'
+          : 'sarvam'
       const voiceGender: 'male' | 'female' = pref
         ? pref.gender
-        : input.voiceGender === 'female' ? 'female' : 'male'
+        : input.voiceGender === 'female' ? 'female'
+          : input.voiceGender === 'male' ? 'male'
+          : ttsProvider === 'sarvam' ? 'female' : 'male'
       const voiceLine = pref
         ? voicePrefLabel(pref)
-        : ttsProvider === 'elevenlabs' ? 'ElevenLabs' : 'Google'
+        : ttsProvider === 'elevenlabs' ? 'ElevenLabs'
+          : ttsProvider === 'sarvam' ? `Sarvam (${voiceGender === 'female' ? 'মেয়ে' : 'ছেলে'} কণ্ঠ)`
+          : 'Google'
       const cardSummary = (msg: string) =>
         `📞 কল → ${phone}\n🔊 ভয়েস: ${voiceLine}\n\n🗣️ "${msg.slice(0, 300)}"`
 

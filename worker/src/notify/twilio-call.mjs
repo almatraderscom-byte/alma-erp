@@ -32,16 +32,42 @@ async function synthesizeCallAudio(speechText, opts = {}) {
   // Always ≥ the actual text so synthesizeSpeech never re-truncates it
   // (its internal 200-char chunking is per-request splitting, not truncation).
   const ttsMaxChars = speechText.length + 20
+  // Salah reminders + an explicit Google request stay on Google Charon (proven, unchanged).
   if (isSalah || opts.ttsProvider === 'google') {
     return synthesizeSpeech(speechText, ttsMaxChars, callOpts)
   }
   if (opts.ttsProvider === 'elevenlabs' || opts.useElevenLabs) {
     const { synthesizeElevenLabs, isElevenLabsAvailable } = await import('../tts-elevenlabs.mjs')
     if (!isElevenLabsAvailable()) {
-      return synthesizeSpeech(speechText, ttsMaxChars, callOpts)
+      return synthesizeSarvamOrGoogle(speechText, ttsMaxChars, callOpts, opts)
     }
     const voiceProfile = opts.voiceProfile === 'female' ? 'female' : 'male'
     return synthesizeElevenLabs(speechText, { voiceProfile, ...callOpts })
+  }
+  // Default (owner decision 2026-07-18): Sarvam Bulbul — more natural Bangla than
+  // Google's bn-IN Charon. Any Sarvam failure (missing key, network, quota) silently
+  // falls back to Google so a call is never left without audio.
+  return synthesizeSarvamOrGoogle(speechText, ttsMaxChars, callOpts, opts)
+}
+
+/** Sarvam Bulbul with an automatic, silent fallback to Google Charon on any failure. */
+async function synthesizeSarvamOrGoogle(speechText, ttsMaxChars, callOpts, opts) {
+  const { synthesizeSarvam, isSarvamAvailable } = await import('../tts-sarvam.mjs')
+  if (isSarvamAvailable()) {
+    try {
+      // Owner voices (2026-07-18): female = anushka/bulbul:v2, male = ashutosh/bulbul:v3.
+      // Speaker + model travel together — ashutosh lives only on v3, anushka on v2.
+      const isMale = opts.voiceProfile === 'male'
+      const speaker = isMale
+        ? (process.env.SARVAM_TTS_SPEAKER_MALE || 'ashutosh')
+        : (process.env.SARVAM_TTS_SPEAKER || 'anushka')
+      const model = isMale
+        ? (process.env.SARVAM_TTS_MODEL_MALE || 'bulbul:v3')
+        : (process.env.SARVAM_TTS_MODEL || 'bulbul:v2')
+      return await synthesizeSarvam(speechText, { speaker, model, ...callOpts })
+    } catch (err) {
+      console.warn('[twilio-call] Sarvam TTS failed → Google fallback:', err.message)
+    }
   }
   return synthesizeSpeech(speechText, ttsMaxChars, callOpts)
 }
