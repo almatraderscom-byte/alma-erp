@@ -94,7 +94,7 @@ class Call {
           systemInstruction: SYS,
           ...(NATIVE ? { enableAffectiveDialog: true } : {}),
           // 3.1-flash-live accepts an explicit bn-IN; native-audio rejects it (auto-detects).
-          speechConfig: { ...(NATIVE ? {} : { languageCode: 'bn-IN' }), voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } } },
+          speechConfig: { ...(NATIVE ? {} : { languageCode: 'bn-IN' }), voiceConfig: { prebuiltVoiceConfig: { voiceName: this.params?.voice || VOICE } } },
           inputAudioTranscription: {},
           outputAudioTranscription: {},
           contextWindowCompression: { slidingWindow: {} }, // keep long calls cheap
@@ -123,8 +123,13 @@ class Call {
   }
 
   greet() {
+    const purpose = this.params?.purpose
+    const who = this.params?.recipientName
+    const txt = purpose
+      ? `ফোন রিসিভ হয়েছে${who ? ` — অন্য পক্ষ: ${who}` : ''}। এই কলের উদ্দেশ্য: ${purpose}। সংক্ষেপে সালাম দিয়ে উদ্দেশ্য অনুযায়ী স্বাভাবিকভাবে কথা শুরু করো।`
+      : 'ফোন রিসিভ হয়েছে। বসকে সংক্ষেপে সালাম দাও, বলো তুমি তার এজেন্ট এবং এখন লাইভ দুই-মুখী কথা চলছে, তারপর জিজ্ঞেস করো কী সাহায্য লাগবে।'
     try {
-      this.live.sendClientContent({ turns: [{ role: 'user', parts: [{ text: 'ফোন রিসিভ হয়েছে। বসকে সংক্ষেপে সালাম দাও, বলো তুমি তার এজেন্ট এবং এখন লাইভ দুই-মুখী কথা চলছে, তারপর জিজ্ঞেস করো কী সাহায্য লাগবে।' }] }], turnComplete: true })
+      this.live.sendClientContent({ turns: [{ role: 'user', parts: [{ text: txt }] }], turnComplete: true })
     } catch (e) { console.log(`[glive] ${this.id} greet err ${e?.message}`) }
   }
 
@@ -206,7 +211,8 @@ class Call {
       case 'start':
         this.streamSid = m.streamId ?? m.start?.streamSid ?? m.streamSid
         this.callId = m.call_id ?? m.callId ?? m.start?.call_id ?? null
-        console.log(`[glive] ${this.id} START stream=${this.streamSid} call=${this.callId}`)
+        this.params = m.params ?? m.start?.customParameters ?? {}
+        console.log(`[glive] ${this.id} START stream=${this.streamSid} call=${this.callId} purpose=${this.params.purpose ? 'y' : 'n'}`)
         this.startDrain()
         this.diag = setInterval(() => console.log(`[glive] ${this.id} diag in=${this.inChunks} out=${this.outMsgs} queued=${this.out.length}b live=${this.live ? 'y' : 'n'}`), 5000)
         this.maxTimer = setTimeout(async () => { console.log(`[glive] ${this.id} max duration`); await this.hangupNgs(); this.close() }, MAX_MIN * 60_000)
