@@ -8,6 +8,7 @@ import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_B
 import { computeHeadToolCap } from '@/agent/lib/models/head-tool-cap'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { buildActiveSkillsBlock } from '@/agent/lib/skill-engine/runtime'
 import { getOfficePulse } from '@/agent/lib/office-pulse'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
@@ -637,6 +638,10 @@ async function* runAlternateProviderTurn(
       : getOfficePulse().catch(() => null),
   ])
 
+  // Skill Engine V2 (gated OFF by default) — pick ≤3 on-demand skill procedures for
+  // this turn from the message text; '' when disabled or nothing matches (fail-open).
+  const activeSkillsBlock = suppressWork ? '' : await buildActiveSkillsBlock(lastUserText)
+
   const promptArgs = {
     projectInstructions: projectSystemInstructions,
     pinnedMemories,
@@ -653,6 +658,7 @@ async function* runAlternateProviderTurn(
     personalMode,
     businessId,
     activePlaybook,
+    activeSkillsBlock,
     intakeContextBlock,
     outcomeLearnings,
     ownerDecisions,

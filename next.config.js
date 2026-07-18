@@ -22,6 +22,10 @@ const nextConfig = {
       // nft.json picks it up but Vercel's bundler still drops it; the route
       // downloads the browser pack remotely instead (see the route file).
       '/api/assistant/artifacts/[id]/pdf': ['./public/fonts/**'],
+      // Skill Engine V2: the SKILL.md packages are read from disk at runtime by
+      // skill-engine/runtime.ts. Without tracing them into the chat lambda, Vercel
+      // drops the source `.md`/`.json` and discovery silently finds nothing.
+      '/api/assistant/chat': ['./src/agent/skills/**'],
     },
   },
   images: {
