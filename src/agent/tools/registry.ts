@@ -685,6 +685,25 @@ function classificationFor(name: string): ResolvedClassification {
  *      classified from the error text) + `retryable`.
  *   4. Log the telemetry span with capability labels.
  */
+/**
+ * Phase 64: feed a real agent-initiated effect outcome back to the autonomy
+ * ladder — one readiness sample + auto-rollback bookkeeping. Fire-and-forget;
+ * never blocks or throws into the tool path. This is what makes the readiness /
+ * SLO tables receive live class-scoped rows once a class leaves 'off'.
+ */
+async function feedLadderOutcome(taskClass: string, ok: boolean): Promise<void> {
+  try {
+    const [{ recordReadinessEvidence }, { recordRolloutOutcome }] = await Promise.all([
+      import('@/agent/lib/autonomy-readiness'),
+      import('@/agent/lib/autonomy-rollout'),
+    ])
+    await recordReadinessEvidence(taskClass, { samples: 1, correct: ok ? 1 : 0 })
+    await recordRolloutOutcome(taskClass, { ok })
+  } catch (err) {
+    console.warn('[registry] ladder outcome feed failed:', err instanceof Error ? err.message : err)
+  }
+}
+
 export async function runRegisteredTool(
   tool: AgentTool,
   input: Record<string, unknown>,
@@ -787,6 +806,9 @@ export async function runRegisteredTool(
   // writes, bounded-policy proposals) are shadow-logged until Phase 57 promotes
   // them per task class. Fail-closed for effects, fail-open for reads.
   let guardEnvelope: import('@/agent/lib/policy/capability-token').SignedEnvelope | undefined
+  // Phase 64: the autonomy ladder task class this call maps to (agent-initiated
+  // effects only), captured so the outcome can be fed back after execution.
+  let ladderTaskClass: string | undefined
   {
     const { guardToolCall } = await import('@/agent/lib/policy/tool-guard')
     const guard = await guardToolCall(tool.name, input ?? {}, cap, {
@@ -800,6 +822,7 @@ export async function runRegisteredTool(
       capabilityRevoked: ctx.capabilityRevoked,
       accountScopeOk: ctx.accountScopeOk,
     })
+    ladderTaskClass = guard.ladderTaskClass
     if (guard.action === 'block') {
       void logToolEvent({
         ...baseEvent,
@@ -814,14 +837,23 @@ export async function runRegisteredTool(
           guardReason: guard.decision.reasonClass,
           guardTier: guard.decision.riskTier,
           guardEnforced: true,
+          ladderTaskClass: guard.ladderTaskClass,
+          ladderStage: guard.ladderStage,
+          ladderVerdict: guard.ladderVerdict,
+          ladderEnforced: guard.ladderEnforced,
         },
       })
+      // A ladder-enforced block IS a real class-scoped outcome — record it so
+      // the SLO/readiness tables receive live rows (Phase 64 exit gate).
+      if (guard.ladderEnforced && guard.ladderTaskClass) {
+        void feedLadderOutcome(guard.ladderTaskClass, false)
+      }
       return { success: false, error: guard.error, errorCode: guard.errorCode ?? 'guard_blocked', retryable: false }
     }
     guardEnvelope = guard.envelope
     // Shadow observability: when the constitution wanted a stricter path than
     // we enforce today, record it — Phase 57 readiness is computed from these.
-    if (!guard.enforced) {
+    if (!guard.enforced || guard.ladderStage) {
       void logToolEvent({
         ...baseEvent,
         success: true,
@@ -831,8 +863,11 @@ export async function runRegisteredTool(
           guardDecision: guard.decision.decision,
           guardReason: guard.decision.reasonClass,
           guardTier: guard.decision.riskTier,
-          guardEnforced: false,
-          guardShadow: true,
+          guardEnforced: guard.enforced,
+          guardShadow: !guard.enforced,
+          ladderTaskClass: guard.ladderTaskClass,
+          ladderStage: guard.ladderStage,
+          ladderVerdict: guard.ladderVerdict,
         },
       })
     }
@@ -865,10 +900,14 @@ export async function runRegisteredTool(
         latencyMs: Date.now() - started,
         detail: { ...capDetail, argsValidation: 'passed', effectEngine: true, effectState: outcome.state, effectReplayed: outcome.replayed },
       })
+      if (ladderTaskClass) void feedLadderOutcome(ladderTaskClass, effectResult.success)
       return effectResult
     }
 
     const result = await tool.handler({ ...input, ...handlerContext })
+    // Phase 64: feed the real outcome back to the autonomy ladder (agent-
+    // initiated effects only — ladderTaskClass is unset otherwise).
+    if (ladderTaskClass) void feedLadderOutcome(ladderTaskClass, result.success)
     if (result.success) {
       void logToolEvent({
         ...baseEvent,

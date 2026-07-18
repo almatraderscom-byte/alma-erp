@@ -65,6 +65,15 @@ export interface GuardOutcome {
   /** Owner/model-facing Bangla error when blocked. */
   error?: string
   errorCode?: string
+  // ── Phase 64: autonomy-ladder governance (GAP-03) ──
+  /** Task class this call maps to (for agent-initiated effects). */
+  ladderTaskClass?: string
+  /** Effective ladder stage for that class right now. */
+  ladderStage?: string
+  /** How the ladder governs this call: allow | stage | block. */
+  ladderVerdict?: 'allow' | 'stage' | 'block'
+  /** True when the ladder (not the base policy) is what blocked/staged. */
+  ladderEnforced?: boolean
 }
 
 // ── Same-turn duplicate suppression (process-local until Phase 53's durable claim) ──
@@ -274,7 +283,62 @@ export async function guardToolCall(
       }
       return o
     }
-    return finalize(resolveEnforcement())
+    // Phase 64: the base guard decides, THEN the autonomy ladder may tighten it
+    // for agent-initiated effects (never loosen). Ladder runs before finalize so
+    // a ladder-blocked call does not register an idempotency claim.
+    const base = resolveEnforcement()
+    const laddered = await applyLadder(base)
+    return finalize(laddered)
+
+    // ── Phase 64: autonomy-ladder tightening (GAP-03) ──
+    async function applyLadder(outcome: GuardOutcome): Promise<GuardOutcome> {
+      // Owner-direct actions + reads are governed by the base guard, not the
+      // ladder. Only model/scheduler-initiative effects reach the ladder.
+      if (origin === 'owner_direct' || classification.mode === 'read') return outcome
+      const { ladderEnforcementMode } = await import('@/agent/lib/autonomy-rollout')
+      const mode = ladderEnforcementMode()
+      if (mode === 'off') return outcome
+      let ladderStage: string
+      let ladderTaskClass: string
+      let verdict: 'allow' | 'stage' | 'block'
+      try {
+        const [{ taskClassForTool }, { effectiveStage, ladderGuardVerdict }] = await Promise.all([
+          import('@/agent/lib/autonomy-task-catalog'),
+          import('@/agent/lib/autonomy-rollout'),
+        ])
+        const tc = taskClassForTool(toolName, {
+          mode: classification.mode,
+          risk: classification.risk,
+          domain: classification.domain,
+        })
+        ladderTaskClass = tc.taskClass
+        const eff = await effectiveStage(tc.taskClass)
+        ladderStage = eff.stage
+        verdict = ladderGuardVerdict(eff.stage, classification.mode, false)
+      } catch (err) {
+        // Fail-closed for effects: if the ladder cannot be read, an enforcing
+        // mode blocks the agent-initiated write; shadow leaves it unchanged.
+        console.warn('[tool-guard] ladder read failed:', err instanceof Error ? err.message : err)
+        if (mode === 'on' && outcome.action === 'proceed') {
+          return { ...outcome, action: 'block', enforced: true, ladderEnforced: true, errorCode: 'guard_ladder_unavailable', error: BLOCK_MESSAGE.autonomy_off }
+        }
+        return outcome
+      }
+      const annotated: GuardOutcome = { ...outcome, ladderStage, ladderTaskClass, ladderVerdict: verdict }
+      // Shadow: attach the decision to the trace, change nothing.
+      if (mode !== 'on') return annotated
+      // Enforce — can only TIGHTEN a base 'proceed'.
+      if (annotated.action === 'block') return annotated
+      if (verdict === 'block') {
+        return { ...annotated, action: 'block', enforced: true, ladderEnforced: true, errorCode: `guard_ladder_${ladderStage}`, error: BLOCK_MESSAGE.autonomy_off }
+      }
+      if (verdict === 'stage') {
+        // A valid payload-bound approval satisfies the draft-stage demand.
+        if (ctx.approvalEnvelope && !approvalPayloadChanged) return annotated
+        return { ...annotated, action: 'block', enforced: true, ladderEnforced: true, errorCode: 'guard_ladder_draft', error: BLOCK_MESSAGE.point_of_risk_approval }
+      }
+      return annotated
+    }
 
     // ── Enforcement matrix ──
     function resolveEnforcement(): GuardOutcome {

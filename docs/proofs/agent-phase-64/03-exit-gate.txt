@@ -1,0 +1,5 @@
+Exit gate — a rung change flips the guard decision (from the test run):
+- AGENT_AUTONOMY_LADDER=on, class stage 'off'  → agent-initiated write BLOCKED (ladderEnforced=true)
+- AGENT_AUTONOMY_LADDER=on, class stage 'auto_r1' → NOT ladder-blocked (ladderVerdict=allow)
+- shadow mode → ladderStage/ladderTaskClass attached to trace, execution unchanged
+- owner-direct writes → ladder never consulted (ladderTaskClass undefined)

@@ -255,6 +255,59 @@ export async function effectiveStage(
   return { stage: rollout.stage, reason: STAGE_LABEL_BN[rollout.stage] }
 }
 
+// ── Phase 64: ladder → guard verdict (pure) ──────────────────────────────────
+
+export type LadderGuardVerdict = 'allow' | 'stage' | 'block'
+
+/**
+ * How a task class's effective ladder stage governs an AGENT-INITIATED action
+ * inside the central guard. Owner-direct actions are governed by the base guard
+ * (normal authorization), NOT the ladder — this is only reached for model /
+ * scheduler initiative. Reads are never gated by the ladder.
+ *
+ *   off / shadow / suggest → block  (the agent may not create the effect)
+ *   draft                  → stage  (a private/reversible draft or approval card)
+ *   auto_r1 / bounded_r2   → allow  (within the scope limits the guard enforces)
+ *
+ * This can only ever TIGHTEN the base guard decision — it never loosens it.
+ */
+export function ladderGuardVerdict(
+  stage: LadderStage,
+  mode: 'read' | 'stage' | 'write',
+  isOwnerDirect: boolean,
+): LadderGuardVerdict {
+  if (isOwnerDirect) return 'allow'
+  if (mode === 'read') return 'allow'
+  switch (stage) {
+    case 'off':
+    case 'shadow':
+    case 'suggest':
+      return 'block'
+    case 'draft':
+      return 'stage'
+    case 'auto_r1':
+    case 'bounded_r2':
+      return 'allow'
+  }
+}
+
+/**
+ * Ladder enforcement mode: 'off' disables it; 'shadow' computes + records but
+ * does not change execution; 'on' enforces the tightening. Unset → ON in Vercel
+ * preview (so exit-gate "a rung change flips the guard decision" is testable),
+ * SHADOW in production (the ladder attaches to the trace but changes nothing
+ * until the owner flips it — every task class also stays 'off' by default).
+ */
+export function ladderEnforcementMode(
+  flag = process.env.AGENT_AUTONOMY_LADDER,
+  vercelEnv = process.env.VERCEL_ENV,
+): 'off' | 'shadow' | 'on' {
+  if (flag === 'off' || flag === 'false') return 'off'
+  if (flag === 'on' || flag === 'true') return 'on'
+  if (flag === 'shadow') return 'shadow'
+  return vercelEnv === 'preview' ? 'on' : 'shadow'
+}
+
 /** Full ladder view for the control centre. */
 export async function listRollouts(kv: ReadinessKv = defaultReadinessKv()): Promise<
   Array<TaskClassRollout & { tier: RiskTier; ceiling: LadderStage; labelBn: string }>

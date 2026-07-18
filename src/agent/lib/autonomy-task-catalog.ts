@@ -344,6 +344,62 @@ export function deriveTier(cap: Pick<Capability, 'mode' | 'risk' | 'domain'>): R
   return 'R1'
 }
 
+// ── Phase 64: complete tool → task-class → tier map (GAP-03) ──────────────────
+// The autonomy ladder governs by task CLASS, but the guard only knows a tool
+// name + its classification. This map is the single source of truth that turns
+// one into the other. It is CI-enforced: a test asserts every task family's
+// representativeTools resolve back to that family, and that an unknown WRITE
+// tool falls back to a conservative class (never a lax one).
+
+/** Explicit tool → task-class overrides, seeded from the families' own lists. */
+const TOOL_TASK_CLASS: Record<string, string> = (() => {
+  const m: Record<string, string> = {}
+  for (const f of TASK_FAMILIES) {
+    for (const t of f.representativeTools) m[t] = f.id
+  }
+  return m
+})()
+
+/** Canonical fallback class per tier (used when a tool is not explicitly mapped). */
+const TIER_DEFAULT_CLASS: Record<RiskTier, string> = {
+  R0: 'erp-reporting',
+  R1: 'drafts-previews',
+  R2: 'internal-reminders',
+  R3: 'public-publish',
+  R4: 'security-permissions',
+}
+
+export interface ToolTaskClass {
+  taskClass: string
+  tier: RiskTier
+}
+
+/** Tier of a known task class (defaults to R3 — conservative — if unknown). */
+export function tierForTaskClass(taskClass: string): RiskTier {
+  return TASK_FAMILIES.find((f) => f.id === taskClass)?.tier ?? 'R3'
+}
+
+/**
+ * Map ANY tool to its task class + tier. Explicit override first; otherwise
+ * derive conservatively from the classification. Reads → the read families;
+ * unmapped writes fall to the tier-default class so the ladder gates them at
+ * (at least) their real risk tier — never below it.
+ */
+export function taskClassForTool(
+  toolName: string,
+  cap?: Pick<Capability, 'mode' | 'risk' | 'domain'>,
+): ToolTaskClass {
+  const explicit = TOOL_TASK_CLASS[toolName]
+  if (explicit) return { taskClass: explicit, tier: tierForTaskClass(explicit) }
+  if (!cap) return { taskClass: 'public-publish', tier: 'R3' } // unknown + no cap = cautious
+  if (cap.mode === 'read') {
+    const taskClass = cap.domain === 'research' ? 'research-public' : 'erp-reporting'
+    return { taskClass, tier: 'R0' }
+  }
+  const tier = deriveTier(cap)
+  return { taskClass: TIER_DEFAULT_CLASS[tier], tier }
+}
+
 /** Domains whose autonomy policy category is actually consulted at baseline. */
 const POLICY_WIRED_DOMAINS = new Set(['cs', 'finance', 'erp'])
 

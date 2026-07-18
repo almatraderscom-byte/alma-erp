@@ -1,0 +1,3 @@
+Central guard + executor edited — full regression:
+src/agent suite: 182 files / 2319 tests PASS (zero regressions).
+tsc --noEmit: 0 errors.
