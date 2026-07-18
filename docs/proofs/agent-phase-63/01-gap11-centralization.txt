@@ -1,0 +1,7 @@
+GAP-11 — Meta Graph version centralization
+Before: 30 hard-coded 'graph.facebook.com/v21.0' literals across 20 non-test files.
+After: 0 literals remain (verified). One shared TS resolver (src/lib/meta-version.ts) +
+one worker mirror (worker/src/meta-version.mjs). All 30 call-sites use metaGraphBase().
+
+Remaining literal search (non-test, excl. resolver comments):
+  NONE ✓

@@ -4,6 +4,7 @@
  */
 
 import { notify } from '../notify/index.mjs'
+import { metaGraphBase } from '../meta-version.mjs'
 
 const PAGES = {
   '1044848232034171': { envKey: 'FB_PAGE_TOKEN_LIFESTYLE', name: 'Alma Lifestyle' },
@@ -22,7 +23,7 @@ export async function checkPageTokenHealth() {
     }
     try {
       const res = await fetch(
-        `https://graph.facebook.com/v21.0/me?access_token=${token}`,
+        `${metaGraphBase()}/me?access_token=${token}`,
       )
       const data = await res.json()
       if (!res.ok) {

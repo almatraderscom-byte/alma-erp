@@ -8,6 +8,7 @@
  * Wrong-app tokens re-subscribe a duplicate app and webhooks never reach Vercel.
  */
 import 'dotenv/config'
+import { metaGraphBase } from '../src/meta-version.mjs'
 
 const META_APP_ID = process.env.META_APP_ID ?? '1990978398451639'
 /** Legacy duplicate app — must not stay subscribed on production pages */
@@ -42,7 +43,7 @@ async function graphJson(url, opts = {}) {
 
 async function getSubscribedApps(pageId, pageToken) {
   const { data } = await graphJson(
-    `https://graph.facebook.com/v21.0/${pageId}/subscribed_apps?access_token=${encodeURIComponent(pageToken)}`,
+    `${metaGraphBase()}/${pageId}/subscribed_apps?access_token=${encodeURIComponent(pageToken)}`,
   )
   return data.data ?? []
 }
@@ -51,7 +52,7 @@ async function unsubscribeWrongApps(pageId, pageToken) {
   for (const wrongId of WRONG_APP_IDS) {
     if (wrongId === META_APP_ID) continue
     const { data } = await graphJson(
-      `https://graph.facebook.com/v21.0/${pageId}/subscribed_apps?app_id=${wrongId}&access_token=${encodeURIComponent(pageToken)}`,
+      `${metaGraphBase()}/${pageId}/subscribed_apps?app_id=${wrongId}&access_token=${encodeURIComponent(pageToken)}`,
       { method: 'DELETE' },
     )
     console.log(`[meta-webhook] unsubscribe ${wrongId} from ${pageId}:`, JSON.stringify(data))
@@ -60,7 +61,7 @@ async function unsubscribeWrongApps(pageId, pageToken) {
 
 async function subscribePage(pageId, pageToken) {
   const { data } = await graphJson(
-    `https://graph.facebook.com/v21.0/${pageId}/subscribed_apps?subscribed_fields=${FIELDS}&access_token=${encodeURIComponent(pageToken)}`,
+    `${metaGraphBase()}/${pageId}/subscribed_apps?subscribed_fields=${FIELDS}&access_token=${encodeURIComponent(pageToken)}`,
     { method: 'POST' },
   )
   return data
@@ -92,7 +93,7 @@ async function main() {
   console.log(`[meta-webhook] target app ${META_APP_ID}, callback ${CALLBACK}`)
 
   console.log('[meta-webhook] registering app-level webhook subscription...')
-  const { data: sub } = await graphJson(`https://graph.facebook.com/v21.0/${META_APP_ID}/subscriptions`, {
+  const { data: sub } = await graphJson(`${metaGraphBase()}/${META_APP_ID}/subscriptions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({

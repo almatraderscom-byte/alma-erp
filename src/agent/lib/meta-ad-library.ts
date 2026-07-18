@@ -3,8 +3,9 @@
  * Requires META_ADS_TOKEN with ads_read (Ad Library API access).
  */
 import { resilientFetch } from '@/agent/lib/fetch-retry'
+import { metaGraphBase } from '@/lib/meta-version'
 
-const GRAPH_BASE = 'https://graph.facebook.com/v21.0'
+const GRAPH_BASE = metaGraphBase()
 
 export type AdLibraryAd = {
   id: string

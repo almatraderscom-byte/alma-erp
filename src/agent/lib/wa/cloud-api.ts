@@ -3,8 +3,9 @@
  * Docs: https://developers.facebook.com/docs/whatsapp/cloud-api
  */
 import { createHmac, timingSafeEqual } from 'crypto'
+import { metaGraphBase } from '@/lib/meta-version'
 
-const GRAPH = 'https://graph.facebook.com/v21.0'
+const GRAPH = metaGraphBase()
 
 export function waConfigured(): boolean {
   return Boolean(process.env.WA_PHONE_ID && process.env.WA_TOKEN)

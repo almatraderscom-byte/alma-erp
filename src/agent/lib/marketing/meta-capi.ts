@@ -18,12 +18,13 @@ import {
   type CanonicalEvent,
 } from '@/agent/lib/marketing/event-contract'
 import { prisma } from '@/lib/prisma'
+import { metaGraphBase } from '@/lib/meta-version'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-// Hard-coded version — listed in META_VERSION_CALL_SITES; Phase 45 centralizes.
-const GRAPH_BASE = 'https://graph.facebook.com/v21.0'
+// Phase 63: centralized through the shared resolver (src/lib/meta-version.ts).
+const GRAPH_BASE = metaGraphBase()
 
 export function capiConfigured(): boolean {
   return Boolean(process.env.META_PIXEL_ID?.trim() && (process.env.META_CAPI_TOKEN ?? process.env.META_ADS_TOKEN)?.trim())

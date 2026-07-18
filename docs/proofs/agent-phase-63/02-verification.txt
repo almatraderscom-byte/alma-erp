@@ -1,0 +1,5 @@
+Verification:
+- tsc --noEmit: 0 errors
+- node --check: all 9 worker mjs OK
+- Full agent suite: 182 files / 2310 tests PASS
+- Parity test: worker default === TS default (v21.0); metaGraphBase() default preserved as https://graph.facebook.com/v21.0

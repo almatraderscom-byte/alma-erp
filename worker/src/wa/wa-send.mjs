@@ -2,8 +2,9 @@
  * WhatsApp Cloud API send helpers (worker-side).
  */
 import { resilientFetch } from '../fetch-retry.mjs'
+import { metaGraphBase } from '../meta-version.mjs'
 
-const GRAPH = 'https://graph.facebook.com/v21.0'
+const GRAPH = metaGraphBase()
 
 function phoneNumberId(pageId) {
   return String(pageId ?? '').replace(/^wa:/, '')

@@ -13,8 +13,9 @@
  */
 import { resilientFetch } from '@/agent/lib/fetch-retry'
 import { checkAdsManagementScope } from '@/agent/lib/meta-ads'
+import { metaGraphBase } from '@/lib/meta-version'
 
-const GRAPH_BASE = 'https://graph.facebook.com/v21.0'
+const GRAPH_BASE = metaGraphBase()
 
 function adsToken(): string {
   const tok = process.env.META_ADS_TOKEN

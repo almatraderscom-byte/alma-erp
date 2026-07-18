@@ -3,6 +3,7 @@
  */
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
+import { metaGraphBase } from '@/lib/meta-version'
 import { getLifestyleOrders } from '@/lib/lifestyle/read'
 import { todayYmdDhaka, daysAgoYmd, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import {
@@ -127,7 +128,7 @@ async function gatherAdsWeekMetrics(): Promise<{ spend: number | null; ctrAvg: n
     const today = todayYmdDhaka()
     const weekStart = daysAgoYmd(6)
     const campRes = await fetch(
-      `https://graph.facebook.com/v21.0/${accountId}/campaigns?effective_status=["ACTIVE"]&fields=id,name&limit=10&access_token=${token}`,
+      `${metaGraphBase()}/${accountId}/campaigns?effective_status=["ACTIVE"]&fields=id,name&limit=10&access_token=${token}`,
     )
     if (!campRes.ok) return { spend: null, ctrAvg: null }
     const campData = (await campRes.json()) as { data?: Array<{ id: string }> }
@@ -137,7 +138,7 @@ async function gatherAdsWeekMetrics(): Promise<{ spend: number | null; ctrAvg: n
     let ctrCount = 0
 
     for (const c of campData.data ?? []) {
-      const url = `https://graph.facebook.com/v21.0/${c.id}/insights?time_range=${encodeURIComponent(JSON.stringify({ since: weekStart, until: today }))}&fields=spend,ctr&access_token=${token}`
+      const url = `${metaGraphBase()}/${c.id}/insights?time_range=${encodeURIComponent(JSON.stringify({ since: weekStart, until: today }))}&fields=spend,ctr&access_token=${token}`
       const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
       if (!res.ok) continue
       const data = (await res.json()) as { data?: Array<{ spend?: string; ctr?: string }> }

@@ -2,6 +2,7 @@
  * Auto-verification helpers for staff tasks (best-effort).
  */
 import { getAppUrl, getInternalToken } from '../env.mjs'
+import { metaGraphBase } from '../meta-version.mjs'
 const PAGES = [
   { id: '1044848232034171', name: 'Alma Lifestyle', envKey: 'FB_PAGE_TOKEN_LIFESTYLE' },
   { id: '827260860637393', name: 'Alma Online Shop', envKey: 'FB_PAGE_TOKEN_ONLINESHOP' },
@@ -32,7 +33,7 @@ async function checkFbPageActivity(task) {
     const token = process.env[page.envKey]
     if (!token) continue
     try {
-      const url = `https://graph.facebook.com/v21.0/${page.id}/feed?limit=8&fields=message,story,created_time&access_token=${encodeURIComponent(token)}`
+      const url = `${metaGraphBase()}/${page.id}/feed?limit=8&fields=message,story,created_time&access_token=${encodeURIComponent(token)}`
       const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
       if (!res.ok) continue
       const data = await res.json()

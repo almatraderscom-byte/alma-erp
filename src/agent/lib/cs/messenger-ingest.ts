@@ -7,6 +7,7 @@ import { csReplyPermitted } from '@/agent/lib/cs/modes'
 import { downloadMessengerAttachment } from '@/agent/lib/cs/meta-messenger'
 import { agentStorageUpload } from '@/agent/lib/storage'
 import { prisma } from '@/lib/prisma'
+import { metaGraphBase } from '@/lib/meta-version'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -49,7 +50,7 @@ async function ensureCustomerName(
   if (!pageToken) return null
   try {
     const profileRes = await fetch(
-      `https://graph.facebook.com/v21.0/${psid}?fields=first_name,last_name&access_token=${pageToken}`,
+      `${metaGraphBase()}/${psid}?fields=first_name,last_name&access_token=${pageToken}`,
     )
     if (!profileRes.ok) return null
     const profile = await profileRes.json() as { first_name?: string; last_name?: string }
