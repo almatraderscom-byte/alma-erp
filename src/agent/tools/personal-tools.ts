@@ -200,7 +200,7 @@ export const place_agent_call: AgentTool = {
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'agent_voice_call',
-          payload: { phone, toNumber: phone, recipientName, purpose, firstMessage, voiceGender },
+          payload: { phone, toNumber: phone, recipientName, purpose, firstMessage, voiceGender, callType: 'contact' },
           summary: `📞 ${who} কে লাইভ কল — "${purpose.slice(0, 60)}"`,
           costEstimate: 0.5,
           status: 'pending',
