@@ -113,6 +113,8 @@ class SarvamCall {
     this.verifyToken = verifyToken
     this.callRecordId = null
     this.streamSid = null
+    this.isNgs = false           // NextGenSwitch (infosoftbd) dialect
+    this.streamKey = 'streamSid' // Twilio uses streamSid; NGS uses streamId
     this.params = {}
     this.history = []
     this.startedAt = Date.now()
@@ -264,14 +266,23 @@ class SarvamCall {
     for (let off = 0; off < mu.length; off += 160) {
       let frame = mu.subarray(off, off + 160)
       if (frame.length < 160) frame = Buffer.concat([frame, Buffer.alloc(160 - frame.length, 0xff)]) // μ-law silence pad
-      this.sendTwilio({ event: 'media', streamSid: this.streamSid, media: { payload: frame.toString('base64') } })
+      this.sendTwilio({ event: 'media', [this.streamKey]: this.streamSid, media: { payload: frame.toString('base64') } })
     }
     this._markSeq = (this._markSeq || 0) + 1
     const name = 'm' + this._markSeq
     this._marks = this._marks || new Set()
     this._marks.add(name)
     this.speaking = true
-    this.sendTwilio({ event: 'mark', streamSid: this.streamSid, mark: { name } })
+    this.sendTwilio({ event: 'mark', [this.streamKey]: this.streamSid, mark: { name } })
+    // Twilio echoes the mark once the audio has PLAYED, which releases the floor.
+    // NGS does NOT reliably echo marks, so without a fallback `speaking` would stay
+    // true forever and the agent would never listen again. Release it on a duration
+    // timer (μ-law 8 kHz = 8000 bytes/sec). onMark guards on membership, so if a real
+    // echo (or another turn) already cleared this mark, the timer is a harmless no-op.
+    if (this.isNgs) {
+      const ms = (mu.length / 8000) * 1000 + 500
+      setTimeout(() => { if (this._marks?.has(name)) this.onMark(name) }, ms)
+    }
   }
 
   /** Twilio echoes a mark once that audio has actually PLAYED out. */
@@ -291,7 +302,7 @@ class SarvamCall {
     this._marks?.clear()
     if (this.speaking) {
       this.speaking = false
-      this.sendTwilio({ event: 'clear', streamSid: this.streamSid })
+      this.sendTwilio({ event: 'clear', [this.streamKey]: this.streamSid })
     }
   }
 
@@ -301,8 +312,13 @@ class SarvamCall {
     try { msg = JSON.parse(raw.toString()) } catch { return }
     switch (msg.event) {
       case 'start': {
-        this.streamSid = msg.start?.streamSid ?? msg.streamSid
-        this.params = msg.start?.customParameters ?? {}
+        // NextGenSwitch (infosoftbd) puts streamId + call_id + params at the top level;
+        // Twilio nests them under start.streamSid / start.customParameters. Detect the
+        // dialect once and normalise, so ONE Sarvam pipeline serves both carriers.
+        this.isNgs = !msg.start && Boolean(msg.streamId)
+        this.streamKey = this.isNgs ? 'streamId' : 'streamSid'
+        this.streamSid = msg.start?.streamSid ?? msg.streamSid ?? msg.streamId
+        this.params = msg.start?.customParameters ?? msg.params ?? {}
         // Media Streams can't carry the token in the URL, so verify it from the
         // <Parameter> values now. Reject anything that isn't ours.
         const okTok = this.verifyToken?.(this.params.id, Number(this.params.exp), this.params.t)
@@ -311,7 +327,7 @@ class SarvamCall {
           this.close()
           return
         }
-        this.callRecordId = this.params.id ?? null
+        this.callRecordId = this.params.id ?? msg.call_id ?? null
         console.log(`[sarvam-media] verified — call ${this.callRecordId}`)
         this.openStt()
         if (this.params.firstMessage) this.say(this.params.firstMessage)
