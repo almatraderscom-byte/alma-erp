@@ -961,10 +961,11 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */;
 			buildSettings = {
+				ALMA_BASE_URL = "https://alma-erp-six.vercel.app";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 78;
+				CURRENT_PROJECT_VERSION = 79;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -983,10 +984,11 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = AF51FD2D460BCFE21FA515B2 /* Pods-App.release.xcconfig */;
 			buildSettings = {
+				ALMA_BASE_URL = "https://alma-erp-six.vercel.app";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 78;
+				CURRENT_PROJECT_VERSION = 79;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -1005,7 +1007,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 78;
+				CURRENT_PROJECT_VERSION = 79;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;
@@ -1027,7 +1029,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 78;
+				CURRENT_PROJECT_VERSION = 79;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;

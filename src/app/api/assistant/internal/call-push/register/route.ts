@@ -1,49 +1,87 @@
-/**
- * Register a device's call-push token so the server can ring it for an office
- * call while the app is backgrounded / killed.
- *   POST /api/assistant/internal/call-push/register
- *     { platform: 'ios' | 'android', voipToken?: string, fcmToken?: string }
- *
- * Any authenticated user (owner OR staff) may register their own device — the
- * token is keyed to their ERP user id (token.sub). The native shells call this:
- * iOS with its PushKit VoIP token, Android with its FCM token.
- */
+import { createHash } from 'node:crypto'
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { registerCallToken } from '@/agent/lib/call-push'
+import { identifyOfficeCallRequest } from '@/agent/lib/office-call-auth'
+import {
+  registerOfficeCallDevice,
+  unregisterOfficeCallInstallation,
+  type OfficeCallDeviceEnvironment,
+} from '@/agent/lib/office-call-devices'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+type RegisterBody = {
+  platform?: string
+  environment?: string
+  installationId?: string
+  voipToken?: string
+  fcmToken?: string
+  appBuild?: string
+  buildSha?: string
+}
+
+function legacyInstallationId(token: string) {
+  return `legacy-${createHash('sha256').update(token).digest('hex').slice(0, 32)}`
+}
+
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
+  const identity = await identifyOfficeCallRequest(req)
+  if (!identity.ok) return Response.json({ error: identity.error }, { status: identity.code })
 
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-
-  let body: { platform?: string; voipToken?: string; fcmToken?: string }
+  let body: RegisterBody
   try {
     body = await req.json()
   } catch {
     return Response.json({ error: 'invalid_json' }, { status: 400 })
   }
-
   const platform = body.platform === 'ios' || body.platform === 'android' ? body.platform : null
   if (!platform) return Response.json({ error: 'platform_required' }, { status: 400 })
-
-  const voipToken = body.voipToken?.trim()
-  const fcmToken = body.fcmToken?.trim()
-  if (!voipToken && !fcmToken) return Response.json({ error: 'token_required' }, { status: 400 })
-
-  try {
-    if (voipToken) await registerCallToken({ userId: token.sub, platform, kind: 'voip', token: voipToken })
-    if (fcmToken) await registerCallToken({ userId: token.sub, platform, kind: 'fcm', token: fcmToken })
-  } catch (err) {
-    console.error('[call-push/register] failed:', (err as Error)?.message)
-    return Response.json({ error: 'register_failed' }, { status: 500 })
+  const token = platform === 'ios' ? body.voipToken?.trim() : body.fcmToken?.trim()
+  if (!token) return Response.json({ error: 'token_required' }, { status: 400 })
+  const provider = platform === 'ios' ? 'apns_voip' : 'fcm'
+  const environment: OfficeCallDeviceEnvironment =
+    body.environment === 'sandbox' || body.environment === 'production'
+      ? body.environment
+      : platform === 'ios' && process.env.APNS_PRODUCTION !== 'true'
+        ? 'sandbox'
+        : 'production'
+  const result = await registerOfficeCallDevice({
+    userId: identity.userId,
+    businessId: identity.businessId,
+    installationId: body.installationId?.trim() || legacyInstallationId(token),
+    platform,
+    environment,
+    provider,
+    token,
+    appBuild: body.appBuild,
+    buildSha: body.buildSha,
+  }).catch((error: unknown) => ({
+    ok: false as const,
+    error: error instanceof Error ? error.message : 'register_failed',
+  }))
+  if (!result.ok) {
+    const status = result.error === 'office_call_device_key_unconfigured' ? 503 : 400
+    return Response.json({ error: result.error }, { status })
   }
+  return Response.json({ ok: true, deviceId: result.deviceId })
+}
 
-  return Response.json({ ok: true })
+export async function DELETE(req: NextRequest) {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
+  const identity = await identifyOfficeCallRequest(req)
+  if (!identity.ok) return Response.json({ error: identity.error }, { status: identity.code })
+  let body: { installationId?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return Response.json({ error: 'invalid_json' }, { status: 400 })
+  }
+  const installationId = body.installationId?.trim()
+  if (!installationId) return Response.json({ error: 'installation_id_required' }, { status: 400 })
+  const removed = await unregisterOfficeCallInstallation({ userId: identity.userId, installationId })
+  return Response.json({ ok: true, removed })
 }

@@ -10,6 +10,8 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
 import com.almatraders.erp.shell.NativeShell;
+import com.almatraders.erp.pages.AgoraIntercom;
+import com.google.firebase.messaging.FirebaseMessaging;
 
 public class MainActivity extends BridgeActivity {
     @Override
@@ -18,7 +20,12 @@ public class MainActivity extends BridgeActivity {
         // Background reminder refresh (iOS BackgroundRefresh parity): keep the owner's
         // reminders fresh + scheduled even if the app isn't opened for days.
         ReminderRefresh.INSTANCE.enqueue(this);
+        // Refresh/register the direct FCM token on every launch. Registration is
+        // installation-bound and retried by WorkManager after login/network recovery.
+        FirebaseMessaging.getInstance().getToken().addOnSuccessListener(token ->
+                OfficeCallPushRegistration.INSTANCE.enqueue(this, token));
         super.onCreate(savedInstanceState);
+        AgoraIntercom.INSTANCE.attach(getApplicationContext());
 
         // ALMA native shell (Compose tab bar + native Lifestyle screens wrapping the
         // Capacitor app — Android twin of the iOS SwiftUI program). Behind the
@@ -41,6 +48,11 @@ public class MainActivity extends BridgeActivity {
                 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
             needed.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
+                != PackageManager.PERMISSION_GRANTED) {
+            needed.add(Manifest.permission.BLUETOOTH_CONNECT);
         }
         if (!needed.isEmpty()) {
             ActivityCompat.requestPermissions(this, needed.toArray(new String[0]), 7321);

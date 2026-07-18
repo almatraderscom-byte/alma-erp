@@ -16,6 +16,7 @@
 import Foundation
 import AVFoundation
 import AgoraRtcKit
+import UIKit
 
 // MARK: - Server contracts
 
@@ -24,13 +25,15 @@ private struct IntercomTokenResp: Decodable {
     let appId: String
     let token: String
     let uid: UInt
+    let expiresAt: String?
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         appId = try c.decode(String.self, forKey: .appId)
         token = try c.decode(String.self, forKey: .token)
         uid = (try? c.decodeIfPresent(UInt.self, forKey: .uid)) ?? 0
+        expiresAt = try? c.decodeIfPresent(String.self, forKey: .expiresAt)
     }
-    enum CodingKeys: String, CodingKey { case appId, token, uid }
+    enum CodingKeys: String, CodingKey { case appId, token, uid, expiresAt }
 }
 
 struct IntercomStaff: Decodable, Identifiable, Equatable {
@@ -50,24 +53,61 @@ struct IntercomStaff: Decodable, Identifiable, Equatable {
 struct IntercomFeedLite: Decodable {
     let liveChannel: String
     let staff: [IntercomStaff]
+    let recentCalls: [IntercomRecentCall]
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         liveChannel = (try? c.decodeIfPresent(String.self, forKey: .liveChannel)) ?? ""
         staff = (try? c.decodeIfPresent([IntercomStaff].self, forKey: .staff)) ?? []
+        let broadcasts = (try? c.decodeIfPresent([IntercomRecentCall].self, forKey: .broadcasts)) ?? []
+        recentCalls = Array(broadcasts.filter { $0.kind == "call" }.suffix(12).reversed())
     }
-    enum CodingKeys: String, CodingKey { case liveChannel, staff }
+    enum CodingKeys: String, CodingKey { case liveChannel, staff, broadcasts }
+}
+
+struct IntercomRecentCall: Decodable, Identifiable {
+    let id: String
+    let kind: String
+    let callerName: String?
+    let outgoingByMe: Bool
+    let createdAt: String
+    let endedAt: String?
+    let endedReason: String?
+    let canonicalState: String?
+    let callDurationSec: Int?
+}
+
+private struct CanonicalCallEnvelope: Decodable { let call: CanonicalCallSnapshot }
+private struct CanonicalCallSnapshot: Decodable {
+    let id: String
+    let state: String
+    let version: Int
+    let terminalReason: String?
+    let direction: String
+    let channel: String
+    let uid: UInt?
+    let ringExpiresAt: String
+    let maxEndsAt: String
+}
+
+private struct CanonicalTransitionResponse: Decodable {
+    let ok: Bool?
+    let state: String?
+    let version: Int?
+    let alreadyApplied: Bool?
+    let terminalReason: String?
 }
 
 // MARK: - Manager
 
 @available(iOS 17.0, *)
 @Observable
-final class AgoraIntercom: NSObject {
-    static let shared = AgoraIntercom()
+final class OfficeCallCoordinator: NSObject {
+    static let shared = OfficeCallCoordinator()
 
     /// `ringing` = a 1:1 call is placed/answered but the other party hasn't joined yet
     /// (WhatsApp-style — no call timer until both are actually on the channel).
-    enum Mode: Equatable { case idle, listening, broadcasting, calling, ringing }
+    enum Mode: Equatable { case idle, listening, broadcasting, calling, ringing, reconnecting }
+    enum Direction: Equatable { case incoming, outgoing }
 
     var mode: Mode = .idle
     var connected = false
@@ -82,8 +122,19 @@ final class AgoraIntercom: NSObject {
     var statusText = ""
     var error: String? = nil
     var roster: [IntercomStaff] = []
+    var recentCalls: [IntercomRecentCall] = []
     var recording = false             // PTT voice-note is capturing right now
     var callPeer = "স্টাফ"            // who we're talking to (shown on the call screen)
+    var activeCallId: String?
+    var callDirection: Direction?
+    var canonicalState = ""
+    var speakerEnabled = false
+    var audioRoute = "iPhone"
+    var reconnectSeconds = 0
+
+    var hasActiveCall: Bool {
+        activeCallId != nil && (mode == .ringing || mode == .calling || mode == .reconnecting)
+    }
 
     // IOSP-4 crash fix: `engine`'s type lives in the dynamically-linked
     // AgoraRtcKit.framework. On an @Observable class, a stored property is read
@@ -97,8 +148,16 @@ final class AgoraIntercom: NSObject {
     @ObservationIgnored private var engine: AgoraRtcEngineKit?
     @ObservationIgnored private var appId: String?
     @ObservationIgnored private var channel: String?
+    @ObservationIgnored private var currentCallVersion: Int?
     @ObservationIgnored private var callTimer: Timer?
     @ObservationIgnored private var ringTimer: Timer?
+    @ObservationIgnored private var reconcileTimer: Timer?
+    @ObservationIgnored private var reconnectTimer: Timer?
+    @ObservationIgnored private var reconnectDeadline: Date?
+    @ObservationIgnored private var tokenExpiry: Date?
+    @ObservationIgnored private var joinStartedAt: Date?
+    @ObservationIgnored private var lastQualityTelemetryAt: Date?
+    @ObservationIgnored private var reconnectCount = 0
     @ObservationIgnored private var remoteUids = Set<UInt>()   // remote parties currently on the call channel
     private let ringtone = IntercomRingtone()   // ringback (caller) + incoming ring (callee)
     @ObservationIgnored private var handledCallIds = Set<String>()  // call broadcasts we've already surfaced
@@ -106,6 +165,16 @@ final class AgoraIntercom: NSObject {
     private var recorder: AVAudioRecorder?
     private var recordURL: URL?
     private var recordStart: Date?
+
+    private override init() {
+        super.init()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(audioRouteChanged),
+            name: AVAudioSession.routeChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(audioInterrupted),
+            name: AVAudioSession.interruptionNotification, object: nil)
+    }
 
     // ── Public API ──────────────────────────────────────────────────────────
 
@@ -115,6 +184,7 @@ final class AgoraIntercom: NSObject {
         do {
             let feed: IntercomFeedLite = try await AlmaAPI.shared.get("/api/assistant/office/intercom")
             roster = feed.staff
+            recentCalls = feed.recentCalls
         } catch {
             // A missing feed shouldn't block joining — the channel is deterministic below.
         }
@@ -146,6 +216,12 @@ final class AgoraIntercom: NSObject {
     /// join-completion delegate can flip us to `.calling` without a race.
     @MainActor
     func startCall(channel ch: String, outgoing: Bool) async {
+        let callId = Self.callId(from: ch)
+        activeCallId = callId
+        callDirection = outgoing ? .outgoing : .incoming
+        joinStartedAt = Date()
+        emitTelemetry(outgoing ? "client.join_started" : "client.answer_pressed", state: "connecting")
+        if !outgoing { emitTelemetry("client.join_started", state: "connecting") }
         error = nil
         mode = .ringing
         remoteUids.removeAll()
@@ -154,15 +230,26 @@ final class AgoraIntercom: NSObject {
         ringtone.stop()                          // any incoming ring stops the moment we act
         do {
             try await ensureMicPermission()
+            if !outgoing {
+                guard await transitionCanonical(to: "ANSWERED") else {
+                    throw IntercomError.canonicalRejected
+                }
+                guard await transitionCanonical(to: "CONNECTING") else {
+                    throw IntercomError.canonicalRejected
+                }
+            }
             try await join(channel: ch, publishMic: true)
             micMuted = false
+            startCanonicalReconciliation()
             if outgoing {
                 startRingTimeout()               // "কেউ ধরেনি" if unanswered
                 ringtone.play(.ringback)         // caller hears the soft ring-back tone
             }
         } catch {
             self.error = message(for: error)
+            emitTelemetry("client.media_error", state: "error", detail: message(for: error))
             statusText = ""
+            if activeCallId != nil { _ = await transitionCanonical(to: "ENDED", reason: "FAILED") }
             leave()
         }
     }
@@ -173,17 +260,55 @@ final class AgoraIntercom: NSObject {
     func ownerCall(staffId: String) async {
         error = nil
         statusText = "কল দিচ্ছি…"
-        struct Body: Encodable { let kind = "call"; let targetStaffId: String }
+        struct Body: Encodable {
+            let kind = "call"
+            let targetStaffId: String
+            let idempotencyKey: String
+        }
         struct Resp: Decodable { let id: String? }
         callPeer = roster.first { $0.id == staffId }?.name ?? "স্টাফ"
         do {
             let r: Resp = try await AlmaAPI.shared.send(
-                "POST", "/api/assistant/office/intercom", body: Body(targetStaffId: staffId))
+                "POST", "/api/assistant/office/intercom",
+                body: Body(targetStaffId: staffId, idempotencyKey: UUID().uuidString))
             guard let id = r.id, !id.isEmpty else { throw IntercomError.callFailed }
-            await startCall(channel: "itc_\(id)", outgoing: true)
+            activeCallId = id.lowercased()
+            callDirection = .outgoing
+            canonicalState = "RINGING"
+            guard await refreshCanonical(callId: id) else { throw IntercomError.canonicalRejected }
+            try await CallKitVoIP.shared.startOutgoing(
+                callId: id, channel: "itc_\(id)", peer: callPeer)
         } catch {
             self.error = message(for: error)
             statusText = ""
+            await endActiveCall(reason: "FAILED", requestSystemEnd: false)
+        }
+    }
+
+    /// Staff → owner uses the same canonical create route; the server resolves the
+    /// business owner and the native CallKit path owns the complete lifecycle.
+    @MainActor
+    func staffCallOwner() async {
+        error = nil
+        statusText = "কল দিচ্ছি…"
+        callPeer = "বস — মারুফ"
+        struct Body: Encodable { let kind = "call"; let idempotencyKey: String }
+        struct Resp: Decodable { let id: String? }
+        do {
+            let r: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/office/intercom",
+                body: Body(idempotencyKey: UUID().uuidString))
+            guard let id = r.id, !id.isEmpty else { throw IntercomError.callFailed }
+            activeCallId = id.lowercased()
+            callDirection = .outgoing
+            canonicalState = "RINGING"
+            guard await refreshCanonical(callId: id) else { throw IntercomError.canonicalRejected }
+            try await CallKitVoIP.shared.startOutgoing(
+                callId: id, channel: "itc_\(id)", peer: callPeer)
+        } catch {
+            self.error = message(for: error)
+            statusText = ""
+            await endActiveCall(reason: "FAILED", requestSystemEnd: false)
         }
     }
 
@@ -201,14 +326,24 @@ final class AgoraIntercom: NSObject {
     /// CallKit finished activating the shared audio session — make sure Agora routes
     /// call audio to the loud speaker (CallKit already owns activation/teardown).
     @MainActor func audioSessionActivated() {
-        engine?.setEnableSpeakerphone(true)
+        engine?.setEnableSpeakerphone(speakerEnabled)
+        updateAudioRoute()
+    }
+
+    @MainActor func toggleSpeaker() {
+        speakerEnabled.toggle()
+        engine?.setEnableSpeakerphone(speakerEnabled)
+        updateAudioRoute()
     }
 
     @MainActor
     func leave() {
+        emitTelemetry("client.leave_started", state: "leaving")
         engine?.leaveChannel(nil)
         stopCallTimer()
         stopRingTimeout()
+        stopCanonicalReconciliation()
+        stopReconnectGrace()
         ringtone.stop()
         mode = .idle
         connected = false
@@ -217,6 +352,203 @@ final class AgoraIntercom: NSObject {
         remoteUids.removeAll()
         channel = nil
         statusText = ""          // never leave a stale "রিং হচ্ছে…" behind the owner view
+        emitTelemetry("client.local_left", state: "ended")
+        activeCallId = nil
+        callDirection = nil
+        canonicalState = ""
+        currentCallVersion = nil
+        speakerEnabled = false
+        reconnectSeconds = 0
+        joinStartedAt = nil
+        lastQualityTelemetryAt = nil
+        reconnectCount = 0
+        UIDevice.current.isProximityMonitoringEnabled = false
+        NotificationCenter.default.post(name: .officeCallCoordinatorDidChange, object: nil)
+    }
+
+    @MainActor
+    func reconcileIncoming(callId: String, channel: String, caller: String) async -> Bool {
+        guard await refreshCanonical(callId: callId),
+              activeCallId == callId.lowercased(),
+              canonicalState == "RINGING",
+              callDirection == .incoming,
+              self.channel == nil || self.channel == channel
+        else { return false }
+        activeCallId = callId.lowercased()
+        callPeer = caller
+        mode = .ringing
+        statusText = "ইনকামিং কল…"
+        markCallHandled(callId)
+        startCanonicalReconciliation()
+        NotificationCenter.default.post(name: .officeCallCoordinatorDidChange, object: nil)
+        return true
+    }
+
+    @MainActor
+    func endActiveCall(reason explicitReason: String? = nil, requestSystemEnd: Bool = true) async {
+        guard let callId = activeCallId else { leave(); return }
+        let reason = explicitReason ?? localEndReason()
+        if requestSystemEnd, CallKitVoIP.shared.hasCall(callId: callId) {
+            // If the OS transaction fails, fall through and terminate canonical
+            // state directly so a UI tap can never leave a ghost call behind.
+            if await CallKitVoIP.shared.requestEnd(callId: callId, reason: reason) { return }
+        }
+        _ = await transitionCanonical(to: "ENDED", reason: reason)
+        CallKitVoIP.shared.finishReportedCall(callId: callId, reason: .remoteEnded)
+        leave()
+    }
+
+    @MainActor
+    func callKitEnded(callId: String, requestedReason: String?) async {
+        guard activeCallId?.caseInsensitiveCompare(callId) == .orderedSame else { return }
+        await endActiveCall(reason: requestedReason, requestSystemEnd: false)
+    }
+
+    @MainActor
+    func systemReset() async {
+        guard activeCallId != nil else { leave(); return }
+        await endActiveCall(reason: "FAILED", requestSystemEnd: false)
+    }
+
+    private func localEndReason() -> String {
+        if canonicalState == "RINGING" {
+            return callDirection == .incoming ? "DECLINED" : "CANCELLED"
+        }
+        return "COMPLETED"
+    }
+
+    @MainActor
+    @discardableResult
+    private func refreshCanonical(callId: String? = nil) async -> Bool {
+        guard let id = (callId ?? activeCallId)?.lowercased() else { return false }
+        do {
+            let envelope: CanonicalCallEnvelope = try await AlmaAPI.shared.get(
+                "/api/assistant/office/calls/\(id)")
+            let call = envelope.call
+            activeCallId = call.id.lowercased()
+            currentCallVersion = call.version
+            canonicalState = call.state
+            callDirection = call.direction == "incoming" ? .incoming : .outgoing
+            if channel == nil { channel = call.channel }
+            if call.state == "ENDED" {
+                CallKitVoIP.shared.finishReportedCall(
+                    callId: id, canonicalReason: call.terminalReason)
+                leave()
+                return false
+            }
+            return true
+        } catch {
+            emitTelemetry("client.reconcile_failed", state: canonicalState.lowercased(), detail: message(for: error))
+            return false
+        }
+    }
+
+    @MainActor
+    @discardableResult
+    private func transitionCanonical(to state: String, reason: String? = nil) async -> Bool {
+        guard let callId = activeCallId else { return false }
+        struct Body: Encodable {
+            let state: String
+            let reason: String?
+            let expectedVersion: Int?
+        }
+        do {
+            let response: CanonicalTransitionResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/office/calls/\(callId)/transition",
+                body: Body(state: state, reason: reason, expectedVersion: currentCallVersion))
+            canonicalState = response.state ?? state
+            currentCallVersion = response.version ?? currentCallVersion
+            return response.ok ?? true
+        } catch {
+            // Version conflicts and duplicate actions reconcile against server truth.
+            guard await refreshCanonical(callId: callId) else { return state == "ENDED" && activeCallId == nil }
+            if canonicalState == state || (state == "ENDED" && canonicalState == "ENDED") { return true }
+            do {
+                let retry: CanonicalTransitionResponse = try await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/office/calls/\(callId)/transition",
+                    body: Body(state: state, reason: reason, expectedVersion: currentCallVersion))
+                canonicalState = retry.state ?? state
+                currentCallVersion = retry.version ?? currentCallVersion
+                return retry.ok ?? true
+            } catch {
+                emitTelemetry("client.transition_failed", state: state.lowercased(), detail: message(for: error))
+                return false
+            }
+        }
+    }
+
+    /// Agora peer presence can beat the callee's ANSWERED write by a few hundred
+    /// milliseconds. Promote only through legal server states instead of attempting
+    /// RINGING → CONNECTED and leaving the two clients with different truths.
+    @MainActor
+    private func promoteCanonicalToConnected() async -> Bool {
+        for attempt in 0..<8 {
+            guard await refreshCanonical() else { return false }
+            if canonicalState == "CONNECTED" { return true }
+            if canonicalState == "ANSWERED" {
+                guard await transitionCanonical(to: "CONNECTING") else { return false }
+            }
+            if canonicalState == "CONNECTING" || canonicalState == "RECONNECTING" {
+                return await transitionCanonical(to: "CONNECTED")
+            }
+            guard canonicalState == "RINGING", attempt < 7 else { return false }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        return false
+    }
+
+    @MainActor
+    private func startCanonicalReconciliation() {
+        guard reconcileTimer == nil else { return }
+        reconcileTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.hasActiveCall else { return }
+                _ = await self.refreshCanonical()
+            }
+        }
+    }
+
+    private func stopCanonicalReconciliation() {
+        reconcileTimer?.invalidate()
+        reconcileTimer = nil
+    }
+
+    @MainActor
+    private func beginReconnectGrace() async {
+        guard activeCallId != nil else { return }
+        // Agora may emit several reconnecting/failed callbacks for one outage. Never
+        // restart the deadline on each callback or a broken call can live forever.
+        guard reconnectDeadline == nil else { return }
+        reconnectCount += 1
+        mode = .reconnecting
+        statusText = "পুনঃসংযোগ হচ্ছে…"
+        reconnectSeconds = 15
+        reconnectDeadline = Date().addingTimeInterval(15)
+        emitTelemetry("client.reconnect_started", state: "reconnecting",
+                      metrics: ["reconnectCount": Double(reconnectCount)])
+        _ = await transitionCanonical(to: "RECONNECTING")
+        // A connected callback may have won while the server write was in flight.
+        guard reconnectDeadline != nil, hasActiveCall, mode == .reconnecting else { return }
+        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
+            Task { @MainActor in
+                guard let self, let deadline = self.reconnectDeadline else { timer.invalidate(); return }
+                self.reconnectSeconds = max(0, Int(ceil(deadline.timeIntervalSinceNow)))
+                if Date() >= deadline {
+                    timer.invalidate()
+                    self.reconnectTimer = nil
+                    await self.endActiveCall(reason: "FAILED")
+                }
+            }
+        }
+        NotificationCenter.default.post(name: .officeCallCoordinatorDidChange, object: nil)
+    }
+
+    @MainActor
+    private func stopReconnectGrace() {
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
+        reconnectDeadline = nil
+        reconnectSeconds = 0
     }
 
     // ── App-wide incoming call (staff) ────────────────────────────────────────
@@ -263,11 +595,15 @@ final class AgoraIntercom: NSObject {
     }
 
     /// Mark a call surfaced (answered or declined) so we don't re-ring it every poll.
-    @MainActor func markCallHandled(_ broadcastId: String) { handledCallIds.insert(broadcastId) }
+    @MainActor func markCallHandled(_ broadcastId: String) {
+        handledCallIds.insert(broadcastId)
+        activeCallId = broadcastId.lowercased()
+        emitTelemetry("client.ring_received", state: "ringing")
+    }
 
-    /// Confirm the call receipt server-side (stops the ring on the staff's OTHER
-    /// devices — the web office rings the same call — and flips the owner's chat
-    /// log line from "মিসড কল" to "ধরা হয়েছে"). Fire-and-forget.
+    /// Confirm the legacy receipt server-side so the owner's chat history can show
+    /// "ধরা হয়েছে". This is history/ack metadata only; canonical end/cancel events,
+    /// not a receipt, are responsible for dismissing rings on other devices.
     func confirmCallReceipt(_ broadcastId: String) {
         struct Body: Encodable { let broadcastId: String; let action = "confirmed" }
         struct Ok: Decodable { let ok: Bool? }
@@ -375,15 +711,16 @@ final class AgoraIntercom: NSObject {
         return "itc_live_ALMA_LIFESTYLE"
     }
 
-    private func token(for channel: String) async throws -> IntercomTokenResp {
-        struct Body: Encodable { let channel: String }
+    private func token(for channel: String, renewal: Bool = false) async throws -> IntercomTokenResp {
+        struct Body: Encodable { let channel: String; let renewal: Bool }
         return try await AlmaAPI.shared.send("POST", "/api/assistant/office/intercom/call-token",
-                                             body: Body(channel: channel))
+                                             body: Body(channel: channel, renewal: renewal))
     }
 
     @MainActor
     private func join(channel ch: String, publishMic: Bool) async throws {
         let tok = try await token(for: ch)
+        tokenExpiry = tok.expiresAt.flatMap(Self.parseISO)
         try configureAudioSession()
         let e = engineFor(appId: tok.appId)
         // Under CallKit, don't let Agora deactivate the shared session on leave — CallKit
@@ -395,7 +732,10 @@ final class AgoraIntercom: NSObject {
         channel = ch
         e.setChannelProfile(.communication)
         e.enableAudio()
-        e.setEnableSpeakerphone(true)                 // loud output — the walkie-talkie "blare"
+        let privateCall = Self.callId(from: ch) != nil
+        speakerEnabled = !privateCall
+        e.setEnableSpeakerphone(speakerEnabled)       // private calls default to earpiece
+        UIDevice.current.isProximityMonitoringEnabled = privateCall && !speakerEnabled
         e.muteLocalAudioStream(!publishMic)           // listeners don't publish
         e.joinChannel(byToken: tok.token, channelId: ch, info: nil, uid: tok.uid, joinSuccess: nil)
     }
@@ -418,16 +758,69 @@ final class AgoraIntercom: NSObject {
         return e
     }
 
+    @MainActor
     private func configureAudioSession() throws {
         let s = AVAudioSession.sharedInstance()
         // `.allowBluetoothHFP` is the current spelling of `.allowBluetooth` — same
         // raw option (0x4), available since iOS 1.0, so this is a rename only.
-        try s.setCategory(.playAndRecord, mode: .voiceChat,
-                          options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP])
+        var options: AVAudioSession.CategoryOptions = [.allowBluetoothHFP]
+        if activeCallId == nil { options.insert(.defaultToSpeaker) }
+        try s.setCategory(.playAndRecord, mode: .voiceChat, options: options)
         // Under CallKit, the framework activates the session in `didActivate` — us
         // calling setActive(true) here races/​fights it, so skip when CallKit-managed.
         if !callKitManaged {
             try s.setActive(true)
+        }
+        updateAudioRoute()
+    }
+
+    @MainActor
+    private func renewAgoraToken() async {
+        guard let channel, activeCallId != nil else { return }
+        do {
+            let renewed = try await token(for: channel, renewal: true)
+            engine?.renewToken(renewed.token)
+            tokenExpiry = renewed.expiresAt.flatMap(Self.parseISO)
+            emitTelemetry("client.token_renewed", state: canonicalState.lowercased())
+        } catch {
+            emitTelemetry("client.token_renew_failed", state: canonicalState.lowercased(), detail: message(for: error))
+        }
+    }
+
+    @objc private func audioRouteChanged(_ notification: Notification) {
+        Task { @MainActor in self.updateAudioRoute() }
+    }
+
+    @objc private func audioInterrupted(_ notification: Notification) {
+        guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        Task { @MainActor in
+            if type == .began, self.hasActiveCall {
+                self.emitTelemetry("client.audio_interrupted", state: "reconnecting")
+                await self.beginReconnectGrace()
+            } else if type == .ended, self.hasActiveCall {
+                try? AVAudioSession.sharedInstance().setActive(true)
+                self.updateAudioRoute()
+                if self.mode == .reconnecting, !self.remoteUids.isEmpty {
+                    self.stopReconnectGrace()
+                    if await self.transitionCanonical(to: "CONNECTED") {
+                        self.mode = .calling
+                        self.statusText = "কল চলছে"
+                    }
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func updateAudioRoute() {
+        let previous = audioRoute
+        let output = AVAudioSession.sharedInstance().currentRoute.outputs.first
+        audioRoute = output?.portName ?? (speakerEnabled ? "Speaker" : "iPhone")
+        UIDevice.current.isProximityMonitoringEnabled = activeCallId != nil && !speakerEnabled
+        if activeCallId != nil, audioRoute != previous {
+            emitTelemetry("client.audio_route_changed", state: canonicalState.lowercased(),
+                          detail: audioRoute)
         }
     }
 
@@ -453,11 +846,46 @@ final class AgoraIntercom: NSObject {
         ringTimer = Timer.scheduledTimer(withTimeInterval: Self.ringWindow, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.mode == .ringing else { return }
-                self.error = "কেউ কল ধরেনি"
-                self.leave()
+                self.ringTimer = nil
+                let timedOutCallId = self.activeCallId
+                // The server is authoritative for MISSED and expires RINGING on read.
+                // A client must never silently leave while the canonical session remains
+                // active, which previously produced a ghost ring on the other device.
+                let stillLive = await self.refreshCanonical()
+                if stillLive, self.canonicalState == "RINGING" {
+                    self.ringTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { [weak self] _ in
+                        Task { @MainActor in
+                            self?.ringTimer = nil
+                            self?.startRingTimeoutFromCanonicalDeadline()
+                        }
+                    }
+                    return
+                }
+                if self.activeCallId == nil || self.activeCallId != timedOutCallId {
+                    self.error = "কেউ কল ধরেনি"
+                }
                 // Clear the notice after a few seconds so it doesn't read as a live error.
                 try? await Task.sleep(nanoseconds: 4_000_000_000)
                 if self.error == "কেউ কল ধরেনি" { self.error = nil }
+            }
+        }
+    }
+
+    @MainActor
+    private func startRingTimeoutFromCanonicalDeadline() {
+        guard mode == .ringing else { return }
+        Task { @MainActor in
+            let callId = activeCallId
+            let stillLive = await refreshCanonical()
+            if stillLive, canonicalState == "RINGING" {
+                ringTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { [weak self] _ in
+                    Task { @MainActor in
+                        self?.ringTimer = nil
+                        self?.startRingTimeoutFromCanonicalDeadline()
+                    }
+                }
+            } else if activeCallId == nil || activeCallId != callId {
+                error = "কেউ কল ধরেনি"
             }
         }
     }
@@ -494,20 +922,75 @@ final class AgoraIntercom: NSObject {
             return "মাইক্রোফোন অনুমতি দিন — সেটিংস → ALMA ERP → মাইক্রোফোন।"
         }
         if let apiErr = error as? AlmaAPIError { return apiErr.errorDescription ?? "সংযোগ ব্যর্থ" }
+        if case IntercomError.canonicalRejected = error { return "কলটি আর সক্রিয় নেই।" }
         let raw = error.localizedDescription
         if raw.contains("agora_unconfigured") { return "Agora কনফিগার করা নেই (সার্ভার কী দরকার)।" }
         return raw
     }
 
-    enum IntercomError: Error { case micDenied, callFailed }
+    enum IntercomError: Error { case micDenied, callFailed, canonicalRejected }
+
+    private static func callId(from channel: String) -> String? {
+        guard channel.hasPrefix("itc_") && !channel.hasPrefix("itc_live_") else { return nil }
+        let candidate = String(channel.dropFirst(4))
+        return UUID(uuidString: candidate) == nil ? nil : candidate.lowercased()
+    }
+
+    private func emitTelemetry(_ event: String, state: String, detail: String? = nil,
+                               latencyMs: Int? = nil, metrics: [String: Double] = [:]) {
+        guard let callId = activeCallId else { return }
+        struct Body: Encodable {
+            let callId: String
+            let event: String
+            let platform: String
+            let deviceId: String?
+            let appBuild: String
+            let buildSha: String?
+            let state: String
+            let latencyMs: Int?
+            let metadata: [String: String]?
+            let occurredAt: String
+        }
+        struct Ack: Decodable { let ok: Bool? }
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
+        let build = info?["CFBundleVersion"] as? String ?? "unknown"
+        var metadata = metrics.mapValues { String($0) }
+        if let detail { metadata["code"] = String(detail.prefix(160)) }
+        let body = Body(
+            callId: callId,
+            event: event,
+            platform: "ios",
+            deviceId: UIDevice.current.identifierForVendor?.uuidString,
+            appBuild: "\(version) (\(build))",
+            buildSha: info?["ALMAGitCommit"] as? String,
+            state: state,
+            latencyMs: latencyMs,
+            metadata: metadata.isEmpty ? nil : metadata,
+            occurredAt: ISO8601DateFormatter().string(from: Date())
+        )
+        Task {
+            let _: Ack? = try? await AlmaAPI.shared.send(
+                "POST", "/api/assistant/office/calls/events", body: body)
+        }
+    }
 }
+
+/// Compatibility name for the existing Office UI while the implementation is
+/// now explicitly one process-level call coordinator.
+@available(iOS 17.0, *)
+typealias AgoraIntercom = OfficeCallCoordinator
 
 // MARK: - Agora delegate
 
 @available(iOS 17.0, *)
-extension AgoraIntercom: AgoraRtcEngineDelegate {
+extension OfficeCallCoordinator: AgoraRtcEngineDelegate {
     func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinChannel channel: String, withUid uid: UInt, elapsed: Int) {
-        Task { @MainActor in self.connected = true }
+        Task { @MainActor in
+            self.connected = true
+            let latency = self.joinStartedAt.map { max(0, Int(Date().timeIntervalSince($0) * 1_000)) }
+            self.emitTelemetry("client.local_joined", state: "connecting", latencyMs: latency)
+        }
     }
 
     /// A REMOTE party joined the channel. For a 1:1 call this is "the other side answered" —
@@ -515,13 +998,27 @@ extension AgoraIntercom: AgoraRtcEngineDelegate {
     func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinedOfUid uid: UInt, elapsed: Int) {
         Task { @MainActor in
             self.remoteUids.insert(uid)
-            if self.mode == .ringing {
+            self.stopReconnectGrace()
+            if self.reconnectCount > 0 {
+                self.emitTelemetry("client.reconnect_recovered", state: "in-call",
+                                   metrics: ["reconnectCount": Double(self.reconnectCount)])
+            }
+            if self.mode == .ringing || self.mode == .reconnecting {
+                guard await self.promoteCanonicalToConnected() else {
+                    self.emitTelemetry("client.transition_failed", state: "connected", detail: "peer_join_before_answer")
+                    return
+                }
                 self.mode = .calling
                 self.statusText = "কল চলছে"
                 self.stopRingTimeout()
                 self.ringtone.stop()          // both sides connected — silence the ring
                 self.startCallTimer()
+                if let callId = self.activeCallId {
+                    CallKitVoIP.shared.reportConnected(callId: callId)
+                }
+                NotificationCenter.default.post(name: .officeCallCoordinatorDidChange, object: nil)
             }
+            self.emitTelemetry("client.peer_joined", state: "in-call")
         }
     }
 
@@ -545,17 +1042,78 @@ extension AgoraIntercom: AgoraRtcEngineDelegate {
         Task { @MainActor in
             self.remoteUids.remove(uid)
             self.remoteSpeaking = false
-            // In a 1:1 call, the other side leaving = hang up. End the call on our side too.
+            // Agora presence is not call truth. Give transient network loss a bounded
+            // reconnect window; canonical reconciliation decides remote hang-up.
             if (self.mode == .calling || self.mode == .ringing), self.remoteUids.isEmpty {
-                self.statusText = "কল শেষ"
-                self.leave()
+                self.emitTelemetry("client.peer_left", state: "reconnecting")
+                await self.beginReconnectGrace()
             }
         }
     }
 
-    func rtcEngine(_ engine: AgoraRtcEngineKit, didOccurError errorCode: AgoraErrorCode) {
-        Task { @MainActor in self.error = "Agora ত্রুটি (\(errorCode.rawValue))" }
+    func rtcEngine(_ engine: AgoraRtcEngineKit, tokenPrivilegeWillExpire token: String) {
+        Task { @MainActor in await self.renewAgoraToken() }
     }
+
+    func rtcEngineRequestToken(_ engine: AgoraRtcEngineKit) {
+        Task { @MainActor in await self.renewAgoraToken() }
+    }
+
+    func rtcEngine(_ engine: AgoraRtcEngineKit,
+                   connectionChangedTo state: AgoraConnectionState,
+                   reason: AgoraConnectionChangedReason) {
+        Task { @MainActor in
+            switch state {
+            case .reconnecting:
+                if self.hasActiveCall { await self.beginReconnectGrace() }
+            case .connected:
+                if self.mode == .reconnecting && !self.remoteUids.isEmpty {
+                    self.stopReconnectGrace()
+                    _ = await self.transitionCanonical(to: "CONNECTED")
+                    self.mode = .calling
+                    self.emitTelemetry("client.reconnect_recovered", state: "in-call",
+                                       metrics: ["reconnectCount": Double(self.reconnectCount)])
+                }
+            case .failed:
+                if self.hasActiveCall { await self.beginReconnectGrace() }
+            default:
+                break
+            }
+            self.emitTelemetry("client.connection_changed", state: String(describing: state),
+                               detail: String(describing: reason))
+        }
+    }
+
+    func rtcEngine(_ engine: AgoraRtcEngineKit, reportRtcStats stats: AgoraChannelStats) {
+        Task { @MainActor in
+            guard self.hasActiveCall else { return }
+            let now = Date()
+            if let last = self.lastQualityTelemetryAt, now.timeIntervalSince(last) < 10 { return }
+            self.lastQualityTelemetryAt = now
+            self.emitTelemetry(
+                "client.quality_sample",
+                state: self.canonicalState.lowercased(),
+                metrics: [
+                    "rttMs": Double(stats.lastmileDelay),
+                    "packetLossPct": Double(max(stats.txPacketLossRate, stats.rxPacketLossRate)),
+                    "txAudioKbps": Double(stats.txAudioKBitrate),
+                    "rxAudioKbps": Double(stats.rxAudioKBitrate),
+                    "reconnectCount": Double(self.reconnectCount),
+                ]
+            )
+        }
+    }
+
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didOccurError errorCode: AgoraErrorCode) {
+        Task { @MainActor in
+            self.error = "Agora ত্রুটি (\(errorCode.rawValue))"
+            self.emitTelemetry("client.media_error", state: "error", detail: "agora_\(errorCode.rawValue)")
+        }
+    }
+}
+
+extension Notification.Name {
+    static let officeCallCoordinatorDidChange = Notification.Name("officeCallCoordinatorDidChange")
 }
 
 // MARK: - Ringtone (self-contained — synthesised in memory, no bundled audio files)

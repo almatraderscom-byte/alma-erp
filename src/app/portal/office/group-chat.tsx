@@ -3,16 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatFeed, ChatMessage } from '@/agent/lib/office-chat'
 import {
-  useIntercom,
   IntercomDock,
   IntercomBubble,
-  IntercomTakeover,
-  IntercomStyle,
-  IntercomCall,
   IntercomLiveBar,
+  IntercomCallsPanel,
+  useIsNativeCallShell,
   type Intercom,
   type ItcBroadcast,
 } from './intercom'
+import { useOfficeCommunication } from '@/agent/components/OfficeCommunicationProvider'
 
 const POLL_MS = 15_000
 const BN = '০১২৩৪৫৬৭৮৯'
@@ -20,10 +19,12 @@ const bn = (n: number | string) => String(n).replace(/\d/g, (d) => BN[Number(d)]
 
 export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
   const [open, setOpen] = useState(false)
+  const [callsOpen, setCallsOpen] = useState(false)
   const [feed, setFeed] = useState<ChatFeed>({ businessId: '', messages: [] })
   // Live intercom (walkie-talkie) — polls its own fast feed; broadcasts merge
   // into the message list below and the owner gets the PTT dock.
-  const itc = useIntercom(self)
+  const itc = useOfficeCommunication()
+  const nativeCallShell = useIsNativeCallShell()
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [lastSeen, setLastSeen] = useState<string | null>(null)
@@ -226,17 +227,22 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
 
   return (
     <>
-      <IntercomStyle />
-      {self === 'staff' && <IntercomTakeover itc={itc} />}
-      <IntercomCall itc={itc} />
-      {!open && (
-        <div className="ohub-chathead" onClick={() => setOpen(true)} role="button" aria-label="অফিস গ্রুপ চ্যাট">
+      {!nativeCallShell && !callsOpen && (
+        <button className="ohub-callshead" onClick={() => { setOpen(false); setCallsOpen(true) }} aria-label="অফিস কল খুলুন">
+          <span aria-hidden="true">📞</span>
+          <span>কল</span>
+        </button>
+      )}
+      {!open && !callsOpen && (
+        <button className="ohub-chathead" onClick={() => setOpen(true)} aria-label="অফিস গ্রুপ চ্যাট">
           <span className="ring"></span>
           <span className="em">🤖</span>
           <span>অফিস গ্রুপ চ্যাট</span>
           {unread > 0 && <span className="badge2">{bn(unread)}</span>}
-        </div>
+        </button>
       )}
+
+      {callsOpen && <IntercomCallsPanel itc={itc} onClose={() => setCallsOpen(false)} />}
 
       {open && (
         <div className="ohub-chatpanel">
@@ -246,7 +252,7 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
               <b>অফিস গ্রুপ</b>
               <span>● Agent, আপনি, টিম</span>
             </div>
-            <button className="x" onClick={() => setOpen(false)}>
+            <button className="x" onClick={() => setOpen(false)} aria-label="অফিস গ্রুপ চ্যাট বন্ধ করুন">
               ×
             </button>
           </div>
@@ -329,7 +335,7 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
                 📋
               </button>
             )}
-            {self === 'staff' && (
+            {self === 'staff' && !nativeCallShell && (
               <button
                 className="cp-attach"
                 aria-label="বসকে কল করুন"

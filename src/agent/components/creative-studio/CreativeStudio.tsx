@@ -3464,7 +3464,7 @@ function VideoStudioView({ onOpenGallery, onOpenStudio }: { onOpenGallery: () =>
             <span className="text-lg">🛍️</span>
             <span className="min-w-0 flex-1">
               <span className="block text-[12px] font-semibold text-cream">নতুন প্রোডাক্টের রিল</span>
-              <span className="block text-[10px] text-muted">স্টুডিওর Auto মোডে "🎬 ছোট রিলও বানাও" টগল অন করুন</span>
+              <span className="block text-[10px] text-muted">স্টুডিওর Auto মোডে &quot;🎬 ছোট রিলও বানাও&quot; টগল অন করুন</span>
             </span>
             <span className="shrink-0 text-[11px] font-semibold text-[#E07A5F]">স্টুডিও →</span>
           </button>

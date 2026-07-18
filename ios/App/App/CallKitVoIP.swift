@@ -35,13 +35,36 @@ final class CallKitVoIP: NSObject {
     private let provider: CXProvider
     private let callController = CXCallController()
 
-    /// Live CallKit calls: our CallKit UUID → the office call it represents.
-    private struct ActiveCall { let broadcastId: String; let channel: String }
+    private enum CallDirection { case incoming, outgoing }
+    /// CallKit is an OS adapter; OfficeCallCoordinator remains the sole source of
+    /// call truth. This map only correlates CallKit action UUIDs to canonical IDs.
+    private struct ActiveCall {
+        let broadcastId: String
+        let channel: String
+        let peer: String
+        let direction: CallDirection
+    }
     private var calls: [UUID: ActiveCall] = [:]
+    private var requestedEndReasons: [UUID: String] = [:]
 
     /// Last VoIP token we obtained; re-POSTed when the app becomes active (login race).
     private var pendingToken: String?
     private var registered = false
+
+    private lazy var installationId: String = {
+        let key = "office-call-installation-id"
+        if let existing = UserDefaults.standard.string(forKey: key), !existing.isEmpty { return existing }
+        let created = UUID().uuidString.lowercased()
+        UserDefaults.standard.set(created, forKey: key)
+        return created
+    }()
+
+    private static let isoFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    private static let isoPlain = ISO8601DateFormatter()
 
     private override init() {
         let config = CXProviderConfiguration()
@@ -76,12 +99,32 @@ final class CallKitVoIP: NSObject {
 
     private func uploadToken(_ token: String) {
         pendingToken = token
-        struct Body: Encodable { let platform = "ios"; let voipToken: String }
+        struct Body: Encodable {
+            let platform = "ios"
+            let environment: String
+            let installationId: String
+            let voipToken: String
+            let appBuild: String?
+            let buildSha: String?
+        }
         struct Resp: Decodable { let ok: Bool? }
+        #if DEBUG
+        let environment = "sandbox"
+        #else
+        let environment = "production"
+        #endif
+        let info = Bundle.main.infoDictionary
+        let body = Body(
+            environment: environment,
+            installationId: installationId,
+            voipToken: token,
+            appBuild: info?["CFBundleVersion"] as? String,
+            buildSha: info?["ALMAGitCommit"] as? String
+        )
         Task {
             do {
                 let r: Resp = try await AlmaAPI.shared.send(
-                    "POST", "/api/assistant/internal/call-push/register", body: Body(voipToken: token))
+                    "POST", "/api/assistant/internal/call-push/register", body: body)
                 if r.ok == true { registered = true }
             } catch {
                 // Not logged in yet / offline — retried on next didBecomeActive.
@@ -89,13 +132,34 @@ final class CallKitVoIP: NSObject {
         }
     }
 
+    /// Remove this installation while the current account cookie is still
+    /// valid. Sign-out calls this before NextAuth clears the session.
+    func unregisterCurrentInstallation() async {
+        struct Body: Encodable { let installationId: String }
+        struct Resp: Decodable { let ok: Bool? }
+        let _: Resp? = try? await AlmaAPI.shared.send(
+            "DELETE", "/api/assistant/internal/call-push/register",
+            body: Body(installationId: installationId))
+        registered = false
+    }
+
     // MARK: - Report an incoming call to CallKit
 
     /// Turn a VoIP payload into a native ringing call. MUST be called synchronously from the
     /// push handler (iOS terminates the app if a VoIP push doesn't report a call).
-    private func reportIncoming(broadcastId: String, channel: String, caller: String, completion: @escaping () -> Void) {
-        let uuid = UUID()
-        calls[uuid] = ActiveCall(broadcastId: broadcastId, channel: channel)
+    private func reportIncoming(broadcastId: String, channel: String, caller: String,
+                                completion: @escaping () -> Void) {
+        guard let uuid = UUID(uuidString: broadcastId) else {
+            reportPlaceholderAndEnd(caller: caller, completion: completion)
+            return
+        }
+        if calls[uuid] != nil {
+            completion() // duplicate PushKit/poll delivery: one deterministic system call
+            return
+        }
+        calls[uuid] = ActiveCall(
+            broadcastId: broadcastId.lowercased(), channel: channel,
+            peer: caller, direction: .incoming)
         // Tell the poll-based ring to skip this one — CallKit owns it now.
         Task { @MainActor in AgoraIntercom.shared.markCallHandled(broadcastId) }
 
@@ -108,17 +172,116 @@ final class CallKitVoIP: NSObject {
         update.supportsHolding = false
 
         provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
-            if error != nil { self?.calls[uuid] = nil }
+            if error != nil {
+                self?.calls[uuid] = nil
+            } else {
+                Task { @MainActor in
+                    let valid = await OfficeCallCoordinator.shared.reconcileIncoming(
+                        callId: broadcastId.lowercased(), channel: channel, caller: caller)
+                    if !valid {
+                        // The user can answer from CallKit before this post-report fetch
+                        // finishes. In that case the coordinator is already advancing
+                        // ANSWERED/CONNECTING; never interpret "not RINGING" as stale.
+                        let coordinator = OfficeCallCoordinator.shared
+                        let sameActiveCall = coordinator.activeCallId?.caseInsensitiveCompare(broadcastId) == .orderedSame
+                        if !(sameActiveCall && coordinator.hasActiveCall) {
+                            self?.finishReportedCall(callId: broadcastId, reason: .remoteEnded)
+                        }
+                    }
+                }
+            }
             completion()
         }
     }
 
-    /// End a CallKit call we surfaced (e.g. the caller hung up before we answered).
-    func endCallKitCall(broadcastId: String) {
-        guard let (uuid, _) = calls.first(where: { $0.value.broadcastId == broadcastId }) else { return }
-        provider.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
-        calls[uuid] = nil
+    func showIncomingFromPoll(callId: String, channel: String, caller: String) {
+        reportIncoming(broadcastId: callId, channel: channel, caller: caller, completion: {})
     }
+
+    func startOutgoing(callId: String, channel: String, peer: String) async throws {
+        guard let uuid = UUID(uuidString: callId) else { throw CallKitError.invalidCallId }
+        if calls[uuid] != nil { return }
+        calls[uuid] = ActiveCall(
+            broadcastId: callId.lowercased(), channel: channel,
+            peer: peer, direction: .outgoing)
+        let handle = CXHandle(type: .generic, value: peer)
+        let action = CXStartCallAction(call: uuid, handle: handle)
+        action.isVideo = false
+        let transaction = CXTransaction(action: action)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            callController.request(transaction) { [weak self] error in
+                if let error {
+                    self?.calls[uuid] = nil
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
+    func hasCall(callId: String) -> Bool {
+        calls.values.contains { $0.broadcastId.caseInsensitiveCompare(callId) == .orderedSame }
+    }
+
+    func requestEnd(callId: String, reason: String) async -> Bool {
+        guard let (uuid, _) = calls.first(where: {
+            $0.value.broadcastId.caseInsensitiveCompare(callId) == .orderedSame
+        }) else { return false }
+        requestedEndReasons[uuid] = reason
+        let transaction = CXTransaction(action: CXEndCallAction(call: uuid))
+        return await withCheckedContinuation { continuation in
+            callController.request(transaction) { [weak self] error in
+                if error != nil { self?.requestedEndReasons[uuid] = nil }
+                continuation.resume(returning: error == nil)
+            }
+        }
+    }
+
+    func reportConnected(callId: String) {
+        guard let (uuid, call) = calls.first(where: {
+            $0.value.broadcastId.caseInsensitiveCompare(callId) == .orderedSame
+        }), call.direction == .outgoing else { return }
+        provider.reportOutgoingCall(with: uuid, connectedAt: Date())
+    }
+
+    func finishReportedCall(callId: String, reason: CXCallEndedReason) {
+        guard let (uuid, _) = calls.first(where: {
+            $0.value.broadcastId.caseInsensitiveCompare(callId) == .orderedSame
+        }) else { return }
+        provider.reportCall(with: uuid, endedAt: Date(), reason: reason)
+        calls[uuid] = nil
+        requestedEndReasons[uuid] = nil
+        Task { @MainActor in OfficeCallCoordinator.shared.callKitManaged = false }
+    }
+
+    /// Convert canonical server truth to the closest CallKit history reason.
+    /// Local end actions are removed by CXProvider before reaching this path;
+    /// this method therefore represents remote/server termination only.
+    func finishReportedCall(callId: String, canonicalReason: String?) {
+        let reason: CXCallEndedReason
+        switch canonicalReason?.uppercased() {
+        case "MISSED": reason = .unanswered
+        case "DECLINED", "BUSY": reason = .declinedElsewhere
+        case "FAILED", "PUSH_UNREACHABLE": reason = .failed
+        default: reason = .remoteEnded
+        }
+        finishReportedCall(callId: callId, reason: reason)
+    }
+
+    private func reportPlaceholderAndEnd(caller: String, completion: @escaping () -> Void) {
+        let uuid = UUID()
+        let update = CXCallUpdate()
+        update.remoteHandle = CXHandle(type: .generic, value: caller)
+        update.localizedCallerName = caller
+        update.hasVideo = false
+        provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] _ in
+            self?.provider.reportCall(with: uuid, endedAt: Date(), reason: .failed)
+            completion()
+        }
+    }
+
+    private enum CallKitError: Error { case invalidCallId }
 }
 
 // MARK: - PKPushRegistryDelegate (VoIP token + incoming push)
@@ -135,6 +298,7 @@ extension CallKitVoIP: PKPushRegistryDelegate {
     func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
         registered = false
         pendingToken = nil
+        Task { await unregisterCurrentInstallation() }
     }
 
     func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload,
@@ -151,27 +315,26 @@ extension CallKitVoIP: PKPushRegistryDelegate {
         // iOS still requires a report on EVERY VoIP push, so satisfy that with a
         // transient placeholder call reported-and-immediately-ended (no lasting ring).
         if event == "cancel" {
-            if !broadcastId.isEmpty { endCallKitCall(broadcastId: broadcastId) }
-            let uuid = UUID()
-            let update = CXCallUpdate()
-            update.remoteHandle = CXHandle(type: .generic, value: caller)
-            update.localizedCallerName = caller
-            update.hasVideo = false
-            provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] _ in
-                self?.provider.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
-                completion()
-            }
+            if !broadcastId.isEmpty { finishReportedCall(callId: broadcastId, reason: .remoteEnded) }
+            reportPlaceholderAndEnd(caller: caller, completion: completion)
             return
         }
 
-        guard !broadcastId.isEmpty, !channel.isEmpty else {
-            // Still MUST report SOMETHING or iOS penalises the app — report + immediately end.
-            reportIncoming(broadcastId: "unknown", channel: "", caller: caller) { [weak self] in
-                self?.endCallKitCall(broadcastId: "unknown"); completion()
-            }
+        let schema = (d["schemaVersion"] as? NSNumber)?.intValue ?? (d["schemaVersion"] as? Int) ?? 0
+        let callUUID = (d["callUUID"] as? String) ?? broadcastId
+        let expiresAt = (d["expiresAt"] as? String).flatMap {
+            Self.isoFractional.date(from: $0) ?? Self.isoPlain.date(from: $0)
+        }
+        guard schema == 1,
+              let callId = UUID(uuidString: broadcastId)?.uuidString.lowercased(),
+              UUID(uuidString: callUUID)?.uuidString.lowercased() == callId,
+              channel == "itc_\(callId)",
+              let expiresAt, expiresAt > Date()
+        else {
+            reportPlaceholderAndEnd(caller: caller, completion: completion)
             return
         }
-        reportIncoming(broadcastId: broadcastId, channel: channel, caller: caller, completion: completion)
+        reportIncoming(broadcastId: callId, channel: channel, caller: caller, completion: completion)
     }
 }
 
@@ -181,42 +344,65 @@ extension CallKitVoIP: PKPushRegistryDelegate {
 extension CallKitVoIP: CXProviderDelegate {
     func providerDidReset(_ provider: CXProvider) {
         calls.removeAll()
-        Task { @MainActor in AgoraIntercom.shared.leave() }
+        requestedEndReasons.removeAll()
+        Task { @MainActor in await OfficeCallCoordinator.shared.systemReset() }
+    }
+
+    func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        guard let call = calls[action.callUUID], call.direction == .outgoing else {
+            action.fail(); return
+        }
+        provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: Date())
+        Task { @MainActor in
+            OfficeCallCoordinator.shared.callKitManaged = true
+            await OfficeCallCoordinator.shared.startCall(channel: call.channel, outgoing: true)
+            if OfficeCallCoordinator.shared.hasActiveCall { action.fulfill() }
+            else {
+                self.calls[action.callUUID] = nil
+                OfficeCallCoordinator.shared.callKitManaged = false
+                action.fail()
+            }
+        }
     }
 
     func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
         guard let call = calls[action.callUUID] else { action.fail(); return }
         Task { @MainActor in
             // CallKit owns the audio session — Agora must not activate/deactivate it.
-            AgoraIntercom.shared.callKitManaged = true
-            AgoraIntercom.shared.confirmCallReceipt(call.broadcastId)   // owner log: ধরা হয়েছে
-            await AgoraIntercom.shared.startCall(channel: call.channel, outgoing: false)
-            action.fulfill()
+            OfficeCallCoordinator.shared.callKitManaged = true
+            OfficeCallCoordinator.shared.confirmCallReceipt(call.broadcastId)
+            await OfficeCallCoordinator.shared.startCall(channel: call.channel, outgoing: false)
+            if OfficeCallCoordinator.shared.hasActiveCall { action.fulfill() }
+            else {
+                self.calls[action.callUUID] = nil
+                OfficeCallCoordinator.shared.callKitManaged = false
+                action.fail()
+            }
         }
     }
 
     func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
         let call = calls[action.callUUID]
+        let reason = requestedEndReasons.removeValue(forKey: action.callUUID)
         calls[action.callUUID] = nil
         Task { @MainActor in
-            if let call, AgoraIntercom.shared.mode == .idle {
-                // Declined before answering — stop the ring on other devices too.
-                AgoraIntercom.shared.confirmCallReceipt(call.broadcastId)
+            if let call {
+                await OfficeCallCoordinator.shared.callKitEnded(
+                    callId: call.broadcastId, requestedReason: reason)
             }
-            AgoraIntercom.shared.leave()
-            AgoraIntercom.shared.callKitManaged = false
+            OfficeCallCoordinator.shared.callKitManaged = false
             action.fulfill()
         }
     }
 
     func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
-        Task { @MainActor in AgoraIntercom.shared.setMuted(action.isMuted) }
+        Task { @MainActor in OfficeCallCoordinator.shared.setMuted(action.isMuted) }
         action.fulfill()
     }
 
     func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
         // CallKit activated the shared session — hand it to Agora (it won't re-activate).
-        Task { @MainActor in AgoraIntercom.shared.audioSessionActivated() }
+        Task { @MainActor in OfficeCallCoordinator.shared.audioSessionActivated() }
     }
 
     func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {

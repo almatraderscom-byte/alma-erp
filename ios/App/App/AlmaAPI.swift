@@ -67,7 +67,20 @@ final class AlmaAPI: NSObject {
 
     static let shared = AlmaAPI()
 
-    static let baseURL = URL(string: "https://alma-erp-six.vercel.app")!
+    /// Production by default; physical-device preview verification can override this
+    /// at build time without committing credentials or changing release behavior.
+    static let baseURL: URL = {
+        let production = URL(string: "https://alma-erp-six.vercel.app")!
+        guard let raw = Bundle.main.object(forInfoDictionaryKey: "ALMABaseURL") as? String else {
+            return production
+        }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard trimmed.hasPrefix("https://"), let configured = URL(string: trimmed) else {
+            return production
+        }
+        return configured
+    }()
 
     /// Posted (on main) when a request came back unauthenticated even after a cookie
     /// re-sync — the UI should prompt the owner to log in via the web tab.

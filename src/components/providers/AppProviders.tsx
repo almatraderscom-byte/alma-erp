@@ -32,6 +32,7 @@ import { SentryUserBridge } from '@/components/providers/SentryUserBridge'
 import { isPublicPath } from '@/lib/auth-paths'
 import { fetchWithTimeout } from '@/lib/fetch-timeout'
 import { cn } from '@/lib/utils'
+import { OfficeCommunicationProvider } from '@/agent/components/OfficeCommunicationProvider'
 
 const NotificationShellProvider = dynamic(
   () => import('@/contexts/NotificationShellContext').then(mod => mod.NotificationShellProvider),
@@ -382,7 +383,9 @@ function SessionBridge({ children, session }: { children: ReactNode; session: Se
       <AppReadyMarker />
       <PwaBootstrap />
       <HapticBridge />
-      <AuthGate initialSession={session}>{children}</AuthGate>
+      <OfficeCommunicationProvider>
+        <AuthGate initialSession={session}>{children}</AuthGate>
+      </OfficeCommunicationProvider>
     </SessionProvider>
   )
 }

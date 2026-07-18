@@ -939,6 +939,7 @@ struct PortalOfficeScreen: View {
     @State private var detailStaffTask: PortalStaffTask? = nil   // rich staff-task detail
     @State private var showSelfCreate = false
     @State private var showChat = false
+    @State private var showCalls = false
     @State private var ownerTask: PortalHubTask? = nil
     @State private var showHistory = false
     let openWeb: (_ path: String, _ title: String) -> Void
@@ -946,6 +947,7 @@ struct PortalOfficeScreen: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 10) {
+                if vm.roleResolved && !vm.authExpired { callsCard }
                 if !vm.roleResolved {
                     loadingRows
                 } else if vm.authExpired {
@@ -997,11 +999,43 @@ struct PortalOfficeScreen: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showCalls) {
+            IntercomView()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
         .sheet(isPresented: $showHistory) {
             PortalOfficeHistorySheet(openWeb: openWeb)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
+    }
+
+    private var callsCard: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            showCalls = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "phone.fill")
+                    .font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(PortalOfficePalette.emerald600, in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("অফিস কল").font(.subheadline.weight(.bold)).foregroundStyle(.primary)
+                    Text("App call · mobile · PTT · live walkie-talkie")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 6)
+                Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .padding(12).portalOfficeGlass(colorScheme, corner: 18)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("অফিস কল খুলুন")
+        .accessibilityHint("App voice call, mobile call, PTT এবং live walkie-talkie")
     }
 
     /// The staff app (unchanged) — shown when the logged-in user is an employee.

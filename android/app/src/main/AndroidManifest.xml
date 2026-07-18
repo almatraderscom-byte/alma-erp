@@ -52,7 +52,20 @@
         <service
             android:name=".IntercomForegroundService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|phoneCall" />
+
+        <receiver
+            android:name=".OfficeCallActionReceiver"
+            android:exported="false" />
+
+        <!-- Canonical Office-call wake path: direct high-priority data FCM. -->
+        <service
+            android:name=".OfficeCallFirebaseService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
 
         <!-- Fires background reminders scheduled by ReminderRefresh (WorkManager). -->
         <receiver
@@ -113,6 +126,9 @@
          call — Android 14+ requires a microphone-typed foreground service for that. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 </manifest>

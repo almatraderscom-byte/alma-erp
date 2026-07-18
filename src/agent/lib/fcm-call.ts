@@ -80,16 +80,26 @@ async function accessToken(creds: SaCreds): Promise<string | null> {
 export type FcmCallPayload = {
   type: 'office_call'
   broadcastId: string
+  schemaVersion?: number
+  callId?: string
+  callUUID?: string
   channel: string
   caller: string
+  expiresAt?: string
   /** 'ring' (default) shows a full-screen incoming call; 'cancel' dismisses it. */
   event?: 'ring' | 'cancel'
 }
 
-type SendResult = { token: string; ok: boolean; status?: number; reason?: string }
+export type FcmCallSendResult = {
+  token: string
+  ok: boolean
+  status?: number
+  reason?: string
+  messageId?: string
+}
 
 /** Send a high-priority data-only call message to every Android FCM token. */
-export async function sendFcmCall(tokens: string[], payload: FcmCallPayload): Promise<SendResult[]> {
+export async function sendFcmCall(tokens: string[], payload: FcmCallPayload): Promise<FcmCallSendResult[]> {
   const uniq = [...new Set(tokens.filter(Boolean))]
   if (uniq.length === 0) return []
   const creds = getCreds()
@@ -105,9 +115,13 @@ export async function sendFcmCall(tokens: string[], payload: FcmCallPayload): Pr
     channel: payload.channel,
     caller: payload.caller,
     event: payload.event ?? 'ring',
+    schemaVersion: String(payload.schemaVersion ?? 1),
+    callId: payload.callId ?? payload.broadcastId,
+    callUUID: payload.callUUID ?? payload.broadcastId,
+    ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
   }
 
-  const sendOne = async (deviceToken: string): Promise<SendResult> => {
+  const sendOne = async (deviceToken: string): Promise<FcmCallSendResult> => {
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -121,7 +135,10 @@ export async function sendFcmCall(tokens: string[], payload: FcmCallPayload): Pr
         }),
         signal: AbortSignal.timeout(8_000),
       })
-      if (res.ok) return { token: deviceToken, ok: true, status: 200 }
+      if (res.ok) {
+        const response = (await res.json().catch(() => null)) as { name?: string } | null
+        return { token: deviceToken, ok: true, status: 200, messageId: response?.name }
+      }
       const text = await res.text().catch(() => '')
       // 404 UNREGISTERED / 400 invalid token → stop targeting it.
       if (res.status === 404 || /UNREGISTERED|InvalidRegistration/i.test(text)) {

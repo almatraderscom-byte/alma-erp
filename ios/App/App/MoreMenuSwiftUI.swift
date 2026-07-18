@@ -1339,6 +1339,9 @@ private struct MoreProfileSheet: View {
     private func signOut() async {
         signingOut = true
         defer { signingOut = false }
+        if #available(iOS 17.0, *) {
+            await CallKitVoIP.shared.unregisterCurrentInstallation()
+        }
         do {
             let csrf: MoreCsrfResponse = try await AlmaAPI.shared.get("/api/auth/csrf")
             guard let token = csrf.csrfToken, !token.isEmpty else { return }
@@ -1700,4 +1703,3 @@ private struct MoreRowButtonStyle: ButtonStyle {
     }
     .preferredColorScheme(.dark)
 }
-

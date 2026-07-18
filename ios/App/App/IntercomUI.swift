@@ -27,7 +27,8 @@ struct IntercomView: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         if let e = ic.error { errorStrip(e) }
-                        if ic.mode == .calling || ic.mode == .ringing {
+                        communicationKinds
+                        if ic.hasActiveCall {
                             callBar
                         } else if !vm.roleResolved {
                             ProgressView().tint(.white).padding(.top, 70)
@@ -38,20 +39,109 @@ struct IntercomView: View {
                         } else {
                             staffListen
                         }
+                        recentCalls
                     }
                     .padding(18)
                 }
             }
-            .navigationTitle("অফিস ইন্টারকম")
+            .navigationTitle("অফিস কল")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("বন্ধ") { ic.leave(); dismiss() }
+                    Button(ic.hasActiveCall ? "মিনিমাইজ" : "বন্ধ") {
+                        if !ic.hasActiveCall { ic.leave() }
+                        dismiss()
+                    }
                 }
             }
         }
         .task { await ic.loadFeed() }
-        .onDisappear { ic.leave() }
+        .onDisappear { if !ic.hasActiveCall { ic.leave() } }
+    }
+
+    private var communicationKinds: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("যোগাযোগের ধরন").font(.footnote.weight(.bold)).foregroundStyle(accent)
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                kind("phone.fill", "App voice call", "দুইজনের private live কথা")
+                kind("phone.arrow.up.right.fill", "Mobile call", "SIM/phone network")
+                kind("mic.fill", "Recorded PTT", "চেপে ধরে voice message")
+                kind("dot.radiowaves.left.and.right", "Live walkie-talkie", "Office group live audio")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16).portalOfficeGlass(scheme, corner: 18)
+    }
+
+    private func kind(_ icon: String, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon).foregroundStyle(accent).frame(width: 22)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.caption.weight(.bold))
+                Text(detail).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+        .padding(9).background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder private var recentCalls: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label("সাম্প্রতিক কল", systemImage: "clock.arrow.circlepath")
+                .font(.footnote.weight(.bold)).foregroundStyle(accent)
+            if ic.recentCalls.isEmpty {
+                Text("এখনো কোনো call history নেই।").font(.caption).foregroundStyle(.secondary)
+            } else {
+                ForEach(ic.recentCalls.prefix(8)) { call in
+                    HStack(spacing: 10) {
+                        Image(systemName: call.outgoingByMe ? "arrow.up.right" : "arrow.down.left")
+                            .foregroundStyle(callTone(call)).frame(width: 28, height: 28)
+                            .background(callTone(call).opacity(0.12), in: Circle())
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(call.callerName ?? (call.outgoingByMe ? "স্টাফ" : "বস — মারুফ"))
+                                .font(.subheadline.weight(.semibold)).lineLimit(1)
+                            Text(callMeta(call)).font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 6)
+                        Text(callOutcome(call)).font(.caption2.weight(.bold)).foregroundStyle(callTone(call))
+                    }
+                    .frame(minHeight: 44)
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16).portalOfficeGlass(scheme, corner: 18)
+    }
+
+    private func callOutcome(_ call: IntercomRecentCall) -> String {
+        if call.endedAt == nil {
+            if call.canonicalState == "CONNECTED" { return "কল চলছে" }
+            if call.canonicalState == "RECONNECTING" { return "পুনঃসংযোগ" }
+            return call.outgoingByMe ? "আউটগোয়িং" : "ইনকামিং"
+        }
+        switch call.endedReason {
+        case "completed": return "সম্পন্ন"
+        case "declined": return "প্রত্যাখ্যাত"
+        case "busy": return "ব্যস্ত"
+        case "failed", "push_unreachable": return "ব্যর্থ"
+        default: return call.outgoingByMe ? "ধরা হয়নি" : "মিসড"
+        }
+    }
+
+    private func callTone(_ call: IntercomRecentCall) -> Color {
+        let outcome = callOutcome(call)
+        if outcome == "সম্পন্ন" || outcome == "কল চলছে" { return PortalOfficePalette.emerald600 }
+        if outcome == "ব্যস্ত" || outcome == "ব্যর্থ" || outcome == "পুনঃসংযোগ" { return .orange }
+        return PortalOfficePalette.red500
+    }
+
+    private func callMeta(_ call: IntercomRecentCall) -> String {
+        let duration = call.callDurationSec.map { $0 < 60 ? "\($0) সেকেন্ড" : "\($0 / 60) মিনিট \($0 % 60) সেকেন্ড" }
+        return [call.outgoingByMe ? "আউটগোয়িং" : "ইনকামিং", duration].compactMap { $0 }.joined(separator: " · ")
     }
 
     // ── Owner: press-and-hold voice note (reaches ALL staff, lands in the group) ──
@@ -99,6 +189,8 @@ struct IntercomView: View {
                         Task { await ic.pttStop() }
                     }
             )
+            .accessibilityLabel(ic.recording ? "রেকর্ডিং চলছে, ছেড়ে দিলে পাঠাবে" : "চেপে ধরে voice message রেকর্ড করুন")
+            .accessibilityAddTraits(.isButton)
     }
 
     // ── Owner: per-staff 1:1 call ──
@@ -139,6 +231,9 @@ struct IntercomView: View {
                 .font(.title3.weight(.bold))
             Text("বস ভয়েস পাঠালে এখানে সাথে সাথে বেজে উঠবে।")
                 .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            bigButton("📞 বসকে কল করুন", tint: PortalOfficePalette.emerald600, filled: true) {
+                Task { await ic.staffCallOwner() }
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(18).portalOfficeGlass(scheme, corner: 22)
@@ -147,7 +242,7 @@ struct IntercomView: View {
             // Incoming CALLS are handled app-wide by FloatingChatHead; here we only
             // auto-play new voice notes while this screen is open.
             while !Task.isCancelled {
-                if ic.mode != .calling && ic.mode != .ringing { await playPendingVoiceNotes() }
+                if !ic.hasActiveCall { await playPendingVoiceNotes() }
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
             }
         }
@@ -173,22 +268,32 @@ struct IntercomView: View {
     // ── Active call bar (both sides) — ringing until the other side joins ──
     private var callBar: some View {
         let ringing = ic.mode == .ringing
+        let reconnecting = ic.mode == .reconnecting
         return VStack(spacing: 14) {
             // While ringing, keep the orb pulsing so it clearly reads as "not connected yet".
             liveOrb(active: true, speaking: ringing || ic.remoteSpeaking)
-            Text(ringing ? "📞 রিং হচ্ছে…" : (ic.remoteSpeaking ? "🔊 কথা হচ্ছে" : "📞 কল চলছে"))
+            Text(reconnecting ? "পুনঃসংযোগ হচ্ছে…" :
+                 (ringing ? "📞 রিং হচ্ছে…" : (ic.remoteSpeaking ? "🔊 কথা হচ্ছে" : "📞 কল চলছে")))
                 .font(.title3.weight(.bold))
             // No timer until connected — WhatsApp-style.
-            Text(ringing ? "অপর পক্ষ ধরার অপেক্ষায়…" : timeStr(ic.callSeconds))
+            Text(reconnecting ? "আরও \(ic.reconnectSeconds) সেকেন্ড চেষ্টা হবে" :
+                 (ringing ? "অপর পক্ষ ধরার অপেক্ষায়…" : timeStr(ic.callSeconds)))
                 .font(ringing ? .subheadline : .title2.weight(.bold).monospacedDigit())
                 .foregroundStyle(.secondary)
+            if !ringing {
+                Text(ic.audioRoute).font(.caption).foregroundStyle(.secondary)
+            }
             HStack(spacing: 10) {
                 if !ringing {
                     bigButton(ic.micMuted ? "🔇 আনমিউট" : "🎙️ মিউট",
                               tint: PortalOfficePalette.violet) { ic.toggleMute() }
+                    bigButton(ic.speakerEnabled ? "🔈 ইয়ারপিস" : "🔊 স্পিকার",
+                              tint: PortalOfficePalette.coral) { ic.toggleSpeaker() }
                 }
                 bigButton(ringing ? "বাতিল" : "কল কাটুন",
-                          tint: PortalOfficePalette.red500, filled: true) { ic.leave() }
+                          tint: PortalOfficePalette.red500, filled: true) {
+                    Task { await ic.endActiveCall() }
+                }
             }
         }
         .frame(maxWidth: .infinity)
@@ -225,11 +330,21 @@ struct IntercomView: View {
     }
 
     private func errorStrip(_ msg: String) -> some View {
-        Label(msg, systemImage: "exclamationmark.triangle.fill")
-            .font(.footnote).foregroundStyle(PortalOfficePalette.red500)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).background(PortalOfficePalette.red500.opacity(0.12),
-                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        VStack(alignment: .leading, spacing: 8) {
+            Label(msg, systemImage: "exclamationmark.triangle.fill")
+            if msg.localizedCaseInsensitiveContains("microphone") || msg.contains("মাইক্রোফোন") {
+                Button("Settings খুলুন") {
+                    guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                    UIApplication.shared.open(url)
+                }
+                .font(.footnote.weight(.bold))
+                .frame(minHeight: 44)
+            }
+        }
+        .font(.footnote).foregroundStyle(PortalOfficePalette.red500)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12).background(PortalOfficePalette.red500.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func timeStr(_ s: Int) -> String {
@@ -247,7 +362,7 @@ struct IncomingCallView: View {
     @State private var answered = false
     @State private var pulse = false
 
-    private var inCall: Bool { ic.mode == .calling || ic.mode == .ringing }
+    private var inCall: Bool { ic.hasActiveCall }
 
     var body: some View {
         ZStack {
@@ -286,6 +401,7 @@ struct IncomingCallView: View {
 
     private var statusLine: String {
         if ic.mode == .calling { return ic.remoteSpeaking ? "🔊 কথা হচ্ছে" : "কল চলছে" }
+        if ic.mode == .reconnecting { return "পুনঃসংযোগ হচ্ছে…" }
         if answered { return "সংযোগ হচ্ছে…" }
         return "📞 অফিস কল করছে…"
     }
@@ -294,22 +410,23 @@ struct IncomingCallView: View {
         if ic.mode == .calling || (answered && ic.mode == .ringing) {
             HStack(spacing: 12) {
                 circleBtn(ic.micMuted ? "mic.slash.fill" : "mic.fill",
-                          tint: .white.opacity(0.18)) { ic.toggleMute() }
-                circleBtn("phone.down.fill", tint: PortalOfficePalette.red500, big: true) {
-                    ic.leave(); dismiss()
+                          tint: .white.opacity(0.18), accessibilityLabel: ic.micMuted ? "আনমিউট" : "মিউট") { ic.toggleMute() }
+                circleBtn("phone.down.fill", tint: PortalOfficePalette.red500, big: true, accessibilityLabel: "কল শেষ করুন") {
+                    Task { await ic.endActiveCall(); dismiss() }
                 }
             }
         } else {
             HStack(spacing: 60) {
                 VStack(spacing: 8) {
-                    circleBtn("phone.down.fill", tint: PortalOfficePalette.red500, big: true) {
-                        ic.confirmCallReceipt(incoming.broadcastId)   // stop other devices' ring
-                        ic.stopRinging(); ic.leave(); dismiss()
+                    circleBtn("phone.down.fill", tint: PortalOfficePalette.red500, big: true, accessibilityLabel: "কল প্রত্যাখ্যান করুন") {
+                        ic.confirmCallReceipt(incoming.broadcastId)   // legacy answer/history acknowledgement
+                        ic.stopRinging()
+                        Task { await ic.endActiveCall(reason: "DECLINED"); dismiss() }
                     }
                     Text("প্রত্যাখ্যান").font(.caption).foregroundStyle(.white.opacity(0.8))
                 }
                 VStack(spacing: 8) {
-                    circleBtn("phone.fill", tint: PortalOfficePalette.emerald600, big: true) {
+                    circleBtn("phone.fill", tint: PortalOfficePalette.emerald600, big: true, accessibilityLabel: "কল গ্রহণ করুন") {
                         answered = true
                         ic.confirmCallReceipt(incoming.broadcastId)   // owner log: ধরা হয়েছে
                         ic.stopRinging()
@@ -321,7 +438,7 @@ struct IncomingCallView: View {
         }
     }
 
-    private func circleBtn(_ icon: String, tint: Color, big: Bool = false, action: @escaping () -> Void) -> some View {
+    private func circleBtn(_ icon: String, tint: Color, big: Bool = false, accessibilityLabel: String, action: @escaping () -> Void) -> some View {
         Button {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred(); action()
         } label: {
@@ -329,7 +446,7 @@ struct IncomingCallView: View {
                 .font(.system(size: big ? 28 : 22, weight: .semibold)).foregroundStyle(.white)
                 .frame(width: big ? 72 : 58, height: big ? 72 : 58)
                 .background(tint, in: Circle())
-        }.buttonStyle(.plain)
+        }.buttonStyle(.plain).accessibilityLabel(accessibilityLabel)
     }
 
     private func timeStr(_ s: Int) -> String { String(format: "%02d:%02d", s / 60, s % 60) }

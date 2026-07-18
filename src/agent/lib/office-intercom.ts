@@ -16,6 +16,17 @@ import { pushStaffPing, pushStaffDevice } from '@/agent/lib/office-notify'
 import { getCallPushTargets } from '@/agent/lib/call-push'
 import { sendVoipCall } from '@/agent/lib/apns-voip'
 import { sendFcmCall } from '@/agent/lib/fcm-call'
+import {
+  safeRecordOfficeCallEvent,
+  summarizeCallDelivery,
+} from '@/agent/lib/office-call-observability'
+import {
+  createCanonicalOfficeCall,
+  isCanonicalOfficeCallEnabled,
+  resolveBusinessOwnerUserId,
+  transitionCanonicalOfficeCall,
+} from '@/agent/lib/office-call-domain'
+import { getOfficeCallRuntimePolicy } from '@/agent/lib/office-call-reliability'
 
 /** 'voice' = PTT audio · 'urgent' = full-volume text alert · 'call' = live VoIP ring (Agora channel = itc_<broadcastId>). */
 export type IntercomKind = 'voice' | 'urgent' | 'call'
@@ -29,7 +40,7 @@ export type IntercomReceipt = {
 }
 
 /** How a live call ended — drives the "stop ringing" signal + missed-call history. */
-export type CallEndReason = 'cancelled' | 'declined' | 'missed' | 'completed'
+export type CallEndReason = 'cancelled' | 'declined' | 'missed' | 'completed' | 'failed' | 'busy' | 'push_unreachable'
 
 export type IntercomBroadcast = {
   id: string
@@ -46,6 +57,10 @@ export type IntercomBroadcast = {
    *  stops ringing / closes the call the moment this is non-null. */
   endedAt: string | null
   endedReason: CallEndReason | null
+  canonicalState: string | null
+  answeredAt: string | null
+  connectedAt: string | null
+  callDurationSec: number | null
   /** True when this call row is an INCOMING ring for the polling viewer (they are
    *  the callee and did not place it). The client rings on this — works for both
    *  owner→staff and staff→owner without the client knowing its own user id. */
@@ -115,17 +130,9 @@ async function activeStaff(businessId: string): Promise<{ id: string; name: stri
 
 const OWNER_LABEL = 'বস — মারুফ'
 
-/** The business owner's User.id — the callee for a staff→owner call. Cached. */
-let cachedOwnerUserId: { id: string | null; at: number } | null = null
-export async function resolveOwnerUserId(): Promise<string | null> {
-  if (cachedOwnerUserId && Date.now() - cachedOwnerUserId.at < 5 * 60_000) return cachedOwnerUserId.id
-  const owner = await prisma.user.findFirst({
-    where: { role: 'SUPER_ADMIN', active: true },
-    select: { id: true },
-    orderBy: { createdAt: 'asc' },
-  })
-  cachedOwnerUserId = { id: owner?.id ?? null, at: Date.now() }
-  return owner?.id ?? null
+/** Business-scoped owner resolution — never a global earliest-admin lookup. */
+export async function resolveOwnerUserId(businessId: string): Promise<string | null> {
+  return resolveBusinessOwnerUserId(businessId)
 }
 
 export async function createIntercomBroadcast(args: {
@@ -142,8 +149,22 @@ export async function createIntercomBroadcast(args: {
   targetUserId?: string | null
   /** kind='call' only: caller display name shown on the callee's ring/CallKit. */
   callerName?: string | null
-}): Promise<{ id: string; createdAt: string } | { error: 'no_target_staff' }> {
+  clientRequestId?: string | null
+}): Promise<
+  | { id: string; createdAt: string; idempotent?: boolean }
+  | {
+      error:
+        | 'no_target_staff'
+        | 'busy'
+        | 'idempotency_conflict'
+        | 'invalid_participants'
+        | 'calling_disabled'
+        | 'rate_limited'
+      retryAfterSec?: number
+    }
+> {
   const isCall = args.kind === 'call'
+  if (isCall && getOfficeCallRuntimePolicy().killSwitch) return { error: 'calling_disabled' }
   const staff = await activeStaff(args.businessId)
   // Voice/urgent fan out to a staff subset (targetStaffId, or everyone). A call
   // rings exactly ONE callee: owner→staff has a targetStaffId (one receipt);
@@ -162,26 +183,70 @@ export async function createIntercomBroadcast(args: {
     : null
   if (isCall && !callTargetUserId) return { error: 'no_target_staff' }
 
-  const row = await prisma.officeIntercomBroadcast.create({
-    data: {
+  const canonical = isCall && isCanonicalOfficeCallEnabled()
+  const canonicalResult = canonical
+    ? await createCanonicalOfficeCall({
+        businessId: args.businessId,
+        callerUserId: args.senderUserId,
+        calleeUserId: callTargetUserId!,
+        targetStaffId: args.targetStaffId ?? null,
+        receiptStaffIds: targets.map((target) => target.id),
+        callerName: args.callerName ?? OWNER_LABEL,
+        clientRequestId: args.clientRequestId ?? null,
+      })
+    : null
+  if (canonicalResult && !canonicalResult.ok) {
+    return { error: canonicalResult.error, ...(canonicalResult.retryAfterSec ? { retryAfterSec: canonicalResult.retryAfterSec } : {}) }
+  }
+
+  const row = canonicalResult?.ok
+    ? { id: canonicalResult.id, createdAt: new Date(canonicalResult.createdAt) }
+    : await prisma.officeIntercomBroadcast.create({
+        data: {
+          businessId: args.businessId,
+          senderUserId: args.senderUserId,
+          kind: args.kind,
+          audioPath: args.audioPath ?? null,
+          audioUrl: args.audioUrl ?? null,
+          mediaType: args.mediaType ?? null,
+          durationSec: Math.max(0, Math.round(args.durationSec ?? 0)),
+          targetStaffId: args.targetStaffId ?? null,
+          targetUserId: callTargetUserId,
+          callerName: isCall ? args.callerName ?? OWNER_LABEL : null,
+          receipts: { create: targets.map((t) => ({ staffId: t.id })) },
+        },
+        select: { id: true, createdAt: true },
+      })
+
+  // A retried create returns the original call without dispatching duplicate wake pushes.
+  if (canonicalResult?.ok && canonicalResult.idempotent) {
+    return { id: row.id, createdAt: row.createdAt.toISOString(), idempotent: true }
+  }
+
+  if (isCall && !canonical) {
+    await safeRecordOfficeCallEvent({
+      callId: row.id,
       businessId: args.businessId,
-      senderUserId: args.senderUserId,
-      kind: args.kind,
-      audioPath: args.audioPath ?? null,
-      audioUrl: args.audioUrl ?? null,
-      mediaType: args.mediaType ?? null,
-      durationSec: Math.max(0, Math.round(args.durationSec ?? 0)),
-      // Keep targetStaffId for owner→staff calls (drives the "who did I call"
-      // history label); a staff→owner call has no staff target (targetUserId=owner).
-      targetStaffId: args.targetStaffId ?? null,
-      targetUserId: callTargetUserId,
-      callerName: isCall ? args.callerName ?? OWNER_LABEL : null,
-      // A call keeps a receipt for a targeted STAFF (owner→staff answer tracking);
-      // a staff→owner call has no staff receipt (owner acks via Agora presence).
-      receipts: { create: targets.map((t) => ({ staffId: t.id })) },
-    },
-    select: { id: true, createdAt: true },
-  })
+      actorUserId: args.senderUserId,
+      source: 'server',
+      event: 'call.created',
+      state: 'ringing',
+      metadata: {
+        direction: args.targetStaffId ? 'owner_to_staff' : 'staff_to_owner',
+        hasTargetUser: Boolean(callTargetUserId),
+      },
+    })
+  }
+
+  // Canonical calls are delivered only by the durable outbox created in the
+  // same transaction. The legacy direct-send block remains for flag-off calls.
+  if (canonical) {
+    return {
+      id: row.id,
+      createdAt: row.createdAt.toISOString(),
+      ...(canonicalResult?.ok && canonicalResult.idempotent ? { idempotent: true } : {}),
+    }
+  }
 
   // Best-effort push so a closed app still gets a ping. Never blocks the send.
   const callerName = args.callerName ?? OWNER_LABEL
@@ -209,7 +274,27 @@ export async function createIntercomBroadcast(args: {
   const pushes: Promise<unknown>[] = [
     // Telegram/ntfy fallback only reaches staff (owner has no staff ping row).
     ...(isCall ? [] : targets.map((t) => pushStaffPing(t, title, body))),
-    pushStaffDevice(deviceUserIds, title, body, callData, highPriority),
+    (async () => {
+      const startedAt = Date.now()
+      const result = await pushStaffDevice(deviceUserIds, title, body, callData, highPriority)
+      if (isCall) {
+        await safeRecordOfficeCallEvent({
+          callId: row.id,
+          businessId: args.businessId,
+          source: 'server',
+          event: 'push.completed',
+          provider: 'onesignal',
+          success: result.ok,
+          latencyMs: Date.now() - startedAt,
+          metadata: {
+            attempted: result.attempted,
+            status: result.status,
+            reason: result.reason,
+          },
+        })
+      }
+      return result
+    })(),
   ]
 
   // A live call additionally fires the real wake layer: an APNs VoIP push (iOS
@@ -228,12 +313,54 @@ export async function createIntercomBroadcast(args: {
       (async () => {
         try {
           const { voip, fcm } = await getCallPushTargets(deviceUserIds)
-          await Promise.allSettled([
-            voip.length ? sendVoipCall(voip, voipPayload) : Promise.resolve([]),
-            fcm.length ? sendFcmCall(fcm, voipPayload) : Promise.resolve([]),
-          ])
+          await safeRecordOfficeCallEvent({
+            callId: row.id,
+            businessId: args.businessId,
+            source: 'server',
+            event: 'push.targets_resolved',
+            metadata: { targetUsers: deviceUserIds.length, apnsVoip: voip.length, fcm: fcm.length },
+          })
+          const apnsStartedAt = Date.now()
+          const apnsPromise = (voip.length ? sendVoipCall(voip, voipPayload) : Promise.resolve([])).then(async (results) => {
+            const summary = summarizeCallDelivery(results)
+            await safeRecordOfficeCallEvent({
+              callId: row.id,
+              businessId: args.businessId,
+              source: 'server',
+              event: 'push.completed',
+              provider: 'apns_voip',
+              success: summary.failed === 0 && summary.attempted > 0,
+              latencyMs: Date.now() - apnsStartedAt,
+              metadata: summary,
+            })
+            return results
+          })
+          const fcmStartedAt = Date.now()
+          const fcmPromise = (fcm.length ? sendFcmCall(fcm, voipPayload) : Promise.resolve([])).then(async (results) => {
+            const summary = summarizeCallDelivery(results)
+            await safeRecordOfficeCallEvent({
+              callId: row.id,
+              businessId: args.businessId,
+              source: 'server',
+              event: 'push.completed',
+              provider: 'fcm',
+              success: summary.failed === 0 && summary.attempted > 0,
+              latencyMs: Date.now() - fcmStartedAt,
+              metadata: summary,
+            })
+            return results
+          })
+          await Promise.allSettled([apnsPromise, fcmPromise])
         } catch (err) {
           console.warn('[office-intercom] call wake push failed:', (err as Error)?.message)
+          await safeRecordOfficeCallEvent({
+            callId: row.id,
+            businessId: args.businessId,
+            source: 'server',
+            event: 'push.dispatch_failed',
+            success: false,
+            metadata: { stage: 'target_resolution_or_dispatch' },
+          })
         }
       })(),
     )
@@ -241,7 +368,11 @@ export async function createIntercomBroadcast(args: {
 
   await Promise.allSettled(pushes)
 
-  return { id: row.id, createdAt: row.createdAt.toISOString() }
+  return {
+    id: row.id,
+    createdAt: row.createdAt.toISOString(),
+    ...(canonicalResult?.ok && canonicalResult.idempotent ? { idempotent: true } : {}),
+  }
 }
 
 /**
@@ -256,13 +387,60 @@ export async function endCall(args: {
   businessId: string
   reason: CallEndReason
   actorUserId: string
-}): Promise<{ ok: boolean; alreadyEnded?: boolean }> {
+}): Promise<{ ok: boolean; alreadyEnded?: boolean; error?: string }> {
+  const participant = await prisma.officeIntercomBroadcast.findFirst({
+    where: {
+      id: args.broadcastId,
+      businessId: args.businessId,
+      kind: 'call',
+      OR: [{ senderUserId: args.actorUserId }, { targetUserId: args.actorUserId }],
+    },
+    select: { id: true },
+  })
+  if (!participant) return { ok: false, error: 'forbidden' }
+
+  let canonicalHandled = false
+  if (isCanonicalOfficeCallEnabled()) {
+    const session = await prisma.officeCallSession.findUnique({ where: { id: args.broadcastId }, select: { id: true } })
+    if (session) {
+      const reason = args.reason.toUpperCase() as 'DECLINED' | 'CANCELLED' | 'MISSED' | 'COMPLETED' | 'FAILED' | 'BUSY' | 'PUSH_UNREACHABLE'
+      const transitioned = await transitionCanonicalOfficeCall({
+        callId: args.broadcastId,
+        businessId: args.businessId,
+        actorUserId: args.actorUserId,
+        target: 'ENDED',
+        reason,
+      })
+      if (!transitioned.ok) return { ok: false, error: transitioned.error }
+      canonicalHandled = true
+    }
+  }
   // Atomically claim the end — updateMany with endedAt IS NULL guard.
   const claimed = await prisma.officeIntercomBroadcast.updateMany({
     where: { id: args.broadcastId, businessId: args.businessId, kind: 'call', endedAt: null },
     data: { endedAt: new Date(), endedReason: args.reason },
   })
-  if (claimed.count === 0) return { ok: true, alreadyEnded: true }
+  if (claimed.count === 0) {
+    if (!canonicalHandled) await safeRecordOfficeCallEvent({
+      callId: args.broadcastId,
+      businessId: args.businessId,
+      actorUserId: args.actorUserId,
+      source: 'server',
+      event: 'call.end_duplicate',
+      metadata: { attemptedReason: args.reason },
+    })
+    return { ok: true, alreadyEnded: true }
+  }
+
+  if (!canonicalHandled) await safeRecordOfficeCallEvent({
+    callId: args.broadcastId,
+    businessId: args.businessId,
+    actorUserId: args.actorUserId,
+    source: 'server',
+    event: 'call.ended',
+    state: 'ended',
+    metadata: { reason: args.reason },
+  })
 
   const row = await prisma.officeIntercomBroadcast.findFirst({
     where: { id: args.broadcastId, businessId: args.businessId },
@@ -370,6 +548,14 @@ export async function getIntercomFeed(
 
   const staff = await activeStaff(businessId)
   const nameOf = new Map(staff.map((s) => [s.id, s.name]))
+  const callIds = rows.filter((row) => row.kind === 'call').map((row) => row.id)
+  const canonicalCalls = isCanonicalOfficeCallEnabled() && callIds.length > 0
+    ? await prisma.officeCallSession.findMany({
+        where: { id: { in: callIds }, businessId },
+        select: { id: true, state: true, answeredAt: true, connectedAt: true, endedAt: true },
+      })
+    : []
+  const canonicalOf = new Map(canonicalCalls.map((call) => [call.id, call]))
 
   const broadcasts: IntercomBroadcast[] = rows.reverse().map((r) => {
     const receipts: IntercomReceipt[] =
@@ -384,6 +570,11 @@ export async function getIntercomFeed(
         : []
     const my = viewer.role === 'staff' ? r.receipts.find((x) => x.staffId === viewer.staffId) : undefined
     const isCall = (r.kind as IntercomKind) === 'call'
+    const canonical = canonicalOf.get(r.id)
+    const effectiveEndedAt = canonical?.endedAt ?? r.endedAt
+    const durationSec = canonical?.connectedAt && effectiveEndedAt
+      ? Math.max(0, Math.round((effectiveEndedAt.getTime() - canonical.connectedAt.getTime()) / 1000))
+      : null
     return {
       id: r.id,
       kind: (r.kind as IntercomKind) ?? 'voice',
@@ -393,8 +584,12 @@ export async function getIntercomFeed(
       transcript: r.transcript,
       targetStaffId: r.targetStaffId,
       callerName: r.callerName ?? null,
-      endedAt: r.endedAt?.toISOString() ?? null,
+      endedAt: effectiveEndedAt?.toISOString() ?? null,
       endedReason: (r.endedReason as CallEndReason | null) ?? null,
+      canonicalState: canonical?.state ?? null,
+      answeredAt: canonical?.answeredAt?.toISOString() ?? null,
+      connectedAt: canonical?.connectedAt?.toISOString() ?? null,
+      callDurationSec: durationSec,
       // I'm the callee (ring me) — a call aimed at my user id that I didn't place.
       incomingForMe: isCall && r.targetUserId === viewer.userId && r.senderUserId !== viewer.userId,
       // I placed this call (show my outgoing/waiting UI + call history on my side).

@@ -498,6 +498,9 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
   padding:12px 18px 12px 14px;border-radius:9999px;font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;font-weight:700;font-size:14px;color:#fff;border:2px solid rgba(255,255,255,.2);
   background:linear-gradient(135deg,#E07A5F,#C45A3C);box-shadow:0 12px 32px rgba(224,122,95,.6);
   user-select:none;animation:oh-bob2 3s ease-in-out infinite}
+.ohub-callshead{position:fixed;right:20px;bottom:calc(84px + var(--safe-bottom));z-index:80;min-height:48px;display:flex;align-items:center;gap:8px;
+  padding:10px 16px;border-radius:9999px;font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;font-weight:800;font-size:13.5px;
+  color:#fff;border:2px solid rgba(255,255,255,.18);background:linear-gradient(135deg,#16a34a,#047857);box-shadow:0 10px 28px rgba(5,150,105,.4);cursor:pointer}
 @keyframes oh-bob2{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
 .ohub-chathead .em{font-size:22px}
 .ohub-chathead .ring{position:absolute;left:8px;width:42px;height:42px;border-radius:50%;border:2px solid rgba(255,255,255,.5);animation:oh-pulse 2.2s ease-out infinite;pointer-events:none}

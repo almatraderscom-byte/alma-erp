@@ -30,13 +30,13 @@ export async function pushStaffDevice(
   body: string,
   data: Record<string, unknown> = {},
   highPriority = false,
-): Promise<void> {
+): Promise<DevicePushResult> {
+  const ids = [...new Set(userIds.filter(Boolean))]
   try {
-    const ids = userIds.filter(Boolean)
-    if (ids.length === 0) return
+    if (ids.length === 0) return { ok: true, attempted: 0, status: null, reason: 'no_targets' }
     const appId = process.env.ONESIGNAL_APP_ID || process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID
     const apiKey = process.env.ONESIGNAL_REST_API_KEY
-    if (!appId || !apiKey) return
+    if (!appId || !apiKey) return { ok: false, attempted: ids.length, status: null, reason: 'onesignal_unconfigured' }
 
     const usesV2Key = apiKey.startsWith('os_v2_')
     const actionUrl = typeof data.actionUrl === 'string' && data.actionUrl ? data.actionUrl : OFFICE_URL
@@ -59,7 +59,7 @@ export async function pushStaffDevice(
     if (usesV2Key) payload.include_aliases = { external_id: ids }
     else payload.include_external_user_ids = ids
 
-    await fetch(
+    const response = await fetch(
       usesV2Key ? 'https://api.onesignal.com/notifications?c=push' : 'https://onesignal.com/api/v1/notifications',
       {
         method: 'POST',
@@ -70,9 +70,23 @@ export async function pushStaffDevice(
         body: JSON.stringify(payload),
       },
     )
+    return {
+      ok: response.ok,
+      attempted: ids.length,
+      status: response.status,
+      reason: response.ok ? null : `http_${response.status}`,
+    }
   } catch (err) {
     console.warn('[office-notify] staff device push failed:', (err as Error)?.message)
+    return { ok: false, attempted: ids.length, status: null, reason: 'request_failed' }
   }
+}
+
+export type DevicePushResult = {
+  ok: boolean
+  attempted: number
+  status: number | null
+  reason: string | null
 }
 
 /** Ping a staff member on Telegram + their ntfy topic. Never throws. */

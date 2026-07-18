@@ -40,7 +40,7 @@ extension Notification.Name {
 /// at launch and can be flipped from the More tab's Dark-mode switch.
 enum AlmaTheme {
     static let cookieName = "alma-theme"
-    static let host = "alma-erp-six.vercel.app"
+    static var host: String { AlmaAPI.baseURL.host ?? "alma-erp-six.vercel.app" }
     static let defaultsKey = "alma-theme-mode"
     static private(set) var isDark = false
 
@@ -1158,7 +1158,7 @@ final class MoreMenuViewController: UITableViewController {
     override func tableView(_ t: UITableView, didSelectRowAt ip: IndexPath) {
         t.deselectRow(at: ip, animated: true)
         guard ip.section >= 1 else { return }   // Appearance row is switch-only
-        let base = "https://alma-erp-six.vercel.app"
+        let base = AlmaAPI.baseURL.absoluteString
         let path: String, tabTitle: String, symbol: String
         if ip.section == 1 {
             let biz = businesses[ip.row]
@@ -1186,7 +1186,7 @@ final class MoreMenuViewController: UITableViewController {
 /// session-sharing content tabs, with a dark appearance and a haptic tick on switch.
 final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate {
     private let selection = UISelectionFeedbackGenerator()
-    static let base = "https://alma-erp-six.vercel.app"
+    static var base: String { AlmaAPI.baseURL.absoluteString }
     weak var dashboardVC: UIViewController?  // internal: makeDashboardTab() (SwiftUIShell.swift) mounts it
     private var approvalsBadgeTimer: Timer?
     private static let approvalsTabIndex = 3

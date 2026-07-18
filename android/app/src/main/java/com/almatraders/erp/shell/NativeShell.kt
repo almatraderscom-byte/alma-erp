@@ -366,12 +366,6 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
         // walkie-talkie intercom. Self-hides when there's no office session.
         com.almatraders.erp.pages.OfficeChatFloatingHead(dark = dark) { p, t -> pushWebForced(p, t) }
 
-        // ── Native forced-update gate ──
-        // The web <ForcedUpdateGate> can't reach a native-first owner (WebView is 1dp).
-        // This native twin covers the whole shell with a blocking download prompt when
-        // the installed build is below agent_kv_settings min_native_android_build.
-        ForcedUpdateGate(dark = dark)
-
         // ── Startup native-login gate ──
         // If the server says we're NOT signed in (authed == false), cover the whole shell
         // with the native Sign-in screen so the app opens straight to native login — no
@@ -395,6 +389,13 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
         // drives the lighthouse beacon + auto-retry, dissolving when a real
         // /api/health probe succeeds.
         ConnectivityBeacon(dark = dark)
+
+        // ── Native forced-update gate — MUST remain the final/topmost child ──
+        // The web <ForcedUpdateGate> can't reach a native-first owner (WebView is 1dp).
+        // This native twin covers login, connectivity, every native screen and the web
+        // shell when the installed build is below min_native_android_build. Keeping it
+        // last guarantees staff cannot dismiss or navigate around a mandatory release.
+        ForcedUpdateGate(dark = dark)
     }
 }
 

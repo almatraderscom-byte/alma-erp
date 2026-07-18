@@ -3,6 +3,14 @@ apply plugin: 'kotlin-android'
 apply plugin: 'org.jetbrains.kotlin.plugin.compose'
 apply plugin: 'androidx.baselineprofile'
 
+def almaBaseUrl = (project.findProperty('almaBaseUrl') ?: 'https://alma-erp-six.vercel.app')
+    .toString()
+    .replaceAll('/+$', '')
+def almaBuildSha = (System.getenv('VERCEL_GIT_COMMIT_SHA') ?: System.getenv('GIT_COMMIT') ?: 'local')
+    .toString()
+    .replaceAll('[^A-Za-z0-9._-]', '')
+    .take(80)
+
 android {
     namespace "com.almatraders.erp"
     compileSdk rootProject.ext.compileSdkVersion
@@ -10,8 +18,15 @@ android {
         applicationId "com.almatraders.erp"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 13
-        versionName "1.2.1"
+        // Build 20 is intentionally above the recovery APK (19) that was installed
+        // during calling verification, so Android accepts this OTA for every known
+        // staff install instead of rejecting it as a downgrade.
+        versionCode 20
+        versionName "1.2.7"
+        // Preview verification can override the endpoint with
+        // `-PalmaBaseUrl=https://...`; production remains the fail-safe default.
+        buildConfigField "String", "ALMA_BASE_URL", "\"${almaBaseUrl}\""
+        buildConfigField "String", "ALMA_BUILD_SHA", "\"${almaBuildSha}\""
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -73,6 +88,7 @@ android {
     // composeOptions block needed.
     buildFeatures {
         compose true
+        buildConfig true
     }
     kotlinOptions {
         jvmTarget = '21'
@@ -129,6 +145,12 @@ dependencies {
     // plugin bundles this exact version at runtime; declared here so the extension's
     // com.onesignal.notifications.* imports resolve at compile time).
     implementation 'com.onesignal:OneSignal:5.9.3'
+    // Direct high-priority data FCM is the single canonical Office-call wake
+    // path. OneSignal remains for non-call ERP notifications and legacy calls.
+    implementation 'com.google.firebase:firebase-messaging:24.0.0'
+    // Android system call integration (Telecom, Bluetooth/wearable controls and
+    // platform audio endpoints) for the process-level Office call coordinator.
+    implementation 'androidx.core:core-telecom:1.0.0'
 
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
