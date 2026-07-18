@@ -27,6 +27,9 @@ function isPublicApiOrShare(pathname: string) {
   // ConversationRelay post-call report from the VPS relay — self-protects via
   // AGENT_INTERNAL_TOKEN Bearer in the route handler; no session cookie.
   if (pathname === '/api/assistant/voice-call/relay-report') return true
+  // Mid-call ERP read-tool bridge from the Gemini Live bot — self-protects via
+  // AGENT_INTERNAL_TOKEN Bearer + requireAgentEnabled in the route handler.
+  if (pathname === '/api/assistant/voice-call/erp-tool') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   if (pathname === '/api/build-info') return true
