@@ -18,8 +18,11 @@ android {
         applicationId "com.almatraders.erp"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 13
-        versionName "1.2.1"
+        // Build 20 is intentionally above the recovery APK (19) that was installed
+        // during calling verification, so Android accepts this OTA for every known
+        // staff install instead of rejecting it as a downgrade.
+        versionCode 20
+        versionName "1.2.7"
         // Preview verification can override the endpoint with
         // `-PalmaBaseUrl=https://...`; production remains the fail-safe default.
         buildConfigField "String", "ALMA_BASE_URL", "\"${almaBaseUrl}\""

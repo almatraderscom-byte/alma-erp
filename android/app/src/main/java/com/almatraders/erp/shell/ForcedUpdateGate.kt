@@ -8,8 +8,9 @@
 //  /api/app/native-version { minBuild, apkUrl }, and — only when a KNOWN install is
 //  strictly below minBuild — covers the whole shell with a blocking download prompt.
 //
-//  Fail-safe by design: any error (offline, unknown build, missing url) leaves the app
-//  fully usable — the gate only ever appears for a definite too-old build.
+//  Fail-safe by design: an initial error (offline, unknown build, missing url) leaves the
+//  app usable. The check repeats, and after a definite too-old result the gate stays up
+//  across transient failures until the server explicitly permits the installed build.
 //
 
 package com.almatraders.erp.shell
@@ -43,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 /**
  * Native blocking update gate. Renders nothing unless the installed build is a KNOWN
@@ -67,12 +69,18 @@ fun ForcedUpdateGate(dark: Boolean) {
     var apkUrl by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
-        try {
-            val root = AlmaApi.getObject("/api/app/native-version")
-            minBuild = root.flexInt("minBuild") ?: 0
-            apkUrl = root.str("apkUrl")
-        } catch (_: Exception) {
-            // Fail-safe: never block the app on a fetch error.
+        while (true) {
+            try {
+                val root = AlmaApi.getObject("/api/app/native-version")
+                // Apply both values from the same authoritative response. A deliberate
+                // minBuild=0 disables the gate; a transient failure preserves the last
+                // known blocking decision instead of briefly exposing the old app.
+                minBuild = root.flexInt("minBuild") ?: 0
+                apkUrl = root.str("apkUrl")
+            } catch (_: Exception) {
+                // Initial failure is fail-open. If already blocked, retain that state.
+            }
+            delay(30_000)
         }
     }
 
