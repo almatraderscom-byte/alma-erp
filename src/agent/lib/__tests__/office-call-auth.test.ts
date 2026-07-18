@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('next-auth/jwt', () => ({ getToken: mocks.getToken }))
 vi.mock('@/agent/lib/office-staff', () => ({ resolveSessionStaff: mocks.resolveSessionStaff }))
 
-import { identifyOfficeCallRequest } from '@/agent/lib/office-call-auth'
+import { decideOfficeAgoraGrant, identifyOfficeCallRequest } from '@/agent/lib/office-call-auth'
 
 function request(businessId?: string) {
   const query = businessId ? `?businessId=${encodeURIComponent(businessId)}` : ''
@@ -67,5 +67,43 @@ describe('office call request identity', () => {
       error: 'forbidden',
       code: 403,
     })
+  })
+})
+
+describe('office Agora channel grant', () => {
+  const live = 'itc_live_ALMA_LIFESTYLE'
+  const callId = '24d406b4-753c-4e2d-aa0d-1bb2c3e335aa'
+
+  it('allows only the owner to publish into the exact business live channel', () => {
+    expect(decideOfficeAgoraGrant({ channel: live, expectedLiveChannel: live, identityRole: 'owner' })).toMatchObject({
+      ok: true,
+      kind: 'live',
+      rtcRole: 'publisher',
+    })
+    expect(decideOfficeAgoraGrant({ channel: live, expectedLiveChannel: live, identityRole: 'staff' })).toMatchObject({
+      ok: true,
+      kind: 'live',
+      rtcRole: 'subscriber',
+    })
+  })
+
+  it('rejects cross-business and arbitrary Agora channels', () => {
+    expect(decideOfficeAgoraGrant({
+      channel: 'itc_live_ALMA_TRADING',
+      expectedLiveChannel: live,
+      identityRole: 'owner',
+    })).toEqual({ ok: false, error: 'invalid_call_channel' })
+    expect(decideOfficeAgoraGrant({ channel: 'private-room', expectedLiveChannel: live, identityRole: 'owner' })).toEqual({
+      ok: false,
+      error: 'invalid_call_channel',
+    })
+  })
+
+  it('keeps structurally valid direct calls publisher-capable for participant authorization', () => {
+    expect(decideOfficeAgoraGrant({
+      channel: `itc_${callId}`,
+      expectedLiveChannel: live,
+      identityRole: 'staff',
+    })).toEqual({ ok: true, kind: 'call', rtcRole: 'publisher', callId })
   })
 })

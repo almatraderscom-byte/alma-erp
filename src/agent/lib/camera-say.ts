@@ -17,9 +17,12 @@
  * suddenly blare out of a camera when it comes back. Claim/ack are best-effort
  * (never throw) because the bridge polls like a cron.
  */
+import { randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { synthesizeBanglaMp3, googleTtsConfigured } from '@/agent/lib/google-tts'
 import { agentStorageUpload, agentStorageSignedUrl } from '@/agent/lib/storage'
+import { cameraLeaseTokenRequired } from '@/agent/lib/camera-auth'
+import { canonicalCameraRoom } from '@/agent/lib/camera-voice-policy'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -27,10 +30,10 @@ const db = prisma as any
 const MAX_TEXT_CHARS = 300
 // Queued jobs older than this are expired, never played (stale-announcement guard).
 const QUEUE_TTL_MS = 10 * 60 * 1000
+// A crashed bridge gets this long to download and hand the audio to go2rtc.
+const CLAIM_LEASE_MS = 2 * 60 * 1000
 // Signed MP3 URL validity — the bridge downloads immediately after claiming.
 const AUDIO_URL_TTL_SEC = 600
-
-const BRIDGE_TOKEN_KEY = 'camera_bridge_token'
 
 /**
  * Friendly names (English + Bangla, as the owner might type them) → go2rtc
@@ -50,8 +53,7 @@ export const CAMERA_STREAMS: Record<string, string> = {
 
 /** Resolve a friendly camera name to a go2rtc stream (default 'workroom'). */
 export function resolveStream(name?: string): string {
-  const key = (name ?? '').trim().toLowerCase()
-  return CAMERA_STREAMS[key] ?? 'workroom'
+  return canonicalCameraRoom(name)
 }
 
 /**
@@ -84,49 +86,164 @@ export async function queueCameraSpeak(
  * 'failed' (error 'expired') instead of returned. Never throws — the bridge
  * poll must not 500 on a transient DB/storage hiccup; it just retries.
  */
-export async function claimNextSpeakJob(): Promise<
-  null | { id: string; stream: string; text: string; audioUrl: string }
-> {
+async function reapSpeakJobs(now = new Date()): Promise<void> {
+  const staleBefore = new Date(now.getTime() - QUEUE_TTL_MS)
+  const legacyLeaseBefore = new Date(now.getTime() - CLAIM_LEASE_MS)
+
+  // No queued/delivered announcement may survive beyond the ten-minute safety window.
+  await db.agentCameraSpeakJob.updateMany({
+    where: { status: { in: ['queued', 'delivered'] }, createdAt: { lt: staleBefore } },
+    data: {
+      status: 'failed',
+      error: 'expired',
+      doneAt: now,
+      leaseToken: null,
+      leaseExpiresAt: null,
+    },
+  })
+
+  // Recover a bridge crash. The legacy deliveredAt clause covers claims created
+  // before this migration; new claims use an explicit expiry timestamp.
+  await db.agentCameraSpeakJob.updateMany({
+    where: {
+      status: 'delivered',
+      createdAt: { gte: staleBefore },
+      OR: [
+        { leaseExpiresAt: { lt: now } },
+        { leaseExpiresAt: null, deliveredAt: { lt: legacyLeaseBefore } },
+      ],
+    },
+    data: {
+      status: 'queued',
+      error: 'lease_recovered',
+      deliveredAt: null,
+      doneAt: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+    },
+  })
+}
+
+export interface ClaimedCameraSpeakJob {
+  id: string
+  stream: string
+  text: string
+  audioUrl: string
+  leaseToken: string
+  leaseExpiresAt: string
+}
+
+export async function claimNextSpeakJob(): Promise<null | ClaimedCameraSpeakJob> {
   try {
-    // Expire stale queued jobs first so they can never play hours late.
-    await db.agentCameraSpeakJob.updateMany({
-      where: { status: 'queued', createdAt: { lt: new Date(Date.now() - QUEUE_TTL_MS) } },
-      data: { status: 'failed', error: 'expired', doneAt: new Date() },
-    })
+    const now = new Date()
+    await reapSpeakJobs(now)
 
-    const job = await db.agentCameraSpeakJob.findFirst({
-      where: { status: 'queued' },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, stream: true, text: true, audioPath: true },
-    })
-    if (!job) return null
+    // findFirst + conditional updateMany is an optimistic atomic claim. If two
+    // bridge polls race, only one transition from queued → delivered can win.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const job = await db.agentCameraSpeakJob.findFirst({
+        where: { status: 'queued', createdAt: { gte: new Date(now.getTime() - QUEUE_TTL_MS) } },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, stream: true, text: true, audioPath: true },
+      })
+      if (!job) return null
 
-    await db.agentCameraSpeakJob.update({
-      where: { id: job.id },
-      data: { status: 'delivered', deliveredAt: new Date() },
-    })
+      const leaseToken = randomUUID()
+      const leaseExpiresAt = new Date(now.getTime() + CLAIM_LEASE_MS)
+      const claimed = await db.agentCameraSpeakJob.updateMany({
+        where: { id: job.id, status: 'queued' },
+        data: {
+          status: 'delivered',
+          error: null,
+          deliveredAt: now,
+          leaseToken,
+          leaseExpiresAt,
+          attemptCount: { increment: 1 },
+        },
+      })
+      if (claimed.count !== 1) continue
 
-    const audioUrl = await agentStorageSignedUrl(job.audioPath as string, AUDIO_URL_TTL_SEC)
-    return { id: job.id as string, stream: job.stream as string, text: job.text as string, audioUrl }
+      try {
+        const audioUrl = await agentStorageSignedUrl(job.audioPath as string, AUDIO_URL_TTL_SEC)
+        return {
+          id: job.id as string,
+          stream: job.stream as string,
+          text: job.text as string,
+          audioUrl,
+          leaseToken,
+          leaseExpiresAt: leaseExpiresAt.toISOString(),
+        }
+      } catch (err) {
+        // Release only our own claim. A later successful lease can never be reset.
+        await db.agentCameraSpeakJob.updateMany({
+          where: { id: job.id, status: 'delivered', leaseToken },
+          data: {
+            status: 'queued',
+            error: 'signed_url_failed',
+            deliveredAt: null,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          },
+        })
+        throw err
+      }
+    }
+    return null
   } catch (err) {
     console.warn('[camera-say] claim failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
 
-/** Bridge reports playback result. Best-effort — never throws. */
-export async function ackSpeakJob(id: string, ok: boolean, error?: string): Promise<void> {
+export interface CameraSpeakAckResult {
+  accepted: boolean
+  alreadyAcked?: boolean
+  reason?: 'not_found' | 'lease_token_required' | 'lease_token_mismatch' | 'lease_expired' | 'not_delivered' | 'claim_changed' | 'internal_error'
+}
+
+/** Bridge reports whether go2rtc accepted the playback command. Best-effort — never throws. */
+export async function ackSpeakJob(
+  id: string,
+  ok: boolean,
+  error?: string,
+  presentedLeaseToken?: string,
+): Promise<CameraSpeakAckResult> {
   try {
-    await db.agentCameraSpeakJob.update({
+    const leaseRequired = await cameraLeaseTokenRequired()
+    if (leaseRequired && !presentedLeaseToken) {
+      return { accepted: false, reason: 'lease_token_required' }
+    }
+
+    const job = await db.agentCameraSpeakJob.findUnique({
       where: { id },
+      select: { status: true, leaseToken: true, leaseExpiresAt: true },
+    })
+    if (!job) return { accepted: false, reason: 'not_found' }
+    if (presentedLeaseToken && presentedLeaseToken !== job.leaseToken) {
+      return { accepted: false, reason: 'lease_token_mismatch' }
+    }
+    if (job.status === 'done' || job.status === 'failed') {
+      return { accepted: true, alreadyAcked: true }
+    }
+    if (job.status !== 'delivered') return { accepted: false, reason: 'not_delivered' }
+    if (job.leaseExpiresAt && job.leaseExpiresAt.getTime() < Date.now()) {
+      return { accepted: false, reason: 'lease_expired' }
+    }
+
+    const updated = await db.agentCameraSpeakJob.updateMany({
+      where: { id, status: 'delivered', leaseToken: job.leaseToken },
       data: {
         status: ok ? 'done' : 'failed',
         doneAt: new Date(),
         error: ok ? null : (error ?? 'playback failed').slice(0, 500),
       },
     })
+    return updated.count === 1
+      ? { accepted: true }
+      : { accepted: false, reason: 'claim_changed' }
   } catch (err) {
     console.warn('[camera-say] ack failed:', err instanceof Error ? err.message : err)
+    return { accepted: false, reason: 'internal_error' }
   }
 }
 
@@ -141,11 +258,7 @@ export async function ackSpeakJob(id: string, ok: boolean, error?: string): Prom
  */
 export async function sweepAndNotifySpeakJobs(): Promise<void> {
   try {
-    // Expire stale queued jobs even when the bridge never polls (PC off).
-    await db.agentCameraSpeakJob.updateMany({
-      where: { status: 'queued', createdAt: { lt: new Date(Date.now() - QUEUE_TTL_MS) } },
-      data: { status: 'failed', error: 'expired', doneAt: new Date() },
-    })
+    await reapSpeakJobs()
 
     const jobs = (await db.agentCameraSpeakJob.findMany({
       where: {
@@ -166,37 +279,18 @@ export async function sweepAndNotifySpeakJobs(): Promise<void> {
       const snippet = job.text.length > 60 ? `${job.text.slice(0, 60)}…` : job.text
       const message =
         job.status === 'done'
-          ? `✅ ঘোষণাটা ক্যামেরার স্পিকারে বেজেছে (${job.stream}):\n"${snippet}"`
+          ? `✅ ক্যামেরা ব্রিজ প্লেব্যাক কমান্ড গ্রহণ করেছে (${job.stream}):\n"${snippet}"\n\nমানুষ শুনেছে কি না সফটওয়্যার থেকে নিশ্চিত করা যায় না।`
           : job.error === 'expired'
             ? `⚠️ ঘোষণাটা বাজেনি — অফিসের PC/ব্রিজ বন্ধ ছিল, তাই ১০ মিনিট পর নিরাপদে বাতিল হয়েছে:\n"${snippet}"`
             : `⚠️ ঘোষণাটা বাজানো যায়নি (${job.error ?? 'unknown'}):\n"${snippet}"`
       const res = await sendOwnerText(message)
-      // Mark notified even if Telegram failed once — better one missed note than
-      // a retry loop spamming the owner every minute.
-      if (!res.ok) console.warn('[camera-say] outcome notify failed:', res.error)
-      await db.agentCameraSpeakJob.update({
-        where: { id: job.id },
-        data: { notifiedAt: new Date() },
-      })
+      if (!res.ok) {
+        console.warn('[camera-say] outcome notify failed:', res.error)
+        continue
+      }
+      await db.agentCameraSpeakJob.update({ where: { id: job.id }, data: { notifiedAt: new Date() } })
     }
   } catch (err) {
     console.warn('[camera-say] sweep failed:', err instanceof Error ? err.message : err)
-  }
-}
-
-/**
- * Shared secret the office-PC bridge must present (Bearer token). Lives in KV
- * (agent_kv_settings key 'camera_bridge_token') so the owner can rotate it
- * without a redeploy. Empty string = bridge auth impossible → all polls 401.
- */
-export async function getBridgeToken(): Promise<string> {
-  try {
-    const row = await db.agentKvSetting.findUnique({
-      where: { key: BRIDGE_TOKEN_KEY },
-      select: { value: true },
-    })
-    return ((row?.value as string | undefined) ?? '').trim()
-  } catch {
-    return ''
   }
 }

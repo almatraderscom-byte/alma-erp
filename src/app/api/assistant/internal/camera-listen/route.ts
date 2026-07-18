@@ -5,9 +5,8 @@
  * bridge). The listener pulls the camera's two-way-audio mic (RTSP AAC 16 kHz),
  * does local voice-activity detection so only chunks with speech are sent, and
  * POSTs each speech chunk here. This route:
- *   1. authorizes with the SHARED bridge token (same KV 'camera_bridge_token'
- *      the camera-bridge route uses — the office PC already has it, so no new
- *      secret), timing-safe.
+ *   1. authorizes with the listener token (KV 'camera_listener_token'), falling
+ *      back to the shared bridge token until the office-PC script is upgraded.
  *   2. transcribes the chunk (Whisper / gpt-4o-transcribe, Bangla) — unless the
  *      caller already did local STT and sent { text } JSON.
  *   3. checks the transcript for a wake word (KV 'camera_wake_words',
@@ -25,12 +24,19 @@
  * 'camera_listen_cooldown_sec' (default 15 — collapse a burst of chunks into
  * one owner ping).
  */
-import { timingSafeEqual } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
-import { getBridgeToken } from '@/agent/lib/camera-say'
+import { cameraRequestAuthorized } from '@/agent/lib/camera-auth'
+import { recordCameraHeartbeat } from '@/agent/lib/camera-health'
+import {
+  cameraCooldownKey,
+  cameraRoomLabel,
+  canonicalCameraRoom,
+  declaredAudioTooLarge,
+  matchCameraWake,
+} from '@/agent/lib/camera-voice-policy'
 import { transcribeVoiceBangla } from '@/agent/lib/voice-bangla'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { calcWhisperCostUsd, estimateAudioDurationSeconds } from '@/agent/lib/pricing'
@@ -55,24 +61,7 @@ const DEFAULT_STT_PROMPT =
   '"ডেলিভারি এসেছে", "প্যাকেট রেডি"। ' +
   'Bangladeshi Bangla only — not Hindi, not Devanagari.'
 const DEFAULT_COOLDOWN_SEC = 15
-const COOLDOWN_KEY = 'camera_listen_last_forward_at'
-
-// Room key → Bangla label shown to the owner.
-const ROOM_LABELS: Record<string, string> = {
-  entrance: 'এন্ট্রান্স',
-  gate: 'এন্ট্রান্স',
-  গেট: 'এন্ট্রান্স',
-  boss: 'বস অফিস',
-  বস: 'বস অফিস',
-  work: 'ওয়ার্করুম',
-  workroom: 'ওয়ার্করুম',
-  কাজ: 'ওয়ার্করুম',
-}
-
-function roomLabel(room?: string): string {
-  const key = (room ?? '').trim().toLowerCase()
-  return ROOM_LABELS[key] ?? ROOM_LABELS[(room ?? '').trim()] ?? 'অফিস'
-}
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024
 
 async function kvGet(key: string): Promise<string | null> {
   try {
@@ -85,44 +74,6 @@ async function kvGet(key: string): Promise<string | null> {
 
 async function kvSet(key: string, value: string): Promise<void> {
   await db.agentKvSetting.upsert({ where: { key }, create: { key, value }, update: { value } })
-}
-
-async function bridgeAuthorized(req: NextRequest): Promise<boolean> {
-  const header = req.headers.get('authorization') ?? ''
-  const presented = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
-  if (!presented) return false
-  const expected = await getBridgeToken()
-  if (!expected) return false
-  try {
-    return timingSafeEqual(Buffer.from(presented), Buffer.from(expected))
-  } catch {
-    return false
-  }
-}
-
-/** Normalize for matching: lowercase, collapse whitespace. */
-function norm(s: string): string {
-  return s.toLowerCase().replace(/\s+/g, ' ').trim()
-}
-
-/**
- * If the transcript contains a wake word, return the utterance with the wake
- * phrase (and anything before it) stripped; otherwise null.
- */
-function matchWake(transcript: string, wakeWords: string[]): string | null {
-  const hay = norm(transcript)
-  for (const w of wakeWords) {
-    const needle = norm(w)
-    if (!needle) continue
-    const idx = hay.indexOf(needle)
-    if (idx !== -1) {
-      // Strip everything up to and including the wake phrase, from the ORIGINAL
-      // (so we keep original casing/diacritics of the actual message).
-      const after = transcript.slice(idx + needle.length)
-      return after.replace(/^[\s,।:-]+/, '').trim()
-    }
-  }
-  return null
 }
 
 const globalForOpenAI = globalThis as unknown as { openaiCameraListen: OpenAI | undefined }
@@ -167,14 +118,21 @@ export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
-  if (!(await bridgeAuthorized(req))) {
+  const auth = await cameraRequestAuthorized(req.headers, 'listener')
+  if (!auth.ok) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  if (declaredAudioTooLarge(req.headers.get('content-length'), MAX_AUDIO_BYTES)) {
+    return NextResponse.json({ error: 'audio_too_large' }, { status: 413 })
   }
 
   const enabled = ((await kvGet('camera_listen_enabled')) ?? 'on').toLowerCase() !== 'off'
   if (!enabled) return NextResponse.json({ ok: true, ignored: 'disabled' })
 
   const input = await parseInput(req)
+  const room = canonicalCameraRoom(input.room)
+  await recordCameraHeartbeat({ component: 'listener', room })
 
   // Resolve the transcript — either provided text or server-side Whisper.
   let transcript = (input.text ?? '').trim()
@@ -182,8 +140,8 @@ export async function POST(req: NextRequest) {
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json({ ok: true, ignored: 'no_stt_key' })
     }
-    if (input.audio.size > 25 * 1024 * 1024) {
-      return NextResponse.json({ ok: true, ignored: 'audio_too_large' })
+    if (input.audio.size > MAX_AUDIO_BYTES) {
+      return NextResponse.json({ error: 'audio_too_large' }, { status: 413 })
     }
     try {
       const sttPrompt = (await kvGet('camera_listen_stt_prompt')) ?? DEFAULT_STT_PROMPT
@@ -208,12 +166,17 @@ export async function POST(req: NextRequest) {
   // Echo guard: right after an announcement plays, the camera mic hears the
   // camera's own speaker — and STT (biased toward the wake word) can
   // hallucinate a match from that echo. Ignore AUDIO-derived transcripts for a
-  // short window after any speak job was created (text input is unaffected).
+  // short window after a successful playback command in the SAME room (text
+  // input is unaffected).
   if (input.audio) {
     const echoSec = Number((await kvGet('camera_listen_echo_guard_sec')) ?? 60) || 60
     try {
       const recentSpeak = await db.agentCameraSpeakJob.findFirst({
-        where: { createdAt: { gte: new Date(Date.now() - echoSec * 1000) } },
+        where: {
+          stream: room,
+          status: 'done',
+          doneAt: { gte: new Date(Date.now() - echoSec * 1000) },
+        },
         select: { id: true },
       })
       if (recentSpeak) {
@@ -224,7 +187,7 @@ export async function POST(req: NextRequest) {
 
   const wakeWords = ((await kvGet('camera_wake_words')) ?? DEFAULT_WAKE_WORDS)
     .split(',').map((s) => s.trim()).filter(Boolean)
-  const utterance = matchWake(transcript, wakeWords)
+  const utterance = matchCameraWake(transcript, wakeWords)
   if (utterance === null) {
     // No wake word — heard speech but not addressed to us. Silent + cheap.
     return NextResponse.json({ ok: true, heard: transcript, matched: false })
@@ -240,7 +203,8 @@ export async function POST(req: NextRequest) {
 
   // Cooldown: a burst of chunks around one sentence should ping the owner once.
   const cooldownSec = Number((await kvGet('camera_listen_cooldown_sec')) ?? DEFAULT_COOLDOWN_SEC) || DEFAULT_COOLDOWN_SEC
-  const lastRaw = await kvGet(COOLDOWN_KEY)
+  const cooldownKey = cameraCooldownKey(room)
+  const lastRaw = await kvGet(cooldownKey)
   const now = Date.now()
   if (lastRaw) {
     const last = Date.parse(lastRaw)
@@ -249,16 +213,30 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const label = roomLabel(input.room)
-  const msg = `🎤 ${label} ক্যামেরায় স্টাফ ডাকলো:\n\n«${utterance}»\n\nউত্তর দিলে বলুন — "${input.room ?? 'work'} ক্যামেরায় বলো: …" — আমি স্পিকারে বলে দেবো, Boss।`
+  const label = cameraRoomLabel(room)
+  const msg = `🎤 ${label} ক্যামেরায় স্টাফ ডাকলো:\n\n«${utterance}»\n\nউত্তর দিলে বলুন — "${room} ক্যামেরায় বলো: …" — আমি স্পিকারে বলে দেবো, Boss।`
 
   const res = await sendOwnerText(msg)
-  if (res.ok) await kvSet(COOLDOWN_KEY, new Date(now).toISOString())
+  if (res.ok) await kvSet(cooldownKey, new Date(now).toISOString())
 
   return NextResponse.json({ ok: true, heard: transcript, matched: true, forwarded: res.ok, error: res.error })
 }
 
-// Health probe for the office-PC listener.
-export async function GET() {
-  return NextResponse.json({ ok: true })
+// Authenticated health probe + heartbeat for the durable office-PC listener.
+export async function GET(req: NextRequest) {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
+  const auth = await cameraRequestAuthorized(req.headers, 'listener')
+  if (!auth.ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const room = canonicalCameraRoom(req.nextUrl.searchParams.get('room') ?? undefined)
+  const heartbeat = await recordCameraHeartbeat({ component: 'listener', room })
+  return NextResponse.json({
+    ok: true,
+    component: 'listener',
+    room,
+    credentialSource: auth.credentialSource,
+    serverNow: new Date().toISOString(),
+    heartbeatRecorded: heartbeat.recorded,
+  })
 }

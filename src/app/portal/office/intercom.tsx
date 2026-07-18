@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { tapHaptic, successHaptic, warningHaptic } from '@/lib/ui-haptics'
 import { useAgoraCall } from '@/agent/hooks/useAgoraCall'
 import { useAgoraIntercom } from '@/agent/hooks/useAgoraIntercom'
+import { isRecoverableOutgoingOfficeCall } from '@/agent/lib/office-call-web-policy'
 import { INTERCOM_CSS } from './intercom-css'
 
 const POLL_MS = 6_000
@@ -167,6 +168,7 @@ export function useIntercom(self: 'owner' | 'staff') {
   const [activeCallId, setActiveCallId] = useState<string | null>(null)
   const [callPeer, setCallPeer] = useState<string>('')
   const [callStarting, setCallStarting] = useState(false)
+  const [dismissedCallIds, setDismissedCallIds] = useState<Set<string>>(() => new Set())
   const callStartRef = useRef(false)
   const answerRef = useRef(false)
   // Live walkie-talkie channel (real-time PTT). Owner publishes; staff listen.
@@ -422,12 +424,19 @@ export function useIntercom(self: 'owner' | 'staff') {
   const everConnectedRef = useRef(false)
 
   /** Tell the server a call is over so the OTHER side stops ringing instantly. */
-  const postEnd = useCallback((broadcastId: string, reason: CallEndReason) => {
-    return fetch('/api/assistant/office/intercom/end', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ broadcastId, reason }),
-    }).then(() => undefined).catch(() => undefined)
+  const postEnd = useCallback(async (broadcastId: string, reason: CallEndReason): Promise<boolean> => {
+    try {
+      const response = await fetch('/api/assistant/office/intercom/end', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ broadcastId, reason }),
+      })
+      if (!response.ok) throw new Error(`call_end_${response.status}`)
+      return true
+    } catch {
+      setError('কল শেষ করা যায়নি — ইন্টারনেট দেখে আবার চেষ্টা করুন')
+      return false
+    }
   }, [])
 
   const markCanonicalAnswered = useCallback(async (callId: string) => {
@@ -576,7 +585,10 @@ export function useIntercom(self: 'owner' | 'staff') {
 
   const dismissRecoverableCall = useCallback(async (b: ItcBroadcast) => {
     const canonical = await canonicalSnapshot(b.id).catch(() => null)
-    await postEnd(b.id, canonical && ['CONNECTED', 'RECONNECTING', 'CONNECTING', 'ANSWERED'].includes(canonical.state) ? 'completed' : 'cancelled')
+    const ended = await postEnd(b.id, canonical && ['CONNECTED', 'RECONNECTING', 'CONNECTING', 'ANSWERED'].includes(canonical.state) ? 'completed' : 'cancelled')
+    if (!ended) return
+    setDismissedCallIds((current) => new Set(current).add(b.id))
+    setError(null)
     await load()
   }, [load, postEnd])
 
@@ -726,6 +738,7 @@ export function useIntercom(self: 'owner' | 'staff') {
     answerCall,
     resumeCall,
     dismissRecoverableCall,
+    dismissedCallIds,
     declineCall,
     endCall,
     // live walkie-talkie
@@ -1470,7 +1483,7 @@ export function IntercomCallsPanel({ itc, onClose }: { itc: Intercom; onClose: (
 const fmtClock = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 
 export function IntercomCall({ itc }: { itc: Intercom }) {
-  const { feed, activeCallId, callPeer, callApi, endCall, answerCall, resumeCall, dismissRecoverableCall, declineCall, nowMs } = itc
+  const { feed, activeCallId, callPeer, callApi, endCall, answerCall, resumeCall, dismissRecoverableCall, dismissedCallIds, declineCall, nowMs } = itc
   const nativeCallShell = useIsNativeCallShell()
   // Minimize the in-call overlay to a small pill so the rest of the office page
   // is usable while talking (WhatsApp-style multitask). Reset on a new call.
@@ -1498,8 +1511,13 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
   }, [activeCallId, nativeCallShell, feed.broadcasts, nowMs])
   const recoverable = useMemo(() => {
     if (activeCallId || nativeCallShell) return null
-    return feed.broadcasts.find((b) => b.kind === 'call' && b.outgoingByMe && !b.endedAt) ?? null
-  }, [activeCallId, nativeCallShell, feed.broadcasts])
+    const currentTime = nowMs()
+    return feed.broadcasts.find((b) => isRecoverableOutgoingOfficeCall({
+      call: b,
+      nowMs: currentTime,
+      locallyDismissed: dismissedCallIds.has(b.id),
+    })) ?? null
+  }, [activeCallId, nativeCallShell, feed.broadcasts, dismissedCallIds, nowMs])
 
   // Ring tone + vibration while an incoming call is pending.
   const ringRef = useRef<{ ctx: AudioContext; stop: () => void } | null>(null)

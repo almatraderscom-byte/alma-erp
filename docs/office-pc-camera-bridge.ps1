@@ -67,14 +67,21 @@ while ($true) {
             $errMsg = $_.Exception.Message
         }
 
-        # 4. Ack the job so the server marks it played (or failed).
-        $ackBody = @{ id = $r.job.id; ok = $ok; error = $errMsg } | ConvertTo-Json
+        # 4. Ack this exact lease. The server still accepts the old no-token
+        #    body during migration, but the token prevents a late/crashed poll
+        #    from acknowledging somebody else's retried claim.
+        $ackBody = @{
+            id = $r.job.id
+            ok = $ok
+            error = $errMsg
+            leaseToken = $r.job.leaseToken
+        } | ConvertTo-Json
         Invoke-RestMethod -Method POST "$Api/api/assistant/internal/camera-bridge" -Headers $Headers -ContentType 'application/json' -Body $ackBody -TimeoutSec 20 | Out-Null
 
         # 5. Log one line per job so problems are visible at a glance.
         $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
         if ($ok) {
-            Write-Host "$stamp played job $($r.job.id) on stream $($r.job.stream)"
+            Write-Host "$stamp playback command accepted for job $($r.job.id) on stream $($r.job.stream)"
         } else {
             Write-Host "$stamp FAILED job $($r.job.id) on stream $($r.job.stream): $errMsg"
         }

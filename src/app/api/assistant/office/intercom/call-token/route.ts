@@ -16,9 +16,9 @@ import { type NextRequest } from 'next/server'
 import { RtcTokenBuilder, RtcRole } from 'agora-token'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
-import { identifyOfficeCallRequest } from '@/agent/lib/office-call-auth'
+import { decideOfficeAgoraGrant, identifyOfficeCallRequest } from '@/agent/lib/office-call-auth'
+import { liveIntercomChannel } from '@/agent/lib/office-intercom'
 import {
-  callIdFromAgoraChannel,
   OFFICE_CALL_TIMING,
   safeRecordOfficeCallEvent,
 } from '@/agent/lib/office-call-observability'
@@ -54,10 +54,14 @@ export async function POST(req: NextRequest) {
   const channel = body.channel?.trim()
   if (!channel) return Response.json({ error: 'channel_required' }, { status: 400 })
 
-  const callId = callIdFromAgoraChannel(channel)
-  if (channel.startsWith('itc_') && !channel.startsWith('itc_live_') && !callId) {
-    return Response.json({ error: 'invalid_call_channel' }, { status: 400 })
-  }
+  const grant = decideOfficeAgoraGrant({
+    channel,
+    expectedLiveChannel: liveIntercomChannel(id.businessId),
+    identityRole: id.role,
+  })
+  if (!grant.ok) return Response.json({ error: grant.error }, { status: 400 })
+
+  const callId = grant.callId
   let uid = 0
   let peerUid: number | null = null
   if (callId) {
@@ -100,7 +104,7 @@ export async function POST(req: NextRequest) {
       appCertificate,
       channel,
       uid,
-      RtcRole.PUBLISHER,
+      grant.rtcRole === 'publisher' ? RtcRole.PUBLISHER : RtcRole.SUBSCRIBER,
       TOKEN_TTL_SEC,
       privilegeExpireTs,
     )
@@ -118,7 +122,7 @@ export async function POST(req: NextRequest) {
       source: 'server',
       event: body.renewal ? 'agora.token_renewed' : 'agora.token_minted',
       success: true,
-      metadata: { ttlSec: TOKEN_TTL_SEC, uid },
+      metadata: { ttlSec: TOKEN_TTL_SEC, uid, rtcRole: grant.rtcRole },
     })
   }
 
@@ -128,6 +132,7 @@ export async function POST(req: NextRequest) {
     token,
     uid,
     peerUid,
+    rtcRole: grant.rtcRole,
     expiresAt: new Date(privilegeExpireTs * 1000).toISOString(),
   })
 }

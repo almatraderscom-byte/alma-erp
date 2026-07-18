@@ -8,7 +8,8 @@
 # then — forwards what the staff said to the owner's Telegram.
 #
 # Setup:
-#   1. C:\go2rtc\bridge-token.txt  — the bridge token (same one the bridge uses).
+#   1. C:\go2rtc\listener-token.txt — preferred dedicated listener token.
+#      During migration the script falls back to C:\go2rtc\bridge-token.txt.
 #   2. C:\go2rtc\listen-rtsp.txt   — the FULL RTSP URL of the camera to listen
 #      on, e.g.
 #      rtsp://admin:<device-pass>@192.168.1.147:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif
@@ -21,7 +22,8 @@
 
 $Api        = 'https://alma-erp-six.vercel.app'
 $Room       = 'entrance'                 # which room this listener covers
-$TokenFile  = 'C:\go2rtc\bridge-token.txt'
+$ListenerTokenFile = 'C:\go2rtc\listener-token.txt'
+$BridgeTokenFile   = 'C:\go2rtc\bridge-token.txt'
 $RtspFile   = 'C:\go2rtc\listen-rtsp.txt'
 $Ffmpeg     = 'C:\go2rtc\ffmpeg.exe'
 $ChunkSec   = 12                         # length of each audio grab (long enough for a full sentence)
@@ -30,7 +32,8 @@ $Chunk      = "$env:TEMP\alma-listen.wav"      # raw grab (silence check runs on
 $SendChunk  = "$env:TEMP\alma-listen-send.wav" # filtered copy actually sent (voice boosted)
 
 # --- Startup: load token + rtsp url -----------------------------------------
-if (-not (Test-Path $TokenFile)) { Write-Host "ERROR: token file not found: $TokenFile"; exit 1 }
+$TokenFile = if (Test-Path $ListenerTokenFile) { $ListenerTokenFile } else { $BridgeTokenFile }
+if (-not (Test-Path $TokenFile)) { Write-Host "ERROR: listener/bridge token file not found"; exit 1 }
 if (-not (Test-Path $RtspFile))  { Write-Host "ERROR: rtsp file not found: $RtspFile";   exit 1 }
 if (-not (Test-Path $Ffmpeg))    { Write-Host "ERROR: ffmpeg not found: $Ffmpeg";        exit 1 }
 
@@ -40,6 +43,7 @@ if ([string]::IsNullOrEmpty($Token)) { Write-Host "ERROR: token file empty"; exi
 if ([string]::IsNullOrEmpty($Rtsp))  { Write-Host "ERROR: rtsp file empty";  exit 1 }
 
 $Headers = @{ Authorization = "Bearer $Token" }
+$LastHeartbeat = [datetime]::MinValue
 Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') camera listener started (room=$Room, chunk=$ChunkSec s)"
 
 # --- Helpers ----------------------------------------------------------------
@@ -54,7 +58,14 @@ function Get-MeanVolumeDb($wav) {
 # --- Main loop --------------------------------------------------------------
 while ($true) {
     try {
-        # 1. Grab one audio chunk from the camera mic (no video, mono 16 kHz).
+        # 1. Authenticated heartbeat makes listener health visible server-side.
+        if (((Get-Date) - $LastHeartbeat).TotalSeconds -ge 30) {
+            Invoke-RestMethod -Method GET "$Api/api/assistant/internal/camera-listen?room=$Room" `
+                -Headers $Headers -TimeoutSec 20 | Out-Null
+            $LastHeartbeat = Get-Date
+        }
+
+        # 2. Grab one audio chunk from the camera mic (no video, mono 16 kHz).
         if (Test-Path $Chunk) { Remove-Item $Chunk -ErrorAction SilentlyContinue }
         & $Ffmpeg -hide_banner -loglevel error -rtsp_transport tcp -i $Rtsp `
             -t $ChunkSec -vn -ac 1 -ar 16000 -y $Chunk 2>&1 | Out-Null
@@ -65,14 +76,14 @@ while ($true) {
             continue
         }
 
-        # 2. Skip silence locally — don't pay to transcribe an empty room.
+        # 3. Skip silence locally — don't pay to transcribe an empty room.
         $vol = Get-MeanVolumeDb $Chunk
         if ($vol -lt $SilenceDb) {
             # quiet chunk; loop straight into the next grab (no gap)
             continue
         }
 
-        # 3. Speech present — boost the distant voice (highpass kills hum,
+        # 4. Speech present — boost the distant voice (highpass kills hum,
         #    dynaudnorm lifts far-field speech) and send THAT copy for STT.
         #    The silence check above ran on the RAW grab, so normalization
         #    cannot trick it into transcribing an empty room.

@@ -1,7 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { connectionStateForAgora, isExpectedAgoraPeer, webCallErrorCode } from '../office-call-web-policy'
+import {
+  connectionStateForAgora,
+  isExpectedAgoraPeer,
+  isRecoverableOutgoingOfficeCall,
+  webCallErrorCode,
+} from '../office-call-web-policy'
 import { canClaimWebCallLease } from '../office-call-web-lease'
 
 describe('Office web call policy', () => {
@@ -44,5 +49,57 @@ describe('Office web call policy', () => {
       expect(canClaimWebCallLease(active, `tab-b-${call}`, now)).toBe(false)
       expect(canClaimWebCallLease(active, `tab-b-${call}`, active.expiresAt)).toBe(true)
     }
+  })
+
+  it('never recovers a canonically-ended or locally-dismissed outgoing call', () => {
+    const nowMs = Date.parse('2026-07-19T00:00:00.000Z')
+    const call = {
+      id: 'call-1',
+      kind: 'call',
+      outgoingByMe: true,
+      endedAt: null,
+      canonicalState: 'ENDED',
+      createdAt: new Date(nowMs - 5_000).toISOString(),
+    }
+    expect(isRecoverableOutgoingOfficeCall({ call, nowMs })).toBe(false)
+    expect(isRecoverableOutgoingOfficeCall({
+      call: { ...call, canonicalState: 'CONNECTED' },
+      nowMs,
+      locallyDismissed: true,
+    })).toBe(false)
+  })
+
+  it('ages legacy/ringing recovery out after the normal ring window', () => {
+    const nowMs = Date.parse('2026-07-19T00:00:00.000Z')
+    const base = {
+      id: 'call-2',
+      kind: 'call',
+      outgoingByMe: true,
+      endedAt: null,
+      canonicalState: null,
+    }
+    expect(isRecoverableOutgoingOfficeCall({
+      call: { ...base, createdAt: new Date(nowMs - 30_000).toISOString() },
+      nowMs,
+    })).toBe(true)
+    expect(isRecoverableOutgoingOfficeCall({
+      call: { ...base, createdAt: new Date(nowMs - 61_000).toISOString() },
+      nowMs,
+    })).toBe(false)
+  })
+
+  it('keeps a fresh canonical connected call recoverable across a reload', () => {
+    const nowMs = Date.parse('2026-07-19T00:00:00.000Z')
+    expect(isRecoverableOutgoingOfficeCall({
+      call: {
+        id: 'call-3',
+        kind: 'call',
+        outgoingByMe: true,
+        endedAt: null,
+        canonicalState: 'RECONNECTING',
+        createdAt: new Date(nowMs - 30 * 60_000).toISOString(),
+      },
+      nowMs,
+    })).toBe(true)
   })
 })

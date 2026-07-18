@@ -2892,22 +2892,28 @@ model AgentKnownPerson {
 // oldest queued job, downloads the signed MP3 and plays it through the chosen
 // camera's speaker via go2rtc. Stale queued jobs expire (never play late).
 model AgentCameraSpeakJob {
-  id          String    @id @default(uuid())
+  id             String    @id @default(uuid())
   /// go2rtc stream name on the office PC: workroom | entrance | boss
-  stream      String    @default("workroom")
-  text        String    @db.Text
+  stream         String    @default("workroom")
+  text           String    @db.Text
   /// agent-files storage path of the synthesized MP3
-  audioPath   String    @map("audio_path")
+  audioPath      String    @map("audio_path")
   /// queued → delivered → done | failed
-  status      String    @default("queued")
-  error       String?   @db.Text
-  createdAt   DateTime  @default(now()) @map("created_at")
-  deliveredAt DateTime? @map("delivered_at")
-  doneAt      DateTime? @map("done_at")
+  status         String    @default("queued")
+  error          String?   @db.Text
+  createdAt      DateTime  @default(now()) @map("created_at")
+  deliveredAt    DateTime? @map("delivered_at")
+  /// Unique claim identity. New bridges echo it in the ack; legacy bridges are
+  /// accepted until camera_bridge_require_lease_token is enabled after upgrade.
+  leaseToken     String?   @map("lease_token")
+  leaseExpiresAt DateTime? @map("lease_expires_at")
+  attemptCount   Int       @default(0) @map("attempt_count")
+  doneAt         DateTime? @map("done_at")
   /// Owner has been told the outcome (✅ বেজেছে / ⚠️ বাজেনি) — set by the sweep.
-  notifiedAt  DateTime? @map("notified_at")
+  notifiedAt     DateTime? @map("notified_at")
 
   @@index([status, createdAt])
+  @@index([status, leaseExpiresAt])
   @@map("agent_camera_speak_jobs")
 }
 
