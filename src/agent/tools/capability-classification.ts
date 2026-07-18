@@ -134,6 +134,7 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   add_staff_task_now: write('staff', 'medium'),
   send_dispatch_correction_notice: stage('staff'),
   send_staff_announcement: stage('staff'),
+  call_staff: stage('staff', 'high'),
   update_staff_task_status: write('staff'),
   set_staff_task_due: { domain: 'staff', mode: 'write', risk: 'medium', proof: 'external' },
   update_staff_task_profile: write('staff'),
