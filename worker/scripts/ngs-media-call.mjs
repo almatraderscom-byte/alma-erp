@@ -35,7 +35,7 @@ const responseXml = '<?xml version="1.0" encoding="UTF-8"?>' +
   P('id', id) + P('exp', String(exp)) + P('t', t) +
   P('firstMessage', first) + P('purpose', purpose) + P('recipientName', 'Maruf boss') +
   P('speaker', SPEAKER) + P('ttsModel', TTSMODEL) +
-  '</stream></connect></response>'
+  '</stream></connect></response>' // hang-up is done via DELETE /api/v1/call/{id}, not a trailing verb
 
 const body = new URLSearchParams({ to: TO, from: FROM, responseXml })
 const res = await fetch(`${API}/api/v1/call`, {

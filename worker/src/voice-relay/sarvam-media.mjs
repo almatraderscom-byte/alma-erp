@@ -263,26 +263,48 @@ class SarvamCall {
     if (this.ended || !this.streamSid) return
     this._buf = null // drop any half-collected caller audio; we're taking the floor
     const mu = pcm16ToMuLaw(pcm)
-    for (let off = 0; off < mu.length; off += 160) {
-      let frame = mu.subarray(off, off + 160)
-      if (frame.length < 160) frame = Buffer.concat([frame, Buffer.alloc(160 - frame.length, 0xff)]) // μ-law silence pad
-      this.sendTwilio({ event: 'media', [this.streamKey]: this.streamSid, media: { payload: frame.toString('base64') } })
-    }
     this._markSeq = (this._markSeq || 0) + 1
     const name = 'm' + this._markSeq
     this._marks = this._marks || new Set()
     this._marks.add(name)
     this.speaking = true
-    this.sendTwilio({ event: 'mark', [this.streamKey]: this.streamSid, mark: { name } })
-    // Twilio echoes the mark once the audio has PLAYED, which releases the floor.
-    // NGS does NOT reliably echo marks, so without a fallback `speaking` would stay
-    // true forever and the agent would never listen again. Release it on a duration
-    // timer (μ-law 8 kHz = 8000 bytes/sec). onMark guards on membership, so if a real
-    // echo (or another turn) already cleared this mark, the timer is a harmless no-op.
+
     if (this.isNgs) {
-      const ms = (mu.length / 8000) * 1000 + 500
-      setTimeout(() => { if (this._marks?.has(name)) this.onMark(name) }, ms)
+      // Twilio buffers a whole line and plays it on its own clock; NGS has no such
+      // jitter buffer, so bursting a line overruns it and the owner hears "ঝিরঝির".
+      // Send CLOCK-DRIVEN in real time instead: keep ~100 ms of audio ahead of the wall
+      // clock, checked every 10 ms. Being clock-driven (send whatever is *due*, not a
+      // fixed 20 ms pacer) makes it robust to the busy worker event loop — the very
+      // jitter that made 20 ms pacing static on Twilio. NGS doesn't echo marks, so the
+      // floor is released once the last frame is queued (+ a short playout tail).
+      if (this._pacer) clearInterval(this._pacer)
+      const FB = 160, FMS = 20, LEAD = 5
+      let sent = 0
+      const start = Date.now()
+      this._pacer = setInterval(() => {
+        if (this.ended) { clearInterval(this._pacer); this._pacer = null; return }
+        const due = Math.floor((Date.now() - start) / FMS) + LEAD
+        while (sent < due && sent * FB < mu.length) {
+          let frame = mu.subarray(sent * FB, sent * FB + FB)
+          if (frame.length < FB) frame = Buffer.concat([frame, Buffer.alloc(FB - frame.length, 0xff)])
+          this.sendTwilio({ event: 'media', [this.streamKey]: this.streamSid, media: { payload: frame.toString('base64') } })
+          sent++
+        }
+        if (sent * FB >= mu.length) {
+          clearInterval(this._pacer); this._pacer = null
+          setTimeout(() => { if (this._marks?.has(name)) this.onMark(name) }, 250)
+        }
+      }, 10)
+      return
     }
+
+    // Twilio: hand the whole line over AT ONCE — it buffers and plays on its own clock.
+    for (let off = 0; off < mu.length; off += 160) {
+      let frame = mu.subarray(off, off + 160)
+      if (frame.length < 160) frame = Buffer.concat([frame, Buffer.alloc(160 - frame.length, 0xff)]) // μ-law silence pad
+      this.sendTwilio({ event: 'media', streamSid: this.streamSid, media: { payload: frame.toString('base64') } })
+    }
+    this.sendTwilio({ event: 'mark', streamSid: this.streamSid, mark: { name } })
   }
 
   /** Twilio echoes a mark once that audio has actually PLAYED out. */
@@ -294,11 +316,16 @@ class SarvamCall {
     }
   }
 
-  haltPlayback() { this.speaking = false; this._marks?.clear() }
+  haltPlayback() {
+    this.speaking = false
+    if (this._pacer) { clearInterval(this._pacer); this._pacer = null }
+    this._marks?.clear()
+  }
 
-  /** Caller barged in — abort generation and cut Twilio's buffered audio at once. */
+  /** Caller barged in — abort generation and cut buffered/queued audio at once. */
   bargeIn() {
     this.pendingGen?.abort()
+    if (this._pacer) { clearInterval(this._pacer); this._pacer = null } // stop the NGS pacer
     this._marks?.clear()
     if (this.speaking) {
       this.speaking = false
