@@ -69,17 +69,91 @@ async function isCsHandledConversation(fbConversationId) {
   }
 }
 
-async function fbGet(pageId, path, token) {
+async function fbGet(pageId, path, token, opts = {}) {
   const url = `https://graph.facebook.com/${META_GRAPH_VERSION()}/${pageId}${path}&access_token=${token}`
   // Graph queries here are heavy (conversations + nested messages); a hard 15s ceiling
   // with no retry was timing out and spamming the worker error log. Use resilientFetch
   // (30s + one retry on transient/abort).
-  const res = await resilientFetch(url, { timeoutMs: 30_000, retries: 1 })
+  const res = await resilientFetch(url, { timeoutMs: opts.timeoutMs ?? 30_000, retries: opts.retries ?? 1 })
+  const text = await res.text()
+  let json = null
+  try { json = text ? JSON.parse(text) : null } catch { /* non-JSON body */ }
   if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`FB API ${res.status}: ${err.slice(0, 200)}`)
+    // Surface the real Facebook error (code / is_transient) so callers can tell a
+    // Facebook-side blip (code 2, self-heals) from an actionable token/permission fault.
+    const fbErr = json?.error ?? {}
+    const e = new Error(`FB API ${res.status}: ${(fbErr.message ?? text ?? '').slice(0, 200)}`)
+    e.httpStatus = res.status
+    e.fbCode = fbErr.code
+    e.fbSubcode = fbErr.error_subcode
+    e.fbTransient = Boolean(fbErr.is_transient)
+    throw e
   }
-  return res.json()
+  return json
+}
+
+// One combined conversations+messages query is fast but fragile: a SINGLE unreadable
+// thread on a page makes Facebook 500 the whole edge (observed 2026-07-18 on Alma Online
+// Shop — feed worked, /conversations returned code 2 persistently). So: try the combined
+// query first (cheap on healthy pages), and only if it fails fall back to a lightweight
+// conversation list + per-thread message fetch, isolating the bad thread(s).
+const CONV_MSG_FIELDS = 'messages{id,from,message,created_time,attachments}'
+
+async function fetchConversations(page, token) {
+  try {
+    const data = await fbGet(
+      page.id,
+      `/conversations?fields=id,updated_time,participants,${CONV_MSG_FIELDS}&limit=20`,
+      token,
+    )
+    return { conversations: data.data ?? [], degraded: false, skipped: 0 }
+  } catch (combinedErr) {
+    console.warn(
+      `[messenger] combined conversations query failed for ${page.name} (${combinedErr.message}) — trying per-thread fallback`,
+    )
+    // If even the bare list fails, it is page/permission level, not one bad thread — rethrow.
+    const list = await fbGet(page.id, '/conversations?fields=id,updated_time,participants&limit=20', token)
+    const conversations = []
+    let skipped = 0
+    let consecutiveFail = 0
+    for (const conv of list.data ?? []) {
+      try {
+        const full = await fbGet(conv.id, `?fields=${CONV_MSG_FIELDS}`, token, { timeoutMs: 12_000, retries: 0 })
+        conversations.push({ ...conv, messages: full.messages })
+        consecutiveFail = 0
+      } catch (threadErr) {
+        skipped++
+        consecutiveFail++
+        console.warn(`[messenger] skipping unreadable thread ${conv.id} on ${page.name}: ${threadErr.message}`)
+        // Broad failure (not one bad thread) → surface as a page error instead of looping 20×.
+        if (consecutiveFail >= 6) {
+          const e = new Error(`per-thread fallback failing broadly: ${threadErr.message}`)
+          e.httpStatus = threadErr.httpStatus
+          e.fbCode = threadErr.fbCode
+          e.fbTransient = threadErr.fbTransient
+          throw e
+        }
+      }
+    }
+    return { conversations, degraded: true, skipped }
+  }
+}
+
+// Turn a raw page-scan error into an owner-facing verdict: actionable faults (bad token,
+// missing permission) get a precise fix; Facebook-side transient errors do not page the owner.
+function classifyPageError(err, page) {
+  const code = err.fbCode
+  if (code === 190) {
+    return { page: page.name, code, actionable: true, message: err.message,
+      hint: 'page token অকার্যকর/মেয়াদোত্তীর্ণ — Business Manager-এ নতুন token নিন।' }
+  }
+  if (code === 200 || code === 10 || code === 3 || code === 100) {
+    return { page: page.name, code, actionable: true, message: err.message,
+      hint: 'inbox পড়ার permission নেই — Business Manager → App → pages_messaging access দিন।' }
+  }
+  // code 2 / HTTP 5xx / is_transient = Facebook-side, self-heals.
+  return { page: page.name, code, actionable: false, message: err.message,
+    hint: 'Facebook সাময়িক সমস্যা — নিজে ঠিক হবে, কিছু করতে হবে না।' }
 }
 
 /**
@@ -200,6 +274,7 @@ export async function runMessengerScan({ supabase, bot }) {
   let totalAlerts = 0
   let pagesScanned = 0
   const scanErrors = []
+  const degradedPages = []
 
   for (const page of PAGES) {
     const token = process.env[page.envKey]
@@ -220,14 +295,13 @@ export async function runMessengerScan({ supabase, bot }) {
     if (!tokenOk) continue
 
     try {
-      // Fetch recent conversations
-      const convData = await fbGet(
-        page.id,
-        '/conversations?fields=id,updated_time,participants,messages{id,from,message,created_time,attachments}&limit=20',
-        token,
-      )
+      // Fetch recent conversations (resilient: recovers good threads if one thread is unreadable)
+      const { conversations, degraded, skipped } = await fetchConversations(page, token)
+      if (degraded && skipped > 0) {
+        degradedPages.push({ name: page.name, pageId: page.id, skipped })
+      }
 
-      for (const conv of convData.data ?? []) {
+      for (const conv of conversations) {
         const messages = conv.messages?.data ?? []
 
         // Reply-time tracking (no message content stored)
@@ -334,7 +408,7 @@ export async function runMessengerScan({ supabase, bot }) {
       pagesScanned++
     } catch (err) {
       console.error(`[messenger] scan error for ${page.name}:`, err.message)
-      scanErrors.push(`${page.name}: ${err.message}`)
+      scanErrors.push(classifyPageError(err, page))
     }
   }
 
@@ -357,17 +431,53 @@ export async function runMessengerScan({ supabase, bot }) {
     )
   }
 
-  if (scanErrors.length > 0) {
-    console.error(`[messenger] scan errors: ${scanErrors.join('; ')}`)
+  // Degraded pages (recovered via per-thread fallback) — tell the owner ONCE per Dhaka day,
+  // not every 15 min, and make clear his token is fine and no action is needed.
+  for (const dp of degradedPages) {
+    const today = dhakaToday()
+    const dayStart = dhakaDayStartUtc(today)
+    const dedupId = `scan_degraded_${dp.pageId}`
+    const { data: already } = await supabase
+      .from('messenger_alerts')
+      .select('id')
+      .eq('conversation_id', dedupId)
+      .eq('alert_type', 'scan_degraded')
+      .gte('detected_at', dayStart)
+      .limit(1)
+    if (already?.length) continue
+    await supabase.from('messenger_alerts').insert({
+      id:              crypto.randomUUID(),
+      page_id:         dp.pageId,
+      conversation_id: dedupId,
+      alert_type:      'scan_degraded',
+      detected_at:     new Date().toISOString(),
+      detected_date:   today,
+    }).catch((e) => console.warn('[messenger] degraded dedup insert failed:', e.message))
     if (bot && ownerChatId) {
       await bot.telegram.sendMessage(
         ownerChatId,
-        `⚠️ Messenger scan আংশিক ব্যর্থ: ${scanErrors.map(e => e.split(':')[0]).join(', ')} — log দেখুন।`,
-      ).catch((e) => console.warn('[messenger] error notification failed:', e.message))
+        `ℹ️ ${dp.name}: Facebook ${dp.skipped}টি thread পড়তে পারছে না, বাকি inbox ঠিকঠাক scan হয়েছে। আপনার token ঠিক আছে — কিছু করতে হবে না।`,
+      ).catch((e) => console.warn('[messenger] degraded notify failed:', e.message))
     }
   }
 
-  console.log(`[messenger] scan complete — ${pagesScanned}/${PAGES.length} pages scanned, ${totalAlerts} new alerts, ${scanErrors.length} errors (cs_mode=${csMode})`)
+  if (scanErrors.length > 0) {
+    console.error(`[messenger] scan errors: ${scanErrors.map(e => `${e.page}: ${e.message}`).join('; ')}`)
+    // Only page the owner for ACTIONABLE faults (bad token / missing permission) with the exact
+    // fix. Facebook-side transient errors (code 2, self-heal) are logged only — no 15-min spam,
+    // no useless "log দেখুন" (the log lived on the VPS where the owner could not see it).
+    const actionable = scanErrors.filter(e => e.actionable)
+    if (actionable.length > 0 && bot && ownerChatId) {
+      await bot.telegram.sendMessage(
+        ownerChatId,
+        `⚠️ Messenger scan সমস্যা:\n${actionable.map(e => `• ${e.page}: ${e.hint}`).join('\n')}`,
+      ).catch((e) => console.warn('[messenger] error notification failed:', e.message))
+    } else {
+      console.warn('[messenger] only Facebook-side transient errors this scan — owner not paged')
+    }
+  }
+
+  console.log(`[messenger] scan complete — ${pagesScanned}/${PAGES.length} pages scanned, ${totalAlerts} new alerts, ${scanErrors.length} errors, ${degradedPages.length} degraded (cs_mode=${csMode})`)
   return {
     dutyStatus: scanErrors.length === PAGES.length ? 'failed' : pagesScanned > 0 ? 'done' : 'skipped',
     dutyDetail: `${pagesScanned} page scanned, ${totalAlerts} alerts${scanErrors.length ? `, ${scanErrors.length} error` : ''}`,
