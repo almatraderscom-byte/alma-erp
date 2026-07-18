@@ -89,6 +89,9 @@ jobs:
       - name: Install JS dependencies (Capacitor plugins)
         run: npm ci --ignore-scripts
 
+      - name: Generate Prisma client for release tests
+        run: npx prisma generate
+
       - name: Calling release tests and typecheck
         run: |
           npx vitest run src/agent/lib/__tests__/office-call*.test.ts
