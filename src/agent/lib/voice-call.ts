@@ -164,6 +164,11 @@ export interface PlaceCallInput {
   /** Sarvam two-way path only: male → ashutosh/bulbul:v3, female → anushka/bulbul:v2.
    * Resolved from Boss's words (voice-provider-intent). Defaults to female. */
   voiceGender?: 'male' | 'female'
+  /** Who the agent is talking to, so the Gemini Live bot picks the right persona:
+   * 'owner' (companion, the default), 'staff' (calling an ALMA staff member on the
+   * owner's behalf), or 'contact' (calling a saved family/friend contact). Only the
+   * ngs (Gemini Live) provider uses this today. */
+  callType?: 'owner' | 'staff' | 'contact'
 }
 
 export interface PlaceCallResult {
@@ -208,7 +213,7 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
   })
 
   if (config.provider === 'ngs') {
-    return placeNgsLiveCall(config, record.id, toNumber, purpose, input.recipientName, input.voiceGender)
+    return placeNgsLiveCall(config, record.id, toNumber, purpose, input.recipientName, input.voiceGender, input.callType)
   }
 
   if (config.provider === 'sarvam') {
@@ -524,6 +529,7 @@ async function placeNgsLiveCall(
   purpose: string,
   recipientName: string | undefined,
   voiceGender: 'male' | 'female' | undefined,
+  callType: 'owner' | 'staff' | 'contact' | undefined,
 ): Promise<PlaceCallResult> {
   try {
     const exp = Date.now() + 15 * 60_000
@@ -535,6 +541,7 @@ async function placeNgsLiveCall(
       `<response><connect><stream name="alma" url="${escapeXmlAttr(config.ngsLiveWsUrl)}">` +
       P('id', callRecordId) + P('exp', String(exp)) + P('t', t) +
       P('purpose', purpose) + P('recipientName', recipientName ?? '') + P('voice', voice) +
+      P('callType', callType ?? 'owner') +
       '</stream></connect></response>'
 
     const body = new URLSearchParams({ to: toNumber, from: config.ngsFrom, responseXml })

@@ -8,6 +8,7 @@
  * just get a Trading-only staff pool and Trading-only pending actions.
  */
 import { prisma } from '@/lib/prisma'
+import { normalizeOutboundPhone } from '@/lib/twilio/phone'
 import { getActiveDrivingStaffIds } from '@/lib/driving-mode'
 import { buildStaffTaskProposal, _resetProfileCache } from '@/agent/lib/staff-task-proposal'
 import { buildTradingTaskProposal } from '@/agent/lib/trading-task-proposal'
@@ -430,6 +431,76 @@ const get_all_staff: AgentTool = {
         getActiveDrivingStaffIds(businessId),
       ])
       return { success: true, data: staff.map((s: { id: string }) => ({ ...s, driving: drivingIds.has(s.id) })) }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+// ── call_staff ────────────────────────────────────────────────────────────────
+
+const call_staff: AgentTool = {
+  name: 'call_staff',
+  description:
+    'Places a LIVE two-way phone call to an ALMA staff member on the owner\'s behalf — for a task, reminder, or follow-up. The agent speaks Bangla as the owner\'s agent (never pretends to be the owner), hears the staff\'s replies, and after the call sends the owner a transcript + Bangla summary. Use this — NOT send_staff_announcement (which is a text/voice-note broadcast) — when the owner wants to actually TALK to / ask / remind a staff member by phone: "রহিমকে কল দিয়ে বলো / জিজ্ঞেস করো / মনে করিয়ে দাও / কনফার্ম করো"। Resolve the staff by name (see get_all_staff). Creates a confirm card — the owner approves before it dials. Cost is high; use sparingly.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      staffName: { type: 'string', description: 'Staff member name (as in get_all_staff).' },
+      purpose: { type: 'string', description: 'Why we are calling, in Bangla — the task/reminder/question that steers the call (e.g. "কালকের ডেলিভারিগুলো রেডি আছে কিনা জেনে নাও").' },
+      firstMessage: { type: 'string', description: 'Optional first Bangla line the agent speaks. A sensible default is used if omitted.' },
+      conversationId: { type: 'string', description: 'Server-managed — omit; the server fills it automatically.' },
+    },
+    required: ['staffName', 'purpose'],
+  },
+  handler: async (input) => {
+    try {
+      const businessId = bizFrom(input)
+      const staffName = String(input.staffName ?? '').trim()
+      const purpose = String(input.purpose ?? '').trim()
+      if (!staffName) return { success: false, error: 'staffName লাগবে' }
+      if (!purpose) return { success: false, error: 'purpose লাগবে' }
+
+      // Staff phone lives on the linked ERP user (agent_staff has no phone of its own).
+      const staff = await db.agentStaff.findFirst({
+        where: { name: { contains: staffName, mode: 'insensitive' }, active: true, businessId },
+        select: { id: true, name: true, user: { select: { name: true, phone: true } } },
+      })
+      if (!staff) {
+        return { success: false, error: `"${staffName}" নামে active স্টাফ পাওয়া যায়নি। get_all_staff দিয়ে নাম চেক করুন।` }
+      }
+      const rawPhone: string | null = staff.user?.phone ?? null
+      if (!rawPhone) {
+        return { success: false, error: `${staff.name}-এর ফোন নম্বর সিস্টেমে সেভ নেই — ফোনে কল করা যাবে না। (ওই স্টাফের ERP ইউজারে ফোন যোগ করলে কল করা যাবে; আপাতত Telegram-এ মেসেজ পাঠানো যায়।)` }
+      }
+      const phone = normalizeOutboundPhone(rawPhone)
+      if (!phone) return { success: false, error: `${staff.name}-এর নম্বরটি ঠিক নেই (${rawPhone})।` }
+
+      const firstMessage = String(input.firstMessage ?? '').trim() || 'আসসালামু আলাইকুম, আমি বসের এজেন্ট বলছি।'
+      // Staff calls default to the male agent voice (Charon); owner voice pref, if the
+      // server injected one, can flip it to female.
+      const pref = input.ownerVoicePref as { gender?: 'male' | 'female' } | undefined
+      const voiceGender: 'male' | 'female' = pref?.gender === 'female' ? 'female' : 'male'
+
+      const action = await db.agentPendingAction.create({
+        data: {
+          conversationId: convId(input) ?? null,
+          businessId,
+          type: 'agent_voice_call',
+          payload: { phone, toNumber: phone, recipientName: staff.name, purpose, firstMessage, voiceGender, callType: 'staff' },
+          summary: `📞 ${staff.name} (স্টাফ) কে লাইভ কল — "${purpose.slice(0, 60)}"`,
+          costEstimate: 0.5,
+          status: 'pending',
+        },
+      })
+      return {
+        success: true,
+        data: {
+          status: 'confirm_required',
+          pendingActionId: action.id,
+          message: `${staff.name} কে লাইভ কল করার জন্য confirm করুন। কথা শেষ হলে সারাংশ পাবেন।`,
+        },
+      }
     } catch (err) {
       return { success: false, error: String(err) }
     }
@@ -2110,6 +2181,7 @@ const get_weekly_report_card: AgentTool = {
 export const STAFF_TOOLS: AgentTool[] = [
   prepare_staff_task_proposal,
   get_all_staff,
+  call_staff,
   get_staff_tasks,
   propose_staff_tasks,
   merge_into_proposal,
