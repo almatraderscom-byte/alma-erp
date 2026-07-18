@@ -5,7 +5,7 @@
 	<key>ALMABaseURL</key>
 	<string>$(ALMA_BASE_URL)</string>
 	<key>ALMAGitCommit</key>
-	<string>1872a255ca</string>
+	<string>69e4cabeaa</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.almatraders.erp.refresh</string>
