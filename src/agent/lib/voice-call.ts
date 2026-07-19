@@ -320,6 +320,16 @@ function escapeXmlAttr(text: string): string {
 }
 
 /**
+ * Format a +E.164 number for NGS/infosoftbd dialing. BD mobiles terminate on the LOCAL
+ * 01XXXXXXXXX form (+8801319628428 → 01319628428); the 880 form returns "Busy". Non-BD
+ * numbers just drop the leading '+'.
+ */
+export function ngsDialFormat(e164: string): string {
+  if (e164.startsWith('+880')) return '0' + e164.slice(4)
+  return e164.replace(/^\+/, '')
+}
+
+/**
  * Two-way call via Twilio ConversationRelay: Twilio streams STT + speaks Gemini's
  * replies in Google's bn-IN-Chirp3-HD-Charon voice (the same voice as one-way
  * calls — far better Bangla than ElevenLabs realtime). The conversation brain is
@@ -544,10 +554,19 @@ async function placeNgsLiveCall(
       P('callType', callType ?? 'owner') +
       '</stream></connect></response>'
 
-    // NGS outbound routes match 01…/880… WITHOUT a leading '+' (normalizeOutboundPhone
-    // returns +E.164 for Twilio); sending '+880…' → NGS "No route found" (code 3).
-    const ngsTo = toNumber.replace(/^\+/, '')
+    // NGS terminates BD mobiles on the LOCAL 01XXXXXXXXX form. normalizeOutboundPhone
+    // returns +E.164 (for Twilio); '+880…' → "No route found", and even the '880…' form
+    // returns "Busy / never established" (the trunk can't terminate it). Dial 01-local.
+    const ngsTo = ngsDialFormat(toNumber)
+    // Ask NGS to POST every call-state change (Dialing/Ringing/Busy/No-answer/Answered/
+    // Ended) to our status webhook, so a call that never connects (busy/no-answer/failed)
+    // is still reported to the owner + chat — not left stuck at 'ringing' forever.
+    const appUrl = (process.env.APP_URL ?? '').replace(/\/$/, '')
+    const statusSecret = process.env.NGS_INBOUND_SECRET ?? ''
     const body = new URLSearchParams({ to: ngsTo, from: config.ngsFrom, responseXml })
+    if (appUrl && statusSecret) {
+      body.set('statusCallback', `${appUrl}/api/assistant/voice-call/ngs-status?rid=${encodeURIComponent(callRecordId)}&k=${encodeURIComponent(statusSecret)}`)
+    }
     const res = await fetch(`${config.ngsApiBase}/api/v1/call`, {
       method: 'POST',
       headers: {

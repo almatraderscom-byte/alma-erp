@@ -398,8 +398,9 @@ export async function makeNgsCall(text, opts = {}) {
     const res = await fetch(`${apiBase}/api/v1/call`, {
       method: 'POST',
       headers: { 'X-Authorization': key, 'X-Authorization-Secret': secret, 'Content-Type': 'application/x-www-form-urlencoded' },
-      // NGS routes match 01…/880… without a leading '+' → strip it (No route found otherwise).
-      body: new URLSearchParams({ to: String(toNumber).replace(/^\+/, ''), from, responseXml }),
+      // NGS terminates BD mobiles on the LOCAL 01XXXXXXXXX form (+8801…→01…); the 880 form
+      // returns Busy and '+880…' → No route found.
+      body: new URLSearchParams({ to: String(toNumber).startsWith('+880') ? '0' + String(toNumber).slice(4) : String(toNumber).replace(/^\+/, ''), from, responseXml }),
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok || !data.call_id) {
