@@ -378,31 +378,41 @@ const probeDurableQueue: Probe = async () => {
 
 /** Autonomy ladder: effectiveStage() is not called by the guard (GAP-03). */
 const probeAutonomyLadder: Probe = async () => {
-  // Real signal: any per-class rollout KV + any SLO/action-run rows the ladder
-  // would produce. With no guard call-site, promotions never happen from live
-  // outcomes, so this stays `unwired` until Phase 64 wires effectiveStage().
-  let classesConfigured = 0
+  // Phase 64 wired effectiveStage() into the central guard; it now governs
+  // agent-initiated effects. In production it runs in SHADOW (annotate-only)
+  // and every class defaults 'off', so it OBSERVES but does not yet govern —
+  // that is `shadow`, not `unwired`. A promoted class flips it to `live`.
+  let activeClasses = 0
   try {
-    const rows: Array<{ key: string }> = await db.agentKvSetting.findMany({
+    const rows: Array<{ key: string; value: string }> = await db.agentKvSetting.findMany({
       where: { key: { startsWith: 'autonomy_rollout:' } },
-      select: { key: true },
+      select: { key: true, value: true },
     })
-    classesConfigured = rows.length
+    for (const r of rows) {
+      try {
+        const stage = (JSON.parse(String(r.value)) as { stage?: string }).stage
+        if (stage && stage !== 'off') activeClasses++
+      } catch { /* skip unparseable */ }
+    }
   } catch {
     return unknownRow('autonomy_ladder', 'অটোনমি ল্যাডার', 'rollout KV পড়া যায়নি')
   }
+  const mode: EffectiveMode = activeClasses > 0 ? 'live' : 'shadow'
   return {
     id: 'autonomy_ladder',
     labelBn: 'অটোনমি ল্যাডার',
     implemented: true,
     deployed: true,
-    configured: classesConfigured > 0,
-    reachable: false,
-    effectiveMode: 'unwired',
+    configured: true,
+    reachable: true,
+    effectiveMode: mode,
     lastRealUse: null,
-    use7d: 0,
-    lastVerifiedOutcome: null,
-    blocker: 'effectiveStage() central guard-এ কল হয় না — ল্যাডার execution নিয়ন্ত্রণ করে না (Phase 64)',
+    use7d: activeClasses,
+    lastVerifiedOutcome: activeClasses > 0 ? `${activeClasses}টি class promote করা` : null,
+    blocker:
+      mode === 'shadow'
+        ? 'central guard-এ যুক্ত (Phase 64), কিন্তু prod shadow — কোনো class এখনো promote হয়নি (Phase 68 rollout)'
+        : null,
   }
 }
 
@@ -415,25 +425,25 @@ const probeServiceAdapters: Probe = async () => {
     return unknownRow('service_adapters', 'Personal/Business OS adapters', 'connection পড়া যায়নি')
   }
   const connected = rows.filter((r) => r.status === 'connected').length
-  // registerServiceAdapter() has no bootstrap (GAP-06): zero rows = unwired.
-  const mode: EffectiveMode = rows.length === 0 ? 'unwired' : connected > 0 ? 'live' : 'unused'
+  // Phase 66 imported the OS tool families into the registry + bootstrap, so the
+  // head can reach them. A service CONNECTION row (owner connects a service) is
+  // separate: none yet = `unused` (reachable, no service connected), not unwired.
+  const mode: EffectiveMode = connected > 0 ? 'live' : 'unused'
   return {
     id: 'service_adapters',
     labelBn: 'Personal/Business OS adapters',
     implemented: true,
     deployed: true,
     configured: rows.length > 0,
-    reachable: rows.length > 0 ? true : false,
+    reachable: true,
     effectiveMode: mode,
     lastRealUse: null,
-    use7d: 0,
+    use7d: connected,
     lastVerifiedOutcome: connected > 0 ? `${connected}টি service সংযুক্ত` : null,
     blocker:
-      mode === 'unwired'
-        ? 'কোনো adapter bootstrap/registration নেই; tools registry-তেও নেই (Phase 66)'
-        : mode === 'unused'
-          ? 'রেজিস্টার্ড কিন্তু কোনোটি connected নয়'
-          : null,
+      mode === 'unused'
+        ? 'tools registry-তে যুক্ত (Phase 66); কিন্তু কোনো service এখনো connected নয় (owner connect করবেন)'
+        : null,
   }
 }
 

@@ -85,11 +85,16 @@ describe('production truth — nothing configured', () => {
     expect(brief.blocker).toBeTruthy()
   })
 
-  it('marks the durable queue and service adapters as unwired (no call-site)', async () => {
+  it('reflects the post-wiring reality: durable queue unwired, ladder shadow, adapters unused', async () => {
     const truth = await getProductionTruth()
+    // Durable queue still has no production caller (Phase 65 worker follow-up).
     expect(truth.features.find((f) => f.id === 'durable_queue')!.effectiveMode).toBe('unwired')
-    expect(truth.features.find((f) => f.id === 'service_adapters')!.effectiveMode).toBe('unwired')
-    expect(truth.features.find((f) => f.id === 'autonomy_ladder')!.effectiveMode).toBe('unwired')
+    // Phase 64 wired the ladder into the guard → shadow (not unwired) until a
+    // class is promoted.
+    expect(truth.features.find((f) => f.id === 'autonomy_ladder')!.effectiveMode).toBe('shadow')
+    // Phase 66 put the OS tools in the registry → reachable; no service
+    // connected yet → unused (not unwired).
+    expect(truth.features.find((f) => f.id === 'service_adapters')!.effectiveMode).toBe('unused')
   })
 
   it('marks Instagram unknown (provider truth unprovable read-only)', async () => {
