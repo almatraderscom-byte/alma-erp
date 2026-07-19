@@ -9,6 +9,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { normalizeOutboundPhone } from '@/lib/twilio/phone'
+import { duplicateCallReason } from './personal-tools'
 import { getActiveDrivingStaffIds } from '@/lib/driving-mode'
 import { buildStaffTaskProposal, _resetProfileCache } from '@/agent/lib/staff-task-proposal'
 import { buildTradingTaskProposal } from '@/agent/lib/trading-task-proposal'
@@ -475,6 +476,10 @@ const call_staff: AgentTool = {
       }
       const phone = normalizeOutboundPhone(rawPhone)
       if (!phone) return { success: false, error: `${staff.name}-এর নম্বরটি ঠিক নেই (${rawPhone})।` }
+
+      // Deterministic anti-spam: don't stack duplicate call cards for the same number.
+      const dup = await duplicateCallReason(phone)
+      if (dup) return { success: true, data: { status: 'duplicate', message: dup } }
 
       const firstMessage = String(input.firstMessage ?? '').trim() || 'আসসালামু আলাইকুম, আমি বসের এজেন্ট বলছি।'
       // Staff calls default to the male agent voice (Charon); owner voice pref, if the

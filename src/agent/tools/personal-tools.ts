@@ -6,6 +6,41 @@ import type { AgentTool } from './registry'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+/**
+ * Deterministic guard against the head model spamming duplicate call cards. Before creating
+ * a new agent_voice_call confirm card, refuse if the SAME number already has a pending card
+ * OR a call placed in the last few minutes. Owner-reported 2026-07-19: the model re-proposed
+ * ~5 cards for one call, each approve dialing again — 4 real calls to one contact.
+ * Returns a Bangla reason string if the call should be blocked, else null.
+ */
+export async function duplicateCallReason(phone: string): Promise<string | null> {
+  const tenMinAgo = new Date(Date.now() - 10 * 60_000)
+  const threeMinAgo = new Date(Date.now() - 3 * 60_000)
+  // 1) An unresolved card for this number is already waiting.
+  const pendings: Array<{ payload: unknown }> = await db.agentPendingAction.findMany({
+    where: { type: 'agent_voice_call', status: 'pending', createdAt: { gte: tenMinAgo } },
+    select: { payload: true },
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+  })
+  const hasPending = pendings.some((a) => {
+    const p = (a.payload ?? {}) as { phone?: string; toNumber?: string }
+    return p.phone === phone || p.toNumber === phone
+  })
+  if (hasPending) {
+    return 'এই নম্বরে একটা কল কার্ড ইতিমধ্যে অনুমোদনের অপেক্ষায় আছে। নতুন কার্ড বানাবে না — ওই কার্ডটাই approve করতে বলো।'
+  }
+  // 2) A call to this number was placed very recently (initiated/ringing/completed).
+  const recent = await db.agentVoiceCall.findFirst({
+    where: { toNumber: phone, createdAt: { gte: threeMinAgo }, status: { in: ['initiated', 'ringing', 'completed'] } },
+    select: { id: true },
+  })
+  if (recent) {
+    return 'এই নম্বরে একটু আগেই একটা কল দেওয়া হয়েছে — আবার কল দেওয়ার দরকার নেই। আগের কলের ফল আসা পর্যন্ত অপেক্ষা করো।'
+  }
+  return null
+}
+
 export const add_family_contact: AgentTool = {
   name: 'add_family_contact',
   description:
@@ -189,6 +224,11 @@ export const place_agent_call: AgentTool = {
       }
       if (!phone && rawPhone) phone = normalizeOutboundPhone(rawPhone)
       if (!phone) return { success: false, error: 'নম্বরটি ঠিক নয় — 01XXXXXXXXX বা +880… দিন।' }
+
+      // Deterministic anti-spam: refuse a duplicate card if this number already has one
+      // pending or was just called (head model was re-proposing the same call every turn).
+      const dup = await duplicateCallReason(phone)
+      if (dup) return { success: true, data: { status: 'duplicate', message: dup } }
 
       const firstMessage = String(input.firstMessage ?? '').trim() || 'আসসালামু আলাইকুম, কেমন আছেন?'
       // Voice = Boss's words (male → ashutosh/v3, female → anushka/v2). Resolved from his
