@@ -180,18 +180,37 @@ export async function sendOwnerText(text: string): Promise<{ ok: boolean; error?
     return { ok: false, error: 'ASSISTANT_BOT_TOKEN or TELEGRAM_OWNER_CHAT_ID not set' }
   }
 
-  const res = await fetch(`${telegramApiBase()}/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text }),
-    signal: AbortSignal.timeout(8_000),
-  })
-
-  const data = await res.json() as { ok?: boolean; description?: string }
-  if (!res.ok || !data.ok) {
-    return { ok: false, error: data.description ?? `HTTP ${res.status}` }
+  // Telegram hard-limits one message to 4096 chars — a longer text is rejected outright
+  // (owner saw call summaries arrive half-cut). Split into ≤~3900-char parts on line
+  // boundaries and send them in order so nothing is dropped.
+  const parts = splitForTelegram(text)
+  let lastErr: string | undefined
+  for (const part of parts) {
+    const res = await fetch(`${telegramApiBase()}/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: part }),
+      signal: AbortSignal.timeout(8_000),
+    })
+    const data = await res.json() as { ok?: boolean; description?: string }
+    if (!res.ok || !data.ok) lastErr = data.description ?? `HTTP ${res.status}`
   }
-  return { ok: true }
+  return lastErr ? { ok: false, error: lastErr } : { ok: true }
+}
+
+/** Split text into Telegram-safe (<4096) chunks, preferring line breaks near the limit. */
+export function splitForTelegram(text: string, limit = 3900): string[] {
+  if (text.length <= limit) return [text]
+  const parts: string[] = []
+  let rest = text
+  while (rest.length > limit) {
+    let cut = rest.lastIndexOf('\n', limit)
+    if (cut < limit * 0.5) cut = limit // no good newline — hard-cut
+    parts.push(rest.slice(0, cut))
+    rest = rest.slice(cut).replace(/^\n/, '')
+  }
+  if (rest) parts.push(rest)
+  return parts
 }
 
 /**

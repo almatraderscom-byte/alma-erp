@@ -93,11 +93,17 @@ export async function POST(req: NextRequest) {
       .map((t) => `${t.role === 'agent' ? '🗣️ এজেন্ট' : '👤 ' + who}: ${t.message}`)
       .join('\n')
     const costLine = costBdt != null ? `💸 আনুমানিক খরচ: ৳${costBdt}\n` : ''
+    // Cap the transcript generously (sendOwnerText splits >4096 into multiple messages,
+    // so it arrives complete). The summary above is always kept whole.
+    const MAX_TRANSCRIPT = 6000
+    const convo = lines
+      ? (lines.length > MAX_TRANSCRIPT ? `${lines.slice(0, MAX_TRANSCRIPT)}\n…(বাকি অংশ সংক্ষিপ্ত করা হলো)` : lines)
+      : ''
     const message =
       `📞 কল শেষ — ${who}${mins ? ` (${mins})` : ''}\n` +
       costLine + '\n' +
       (summary ? `সারাংশ: ${summary}\n\n` : '') +
-      (lines ? `কথোপকথন:\n${lines}`.slice(0, 1500) : 'কেউ কথা বলেনি / কল ধরা হয়নি।')
+      (convo ? `কথোপকথন:\n${convo}` : 'কেউ কথা বলেনি / কল ধরা হয়নি।')
     await notifyOwner({ tier: 2, title: `কল শেষ — ${who}`, message, category: 'report' })
   } catch (err) {
     console.warn('[relay-report] owner notify failed:', err instanceof Error ? err.message : String(err))
