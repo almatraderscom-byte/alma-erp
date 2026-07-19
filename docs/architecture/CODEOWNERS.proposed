@@ -1,0 +1,16 @@
+# GENERATED — src/agent/contracts/ownership.ts (G01 / SPEC-003). Proposal only.
+
+/docs/architecture/ @alma/architecture
+/scripts/architecture/ @alma/architecture
+/src/agent/contracts/ @alma/architecture
+/artifacts/ @alma/architecture
+/prisma/schema.prisma @alma/architecture
+/package-lock.json @alma/architecture
+/package.json @alma/architecture
+/.github @alma/architecture
+/src/app/api/assistant/ @alma/agent
+/src/app/agent/ @alma/agent
+/src/agent/ @alma/agent
+/src/app/api/agent/ @alma/agent
+/src/app/ @alma/erp
+/src/lib/ @alma/erp
