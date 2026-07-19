@@ -66,9 +66,21 @@ three-dot diff against current main remains restricted to the 22 locked files.
 | Production build | PASS | Local build; deploy migration correctly skipped off Vercel |
 | Whitespace safety | PASS | `git diff --check` |
 | Locked-file scope | PASS | Only Phase 65 prompt files changed |
-| Vercel preview | PENDING | Rebuilt from the latest-main integration tip |
-| Owner-Chrome browser proof | PENDING | Recorded after live preview exercise |
+| Vercel preview | PASS | Ready deployment `8oQFMN9CURpMDwE1bFpFABKzDL5K` from integrated tip `9ebe9c95` |
+| Owner-Chrome browser proof | PASS | Authenticated Office Hub exercised on the exact branch preview; desktop and 390×844 screenshots captured |
 | Physical camera proof | NOT IN PHASE | Requires later Office-PC/hardware session |
+
+### Live browser proof
+
+- Preview: `https://alma-erp-git-agent-phase-65-maruf-s-projects2.vercel.app/portal/office`
+- The authenticated Office Hub remained usable after a hard navigation/reload; no
+  ended, dismissed, or stale call recovery overlay appeared.
+- The read-only Office History panel opened and closed successfully without starting
+  a call, sending a reminder, or mutating business data.
+- Default desktop and 390×844 mobile viewports both rendered the Office Hub with no
+  document-level horizontal overflow. The temporary mobile override was reset.
+- The live preview emitted zero browser-console errors and zero warnings during the
+  exercised flow.
 
 ## Files
 
@@ -85,5 +97,5 @@ three-dot diff against current main remains restricted to the 22 locked files.
   merged only into the isolated phase branch to protect concurrent work.
 - No claim of physical speaker playback or staff audio capture is made. Those require
   human hearing/microphone proof at the office.
-- Preview URL and browser screenshot proof are added only after the exact branch build
-  is live and exercised in the owner's Chrome.
+- The preview URL and screenshot proof above were recorded only after the exact branch
+  build was live and authenticated in the owner's Chrome.
