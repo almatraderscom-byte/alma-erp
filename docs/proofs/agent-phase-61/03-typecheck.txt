@@ -1,0 +1,2 @@
+npx tsc --noEmit after prisma generate: 0 errors (project-wide, incl. new files).
+tsc error count: 0

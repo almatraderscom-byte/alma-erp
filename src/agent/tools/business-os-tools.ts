@@ -5,6 +5,7 @@
  */
 import type { AgentTool } from './registry'
 import { assertOpAllowed, getServiceAdapter } from '@/agent/lib/integrations/service-registry'
+import { ensureServiceAdaptersBootstrapped } from '@/agent/lib/integrations/bootstrap'
 
 export const business_os_read: AgentTool = {
   name: 'business_os_read',
@@ -15,14 +16,15 @@ export const business_os_read: AgentTool = {
     type: 'object' as const,
     properties: {
       service: { type: 'string', description: "Adapter id, e.g. 'erp-orders'." },
-      op: { type: 'string' },
-      params: { type: 'object', additionalProperties: true },
+      op: { type: 'string', description: 'Read op declared by the adapter.' },
+      params: { type: 'object', description: 'Op parameters.', additionalProperties: true },
     },
     required: ['service', 'op'],
   },
   handler: async (input) => {
     const service = String(input.service ?? '')
     const op = String(input.op ?? '')
+    await ensureServiceAdaptersBootstrapped()
     const adapter = getServiceAdapter(service)
     if (!adapter || adapter.scope !== 'business') return { success: false, error: `unknown business service: ${service}` }
     const gate = await assertOpAllowed(service, op)
@@ -42,15 +44,16 @@ export const business_os_stage: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      service: { type: 'string' },
-      op: { type: 'string' },
-      params: { type: 'object', additionalProperties: true },
+      service: { type: 'string', description: "Adapter id, e.g. 'erp-orders'." },
+      op: { type: 'string', description: 'Stage op declared by the adapter (produces a private draft).' },
+      params: { type: 'object', description: 'Op parameters.', additionalProperties: true },
     },
     required: ['service', 'op'],
   },
   handler: async (input) => {
     const service = String(input.service ?? '')
     const op = String(input.op ?? '')
+    await ensureServiceAdaptersBootstrapped()
     const adapter = getServiceAdapter(service)
     if (!adapter || adapter.scope !== 'business') return { success: false, error: `unknown business service: ${service}` }
     const gate = await assertOpAllowed(service, op)

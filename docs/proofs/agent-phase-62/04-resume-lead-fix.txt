@@ -1,0 +1,10 @@
+Phase 62 resolver fix — long mixed follow-up ("আগের কাজটা চালাও, কিন্তু নতুন এই শর্তটা যোগ করো …"):
+
+BEFORE: binding = new_task / park_and_start  (reason: new_task_parks_active_focus)
+        → PARKED the very work the owner asked to continue (the documented gap).
+
+AFTER : binding = active_focus / resume       (reason: resume_lead_references_active_focus)
+        → RESUMES the active work; the added constraint is applied inside it.
+
+Locked by continuity-resolver.test.ts "Phase 62 — long mixed follow-up resumes (does not park)".
+Corpus bindingAccuracy stayed 1.0 (no existing fixture changed binding).

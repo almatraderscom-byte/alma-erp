@@ -3,6 +3,7 @@
  * Uses roundMoney everywhere; never fabricates margin when cost data is missing.
  */
 import { prisma } from '@/lib/prisma'
+import { metaGraphBase } from '@/lib/meta-version'
 import { getLifestyleOrders } from '@/lib/lifestyle/read'
 import { todayYmdDhaka, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import { aggregateDashboardMetrics, filterOrdersByDateRange } from '@/lib/order-analytics'
@@ -102,7 +103,7 @@ async function fetchAdSpendPeriod(startYmd: string, endYmd: string): Promise<{ a
 
   try {
     const campRes = await fetch(
-      `https://graph.facebook.com/v21.0/${accountId}/campaigns?effective_status=["ACTIVE","PAUSED"]&fields=id&limit=15&access_token=${token}`,
+      `${metaGraphBase()}/${accountId}/campaigns?effective_status=["ACTIVE","PAUSED"]&fields=id&limit=15&access_token=${token}`,
       { signal: AbortSignal.timeout(20_000) },
     )
     if (!campRes.ok) return { amount: 0, currency: 'BDT' }
@@ -111,7 +112,7 @@ async function fetchAdSpendPeriod(startYmd: string, endYmd: string): Promise<{ a
     let currency = 'BDT'
     try {
       const acctRes = await fetch(
-        `https://graph.facebook.com/v21.0/${accountId}?fields=currency&access_token=${token}`,
+        `${metaGraphBase()}/${accountId}?fields=currency&access_token=${token}`,
         { signal: AbortSignal.timeout(10_000) },
       )
       if (acctRes.ok) currency = ((await acctRes.json()) as { currency?: string }).currency || 'BDT'
@@ -122,7 +123,7 @@ async function fetchAdSpendPeriod(startYmd: string, endYmd: string): Promise<{ a
     let total = 0
     const range = encodeURIComponent(JSON.stringify({ since: startYmd, until: endYmd }))
     for (const c of campData.data ?? []) {
-      const url = `https://graph.facebook.com/v21.0/${c.id}/insights?time_range=${range}&fields=spend&access_token=${token}`
+      const url = `${metaGraphBase()}/${c.id}/insights?time_range=${range}&fields=spend&access_token=${token}`
       const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
       if (!res.ok) continue
       const data = (await res.json()) as { data?: Array<{ spend?: string }> }

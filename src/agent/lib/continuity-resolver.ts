@@ -133,6 +133,29 @@ export function referencesFocus(text: string, focus: { goal: string; kind: strin
 }
 
 /**
+ * Phase 62 — a LONG "resume the previous work (but also …)" lead. These both
+ * refer to old work AND add a requirement, so they exceed CONTINUATION_MAX and
+ * used to fall through to `new_task` — parking the very work the owner asked to
+ * continue ("আগের কাজটা চালাও, কিন্তু নতুন এই শর্তটা যোগ করো"). The signal is
+ * DETERMINISTIC: the message opens with an explicit reference to prior work
+ * ("আগের কাজ" / "ager kaj" / "ওই কাজ" / "oi kaj") followed by a continue/finish
+ * verb within a short window. The added constraint is handled by the head
+ * inside the resumed task; binding stays on the existing focus.
+ */
+const RESUME_LEAD_RE = new RegExp(
+  '^\\s*' +
+    '(আগের?|আগে|ager|previous|আগের\\s*ঐ|ঐ|ওই|oi|সেই|sei|ওটা|oita|ঐটা)\\s*' +
+    '(কাজ(টা|টার)?|kaj(\\s*ta)?|task|work|প্রজেক্ট|project|পোস্ট|post|টাস্ক)' +
+    '.{0,44}?' +
+    '(চালাও|চালিয়ে\\s*যাও|chalao|chaliye\\s*jao|আগাও|agao|শেষ\\s*কর(ো|)|ses\\s*kor|finish|complete|resume|continue|করো\\s*আবার|আবার\\s*করো)',
+  'i',
+)
+
+export function isResumeLeadReference(text: string): boolean {
+  return RESUME_LEAD_RE.test((text ?? '').trim())
+}
+
+/**
  * A clear NEW task: carries its own domain intent (pack hit) AND is not a
  * continuation/status/decision shape. matchIntentPacks is the same pure
  * signal the state router uses for tool selection.
@@ -237,6 +260,20 @@ export function resolveContinuityDecision(input: ContinuityInput): ContinuityDec
       action: isWhyStoppedText(text) && !isRetryText(text) ? 'explain_stop' : 'retry',
       checkpointTaskRef: cp.taskRef,
       reason: 'checkpoint_retry_or_explain',
+    }
+  }
+
+  // 3.5 Long "resume the previous task (but also add X)" lead. Exceeds the
+  //     short-utterance cap but explicitly points at prior work — bind to the
+  //     existing focus (active first, else a single dormant one) instead of
+  //     parking it as a new task. Phase 62: closes the long-mixed-followup gap.
+  if (isResumeLeadReference(text)) {
+    if (input.activeFocus) {
+      return { ...base, binding: 'active_focus', action: 'resume', focusId: input.activeFocus.id, reason: 'resume_lead_references_active_focus' }
+    }
+    const single = [...(input.parkedFocuses ?? [])]
+    if (single.length === 1) {
+      return { ...base, binding: 'active_focus', action: 'resume', focusId: single[0].id, reason: 'resume_lead_resumes_single_parked_focus' }
     }
   }
 

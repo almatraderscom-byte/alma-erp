@@ -2,6 +2,7 @@
  * Owner morning briefing — shared data gatherers (Vercel agent tool + internal API + worker).
  */
 import { prisma } from '@/lib/prisma'
+import { metaGraphBase } from '@/lib/meta-version'
 import {
   getAgentOrdersSummary,
   listAgentOrders,
@@ -175,7 +176,7 @@ async function gatherAdsDigest() {
     // campaigns through — see src/agent/lib/ads/insights.ts), which made the
     // owner's briefing digest report paused campaigns as active.
     const campRes = await fetch(
-      `https://graph.facebook.com/v21.0/${accountId}/campaigns?fields=id,name,effective_status&limit=25&access_token=${token}`,
+      `${metaGraphBase()}/${accountId}/campaigns?fields=id,name,effective_status&limit=25&access_token=${token}`,
       { signal: AbortSignal.timeout(20_000) },
     )
     if (!campRes.ok) return null
@@ -189,8 +190,8 @@ async function gatherAdsDigest() {
     const anomalies: Array<{ campaign: string; dropPct: number }> = []
 
     for (const c of activeCampaigns) {
-      const todayUrl = `https://graph.facebook.com/v21.0/${c.id}/insights?time_range=${encodeURIComponent(JSON.stringify({ since: today, until: today }))}&fields=spend,ctr,cpc&access_token=${token}`
-      const weekUrl = `https://graph.facebook.com/v21.0/${c.id}/insights?time_range=${encodeURIComponent(JSON.stringify({ since: sevenDaysAgo, until: today }))}&fields=ctr,spend&access_token=${token}`
+      const todayUrl = `${metaGraphBase()}/${c.id}/insights?time_range=${encodeURIComponent(JSON.stringify({ since: today, until: today }))}&fields=spend,ctr,cpc&access_token=${token}`
+      const weekUrl = `${metaGraphBase()}/${c.id}/insights?time_range=${encodeURIComponent(JSON.stringify({ since: sevenDaysAgo, until: today }))}&fields=ctr,spend&access_token=${token}`
       const [todayIns, weekIns] = await Promise.all([
         fetch(todayUrl, { signal: AbortSignal.timeout(15_000) }),
         fetch(weekUrl, { signal: AbortSignal.timeout(15_000) }),

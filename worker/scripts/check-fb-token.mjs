@@ -9,6 +9,7 @@
  */
 
 import 'dotenv/config'
+import { metaGraphBase } from '../src/meta-version.mjs'
 
 const REQUIRED_SCOPES = ['pages_manage_posts', 'pages_read_engagement']
 
@@ -34,7 +35,7 @@ async function checkToken(label, { token, pageId }) {
   // debug_token — only works with app access token or the token itself
   try {
     const debugRes = await fetch(
-      `https://graph.facebook.com/v21.0/debug_token?input_token=${token}&access_token=${token}`,
+      `${metaGraphBase()}/debug_token?input_token=${token}&access_token=${token}`,
     )
     const debug = await debugRes.json()
 
@@ -62,7 +63,7 @@ async function checkToken(label, { token, pageId }) {
   // /me/accounts — verify this token can see the page
   try {
     const accsRes = await fetch(
-      `https://graph.facebook.com/v21.0/me/accounts?access_token=${token}`,
+      `${metaGraphBase()}/me/accounts?access_token=${token}`,
     )
     const accs = await accsRes.json()
     if (accs.error) {

@@ -4,6 +4,7 @@
  * (latest message in thread must be from customer, within max age).
  */
 import { resilientFetch } from '../fetch-retry.mjs'
+import { metaGraphBase } from '../meta-version.mjs'
 
 const PAGES = [
   { id: '1044848232034171', name: 'Alma Lifestyle', envKey: 'FB_PAGE_TOKEN_LIFESTYLE' },
@@ -17,7 +18,7 @@ const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
 async function fbGet(path, token) {
-  const url = `https://graph.facebook.com/v21.0/${path}&access_token=${encodeURIComponent(token)}`
+  const url = `${metaGraphBase()}/${path}&access_token=${encodeURIComponent(token)}`
   // 30s + one retry — a 15s no-retry ceiling on these nested conversation queries was
   // timing out and spamming the worker error log.
   const res = await resilientFetch(url, { timeoutMs: 30_000, retries: 1 })

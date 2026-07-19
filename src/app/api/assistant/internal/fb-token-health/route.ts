@@ -3,6 +3,7 @@
  * Runtime check — Vercel production FB page tokens (masked, no secrets returned).
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { metaGraphBase } from '@/lib/meta-version'
 import { timingSafeEqual } from 'crypto'
 
 export const runtime = 'nodejs'
@@ -38,7 +39,7 @@ export async function GET(req: NextRequest) {
 
     try {
       const debugRes = await fetch(
-        `https://graph.facebook.com/v21.0/debug_token?input_token=${encodeURIComponent(token)}&access_token=${encodeURIComponent(token)}`,
+        `${metaGraphBase()}/debug_token?input_token=${encodeURIComponent(token)}&access_token=${encodeURIComponent(token)}`,
         { signal: AbortSignal.timeout(15_000) },
       )
       const debug = (await debugRes.json()) as { data?: { is_valid?: boolean; type?: string; expires_at?: number }; error?: { message?: string } }
@@ -55,7 +56,7 @@ export async function GET(req: NextRequest) {
       }
 
       const convRes = await fetch(
-        `https://graph.facebook.com/v21.0/${page.pageId}/conversations?limit=1&access_token=${encodeURIComponent(token)}`,
+        `${metaGraphBase()}/${page.pageId}/conversations?limit=1&access_token=${encodeURIComponent(token)}`,
         { signal: AbortSignal.timeout(15_000) },
       )
       const conv = (await convRes.json()) as { error?: { message?: string } }

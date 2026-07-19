@@ -1,0 +1,8 @@
+ RUN  v4.1.9 /Users/marufbillah/alma-erp/.claude/worktrees/ios-appeal-approval-profile-cd6f15
+
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+   Start at  23:31:00
+   Duration  252ms (transform 59ms, setup 0ms, import 87ms, tests 16ms, environment 0ms)
+

@@ -10,8 +10,9 @@
  */
 import { isGscConnected, listSites } from '@/agent/lib/gsc'
 import { isGa4Configured, resolveGa4PropertyId, runGa4Report } from '@/agent/lib/ga4'
+import { metaGraphBase } from '@/lib/meta-version'
 
-const GRAPH_BASE = 'https://graph.facebook.com/v21.0'
+const GRAPH_BASE = metaGraphBase()
 
 export type CapabilityStatus =
   | 'read' // proven readable right now

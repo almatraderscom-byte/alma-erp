@@ -1,0 +1,1 @@
+Full agent suite: 186 files / 2352 tests PASS; tsc 0 errors. Scorecard rendered in GraphHealthPanel.

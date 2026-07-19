@@ -1,0 +1,1 @@
+tsc --noEmit: 0 errors project-wide.
