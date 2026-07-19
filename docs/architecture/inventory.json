@@ -1,0 +1,173 @@
+{
+  "contractVersion": "1.0.0",
+  "databaseCallers": {
+    "count": 704,
+    "sample": [
+      "src/agent/components/AgentApp.tsx",
+      "src/agent/components/AgentCostsDashboard.tsx",
+      "src/agent/lib/__tests__/attribution.test.ts",
+      "src/agent/lib/__tests__/autonomy-ledger.test.ts",
+      "src/agent/lib/__tests__/browser-success-criteria.test.ts",
+      "src/agent/lib/__tests__/camera-auth.test.ts",
+      "src/agent/lib/__tests__/camera-health.test.ts",
+      "src/agent/lib/__tests__/camera-say.test.ts",
+      "src/agent/lib/__tests__/checkpoint.test.ts",
+      "src/agent/lib/__tests__/continuity-outcome.test.ts",
+      "src/agent/lib/__tests__/continuity-replay.test.ts",
+      "src/agent/lib/__tests__/conversation-focus.test.ts",
+      "src/agent/lib/__tests__/experiment-registry.test.ts",
+      "src/agent/lib/__tests__/failure-lesson.test.ts",
+      "src/agent/lib/__tests__/growth-brief.test.ts",
+      "src/agent/lib/__tests__/growth-strategy-graph.test.ts",
+      "src/agent/lib/__tests__/marketing-event-contract.test.ts",
+      "src/agent/lib/__tests__/meta-campaign-graph.test.ts",
+      "src/agent/lib/__tests__/office-call-devices.test.ts",
+      "src/agent/lib/__tests__/office-call-domain.test.ts",
+      "src/agent/lib/__tests__/office-call-observability.test.ts",
+      "src/agent/lib/__tests__/office-call-outbox.test.ts",
+      "src/agent/lib/__tests__/owner-silence-ladder.test.ts",
+      "src/agent/lib/__tests__/planner.test.ts",
+      "src/agent/lib/__tests__/production-truth.test.ts"
+    ]
+  },
+  "ownedZones": {
+    "docs/architecture": true,
+    "scripts/architecture": true,
+    "src/agent/contracts": true
+  },
+  "providerCalls": {
+    "anthropic": {
+      "count": 20,
+      "files": [
+        "src/agent/lib/__tests__/prompt-cache-prefix.test.ts",
+        "src/agent/lib/api-balances.ts",
+        "src/agent/lib/core.ts",
+        "src/agent/lib/cs/core.ts",
+        "src/agent/lib/llm-text.ts",
+        "src/agent/lib/models/adapters/anthropic.ts",
+        "src/agent/lib/models/neutral.ts",
+        "src/agent/lib/models/subagent.ts",
+        "src/agent/lib/security/egress-policy.ts",
+        "src/agent/lib/system-prompt.ts",
+        "src/agent/lib/tail-compact.ts",
+        "src/agent/tools/capability-manifest.ts",
+        "src/agent/tools/cs-registry.ts",
+        "src/agent/tools/cs-tools.ts",
+        "src/agent/tools/registry.ts",
+        "src/agent/tools/select-tools.ts",
+        "src/agent/tools/state-router.ts",
+        "src/app/api/assistant/actions/[id]/reject/route.ts",
+        "src/app/api/assistant/internal/assess-task-proof/route.ts",
+        "src/lib/weekly-strategic-data.ts"
+      ]
+    },
+    "facebook-graph": {
+      "count": 6,
+      "files": [
+        "src/agent/lib/__tests__/meta-version.test.ts",
+        "src/agent/lib/__tests__/prompt-injection-redteam.test.ts",
+        "src/agent/lib/meta-mcp/oauth.ts",
+        "src/agent/lib/security/egress-policy.ts",
+        "src/lib/__tests__/meta-version.test.ts",
+        "src/lib/meta-version.ts"
+      ]
+    },
+    "google-generative": {
+      "count": 13,
+      "files": [
+        "src/agent/lib/attachment-vision.ts",
+        "src/agent/lib/cs/gemini-vision.ts",
+        "src/agent/lib/face-match.ts",
+        "src/agent/lib/gemini-text.ts",
+        "src/agent/lib/models/adapters/__tests__/google-thinking.test.ts",
+        "src/agent/lib/models/adapters/google.ts",
+        "src/agent/lib/reference/vision.ts",
+        "src/agent/lib/security/egress-policy.ts",
+        "src/agent/lib/taste/vision.ts",
+        "src/agent/lib/vision-analyze.ts",
+        "src/lib/creative-studio/single-pipeline.ts",
+        "src/lib/tryon/art-director.ts",
+        "src/lib/tryon/qc-gate.ts"
+      ]
+    },
+    "google-tts": {
+      "count": 2,
+      "files": [
+        "src/agent/lib/google-tts.ts",
+        "src/agent/lib/wa/wa-voice.ts"
+      ]
+    },
+    "openai-whisper": {
+      "count": 5,
+      "files": [
+        "src/agent/hooks/useStreamingStt.ts",
+        "src/agent/lib/api-balances.ts",
+        "src/agent/lib/security/egress-policy.ts",
+        "src/app/api/assistant/internal/cost-reconcile/route.ts",
+        "src/app/api/assistant/stt-session/route.ts"
+      ]
+    },
+    "openrouter": {
+      "count": 9,
+      "files": [
+        "src/agent/components/AgentCostsDashboard.tsx",
+        "src/agent/lib/answer-gate.ts",
+        "src/agent/lib/api-balances.ts",
+        "src/agent/lib/models/adapters/openrouter.ts",
+        "src/agent/lib/models/head-router.ts",
+        "src/agent/lib/models/registry.ts",
+        "src/agent/lib/plan-driver/completion-gate.ts",
+        "src/agent/lib/security/egress-policy.ts",
+        "src/app/api/assistant/internal/generate-focus-plan/route.ts"
+      ]
+    },
+    "telegram": {
+      "count": 9,
+      "files": [
+        "src/agent/lib/cs/post-products.ts",
+        "src/agent/lib/security/egress-policy.ts",
+        "src/agent/lib/telegram-owner-notify.ts",
+        "src/agent/tools/cs-tools.ts",
+        "src/app/api/assistant/actions/[id]/approve/route.ts",
+        "src/app/api/assistant/internal/assess-task-proof/route.ts",
+        "src/app/api/assistant/internal/task-auto-qc/route.ts",
+        "src/lib/telegram-notification/ops-health.ts",
+        "src/lib/trading-telegram-bot.ts"
+      ]
+    },
+    "twilio": {
+      "count": 4,
+      "files": [
+        "src/agent/lib/api-balances.ts",
+        "src/agent/lib/security/egress-policy.ts",
+        "src/agent/lib/voice-call.ts",
+        "src/agent/lib/wa/twilio-wa.ts"
+      ]
+    }
+  },
+  "requestPath": [
+    "Admission Control Plane",
+    "Cost Governor",
+    "Context Compiler",
+    "Capability Broker",
+    "Policy/Approval",
+    "Durable Workflow",
+    "Secure Tool Gateway",
+    "Evidence Verification",
+    "Response Gate",
+    "Audit + Cost + Evaluation"
+  ],
+  "scanned": {
+    "files": 1972
+  },
+  "zones": {
+    "agent-code": 750,
+    "agent-contracts": 2,
+    "assistant-api": 258,
+    "erp-api": 204,
+    "erp-app": 104,
+    "legacy-agent-api": 72,
+    "other": 175,
+    "shared-lib": 407
+  }
+}
