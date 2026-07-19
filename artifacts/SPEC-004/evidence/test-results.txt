@@ -1,0 +1,10 @@
+$ npx vitest run src/agent/contracts
+
+ RUN  v4.1.9 /home/user/alma-erp
+
+
+ Test Files  4 passed (4)
+      Tests  43 passed (43)
+   Start at  21:25:27
+   Duration  523ms (transform 282ms, setup 0ms, import 398ms, tests 47ms, environment 0ms)
+
