@@ -220,9 +220,200 @@ export const place_agent_call: AgentTool = {
   },
 }
 
+export const schedule_call: AgentTool = {
+  name: 'schedule_call',
+  description:
+    'Schedules a LIVE two-way phone call for a FUTURE time (Asia/Dhaka). Use when the owner says "কাল সকালে / বিকেল ৫টায় / ২ ঘন্টা পরে X কে কল দাও"। Resolve the natural-language time to an ISO dueAt first. Resolves a saved family contact OR an ALMA staff member by name, else a raw number. Creates a confirm card — the owner approves the schedule once, then the call fires automatically at the due time and a summary comes back. For calling right now, use call_family_member / call_staff instead.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      relationOrName: { type: 'string', description: 'Saved family contact (মা/ভাই) or ALMA staff name. Optional if phone given.' },
+      phone: { type: 'string', description: 'Raw number (01XXXXXXXXX / +880…). Optional if relationOrName resolves.' },
+      purpose: { type: 'string', description: 'Why we are calling, in Bangla — steers the call.' },
+      dueAt: { type: 'string', description: 'ISO 8601 date-time (Asia/Dhaka resolved) when the call should be placed.' },
+      firstMessage: { type: 'string', description: 'Optional first Bangla line the agent speaks.' },
+      conversationId: { type: 'string', description: 'Server-managed — omit.' },
+    },
+    required: ['purpose', 'dueAt'],
+  },
+  handler: async (input) => {
+    try {
+      const needle = String(input.relationOrName ?? '').trim()
+      const rawPhone = String(input.phone ?? '').trim()
+      const purpose = String(input.purpose ?? '').trim()
+      const dueAtRaw = String(input.dueAt ?? '').trim()
+      if (!purpose) return { success: false, error: 'purpose লাগবে' }
+      if (!needle && !rawPhone) return { success: false, error: 'relationOrName বা phone — একটা লাগবে' }
+      const dueAt = new Date(dueAtRaw)
+      if (!dueAtRaw || Number.isNaN(dueAt.getTime())) return { success: false, error: 'dueAt ঠিক নয় — ISO date-time দিন' }
+      if (dueAt.getTime() < Date.now() - 60_000) return { success: false, error: 'সময়টা অতীতে — ভবিষ্যতের সময় দিন' }
+
+      let recipientName: string | undefined
+      let phone: string | null = null
+      let callType: 'staff' | 'contact' = 'contact'
+
+      if (needle) {
+        const contacts = await db.familyContact.findMany({ select: { name: true, relation: true, phone: true } })
+        const contact = contacts.find(
+          (c: { name: string; relation: string }) =>
+            c.relation.includes(needle) || c.name.includes(needle) || needle.includes(c.relation) || needle.includes(c.name),
+        )
+        if (contact) {
+          recipientName = contact.name
+          phone = normalizeOutboundPhone(contact.phone)
+        } else {
+          // Try ALMA staff (phone lives on the linked ERP user).
+          const staff = await db.agentStaff.findFirst({
+            where: { name: { contains: needle, mode: 'insensitive' }, active: true },
+            select: { name: true, user: { select: { phone: true } } },
+          })
+          if (staff?.user?.phone) {
+            recipientName = staff.name
+            phone = normalizeOutboundPhone(staff.user.phone)
+            callType = 'staff'
+          } else if (!rawPhone) {
+            return { success: true, data: { status: 'not_found', message: `"${needle}" নামে contact বা স্টাফ পাওয়া যায়নি।` } }
+          }
+        }
+      }
+      if (!phone && rawPhone) phone = normalizeOutboundPhone(rawPhone)
+      if (!phone) return { success: false, error: 'নম্বরটি ঠিক নয় — 01XXXXXXXXX বা +880… দিন।' }
+
+      const firstMessage = String(input.firstMessage ?? '').trim() || 'আসসালামু আলাইকুম।'
+      const pref = input.ownerVoicePref as { gender?: 'male' | 'female' } | undefined
+      const voiceGender: 'male' | 'female' = pref?.gender === 'male' ? 'male' : callType === 'staff' ? 'male' : 'female'
+      const who = recipientName ?? phone
+      const whenLabel = dueAt.toLocaleString('en-US', { timeZone: 'Asia/Dhaka', dateStyle: 'medium', timeStyle: 'short' })
+      const action = await db.agentPendingAction.create({
+        data: {
+          conversationId: input.conversationId ? String(input.conversationId) : null,
+          type: 'schedule_call',
+          payload: { toNumber: phone, phone, recipientName, purpose, firstMessage, callType, voiceGender, dueAt: dueAt.toISOString() },
+          summary: `⏰📞 ${who} কে ${whenLabel}-এ কল শিডিউল — "${purpose.slice(0, 50)}"`,
+          costEstimate: 0.5,
+          status: 'pending',
+        },
+      })
+      return {
+        success: true,
+        data: { status: 'confirm_required', pendingActionId: action.id, message: `${who} কে ${whenLabel}-এ কল শিডিউল করতে confirm করুন।` },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+export const list_scheduled_calls: AgentTool = {
+  name: 'list_scheduled_calls',
+  description: 'Lists upcoming scheduled two-way calls (status=scheduled), soonest first. Use when the owner asks "কী কী কল শিডিউল আছে"।',
+  input_schema: { type: 'object' as const, properties: {} },
+  handler: async () => {
+    try {
+      const rows = await db.scheduledCall.findMany({
+        where: { status: 'scheduled' },
+        orderBy: { dueAt: 'asc' },
+        take: 25,
+        select: { id: true, recipientName: true, toNumber: true, purpose: true, dueAt: true, callType: true },
+      })
+      return {
+        success: true,
+        data: rows.map((r: { id: string; recipientName: string | null; toNumber: string; purpose: string; dueAt: Date; callType: string }) => ({
+          id: r.id,
+          who: r.recipientName ?? r.toNumber,
+          purpose: r.purpose,
+          dueAt: r.dueAt,
+          when: new Date(r.dueAt).toLocaleString('en-US', { timeZone: 'Asia/Dhaka', dateStyle: 'medium', timeStyle: 'short' }),
+          callType: r.callType,
+        })),
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+export const cancel_scheduled_call: AgentTool = {
+  name: 'cancel_scheduled_call',
+  description: 'Cancels a scheduled two-way call by its id (from list_scheduled_calls). Use when the owner says "ঐ কলটা বাতিল করো"।',
+  input_schema: {
+    type: 'object' as const,
+    properties: { id: { type: 'string', description: 'Scheduled call id from list_scheduled_calls.' } },
+    required: ['id'],
+  },
+  handler: async (input) => {
+    try {
+      const id = String(input.id ?? '').trim()
+      if (!id) return { success: false, error: 'id লাগবে' }
+      const row = await db.scheduledCall.findUnique({ where: { id }, select: { status: true, recipientName: true, toNumber: true } })
+      if (!row) return { success: false, error: 'ঐ শিডিউল কলটা পাওয়া যায়নি।' }
+      if (row.status !== 'scheduled') return { success: false, error: `কলটা ইতিমধ্যে ${row.status} — বাতিল করা যাবে না।` }
+      await db.scheduledCall.update({ where: { id }, data: { status: 'cancelled' } })
+      return { success: true, data: { message: `${row.recipientName ?? row.toNumber} কে কলের শিডিউল বাতিল করা হয়েছে।` } }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+export const get_call_history: AgentTool = {
+  name: 'get_call_history',
+  description:
+    'Returns the call log — recent phone calls (both INCOMING to the ALMA number and OUTGOING made by the agent) with who / direction / duration / est. cost / status / Bangla summary, plus any UPCOMING scheduled calls. Use when the owner asks "কল হিস্ট্রি / সাম্প্রতিক কল / কে কল করেছিল / কী কল বাকি আছে দেখাও"।',
+  input_schema: {
+    type: 'object' as const,
+    properties: { limit: { type: 'number', description: 'How many recent calls (default 12, max 30).' } },
+  },
+  handler: async (input) => {
+    try {
+      const limit = Math.min(30, Math.max(1, Number(input.limit) || 12))
+      const [calls, scheduled] = await Promise.all([
+        db.agentVoiceCall.findMany({
+          orderBy: { createdAt: 'desc' },
+          take: limit,
+          select: { recipientName: true, toNumber: true, purpose: true, status: true, durationSecs: true, costCredits: true, summary: true, createdAt: true },
+        }),
+        db.scheduledCall.findMany({
+          where: { status: 'scheduled' },
+          orderBy: { dueAt: 'asc' },
+          take: 15,
+          select: { recipientName: true, toNumber: true, purpose: true, dueAt: true, callType: true },
+        }),
+      ])
+      const fmt = (d: Date) => new Date(d).toLocaleString('en-US', { timeZone: 'Asia/Dhaka', dateStyle: 'medium', timeStyle: 'short' })
+      return {
+        success: true,
+        data: {
+          recent: calls.map((c: { recipientName: string | null; toNumber: string; purpose: string | null; status: string; durationSecs: number | null; costCredits: number | null; summary: string | null; createdAt: Date }) => ({
+            who: c.recipientName ?? c.toNumber,
+            direction: c.purpose === 'inbound_call' ? 'incoming' : 'outgoing',
+            status: c.status,
+            durationSecs: c.durationSecs,
+            costBdt: c.costCredits,
+            summary: c.summary,
+            at: fmt(c.createdAt),
+          })),
+          upcoming: scheduled.map((s: { recipientName: string | null; toNumber: string; purpose: string; dueAt: Date; callType: string }) => ({
+            who: s.recipientName ?? s.toNumber,
+            purpose: s.purpose,
+            when: fmt(s.dueAt),
+            callType: s.callType,
+          })),
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const FAMILY_TOOLS: AgentTool[] = [
   add_family_contact,
   list_family_contacts,
   call_family_member,
   place_agent_call,
+  schedule_call,
+  list_scheduled_calls,
+  cancel_scheduled_call,
+  get_call_history,
 ]

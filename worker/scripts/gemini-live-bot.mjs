@@ -112,12 +112,26 @@ function sysContact(who, purpose) {
 ${SYS_COMMON}`
 }
 
+// Inbound call — a customer/outsider dialed ALMA's BD number and the agent PICKS UP as
+// ALMA's assistant. Never the owner, never reveals internal business data (sales, other
+// customers' orders, finances). Helps politely + takes the caller's need so the owner can
+// follow up. The post-call summary tells the owner who called + why.
+const SYS_INBOUND = `তুমি ALMA-র (একটি বাংলাদেশি অনলাইন ব্যবসা — পোশাক/লাইফস্টাইল পণ্য) ফোন-সহকারী। এইমাত্র একজন গ্রাহক/বাইরের কেউ ALMA-র নম্বরে ফোন করেছেন এবং তুমি ফোন ধরেছ। তুমি একজন উষ্ণ, বিনয়ী, পেশাদার মানুষের মতো রিসেপশনিস্ট।
+আচরণ:
+- শুরুতে সংক্ষেপে সালাম দিয়ে পরিচয় দাও — "আসসালামু আলাইকুম, ALMA-তে স্বাগতম, আমি ALMA-র সহকারী বলছি" — তারপর জিজ্ঞেস করো কীভাবে সাহায্য করতে পারো। এরপর গ্রাহকের কথা শোনার জন্য অপেক্ষা করো।
+- গ্রাহককে সম্মানের সাথে "আপনি" বলে সহজ, স্পষ্ট বাংলায় কথা বলো। তুমি ব্যবসার মালিক নও — মালিককে "বস" ইত্যাদি বলবে না।
+- গ্রাহক কী চান মন দিয়ে বুঝে নাও (পণ্যের খোঁজ, অর্ডার, দাম, ডেলিভারি, অভিযোগ ইত্যাদি)। বিনয়ের সাথে দরকারি তথ্য (নাম, কী চান, ফোন) জেনে নাও।
+- ভেতরের গোপন তথ্য (মোট বিক্রি, অন্য গ্রাহকের তথ্য, হিসাব) কখনো বলবে না। নিশ্চিত না জানলে বানিয়ে বলবে না — বলো "আমি বিষয়টা টিম/মালিককে জানিয়ে দিচ্ছি, উনি আপনাকে জানাবেন।"
+- কাজ শেষ হলে ভদ্রভাবে ধন্যবাদ দিয়ে বিদায় নাও। কল শেষে মালিক গ্রাহকের দরকারের একটা সারাংশ পাবেন।
+${SYS_COMMON}`
+
 function sysFor(params) {
   const who = params?.recipientName || ''
   const purpose = params?.purpose || ''
   switch (params?.callType) {
     case 'staff': return sysStaff(who, purpose)
     case 'contact': return sysContact(who, purpose)
+    case 'inbound': return SYS_INBOUND
     default: return SYS_OWNER
   }
 }
@@ -231,9 +245,12 @@ class Call {
   greet() {
     const purpose = this.params?.purpose
     const who = this.params?.recipientName
-    const txt = purpose
-      ? `ফোন রিসিভ হয়েছে${who ? ` — অন্য পক্ষ: ${who}` : ''}। এই কলের উদ্দেশ্য: ${purpose}। সংক্ষেপে সালাম দিয়ে উদ্দেশ্য অনুযায়ী স্বাভাবিকভাবে কথা শুরু করো।`
-      : 'ফোন রিসিভ হয়েছে। বসকে সংক্ষেপে সালাম দাও, বলো তুমি তার এজেন্ট এবং এখন লাইভ দুই-মুখী কথা চলছে, তারপর জিজ্ঞেস করো কী সাহায্য লাগবে।'
+    // Inbound: a customer called ALMA and we just answered — open as a receptionist.
+    const txt = this.params?.callType === 'inbound'
+      ? 'একজন গ্রাহক ALMA-র নম্বরে ফোন করেছেন, তুমি ফোন ধরেছ। সংক্ষেপে সালাম দিয়ে ALMA-র সহকারী হিসেবে নিজের পরিচয় দাও এবং বিনয়ের সাথে জিজ্ঞেস করো কীভাবে সাহায্য করতে পারো, তারপর গ্রাহকের উত্তরের জন্য অপেক্ষা করো।'
+      : purpose
+        ? `ফোন রিসিভ হয়েছে${who ? ` — অন্য পক্ষ: ${who}` : ''}। এই কলের উদ্দেশ্য: ${purpose}। সংক্ষেপে সালাম দিয়ে উদ্দেশ্য অনুযায়ী স্বাভাবিকভাবে কথা শুরু করো।`
+        : 'ফোন রিসিভ হয়েছে। বসকে সংক্ষেপে সালাম দাও, বলো তুমি তার এজেন্ট এবং এখন লাইভ দুই-মুখী কথা চলছে, তারপর জিজ্ঞেস করো কী সাহায্য লাগবে।'
     try {
       this.live.sendClientContent({ turns: [{ role: 'user', parts: [{ text: txt }] }], turnComplete: true })
     } catch (e) { console.log(`[glive] ${this.id} greet err ${e?.message}`) }

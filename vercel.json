@@ -15,6 +15,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/scheduled-calls",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/live-activity-push",
       "schedule": "*/2 * * * *"
     },

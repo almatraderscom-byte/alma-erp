@@ -1308,6 +1308,40 @@ async function runApprove(
     })
   }
 
+  // Approving a scheduled call = booking it: create the scheduled_calls row; the
+  // /api/cron/scheduled-calls cron fires it at dueAt via placeOutboundCall.
+  if (action.type === 'schedule_call') {
+    const p = payload as {
+      toNumber?: string; phone?: string; recipientName?: string; purpose?: string
+      firstMessage?: string; callType?: 'owner' | 'staff' | 'contact'; voiceGender?: 'male' | 'female'; dueAt?: string
+    }
+    const toNumber = String(p.toNumber ?? p.phone ?? '')
+    const dueAt = p.dueAt ? new Date(p.dueAt) : null
+    if (!toNumber || !dueAt || Number.isNaN(dueAt.getTime())) {
+      await db.agentPendingAction.update({ where: { id: actionId }, data: { status: 'failed', resolvedAt: new Date(), result: { error: 'bad schedule payload' } } })
+      return Response.json({ error: 'শিডিউল তথ্য ঠিক নেই' }, { status: 400 })
+    }
+    const sc = await db.scheduledCall.create({
+      data: {
+        toNumber,
+        recipientName: p.recipientName ?? null,
+        purpose: String(p.purpose ?? ''),
+        firstMessage: p.firstMessage ?? null,
+        callType: p.callType === 'staff' ? 'staff' : p.callType === 'owner' ? 'owner' : 'contact',
+        voiceGender: p.voiceGender === 'male' ? 'male' : 'female',
+        dueAt,
+        conversationId: resolveConversationId(action) ?? null,
+        businessId: (action.businessId as string) ?? 'ALMA_LIFESTYLE',
+      },
+    })
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { scheduledCallId: sc.id, dueAt: dueAt.toISOString() } },
+    })
+    const whenLabel = dueAt.toLocaleString('en-US', { timeZone: 'Asia/Dhaka', dateStyle: 'medium', timeStyle: 'short' })
+    return Response.json({ success: true, message: `কল শিডিউল হয়েছে — ${whenLabel}-এ ${p.recipientName ?? toNumber} কে কল যাবে।`, scheduledCallId: sc.id })
+  }
+
   if (action.type === 'pause_campaign') {
     const { campaignId } = payload as { campaignId: string }
     const result = await pauseCampaign(String(campaignId))

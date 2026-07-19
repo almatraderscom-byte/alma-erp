@@ -4269,6 +4269,30 @@ model AgentVoiceCall {
   @@map("agent_voice_calls")
 }
 
+/// Scheduled two-way calls — the agent queues a call for a future time (owner-approved
+/// at schedule time); the /api/cron/scheduled-calls cron fires each due row via
+/// placeOutboundCall. status: scheduled | placed | failed | cancelled.
+model ScheduledCall {
+  id             String    @id @default(uuid())
+  toNumber       String    @map("to_number")
+  recipientName  String?   @map("recipient_name")
+  purpose        String
+  firstMessage   String?   @map("first_message")
+  callType       String    @default("contact") @map("call_type")
+  voiceGender    String    @default("female") @map("voice_gender")
+  dueAt          DateTime  @map("due_at")
+  status         String    @default("scheduled")
+  placedCallId   String?   @map("placed_call_id")
+  error          String?
+  conversationId String?   @map("conversation_id")
+  businessId     String    @default("ALMA_LIFESTYLE") @map("business_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  placedAt       DateTime? @map("placed_at")
+
+  @@index([status, dueAt])
+  @@map("scheduled_calls")
+}
+
 /// ─── GROWTH AUTOPILOT: scheduled content calendar ────────────────────────────
 /// One row per planned social post. The agent drafts entries (status 'draft');
 /// the owner approves them into 'approved'; the growth-publish cron picks up
