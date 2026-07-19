@@ -1,0 +1,22 @@
+{
+  "name": "alma-website",
+  "description": "Website content/product-page improvement — শুধু owner-gated proposal / PR হিসেবে, কখনো সরাসরি live নয়।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "medium",
+  "requiredCapabilities": [
+    "get_website_catalog",
+    "get_website_health",
+    "fetch_website_page",
+    "run_workbench_task",
+    "check_workbench_task"
+  ],
+  "networkPolicy": "allowlist",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "entryWorkflow": "skill_pack:website",
+  "maxSteps": 4,
+  "status": "draft"
+}

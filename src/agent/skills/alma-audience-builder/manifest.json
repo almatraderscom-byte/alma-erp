@@ -1,0 +1,19 @@
+{
+  "name": "alma-audience-builder",
+  "description": "কাস্টমার segment/intelligence থেকে টার্গেট audience সংজ্ঞা — তৈরি owner-gated।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "medium",
+  "requiredCapabilities": [
+    "list_audiences",
+    "get_customer_segments",
+    "get_customer_intelligence"
+  ],
+  "networkPolicy": "allowlist",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "inherit",
+  "maxSteps": 4,
+  "status": "draft"
+}

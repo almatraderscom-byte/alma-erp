@@ -22,6 +22,7 @@ import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
 import { prisma } from '@/lib/prisma'
 import { isOutboundCallIntent } from '@/agent/lib/outbound-call-intent'
+import { getDefaultHeadModelId } from '@/agent/lib/models/routing-config'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
 export type HeadTier = 'light' | 'heavy' | 'explicit' | 'marketing' | 'personal'
@@ -42,8 +43,12 @@ const triageModelId = (): string => process.env.CHEAP_HEAD_TRIAGE_MODEL_ID?.trim
 // Owner-tunable via HEAVY_HEAD_MODEL_ID (no redeploy). Falls back to DEFAULT_MODEL_ID
 // only if the configured id is unknown — DEFAULT_MODEL_ID itself stays Claude because
 // it guards the finance/CRITICAL sub-agent path, which is separate from the head.
-export const heavyHeadModelId = (): string => {
-  const id = process.env.HEAVY_HEAD_MODEL_ID?.trim() || 'gemini-3.1-pro'
+// Owner rule 2026-07-18: Gemini head OFF, Grok 4.20 is the head. The heavy/sensitive
+// tier (auto-mode) + the ANTHROPIC_HEAD_DOWN redirect now land on Grok by default.
+// `fallback` lets resolveHeadModelId pass the owner's KV-tuned default head so a live
+// change (no redeploy) also moves the heavy tier; HEAVY_HEAD_MODEL_ID env still wins.
+export const heavyHeadModelId = (fallback = 'xai-grok-4.20'): string => {
+  const id = process.env.HEAVY_HEAD_MODEL_ID?.trim() || fallback
   return isKnownModelId(id) ? id : DEFAULT_MODEL_ID
 }
 
@@ -485,7 +490,10 @@ export async function resolveHeadModelId(opts: {
   businessId: AgentBusinessId
   conversationId?: string
 }): Promise<HeadDecision> {
-  const heavy = (via: string): HeadDecision => ({ modelId: heavyHeadModelId(), tier: 'heavy', via })
+  // Owner's KV-tuned default head (Grok 4.20 unless changed) — feeds the heavy
+  // fallback so a live default-head change also moves auto-mode sensitive turns.
+  const kvDefaultHead = await getDefaultHeadModelId()
+  const heavy = (via: string): HeadDecision => ({ modelId: heavyHeadModelId(kvDefaultHead), tier: 'heavy', via })
 
   // Owner's model choice for this conversation:
   //  - a concrete known model id (INCLUDING Sonnet) → run THAT exact model, no triage.
@@ -534,7 +542,7 @@ export async function resolveHeadModelId(opts: {
   // misread as personal.
   if (personalEmpathyEnabled() && PERSONAL_EMOTION_RE.test(text)) {
     if (await classifyIsPersonalEmotional(text, opts.conversationId)) {
-      return { modelId: heavyHeadModelId(), tier: 'personal', via: 'personal_emotional' }
+      return { modelId: heavyHeadModelId(kvDefaultHead), tier: 'personal', via: 'personal_emotional' }
     }
   }
 

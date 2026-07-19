@@ -941,6 +941,8 @@ export type BuildSystemPromptArgs = {
   personalMode?: boolean
   businessId?: AgentBusinessId
   activePlaybook?: ActivePlaybookEntry[]
+  /** Skill Engine V2: ≤3 on-demand skill procedures selected for this turn (gated). */
+  activeSkillsBlock?: string
   teachingBlock?: string
   intakeContextBlock?: string
   ownerActiveTasksBlock?: string
@@ -1022,6 +1024,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     personalMode = false,
     businessId = 'ALMA_LIFESTYLE',
     activePlaybook,
+    activeSkillsBlock,
     teachingBlock,
     intakeContextBlock,
     ownerActiveTasksBlock,
@@ -1167,6 +1170,12 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
           playbookLines +
           `\n\nWhen applying a rule, occasionally mention it in one line ("আপনার নিয়ম মেনে…") — not every turn.`,
       )
+    }
+
+    // Skill Engine V2 (gated): on-demand skill procedures for this turn. VOLATILE —
+    // selection depends on the message text, so it must never enter the cached prefix.
+    if (activeSkillsBlock && activeSkillsBlock.trim()) {
+      volatileParts.push(activeSkillsBlock)
     }
 
     if (teachingBlock) {

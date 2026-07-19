@@ -1,0 +1,20 @@
+{
+  "name": "alma-agent-incident-diagnosis",
+  "description": "কিছু ভাঙলে root-cause diagnosis: health scan, audit, order issue — fix আগে owner-কে জানানো।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE", "ALMA_TRADING", "CDIT"],
+  "riskTier": "low",
+  "requiredCapabilities": [
+    "diagnose_issue",
+    "run_health_scan",
+    "get_audit_summary",
+    "check_order_issues"
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "none",
+  "approvalPolicy": "inherit",
+  "maxSteps": 5,
+  "status": "draft"
+}

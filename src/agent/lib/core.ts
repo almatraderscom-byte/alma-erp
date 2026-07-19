@@ -4,6 +4,7 @@ import { AGENT_MODEL, MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, HEAD_TOO
 import { getModel } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { buildActiveSkillsBlock } from '@/agent/lib/skill-engine/runtime'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { buildBusinessContext } from '@/agent/lib/business-brain'
 import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
@@ -928,6 +929,10 @@ export async function* runAgentTurn(
     return
   }
 
+  // Skill Engine V2 (gated OFF by default) — same on-demand skill selection as the
+  // normalized path in run-owner-turn; '' when disabled/personal/no match (fail-open).
+  const activeSkillsBlock = personalMode ? '' : await buildActiveSkillsBlock(lastUserText)
+
   const promptArgs = {
     projectInstructions: projectSystemInstructions,
     pinnedMemories,
@@ -944,6 +949,7 @@ export async function* runAgentTurn(
     personalMode,
     businessId,
     activePlaybook,
+    activeSkillsBlock,
     teachingBlock,
     intakeContextBlock,
     ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,

@@ -1,0 +1,22 @@
+{
+  "name": "alma-customer-support",
+  "description": "কাস্টমার inbox/comment দেখে জবাবের খসড়া — পাঠানো owner-gated, বাংলা, Islamic guardrail।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "high",
+  "requiredCapabilities": [
+    "get_fb_messenger_inbox",
+    "get_wa_inbox",
+    "get_unanswered_comments",
+    "get_customer_summary",
+    "send_customer_message",
+    "reply_to_comment"
+  ],
+  "networkPolicy": "allowlist",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 5,
+  "status": "draft"
+}

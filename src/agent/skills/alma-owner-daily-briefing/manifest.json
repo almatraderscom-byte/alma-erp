@@ -1,0 +1,21 @@
+{
+  "name": "alma-owner-daily-briefing",
+  "description": "Boss-এর জন্য দিনের শুরুর briefing: বিক্রি, pending approval, dispatch ও জরুরি সংকেত — এক জায়গায়, Bangla-তে।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE", "ALMA_TRADING", "CDIT"],
+  "riskTier": "low",
+  "requiredCapabilities": [
+    "get_daily_digest",
+    "get_sales_summary",
+    "get_pending_approvals",
+    "get_dispatch_status"
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "none",
+  "approvalPolicy": "inherit",
+  "maxTools": 6,
+  "maxSteps": 8,
+  "status": "draft"
+}

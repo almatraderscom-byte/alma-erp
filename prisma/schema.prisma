@@ -2734,6 +2734,28 @@ model AgentKvSetting {
   @@map("agent_kv_settings")
 }
 
+// Skill Engine V2 (B4): one row per imported GitHub skill VERSION (pinned commit).
+// A `block`-verdict import is quarantined (status 'blocked') and never goes live;
+// clean imports move draft → reviewed → canary → active, with rollback via `supersedes`.
+model AgentImportedSkill {
+  id           String   @id
+  name         String
+  sourceRepo   String   @map("source_repo")
+  sourceCommit String   @map("source_commit")
+  contentHash  String   @map("content_hash")
+  status       String // blocked|draft|reviewed|canary|active|retired
+  verdict      String // block|review|ok
+  findings     Json?
+  reviewedBy   String?  @map("reviewed_by")
+  supersedes   String?  @map("supersedes") // id of the prior active version (rollback target)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([name, sourceCommit])
+  @@index([name, status])
+  @@map("agent_imported_skills")
+}
+
 // Phase 42 — versioned Growth Brain. One row per brief VERSION; history is
 // never rewritten. Exactly one 'approved' row per business at a time (older
 // approved rows become 'superseded'). `brief` holds GrowthBriefContent with

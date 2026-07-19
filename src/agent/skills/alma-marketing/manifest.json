@@ -1,0 +1,24 @@
+{
+  "name": "alma-marketing",
+  "description": "Data-grounded marketing readout + plan: performance, competitor creatives, calendar — সব spend owner-gated।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "medium",
+  "requiredCapabilities": [
+    "marketing_report",
+    "recommend_ad_actions",
+    "research_competitor_creatives",
+    "get_marketing_intel",
+    "list_content_calendar",
+    "list_important_dates",
+    "plan_marketing"
+  ],
+  "networkPolicy": "allowlist",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "entryWorkflow": "skill_pack:marketing",
+  "maxSteps": 6,
+  "status": "draft"
+}

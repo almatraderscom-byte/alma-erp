@@ -1,0 +1,21 @@
+{
+  "name": "alma-staff-dispatch",
+  "description": "স্টাফের কাজ/হাজিরা/লোকেশন দেখে dispatch সিদ্ধান্ত — assignment owner/existing card দিয়ে।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "medium",
+  "requiredCapabilities": [
+    "get_all_staff",
+    "get_staff_tasks",
+    "get_attendance",
+    "get_staff_location",
+    "get_dispatch_status"
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "inherit",
+  "maxSteps": 5,
+  "status": "draft"
+}

@@ -72,6 +72,16 @@ const handlers = {
   'midday-checkin':    async () => { const { runMiddayCheckin } = await import('../src/staff/midday-checkin.mjs'); await runMiddayCheckin(context) },
   'salah-escalation':  async () => { const { checkAndEscalateSalah } = await import('../src/salah/scheduler.mjs'); await checkAndEscalateSalah(context) },
   'messenger-scan':    async () => { const { runMessengerScan } = await import('../src/messenger/scan.mjs'); await runMessengerScan(context) },
+  // Skill Engine V2 (B4): fetch + scan a commit-pinned GitHub skill on the box.
+  // Usage: node scripts/trigger.mjs skill-import <https-repo> <40-hex-commit> [name] [subdir]
+  'skill-import':      async () => {
+    const { runSkillImport } = await import('../src/skill-import/run.mjs')
+    const [, , , repo, commit, name, subdir] = process.argv
+    if (!repo || !commit) { console.error('usage: skill-import <repo> <commit> [name] [subdir]'); process.exitCode = 2; return }
+    const result = await runSkillImport({ repo, commit, name, subdir })
+    console.log('[skill-import]', JSON.stringify(result, null, 2))
+    if (!result.ok) process.exitCode = 1
+  },
   'night-report':      async () => { const { runNightReport } = await import('../src/staff/night-report.mjs'); await runNightReport(context) },
   'weekly-review':     async () => { const { runWeeklyReview } = await import('../src/staff/weekly-review.mjs'); await runWeeklyReview({ supabase, bot }) },
   'daily-summary':     async () => { const { runDailySummary } = await import('../src/schedulers/daily-summary.mjs'); await runDailySummary(context) },

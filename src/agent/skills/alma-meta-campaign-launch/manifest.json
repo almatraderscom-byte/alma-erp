@@ -1,0 +1,20 @@
+{
+  "name": "alma-meta-campaign-launch",
+  "description": "Meta campaign plan: objective, audience, budget, creative — launch/spend owner-gated card দিয়ে।",
+  "version": "0.1.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "high",
+  "requiredCapabilities": [
+    "marketing_report",
+    "recommend_ad_actions",
+    "list_audiences",
+    "get_customer_segments"
+  ],
+  "networkPolicy": "allowlist",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 5,
+  "status": "draft"
+}
