@@ -19,6 +19,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/ngs-call-sweep",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/live-activity-push",
       "schedule": "*/2 * * * *"
     },
