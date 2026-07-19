@@ -29,11 +29,16 @@ completion-proof stay in code — never inside a downloadable skill.
   marketing, website, client-seo, finance-brief, staff-dispatch, customer-support,
   agent-incident-diagnosis, product-social-post, browser-operator. **Queued:**
   meta-campaign-launch, audience-builder, product-listing, invoice-to-erp.
-- **B4 (security core DONE).** `import-scan.ts` — static gate: injection/secret/exfil
-  scan of prose, danger scan of scripts, Alma import-rule enforcement (pinned commit,
-  names-only secrets, mapped capabilities, forced draft) → block/review/ok + contentHash.
-  **Remaining (owner-gated workbench wiring):** live commit-pinned fetch, no-secret
-  sandbox eval run, shadow→canary→active lifecycle store, one-click rollback.
+- **B4 (DONE except the live fetch job).**
+  - `import-scan.ts` — static gate: injection/secret/exfil scan of prose, danger scan of
+    scripts, Alma import-rule enforcement → block/review/ok + contentHash.
+  - `import-lifecycle.ts` — pure state machine: blocked | draft→reviewed→canary→active→
+    retired; a block-verdict import can never promote.
+  - `import.ts` + `import-store.ts` — orchestrator (ingest/promote/rollback, one active per
+    skill via `supersedes`) over the `agent_imported_skills` table (additive migration).
+  - **Remaining (needs the VPS — build + verify on the box):** a workbench job that
+    git-clones a pinned commit into the no-secret sandbox and feeds the fetched files to
+    `ingestImportedSkill`. Everything downstream of that fetch is built and tested.
 
 ## Enabling (owner)
 
