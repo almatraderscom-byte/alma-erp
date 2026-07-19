@@ -164,6 +164,9 @@ const ERP_TOOL_URL_PATH = '/api/assistant/voice-call/erp-tool'
 // warrants a human, the model calls forward_call and we PUT a <Dial> live-modify to NGS to
 // bridge the caller to the forward number. Handled locally in the bot (has NGS creds+callId).
 const NGS_FORWARD_NUMBER = process.env.NGS_FORWARD_NUMBER || ''
+// The ws URL NGS uses to reach THIS bot — needed to reconnect the caller to the AI if the
+// forward isn't answered. Same value as the inbound webhook's NGS_LIVE_WS_URL.
+const GLIVE_PUBLIC_WS_URL = process.env.GLIVE_PUBLIC_WS_URL || process.env.NGS_LIVE_WS_URL || 'ws://31.97.237.40:8766/ws'
 const FORWARD_FN_DECL = {
   name: 'forward_call',
   description: 'কলদাতাকে সরাসরি বস/মালিক বা টিমের সাথে যুক্ত করতে কলটি ট্রান্সফার করে দাও। ব্যবহার করো যখন: কলদাতা বলেন তিনি বস/মালিক/টিমের সাথে কথা বলতে চান, অথবা বিষয়টি গুরুত্বপূর্ণ/জরুরি/স্পর্শকাতর এবং তুমি নিজে সমাধান করতে পারছ না। ট্রান্সফারের ঠিক আগে কলদাতাকে সংক্ষেপে বলো "জি, একটু ধরুন, যুক্ত করে দিচ্ছি"। ট্রান্সফারের পর কল আর তোমার কাছে থাকবে না।',
@@ -196,6 +199,8 @@ class Call {
     this.curRole = null          // speaker of the in-progress turn being accumulated
     this.curText = ''            // in-progress turn text (fragments merged until speaker flips)
     this.reported = false        // post-call report fires exactly once
+    this.forwarding = false      // forward_call queued — transfer after the hand-off line plays
+    this.forwardReason = ''
   }
 
   // Merge streaming transcription fragments into speaker-segmented turns. Called with
@@ -318,6 +323,7 @@ class Call {
       if (!this.playing) {
         if (this.out.length >= CUSHION * FB) { this.playing = true; this.nextT = now }
         else if (this.hangingUp && this.out.length < FB) { this.finishHangup() }
+        else if (this.forwarding && this.out.length < FB && Date.now() - this.forwardAt > 1200) { this.finishForward() }
         return
       }
       let guard = 0
@@ -330,6 +336,7 @@ class Call {
       if (this.playing && this.out.length < FB && now >= this.nextT) {
         this.playing = false // buffer dry (turn end or gap) — re-buffer before resuming
         if (this.hangingUp) this.finishHangup()
+        else if (this.forwarding && Date.now() - this.forwardAt > 1200) this.finishForward()
       }
     }, 5)
   }
@@ -411,28 +418,50 @@ class Call {
     return []
   }
 
-  // Transfer the live call to the forward number via NGS Modify-Live: PUT /api/v1/call/{id}
-  // with <Response><Dial to=NUMBER>. (Hangup is DELETE; transfer is PUT+Dial — verified
-  // against the NGS Programmable Voice API docs.) After this, NGS bridges the caller to the
-  // forward number and our stream ends.
-  async forwardCall(reason) {
+  // forward_call tool → QUEUE the transfer (don't cut the caller mid-sentence). We let the
+  // agent's "একটু ধরুন, যুক্ত করে দিচ্ছি" line fully play (drain), THEN issue the transfer
+  // from the drain loop (finishForward). The tool response tells the model it's connecting
+  // so it says the hand-off line and then waits.
+  requestForward(reason) {
     if (!this.callId || !NGS_KEY) return { ok: false, error: 'forward not configured (callId/creds)' }
     if (!NGS_FORWARD_NUMBER) return { ok: false, error: 'NGS_FORWARD_NUMBER not set' }
-    const responseXml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true" to="${NGS_FORWARD_NUMBER}"/></Response>`
-    try {
-      const res = await fetch(`${NGS_API}/api/v1/call/${this.callId}`, {
-        method: 'PUT',
-        headers: { 'X-Authorization': NGS_KEY, 'X-Authorization-Secret': NGS_SECRET, 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ responseXml }),
-      })
-      const text = await res.text()
-      console.log(`[glive] ${this.id} forward_call -> ${NGS_FORWARD_NUMBER} PUT ${res.status} ${text.slice(0, 120)} (reason: ${reason || '-'})`)
-      this.forwarded = res.ok
-      return res.ok ? { ok: true, forwarded_to: 'team' } : { ok: false, error: `NGS ${res.status}: ${text.slice(0, 100)}` }
-    } catch (e) {
-      console.log(`[glive] ${this.id} forward_call err ${e?.message || e}`)
-      return { ok: false, error: e?.message || String(e) }
-    }
+    this.forwarding = true
+    this.forwardReason = reason || ''
+    this.forwardAt = Date.now() // don't transfer until the hand-off line has had time to play
+    console.log(`[glive] ${this.id} forward QUEUED -> ${NGS_FORWARD_NUMBER} (reason: ${this.forwardReason || '-'})`)
+    return { ok: true, status: 'connecting', instruction: 'কলদাতাকে সংক্ষেপে "জি, একটু ধরুন, যুক্ত করে দিচ্ছি" বলো, তারপর অপেক্ষা করো — সিস্টেম এখন যুক্ত করছে।' }
+  }
+
+  // Fires from the drain loop once the hand-off line has finished playing. Transfers the
+  // caller to the forward number via NGS Modify-Live (PUT + <Dial>). answerOnBridge = the
+  // caller hears ringback (not silence) while it rings; timeout bounds the ring. If the
+  // forward is NOT answered, NGS proceeds to the <Connect><Stream> fallback → the AI
+  // reconnects and stays with the caller (owner rule: don't abandon the caller unless the
+  // forward succeeds). On PUT failure we clear the flag so the agent simply keeps talking.
+  finishForward() {
+    if (this._fwdTimer || this.closed) return
+    this._fwdTimer = setTimeout(async () => {
+      const exp = Date.now() + 15 * 60_000
+      const t = createHmac('sha256', AUTH_TOKEN || '').update(`relay:${this.params?.id}:${exp}`).digest('hex')
+      const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+      const P = (n, v) => `<parameter name="${esc(n)}" value="${esc(v)}"/>`
+      const backPurpose = 'কলটি টিমের নম্বরে যুক্ত করার চেষ্টা হয়েছিল এবং কলদাতা আবার তোমার লাইনে ফিরে এসেছে (সম্ভবত কেউ ধরেনি)। বিনয়ের সাথে বলো — "আমি আবার লাইনে আছি" — এই মুহূর্তে সরাসরি যুক্ত করা গেল না; তার নাম, নম্বর ও বিষয়টি নিশ্চিত করে নাও যাতে টিম পরে কল করতে পারে, অথবা তুমি নিজে যতটা পারো সাহায্য করো।'
+      const fallbackStream = `<Connect><Stream name="alma" url="${esc(GLIVE_PUBLIC_WS_URL)}">${P('id', this.params?.id || '')}${P('exp', String(exp))}${P('t', t)}${P('purpose', backPurpose)}${P('recipientName', this.params?.recipientName || '')}${P('voice', this.params?.voice || VOICE)}${P('callType', 'inbound')}</Stream></Connect>`
+      const responseXml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true" timeout="30" to="${esc(NGS_FORWARD_NUMBER)}"/>${fallbackStream}</Response>`
+      try {
+        const res = await fetch(`${NGS_API}/api/v1/call/${this.callId}`, {
+          method: 'PUT',
+          headers: { 'X-Authorization': NGS_KEY, 'X-Authorization-Secret': NGS_SECRET, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ responseXml }),
+        })
+        const text = await res.text()
+        console.log(`[glive] ${this.id} forward_call -> ${NGS_FORWARD_NUMBER} PUT ${res.status} ${text.slice(0, 120)}`)
+        if (!res.ok) { this.forwarding = false; this._fwdTimer = null } // transfer refused — stay on the line
+      } catch (e) {
+        console.log(`[glive] ${this.id} forward PUT err ${e?.message || e}`)
+        this.forwarding = false; this._fwdTimer = null
+      }
+    }, 500)
   }
 
   // Bridge Gemini Live function calls. forward_call is handled LOCALLY (NGS transfer); the
@@ -443,7 +472,7 @@ class Call {
     for (const fc of calls) {
       let out
       if (fc.name === 'forward_call') {
-        out = await this.forwardCall(fc.args?.reason)
+        out = this.requestForward(fc.args?.reason)
       } else if (!APP_URL || !AUTH_TOKEN) {
         out = { ok: false, error: 'tool bridge not configured' }
       } else {
