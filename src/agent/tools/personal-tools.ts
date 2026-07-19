@@ -356,6 +356,57 @@ export const cancel_scheduled_call: AgentTool = {
   },
 }
 
+export const get_call_history: AgentTool = {
+  name: 'get_call_history',
+  description:
+    'Returns the call log — recent phone calls (both INCOMING to the ALMA number and OUTGOING made by the agent) with who / direction / duration / est. cost / status / Bangla summary, plus any UPCOMING scheduled calls. Use when the owner asks "কল হিস্ট্রি / সাম্প্রতিক কল / কে কল করেছিল / কী কল বাকি আছে দেখাও"।',
+  input_schema: {
+    type: 'object' as const,
+    properties: { limit: { type: 'number', description: 'How many recent calls (default 12, max 30).' } },
+  },
+  handler: async (input) => {
+    try {
+      const limit = Math.min(30, Math.max(1, Number(input.limit) || 12))
+      const [calls, scheduled] = await Promise.all([
+        db.agentVoiceCall.findMany({
+          orderBy: { createdAt: 'desc' },
+          take: limit,
+          select: { recipientName: true, toNumber: true, purpose: true, status: true, durationSecs: true, costCredits: true, summary: true, createdAt: true },
+        }),
+        db.scheduledCall.findMany({
+          where: { status: 'scheduled' },
+          orderBy: { dueAt: 'asc' },
+          take: 15,
+          select: { recipientName: true, toNumber: true, purpose: true, dueAt: true, callType: true },
+        }),
+      ])
+      const fmt = (d: Date) => new Date(d).toLocaleString('en-US', { timeZone: 'Asia/Dhaka', dateStyle: 'medium', timeStyle: 'short' })
+      return {
+        success: true,
+        data: {
+          recent: calls.map((c: { recipientName: string | null; toNumber: string; purpose: string | null; status: string; durationSecs: number | null; costCredits: number | null; summary: string | null; createdAt: Date }) => ({
+            who: c.recipientName ?? c.toNumber,
+            direction: c.purpose === 'inbound_call' ? 'incoming' : 'outgoing',
+            status: c.status,
+            durationSecs: c.durationSecs,
+            costBdt: c.costCredits,
+            summary: c.summary,
+            at: fmt(c.createdAt),
+          })),
+          upcoming: scheduled.map((s: { recipientName: string | null; toNumber: string; purpose: string; dueAt: Date; callType: string }) => ({
+            who: s.recipientName ?? s.toNumber,
+            purpose: s.purpose,
+            when: fmt(s.dueAt),
+            callType: s.callType,
+          })),
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const FAMILY_TOOLS: AgentTool[] = [
   add_family_contact,
   list_family_contacts,
@@ -364,4 +415,5 @@ export const FAMILY_TOOLS: AgentTool[] = [
   schedule_call,
   list_scheduled_calls,
   cancel_scheduled_call,
+  get_call_history,
 ]

@@ -449,6 +449,7 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   schedule_call: stage('family', 'high'),
   list_scheduled_calls: read('family'),
   cancel_scheduled_call: write('family', 'low'),
+  get_call_history: read('calls'),
 
   // ── CS-1 customer surface (cs-registry only, never a head group) ───────────
   match_product_by_image: { domain: 'cs', mode: 'read', risk: 'low', routing: 'customer' },
