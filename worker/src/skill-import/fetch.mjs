@@ -100,9 +100,15 @@ export async function _fetchFromResolvedUrl(cloneUrl, sha, subdir = '') {
   const ws = await mkdtemp(join(tmpdir(), 'alma-skill-import-'))
   try {
     // Shallow, blobless clone then fetch+checkout the single pinned commit. execFile =
-    // no shell; args are arrays so the repo/sha can never be interpreted as flags.
+    // no shell; args are arrays so the repo/sha can never be interpreted as flags. When a
+    // subdir is given, sparse-checkout it so a huge repo only materializes that one folder
+    // (blobless + sparse ⇒ only the skill's blobs are ever fetched).
     await run('git', ['init', '--quiet', ws], { timeout: GIT_TIMEOUT_MS })
     await run('git', ['-C', ws, 'remote', 'add', 'origin', cloneUrl], { timeout: GIT_TIMEOUT_MS })
+    if (subdir) {
+      await run('git', ['-C', ws, 'sparse-checkout', 'init', '--cone'], { timeout: GIT_TIMEOUT_MS })
+      await run('git', ['-C', ws, 'sparse-checkout', 'set', subdir], { timeout: GIT_TIMEOUT_MS })
+    }
     await run('git', ['-C', ws, 'fetch', '--depth', '1', '--filter=blob:none', 'origin', sha], {
       timeout: GIT_TIMEOUT_MS,
     })

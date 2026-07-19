@@ -1,0 +1,50 @@
+name: Skill import smoke (VPS)
+
+# One-off manual proof for Skill Engine V2 (B4): SSH to the VPS and run a real
+# commit-pinned skill import (clone on the box → server-side scan → lifecycle store).
+# Uses the same VPS_HOST + VPS_SSH_KEY secrets as deploy-worker. Manual-only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: 'https github repo URL'
+        required: true
+        default: 'https://github.com/almatraderscom-byte/alma-erp'
+      commit:
+        description: 'full 40-hex commit sha'
+        required: true
+      name:
+        description: 'skill name to record'
+        required: true
+        default: 'imported-daily-briefing-smoke'
+      subdir:
+        description: 'path to the skill package within the repo'
+        required: true
+        default: 'src/agent/skills/alma-owner-daily-briefing'
+
+concurrency:
+  group: skill-import-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Run import on the VPS
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          REPO: ${{ inputs.repo }}
+          COMMIT: ${{ inputs.commit }}
+          NAME: ${{ inputs.name }}
+          SUBDIR: ${{ inputs.subdir }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 "root@$VPS_HOST" \
+            "cd /opt/alma-erp/worker && node scripts/trigger.mjs skill-import '$REPO' '$COMMIT' '$NAME' '$SUBDIR'"

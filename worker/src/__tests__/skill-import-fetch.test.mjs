@@ -61,3 +61,30 @@ test('clones a pinned commit from a local fixture and reads the package (hermeti
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('sparse-checkout reads only the pinned subdir from a repo with many folders', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'alma-skill-sub-'))
+  const git = (args) => execFileSync('git', ['-C', root, ...args], { stdio: 'pipe' }).toString().trim()
+  try {
+    execFileSync('git', ['init', '--quiet', root], { stdio: 'pipe' })
+    git(['config', 'uploadpack.allowAnySHA1InWant', 'true'])
+    git(['config', 'uploadpack.allowFilter', 'true'])
+    git(['config', 'user.email', 'test@alma.local'])
+    git(['config', 'user.name', 'alma test'])
+
+    await mkdir(join(root, 'other'), { recursive: true })
+    await writeFile(join(root, 'other', 'big.txt'), 'x'.repeat(1000))
+    await mkdir(join(root, 'skills', 'my-skill'), { recursive: true })
+    await writeFile(join(root, 'skills', 'my-skill', 'SKILL.md'), '---\nname: sub\n---\n# Sub skill')
+    await writeFile(join(root, 'skills', 'my-skill', 'manifest.json'), JSON.stringify({ name: 'sub', version: '1.0.0' }))
+    git(['add', '-A'])
+    git(['commit', '--quiet', '-m', 'init'])
+    const sha = git(['rev-parse', 'HEAD'])
+
+    const pkg = await _fetchFromResolvedUrl(`file://${root}`, sha, 'skills/my-skill')
+    assert.equal(pkg.manifest.name, 'sub')
+    assert.match(pkg.skillMd, /Sub skill/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
