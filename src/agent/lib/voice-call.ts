@@ -544,7 +544,10 @@ async function placeNgsLiveCall(
       P('callType', callType ?? 'owner') +
       '</stream></connect></response>'
 
-    const body = new URLSearchParams({ to: toNumber, from: config.ngsFrom, responseXml })
+    // NGS outbound routes match 01…/880… WITHOUT a leading '+' (normalizeOutboundPhone
+    // returns +E.164 for Twilio); sending '+880…' → NGS "No route found" (code 3).
+    const ngsTo = toNumber.replace(/^\+/, '')
+    const body = new URLSearchParams({ to: ngsTo, from: config.ngsFrom, responseXml })
     const res = await fetch(`${config.ngsApiBase}/api/v1/call`, {
       method: 'POST',
       headers: {
