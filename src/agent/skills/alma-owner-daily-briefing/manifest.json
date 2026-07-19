@@ -17,5 +17,5 @@
   "approvalPolicy": "inherit",
   "maxTools": 6,
   "maxSteps": 8,
-  "status": "draft"
+  "status": "active"
 }
