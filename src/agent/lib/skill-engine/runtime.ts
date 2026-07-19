@@ -12,15 +12,13 @@
  */
 import path from 'path'
 import { discoverSkills, selectSkills, activateSkill } from '@/agent/lib/skill-engine/loader'
+import { isSkillEngineEnabled } from '@/agent/lib/skill-engine/enabled'
 import type { SkillIndex } from '@/agent/lib/skill-engine/types'
 
 const SKILLS_ROOT = path.join(process.cwd(), 'src', 'agent', 'skills')
 const MAX_SKILL_BODY_CHARS = 6000 // roadmap: activated SKILL.md ≤ ~5k tokens
 
-/** Default OFF. Owner flips via env SKILL_ENGINE_ENABLED=true after a live check. */
-export function isSkillEngineEnabled(): boolean {
-  return process.env.SKILL_ENGINE_ENABLED === 'true'
-}
+export { isSkillEngineEnabled }
 
 // Skills are static files — discover once per process (memoized). A failed scan is
 // cached as an empty index so a bad deploy doesn't re-hit the FS every turn.
@@ -42,7 +40,7 @@ export function __resetSkillIndexCache(): void {
  * engine is off / nothing matches / anything throws.
  */
 export async function buildActiveSkillsBlock(lastUserText: string): Promise<string> {
-  if (!isSkillEngineEnabled()) return ''
+  if (!(await isSkillEngineEnabled())) return ''
   if (!lastUserText || !lastUserText.trim()) return ''
   try {
     const index = await getIndex()

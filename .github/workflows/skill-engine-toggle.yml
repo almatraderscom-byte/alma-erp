@@ -1,0 +1,51 @@
+name: Skill engine toggle (VPS)
+
+# Flip the KV `skill_engine_enabled` switch on prod without a Vercel env change, by
+# calling the internal toggle endpoint from the VPS (which holds APP_URL + the internal
+# token). Manual-only. Uses the same VPS_HOST + VPS_SSH_KEY secrets as deploy-worker.
+
+on:
+  workflow_dispatch:
+    inputs:
+      enabled:
+        description: 'true to enable the skill engine, false to disable'
+        required: true
+        default: 'true'
+
+concurrency:
+  group: skill-engine-toggle
+  cancel-in-progress: false
+
+jobs:
+  toggle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Set + read back the KV switch via the VPS
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          ENABLED: ${{ inputs.enabled }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 "root@$VPS_HOST" bash -s <<EOF
+            set -e
+            cd /opt/alma-erp/worker
+            [ -f .env ] && set -a && . ./.env && set +a || true
+            : "\${APP_URL:?APP_URL not set on the box}"
+            : "\${AGENT_INTERNAL_TOKEN:?AGENT_INTERNAL_TOKEN not set on the box}"
+            echo "set →"
+            curl -sS -X POST "\$APP_URL/api/assistant/internal/skill-engine" \
+              -H "Authorization: Bearer \$AGENT_INTERNAL_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"enabled\": $ENABLED}"
+            echo
+            echo "read →"
+            curl -sS "\$APP_URL/api/assistant/internal/skill-engine" \
+              -H "Authorization: Bearer \$AGENT_INTERNAL_TOKEN"
+            echo
+          EOF
