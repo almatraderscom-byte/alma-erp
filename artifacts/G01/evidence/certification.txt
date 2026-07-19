@@ -1,0 +1,28 @@
+# G01 Group Integration Checkpoint — captured evidence
+
+## scope (vs main)
+ 210 files changed, 5721 insertions(+)
+modified/deleted pre-existing files: 0
+src changes outside src/agent/contracts: 0
+prisma/ changes: 0
+
+## full repository typecheck
+npx tsc --noEmit -> exit 0 (PASS)
+
+## group test suite
+ Test Files  10 passed (10)
+      Tests  90 passed (90)
+
+## aggregate freeze gate
+[PASS] contracts-typecheck  
+[PASS] contracts-tests         Duration  915ms (transform 326ms, setup 0ms, import 555ms, tests 85ms, enviro
+[PASS] forbidden-imports    PASS — no NEW forbidden imports. ERP app/api → agent: 0. Boundary did not regres
+[PASS] ownership            PASS — every changed file is within the session owner zones
+[PASS] adr-lint             PASS — all ADRs well-formed and sequential
+[PASS] proof-complete       PASS — all proof directories complete and verdicts valid
+---
+FREEZE BASELINE: PASS — architecture is frozen and green
+
+## group rollback drill
+main tree = 241ace832aa144d67e65060c155d3f04022e0f36
+revert(main..HEAD) tree = 241ace832aa144d67e65060c155d3f04022e0f36 -> MATCH
