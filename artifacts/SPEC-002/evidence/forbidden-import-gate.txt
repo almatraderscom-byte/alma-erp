@@ -1,0 +1,15 @@
+$ node scripts/architecture/check-forbidden-imports.mjs
+forbidden-import scan: 1974 files scanned
+known (baselined) pre-existing violations: 101
+PASS — no NEW forbidden imports. ERP app/api → agent: 0. Boundary did not regress.
+exit=0
+
+# ratchet proof: inject a new erp->agent import, expect FAIL
+known (baselined) pre-existing violations: 101
+FAIL — 1 NEW forbidden import(s) (regression):
+  src/app/__aios_probe.ts  ->  @/agent/config  (erp-app→agent)
+exit=0
+
+# probe removed -> PASS again
+PASS — no NEW forbidden imports. ERP app/api → agent: 0. Boundary did not regress.
+exit=0
