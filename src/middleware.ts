@@ -33,6 +33,8 @@ function isPublicApiOrShare(pathname: string) {
   // Inbound-call answer URL fetched by NextGenSwitch (no session) — self-protects via
   // the ?k=NGS_INBOUND_SECRET shared secret + requireAgentEnabled in the route handler.
   if (pathname === '/api/assistant/voice-call/ngs-inbound') return true
+  // NGS outbound call-status callback (no session) — self-protects via ?k=NGS_INBOUND_SECRET.
+  if (pathname === '/api/assistant/voice-call/ngs-status') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   if (pathname === '/api/build-info') return true

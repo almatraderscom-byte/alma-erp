@@ -105,6 +105,14 @@ export async function POST(req: NextRequest) {
       (summary ? `সারাংশ: ${summary}\n\n` : '') +
       (convo ? `কথোপকথন:\n${convo}` : 'কেউ কথা বলেনি / কল ধরা হয়নি।')
     await notifyOwner({ tier: 2, title: `কল শেষ — ${who}`, message, category: 'report' })
+    // Also drop the result into the agent chat so the owner SEES it on screen, not only in
+    // Telegram (the summary line is enough here; the full transcript stays in Telegram).
+    if (record.conversationId) {
+      const chatText = `📞 কল শেষ — ${who}${mins ? ` (${mins})` : ''}।` + (summary ? ` সারাংশ: ${summary}` : '')
+      await db.agentMessage.create({
+        data: { conversationId: record.conversationId, role: 'assistant', content: [{ type: 'text', text: chatText }], tokensIn: 0, tokensOut: 0, costUsd: 0 },
+      }).catch(() => {})
+    }
   } catch (err) {
     console.warn('[relay-report] owner notify failed:', err instanceof Error ? err.message : String(err))
   }
