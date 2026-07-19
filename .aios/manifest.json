@@ -1,0 +1,4396 @@
+{
+  "version": "2.0.0",
+  "architectureFrozen": true,
+  "groups": [
+    {
+      "id": "G01",
+      "name": "Architecture Freeze and Repository Governance",
+      "deps": [],
+      "paths": [
+        "docs/architecture",
+        "scripts/architecture",
+        "src/agent/contracts"
+      ],
+      "specs": [
+        "SPEC-001",
+        "SPEC-002",
+        "SPEC-003",
+        "SPEC-004",
+        "SPEC-005",
+        "SPEC-006",
+        "SPEC-007",
+        "SPEC-008",
+        "SPEC-009",
+        "SPEC-010"
+      ]
+    },
+    {
+      "id": "G02",
+      "name": "Request Admission Control Plane",
+      "deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/control-plane/admission",
+        "src/app/api/agent"
+      ],
+      "specs": [
+        "SPEC-011",
+        "SPEC-012",
+        "SPEC-013",
+        "SPEC-014",
+        "SPEC-015",
+        "SPEC-016",
+        "SPEC-017",
+        "SPEC-018",
+        "SPEC-019",
+        "SPEC-020"
+      ]
+    },
+    {
+      "id": "G03",
+      "name": "Provider Pricing and Cost Accounting",
+      "deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/finops",
+        "src/agent/providers/pricing",
+        "prisma/agent-cost"
+      ],
+      "specs": [
+        "SPEC-021",
+        "SPEC-022",
+        "SPEC-023",
+        "SPEC-024",
+        "SPEC-025",
+        "SPEC-026",
+        "SPEC-027",
+        "SPEC-028",
+        "SPEC-029",
+        "SPEC-030"
+      ]
+    },
+    {
+      "id": "G04",
+      "name": "Hard Cost Governor",
+      "deps": [
+        "G02",
+        "G03"
+      ],
+      "paths": [
+        "src/agent/control-plane/cost",
+        "src/agent/budgets"
+      ],
+      "specs": [
+        "SPEC-031",
+        "SPEC-032",
+        "SPEC-033",
+        "SPEC-034",
+        "SPEC-035",
+        "SPEC-036",
+        "SPEC-037",
+        "SPEC-038",
+        "SPEC-039",
+        "SPEC-040"
+      ]
+    },
+    {
+      "id": "G05",
+      "name": "Prompt and Context Compiler",
+      "deps": [
+        "G01",
+        "G02",
+        "G04"
+      ],
+      "paths": [
+        "src/agent/context",
+        "src/agent/prompts"
+      ],
+      "specs": [
+        "SPEC-041",
+        "SPEC-042",
+        "SPEC-043",
+        "SPEC-044",
+        "SPEC-045",
+        "SPEC-046",
+        "SPEC-047",
+        "SPEC-048",
+        "SPEC-049",
+        "SPEC-050"
+      ]
+    },
+    {
+      "id": "G06",
+      "name": "Conversation State and Memory",
+      "deps": [
+        "G01",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/memory",
+        "prisma/agent-memory"
+      ],
+      "specs": [
+        "SPEC-051",
+        "SPEC-052",
+        "SPEC-053",
+        "SPEC-054",
+        "SPEC-055",
+        "SPEC-056",
+        "SPEC-057",
+        "SPEC-058",
+        "SPEC-059",
+        "SPEC-060"
+      ]
+    },
+    {
+      "id": "G07",
+      "name": "Prompt Caching and Response Caching",
+      "deps": [
+        "G03",
+        "G05",
+        "G06"
+      ],
+      "paths": [
+        "src/agent/cache",
+        "src/agent/providers/cache"
+      ],
+      "specs": [
+        "SPEC-061",
+        "SPEC-062",
+        "SPEC-063",
+        "SPEC-064",
+        "SPEC-065",
+        "SPEC-066",
+        "SPEC-067",
+        "SPEC-068",
+        "SPEC-069",
+        "SPEC-070"
+      ]
+    },
+    {
+      "id": "G08",
+      "name": "Tool Registry Decomposition",
+      "deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/tools/registry",
+        "src/agent/tools/manifests"
+      ],
+      "specs": [
+        "SPEC-071",
+        "SPEC-072",
+        "SPEC-073",
+        "SPEC-074",
+        "SPEC-075",
+        "SPEC-076",
+        "SPEC-077",
+        "SPEC-078",
+        "SPEC-079",
+        "SPEC-080"
+      ]
+    },
+    {
+      "id": "G09",
+      "name": "Capability Control Plane",
+      "deps": [
+        "G02",
+        "G08"
+      ],
+      "paths": [
+        "src/agent/capabilities",
+        "prisma/agent-capability"
+      ],
+      "specs": [
+        "SPEC-081",
+        "SPEC-082",
+        "SPEC-083",
+        "SPEC-084",
+        "SPEC-085",
+        "SPEC-086",
+        "SPEC-087",
+        "SPEC-088",
+        "SPEC-089",
+        "SPEC-090"
+      ]
+    },
+    {
+      "id": "G10",
+      "name": "Tool Selection and Tool Result Firewall",
+      "deps": [
+        "G05",
+        "G08",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/tools/selection",
+        "src/agent/tools/results"
+      ],
+      "specs": [
+        "SPEC-091",
+        "SPEC-092",
+        "SPEC-093",
+        "SPEC-094",
+        "SPEC-095",
+        "SPEC-096",
+        "SPEC-097",
+        "SPEC-098",
+        "SPEC-099",
+        "SPEC-100"
+      ]
+    },
+    {
+      "id": "G11",
+      "name": "Identity Authorization and Policy Engine",
+      "deps": [
+        "G01",
+        "G02",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/policy",
+        "src/agent/identity"
+      ],
+      "specs": [
+        "SPEC-101",
+        "SPEC-102",
+        "SPEC-103",
+        "SPEC-104",
+        "SPEC-105",
+        "SPEC-106",
+        "SPEC-107",
+        "SPEC-108",
+        "SPEC-109",
+        "SPEC-110"
+      ]
+    },
+    {
+      "id": "G12",
+      "name": "Autonomy and Approval Governance",
+      "deps": [
+        "G04",
+        "G11"
+      ],
+      "paths": [
+        "src/agent/autonomy",
+        "src/agent/approvals"
+      ],
+      "specs": [
+        "SPEC-111",
+        "SPEC-112",
+        "SPEC-113",
+        "SPEC-114",
+        "SPEC-115",
+        "SPEC-116",
+        "SPEC-117",
+        "SPEC-118",
+        "SPEC-119",
+        "SPEC-120"
+      ]
+    },
+    {
+      "id": "G13",
+      "name": "Central Secure Tool Gateway",
+      "deps": [
+        "G04",
+        "G10",
+        "G11",
+        "G12"
+      ],
+      "paths": [
+        "src/agent/tool-gateway"
+      ],
+      "specs": [
+        "SPEC-121",
+        "SPEC-122",
+        "SPEC-123",
+        "SPEC-124",
+        "SPEC-125",
+        "SPEC-126",
+        "SPEC-127",
+        "SPEC-128",
+        "SPEC-129",
+        "SPEC-130"
+      ]
+    },
+    {
+      "id": "G14",
+      "name": "Durable Workflow Runtime",
+      "deps": [
+        "G01",
+        "G09",
+        "G13"
+      ],
+      "paths": [
+        "src/agent/workflows",
+        "src/worker/workflows"
+      ],
+      "specs": [
+        "SPEC-131",
+        "SPEC-132",
+        "SPEC-133",
+        "SPEC-134",
+        "SPEC-135",
+        "SPEC-136",
+        "SPEC-137",
+        "SPEC-138",
+        "SPEC-139",
+        "SPEC-140"
+      ]
+    },
+    {
+      "id": "G15",
+      "name": "Queue Scheduling and Browser Runtime",
+      "deps": [
+        "G04",
+        "G14"
+      ],
+      "paths": [
+        "src/worker/queues",
+        "src/agent/browser-runtime"
+      ],
+      "specs": [
+        "SPEC-141",
+        "SPEC-142",
+        "SPEC-143",
+        "SPEC-144",
+        "SPEC-145",
+        "SPEC-146",
+        "SPEC-147",
+        "SPEC-148",
+        "SPEC-149",
+        "SPEC-150"
+      ]
+    },
+    {
+      "id": "G16",
+      "name": "Model Fabric and Provider Adapters",
+      "deps": [
+        "G03",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/models",
+        "src/agent/providers/runtime"
+      ],
+      "specs": [
+        "SPEC-151",
+        "SPEC-152",
+        "SPEC-153",
+        "SPEC-154",
+        "SPEC-155",
+        "SPEC-156",
+        "SPEC-157",
+        "SPEC-158",
+        "SPEC-159",
+        "SPEC-160"
+      ]
+    },
+    {
+      "id": "G17",
+      "name": "Measured Routing and Head Model Isolation",
+      "deps": [
+        "G04",
+        "G09",
+        "G16"
+      ],
+      "paths": [
+        "src/agent/routing",
+        "src/agent/runtime"
+      ],
+      "specs": [
+        "SPEC-161",
+        "SPEC-162",
+        "SPEC-163",
+        "SPEC-164",
+        "SPEC-165",
+        "SPEC-166",
+        "SPEC-167",
+        "SPEC-168",
+        "SPEC-169",
+        "SPEC-170"
+      ]
+    },
+    {
+      "id": "G18",
+      "name": "Specialist Agents and Known Workflows",
+      "deps": [
+        "G09",
+        "G14",
+        "G17"
+      ],
+      "paths": [
+        "src/agent/specialists",
+        "src/agent/workflow-templates"
+      ],
+      "specs": [
+        "SPEC-171",
+        "SPEC-172",
+        "SPEC-173",
+        "SPEC-174",
+        "SPEC-175",
+        "SPEC-176",
+        "SPEC-177",
+        "SPEC-178",
+        "SPEC-179",
+        "SPEC-180"
+      ]
+    },
+    {
+      "id": "G19",
+      "name": "Verification Security and Evaluation",
+      "deps": [
+        "G10",
+        "G11",
+        "G13",
+        "G17",
+        "G18"
+      ],
+      "paths": [
+        "src/agent/verification",
+        "src/agent/evals",
+        "tests/agent-security"
+      ],
+      "specs": [
+        "SPEC-181",
+        "SPEC-182",
+        "SPEC-183",
+        "SPEC-184",
+        "SPEC-185",
+        "SPEC-186",
+        "SPEC-187",
+        "SPEC-188",
+        "SPEC-189",
+        "SPEC-190"
+      ]
+    },
+    {
+      "id": "G20",
+      "name": "Observability Release and Continuous Optimization",
+      "deps": [
+        "G07",
+        "G14",
+        "G19"
+      ],
+      "paths": [
+        "src/agent/observability",
+        "src/agent/release",
+        "src/app/agent-ops"
+      ],
+      "specs": [
+        "SPEC-191",
+        "SPEC-192",
+        "SPEC-193",
+        "SPEC-194",
+        "SPEC-195",
+        "SPEC-196",
+        "SPEC-197",
+        "SPEC-198",
+        "SPEC-199",
+        "SPEC-200"
+      ]
+    }
+  ],
+  "waves": [
+    [
+      "G01"
+    ],
+    [
+      "G02",
+      "G03",
+      "G08"
+    ],
+    [
+      "G04",
+      "G06",
+      "G09",
+      "G11",
+      "G16"
+    ],
+    [
+      "G05",
+      "G12",
+      "G14"
+    ],
+    [
+      "G07",
+      "G10",
+      "G15",
+      "G17"
+    ],
+    [
+      "G13",
+      "G18"
+    ],
+    [
+      "G19"
+    ],
+    [
+      "G20"
+    ]
+  ],
+  "specs": [
+    {
+      "id": "SPEC-001",
+      "title": "Architecture inventory and request-path map",
+      "group": "G01",
+      "group_name": "Architecture Freeze and Repository Governance",
+      "index": 1,
+      "deps": [],
+      "group_deps": [],
+      "paths": [
+        "docs/architecture",
+        "scripts/architecture",
+        "src/agent/contracts"
+      ],
+      "objective": "Implement architecture inventory and request-path map as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-002",
+      "title": "Architecture invariants and forbidden dependency rules",
+      "group": "G01",
+      "group_name": "Architecture Freeze and Repository Governance",
+      "index": 2,
+      "deps": [
+        "SPEC-001"
+      ],
+      "group_deps": [],
+      "paths": [
+        "docs/architecture",
+        "scripts/architecture",
+        "src/agent/contracts"
+      ],
+      "objective": "Implement architecture invariants and forbidden dependency rules as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-003",
+      "title": "Repository ownership zones and CODEOWNERS model",
+      "group": "G01",
+      "group_name": "Architecture Freeze and Repository Governance",
+      "index": 3,
+      "deps": [
+        "SPEC-002"
+      ],
+      "group_deps": [],
+      "paths": [
+        "docs/architecture",
+        "scripts/architecture",
+        "src/agent/contracts"
+      ],
+      "objective": "Implement repository ownership zones and codeowners model as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-004",
+      "title": "Canonical execution identity contract",
+      "group": "G01",
+      "group_name": "Architecture Freeze and Repository Governance",
+      "index": 4,
+      "deps": [
+        "SPEC-003"
+      ],
+      "group_deps": [],
+      "paths": [
+        "docs/architecture",
+        "scripts/architecture",
+        "src/agent/contracts"
+      ],
+      "objective": "Implement canonical execution identity contract as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-005",
+      "title": "Tenant and business context propagation contract",
+      "group": "G01",
+      "group_name": "Architecture Freeze and Repository Governance",
+      "index": 5,
+      "deps": [
+        "SPEC-004"
+      ],
+      "group_deps": [],
+      "paths": [
+        "docs/architecture",
+        "scripts/architecture",
+        "src/agent/contracts"
+      ],
+      "objective": "Implement tenant and business context propagation contract as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-006",
+      "title": "Canonical error taxonomy",
+      "group": "G01",
+      "group_name": "Architecture Freeze and Repository Governance",
+      "index": 6,
+      "deps": [
+        "SPEC-005"
+      ],
+      "group_deps": [],
+      "paths": [
+        "docs/architecture",
+        "scripts/architecture",
+        "src/agent/contracts"
+      ],
+      "objective": "Implement canonical error taxonomy as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-007",
+      "title": "Architecture decision record process",
+      "group": "G01",
+      "group_name": "Architecture Freeze and Repository Governance",
+      "index": 7,
+      "deps": [
+        "SPEC-006"
+      ],
+      "group_deps": [],
+      "paths": [
+        "docs/architecture",
+        "scripts/architecture",
+        "src/agent/contracts"
+      ],
+      "objective": "Implement architecture decision record process as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-008",
+      "title": "Feature flag and rollback contract",
+      "group": "G01",
+      "group_name": "Architecture Freeze and Repository Governance",
+      "index": 8,
+      "deps": [
+        "SPEC-007"
+      ],
+      "group_deps": [],
+      "paths": [
+        "docs/architecture",
+        "scripts/architecture",
+        "src/agent/contracts"
+      ],
+      "objective": "Implement feature flag and rollback contract as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-009",
+      "title": "AI change-proof artifact standard",
+      "group": "G01",
+      "group_name": "Architecture Freeze and Repository Governance",
+      "index": 9,
+      "deps": [
+        "SPEC-008"
+      ],
+      "group_deps": [],
+      "paths": [
+        "docs/architecture",
+        "scripts/architecture",
+        "src/agent/contracts"
+      ],
+      "objective": "Implement ai change-proof artifact standard as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-010",
+      "title": "Architecture freeze baseline gate",
+      "group": "G01",
+      "group_name": "Architecture Freeze and Repository Governance",
+      "index": 10,
+      "deps": [
+        "SPEC-009"
+      ],
+      "group_deps": [],
+      "paths": [
+        "docs/architecture",
+        "scripts/architecture",
+        "src/agent/contracts"
+      ],
+      "objective": "Implement architecture freeze baseline gate as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-011",
+      "title": "Single admission gateway",
+      "group": "G02",
+      "group_name": "Request Admission Control Plane",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/control-plane/admission",
+        "src/app/api/agent"
+      ],
+      "objective": "Implement single admission gateway as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-012",
+      "title": "Request source normalization",
+      "group": "G02",
+      "group_name": "Request Admission Control Plane",
+      "index": 2,
+      "deps": [
+        "SPEC-011"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/control-plane/admission",
+        "src/app/api/agent"
+      ],
+      "objective": "Implement request source normalization as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-013",
+      "title": "Deterministic fast-path command router",
+      "group": "G02",
+      "group_name": "Request Admission Control Plane",
+      "index": 3,
+      "deps": [
+        "SPEC-012"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/control-plane/admission",
+        "src/app/api/agent"
+      ],
+      "objective": "Implement deterministic fast-path command router as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-014",
+      "title": "Structured task envelope",
+      "group": "G02",
+      "group_name": "Request Admission Control Plane",
+      "index": 4,
+      "deps": [
+        "SPEC-013"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/control-plane/admission",
+        "src/app/api/agent"
+      ],
+      "objective": "Implement structured task envelope as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-015",
+      "title": "Intent classification adapter",
+      "group": "G02",
+      "group_name": "Request Admission Control Plane",
+      "index": 5,
+      "deps": [
+        "SPEC-014"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/control-plane/admission",
+        "src/app/api/agent"
+      ],
+      "objective": "Implement intent classification adapter as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-016",
+      "title": "Complexity classification",
+      "group": "G02",
+      "group_name": "Request Admission Control Plane",
+      "index": 6,
+      "deps": [
+        "SPEC-015"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/control-plane/admission",
+        "src/app/api/agent"
+      ],
+      "objective": "Implement complexity classification as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-017",
+      "title": "Planning-need classification",
+      "group": "G02",
+      "group_name": "Request Admission Control Plane",
+      "index": 7,
+      "deps": [
+        "SPEC-016"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/control-plane/admission",
+        "src/app/api/agent"
+      ],
+      "objective": "Implement planning-need classification as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-018",
+      "title": "Risk admission classification",
+      "group": "G02",
+      "group_name": "Request Admission Control Plane",
+      "index": 8,
+      "deps": [
+        "SPEC-017"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/control-plane/admission",
+        "src/app/api/agent"
+      ],
+      "objective": "Implement risk admission classification as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-019",
+      "title": "Request deduplication and replay protection",
+      "group": "G02",
+      "group_name": "Request Admission Control Plane",
+      "index": 9,
+      "deps": [
+        "SPEC-018"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/control-plane/admission",
+        "src/app/api/agent"
+      ],
+      "objective": "Implement request deduplication and replay protection as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-020",
+      "title": "Admission bypass CI gate",
+      "group": "G02",
+      "group_name": "Request Admission Control Plane",
+      "index": 10,
+      "deps": [
+        "SPEC-019"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/control-plane/admission",
+        "src/app/api/agent"
+      ],
+      "objective": "Implement admission bypass ci gate as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-021",
+      "title": "Versioned provider pricing registry",
+      "group": "G03",
+      "group_name": "Provider Pricing and Cost Accounting",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/finops",
+        "src/agent/providers/pricing",
+        "prisma/agent-cost"
+      ],
+      "objective": "Implement versioned provider pricing registry as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-022",
+      "title": "Tokenizer abstraction and token estimation",
+      "group": "G03",
+      "group_name": "Provider Pricing and Cost Accounting",
+      "index": 2,
+      "deps": [
+        "SPEC-021"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/finops",
+        "src/agent/providers/pricing",
+        "prisma/agent-cost"
+      ],
+      "objective": "Implement tokenizer abstraction and token estimation as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-023",
+      "title": "Cached-input pricing support",
+      "group": "G03",
+      "group_name": "Provider Pricing and Cost Accounting",
+      "index": 3,
+      "deps": [
+        "SPEC-022"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/finops",
+        "src/agent/providers/pricing",
+        "prisma/agent-cost"
+      ],
+      "objective": "Implement cached-input pricing support as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-024",
+      "title": "Reasoning and tool-call cost accounting",
+      "group": "G03",
+      "group_name": "Provider Pricing and Cost Accounting",
+      "index": 4,
+      "deps": [
+        "SPEC-023"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/finops",
+        "src/agent/providers/pricing",
+        "prisma/agent-cost"
+      ],
+      "objective": "Implement reasoning and tool-call cost accounting as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-025",
+      "title": "Pre-call normal cost estimator",
+      "group": "G03",
+      "group_name": "Provider Pricing and Cost Accounting",
+      "index": 5,
+      "deps": [
+        "SPEC-024"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/finops",
+        "src/agent/providers/pricing",
+        "prisma/agent-cost"
+      ],
+      "objective": "Implement pre-call normal cost estimator as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-026",
+      "title": "Pre-call worst-case cost estimator",
+      "group": "G03",
+      "group_name": "Provider Pricing and Cost Accounting",
+      "index": 6,
+      "deps": [
+        "SPEC-025"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/finops",
+        "src/agent/providers/pricing",
+        "prisma/agent-cost"
+      ],
+      "objective": "Implement pre-call worst-case cost estimator as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-027",
+      "title": "Actual usage reconciliation",
+      "group": "G03",
+      "group_name": "Provider Pricing and Cost Accounting",
+      "index": 7,
+      "deps": [
+        "SPEC-026"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/finops",
+        "src/agent/providers/pricing",
+        "prisma/agent-cost"
+      ],
+      "objective": "Implement actual usage reconciliation as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-028",
+      "title": "Cost event ledger",
+      "group": "G03",
+      "group_name": "Provider Pricing and Cost Accounting",
+      "index": 8,
+      "deps": [
+        "SPEC-027"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/finops",
+        "src/agent/providers/pricing",
+        "prisma/agent-cost"
+      ],
+      "objective": "Implement cost event ledger as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-029",
+      "title": "Cost attribution dimensions",
+      "group": "G03",
+      "group_name": "Provider Pricing and Cost Accounting",
+      "index": 9,
+      "deps": [
+        "SPEC-028"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/finops",
+        "src/agent/providers/pricing",
+        "prisma/agent-cost"
+      ],
+      "objective": "Implement cost attribution dimensions as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-030",
+      "title": "Pricing freshness and provider-doc verification job",
+      "group": "G03",
+      "group_name": "Provider Pricing and Cost Accounting",
+      "index": 10,
+      "deps": [
+        "SPEC-029"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/finops",
+        "src/agent/providers/pricing",
+        "prisma/agent-cost"
+      ],
+      "objective": "Implement pricing freshness and provider-doc verification job as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-031",
+      "title": "Organization monthly budget",
+      "group": "G04",
+      "group_name": "Hard Cost Governor",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G02",
+        "G03"
+      ],
+      "paths": [
+        "src/agent/control-plane/cost",
+        "src/agent/budgets"
+      ],
+      "objective": "Implement organization monthly budget as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-032",
+      "title": "Department and business budget",
+      "group": "G04",
+      "group_name": "Hard Cost Governor",
+      "index": 2,
+      "deps": [
+        "SPEC-031"
+      ],
+      "group_deps": [
+        "G02",
+        "G03"
+      ],
+      "paths": [
+        "src/agent/control-plane/cost",
+        "src/agent/budgets"
+      ],
+      "objective": "Implement department and business budget as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-033",
+      "title": "User and service-account budget",
+      "group": "G04",
+      "group_name": "Hard Cost Governor",
+      "index": 3,
+      "deps": [
+        "SPEC-032"
+      ],
+      "group_deps": [
+        "G02",
+        "G03"
+      ],
+      "paths": [
+        "src/agent/control-plane/cost",
+        "src/agent/budgets"
+      ],
+      "objective": "Implement user and service-account budget as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-034",
+      "title": "Workflow budget",
+      "group": "G04",
+      "group_name": "Hard Cost Governor",
+      "index": 4,
+      "deps": [
+        "SPEC-033"
+      ],
+      "group_deps": [
+        "G02",
+        "G03"
+      ],
+      "paths": [
+        "src/agent/control-plane/cost",
+        "src/agent/budgets"
+      ],
+      "objective": "Implement workflow budget as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-035",
+      "title": "Turn budget",
+      "group": "G04",
+      "group_name": "Hard Cost Governor",
+      "index": 5,
+      "deps": [
+        "SPEC-034"
+      ],
+      "group_deps": [
+        "G02",
+        "G03"
+      ],
+      "paths": [
+        "src/agent/control-plane/cost",
+        "src/agent/budgets"
+      ],
+      "objective": "Implement turn budget as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-036",
+      "title": "Individual model-call budget",
+      "group": "G04",
+      "group_name": "Hard Cost Governor",
+      "index": 6,
+      "deps": [
+        "SPEC-035"
+      ],
+      "group_deps": [
+        "G02",
+        "G03"
+      ],
+      "paths": [
+        "src/agent/control-plane/cost",
+        "src/agent/budgets"
+      ],
+      "objective": "Implement individual model-call budget as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-037",
+      "title": "Tool-loop total budget",
+      "group": "G04",
+      "group_name": "Hard Cost Governor",
+      "index": 7,
+      "deps": [
+        "SPEC-036"
+      ],
+      "group_deps": [
+        "G02",
+        "G03"
+      ],
+      "paths": [
+        "src/agent/control-plane/cost",
+        "src/agent/budgets"
+      ],
+      "objective": "Implement tool-loop total budget as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-038",
+      "title": "Browser-task cost budget",
+      "group": "G04",
+      "group_name": "Hard Cost Governor",
+      "index": 8,
+      "deps": [
+        "SPEC-037"
+      ],
+      "group_deps": [
+        "G02",
+        "G03"
+      ],
+      "paths": [
+        "src/agent/control-plane/cost",
+        "src/agent/budgets"
+      ],
+      "objective": "Implement browser-task cost budget as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-039",
+      "title": "Cost denial and degradation policy",
+      "group": "G04",
+      "group_name": "Hard Cost Governor",
+      "index": 9,
+      "deps": [
+        "SPEC-038"
+      ],
+      "group_deps": [
+        "G02",
+        "G03"
+      ],
+      "paths": [
+        "src/agent/control-plane/cost",
+        "src/agent/budgets"
+      ],
+      "objective": "Implement cost denial and degradation policy as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-040",
+      "title": "Budget bypass and overspend test gate",
+      "group": "G04",
+      "group_name": "Hard Cost Governor",
+      "index": 10,
+      "deps": [
+        "SPEC-039"
+      ],
+      "group_deps": [
+        "G02",
+        "G03"
+      ],
+      "paths": [
+        "src/agent/control-plane/cost",
+        "src/agent/budgets"
+      ],
+      "objective": "Implement budget bypass and overspend test gate as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-041",
+      "title": "Versioned context compiler contract",
+      "group": "G05",
+      "group_name": "Prompt and Context Compiler",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G04"
+      ],
+      "paths": [
+        "src/agent/context",
+        "src/agent/prompts"
+      ],
+      "objective": "Implement versioned context compiler contract as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-042",
+      "title": "Stable constitution bundle",
+      "group": "G05",
+      "group_name": "Prompt and Context Compiler",
+      "index": 2,
+      "deps": [
+        "SPEC-041"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G04"
+      ],
+      "paths": [
+        "src/agent/context",
+        "src/agent/prompts"
+      ],
+      "objective": "Implement stable constitution bundle as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-043",
+      "title": "Domain skill bundle",
+      "group": "G05",
+      "group_name": "Prompt and Context Compiler",
+      "index": 3,
+      "deps": [
+        "SPEC-042"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G04"
+      ],
+      "paths": [
+        "src/agent/context",
+        "src/agent/prompts"
+      ],
+      "objective": "Implement domain skill bundle as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-044",
+      "title": "Policy bundle insertion",
+      "group": "G05",
+      "group_name": "Prompt and Context Compiler",
+      "index": 4,
+      "deps": [
+        "SPEC-043"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G04"
+      ],
+      "paths": [
+        "src/agent/context",
+        "src/agent/prompts"
+      ],
+      "objective": "Implement policy bundle insertion as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-045",
+      "title": "Structured workflow state insertion",
+      "group": "G05",
+      "group_name": "Prompt and Context Compiler",
+      "index": 5,
+      "deps": [
+        "SPEC-044"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G04"
+      ],
+      "paths": [
+        "src/agent/context",
+        "src/agent/prompts"
+      ],
+      "objective": "Implement structured workflow state insertion as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-046",
+      "title": "Relevant memory insertion",
+      "group": "G05",
+      "group_name": "Prompt and Context Compiler",
+      "index": 6,
+      "deps": [
+        "SPEC-045"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G04"
+      ],
+      "paths": [
+        "src/agent/context",
+        "src/agent/prompts"
+      ],
+      "objective": "Implement relevant memory insertion as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-047",
+      "title": "Exact tool-schema insertion",
+      "group": "G05",
+      "group_name": "Prompt and Context Compiler",
+      "index": 7,
+      "deps": [
+        "SPEC-046"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G04"
+      ],
+      "paths": [
+        "src/agent/context",
+        "src/agent/prompts"
+      ],
+      "objective": "Implement exact tool-schema insertion as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-048",
+      "title": "Dynamic request suffix",
+      "group": "G05",
+      "group_name": "Prompt and Context Compiler",
+      "index": 8,
+      "deps": [
+        "SPEC-047"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G04"
+      ],
+      "paths": [
+        "src/agent/context",
+        "src/agent/prompts"
+      ],
+      "objective": "Implement dynamic request suffix as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-049",
+      "title": "Context token allocator",
+      "group": "G05",
+      "group_name": "Prompt and Context Compiler",
+      "index": 9,
+      "deps": [
+        "SPEC-048"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G04"
+      ],
+      "paths": [
+        "src/agent/context",
+        "src/agent/prompts"
+      ],
+      "objective": "Implement context token allocator as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-050",
+      "title": "Context provenance and replay record",
+      "group": "G05",
+      "group_name": "Prompt and Context Compiler",
+      "index": 10,
+      "deps": [
+        "SPEC-049"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G04"
+      ],
+      "paths": [
+        "src/agent/context",
+        "src/agent/prompts"
+      ],
+      "objective": "Implement context provenance and replay record as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-051",
+      "title": "Immutable conversation transcript",
+      "group": "G06",
+      "group_name": "Conversation State and Memory",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G01",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/memory",
+        "prisma/agent-memory"
+      ],
+      "objective": "Implement immutable conversation transcript as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-052",
+      "title": "Structured active-session state",
+      "group": "G06",
+      "group_name": "Conversation State and Memory",
+      "index": 2,
+      "deps": [
+        "SPEC-051"
+      ],
+      "group_deps": [
+        "G01",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/memory",
+        "prisma/agent-memory"
+      ],
+      "objective": "Implement structured active-session state as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-053",
+      "title": "Pending decision and approval state",
+      "group": "G06",
+      "group_name": "Conversation State and Memory",
+      "index": 3,
+      "deps": [
+        "SPEC-052"
+      ],
+      "group_deps": [
+        "G01",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/memory",
+        "prisma/agent-memory"
+      ],
+      "objective": "Implement pending decision and approval state as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-054",
+      "title": "Conversation compaction policy",
+      "group": "G06",
+      "group_name": "Conversation State and Memory",
+      "index": 4,
+      "deps": [
+        "SPEC-053"
+      ],
+      "group_deps": [
+        "G01",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/memory",
+        "prisma/agent-memory"
+      ],
+      "objective": "Implement conversation compaction policy as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-055",
+      "title": "Semantic long-term memory store",
+      "group": "G06",
+      "group_name": "Conversation State and Memory",
+      "index": 5,
+      "deps": [
+        "SPEC-054"
+      ],
+      "group_deps": [
+        "G01",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/memory",
+        "prisma/agent-memory"
+      ],
+      "objective": "Implement semantic long-term memory store as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-056",
+      "title": "Episodic execution memory",
+      "group": "G06",
+      "group_name": "Conversation State and Memory",
+      "index": 6,
+      "deps": [
+        "SPEC-055"
+      ],
+      "group_deps": [
+        "G01",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/memory",
+        "prisma/agent-memory"
+      ],
+      "objective": "Implement episodic execution memory as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-057",
+      "title": "Memory relevance scoring",
+      "group": "G06",
+      "group_name": "Conversation State and Memory",
+      "index": 7,
+      "deps": [
+        "SPEC-056"
+      ],
+      "group_deps": [
+        "G01",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/memory",
+        "prisma/agent-memory"
+      ],
+      "objective": "Implement memory relevance scoring as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-058",
+      "title": "Memory privacy and tenant isolation",
+      "group": "G06",
+      "group_name": "Conversation State and Memory",
+      "index": 8,
+      "deps": [
+        "SPEC-057"
+      ],
+      "group_deps": [
+        "G01",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/memory",
+        "prisma/agent-memory"
+      ],
+      "objective": "Implement memory privacy and tenant isolation as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-059",
+      "title": "Memory expiration and correction",
+      "group": "G06",
+      "group_name": "Conversation State and Memory",
+      "index": 9,
+      "deps": [
+        "SPEC-058"
+      ],
+      "group_deps": [
+        "G01",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/memory",
+        "prisma/agent-memory"
+      ],
+      "objective": "Implement memory expiration and correction as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-060",
+      "title": "Memory retrieval evaluation suite",
+      "group": "G06",
+      "group_name": "Conversation State and Memory",
+      "index": 10,
+      "deps": [
+        "SPEC-059"
+      ],
+      "group_deps": [
+        "G01",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/memory",
+        "prisma/agent-memory"
+      ],
+      "objective": "Implement memory retrieval evaluation suite as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-061",
+      "title": "Stable-prefix hashing",
+      "group": "G07",
+      "group_name": "Prompt Caching and Response Caching",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G03",
+        "G05",
+        "G06"
+      ],
+      "paths": [
+        "src/agent/cache",
+        "src/agent/providers/cache"
+      ],
+      "objective": "Implement stable-prefix hashing as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-062",
+      "title": "Provider prompt-cache adapter",
+      "group": "G07",
+      "group_name": "Prompt Caching and Response Caching",
+      "index": 2,
+      "deps": [
+        "SPEC-061"
+      ],
+      "group_deps": [
+        "G03",
+        "G05",
+        "G06"
+      ],
+      "paths": [
+        "src/agent/cache",
+        "src/agent/providers/cache"
+      ],
+      "objective": "Implement provider prompt-cache adapter as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-063",
+      "title": "Cache-break diagnostics",
+      "group": "G07",
+      "group_name": "Prompt Caching and Response Caching",
+      "index": 3,
+      "deps": [
+        "SPEC-062"
+      ],
+      "group_deps": [
+        "G03",
+        "G05",
+        "G06"
+      ],
+      "paths": [
+        "src/agent/cache",
+        "src/agent/providers/cache"
+      ],
+      "objective": "Implement cache-break diagnostics as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-064",
+      "title": "Conversation cache-key strategy",
+      "group": "G07",
+      "group_name": "Prompt Caching and Response Caching",
+      "index": 4,
+      "deps": [
+        "SPEC-063"
+      ],
+      "group_deps": [
+        "G03",
+        "G05",
+        "G06"
+      ],
+      "paths": [
+        "src/agent/cache",
+        "src/agent/providers/cache"
+      ],
+      "objective": "Implement conversation cache-key strategy as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-065",
+      "title": "Exact deterministic response cache",
+      "group": "G07",
+      "group_name": "Prompt Caching and Response Caching",
+      "index": 5,
+      "deps": [
+        "SPEC-064"
+      ],
+      "group_deps": [
+        "G03",
+        "G05",
+        "G06"
+      ],
+      "paths": [
+        "src/agent/cache",
+        "src/agent/providers/cache"
+      ],
+      "objective": "Implement exact deterministic response cache as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-066",
+      "title": "Semantic read-only response cache",
+      "group": "G07",
+      "group_name": "Prompt Caching and Response Caching",
+      "index": 6,
+      "deps": [
+        "SPEC-065"
+      ],
+      "group_deps": [
+        "G03",
+        "G05",
+        "G06"
+      ],
+      "paths": [
+        "src/agent/cache",
+        "src/agent/providers/cache"
+      ],
+      "objective": "Implement semantic read-only response cache as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-067",
+      "title": "Tool result cache with freshness",
+      "group": "G07",
+      "group_name": "Prompt Caching and Response Caching",
+      "index": 7,
+      "deps": [
+        "SPEC-066"
+      ],
+      "group_deps": [
+        "G03",
+        "G05",
+        "G06"
+      ],
+      "paths": [
+        "src/agent/cache",
+        "src/agent/providers/cache"
+      ],
+      "objective": "Implement tool result cache with freshness as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-068",
+      "title": "Policy and permission cache exclusions",
+      "group": "G07",
+      "group_name": "Prompt Caching and Response Caching",
+      "index": 8,
+      "deps": [
+        "SPEC-067"
+      ],
+      "group_deps": [
+        "G03",
+        "G05",
+        "G06"
+      ],
+      "paths": [
+        "src/agent/cache",
+        "src/agent/providers/cache"
+      ],
+      "objective": "Implement policy and permission cache exclusions as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-069",
+      "title": "Cross-tenant cache isolation",
+      "group": "G07",
+      "group_name": "Prompt Caching and Response Caching",
+      "index": 9,
+      "deps": [
+        "SPEC-068"
+      ],
+      "group_deps": [
+        "G03",
+        "G05",
+        "G06"
+      ],
+      "paths": [
+        "src/agent/cache",
+        "src/agent/providers/cache"
+      ],
+      "objective": "Implement cross-tenant cache isolation as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-070",
+      "title": "Cache savings and correctness dashboard",
+      "group": "G07",
+      "group_name": "Prompt Caching and Response Caching",
+      "index": 10,
+      "deps": [
+        "SPEC-069"
+      ],
+      "group_deps": [
+        "G03",
+        "G05",
+        "G06"
+      ],
+      "paths": [
+        "src/agent/cache",
+        "src/agent/providers/cache"
+      ],
+      "objective": "Implement cache savings and correctness dashboard as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-071",
+      "title": "Current monolithic registry inventory",
+      "group": "G08",
+      "group_name": "Tool Registry Decomposition",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/tools/registry",
+        "src/agent/tools/manifests"
+      ],
+      "objective": "Implement current monolithic registry inventory as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-072",
+      "title": "Tool manifest schema",
+      "group": "G08",
+      "group_name": "Tool Registry Decomposition",
+      "index": 2,
+      "deps": [
+        "SPEC-071"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/tools/registry",
+        "src/agent/tools/manifests"
+      ],
+      "objective": "Implement tool manifest schema as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-073",
+      "title": "Domain tool package structure",
+      "group": "G08",
+      "group_name": "Tool Registry Decomposition",
+      "index": 3,
+      "deps": [
+        "SPEC-072"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/tools/registry",
+        "src/agent/tools/manifests"
+      ],
+      "objective": "Implement domain tool package structure as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-074",
+      "title": "Tool input/output schema registry",
+      "group": "G08",
+      "group_name": "Tool Registry Decomposition",
+      "index": 4,
+      "deps": [
+        "SPEC-073"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/tools/registry",
+        "src/agent/tools/manifests"
+      ],
+      "objective": "Implement tool input/output schema registry as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-075",
+      "title": "Tool risk and side-effect classification",
+      "group": "G08",
+      "group_name": "Tool Registry Decomposition",
+      "index": 5,
+      "deps": [
+        "SPEC-074"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/tools/registry",
+        "src/agent/tools/manifests"
+      ],
+      "objective": "Implement tool risk and side-effect classification as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-076",
+      "title": "Tool ownership metadata",
+      "group": "G08",
+      "group_name": "Tool Registry Decomposition",
+      "index": 6,
+      "deps": [
+        "SPEC-075"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/tools/registry",
+        "src/agent/tools/manifests"
+      ],
+      "objective": "Implement tool ownership metadata as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-077",
+      "title": "Tool versioning",
+      "group": "G08",
+      "group_name": "Tool Registry Decomposition",
+      "index": 7,
+      "deps": [
+        "SPEC-076"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/tools/registry",
+        "src/agent/tools/manifests"
+      ],
+      "objective": "Implement tool versioning as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-078",
+      "title": "Tool deprecation and migration",
+      "group": "G08",
+      "group_name": "Tool Registry Decomposition",
+      "index": 8,
+      "deps": [
+        "SPEC-077"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/tools/registry",
+        "src/agent/tools/manifests"
+      ],
+      "objective": "Implement tool deprecation and migration as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-079",
+      "title": "Generated runtime registry",
+      "group": "G08",
+      "group_name": "Tool Registry Decomposition",
+      "index": 9,
+      "deps": [
+        "SPEC-078"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/tools/registry",
+        "src/agent/tools/manifests"
+      ],
+      "objective": "Implement generated runtime registry as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-080",
+      "title": "Monolithic registry removal gate",
+      "group": "G08",
+      "group_name": "Tool Registry Decomposition",
+      "index": 10,
+      "deps": [
+        "SPEC-079"
+      ],
+      "group_deps": [
+        "G01"
+      ],
+      "paths": [
+        "src/agent/tools/registry",
+        "src/agent/tools/manifests"
+      ],
+      "objective": "Implement monolithic registry removal gate as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-081",
+      "title": "Capability data model",
+      "group": "G09",
+      "group_name": "Capability Control Plane",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G02",
+        "G08"
+      ],
+      "paths": [
+        "src/agent/capabilities",
+        "prisma/agent-capability"
+      ],
+      "objective": "Implement capability data model as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-082",
+      "title": "Capability-to-intent mapping",
+      "group": "G09",
+      "group_name": "Capability Control Plane",
+      "index": 2,
+      "deps": [
+        "SPEC-081"
+      ],
+      "group_deps": [
+        "G02",
+        "G08"
+      ],
+      "paths": [
+        "src/agent/capabilities",
+        "prisma/agent-capability"
+      ],
+      "objective": "Implement capability-to-intent mapping as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-083",
+      "title": "Capability-to-tool mapping",
+      "group": "G09",
+      "group_name": "Capability Control Plane",
+      "index": 3,
+      "deps": [
+        "SPEC-082"
+      ],
+      "group_deps": [
+        "G02",
+        "G08"
+      ],
+      "paths": [
+        "src/agent/capabilities",
+        "prisma/agent-capability"
+      ],
+      "objective": "Implement capability-to-tool mapping as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-084",
+      "title": "Capability permission metadata",
+      "group": "G09",
+      "group_name": "Capability Control Plane",
+      "index": 4,
+      "deps": [
+        "SPEC-083"
+      ],
+      "group_deps": [
+        "G02",
+        "G08"
+      ],
+      "paths": [
+        "src/agent/capabilities",
+        "prisma/agent-capability"
+      ],
+      "objective": "Implement capability permission metadata as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-085",
+      "title": "Capability cost and model-tier metadata",
+      "group": "G09",
+      "group_name": "Capability Control Plane",
+      "index": 5,
+      "deps": [
+        "SPEC-084"
+      ],
+      "group_deps": [
+        "G02",
+        "G08"
+      ],
+      "paths": [
+        "src/agent/capabilities",
+        "prisma/agent-capability"
+      ],
+      "objective": "Implement capability cost and model-tier metadata as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-086",
+      "title": "Capability runtime and owner metadata",
+      "group": "G09",
+      "group_name": "Capability Control Plane",
+      "index": 6,
+      "deps": [
+        "SPEC-085"
+      ],
+      "group_deps": [
+        "G02",
+        "G08"
+      ],
+      "paths": [
+        "src/agent/capabilities",
+        "prisma/agent-capability"
+      ],
+      "objective": "Implement capability runtime and owner metadata as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-087",
+      "title": "Capability health model",
+      "group": "G09",
+      "group_name": "Capability Control Plane",
+      "index": 7,
+      "deps": [
+        "SPEC-086"
+      ],
+      "group_deps": [
+        "G02",
+        "G08"
+      ],
+      "paths": [
+        "src/agent/capabilities",
+        "prisma/agent-capability"
+      ],
+      "objective": "Implement capability health model as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-088",
+      "title": "Capability resolver",
+      "group": "G09",
+      "group_name": "Capability Control Plane",
+      "index": 8,
+      "deps": [
+        "SPEC-087"
+      ],
+      "group_deps": [
+        "G02",
+        "G08"
+      ],
+      "paths": [
+        "src/agent/capabilities",
+        "prisma/agent-capability"
+      ],
+      "objective": "Implement capability resolver as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-089",
+      "title": "Capability broker and fallback",
+      "group": "G09",
+      "group_name": "Capability Control Plane",
+      "index": 9,
+      "deps": [
+        "SPEC-088"
+      ],
+      "group_deps": [
+        "G02",
+        "G08"
+      ],
+      "paths": [
+        "src/agent/capabilities",
+        "prisma/agent-capability"
+      ],
+      "objective": "Implement capability broker and fallback as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-090",
+      "title": "Capability certification gate",
+      "group": "G09",
+      "group_name": "Capability Control Plane",
+      "index": 10,
+      "deps": [
+        "SPEC-089"
+      ],
+      "group_deps": [
+        "G02",
+        "G08"
+      ],
+      "paths": [
+        "src/agent/capabilities",
+        "prisma/agent-capability"
+      ],
+      "objective": "Implement capability certification gate as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-091",
+      "title": "Domain-first tool retrieval",
+      "group": "G10",
+      "group_name": "Tool Selection and Tool Result Firewall",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G05",
+        "G08",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/tools/selection",
+        "src/agent/tools/results"
+      ],
+      "objective": "Implement domain-first tool retrieval as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-092",
+      "title": "Exact tool shortlist selection",
+      "group": "G10",
+      "group_name": "Tool Selection and Tool Result Firewall",
+      "index": 2,
+      "deps": [
+        "SPEC-091"
+      ],
+      "group_deps": [
+        "G05",
+        "G08",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/tools/selection",
+        "src/agent/tools/results"
+      ],
+      "objective": "Implement exact tool shortlist selection as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-093",
+      "title": "Tool schema token minimization",
+      "group": "G10",
+      "group_name": "Tool Selection and Tool Result Firewall",
+      "index": 3,
+      "deps": [
+        "SPEC-092"
+      ],
+      "group_deps": [
+        "G05",
+        "G08",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/tools/selection",
+        "src/agent/tools/results"
+      ],
+      "objective": "Implement tool schema token minimization as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-094",
+      "title": "Tool argument validation",
+      "group": "G10",
+      "group_name": "Tool Selection and Tool Result Firewall",
+      "index": 4,
+      "deps": [
+        "SPEC-093"
+      ],
+      "group_deps": [
+        "G05",
+        "G08",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/tools/selection",
+        "src/agent/tools/results"
+      ],
+      "objective": "Implement tool argument validation as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-095",
+      "title": "Full evidence payload storage",
+      "group": "G10",
+      "group_name": "Tool Selection and Tool Result Firewall",
+      "index": 5,
+      "deps": [
+        "SPEC-094"
+      ],
+      "group_deps": [
+        "G05",
+        "G08",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/tools/selection",
+        "src/agent/tools/results"
+      ],
+      "objective": "Implement full evidence payload storage as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-096",
+      "title": "Compact model-view contract",
+      "group": "G10",
+      "group_name": "Tool Selection and Tool Result Firewall",
+      "index": 6,
+      "deps": [
+        "SPEC-095"
+      ],
+      "group_deps": [
+        "G05",
+        "G08",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/tools/selection",
+        "src/agent/tools/results"
+      ],
+      "objective": "Implement compact model-view contract as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-097",
+      "title": "Large result summarization without LLM",
+      "group": "G10",
+      "group_name": "Tool Selection and Tool Result Firewall",
+      "index": 7,
+      "deps": [
+        "SPEC-096"
+      ],
+      "group_deps": [
+        "G05",
+        "G08",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/tools/selection",
+        "src/agent/tools/results"
+      ],
+      "objective": "Implement large result summarization without llm as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-098",
+      "title": "Search and browser result normalization",
+      "group": "G10",
+      "group_name": "Tool Selection and Tool Result Firewall",
+      "index": 8,
+      "deps": [
+        "SPEC-097"
+      ],
+      "group_deps": [
+        "G05",
+        "G08",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/tools/selection",
+        "src/agent/tools/results"
+      ],
+      "objective": "Implement search and browser result normalization as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-099",
+      "title": "Tool result provenance",
+      "group": "G10",
+      "group_name": "Tool Selection and Tool Result Firewall",
+      "index": 9,
+      "deps": [
+        "SPEC-098"
+      ],
+      "group_deps": [
+        "G05",
+        "G08",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/tools/selection",
+        "src/agent/tools/results"
+      ],
+      "objective": "Implement tool result provenance as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-100",
+      "title": "Tool-selection and result-size regression gate",
+      "group": "G10",
+      "group_name": "Tool Selection and Tool Result Firewall",
+      "index": 10,
+      "deps": [
+        "SPEC-099"
+      ],
+      "group_deps": [
+        "G05",
+        "G08",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/tools/selection",
+        "src/agent/tools/results"
+      ],
+      "objective": "Implement tool-selection and result-size regression gate as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-101",
+      "title": "Human actor principal",
+      "group": "G11",
+      "group_name": "Identity Authorization and Policy Engine",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/policy",
+        "src/agent/identity"
+      ],
+      "objective": "Implement human actor principal as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-102",
+      "title": "Agent principal",
+      "group": "G11",
+      "group_name": "Identity Authorization and Policy Engine",
+      "index": 2,
+      "deps": [
+        "SPEC-101"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/policy",
+        "src/agent/identity"
+      ],
+      "objective": "Implement agent principal as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-103",
+      "title": "Workflow principal",
+      "group": "G11",
+      "group_name": "Identity Authorization and Policy Engine",
+      "index": 3,
+      "deps": [
+        "SPEC-102"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/policy",
+        "src/agent/identity"
+      ],
+      "objective": "Implement workflow principal as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-104",
+      "title": "Credential principal",
+      "group": "G11",
+      "group_name": "Identity Authorization and Policy Engine",
+      "index": 4,
+      "deps": [
+        "SPEC-103"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/policy",
+        "src/agent/identity"
+      ],
+      "objective": "Implement credential principal as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-105",
+      "title": "Unified policy decision API",
+      "group": "G11",
+      "group_name": "Identity Authorization and Policy Engine",
+      "index": 5,
+      "deps": [
+        "SPEC-104"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/policy",
+        "src/agent/identity"
+      ],
+      "objective": "Implement unified policy decision api as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-106",
+      "title": "RBAC policy layer",
+      "group": "G11",
+      "group_name": "Identity Authorization and Policy Engine",
+      "index": 6,
+      "deps": [
+        "SPEC-105"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/policy",
+        "src/agent/identity"
+      ],
+      "objective": "Implement rbac policy layer as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-107",
+      "title": "ABAC policy layer",
+      "group": "G11",
+      "group_name": "Identity Authorization and Policy Engine",
+      "index": 7,
+      "deps": [
+        "SPEC-106"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/policy",
+        "src/agent/identity"
+      ],
+      "objective": "Implement abac policy layer as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-108",
+      "title": "Relationship authorization layer",
+      "group": "G11",
+      "group_name": "Identity Authorization and Policy Engine",
+      "index": 8,
+      "deps": [
+        "SPEC-107"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/policy",
+        "src/agent/identity"
+      ],
+      "objective": "Implement relationship authorization layer as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-109",
+      "title": "Policy obligations and redaction",
+      "group": "G11",
+      "group_name": "Identity Authorization and Policy Engine",
+      "index": 9,
+      "deps": [
+        "SPEC-108"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/policy",
+        "src/agent/identity"
+      ],
+      "objective": "Implement policy obligations and redaction as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-110",
+      "title": "Authorization bypass CI and runtime gate",
+      "group": "G11",
+      "group_name": "Identity Authorization and Policy Engine",
+      "index": 10,
+      "deps": [
+        "SPEC-109"
+      ],
+      "group_deps": [
+        "G01",
+        "G02",
+        "G09"
+      ],
+      "paths": [
+        "src/agent/policy",
+        "src/agent/identity"
+      ],
+      "objective": "Implement authorization bypass ci and runtime gate as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-111",
+      "title": "Autonomy decision states",
+      "group": "G12",
+      "group_name": "Autonomy and Approval Governance",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G04",
+        "G11"
+      ],
+      "paths": [
+        "src/agent/autonomy",
+        "src/agent/approvals"
+      ],
+      "objective": "Implement autonomy decision states as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-112",
+      "title": "Fail-closed approval contract",
+      "group": "G12",
+      "group_name": "Autonomy and Approval Governance",
+      "index": 2,
+      "deps": [
+        "SPEC-111"
+      ],
+      "group_deps": [
+        "G04",
+        "G11"
+      ],
+      "paths": [
+        "src/agent/autonomy",
+        "src/agent/approvals"
+      ],
+      "objective": "Implement fail-closed approval contract as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-113",
+      "title": "Financial action approval rules",
+      "group": "G12",
+      "group_name": "Autonomy and Approval Governance",
+      "index": 3,
+      "deps": [
+        "SPEC-112"
+      ],
+      "group_deps": [
+        "G04",
+        "G11"
+      ],
+      "paths": [
+        "src/agent/autonomy",
+        "src/agent/approvals"
+      ],
+      "objective": "Implement financial action approval rules as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-114",
+      "title": "External publishing approval rules",
+      "group": "G12",
+      "group_name": "Autonomy and Approval Governance",
+      "index": 4,
+      "deps": [
+        "SPEC-113"
+      ],
+      "group_deps": [
+        "G04",
+        "G11"
+      ],
+      "paths": [
+        "src/agent/autonomy",
+        "src/agent/approvals"
+      ],
+      "objective": "Implement external publishing approval rules as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-115",
+      "title": "HR and staff action approval rules",
+      "group": "G12",
+      "group_name": "Autonomy and Approval Governance",
+      "index": 5,
+      "deps": [
+        "SPEC-114"
+      ],
+      "group_deps": [
+        "G04",
+        "G11"
+      ],
+      "paths": [
+        "src/agent/autonomy",
+        "src/agent/approvals"
+      ],
+      "objective": "Implement hr and staff action approval rules as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-116",
+      "title": "Data export approval rules",
+      "group": "G12",
+      "group_name": "Autonomy and Approval Governance",
+      "index": 6,
+      "deps": [
+        "SPEC-115"
+      ],
+      "group_deps": [
+        "G04",
+        "G11"
+      ],
+      "paths": [
+        "src/agent/autonomy",
+        "src/agent/approvals"
+      ],
+      "objective": "Implement data export approval rules as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-117",
+      "title": "Separation-of-duties enforcement",
+      "group": "G12",
+      "group_name": "Autonomy and Approval Governance",
+      "index": 7,
+      "deps": [
+        "SPEC-116"
+      ],
+      "group_deps": [
+        "G04",
+        "G11"
+      ],
+      "paths": [
+        "src/agent/autonomy",
+        "src/agent/approvals"
+      ],
+      "objective": "Implement separation-of-duties enforcement as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-118",
+      "title": "Approval expiry and revocation",
+      "group": "G12",
+      "group_name": "Autonomy and Approval Governance",
+      "index": 8,
+      "deps": [
+        "SPEC-117"
+      ],
+      "group_deps": [
+        "G04",
+        "G11"
+      ],
+      "paths": [
+        "src/agent/autonomy",
+        "src/agent/approvals"
+      ],
+      "objective": "Implement approval expiry and revocation as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-119",
+      "title": "Approval evidence and audit",
+      "group": "G12",
+      "group_name": "Autonomy and Approval Governance",
+      "index": 9,
+      "deps": [
+        "SPEC-118"
+      ],
+      "group_deps": [
+        "G04",
+        "G11"
+      ],
+      "paths": [
+        "src/agent/autonomy",
+        "src/agent/approvals"
+      ],
+      "objective": "Implement approval evidence and audit as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-120",
+      "title": "Autonomy and approval adversarial tests",
+      "group": "G12",
+      "group_name": "Autonomy and Approval Governance",
+      "index": 10,
+      "deps": [
+        "SPEC-119"
+      ],
+      "group_deps": [
+        "G04",
+        "G11"
+      ],
+      "paths": [
+        "src/agent/autonomy",
+        "src/agent/approvals"
+      ],
+      "objective": "Implement autonomy and approval adversarial tests as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-121",
+      "title": "Gateway request contract",
+      "group": "G13",
+      "group_name": "Central Secure Tool Gateway",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G04",
+        "G10",
+        "G11",
+        "G12"
+      ],
+      "paths": [
+        "src/agent/tool-gateway"
+      ],
+      "objective": "Implement gateway request contract as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-122",
+      "title": "Schema validation stage",
+      "group": "G13",
+      "group_name": "Central Secure Tool Gateway",
+      "index": 2,
+      "deps": [
+        "SPEC-121"
+      ],
+      "group_deps": [
+        "G04",
+        "G10",
+        "G11",
+        "G12"
+      ],
+      "paths": [
+        "src/agent/tool-gateway"
+      ],
+      "objective": "Implement schema validation stage as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-123",
+      "title": "Identity validation stage",
+      "group": "G13",
+      "group_name": "Central Secure Tool Gateway",
+      "index": 3,
+      "deps": [
+        "SPEC-122"
+      ],
+      "group_deps": [
+        "G04",
+        "G10",
+        "G11",
+        "G12"
+      ],
+      "paths": [
+        "src/agent/tool-gateway"
+      ],
+      "objective": "Implement identity validation stage as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-124",
+      "title": "Policy decision stage",
+      "group": "G13",
+      "group_name": "Central Secure Tool Gateway",
+      "index": 4,
+      "deps": [
+        "SPEC-123"
+      ],
+      "group_deps": [
+        "G04",
+        "G10",
+        "G11",
+        "G12"
+      ],
+      "paths": [
+        "src/agent/tool-gateway"
+      ],
+      "objective": "Implement policy decision stage as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-125",
+      "title": "Cost authorization stage",
+      "group": "G13",
+      "group_name": "Central Secure Tool Gateway",
+      "index": 5,
+      "deps": [
+        "SPEC-124"
+      ],
+      "group_deps": [
+        "G04",
+        "G10",
+        "G11",
+        "G12"
+      ],
+      "paths": [
+        "src/agent/tool-gateway"
+      ],
+      "objective": "Implement cost authorization stage as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-126",
+      "title": "Approval obligation stage",
+      "group": "G13",
+      "group_name": "Central Secure Tool Gateway",
+      "index": 6,
+      "deps": [
+        "SPEC-125"
+      ],
+      "group_deps": [
+        "G04",
+        "G10",
+        "G11",
+        "G12"
+      ],
+      "paths": [
+        "src/agent/tool-gateway"
+      ],
+      "objective": "Implement approval obligation stage as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-127",
+      "title": "Execution adapter stage",
+      "group": "G13",
+      "group_name": "Central Secure Tool Gateway",
+      "index": 7,
+      "deps": [
+        "SPEC-126"
+      ],
+      "group_deps": [
+        "G04",
+        "G10",
+        "G11",
+        "G12"
+      ],
+      "paths": [
+        "src/agent/tool-gateway"
+      ],
+      "objective": "Implement execution adapter stage as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-128",
+      "title": "Evidence capture stage",
+      "group": "G13",
+      "group_name": "Central Secure Tool Gateway",
+      "index": 8,
+      "deps": [
+        "SPEC-127"
+      ],
+      "group_deps": [
+        "G04",
+        "G10",
+        "G11",
+        "G12"
+      ],
+      "paths": [
+        "src/agent/tool-gateway"
+      ],
+      "objective": "Implement evidence capture stage as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-129",
+      "title": "Audit and cost finalization",
+      "group": "G13",
+      "group_name": "Central Secure Tool Gateway",
+      "index": 9,
+      "deps": [
+        "SPEC-128"
+      ],
+      "group_deps": [
+        "G04",
+        "G10",
+        "G11",
+        "G12"
+      ],
+      "paths": [
+        "src/agent/tool-gateway"
+      ],
+      "objective": "Implement audit and cost finalization as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-130",
+      "title": "Direct external-call bypass removal",
+      "group": "G13",
+      "group_name": "Central Secure Tool Gateway",
+      "index": 10,
+      "deps": [
+        "SPEC-129"
+      ],
+      "group_deps": [
+        "G04",
+        "G10",
+        "G11",
+        "G12"
+      ],
+      "paths": [
+        "src/agent/tool-gateway"
+      ],
+      "objective": "Implement direct external-call bypass removal as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-131",
+      "title": "Workflow template registry",
+      "group": "G14",
+      "group_name": "Durable Workflow Runtime",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G01",
+        "G09",
+        "G13"
+      ],
+      "paths": [
+        "src/agent/workflows",
+        "src/worker/workflows"
+      ],
+      "objective": "Implement workflow template registry as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-132",
+      "title": "Workflow versioning",
+      "group": "G14",
+      "group_name": "Durable Workflow Runtime",
+      "index": 2,
+      "deps": [
+        "SPEC-131"
+      ],
+      "group_deps": [
+        "G01",
+        "G09",
+        "G13"
+      ],
+      "paths": [
+        "src/agent/workflows",
+        "src/worker/workflows"
+      ],
+      "objective": "Implement workflow versioning as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-133",
+      "title": "Durable workflow state",
+      "group": "G14",
+      "group_name": "Durable Workflow Runtime",
+      "index": 3,
+      "deps": [
+        "SPEC-132"
+      ],
+      "group_deps": [
+        "G01",
+        "G09",
+        "G13"
+      ],
+      "paths": [
+        "src/agent/workflows",
+        "src/worker/workflows"
+      ],
+      "objective": "Implement durable workflow state as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-134",
+      "title": "Step leases and heartbeats",
+      "group": "G14",
+      "group_name": "Durable Workflow Runtime",
+      "index": 4,
+      "deps": [
+        "SPEC-133"
+      ],
+      "group_deps": [
+        "G01",
+        "G09",
+        "G13"
+      ],
+      "paths": [
+        "src/agent/workflows",
+        "src/worker/workflows"
+      ],
+      "objective": "Implement step leases and heartbeats as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-135",
+      "title": "Retry classification",
+      "group": "G14",
+      "group_name": "Durable Workflow Runtime",
+      "index": 5,
+      "deps": [
+        "SPEC-134"
+      ],
+      "group_deps": [
+        "G01",
+        "G09",
+        "G13"
+      ],
+      "paths": [
+        "src/agent/workflows",
+        "src/worker/workflows"
+      ],
+      "objective": "Implement retry classification as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-136",
+      "title": "Idempotency keys",
+      "group": "G14",
+      "group_name": "Durable Workflow Runtime",
+      "index": 6,
+      "deps": [
+        "SPEC-135"
+      ],
+      "group_deps": [
+        "G01",
+        "G09",
+        "G13"
+      ],
+      "paths": [
+        "src/agent/workflows",
+        "src/worker/workflows"
+      ],
+      "objective": "Implement idempotency keys as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-137",
+      "title": "Unknown-outcome reconciliation",
+      "group": "G14",
+      "group_name": "Durable Workflow Runtime",
+      "index": 7,
+      "deps": [
+        "SPEC-136"
+      ],
+      "group_deps": [
+        "G01",
+        "G09",
+        "G13"
+      ],
+      "paths": [
+        "src/agent/workflows",
+        "src/worker/workflows"
+      ],
+      "objective": "Implement unknown-outcome reconciliation as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-138",
+      "title": "Compensation and saga actions",
+      "group": "G14",
+      "group_name": "Durable Workflow Runtime",
+      "index": 8,
+      "deps": [
+        "SPEC-137"
+      ],
+      "group_deps": [
+        "G01",
+        "G09",
+        "G13"
+      ],
+      "paths": [
+        "src/agent/workflows",
+        "src/worker/workflows"
+      ],
+      "objective": "Implement compensation and saga actions as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-139",
+      "title": "Dead-letter and manual recovery",
+      "group": "G14",
+      "group_name": "Durable Workflow Runtime",
+      "index": 9,
+      "deps": [
+        "SPEC-138"
+      ],
+      "group_deps": [
+        "G01",
+        "G09",
+        "G13"
+      ],
+      "paths": [
+        "src/agent/workflows",
+        "src/worker/workflows"
+      ],
+      "objective": "Implement dead-letter and manual recovery as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-140",
+      "title": "Workflow durability chaos tests",
+      "group": "G14",
+      "group_name": "Durable Workflow Runtime",
+      "index": 10,
+      "deps": [
+        "SPEC-139"
+      ],
+      "group_deps": [
+        "G01",
+        "G09",
+        "G13"
+      ],
+      "paths": [
+        "src/agent/workflows",
+        "src/worker/workflows"
+      ],
+      "objective": "Implement workflow durability chaos tests as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-141",
+      "title": "Domain task queues",
+      "group": "G15",
+      "group_name": "Queue Scheduling and Browser Runtime",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G04",
+        "G14"
+      ],
+      "paths": [
+        "src/worker/queues",
+        "src/agent/browser-runtime"
+      ],
+      "objective": "Implement domain task queues as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-142",
+      "title": "Tenant fairness scheduling",
+      "group": "G15",
+      "group_name": "Queue Scheduling and Browser Runtime",
+      "index": 2,
+      "deps": [
+        "SPEC-141"
+      ],
+      "group_deps": [
+        "G04",
+        "G14"
+      ],
+      "paths": [
+        "src/worker/queues",
+        "src/agent/browser-runtime"
+      ],
+      "objective": "Implement tenant fairness scheduling as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-143",
+      "title": "Concurrency and backpressure",
+      "group": "G15",
+      "group_name": "Queue Scheduling and Browser Runtime",
+      "index": 3,
+      "deps": [
+        "SPEC-142"
+      ],
+      "group_deps": [
+        "G04",
+        "G14"
+      ],
+      "paths": [
+        "src/worker/queues",
+        "src/agent/browser-runtime"
+      ],
+      "objective": "Implement concurrency and backpressure as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-144",
+      "title": "Priority and deadline scheduling",
+      "group": "G15",
+      "group_name": "Queue Scheduling and Browser Runtime",
+      "index": 4,
+      "deps": [
+        "SPEC-143"
+      ],
+      "group_deps": [
+        "G04",
+        "G14"
+      ],
+      "paths": [
+        "src/worker/queues",
+        "src/agent/browser-runtime"
+      ],
+      "objective": "Implement priority and deadline scheduling as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-145",
+      "title": "Worker lease and crash recovery",
+      "group": "G15",
+      "group_name": "Queue Scheduling and Browser Runtime",
+      "index": 5,
+      "deps": [
+        "SPEC-144"
+      ],
+      "group_deps": [
+        "G04",
+        "G14"
+      ],
+      "paths": [
+        "src/worker/queues",
+        "src/agent/browser-runtime"
+      ],
+      "objective": "Implement worker lease and crash recovery as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-146",
+      "title": "Browser plan-perception-action separation",
+      "group": "G15",
+      "group_name": "Queue Scheduling and Browser Runtime",
+      "index": 6,
+      "deps": [
+        "SPEC-145"
+      ],
+      "group_deps": [
+        "G04",
+        "G14"
+      ],
+      "paths": [
+        "src/worker/queues",
+        "src/agent/browser-runtime"
+      ],
+      "objective": "Implement browser plan-perception-action separation as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-147",
+      "title": "Browser compact observation state",
+      "group": "G15",
+      "group_name": "Queue Scheduling and Browser Runtime",
+      "index": 7,
+      "deps": [
+        "SPEC-146"
+      ],
+      "group_deps": [
+        "G04",
+        "G14"
+      ],
+      "paths": [
+        "src/worker/queues",
+        "src/agent/browser-runtime"
+      ],
+      "objective": "Implement browser compact observation state as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-148",
+      "title": "Browser replan limits",
+      "group": "G15",
+      "group_name": "Queue Scheduling and Browser Runtime",
+      "index": 8,
+      "deps": [
+        "SPEC-147"
+      ],
+      "group_deps": [
+        "G04",
+        "G14"
+      ],
+      "paths": [
+        "src/worker/queues",
+        "src/agent/browser-runtime"
+      ],
+      "objective": "Implement browser replan limits as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-149",
+      "title": "Browser cost and step hard stops",
+      "group": "G15",
+      "group_name": "Queue Scheduling and Browser Runtime",
+      "index": 9,
+      "deps": [
+        "SPEC-148"
+      ],
+      "group_deps": [
+        "G04",
+        "G14"
+      ],
+      "paths": [
+        "src/worker/queues",
+        "src/agent/browser-runtime"
+      ],
+      "objective": "Implement browser cost and step hard stops as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-150",
+      "title": "Queue and browser chaos verification",
+      "group": "G15",
+      "group_name": "Queue Scheduling and Browser Runtime",
+      "index": 10,
+      "deps": [
+        "SPEC-149"
+      ],
+      "group_deps": [
+        "G04",
+        "G14"
+      ],
+      "paths": [
+        "src/worker/queues",
+        "src/agent/browser-runtime"
+      ],
+      "objective": "Implement queue and browser chaos verification as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-151",
+      "title": "Vendor-neutral model tier contract",
+      "group": "G16",
+      "group_name": "Model Fabric and Provider Adapters",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G03",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/models",
+        "src/agent/providers/runtime"
+      ],
+      "objective": "Implement vendor-neutral model tier contract as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-152",
+      "title": "Deterministic T0 path",
+      "group": "G16",
+      "group_name": "Model Fabric and Provider Adapters",
+      "index": 2,
+      "deps": [
+        "SPEC-151"
+      ],
+      "group_deps": [
+        "G03",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/models",
+        "src/agent/providers/runtime"
+      ],
+      "objective": "Implement deterministic t0 path as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-153",
+      "title": "Classifier and extractor T1 tier",
+      "group": "G16",
+      "group_name": "Model Fabric and Provider Adapters",
+      "index": 3,
+      "deps": [
+        "SPEC-152"
+      ],
+      "group_deps": [
+        "G03",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/models",
+        "src/agent/providers/runtime"
+      ],
+      "objective": "Implement classifier and extractor t1 tier as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-154",
+      "title": "Cheap specialist T2 tier",
+      "group": "G16",
+      "group_name": "Model Fabric and Provider Adapters",
+      "index": 4,
+      "deps": [
+        "SPEC-153"
+      ],
+      "group_deps": [
+        "G03",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/models",
+        "src/agent/providers/runtime"
+      ],
+      "objective": "Implement cheap specialist t2 tier as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-155",
+      "title": "Standard reasoner T3 tier",
+      "group": "G16",
+      "group_name": "Model Fabric and Provider Adapters",
+      "index": 5,
+      "deps": [
+        "SPEC-154"
+      ],
+      "group_deps": [
+        "G03",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/models",
+        "src/agent/providers/runtime"
+      ],
+      "objective": "Implement standard reasoner t3 tier as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-156",
+      "title": "Frontier escalation T4 tier",
+      "group": "G16",
+      "group_name": "Model Fabric and Provider Adapters",
+      "index": 6,
+      "deps": [
+        "SPEC-155"
+      ],
+      "group_deps": [
+        "G03",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/models",
+        "src/agent/providers/runtime"
+      ],
+      "objective": "Implement frontier escalation t4 tier as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-157",
+      "title": "Provider capability discovery",
+      "group": "G16",
+      "group_name": "Model Fabric and Provider Adapters",
+      "index": 7,
+      "deps": [
+        "SPEC-156"
+      ],
+      "group_deps": [
+        "G03",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/models",
+        "src/agent/providers/runtime"
+      ],
+      "objective": "Implement provider capability discovery as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-158",
+      "title": "Provider timeout and quota controls",
+      "group": "G16",
+      "group_name": "Model Fabric and Provider Adapters",
+      "index": 8,
+      "deps": [
+        "SPEC-157"
+      ],
+      "group_deps": [
+        "G03",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/models",
+        "src/agent/providers/runtime"
+      ],
+      "objective": "Implement provider timeout and quota controls as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-159",
+      "title": "Provider failover rules",
+      "group": "G16",
+      "group_name": "Model Fabric and Provider Adapters",
+      "index": 9,
+      "deps": [
+        "SPEC-158"
+      ],
+      "group_deps": [
+        "G03",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/models",
+        "src/agent/providers/runtime"
+      ],
+      "objective": "Implement provider failover rules as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-160",
+      "title": "Model adapter conformance tests",
+      "group": "G16",
+      "group_name": "Model Fabric and Provider Adapters",
+      "index": 10,
+      "deps": [
+        "SPEC-159"
+      ],
+      "group_deps": [
+        "G03",
+        "G05"
+      ],
+      "paths": [
+        "src/agent/models",
+        "src/agent/providers/runtime"
+      ],
+      "objective": "Implement model adapter conformance tests as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-161",
+      "title": "Task-class model performance records",
+      "group": "G17",
+      "group_name": "Measured Routing and Head Model Isolation",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G04",
+        "G09",
+        "G16"
+      ],
+      "paths": [
+        "src/agent/routing",
+        "src/agent/runtime"
+      ],
+      "objective": "Implement task-class model performance records as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-162",
+      "title": "Cost-quality model score",
+      "group": "G17",
+      "group_name": "Measured Routing and Head Model Isolation",
+      "index": 2,
+      "deps": [
+        "SPEC-161"
+      ],
+      "group_deps": [
+        "G04",
+        "G09",
+        "G16"
+      ],
+      "paths": [
+        "src/agent/routing",
+        "src/agent/runtime"
+      ],
+      "objective": "Implement cost-quality model score as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-163",
+      "title": "Latency and availability score",
+      "group": "G17",
+      "group_name": "Measured Routing and Head Model Isolation",
+      "index": 3,
+      "deps": [
+        "SPEC-162"
+      ],
+      "group_deps": [
+        "G04",
+        "G09",
+        "G16"
+      ],
+      "paths": [
+        "src/agent/routing",
+        "src/agent/runtime"
+      ],
+      "objective": "Implement latency and availability score as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-164",
+      "title": "Measured model router",
+      "group": "G17",
+      "group_name": "Measured Routing and Head Model Isolation",
+      "index": 4,
+      "deps": [
+        "SPEC-163"
+      ],
+      "group_deps": [
+        "G04",
+        "G09",
+        "G16"
+      ],
+      "paths": [
+        "src/agent/routing",
+        "src/agent/runtime"
+      ],
+      "objective": "Implement measured model router as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-165",
+      "title": "Explicit escalation reason contract",
+      "group": "G17",
+      "group_name": "Measured Routing and Head Model Isolation",
+      "index": 5,
+      "deps": [
+        "SPEC-164"
+      ],
+      "group_deps": [
+        "G04",
+        "G09",
+        "G16"
+      ],
+      "paths": [
+        "src/agent/routing",
+        "src/agent/runtime"
+      ],
+      "objective": "Implement explicit escalation reason contract as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-166",
+      "title": "Escalation budget enforcement",
+      "group": "G17",
+      "group_name": "Measured Routing and Head Model Isolation",
+      "index": 6,
+      "deps": [
+        "SPEC-165"
+      ],
+      "group_deps": [
+        "G04",
+        "G09",
+        "G16"
+      ],
+      "paths": [
+        "src/agent/routing",
+        "src/agent/runtime"
+      ],
+      "objective": "Implement escalation budget enforcement as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-167",
+      "title": "De-escalation after planning",
+      "group": "G17",
+      "group_name": "Measured Routing and Head Model Isolation",
+      "index": 7,
+      "deps": [
+        "SPEC-166"
+      ],
+      "group_deps": [
+        "G04",
+        "G09",
+        "G16"
+      ],
+      "paths": [
+        "src/agent/routing",
+        "src/agent/runtime"
+      ],
+      "objective": "Implement de-escalation after planning as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-168",
+      "title": "Frontier head planner contract",
+      "group": "G17",
+      "group_name": "Measured Routing and Head Model Isolation",
+      "index": 8,
+      "deps": [
+        "SPEC-167"
+      ],
+      "group_deps": [
+        "G04",
+        "G09",
+        "G16"
+      ],
+      "paths": [
+        "src/agent/routing",
+        "src/agent/runtime"
+      ],
+      "objective": "Implement frontier head planner contract as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-169",
+      "title": "Head-model tool-loop prohibition",
+      "group": "G17",
+      "group_name": "Measured Routing and Head Model Isolation",
+      "index": 9,
+      "deps": [
+        "SPEC-168"
+      ],
+      "group_deps": [
+        "G04",
+        "G09",
+        "G16"
+      ],
+      "paths": [
+        "src/agent/routing",
+        "src/agent/runtime"
+      ],
+      "objective": "Implement head-model tool-loop prohibition as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-170",
+      "title": "Routing and head-isolation regression gate",
+      "group": "G17",
+      "group_name": "Measured Routing and Head Model Isolation",
+      "index": 10,
+      "deps": [
+        "SPEC-169"
+      ],
+      "group_deps": [
+        "G04",
+        "G09",
+        "G16"
+      ],
+      "paths": [
+        "src/agent/routing",
+        "src/agent/runtime"
+      ],
+      "objective": "Implement routing and head-isolation regression gate as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-171",
+      "title": "Specialist agent runtime contract",
+      "group": "G18",
+      "group_name": "Specialist Agents and Known Workflows",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G09",
+        "G14",
+        "G17"
+      ],
+      "paths": [
+        "src/agent/specialists",
+        "src/agent/workflow-templates"
+      ],
+      "objective": "Implement specialist agent runtime contract as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-172",
+      "title": "Schema-constrained specialist output",
+      "group": "G18",
+      "group_name": "Specialist Agents and Known Workflows",
+      "index": 2,
+      "deps": [
+        "SPEC-171"
+      ],
+      "group_deps": [
+        "G09",
+        "G14",
+        "G17"
+      ],
+      "paths": [
+        "src/agent/specialists",
+        "src/agent/workflow-templates"
+      ],
+      "objective": "Implement schema-constrained specialist output as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-173",
+      "title": "Marketing workflow templates",
+      "group": "G18",
+      "group_name": "Specialist Agents and Known Workflows",
+      "index": 3,
+      "deps": [
+        "SPEC-172"
+      ],
+      "group_deps": [
+        "G09",
+        "G14",
+        "G17"
+      ],
+      "paths": [
+        "src/agent/specialists",
+        "src/agent/workflow-templates"
+      ],
+      "objective": "Implement marketing workflow templates as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-174",
+      "title": "Customer-support workflow templates",
+      "group": "G18",
+      "group_name": "Specialist Agents and Known Workflows",
+      "index": 4,
+      "deps": [
+        "SPEC-173"
+      ],
+      "group_deps": [
+        "G09",
+        "G14",
+        "G17"
+      ],
+      "paths": [
+        "src/agent/specialists",
+        "src/agent/workflow-templates"
+      ],
+      "objective": "Implement customer-support workflow templates as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-175",
+      "title": "Finance and invoice workflow templates",
+      "group": "G18",
+      "group_name": "Specialist Agents and Known Workflows",
+      "index": 5,
+      "deps": [
+        "SPEC-174"
+      ],
+      "group_deps": [
+        "G09",
+        "G14",
+        "G17"
+      ],
+      "paths": [
+        "src/agent/specialists",
+        "src/agent/workflow-templates"
+      ],
+      "objective": "Implement finance and invoice workflow templates as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-176",
+      "title": "ERP and office workflow templates",
+      "group": "G18",
+      "group_name": "Specialist Agents and Known Workflows",
+      "index": 6,
+      "deps": [
+        "SPEC-175"
+      ],
+      "group_deps": [
+        "G09",
+        "G14",
+        "G17"
+      ],
+      "paths": [
+        "src/agent/specialists",
+        "src/agent/workflow-templates"
+      ],
+      "objective": "Implement erp and office workflow templates as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-177",
+      "title": "Research workflow templates",
+      "group": "G18",
+      "group_name": "Specialist Agents and Known Workflows",
+      "index": 7,
+      "deps": [
+        "SPEC-176"
+      ],
+      "group_deps": [
+        "G09",
+        "G14",
+        "G17"
+      ],
+      "paths": [
+        "src/agent/specialists",
+        "src/agent/workflow-templates"
+      ],
+      "objective": "Implement research workflow templates as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-178",
+      "title": "External communication workflows",
+      "group": "G18",
+      "group_name": "Specialist Agents and Known Workflows",
+      "index": 8,
+      "deps": [
+        "SPEC-177"
+      ],
+      "group_deps": [
+        "G09",
+        "G14",
+        "G17"
+      ],
+      "paths": [
+        "src/agent/specialists",
+        "src/agent/workflow-templates"
+      ],
+      "objective": "Implement external communication workflows as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-179",
+      "title": "Specialist retry and repair policy",
+      "group": "G18",
+      "group_name": "Specialist Agents and Known Workflows",
+      "index": 9,
+      "deps": [
+        "SPEC-178"
+      ],
+      "group_deps": [
+        "G09",
+        "G14",
+        "G17"
+      ],
+      "paths": [
+        "src/agent/specialists",
+        "src/agent/workflow-templates"
+      ],
+      "objective": "Implement specialist retry and repair policy as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-180",
+      "title": "Known-workflow no-planner evaluation",
+      "group": "G18",
+      "group_name": "Specialist Agents and Known Workflows",
+      "index": 10,
+      "deps": [
+        "SPEC-179"
+      ],
+      "group_deps": [
+        "G09",
+        "G14",
+        "G17"
+      ],
+      "paths": [
+        "src/agent/specialists",
+        "src/agent/workflow-templates"
+      ],
+      "objective": "Implement known-workflow no-planner evaluation as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-181",
+      "title": "Deterministic postcondition verifier",
+      "group": "G19",
+      "group_name": "Verification Security and Evaluation",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G10",
+        "G11",
+        "G13",
+        "G17",
+        "G18"
+      ],
+      "paths": [
+        "src/agent/verification",
+        "src/agent/evals",
+        "tests/agent-security"
+      ],
+      "objective": "Implement deterministic postcondition verifier as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-182",
+      "title": "Evidence-backed claim verifier",
+      "group": "G19",
+      "group_name": "Verification Security and Evaluation",
+      "index": 2,
+      "deps": [
+        "SPEC-181"
+      ],
+      "group_deps": [
+        "G10",
+        "G11",
+        "G13",
+        "G17",
+        "G18"
+      ],
+      "paths": [
+        "src/agent/verification",
+        "src/agent/evals",
+        "tests/agent-security"
+      ],
+      "objective": "Implement evidence-backed claim verifier as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-183",
+      "title": "User response gate",
+      "group": "G19",
+      "group_name": "Verification Security and Evaluation",
+      "index": 3,
+      "deps": [
+        "SPEC-182"
+      ],
+      "group_deps": [
+        "G10",
+        "G11",
+        "G13",
+        "G17",
+        "G18"
+      ],
+      "paths": [
+        "src/agent/verification",
+        "src/agent/evals",
+        "tests/agent-security"
+      ],
+      "objective": "Implement user response gate as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-184",
+      "title": "Golden task dataset",
+      "group": "G19",
+      "group_name": "Verification Security and Evaluation",
+      "index": 4,
+      "deps": [
+        "SPEC-183"
+      ],
+      "group_deps": [
+        "G10",
+        "G11",
+        "G13",
+        "G17",
+        "G18"
+      ],
+      "paths": [
+        "src/agent/verification",
+        "src/agent/evals",
+        "tests/agent-security"
+      ],
+      "objective": "Implement golden task dataset as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-185",
+      "title": "Routing evaluation",
+      "group": "G19",
+      "group_name": "Verification Security and Evaluation",
+      "index": 5,
+      "deps": [
+        "SPEC-184"
+      ],
+      "group_deps": [
+        "G10",
+        "G11",
+        "G13",
+        "G17",
+        "G18"
+      ],
+      "paths": [
+        "src/agent/verification",
+        "src/agent/evals",
+        "tests/agent-security"
+      ],
+      "objective": "Implement routing evaluation as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-186",
+      "title": "Tool-selection evaluation",
+      "group": "G19",
+      "group_name": "Verification Security and Evaluation",
+      "index": 6,
+      "deps": [
+        "SPEC-185"
+      ],
+      "group_deps": [
+        "G10",
+        "G11",
+        "G13",
+        "G17",
+        "G18"
+      ],
+      "paths": [
+        "src/agent/verification",
+        "src/agent/evals",
+        "tests/agent-security"
+      ],
+      "objective": "Implement tool-selection evaluation as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-187",
+      "title": "Cost-per-success evaluation",
+      "group": "G19",
+      "group_name": "Verification Security and Evaluation",
+      "index": 7,
+      "deps": [
+        "SPEC-186"
+      ],
+      "group_deps": [
+        "G10",
+        "G11",
+        "G13",
+        "G17",
+        "G18"
+      ],
+      "paths": [
+        "src/agent/verification",
+        "src/agent/evals",
+        "tests/agent-security"
+      ],
+      "objective": "Implement cost-per-success evaluation as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-188",
+      "title": "Prompt-injection test suite",
+      "group": "G19",
+      "group_name": "Verification Security and Evaluation",
+      "index": 8,
+      "deps": [
+        "SPEC-187"
+      ],
+      "group_deps": [
+        "G10",
+        "G11",
+        "G13",
+        "G17",
+        "G18"
+      ],
+      "paths": [
+        "src/agent/verification",
+        "src/agent/evals",
+        "tests/agent-security"
+      ],
+      "objective": "Implement prompt-injection test suite as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-189",
+      "title": "Policy and permission bypass suite",
+      "group": "G19",
+      "group_name": "Verification Security and Evaluation",
+      "index": 9,
+      "deps": [
+        "SPEC-188"
+      ],
+      "group_deps": [
+        "G10",
+        "G11",
+        "G13",
+        "G17",
+        "G18"
+      ],
+      "paths": [
+        "src/agent/verification",
+        "src/agent/evals",
+        "tests/agent-security"
+      ],
+      "objective": "Implement policy and permission bypass suite as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-190",
+      "title": "Quality and security release gate",
+      "group": "G19",
+      "group_name": "Verification Security and Evaluation",
+      "index": 10,
+      "deps": [
+        "SPEC-189"
+      ],
+      "group_deps": [
+        "G10",
+        "G11",
+        "G13",
+        "G17",
+        "G18"
+      ],
+      "paths": [
+        "src/agent/verification",
+        "src/agent/evals",
+        "tests/agent-security"
+      ],
+      "objective": "Implement quality and security release gate as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-191",
+      "title": "End-to-end trace model",
+      "group": "G20",
+      "group_name": "Observability Release and Continuous Optimization",
+      "index": 1,
+      "deps": [],
+      "group_deps": [
+        "G07",
+        "G14",
+        "G19"
+      ],
+      "paths": [
+        "src/agent/observability",
+        "src/agent/release",
+        "src/app/agent-ops"
+      ],
+      "objective": "Implement end-to-end trace model as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-192",
+      "title": "Agent operational SLOs",
+      "group": "G20",
+      "group_name": "Observability Release and Continuous Optimization",
+      "index": 2,
+      "deps": [
+        "SPEC-191"
+      ],
+      "group_deps": [
+        "G07",
+        "G14",
+        "G19"
+      ],
+      "paths": [
+        "src/agent/observability",
+        "src/agent/release",
+        "src/app/agent-ops"
+      ],
+      "objective": "Implement agent operational slos as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-193",
+      "title": "Cost and quality dashboard",
+      "group": "G20",
+      "group_name": "Observability Release and Continuous Optimization",
+      "index": 3,
+      "deps": [
+        "SPEC-192"
+      ],
+      "group_deps": [
+        "G07",
+        "G14",
+        "G19"
+      ],
+      "paths": [
+        "src/agent/observability",
+        "src/agent/release",
+        "src/app/agent-ops"
+      ],
+      "objective": "Implement cost and quality dashboard as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-194",
+      "title": "Escalation and cache dashboard",
+      "group": "G20",
+      "group_name": "Observability Release and Continuous Optimization",
+      "index": 4,
+      "deps": [
+        "SPEC-193"
+      ],
+      "group_deps": [
+        "G07",
+        "G14",
+        "G19"
+      ],
+      "paths": [
+        "src/agent/observability",
+        "src/agent/release",
+        "src/app/agent-ops"
+      ],
+      "objective": "Implement escalation and cache dashboard as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-195",
+      "title": "Shadow traffic framework",
+      "group": "G20",
+      "group_name": "Observability Release and Continuous Optimization",
+      "index": 5,
+      "deps": [
+        "SPEC-194"
+      ],
+      "group_deps": [
+        "G07",
+        "G14",
+        "G19"
+      ],
+      "paths": [
+        "src/agent/observability",
+        "src/agent/release",
+        "src/app/agent-ops"
+      ],
+      "objective": "Implement shadow traffic framework as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-196",
+      "title": "Canary release framework",
+      "group": "G20",
+      "group_name": "Observability Release and Continuous Optimization",
+      "index": 6,
+      "deps": [
+        "SPEC-195"
+      ],
+      "group_deps": [
+        "G07",
+        "G14",
+        "G19"
+      ],
+      "paths": [
+        "src/agent/observability",
+        "src/agent/release",
+        "src/app/agent-ops"
+      ],
+      "objective": "Implement canary release framework as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-197",
+      "title": "Automatic rollback thresholds",
+      "group": "G20",
+      "group_name": "Observability Release and Continuous Optimization",
+      "index": 7,
+      "deps": [
+        "SPEC-196"
+      ],
+      "group_deps": [
+        "G07",
+        "G14",
+        "G19"
+      ],
+      "paths": [
+        "src/agent/observability",
+        "src/agent/release",
+        "src/app/agent-ops"
+      ],
+      "objective": "Implement automatic rollback thresholds as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-198",
+      "title": "Model bake-off automation",
+      "group": "G20",
+      "group_name": "Observability Release and Continuous Optimization",
+      "index": 8,
+      "deps": [
+        "SPEC-197"
+      ],
+      "group_deps": [
+        "G07",
+        "G14",
+        "G19"
+      ],
+      "paths": [
+        "src/agent/observability",
+        "src/agent/release",
+        "src/app/agent-ops"
+      ],
+      "objective": "Implement model bake-off automation as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-199",
+      "title": "Workflow optimization recommendations",
+      "group": "G20",
+      "group_name": "Observability Release and Continuous Optimization",
+      "index": 9,
+      "deps": [
+        "SPEC-198"
+      ],
+      "group_deps": [
+        "G07",
+        "G14",
+        "G19"
+      ],
+      "paths": [
+        "src/agent/observability",
+        "src/agent/release",
+        "src/app/agent-ops"
+      ],
+      "objective": "Implement workflow optimization recommendations as a production-grade, typed, audited and testable boundary for Alma ERP."
+    },
+    {
+      "id": "SPEC-200",
+      "title": "Production readiness and final architecture certification",
+      "group": "G20",
+      "group_name": "Observability Release and Continuous Optimization",
+      "index": 10,
+      "deps": [
+        "SPEC-199"
+      ],
+      "group_deps": [
+        "G07",
+        "G14",
+        "G19"
+      ],
+      "paths": [
+        "src/agent/observability",
+        "src/agent/release",
+        "src/app/agent-ops"
+      ],
+      "objective": "Implement production readiness and final architecture certification as a production-grade, typed, audited and testable boundary for Alma ERP."
+    }
+  ]
+}
