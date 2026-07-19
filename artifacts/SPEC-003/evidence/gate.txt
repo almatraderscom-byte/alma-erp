@@ -1,0 +1,11 @@
+$ node scripts/architecture/check-ownership.mjs --owner G01   # this session's diff vs main
+ownership check: owner=G01, 46 files
+PASS — every changed file is within the session owner zones
+exit=0
+
+# negative: a G01 session touching ERP must FAIL
+$ node scripts/architecture/check-ownership.mjs --owner G01 src/lib/money.ts
+ownership check: owner=G01, 1 files
+FAIL — 1 ownership violation(s):
+  src/lib/money.ts  [OWNERSHIP_CONFLICT owned by erp]
+exit=1

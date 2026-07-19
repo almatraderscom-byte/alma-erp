@@ -1,0 +1,612 @@
+{
+  "generatedFrom": "aios/G01-architecture-freeze",
+  "count": 101,
+  "violations": [
+    {
+      "file": "src/app/api/cron/growth-digest/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/config",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/growth-digest/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/growth/digest",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/growth-digest/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/growth/settings",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/growth-digest/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/telegram-owner-notify",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/growth-publish/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/config",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/growth-publish/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/growth/publish",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/growth-publish/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/growth/settings",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/growth-rank-tracker/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/config",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/growth-rank-tracker/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/growth/settings",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/growth-rank-tracker/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/telegram-owner-notify",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/lifestyle-gas-export/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/notify-owner",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/live-activity-push/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/config",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/live-activity-push/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/live-activity-push",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/live-activity-push/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/native-owner-push",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/live-activity-push/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/pulse-snapshot",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/ngs-call-sweep/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/ngs-call-outcome",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/office-call-reconcile/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/office-call-domain",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/office-call-reconcile/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/office-call-outbox",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/office-call-reconcile/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/office-call-reliability",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/scheduled-calls/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/voice-call",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/portal/wa-optin-status/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/wa/optin",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/twilio/call-status/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/outbound-call-missed",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/twilio/wa-voice/[token]/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/guards",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/twilio/wa-voice/[token]/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/wa/wa-voice",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/twilio/whatsapp/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/wa/optin",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/twilio/whatsapp/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/wa/twilio-wa",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/twilio/whatsapp/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/wa/wa-approval",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/twilio/whatsapp/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/wa/wa-ingest",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/wa/webhook/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/guards",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/wa/webhook/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/wa/cloud-api",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/wa/webhook/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/wa/constants",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/wa/webhook/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/wa/wa-ingest",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/group-chat.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/components/OfficeCommunicationProvider",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/group-chat.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-chat",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/history-panel.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-hub",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/intercom.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/hooks/useAgoraCall",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/intercom.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/hooks/useAgoraIntercom",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/intercom.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-call-web-policy",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/notif-bell.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-notifications",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/office-shell.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-hub",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/office-shell.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-motivation",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/owner-hub.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-hub",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/owner-hub.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-motivation",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/owner-hub.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-performance",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/owner-hub.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-proposals",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/page.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/config",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/page.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-hub",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/page.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-motivation",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/staff-app.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-hub",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/portal/office/staff-app.tsx",
+      "fromZone": "erp-app",
+      "importSpec": "@/agent/lib/office-motivation",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/ad-creative-gate.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/storage",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/ad-creative-gate.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/telegram-owner-notify",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/ad-creative.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/storage",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/brand-frame.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/storage",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/caption.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/llm-text",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/generate-variants.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/reference/library",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/generate-variants.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/taste/distill",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/pick-product.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/catalog/inventory-lookup",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/pipeline.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/meta",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/pipeline.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/meta",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/pipeline.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/storage",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/pipeline.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/taste/capture",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/pipeline.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/taste/capture",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/pipeline.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/telegram-owner-notify",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/qc-gate.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/auto-qc",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/qc-gate.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/notify-owner",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/qc-gate.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/storage",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/video-reel-gate.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/storage",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/content-engine/video-reel-gate.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/telegram-owner-notify",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/creative-studio/single-pipeline.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/cost-events",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/creative-studio/single-pipeline.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/storage",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/outcome-measure.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/agent-memory",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/outcome-wiring.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/owner-briefing-data",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/owner-daily-digest.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/owner-briefing-data",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/oxylabs/client.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/cost-events",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/personal-space.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/personal-prompt",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/reflection-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/llm-text",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/reflection-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/notify-owner",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/reflection-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/playbook",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/reflection-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/telegram-owner-notify",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/salah/__tests__/salah-snooze.test.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/salah-snooze",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/staff-forecast-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/notify-owner",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/staff-forecast-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/telegram-owner-notify",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/strategist-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/agent-memory",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/strategist-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/llm-text",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/strategist-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/notify-owner",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/strategist-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/owner-briefing-data",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/strategist-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/playbook",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/strategist-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/retail-calendar",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/strategist-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/telegram-owner-notify",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/tryon/art-director.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/cost-events",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/tryon/art-director.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/storage",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/tryon/qc-gate.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/cost-events",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/tryon/qc-gate.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/reference/library",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/tryon/qc-gate.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/storage",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/tryon/qc-gate.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/taste/distill",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/weekly-strategic-data.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/config",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/weekly-strategic-data.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/cost-events",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/weekly-strategic-data.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/pricing",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/winback-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/notify-owner",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/lib/winback-run.ts",
+      "fromZone": "shared-lib",
+      "importSpec": "@/agent/lib/telegram-owner-notify",
+      "toZone": "agent"
+    }
+  ]
+}

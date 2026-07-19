@@ -1,0 +1,2 @@
+$ rg -n "agent/contracts" src/app src/lib   (ERP zones must NOT import agent)
+NO MATCHES — one-way dependency intact

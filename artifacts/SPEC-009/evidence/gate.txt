@@ -1,0 +1,13 @@
+$ node scripts/architecture/check-proof.mjs --require-pass   # validates all prior spec proofs
+proof check: 9 spec dir(s) (require PASS)
+  [OK] SPEC-001  verdict=PASS
+  [OK] SPEC-002  verdict=PASS
+  [OK] SPEC-003  verdict=PASS
+  [OK] SPEC-004  verdict=PASS
+  [OK] SPEC-005  verdict=PASS
+  [OK] SPEC-006  verdict=PASS
+  [OK] SPEC-007  verdict=PASS
+  [OK] SPEC-008  verdict=PASS
+  [BAD] SPEC-009  verdict=NONE  missing=baseline.md,contract.md,changed-files.md,test-results.md,architecture-scan.md,cost-before-after.md,security-proof.md,rollback-proof.md,unresolved-risks.md,final-verdict.md
+FAIL — incomplete proof or non-PASS verdict
+exit=1
