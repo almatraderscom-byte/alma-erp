@@ -46,5 +46,14 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 "root@$VPS_HOST" \
-            "cd /opt/alma-erp/worker && node scripts/trigger.mjs skill-import '$REPO' '$COMMIT' '$NAME' '$SUBDIR'"
+          # dotenv-free CLI; load the worker's env via Node 22 --env-file when a .env
+          # exists on the box, else rely on the ambient/pm2 env.
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 "root@$VPS_HOST" bash -s <<EOF
+            set -e
+            cd /opt/alma-erp/worker
+            if [ -f .env ]; then
+              node --env-file=.env scripts/skill-import-cli.mjs "$REPO" "$COMMIT" "$NAME" "$SUBDIR"
+            else
+              node scripts/skill-import-cli.mjs "$REPO" "$COMMIT" "$NAME" "$SUBDIR"
+            fi
+          EOF
