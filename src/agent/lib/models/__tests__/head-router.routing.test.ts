@@ -72,14 +72,16 @@ describe('resolveHeadModelId — routine fast-path', () => {
 })
 
 describe('resolveHeadModelId — explicit model selection vs Auto', () => {
-  // When Anthropic credits are healthy, an explicit pin (including Sonnet/Opus) is
-  // honoured exactly. The redirect below only kicks in while ANTHROPIC_HEAD_DOWN.
-  describe('with Anthropic head available', () => {
+  // Owner rule 2026-07-20: the Monitor toggle is the ONE owner-facing switch. If the
+  // owner has NOT turned the model off in Monitor and picks it in chat, it RUNS — no
+  // env flag involved. Redirect only when the model is Monitor-OFF or the API key is
+  // missing (Claude can't physically run without a key).
+  describe('with Anthropic head available (key present, Monitor on)', () => {
     beforeAll(() => {
-      process.env.ANTHROPIC_HEAD_DOWN = 'false'
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key'
     })
     afterAll(() => {
-      delete process.env.ANTHROPIC_HEAD_DOWN
+      delete process.env.ANTHROPIC_API_KEY
     })
 
     it.each(['claude-opus-4-8', 'or-deepseek-v4-flash', 'claude-sonnet-4-6'])(
@@ -96,24 +98,39 @@ describe('resolveHeadModelId — explicit model selection vs Auto', () => {
         expect(decision.modelId).toBe(modelId)
       },
     )
-  })
 
-  describe('while Anthropic head is down (owner command, credits out — default)', () => {
-    it('redirects an explicitly-pinned Anthropic head to Gemini so the chat still answers', async () => {
-      for (const modelId of ['claude-sonnet-4-6', 'claude-opus-4-8']) {
+    it('an ANTHROPIC_HEAD_DOWN env value does NOT affect an explicit pick', async () => {
+      process.env.ANTHROPIC_HEAD_DOWN = 'true'
+      try {
         const decision = await resolveHeadModelId({
-          requestedModelId: modelId,
+          requestedModelId: 'claude-opus-4-8',
           lastUserText: 'aj koto sale holo',
           personalMode: false,
           businessId: 'ALMA_LIFESTYLE',
         })
-        expect(decision.tier).toBe('heavy')
-        expect(decision.modelId).toBe('xai-grok-4.20')
-        expect(decision.via).toBe('anthropic_down_explicit_redirect')
+        expect(decision.tier).toBe('explicit')
+        expect(decision.modelId).toBe('claude-opus-4-8')
+      } finally {
+        delete process.env.ANTHROPIC_HEAD_DOWN
       }
     })
+  })
 
-    it('still honours a non-Anthropic explicit pin exactly (e.g. DeepSeek)', async () => {
+  describe('redirects a Claude pick only on a real down signal', () => {
+    it('redirects Opus to the heavy head when no API key is configured', async () => {
+      delete process.env.ANTHROPIC_API_KEY
+      const decision = await resolveHeadModelId({
+        requestedModelId: 'claude-opus-4-8',
+        lastUserText: 'aj koto sale holo',
+        personalMode: false,
+        businessId: 'ALMA_LIFESTYLE',
+      })
+      expect(decision.tier).toBe('heavy')
+      expect(decision.via).toBe('anthropic_down_explicit_redirect')
+    })
+
+    it('a non-Anthropic explicit pin is honoured regardless of key/env', async () => {
+      delete process.env.ANTHROPIC_API_KEY
       const decision = await resolveHeadModelId({
         requestedModelId: 'or-deepseek-v4-flash',
         lastUserText: 'aj koto sale holo',
