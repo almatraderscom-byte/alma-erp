@@ -1,0 +1,2 @@
+# SPEC-177 Baseline — Research workflow templates
+New in the G12 owned zone (src/agent/specialists | src/agent/workflow-templates). Builds on G01 ComponentResult, G14 workflow registry/runtime, and specialist role concepts. Discovery: `git status` + `find src/agent/autonomy src/agent/approvals`. No callers yet (wired at integration). No provider/model/DB/network calls (INV-01) — verified by model-call-scan. Tenant isolation enforced upstream (G11) before autonomy. Tests: src/agent/workflow-templates/__tests__/research.test.ts (4 cases). Files: see changed-files.md.
