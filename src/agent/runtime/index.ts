@@ -9,3 +9,4 @@
 export * from './de-escalation';
 export * from './head-planner';
 export * from './head-tool-loop-guard';
+export * from './regression-gate';
