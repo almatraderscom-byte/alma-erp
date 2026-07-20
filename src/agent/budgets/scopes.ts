@@ -17,3 +17,8 @@ export function businessBudget(tenantId: string, businessId: string, yearMonth: 
 export function userBudget(tenantId: string, actorId: string, yearMonth: string, limitNanoUsd: number): Budget {
   return { scope: 'user', key: `user:${tenantId}:${actorId}:${yearMonth}`, limitNanoUsd };
 }
+
+/** SPEC-034 — per-workflow-run budget (whole multi-step task). */
+export function workflowBudget(workflowId: string, limitNanoUsd: number): Budget {
+  return { scope: 'workflow', key: `workflow:${workflowId}`, limitNanoUsd };
+}
