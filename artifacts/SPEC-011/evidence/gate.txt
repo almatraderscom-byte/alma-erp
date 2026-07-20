@@ -1,0 +1,5 @@
+$ node scripts/architecture/check-forbidden-imports.mjs (G01 gate — ERP must not import agent, incl control-plane)
+forbidden-import scan: 1994 files scanned
+known (baselined) pre-existing violations: 101
+PASS — no NEW forbidden imports. ERP app/api → agent: 0. Boundary did not regress.
+exit=0

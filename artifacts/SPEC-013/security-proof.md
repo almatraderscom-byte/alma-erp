@@ -1,0 +1,23 @@
+# SPEC-013 Security Proof — Deterministic fast-path command router
+
+## Secret / payload leakage scan (added files)
+
+```text
+$ secret scan on admission zone
+NO secrets found in added files
+```
+
+## Tenant isolation / fail-closed posture
+
+Contracts require full `ExecutionIdentity`; `validateRequest` fails closed
+(returns typed `ComponentFailure`, never throws, never defaults to allow).
+Cross-tenant handling is enforced/tested where the spec introduces propagation.
+
+## Authorization / side-effect posture
+
+No external side effect is introduced. No provider/model/tool/db call is added
+(see architecture-scan.md), so no authorization or Tool-Gateway bypass is
+possible from this change.
+
+Result: **PASS**.
+
