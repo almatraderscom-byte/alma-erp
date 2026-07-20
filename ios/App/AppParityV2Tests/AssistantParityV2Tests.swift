@@ -130,4 +130,73 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertFalse(archived)
         XCTAssertFalse(deleted)
     }
+
+    func testDirectStreamEOFWithoutTerminalRequiresDurableRecovery() {
+        XCTAssertTrue(AssistantVM.directStreamEndRequiresRecovery(sawTerminalEvent: false))
+        XCTAssertFalse(AssistantVM.directStreamEndRequiresRecovery(sawTerminalEvent: true))
+    }
+
+    func testPreTurnCleanEOFRetryIsBoundedAndBacksOff() {
+        XCTAssertEqual(AssistantVM.preTurnEOFRetryDelay(for: 1), 1)
+        XCTAssertEqual(AssistantVM.preTurnEOFRetryDelay(for: 2), 2)
+        XCTAssertNil(AssistantVM.preTurnEOFRetryDelay(for: 3))
+        XCTAssertNil(AssistantVM.preTurnEOFRetryDelay(for: 4))
+    }
+
+    func testAcceptanceUnknownTerminalStatusRequiresPositiveSendEvidence() {
+        let sentAt = Date()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        XCTAssertFalse(AssistantVM.terminalStartedAtMatchesSend(startedAt: nil, sentAt: sentAt))
+        XCTAssertTrue(AssistantVM.terminalStartedAtMatchesSend(
+            startedAt: formatter.string(from: sentAt), sentAt: sentAt))
+        XCTAssertFalse(AssistantVM.terminalStartedAtMatchesSend(
+            startedAt: formatter.string(from: sentAt.addingTimeInterval(-60)), sentAt: sentAt))
+    }
+
+    func testActionContinuationKeepsOneIdAcrossRetryAndRelaunch() {
+        let key = "test-action-\(UUID().uuidString)"
+        let first = AssistantVM()
+        let firstId = first.debugStableActionContinuationId(
+            key: key, text: "PDF", askCardId: "ask-1")
+        let relaunched = AssistantVM()
+        let retryId = relaunched.debugStableActionContinuationId(
+            key: key, text: "new retry payload before acceptance",
+            askCardId: "ask-1")
+        XCTAssertEqual(retryId, firstId)
+        XCTAssertEqual(
+            relaunched.debugActionContinuationText(key: key),
+            "new retry payload before acceptance")
+        relaunched.debugMarkActionContinuationAccepted(clientMessageId: retryId)
+        let afterAcceptance = AssistantVM()
+        XCTAssertTrue(afterAcceptance.debugActionContinuationIsAccepted(key: key))
+        XCTAssertEqual(
+            afterAcceptance.debugStableActionContinuationId(
+                key: key, text: "must not create a new continuation", askCardId: "ask-1"),
+            firstId)
+        afterAcceptance.debugRemoveActionContinuation(key: key)
+    }
+
+    func testAskAndOpinionDraftsPersistAcrossRelaunch() {
+        let cardId = "fixture-persisted-action"
+        let first = AssistantVM()
+        first.askChosenOption[cardId] = "PDF"
+        first.askDraftText[cardId] = "নিজের উত্তর"
+        first.askOtherActiveIds.insert(cardId)
+        first.opinionDraftText[cardId] = "এই অংশটি আগে বদলান"
+        first.opinionOpenIds.insert(cardId)
+
+        let relaunched = AssistantVM()
+        XCTAssertEqual(relaunched.askChosenOption[cardId], "PDF")
+        XCTAssertEqual(relaunched.askDraftText[cardId], "নিজের উত্তর")
+        XCTAssertTrue(relaunched.askOtherActiveIds.contains(cardId))
+        XCTAssertEqual(relaunched.opinionDraftText[cardId], "এই অংশটি আগে বদলান")
+        XCTAssertTrue(relaunched.opinionOpenIds.contains(cardId))
+
+        relaunched.askChosenOption.removeValue(forKey: cardId)
+        relaunched.askDraftText.removeValue(forKey: cardId)
+        relaunched.askOtherActiveIds.remove(cardId)
+        relaunched.opinionDraftText.removeValue(forKey: cardId)
+        relaunched.opinionOpenIds.remove(cardId)
+    }
 }

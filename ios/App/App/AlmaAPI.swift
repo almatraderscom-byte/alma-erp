@@ -29,6 +29,7 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
     private static var multiResolvedActionIds: Set<String> = []
     private static var multiRequestCounts: [String: Int] = [:]
     private static var recoveryStreamServed = false
+    private static var unexpectedEOFReplayServed = false
     static var scenario: String? {
         let process = ProcessInfo.processInfo
         if let value = process.environment["ALMA_MERGE_MOCK"], !value.isEmpty { return value }
@@ -46,6 +47,57 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
         }
         let path = url.path
+        if scenario == "streamEOF" {
+            if path == "/api/assistant/chat" {
+                // Reproduce the owner-hit failure exactly: the direct stream sends
+                // addressability + partial prose, then ends cleanly without a
+                // terminal event while the same server turn remains alive.
+                let frames = [
+                    "data: {\"type\":\"conversation_id\",\"id\":\"fixture-eof-conversation\"}\n\n",
+                    "data: {\"type\":\"turn_id\",\"id\":\"fixture-eof-turn\"}\n\n",
+                    "data: {\"type\":\"thinking_delta\",\"delta\":\"উত্তর প্রস্তুত করছি…\"}\n\n",
+                    "data: {\"type\":\"text_delta\",\"delta\":\"স্টক রিপোর্ট\"}\n\n",
+                ].joined()
+                respond(status: 200, data: Data(frames.utf8), contentType: "text/event-stream")
+                return
+            }
+            if path.hasSuffix("/turn-status") {
+                respond(status: 200, object: [
+                    "status": Self.unexpectedEOFReplayServed ? "completed" : "running",
+                    "turnId": "fixture-eof-turn",
+                    "startedAt": ISO8601DateFormatter().string(from: Date()),
+                    "continuationNeeded": false,
+                ])
+                return
+            }
+            if path.contains("/turn/fixture-eof-turn/stream") {
+                Self.unexpectedEOFReplayServed = true
+                let frames = [
+                    "id: 0\ndata: {\"type\":\"turn_snapshot\",\"turnId\":\"fixture-eof-turn\",\"conversationId\":\"fixture-eof-conversation\",\"status\":\"running\",\"lastSeq\":0}\n\n",
+                    "id: 1\ndata: {\"type\":\"thinking_delta\",\"delta\":\"উত্তর প্রস্তুত করছি…\"}\n\n",
+                    "id: 2\ndata: {\"type\":\"text_delta\",\"delta\":\"স্টক রিপোর্ট প্রস্তুত — একই turn recovery থেকে উত্তর এসেছে Boss।\"}\n\n",
+                    "id: 3\ndata: {\"type\":\"done\",\"messageId\":\"fixture-eof-assistant\",\"needContinue\":false}\n\n",
+                ].joined()
+                respond(status: 200, data: Data(frames.utf8), contentType: "text/event-stream")
+                return
+            }
+            if path.contains("/conversations/fixture-eof-conversation/messages") {
+                respond(status: 200, object: [[
+                    "id": "fixture-eof-owner", "role": "user",
+                    "content": [["type": "text", "text": "আজকের স্টক রিপোর্ট দাও"]],
+                ], [
+                    "id": "fixture-eof-assistant", "role": "assistant",
+                    "content": [["type": "text",
+                                 "text": "স্টক রিপোর্ট প্রস্তুত — একই turn recovery থেকে উত্তর এসেছে Boss।"]],
+                ]])
+                return
+            }
+            if path.contains("/artifacts") || path.contains("/background-turns")
+                || path.contains("/open-tasks") {
+                respond(status: 200, object: [])
+                return
+            }
+        }
         if scenario == "attachmentAtomic" {
             if path == "/api/assistant/upload" {
                 // Long enough for the Simulator to prove Send was tapped while

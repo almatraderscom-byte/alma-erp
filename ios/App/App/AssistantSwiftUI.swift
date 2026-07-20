@@ -34,6 +34,7 @@ import WebKit
 import AVFoundation
 import PhotosUI
 import UniformTypeIdentifiers
+import VisionKit
 import QuickLook
 import ObjectiveC
 import os.signpost
@@ -1254,7 +1255,19 @@ final class AssistantVM {
         var opinionOpenIds: Set<String> = []
     }
 
+    /// The server action decision and the owner-authored chat continuation are
+    /// two network operations. Bind the second one to a persisted idempotency key
+    /// so a 409, lost response, double tap, or relaunch can only create one turn.
+    private struct ActionContinuation: Codable {
+        let clientMessageId: String
+        var text: String
+        var askCardId: String?
+        var dispatchedAt: Date? = nil
+        var acceptedAt: Date? = nil
+    }
+
     private static let actionRegistryKey = "alma.assistant.actionRegistry.v2"
+    private static let actionContinuationsKey = "alma.assistant.actionContinuations.v1"
     private static func loadActionRegistry() -> ActionRegistrySnapshot {
         guard let data = UserDefaults.standard.data(forKey: actionRegistryKey),
               var value = try? JSONDecoder().decode(ActionRegistrySnapshot.self, from: data)
@@ -1265,6 +1278,10 @@ final class AssistantVM {
             value.records[id]?.state = .checking
         }
         return value
+    }
+    private static func loadActionContinuations() -> [String: ActionContinuation] {
+        guard let data = UserDefaults.standard.data(forKey: actionContinuationsKey) else { return [:] }
+        return (try? JSONDecoder().decode([String: ActionContinuation].self, from: data)) ?? [:]
     }
 
     // Thread state
@@ -1283,6 +1300,8 @@ final class AssistantVM {
     /// the canonical protection shared by chat cards, sheets and voice actions.
     private var submittingActionKeys: Set<String> = []
     private var actionRegistry: [String: ActionRegistryRecord] = AssistantVM.loadActionRegistry().records
+    private var actionContinuations = AssistantVM.loadActionContinuations()
+    private var resumedActionContinuationKeys: Set<String> = []
     func isSubmittingAction(_ key: String) -> Bool { submittingActionKeys.contains(key) }
     @discardableResult private func beginSubmitting(_ key: String) -> Bool {
         guard submittingActionKeys.insert(key).inserted else { return false }
@@ -1334,6 +1353,11 @@ final class AssistantVM {
         }
     }
 
+    private func persistActionContinuations() {
+        guard let data = try? JSONEncoder().encode(actionContinuations) else { return }
+        UserDefaults.standard.set(data, forKey: Self.actionContinuationsKey)
+    }
+
     private func setActionState(_ id: String, kind: String,
                                 state: ActionLifecycleState, selectedOption: String? = nil) {
         var record = actionRegistry[id]
@@ -1354,6 +1378,111 @@ final class AssistantVM {
         opinionDraftText.removeValue(forKey: cardId)
         opinionOpenIds.remove(cardId)
     }
+
+    @discardableResult
+    private func resolvedActionContinuation(key: String, text: String,
+                                            askCardId: String?) -> ActionContinuation {
+        let continuation: ActionContinuation
+        if var existing = actionContinuations[key] {
+            if existing.dispatchedAt == nil, existing.acceptedAt == nil,
+               existing.text != text || existing.askCardId != askCardId {
+                existing.text = text
+                existing.askCardId = askCardId
+                actionContinuations[key] = existing
+                persistActionContinuations()
+            }
+            continuation = existing
+        } else {
+            continuation = .init(
+                clientMessageId: UUID().uuidString, text: text, askCardId: askCardId)
+            actionContinuations[key] = continuation
+            persistActionContinuations()       // durable before any local/network dispatch
+        }
+        return continuation
+    }
+
+    @discardableResult
+    private func dispatchActionContinuation(key: String, text: String,
+                                            askCardId: String?) -> Bool {
+        var continuation = resolvedActionContinuation(
+            key: key, text: text, askCardId: askCardId)
+        if continuation.acceptedAt != nil { return true }
+        if continuation.dispatchedAt == nil {
+            // Reconciliation may reveal the server's already-accepted ask option.
+            // Freeze that authoritative text before the idempotent chat dispatch.
+            continuation.text = text
+            continuation.askCardId = askCardId
+            continuation.dispatchedAt = Date()
+            actionContinuations[key] = continuation
+            persistActionContinuations()
+        }
+
+        let clientMessageId = continuation.clientMessageId
+        if queuedOwnerMessages.contains(where: { $0.id == clientMessageId })
+            || recoverableTurn?.clientMessageId == clientMessageId
+            || pendingAttachmentSend?.clientMessageId == clientMessageId
+            || messages.contains(where: {
+                $0.clientMessageId == clientMessageId && $0.outgoingState != .cancelled
+            }) {
+            return true
+        }
+
+        if isStreaming || recoverableTurn != nil {
+            queueOwnerMessage(
+                text: continuation.text, files: [], askCardId: continuation.askCardId,
+                sentPendingIds: [], clientMessageId: clientMessageId)
+        } else {
+            startPreparedTurn(
+                text: continuation.text, files: [], askCardId: continuation.askCardId,
+                clientMessageId: clientMessageId)
+        }
+        return true
+    }
+
+    private func resumeAcceptedActionContinuations() {
+        for (key, continuation) in actionContinuations
+        where continuation.acceptedAt == nil
+            && !resumedActionContinuationKeys.contains(key) {
+            let terminal: Bool
+            if key.hasPrefix("ask:") {
+                let cardId = String(key.dropFirst(4))
+                terminal = messages.lazy.flatMap(\.askCards).contains {
+                    $0.id == cardId && $0.status == "answered"
+                }
+            } else if key.hasPrefix("opinion:") {
+                let cardId = String(key.dropFirst(8))
+                terminal = messages.lazy.flatMap(\.confirmCards).contains {
+                    $0.id == cardId && $0.status == "rejected"
+                }
+            } else {
+                terminal = false
+            }
+            guard terminal else { continue }
+            resumedActionContinuationKeys.insert(key)
+            dispatchActionContinuation(
+                key: key, text: continuation.text, askCardId: continuation.askCardId)
+        }
+    }
+
+    #if DEBUG
+    func debugStableActionContinuationId(key: String, text: String,
+                                         askCardId: String?) -> String {
+        resolvedActionContinuation(key: key, text: text, askCardId: askCardId).clientMessageId
+    }
+    func debugRemoveActionContinuation(key: String) {
+        actionContinuations.removeValue(forKey: key)
+        persistActionContinuations()
+    }
+    func debugActionContinuationText(key: String) -> String? {
+        actionContinuations[key]?.text
+    }
+    func debugMarkActionContinuationAccepted(clientMessageId: String) {
+        markOutgoingAccepted(clientMessageId: clientMessageId)
+    }
+    func debugActionContinuationIsAccepted(key: String) -> Bool {
+        actionContinuations[key]?.acceptedAt != nil
+    }
+    #endif
     // Awakening animation bridge (spec): bumped when a DIFFERENT conversation is
     // opened from the drawer so the screen replays the session-opening character;
     // readyTick fires once its history has loaded (success is gated on this).
@@ -1449,6 +1578,11 @@ final class AssistantVM {
         /// Stable identity for the locally selected chat before the server has
         /// assigned a conversation id. Persisted for kill/relaunch recovery.
         var sessionIdentity: String? = nil
+        /// A proxy can repeatedly close a POST before returning any identity.
+        /// Persist the bounded clean-EOF retry ladder so relaunch/poll cannot
+        /// turn that acceptance-unknown request into a tight network loop.
+        var preTurnEOFRetryCount: Int? = nil
+        var preTurnRetryNotBefore: Date? = nil
     }
     private static let recoverableTurnKey = "alma.assistant.recoverableTurn"
     private var recoverableTurn: RecoverableTurn? = AssistantVM.loadRecoverableTurn() {
@@ -1479,6 +1613,20 @@ final class AssistantVM {
     private var lastSendAt: Date?
     private var recoveryTask: Task<Void, Never>?
     private var recoveryInFlight = false
+    private static let maxPreTurnEOFRetries = 3
+    static func preTurnEOFRetryDelay(for attempt: Int) -> TimeInterval? {
+        guard attempt > 0, attempt < maxPreTurnEOFRetries else { return nil }
+        return pow(2.0, Double(attempt - 1))
+    }
+
+    static func terminalStartedAtMatchesSend(startedAt raw: String?, sentAt: Date?) -> Bool {
+        guard let sentAt, let raw else { return false }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let started = iso.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+        guard let started else { return false }
+        return started >= sentAt.addingTimeInterval(-15)
+    }
     /// Explicit transport ownership handoff. Some control turns intentionally
     /// have no recovery descriptor, so descriptor existence cannot identify a
     /// direct-SSE cancellation that durable replay now owns.
@@ -2033,6 +2181,13 @@ final class AssistantVM {
         // arrives. Re-submit the exact body with the same idempotency key; the
         // server either returns the existing turn or creates the one missing turn.
         if rt.turnId == nil {
+            if (rt.preTurnEOFRetryCount ?? 0) >= Self.maxPreTurnEOFRetries {
+                await failRecovery(
+                    preserveDescriptor: true,
+                    ownerRetryable: true,
+                    message: "Server গ্রহণ নিশ্চিত করা যায়নি — বার্তাটি নিরাপদ আছে, Retry করুন")
+                return
+            }
             var descriptor = rt
             let identity = rt.sessionIdentity ?? "recovered:\(rt.clientMessageId)"
             // The active pointer may have loaded an older server conversation
@@ -2251,6 +2406,7 @@ final class AssistantVM {
             canLoadOlder = !olderHistoryCache.isEmpty || serverHasOlder
             authExpired = false
             await loadOpenTasks()
+            resumeAcceptedActionContinuations()
         } catch AlmaAPIError.notAuthenticated { authExpired = true } catch {
             if showSpinner { errorToast = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription }
         }
@@ -2688,6 +2844,13 @@ final class AssistantVM {
            recoverableTurn.conversationId == conversationId,
            recoverableTurn.sessionIdentity == selectedSessionIdentity,
            !isStreaming {
+            guard (recoverableTurn.preTurnEOFRetryCount ?? 0) < Self.maxPreTurnEOFRetries else {
+                return
+            }
+            if let notBefore = recoverableTurn.preTurnRetryNotBefore,
+               notBefore > Date() {
+                return
+            }
             resumePreTurnDescriptor(recoverableTurn)
             return
         }
@@ -2761,7 +2924,27 @@ final class AssistantVM {
             } else {
                 startRecoveryPolling(cid: cid)
             }
-        } else if reconnecting || isStreaming || matchingDescriptor?.turnId != nil {
+        } else if reconnecting || isStreaming || matchingDescriptor != nil {
+            // The POST already yielded this conversation id, but no turn id yet.
+            // An idle/terminal row may still describe the PREVIOUS turn while our
+            // accepted request is between conversation creation and turn creation.
+            // Only terminalize when the status carries positive identity/time
+            // evidence for this send; otherwise keep the descriptor and perform
+            // the bounded awaiting-creation reconciliation.
+            if matchingDescriptor?.turnId == nil {
+                if status.turnId != nil, isTerminalForOurTurn(status, requireEvidence: true) {
+                    currentTurnId = status.turnId
+                    if var descriptor = recoverableTurn {
+                        descriptor.turnId = status.turnId
+                        recoverableTurn = descriptor
+                        markOutgoingAccepted(clientMessageId: descriptor.clientMessageId)
+                    }
+                    await finishRecovery(terminalStatus: status.status ?? "done")
+                } else {
+                    startRecoveryPolling(cid: cid, awaitingTurnCreation: true)
+                }
+                return
+            }
             // We believed a turn was live. Is this terminal row OUR turn, or a stale
             // previous one (our send may have died before the server created a turn)?
             if isTerminalForOurTurn(status) {
@@ -2788,15 +2971,12 @@ final class AssistantVM {
     /// were watching: it is the turn we hold an id for, or it started at/after our
     /// last send (small clock slack). Phase 3 replaces this heuristic with
     /// clientMessageId identity.
-    private func isTerminalForOurTurn(_ st: TurnStatusResponse) -> Bool {
+    private func isTerminalForOurTurn(_ st: TurnStatusResponse,
+                                      requireEvidence: Bool = false) -> Bool {
         if let tid = st.turnId, tid == currentTurnId { return true }
-        guard let sentAt = lastSendAt else { return true }   // resume path: any terminal is truth
-        guard let raw = st.startedAt else { return true }
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let started = iso.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
-        guard let started else { return true }
-        return started >= sentAt.addingTimeInterval(-15)
+        let matched = Self.terminalStartedAtMatchesSend(
+            startedAt: st.startedAt, sentAt: lastSendAt)
+        return matched || !requireEvidence && (lastSendAt == nil || st.startedAt == nil)
     }
 
     /// PR 5 recovery transport: attach the durable stream — the full activity
@@ -2869,7 +3049,8 @@ final class AssistantVM {
                         sawRunning = true
                         self.currentTurnId = s.turnId
                         if self.reconnecting { self.ensureStreamingTail() }
-                    } else if sawRunning || !awaitingTurnCreation || self.isTerminalForOurTurn(s) {
+                    } else if sawRunning || !awaitingTurnCreation
+                                || self.isTerminalForOurTurn(s, requireEvidence: true) {
                         await self.finishRecovery(terminalStatus: s.status ?? "done")
                         return
                     } else if elapsed > 20 {
@@ -2940,6 +3121,7 @@ final class AssistantVM {
     /// placeholder tail, and say so in Bangla (roadmap 1.1: bounded recovery proved
     /// no turn exists — only now may a failure surface).
     private func failRecovery(preserveDescriptor: Bool = false,
+                              ownerRetryable: Bool = false,
                               message: String = "পাঠানো যায়নি — আবার চেষ্টা করুন") async {
         recoveryTask?.cancel()
         recoveryTask = nil
@@ -2957,7 +3139,8 @@ final class AssistantVM {
         if !preserveDescriptor { recoverableTurn = nil }
         if let clientMessageId = currentClientMessageId {
             for index in messages.indices where messages[index].clientMessageId == clientMessageId {
-                messages[index].outgoingState = preserveDescriptor ? .checking : .failed
+                messages[index].outgoingState = ownerRetryable
+                    ? .failed : preserveDescriptor ? .checking : .failed
             }
         }
         AlmaTurnLog.event("turn.terminal", preserveDescriptor
@@ -3917,6 +4100,12 @@ final class AssistantVM {
         streamTaskGeneration == generation && selectedSessionIdentity == sessionIdentity
     }
 
+    /// Pure policy seam used by the native regression suite. A network task ending
+    /// is transport state; only a typed terminal event is agent-turn state.
+    static func directStreamEndRequiresRecovery(sawTerminalEvent: Bool) -> Bool {
+        !sawTerminalEvent
+    }
+
     private func runTurn(body: ChatBody, generation: UUID,
                          sessionIdentity: String) async {
         var handedToRecovery = false
@@ -3993,6 +4182,22 @@ final class AssistantVM {
                 handedToRecovery = durableHandoffGenerations.remove(generation) != nil
                 return
             }
+            // A clean socket EOF is not proof that the agent turn completed. In
+            // practice the POST stream can be closed by a proxy while the server
+            // keeps running and persists the final reply a little later. Treating
+            // that EOF as success used to settle the loader, clear the durable
+            // descriptor, and leave the reply invisible until navigation caused a
+            // history reload. Only a typed done/error event may finalize directly;
+            // every other EOF is handed to the existing status + durable replay
+            // recovery owner.
+            guard !Self.directStreamEndRequiresRecovery(sawTerminalEvent: sawTerminalEvent) else {
+                handedToRecovery = true
+                handoffUnexpectedStreamEnd(
+                    generation: generation,
+                    sessionIdentity: sessionIdentity,
+                    trigger: "direct-eof-without-terminal")
+                return
+            }
             // Server truth (final card ids/statuses, tool rows, cost) merges into the
             // tail in place — never a wholesale replace (prose must not blink).
             guard await finalizeTurn(expectedGeneration: generation,
@@ -4031,6 +4236,14 @@ final class AssistantVM {
             }
             do {
                 try await tailDurableTurn(dup.turnId, afterSeq: -1, buffer: buffer)
+                guard !Self.directStreamEndRequiresRecovery(sawTerminalEvent: sawTerminalEvent) else {
+                    handedToRecovery = true
+                    handoffUnexpectedStreamEnd(
+                        generation: generation,
+                        sessionIdentity: sessionIdentity,
+                        trigger: "duplicate-tail-eof-without-terminal")
+                    return
+                }
                 guard ownsDirectTurn(generation: generation, sessionIdentity: sessionIdentity),
                       await finalizeTurn(expectedGeneration: generation,
                                          expectedSessionIdentity: sessionIdentity) else {
@@ -4104,6 +4317,66 @@ final class AssistantVM {
             case .terminalAgentError:
                 await failRecovery(preserveDescriptor: false, message: kind.banglaMessage)
             }
+        }
+    }
+
+    /// Release the direct transport before asking recovery to attach. The yield is
+    /// intentional: it lets `runTurn` unwind first, preventing the recovery tail
+    /// from cancelling the task that is currently handing ownership over.
+    private func handoffUnexpectedStreamEnd(generation: UUID,
+                                            sessionIdentity: String,
+                                            trigger: String) {
+        guard ownsDirectTurn(generation: generation, sessionIdentity: sessionIdentity) else { return }
+        AlmaTurnLog.event("turn.streamEOFWithoutTerminal", trigger)
+        streamTask = nil
+        streamTaskGeneration = nil
+        if conversationId == nil {
+            // Pre-ID recovery replays the exact persisted idempotent request. It is
+            // a durable queued intent, not an endlessly spinning anonymous turn.
+            isStreaming = false
+            thinkingLive = false
+            settleLiveMode()
+            if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                messages[i].isStreaming = false
+            }
+            var delay: TimeInterval?
+            if var descriptor = recoverableTurn {
+                let attempt = (descriptor.preTurnEOFRetryCount ?? 0) + 1
+                descriptor.preTurnEOFRetryCount = attempt
+                if let seconds = Self.preTurnEOFRetryDelay(for: attempt) {
+                    descriptor.preTurnRetryNotBefore = Date().addingTimeInterval(seconds)
+                    delay = seconds
+                } else {
+                    descriptor.preTurnRetryNotBefore = nil
+                }
+                recoverableTurn = descriptor
+                AlmaTurnLog.event("turn.preIdEOFRetry", "\(attempt)/\(Self.maxPreTurnEOFRetries)")
+            }
+            guard let delay else {
+                Task { [weak self] in
+                    await self?.failRecovery(
+                        preserveDescriptor: true,
+                        ownerRetryable: true,
+                        message: "Server গ্রহণ নিশ্চিত করা যায়নি — বার্তাটি নিরাপদ আছে, Retry করুন")
+                }
+                return
+            }
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                await self?.recoverTurnState(trigger: "pre-id-eof-retry")
+            }
+            return
+        } else {
+            reconnecting = true
+            isStreaming = true
+            thinkingLive = true
+            ensureStreamingTail()
+            requestLiveMode("thinking")
+        }
+        Task { [weak self] in
+            await Task.yield()
+            await self?.recoverTurnState(trigger: "stream-eof")
         }
     }
 
@@ -4573,6 +4846,12 @@ final class AssistantVM {
     /// tool rows → superseded draft (visible) → verify row → corrected final +
     /// Σ/cache/ধাপ footer.
     func loadParityFixture() {
+        // Simulator proof fixtures must be visually deterministic. Do not let an
+        // unrelated persisted queue/dictation warning from an earlier recovery
+        // journey cover the card or attachment state currently under review.
+        queuedOwnerMessages = []
+        dictationFailure = nil
+        pendingFiles = []
         var rows: [AgentChatMessage] = []
         var fixtureOwner = AgentChatMessage(id: "fix-u-parity", role: .user,
                                             text: "স্টকের কাজটা কি হয়েছে?")
@@ -4687,6 +4966,13 @@ final class AssistantVM {
                 .init(id: "fix-ask-\(suffix)", question: card.question, options: card.options,
                       status: card.status, selectedOption: card.selectedOption)
             }
+            // Proof-only views keep one real production card on screen at a
+            // time; normal action fixtures continue to exercise both together.
+            if scenario == "approvalProof" {
+                messages[messageIndex].askCards = []
+            } else if scenario == "askProof" {
+                messages[messageIndex].confirmCards = []
+            }
         }
         conversationId = "fixture-conversation"
     }
@@ -4760,6 +5046,19 @@ final class AssistantVM {
             await recoverTurnState(trigger: "stall")
             if !isStreaming { break }
         }
+    }
+
+    /// Real send/stream path for the clean-EOF regression. The URLProtocol sends
+    /// partial content and closes without done; production recovery must attach to
+    /// the same durable turn and finish without navigation or relaunch.
+    func runUnexpectedStreamEOFFixture() {
+        queuedOwnerMessages = []
+        dictationFailure = nil
+        pendingFiles = []
+        messages = []
+        conversationId = nil
+        composerDraft = ""
+        send("আজকের স্টক রিপোর্ট দাও")
     }
     #endif
 
@@ -5456,6 +5755,19 @@ final class AssistantVM {
 
     @discardableResult
     func answerAskCard(_ cardId: String, option: String, continueInChat: Bool = true) async -> Bool {
+        if actionRegistry[cardId]?.state == .answered {
+            let acceptedOption = actionRegistry[cardId]?.selectedOption ?? option
+            if continueInChat {
+                dispatchActionContinuation(
+                    key: "ask:\(cardId)", text: acceptedOption, askCardId: cardId)
+            }
+            clearAskDraft(cardId)
+            return true
+        }
+        if continueInChat {
+            _ = resolvedActionContinuation(
+                key: "ask:\(cardId)", text: option, askCardId: cardId)
+        }
         guard beginSubmitting("ask:\(cardId)") else { return false }
         defer { finishSubmitting("ask:\(cardId)") }
         AlmaAgentHaptics.light()
@@ -5473,7 +5785,9 @@ final class AssistantVM {
             clearAskDraft(cardId)
             // Voice owns its own spoken continuation, so it persists here with
             // continueInChat=false and starts exactly one voice turn itself.
-            if continueInChat { send(option, askCardId: cardId) }
+            if continueInChat {
+                dispatchActionContinuation(key: "ask:\(cardId)", text: option, askCardId: cardId)
+            }
             return true
         } catch AlmaAPIError.http(let status, let body) where status == 409 {
             let selected = selectedOptionFromErrorBody(body)
@@ -5488,14 +5802,23 @@ final class AssistantVM {
                 errorToast = "উত্তরটি আগেই সংরক্ষিত হয়েছে"
                 AlmaAgentHaptics.selection()
                 clearAskDraft(cardId)
-                if continueInChat { send(option, askCardId: cardId) }
+                if continueInChat {
+                    dispatchActionContinuation(key: "ask:\(cardId)", text: option, askCardId: cardId)
+                }
                 return true
             }
             await loadMessages()
             let serverCard = messages.lazy.flatMap(\.askCards).first(where: { $0.id == cardId })
             if serverCard?.status == "answered" {
+                let acceptedOption = serverCard?.selectedOption
                 errorToast = "উত্তরটি আগেই সংরক্ষিত হয়েছে"
                 AlmaAgentHaptics.selection()
+                if continueInChat, let acceptedOption, !acceptedOption.isEmpty {
+                    setActionState(cardId, kind: "ask", state: .answered,
+                                   selectedOption: acceptedOption)
+                    dispatchActionContinuation(
+                        key: "ask:\(cardId)", text: acceptedOption, askCardId: cardId)
+                }
                 clearAskDraft(cardId)
                 return true
             }
@@ -5508,9 +5831,17 @@ final class AssistantVM {
         } catch {
             setActionState(cardId, kind: "ask", state: .checking)
             await loadMessages()
-            if messages.lazy.flatMap(\.askCards).first(where: { $0.id == cardId })?.status == "answered" {
+            if let serverCard = messages.lazy.flatMap(\.askCards).first(where: { $0.id == cardId }),
+               serverCard.status == "answered" {
                 errorToast = "উত্তরটি সার্ভারে সংরক্ষিত ছিল — অবস্থা মিলিয়ে নেওয়া হয়েছে"
                 AlmaAgentHaptics.selection()
+                let acceptedOption = serverCard.selectedOption ?? option
+                setActionState(cardId, kind: "ask", state: .answered,
+                               selectedOption: acceptedOption)
+                if continueInChat {
+                    dispatchActionContinuation(
+                        key: "ask:\(cardId)", text: acceptedOption, askCardId: cardId)
+                }
                 clearAskDraft(cardId)
                 return true
             }
@@ -5635,6 +5966,14 @@ final class AssistantVM {
     func submitOpinion(_ cardId: String, note: String) async -> Bool {
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
+        if currentConfirmStatus(cardId) == "rejected"
+            || actionRegistry[cardId]?.state == .rejected {
+            dispatchActionContinuation(key: "opinion:\(cardId)", text: trimmed, askCardId: nil)
+            clearOpinionDraft(cardId)
+            return true
+        }
+        _ = resolvedActionContinuation(
+            key: "opinion:\(cardId)", text: trimmed, askCardId: nil)
         guard beginSubmitting("action:\(cardId)") else { return false }
         defer { finishSubmitting("action:\(cardId)") }
         AlmaAgentHaptics.commit()
@@ -5643,14 +5982,14 @@ final class AssistantVM {
                 "POST", "/api/assistant/actions/\(cardId)/reject")
             setConfirmStatus(cardId, "rejected")
             AlmaAgentHaptics.success()
+            dispatchActionContinuation(key: "opinion:\(cardId)", text: trimmed, askCardId: nil)
             clearOpinionDraft(cardId)
-            send(trimmed)
             return true
         } catch {
             let reconciled = await reconcileActionFailure(cardId: cardId, error: error)
             if reconciled, currentConfirmStatus(cardId) == "rejected" {
+                dispatchActionContinuation(key: "opinion:\(cardId)", text: trimmed, askCardId: nil)
                 clearOpinionDraft(cardId)
-                send(trimmed)
             }
             return reconciled
         }
@@ -5749,6 +6088,20 @@ final class AssistantVM {
         }
     }
 
+    private func removeAttachmentCacheFiles(_ ids: Set<UUID>) {
+        guard !ids.isEmpty, let directory = Self.attachmentCacheDirectory() else { return }
+        let names = pendingFiles.compactMap { ids.contains($0.id) ? $0.cacheFileName : nil }
+        for name in names {
+            let url = directory.appendingPathComponent(name)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch {
+                AlmaTurnLog.event("attachment.cacheCleanupFailed", name)
+            }
+        }
+    }
+
     func removePendingFile(_ id: UUID) {
         if pendingAttachmentSend?.attachmentIds.contains(id) == true {
             let clientMessageId = pendingAttachmentSend?.clientMessageId
@@ -5758,6 +6111,7 @@ final class AssistantVM {
             }
             errorToast = "অপেক্ষার Send বাতিল হয়েছে — লেখা অক্ষত আছে"
         }
+        removeAttachmentCacheFiles([id])
         pendingFiles.removeAll { $0.id == id }
     }
 
@@ -5779,7 +6133,11 @@ final class AssistantVM {
             for index in messages.indices where messages[index].clientMessageId == clientMessageId {
                 messages[index].outgoingState = .checking
             }
-            resumePreTurnDescriptor(descriptor)
+            var retryDescriptor = descriptor
+            retryDescriptor.preTurnEOFRetryCount = 0
+            retryDescriptor.preTurnRetryNotBefore = nil
+            recoverableTurn = retryDescriptor
+            resumePreTurnDescriptor(retryDescriptor)
             return
         }
         // A definite pre-acceptance failure has no recovery descriptor. Reuse
@@ -5911,11 +6269,20 @@ final class AssistantVM {
         }
         if let text, composerDraft == text { composerDraft = "" }
         if !attachmentIds.isEmpty {
+            removeAttachmentCacheFiles(attachmentIds)
             pendingFiles.removeAll { attachmentIds.contains($0.id) }
         }
         if pendingAttachmentSend?.clientMessageId == clientMessageId {
             pendingAttachmentSend = nil
         }
+        var retiredContinuation = false
+        for key in Array(actionContinuations.keys)
+        where actionContinuations[key]?.clientMessageId == clientMessageId {
+            actionContinuations[key]?.acceptedAt = Date()
+            resumedActionContinuationKeys.insert(key)
+            retiredContinuation = true
+        }
+        if retiredContinuation { persistActionContinuations() }
         AlmaTurnLog.event("turn.ownerIntentAccepted", clientMessageId)
     }
 
@@ -7950,113 +8317,58 @@ struct AgentConfirmCardView: View {
     private var recoveryState: AssistantVM.ActionLifecycleState? { vm.actionState(card.id) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "bell.badge.fill")
-                    .font(.system(size: 12))
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 11) {
+                Image(systemName: "hand.raised.fill")
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(AgentPalette.coral)
-                Text("অনুমোদন দরকার")
-                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(AgentPalette.coral)
-                Spacer()
+                    .frame(width: 36, height: 36)
+                    .background(AgentPalette.coral.opacity(0.12), in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("এই কাজটি চালাব?")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(pal.ink)
+                    Text(actionLabel)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(pal.muted)
+                }
+                Spacer(minLength: 6)
                 if let c = card.costEstimate, c > 0 {
-                    Text(String(format: "~$%.2f", c)).font(.system(size: 10.5)).foregroundStyle(pal.muted)
+                    Text(String(format: "~$%.2f", c))
+                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(pal.mutedHi)
+                        .padding(.horizontal, 8).padding(.vertical, 5)
+                        .background(Color.white.opacity(0.07), in: Capsule())
                 }
             }
-            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 8)
+
             Text(card.summary)
-                .font(.system(size: 14)).foregroundStyle(pal.ink).lineSpacing(3)
-                .padding(.horizontal, 16).padding(.bottom, 12)
+                .font(.system(size: 14.5, weight: .regular))
+                .foregroundStyle(pal.ink)
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+
             if card.status == "pending", recoveryState == .failed || recoveryState == .checking {
-                HStack(spacing: 7) {
+                HStack(spacing: 8) {
                     Image(systemName: recoveryState == .checking
-                          ? "arrow.triangle.2.circlepath" : "exclamationmark.circle")
+                          ? "arrow.triangle.2.circlepath" : "exclamationmark.circle.fill")
                     Text(recoveryState == .checking
-                         ? "সার্ভারের অবস্থা যাচাই দরকার" : "সিদ্ধান্ত নিশ্চিত হয়নি")
-                    Spacer()
-                    Button("Status দেখুন") { Task { await vm.checkActionStatus(card.id) } }
+                         ? "সিদ্ধান্তের server status যাচাই হচ্ছে" : "সিদ্ধান্ত নিশ্চিত হয়নি")
+                        .lineLimit(2)
+                    Spacer(minLength: 4)
+                    Button("Check status") { Task { await vm.checkActionStatus(card.id) } }
                         .fontWeight(.semibold)
                 }
-                .font(.system(size: 11))
+                .font(.system(size: 11.5))
                 .foregroundStyle(recoveryState == .failed ? Color.red : pal.mutedHi)
-                .padding(.horizontal, 16).padding(.bottom, 10)
+                .padding(10)
+                .background((recoveryState == .failed ? Color.red : AgentPalette.coral).opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
+
             if card.status == "pending" {
-                if showOpinion {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "pencil.line")
-                                .font(.system(size: 12))
-                                .foregroundStyle(pal.mutedHi)
-                            Text("আপনার মত লিখুন")
-                                .font(.system(size: 12, weight: .semibold)).foregroundStyle(pal.mutedHi)
-                        }
-                        TextField("আপনার মতামত…", text: opinionTextBinding, axis: .vertical)
-                            .font(.system(size: 14)).lineLimit(2...4)
-                            .padding(10)
-                            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
-                            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(pal.borderSubtle))
-                        HStack(spacing: 8) {
-                            Button {
-                                Task { await vm.submitOpinion(card.id, note: opinionText) }
-                            } label: {
-                                Group {
-                                    if submitting { ProgressView().tint(.white) }
-                                    else { Text("পাঠান") }
-                                }
-                                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                                    .padding(.horizontal, 16).padding(.vertical, 8)
-                                    .background(AgentPalette.coral, in: Capsule())
-                            }
-                            .disabled(submitting || opinionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            Button { vm.opinionOpenIds.remove(card.id) } label: {
-                                Text("বাতিল").font(.system(size: 13)).foregroundStyle(pal.muted)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 16).padding(.bottom, 14)
-                } else {
-                    VStack(spacing: 0) {
-                        HStack(spacing: 8) {
-                            Button { onDecide(true) } label: {
-                                Group {
-                                    if submitting { ProgressView().tint(.white) }
-                                    else { Text("অনুমোদন") }
-                                }
-                                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                                    .frame(maxWidth: .infinity).padding(.vertical, 10)
-                                    .background(AgentPalette.coral, in: RoundedRectangle(cornerRadius: 12))
-                            }
-                            Button { onDecide(false) } label: {
-                                Text("বাতিল")
-                                    .font(.system(size: 13, weight: .medium)).foregroundStyle(pal.muted)
-                                    .frame(maxWidth: .infinity).padding(.vertical, 10)
-                                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
-                                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(pal.borderSubtle))
-                            }
-                        }
-                        .disabled(submitting)
-                        .padding(.horizontal, 16).padding(.bottom, 10)
-                        Button {
-                            AlmaAgentHaptics.light()
-                            vm.opinionOpenIds.insert(card.id)
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "text.bubble")
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(AgentPalette.coral.opacity(0.9))
-                                Text("আমার মত")
-                                    .font(.system(size: 14, weight: .medium)).foregroundStyle(pal.ink)
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(pal.muted.opacity(0.5))
-                            }
-                            .padding(.horizontal, 16).padding(.vertical, 12)
-                        }
-                        .buttonStyle(AlmaAgentPressStyle())
-                        .overlay(alignment: .top) { Rectangle().fill(pal.borderSubtle).frame(height: 1) }
-                    }
-                }
+                if showOpinion { opinionComposer }
+                else { decisionControls }
             } else if card.status == "approved", card.actionType == "image_gen" || card.actionType == "video_gen" {
                 // Creative-Studio-style render count (owner ask 2026-07-13): a live
                 // 1→95% time-eased fill while the artifact renders — the real image
@@ -8064,21 +8376,108 @@ struct AgentConfirmCardView: View {
                 AgentRenderProgressStrip(
                     startedAt: vm.confirmApprovedAt[card.id] ?? card.approvedAt ?? Date(),
                     pal: pal)
-                    .padding(.horizontal, 16).padding(.bottom, 14)
             } else {
                 HStack(spacing: 5) {
                     Image(systemName: statusIcon).font(.system(size: 11))
                     Text(statusLabel).font(.system(size: 12, weight: .medium))
                 }
                 .foregroundStyle(statusColor)
-                .padding(.horizontal, 16).padding(.bottom, 14)
             }
         }
+        .padding(16)
         .modifier(AlmaAgentGlassBackground(
-            shape: RoundedRectangle(cornerRadius: 20, style: .continuous), pal: pal))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
-        .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
+            shape: RoundedRectangle(cornerRadius: 22, style: .continuous), pal: pal))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.13), lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder private var decisionControls: some View {
+        VStack(spacing: 8) {
+            Button { onDecide(true) } label: {
+                HStack(spacing: 7) {
+                    if submitting { ProgressView().tint(.white).controlSize(.small) }
+                    else { Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)) }
+                    Text(submitting ? "নিশ্চিত করছি…" : "অনুমোদন দিন")
+                }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(AgentPalette.coral, in: Capsule())
+            }
+            .disabled(submitting)
+            .accessibilityLabel("অনুমোদন দিন")
+            .accessibilityHint("এই Agent action চালু করবে")
+
+            HStack(spacing: 10) {
+                Button { onDecide(false) } label: {
+                    Label("অনুমোদন দেব না", systemImage: "xmark")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(pal.mutedHi)
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                        .background(Color.white.opacity(0.045), in: Capsule())
+                        .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+                }
+                .accessibilityLabel("অনুমোদন দেব না")
+                Button {
+                    AlmaAgentHaptics.light()
+                    vm.opinionOpenIds.insert(card.id)
+                } label: {
+                    Label("আমার মত লিখি", systemImage: "text.bubble")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(pal.mutedHi)
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                        .background(Color.white.opacity(0.045), in: Capsule())
+                        .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+                }
+                .accessibilityLabel("আমার মত লিখি")
+            }
+            .disabled(submitting)
+        }
+    }
+
+    @ViewBuilder private var opinionComposer: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("কীভাবে বদলাবেন?")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(pal.mutedHi)
+            TextField("আপনার মতামত লিখুন…", text: opinionTextBinding, axis: .vertical)
+                .font(.system(size: 14)).lineLimit(2...4)
+                .padding(12)
+                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(pal.borderSubtle))
+            HStack(spacing: 8) {
+                Button {
+                    Task { await vm.submitOpinion(card.id, note: opinionText) }
+                } label: {
+                    Text(submitting ? "পাঠাচ্ছি…" : "মতামত পাঠান")
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, minHeight: 42)
+                        .background(AgentPalette.coral, in: Capsule())
+                }
+                .disabled(submitting || opinionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button { vm.opinionOpenIds.remove(card.id) } label: {
+                    Text("ফিরে যান")
+                        .font(.system(size: 13, weight: .medium)).foregroundStyle(pal.muted)
+                        .frame(minHeight: 42)
+                        .padding(.horizontal, 10)
+                }
+            }
+        }
+    }
+
+    private var actionLabel: String {
+        switch card.actionType {
+        case "image_gen": return "ছবি তৈরি"
+        case "video_gen": return "ভিডিও তৈরি"
+        case "email", "send_email": return "ইমেইল পাঠানো"
+        case "facebook_post": return "Facebook প্রকাশ"
+        case "delete": return "পরিবর্তনযোগ্য নয় এমন কাজ"
+        case .some(let value) where !value.isEmpty:
+            return value.replacingOccurrences(of: "_", with: " ").capitalized
+        default: return "Agent action · আপনার নিয়ন্ত্রণে"
+        }
     }
 
     private var statusIcon: String {
@@ -8215,92 +8614,83 @@ struct AgentAskCardView: View {
     let onAnswer: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 14) {
             if card.status == "pending" {
-                // Claude header: ‹ 1 of 3 › left, circular ✕ right.
-                if pageIndex != nil || onClose != nil {
-                    HStack(spacing: 4) {
+                HStack(spacing: 10) {
+                    Image(systemName: "questionmark.bubble.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AgentPalette.coral)
+                        .frame(width: 36, height: 36)
+                        .background(AgentPalette.coral.opacity(0.12), in: Circle())
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Agent-এর প্রশ্ন")
+                            .font(.system(size: 14.5, weight: .semibold))
+                            .foregroundStyle(pal.ink)
                         if let idx = pageIndex, pageCount > 1 {
-                            Button { onPrev?() } label: {
-                                Image(systemName: "chevron.left")
-                                    .accessibilityLabel("আগের পাতা")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(idx > 0 ? pal.ink : pal.muted.opacity(0.35))
-                                    .frame(width: 28, height: 28)
-                                    .almaAgentHitTarget()
-                            }
-                            .disabled(idx == 0)
                             Text("\(almaBn(idx + 1)) / \(almaBn(pageCount))")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 11.5, weight: .medium))
                                 .foregroundStyle(pal.muted)
-                            Button { onNext?() } label: {
-                                Image(systemName: "chevron.right")
-                                    .accessibilityLabel("পরের পাতা")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(idx < pageCount - 1 ? pal.ink : pal.muted.opacity(0.35))
-                                    .frame(width: 28, height: 28)
-                                    .almaAgentHitTarget()
-                            }
-                            .disabled(idx >= pageCount - 1)
-                        }
-                        Spacer()
-                        if let onClose {
-                            Button {
-                                AlmaAgentHaptics.light()
-                                onClose()
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .accessibilityLabel("কার্ড বন্ধ করুন")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(pal.muted)
-                                    .frame(width: 28, height: 28)
-                                    .background(Color.white.opacity(0.06), in: Circle())
-                                    .almaAgentHitTarget()
-                            }
+                        } else {
+                            Text("উত্তর না দেওয়া পর্যন্ত কাজটি অপেক্ষায় থাকবে")
+                                .font(.system(size: 10.5)).foregroundStyle(pal.muted)
                         }
                     }
-                    .padding(.horizontal, 12).padding(.top, 10)
+                    Spacer(minLength: 4)
+                    if let idx = pageIndex, pageCount > 1 {
+                        Button { onPrev?() } label: {
+                            Image(systemName: "chevron.left").frame(width: 30, height: 30)
+                        }.disabled(idx == 0).accessibilityLabel("আগের প্রশ্ন")
+                        Button { onNext?() } label: {
+                            Image(systemName: "chevron.right").frame(width: 30, height: 30)
+                        }.disabled(idx >= pageCount - 1).accessibilityLabel("পরের প্রশ্ন")
+                    }
+                    if let onClose {
+                        Button { AlmaAgentHaptics.light(); onClose() } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 11, weight: .semibold))
+                                .frame(width: 30, height: 30)
+                                .background(Color.white.opacity(0.06), in: Circle())
+                        }
+                        .accessibilityLabel("প্রশ্ন কার্ড বন্ধ করুন")
+                    }
                 }
+                .foregroundStyle(pal.muted)
+
                 Text(card.question)
-                    .font(.system(size: 15.5, weight: .semibold, design: .serif))
+                    .font(.system(size: 15.5, weight: .semibold))
                     .foregroundStyle(pal.ink)
-                    .lineSpacing(3)
-                    .padding(.horizontal, 18)
-                    .padding(.top, pageIndex != nil || onClose != nil ? 6 : 18)
-                    .padding(.bottom, 10)
-                VStack(spacing: 0) {
+                    .lineSpacing(4)
+
+                VStack(spacing: 8) {
                     ForEach(Array(card.options.enumerated()), id: \.offset) { idx, opt in
                         let active = !otherActive && chosen == opt
                         Button {
                             AlmaAgentHaptics.light()
                             chosen = opt; otherActive = false
-                            onAnswer(opt)
                         } label: {
-                            HStack(spacing: 12) {
-                                // Claude: option number sits in a small frosted circle.
-                                Text("\(almaBn(idx + 1))")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(active ? .white : pal.mutedHi)
-                                    .frame(width: 26, height: 26)
-                                    .background(active ? AnyShapeStyle(AgentPalette.coral)
-                                                       : AnyShapeStyle(Color.white.opacity(0.07)),
-                                                in: Circle())
-                                    .overlay(Circle().strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+                            HStack(spacing: 11) {
+                                Image(systemName: active ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 18, weight: .medium))
+                                    .foregroundStyle(active ? AgentPalette.coral : pal.muted.opacity(0.6))
                                 Text(opt)
                                     .font(.system(size: 14, weight: .medium))
                                     .foregroundStyle(pal.ink)
                                     .multilineTextAlignment(.leading)
                                 Spacer()
+                                Text(almaBn(idx + 1))
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(pal.muted)
                             }
-                            .padding(.horizontal, 16).padding(.vertical, 12)
+                            .padding(.horizontal, 13).frame(minHeight: 46)
+                            .background(active ? AgentPalette.coral.opacity(0.09) : Color.white.opacity(0.035),
+                                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(active ? AgentPalette.coral.opacity(0.45) : pal.borderSubtle,
+                                              lineWidth: 1))
                         }
                         .buttonStyle(AlmaAgentPressStyle())
                         .disabled(submitting)
-                        if idx < card.options.count - 1 {
-                            Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1).padding(.leading, 18)
-                        }
                     }
-                    Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
                     Button {
                         AlmaAgentHaptics.light()
                         otherActive = true; chosen = nil
@@ -8308,36 +8698,43 @@ struct AgentAskCardView: View {
                         HStack(spacing: 10) {
                             Image(systemName: "pencil")
                                 .font(.system(size: 13))
-                                .foregroundStyle(pal.muted)
-                                .frame(width: 26, alignment: .center)
-                            Text("Type your answer…")
-                                .font(.system(size: 14)).foregroundStyle(otherActive ? pal.ink : pal.muted)
+                                .foregroundStyle(otherActive ? AgentPalette.coral : pal.muted)
+                                .frame(width: 18, alignment: .center)
+                            Text("নিজের উত্তর লিখুন")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(otherActive ? pal.ink : pal.muted)
                             Spacer()
                         }
-                        .padding(.horizontal, 16).padding(.vertical, 13)
+                        .padding(.horizontal, 13).frame(minHeight: 44)
+                        .background(Color.white.opacity(0.035),
+                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(otherActive ? AgentPalette.coral.opacity(0.45) : pal.borderSubtle))
                     }
                     .buttonStyle(AlmaAgentPressStyle())
                     .disabled(submitting)
                     if otherActive {
-                        HStack(spacing: 8) {
-                            TextField("আপনার মতামত…", text: $otherText)
-                                .font(.system(size: 14))
-                                .padding(10)
-                                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
-                            Button {
-                                let t = otherText.trimmingCharacters(in: .whitespacesAndNewlines)
-                                guard !t.isEmpty else { return }
-                                onAnswer(t)
-                            } label: {
-                                Image(systemName: "arrow.up.circle.fill")
-                                    .font(.system(size: 28))
-                                    .foregroundStyle(AgentPalette.coral)
-                            }
-                            .disabled(submitting)
-                        }
-                        .padding(.horizontal, 18).padding(.bottom, 14)
+                        TextField("উত্তর লিখুন…", text: $otherText, axis: .vertical)
+                            .font(.system(size: 14)).lineLimit(2...4)
+                            .padding(12)
+                            .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 14))
+                            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(pal.borderSubtle))
                     }
                 }
+
+                Button { submitAnswer() } label: {
+                    HStack(spacing: 7) {
+                        if submitting { ProgressView().tint(.white).controlSize(.small) }
+                        else { Image(systemName: "arrow.up").font(.system(size: 12, weight: .bold)) }
+                        Text(submitting ? "পাঠাচ্ছি…" : "উত্তর পাঠান")
+                    }
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(answerReady ? AgentPalette.coral : pal.muted.opacity(0.25), in: Capsule())
+                }
+                .disabled(submitting || !answerReady)
+                .accessibilityLabel("উত্তর পাঠান")
             } else if let sel = card.selectedOption {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(card.question).font(.system(size: 13)).foregroundStyle(pal.muted)
@@ -8347,15 +8744,30 @@ struct AgentAskCardView: View {
                     }
                     .foregroundStyle(AgentPalette.coral)
                 }
-                .padding(18)
             }
         }
-        .overlay { if submitting { ProgressView().tint(AgentPalette.coral) } }
+        .padding(16)
         .modifier(AlmaAgentGlassBackground(
             shape: RoundedRectangle(cornerRadius: 22, style: .continuous), pal: pal))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
-        .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
+            .strokeBorder(Color.white.opacity(0.13), lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var answerReady: Bool {
+        if otherActive {
+            return !otherText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return chosen?.isEmpty == false
+    }
+
+    private func submitAnswer() {
+        let answer = otherActive
+            ? otherText.trimmingCharacters(in: .whitespacesAndNewlines)
+            : (chosen ?? "")
+        guard !answer.isEmpty else { return }
+        onAnswer(answer)
     }
 }
 
@@ -8946,6 +9358,38 @@ private struct AgentCameraPicker: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
 }
 
+@available(iOS 17.0, *)
+private struct AgentDocumentScanner: UIViewControllerRepresentable {
+    let onImages: ([UIImage]) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    final class Coordinator: NSObject, VNDocumentCameraViewControllerDelegate {
+        let parent: AgentDocumentScanner
+        init(_ parent: AgentDocumentScanner) { self.parent = parent }
+
+        func documentCameraViewController(_ controller: VNDocumentCameraViewController,
+                                          didFinishWith scan: VNDocumentCameraScan) {
+            parent.onImages((0..<scan.pageCount).map { scan.imageOfPage(at: $0) })
+            parent.dismiss()
+        }
+        func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) {
+            parent.dismiss()
+        }
+        func documentCameraViewController(_ controller: VNDocumentCameraViewController,
+                                          didFailWithError error: Error) {
+            parent.dismiss()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIViewController(context: Context) -> VNDocumentCameraViewController {
+        let controller = VNDocumentCameraViewController()
+        controller.delegate = context.coordinator
+        return controller
+    }
+    func updateUIViewController(_ controller: VNDocumentCameraViewController, context: Context) {}
+}
+
 /// NP-3 (AG-07.staff): staff quick actions on the LIVE Business Monitor prefill
 /// the chat composer — the web's `/agent?draft=…` deep link, natively. The
 /// pending text survives even if the composer isn't mounted yet (tab not built).
@@ -8958,6 +9402,10 @@ enum AlmaComposerPrefill {
     }
 }
 
+enum AlmaAssistantLibraryRequest {
+    static let note = Notification.Name("almaAssistantOpenSessionLibrary")
+}
+
 @available(iOS 17.0, *)
 struct AgentComposerView: View {
     @Bindable var vm: AssistantVM
@@ -8968,12 +9416,13 @@ struct AgentComposerView: View {
     @State private var showPhotoPicker = false
     @State private var showDocumentPicker = false
     @State private var showCamera = false
+    @State private var showScanner = false
     @State private var showModelPicker = false
     @FocusState private var focused: Bool
 
     private var hasComposerPresentation: Bool {
         showAttachmentChoices || showPhotoPicker || showDocumentPicker
-            || showCamera || showModelPicker
+            || showCamera || showScanner || showModelPicker
     }
 
     var body: some View {
@@ -9071,14 +9520,6 @@ struct AgentComposerView: View {
             }
         }
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
-        .confirmationDialog("ফাইল যোগ করুন", isPresented: $showAttachmentChoices,
-                            titleVisibility: .visible) {
-            Button("ছবি থেকে") { showPhotoPicker = true }
-            Button("ক্যামেরা") { showCamera = true }
-                .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
-            Button("Files থেকে") { showDocumentPicker = true }
-            Button("বাতিল", role: .cancel) {}
-        }
         .fileImporter(isPresented: $showDocumentPicker,
                       allowedContentTypes: [.pdf, .image], allowsMultipleSelection: true) { result in
             guard case .success(let urls) = result else { return }
@@ -9093,6 +9534,10 @@ struct AgentComposerView: View {
         }
         .sheet(isPresented: $showCamera) {
             AgentCameraPicker { image in vm.attachImage(image) }
+                .ignoresSafeArea()
+        }
+        .sheet(isPresented: $showScanner) {
+            AgentDocumentScanner { images in images.forEach(vm.attachImage) }
                 .ignoresSafeArea()
         }
         .onChange(of: hasComposerPresentation) { _, shown in
@@ -9154,60 +9599,90 @@ struct AgentComposerView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(vm.pendingFiles) { f in
-                    ZStack(alignment: .topTrailing) {
-                        Group {
+                    HStack(spacing: 9) {
+                        ZStack {
                             if let image = f.image {
                                 Image(uiImage: image).resizable().scaledToFill()
                             } else {
-                                VStack(spacing: 4) {
-                                    Image(systemName: f.mediaType == "application/pdf" ? "doc.richtext.fill" : "doc.fill")
-                                        .font(.system(size: 22)).foregroundStyle(AgentPalette.coral)
-                                    Text(f.name).font(.system(size: 8, weight: .medium))
-                                        .foregroundStyle(pal.ink).lineLimit(2)
-                                }
-                                .padding(5)
-                                .background(pal.card)
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .fill(AgentPalette.coral.opacity(0.10))
+                                    .overlay {
+                                        Image(systemName: f.mediaType == "application/pdf"
+                                              ? "doc.richtext.fill" : "doc.fill")
+                                            .font(.system(size: 20, weight: .medium))
+                                            .foregroundStyle(AgentPalette.coral)
+                                    }
                             }
                         }
-                            .frame(width: 64, height: 64)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .overlay {
-                                if f.state == .uploading {
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color.black.opacity(0.45))
-                                    AlmaMiniLoader(mode: .thinking, size: 18)
-                                } else if f.state == .waitingForNetwork {
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color.black.opacity(0.45))
-                                    Image(systemName: "wifi.slash").foregroundStyle(.white)
-                                } else if f.state == .failed {
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color.red.opacity(0.4))
-                                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.white)
-                                }
+                        .frame(width: 50, height: 50)
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(f.name)
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .foregroundStyle(pal.ink)
+                                .lineLimit(1)
+                            HStack(spacing: 5) {
+                                attachmentStateGlyph(f)
+                                Text(attachmentStateLabel(f))
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundStyle(attachmentStateColor(f, pal: pal))
+                                    .lineLimit(1)
                             }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                if f.state == .failed || f.state == .waitingForNetwork {
-                                    vm.retryPendingFile(f.id)
-                                }
+                            if f.state == .failed || f.state == .waitingForNetwork {
+                                Button("Retry") { vm.retryPendingFile(f.id) }
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(AgentPalette.coral)
                             }
+                        }
+                        .frame(width: 92, alignment: .leading)
                         Button { vm.removePendingFile(f.id) } label: {
                             Image(systemName: "xmark")
-                                .accessibilityLabel("ফাইল সরান")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 18, height: 18)
-                                .background(Color.black.opacity(0.65), in: Circle())
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(pal.muted)
+                                .frame(width: 28, height: 28)
+                                .background(Color.white.opacity(0.06), in: Circle())
                         }
-                        .almaAgentHitTarget()
-                        .offset(x: 13, y: -13)
+                        .accessibilityLabel("\(f.name) সরান")
                     }
+                    .padding(7)
+                    .background(Color.white.opacity(0.055),
+                                in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous)
+                        .strokeBorder(f.state == .failed
+                                      ? Color.red.opacity(0.35) : pal.borderSubtle, lineWidth: 1))
                 }
             }
-            .padding(.horizontal, 6).padding(.top, 6)
+            .padding(.horizontal, 4).padding(.vertical, 3)
         }
-        .frame(height: 72)
+        .frame(height: 70)
+    }
+
+    @ViewBuilder private func attachmentStateGlyph(_ file: AssistantVM.PendingFile) -> some View {
+        switch file.state {
+        case .uploading: ProgressView().controlSize(.mini).tint(AgentPalette.coral)
+        case .waitingForNetwork: Image(systemName: "wifi.slash").font(.system(size: 9))
+        case .ready: Image(systemName: "checkmark.circle.fill").font(.system(size: 10))
+        case .failed: Image(systemName: "exclamationmark.circle.fill").font(.system(size: 10))
+        }
+    }
+
+    private func attachmentStateLabel(_ file: AssistantVM.PendingFile) -> String {
+        switch file.state {
+        case .uploading: return "Uploading…"
+        case .waitingForNetwork: return "Offline · saved"
+        case .ready: return "Ready"
+        case .failed: return "Upload failed"
+        }
+    }
+
+    private func attachmentStateColor(_ file: AssistantVM.PendingFile, pal: AgentPalette) -> Color {
+        switch file.state {
+        case .ready: return AgentPalette.teal
+        case .failed: return .red
+        case .uploading: return AgentPalette.coral
+        case .waitingForNetwork: return pal.muted
+        }
     }
 
     @ViewBuilder private func controlsRow(_ pal: AgentPalette) -> some View {
@@ -9222,6 +9697,11 @@ struct AgentComposerView: View {
                     .almaAgentHitTarget()
             }
             .accessibilityLabel("ফাইল যোগ করুন")
+            .popover(isPresented: $showAttachmentChoices, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+                attachmentMenu(pal)
+                    .presentationCompactAdaptation(.popover)
+                    .presentationBackground(.ultraThinMaterial)
+            }
             // Model picker pill — opens the native sheet with EVERY enabled model.
             Button {
                 AlmaAgentHaptics.selection()
@@ -9310,6 +9790,62 @@ struct AgentComposerView: View {
         !vm.composerSubmissionPending
             && (!vm.composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !vm.pendingFiles.isEmpty)
+    }
+
+    @ViewBuilder private func attachmentMenu(_ pal: AgentPalette) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("যোগ করুন")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(pal.muted)
+                .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 3)
+            attachmentChoice("Photo Library", icon: "photo.on.rectangle.angled", pal: pal) {
+                presentAttachmentDestination { showPhotoPicker = true }
+            }
+            attachmentChoice("Camera", icon: "camera", pal: pal,
+                             enabled: UIImagePickerController.isSourceTypeAvailable(.camera)) {
+                presentAttachmentDestination { showCamera = true }
+            }
+            attachmentChoice("Files", icon: "folder", pal: pal) {
+                presentAttachmentDestination { showDocumentPicker = true }
+            }
+            attachmentChoice("Scan Document", icon: "doc.viewfinder", pal: pal,
+                             enabled: VNDocumentCameraViewController.isSupported) {
+                presentAttachmentDestination { showScanner = true }
+            }
+            Rectangle().fill(pal.borderSubtle).frame(height: 1).padding(.vertical, 3)
+            attachmentChoice("Recent Library", icon: "square.grid.2x2", pal: pal) {
+                showAttachmentChoices = false
+                NotificationCenter.default.post(name: AlmaAssistantLibraryRequest.note, object: nil)
+            }
+        }
+        .padding(6)
+        .frame(width: 228)
+    }
+
+    @ViewBuilder private func attachmentChoice(_ title: String, icon: String, pal: AgentPalette,
+                                               enabled: Bool = true,
+                                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(enabled ? AgentPalette.coral : pal.muted.opacity(0.35))
+                    .frame(width: 22)
+                Text(title)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(enabled ? pal.ink : pal.muted.opacity(0.45))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10).frame(minHeight: 43)
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(AlmaAgentPressStyle())
+        .disabled(!enabled)
+    }
+
+    private func presentAttachmentDestination(_ action: @escaping () -> Void) {
+        showAttachmentChoices = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: action)
     }
 
     private func send() {
@@ -12858,6 +13394,11 @@ struct AssistantScreen: View {
                 }
                 return
             }
+            if argFlag("ALMA_ASSISTANT_STREAM_EOF") {
+                vm.runUnexpectedStreamEOFFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=stream-eof")
+                return
+            }
             #endif
             // Parity roadmap — persisted verification-retry composition only.
             if argFlag("ALMA_ASSISTANT_PARITY") {
@@ -12988,6 +13529,9 @@ struct AssistantScreen: View {
                     }
                 }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AlmaAssistantLibraryRequest.note)) { _ in
+            showLibrary = true
         }
         .sheet(isPresented: $showProjectPicker) {
             AgentConversationProjectPicker(vm: vm)
