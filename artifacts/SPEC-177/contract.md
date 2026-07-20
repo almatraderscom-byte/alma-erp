@@ -1,0 +1,3 @@
+# SPEC-177 Contract — Research workflow templates
+RESEARCH_TEMPLATES + registry/validate/researchIsReadOnly: known research workflow (market_scan: gather→read→synthesize→cite) as a validated G14 template; entirely read-only (no side-effecting step) but still gateway-routed for cost + evidence + bounded browsing (G15).
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-177 commit>` → parent tree MATCH.

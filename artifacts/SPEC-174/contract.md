@@ -1,0 +1,3 @@
+# SPEC-174 Contract — Customer support workflow templates
+CUSTOMER_SUPPORT_TEMPLATES + registry/validate: known CS workflows (answer_inquiry: classify→draft_reply→send; escalate: summarize→notify_owner) as validated G14 WorkflowTemplates; customer-facing sends are reconcilable side effects (approval + gateway at runtime), classification/drafting are side-effect-free.
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-174 commit>` → parent tree MATCH.

@@ -34,3 +34,6 @@ android/local.properties
 # Replay-case draft skeletons exported from real conversations (may carry PII
 # until reviewed) — only reviewed, anonymized cases go in src/agent/replay/fixtures/
 src/agent/replay/fixtures-drafts/
+
+# Background sub-agent git worktrees (transient; auto-cleaned by the harness)
+.claude/worktrees/

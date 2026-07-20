@@ -1,0 +1,2 @@
+# SPEC-171 Baseline — Specialist agent runtime contract
+New in the G12 owned zone (src/agent/specialists | src/agent/workflow-templates). Builds on G01 ComponentResult, G14 workflow registry/runtime, and specialist role concepts. Discovery: `git status` + `find src/agent/autonomy src/agent/approvals`. No callers yet (wired at integration). No provider/model/DB/network calls (INV-01) — verified by model-call-scan. Tenant isolation enforced upstream (G11) before autonomy. Tests: src/agent/specialists/__tests__/runtime.test.ts (8 cases). Files: see changed-files.md.
