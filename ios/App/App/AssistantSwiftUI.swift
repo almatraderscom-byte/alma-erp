@@ -1423,6 +1423,8 @@ final class AssistantVM {
         guard !loadingOlder, canLoadOlder, let cid = conversationId,
               let oldest = messages.first,
               !oldest.id.hasPrefix("local-"), !oldest.id.hasPrefix("stream-") else { return }
+        let started = Date()
+        AlmaTurnLog.event("sync.olderPage.begin", "mounted=\(messages.count)")
         loadingOlder = true
         defer { loadingOlder = false }
         guard let older: [AgentMessageWire] = try? await AlmaAPI.shared.get(
@@ -1439,7 +1441,9 @@ final class AssistantVM {
         tx.disablesAnimations = true
         withTransaction(tx) { messages.insert(contentsOf: rows, at: 0) }
         paginatedPrefixCount += rows.count
-        AlmaTurnLog.event("sync.olderPage", "\(rows.count)")
+        AlmaTurnLog.event(
+            "sync.olderPage.end",
+            "added=\(rows.count) mounted=\(messages.count) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
     }
 
     /// Local ("stream-…" / "local-…") id per server message id — keeps SwiftUI row
@@ -1525,6 +1529,13 @@ final class AssistantVM {
     /// Stream ended: settle the tail in place FIRST (prose stays on screen), then
     /// fold in server truth (card ids/statuses, tokens, cost) via the merge.
     private func finalizeTurn() async {
+        let started = Date()
+        AlmaTurnLog.event("turn.finalize.begin", "mounted=\(messages.count)")
+        defer {
+            AlmaTurnLog.event(
+                "turn.finalize.end",
+                "mounted=\(messages.count) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+        }
         if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
         isStreaming = false
         thinkingLive = false
@@ -2863,7 +2874,10 @@ final class AssistantVM {
                                      text: "স্টকের কাজটা কি হয়েছে?"))
         let parityJSON = #"""
         {"id":"fix-a-parity","role":"assistant",
-         "content":[{"type":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}],
+         "content":[
+           {"type":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"},
+           {"type":"confirm_card","pendingActionId":"fix-approval","summary":"ঈদ ক্যাম্পেইনের জন্য ৳৫,০০০ বাজেট অনুমোদন","status":"pending","actionType":"campaign_budget"},
+           {"type":"ask_card","askCardId":"fix-ask","question":"কোন রিপোর্ট format দরকার Boss?","options":["PDF","Markdown","দুটোই"],"status":"pending"}],
          "tokensIn":105300,"tokensOut":2100,"cacheCreation":41000,"cacheRead":960000,
          "apiRounds":6,"roundCostsUsd":[0.03,0.03,0.03,0.03,0.03,0.033],"costUsd":0.183,
          "createdAt":"2026-07-14T10:00:00.000Z",
@@ -2871,6 +2885,7 @@ final class AssistantVM {
            {"t":"text","text":"আগে স্টকের অবস্থাটা দেখে নিচ্ছি…"},
            {"t":"tool","name":"get_inventory_status","ok":true},
            {"t":"tool","name":"live_browser_look","ok":true,"result":"পেজ দেখা হয়েছে","shot":"https://picsum.photos/seed/alma/900/560"},
+           {"t":"file","id":"fix-artifact","name":"স্টক-অডিট.md","kind":"markdown"},
            {"t":"text","text":"কাজটা করে দিয়েছি Boss!","state":"superseded"},
            {"t":"verify","attempt":1,"max":2},
            {"t":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}]}
@@ -9431,6 +9446,7 @@ struct AssistantScreen: View {
             AgentComposerView(vm: vm, openWeb: openWeb)
         }
         .task {
+            AlmaTurnLog.event("assistant.open.begin")
             barHooks.onMenu = { Self.presentDrawer(vm) }
             barHooks.onNewChat = { Task { await vm.newChat() } }
             // DEBUG self-test hooks (never fire in production — the env vars are only
@@ -9471,11 +9487,13 @@ struct AssistantScreen: View {
             // server entirely (no bootstrap) so layout is tested in isolation.
             if argFlag("ALMA_ASSISTANT_FIXTURE") {
                 vm.loadDebugFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=stress count=\(vm.messages.count)")
                 return
             }
             // Parity roadmap — persisted verification-retry composition only.
             if argFlag("ALMA_ASSISTANT_PARITY") {
                 vm.loadParityFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=parity count=\(vm.messages.count)")
                 return
             }
             // Chat-parity batch — full-screen image viewer incl. the ⬇ save button.
@@ -9556,6 +9574,7 @@ struct AssistantScreen: View {
             awakening.begin(sessionNeedsRestore: vm.messages.isEmpty)
             await vm.bootstrap()
             awakening.markReady(hasContent: !vm.messages.isEmpty)
+            AlmaTurnLog.event("assistant.contentReady", "live count=\(vm.messages.count)")
         }
         .fullScreenCover(isPresented: $vm.showSidebar) {
             AgentSideDrawer(vm: vm, openWeb: openWeb)
@@ -9956,8 +9975,11 @@ struct AgentArtifactViewerSheet: View {
     }
 
     private func load() async {
+        let started = Date()
+        AlmaTurnLog.event("artifact.preview.begin", artifactId)
         guard let cid = vm.conversationId else {
             loadError = "কথোপকথন পাওয়া যায়নি"
+            AlmaTurnLog.event("artifact.preview.fail", "missing-conversation")
             return
         }
         do {
@@ -9967,6 +9989,9 @@ struct AgentArtifactViewerSheet: View {
                 return
             }
             artifact = a
+            AlmaTurnLog.event(
+                "artifact.preview.ready",
+                "type=\(a.type ?? "unknown") ms=\(Int(Date().timeIntervalSince(started) * 1000))")
             // Write a real .md file so the share sheet hands the client a document.
             if let content = a.content {
                 let safe = (a.title ?? fallbackTitle)
@@ -9979,6 +10004,7 @@ struct AgentArtifactViewerSheet: View {
             }
         } catch {
             loadError = "লোড ব্যর্থ — নেটওয়ার্ক দেখে আবার চেষ্টা করুন"
+            AlmaTurnLog.event("artifact.preview.fail", "network")
         }
     }
 }
