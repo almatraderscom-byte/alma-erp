@@ -2,38 +2,9 @@ $ npx vitest run src/agent/control-plane
 
  RUN  v4.1.9 /home/user/alma-erp
 
- ❯ src/agent/control-plane/admission/__tests__/gateway.test.ts (6 tests | 1 failed) 15ms
-     × ships an empty default registry (baseline door is identity-only) 7ms
 
-⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
-
- FAIL  src/agent/control-plane/admission/__tests__/gateway.test.ts > admit — the single door > ships an empty default registry (baseline door is identity-only)
-AssertionError: expected [ { id: 'normalize', …(1) } ] to deeply equal []
-
-- Expected
-+ Received
-
-- []
-+ [
-+   {
-+     "id": "normalize",
-+     "run": [Function run],
-+   },
-+ ]
-
- ❯ src/agent/control-plane/admission/__tests__/gateway.test.ts:75:30
-     73|
-     74|   it('ships an empty default registry (baseline door is identity-only)…
-     75|     expect(ADMISSION_STAGES).toEqual([]);
-       |                              ^
-     76|   });
-     77| });
-
-⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
-
-
- Test Files  1 failed | 1 passed (2)
-      Tests  1 failed | 14 passed (15)
-   Start at  07:30:02
-   Duration  408ms (transform 205ms, setup 0ms, import 286ms, tests 21ms, environment 0ms)
+ Test Files  3 passed (3)
+      Tests  20 passed (20)
+   Start at  07:35:43
+   Duration  499ms (transform 319ms, setup 0ms, import 452ms, tests 25ms, environment 0ms)
 

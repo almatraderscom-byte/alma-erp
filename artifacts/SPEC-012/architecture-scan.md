@@ -24,7 +24,7 @@ See `changed-files.md`.
 ## Executable gate
 
 ```text
-$ node scripts/architecture/check-forbidden-imports.mjs (ERP must not import agent/control-plane)
+$ node scripts/architecture/check-forbidden-imports.mjs
 known (baselined) pre-existing violations: 101
 PASS — no NEW forbidden imports. ERP app/api → agent: 0. Boundary did not regress.
 exit=0

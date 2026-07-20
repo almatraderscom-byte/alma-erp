@@ -71,7 +71,14 @@ describe('admit — the single door', () => {
     expect(after).toEqual([]); // downstream stage never ran
   });
 
-  it('ships an empty default registry (baseline door is identity-only)', () => {
-    expect(ADMISSION_STAGES).toEqual([]);
+  it('exposes a well-formed default registry (stages are appended as specs land)', () => {
+    // The registry grows as G02 specs register stages; every entry must be a
+    // valid AdmissionStage. (Do NOT assert emptiness — that regresses each time
+    // a stage is added; SPEC-011 originally asserted [] which broke at SPEC-012.)
+    expect(Array.isArray(ADMISSION_STAGES)).toBe(true);
+    for (const s of ADMISSION_STAGES) {
+      expect(typeof s.id).toBe('string');
+      expect(typeof s.run).toBe('function');
+    }
   });
 });
