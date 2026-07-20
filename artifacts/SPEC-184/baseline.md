@@ -1,0 +1,2 @@
+# SPEC-184 Baseline — Golden-task dataset
+New in the G12 owned zone (src/agent/verification | src/agent/evals | tests/agent-security). Builds on G01 ComponentResult and the completed G10/G11/G13/G17/G18 components under verification. Discovery: `git status` + `find src/agent/autonomy src/agent/approvals`. No callers yet (wired at integration). No provider/model/DB/network calls (INV-01) — verified by model-call-scan. Tenant isolation enforced upstream (G11) before autonomy. Tests: src/agent/evals/__tests__/golden.test.ts (5 cases). Files: see changed-files.md.

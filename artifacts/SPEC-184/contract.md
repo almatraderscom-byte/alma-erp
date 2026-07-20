@@ -1,0 +1,3 @@
+# SPEC-184 Contract — Golden-task dataset
+GOLDEN_TASKS + validateGoldenTasks/getGoldenTask: a fixed, versioned, hand-authored dataset of representative ALMA requests with expected intent/tier/tools/success — the deterministic ground truth every eval (routing/tool-selection/cost) scores against; validated for unique ids + shape.
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-184 commit>` → parent tree MATCH.
