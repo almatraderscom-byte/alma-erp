@@ -1,0 +1,3 @@
+# SPEC-194 Contract — Escalation and cache dashboard
+buildEscalationCacheDashboard: escalations-by-kind (approval/frontier/human/opus) + total, and cache hit-rate + nano-USD saved; hits clamped to lookups, malformed rows ignored. Deterministic (INV-01).
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-194 commit>` → parent tree MATCH.
