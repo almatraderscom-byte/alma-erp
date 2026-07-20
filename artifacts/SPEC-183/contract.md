@@ -1,0 +1,3 @@
+# SPEC-183 Contract — User-response gate
+gateUserResponse: the last door before the owner — releases a response ONLY if every postcondition verified (181), every claim is evidence-backed (182), no secret pattern leaked, and no banned address ('Sir'/'স্যার') is used; anything else ⇒ DENIED with accumulated reasons (fail-closed, INV-05). Deterministic, no LLM decides release.
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-183 commit>` → parent tree MATCH.

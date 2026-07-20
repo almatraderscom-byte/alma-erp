@@ -1,0 +1,10 @@
+$ npx vitest run src/agent/verification src/agent/evals tests/agent-security
+
+ RUN  v4.1.9 /home/user/alma-erp
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  16:03:23
+   Duration  466ms (transform 107ms, setup 0ms, import 134ms, tests 9ms, environment 0ms)
+

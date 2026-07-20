@@ -1,0 +1,3 @@
+# SPEC-182 Contract — Evidence-backed claim verifier
+verifyClaims / findUnbackedClaims: every owner-facing claim must cite ≥1 existing evidence id; uncited or bogus-evidence claims are UNBACKED and yield FAILED_FINAL (fail-closed) — separating verified statements from hallucinations deterministically (INV-01, no LLM judges truth).
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-182 commit>` → parent tree MATCH.
