@@ -13,14 +13,21 @@ require() {
   fi
 }
 
-require 'AlmaConversationMenuSheet' "$assistant"
-require 'conversationMenuTapped' "$assistant"
-require 'rightBarButtonItems = \[plus, options\]' "$assistant"
-require 'AgentProjectAssignmentSheet' "$assistant"
 require 'assignConversationProject' "$assistant"
-require 'AgentConversationSearchSheet' "$assistant"
 require 'exportConversation' "$assistant"
-require 'showDeleteConfirmation' "$assistant"
 require 'sendNoContent' "$api"
 
-echo "PASS: Phase 2 conversation/session management checks"
+for rejected in \
+  'AlmaConversationMenuSheet' \
+  'conversationMenuTapped' \
+  'rightBarButtonItems = \[plus, options\]' \
+  'showConversationMenu'; do
+  if rg -q "$rejected" "$assistant"; then
+    echo "FAIL: rejected Gate 9 presentation remains: $rejected" >&2
+    exit 1
+  fi
+done
+
+require 'rightBarButtonItem = plus' "$assistant"
+
+echo "PASS: superseded conversation menu isolated; non-visual helpers retained"

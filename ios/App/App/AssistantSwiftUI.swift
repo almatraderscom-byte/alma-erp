@@ -285,17 +285,6 @@ enum AgentConversationExportFormat {
 
 private enum AgentConversationExportError: Error { case pageLimitExceeded }
 
-struct AgentConversationSharePayload: Identifiable {
-    let id = UUID()
-    let url: URL
-}
-
-enum AgentConversationMenuAction: Equatable {
-    case share, project, removeProject, files, search
-    case exportPDF, exportMarkdown, exportText
-    case rename, archive, delete
-}
-
 struct AgentMemoryRow: Decodable, Identifiable, Equatable {
     let id: String
     var scope: String
@@ -1161,6 +1150,9 @@ final class AssistantVM {
         let files: [AgentFileRef]
         let askCardId: String?
         let createdAt: Date
+        /// Distinguishes separate server-unassigned chats. Two provisional chats
+        /// both have a nil conversationId, so nil must never be their identity.
+        var sessionIdentity: String? = nil
     }
     private static let queuedOwnerMessagesKey = "alma.assistant.queuedOwnerMessages"
     private(set) var queuedOwnerMessages: [QueuedOwnerMessage] = AssistantVM.loadQueuedOwnerMessages() {
@@ -1182,8 +1174,11 @@ final class AssistantVM {
             if let queuedConversationId = queued.conversationId {
                 return queuedConversationId == conversationId
             }
-            return conversationId == nil
-                && queued.newConversationClientMessageId == activeNewConversationSendId
+            guard conversationId == nil else { return false }
+            if let queuedSessionIdentity = queued.sessionIdentity {
+                return queuedSessionIdentity == selectedSessionIdentity
+            }
+            return queued.newConversationClientMessageId == activeNewConversationSendId
         }.count
     }
 
@@ -1201,6 +1196,9 @@ final class AssistantVM {
         var modelId: String? = nil
         var projectId: String? = nil
         var askCardId: String? = nil
+        /// Stable identity for the locally selected chat before the server has
+        /// assigned a conversation id. Persisted for kill/relaunch recovery.
+        var sessionIdentity: String? = nil
     }
     private static let recoverableTurnKey = "alma.assistant.recoverableTurn"
     private var recoverableTurn: RecoverableTurn? = AssistantVM.loadRecoverableTurn() {
@@ -1234,7 +1232,9 @@ final class AssistantVM {
     /// Explicit transport ownership handoff. Some control turns intentionally
     /// have no recovery descriptor, so descriptor existence cannot identify a
     /// direct-SSE cancellation that durable replay now owns.
-    private var directStreamHandoffPending = false
+    private var selectedSessionIdentity = UUID().uuidString
+    private var streamTaskGeneration: UUID?
+    private var durableHandoffGenerations: Set<UUID> = []
     private var statusRecoveryFailureCount = 0
     private let maxStatusRecoveryFailures = 5
     /// Observer tokens live in a box whose own (nonisolated) deinit unregisters
@@ -1523,7 +1523,27 @@ final class AssistantVM {
         // arrives. Re-submit the exact body with the same idempotency key; the
         // server either returns the existing turn or creates the one missing turn.
         if rt.turnId == nil {
-            resumePreTurnDescriptor(rt)
+            var descriptor = rt
+            let identity = rt.sessionIdentity ?? "recovered:\(rt.clientMessageId)"
+            // The active pointer may have loaded an older server conversation
+            // first. A persisted pre-ID send belongs to its own provisional chat;
+            // restore that surface explicitly instead of coalescing nil onto the
+            // unrelated active conversation.
+            conversationId = nil
+            selectedSessionIdentity = identity
+            currentProjectId = rt.projectId
+            modelId = rt.modelId == "auto" ? nil : rt.modelId
+            conversationTitle = "ALMA AI"
+            localIdByServerId = [:]
+            lastSyncStamp = nil
+            paginatedPrefixCount = 0
+            canLoadOlder = false
+            messages = []
+            openTasks = []
+            artifacts = []
+            descriptor.sessionIdentity = identity
+            recoverableTurn = descriptor
+            resumePreTurnDescriptor(descriptor)
             return
         }
         guard let recoverConversationId = rt.conversationId else {
@@ -1558,7 +1578,7 @@ final class AssistantVM {
             scheduleQueuedOwnerMessage()
             return
         }
-        conversationId = rt.conversationId ?? conversationId
+        conversationId = rt.conversationId
         if !messages.contains(where: { $0.role == .user && $0.text == text }) {
             var owner = AgentChatMessage(id: "local-recovered-\(rt.clientMessageId)", role: .user, text: text)
             owner.fileRefs = files
@@ -1576,7 +1596,7 @@ final class AssistantVM {
             conversationId: rt.conversationId, message: text, files: files,
             modelId: rt.modelId ?? "auto", projectId: rt.projectId,
             clientMessageId: rt.clientMessageId, askCardId: rt.askCardId)
-        streamTask = Task { [weak self] in await self?.runTurn(body: body) }
+        startDirectTurn(body)
     }
 
     /// One-time observer registration (bootstrap can re-run; observers must not
@@ -1636,6 +1656,7 @@ final class AssistantVM {
             let ptr: ActiveConversationPointer = try await AlmaAPI.shared.get("/api/assistant/active-conversation")
             if let cid = ptr.conversationId {
                 conversationId = cid
+                selectedSessionIdentity = "server:\(cid)"
                 currentProjectId = ptr.projectId
                 modelId = ptr.modelId
                 await loadMessages(showSpinner: messages.isEmpty)
@@ -1806,7 +1827,10 @@ final class AssistantVM {
 
     /// Stream ended: settle the tail in place FIRST (prose stays on screen), then
     /// fold in server truth (card ids/statuses, tokens, cost) via the merge.
-    private func finalizeTurn() async {
+    private func finalizeTurn(expectedGeneration: UUID,
+                              expectedSessionIdentity: String) async -> Bool {
+        guard streamTaskGeneration == expectedGeneration,
+              selectedSessionIdentity == expectedSessionIdentity else { return false }
         let started = Date()
         AlmaTurnLog.event("turn.finalize.begin", "mounted=\(messages.count)")
         defer {
@@ -1819,20 +1843,24 @@ final class AssistantVM {
         thinkingLive = false
         settleLiveMode()
         justSettledId = messages.last(where: { $0.role == .assistant })?.id
-        guard let cid = conversationId else { return }
+        guard let cid = conversationId else { return false }
         if let wire: [AgentMessageWire] = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/messages") {
+            guard streamTaskGeneration == expectedGeneration,
+                  selectedSessionIdentity == expectedSessionIdentity,
+                  conversationId == cid else { return false }
             mergeServerMessages(wire)
             justSettledId = messages.last(where: { $0.role == .assistant })?.id
-            await loadOpenTasks()
-            await loadArtifacts()   // the turn may have just produced one
-            async let drive: Void = loadPlanDrive()
-            async let todos: Void = loadDailyAgentTodos()
-            async let turns: Void = loadActiveBackgroundTurns()
-            _ = await (drive, todos, turns)
         }
+        guard streamTaskGeneration == expectedGeneration,
+              selectedSessionIdentity == expectedSessionIdentity,
+              conversationId == cid else { return false }
         // PR 5: terminal + reconciled — the descriptor has done its job.
         recoverableTurn = nil
         currentClientMessageId = nil
+        // Open tasks/artifacts/global counters are refreshed by the existing quiet
+        // poll. Keeping them out of this suspended ownership boundary prevents an
+        // old chat's async result from landing after navigation.
+        return true
     }
 
     /// Web parity: quiet message re-poll every 12s (day-shift lines, Telegram echoes)
@@ -1931,6 +1959,7 @@ final class AssistantVM {
         if let recoverableTurn,
            recoverableTurn.turnId == nil,
            recoverableTurn.conversationId == conversationId,
+           recoverableTurn.sessionIdentity == selectedSessionIdentity,
            !isStreaming {
             resumePreTurnDescriptor(recoverableTurn)
             return
@@ -2052,9 +2081,10 @@ final class AssistantVM {
         // Recovery becomes the single transport owner. Without this handoff a
         // stalled direct SSE could resume beside the full replay and both buffers
         // would apply the same prose/tools/done events.
-        if let directStream = streamTask {
-            directStreamHandoffPending = true
+        if let directStream = streamTask, let generation = streamTaskGeneration {
+            durableHandoffGenerations.insert(generation)
             streamTask = nil
+            streamTaskGeneration = nil
             directStream.cancel()
             AlmaTurnLog.event("turn.streamHandoff", "direct-to-durable:\(turnId)")
         }
@@ -2354,10 +2384,16 @@ final class AssistantVM {
 
     func openConversation(_ id: String) async {
         guard id != conversationId else { return }
+        if let recoverableTurn,
+           recoverableTurn.turnId == nil, recoverableTurn.conversationId == nil {
+            errorToast = "চলতি বার্তার অবস্থা যাচাই হচ্ছে — শেষ হলে অন্য কথোপকথন খুলুন"
+            return
+        }
         restoreTick += 1     // screen replays the session-opening awakening
         stopStreaming(cancelServer: false)
         currentClientMessageId = nil
         conversationId = id
+        selectedSessionIdentity = "server:\(id)"
         let selected = conversations.first { $0.id == id }
         modelId = selected?.modelId   // pinned model follows the chat
         currentProjectId = selected?.projectId
@@ -2379,9 +2415,15 @@ final class AssistantVM {
     }
 
     func newChat() async {
+        if let recoverableTurn,
+           recoverableTurn.turnId == nil, recoverableTurn.conversationId == nil {
+            errorToast = "চলতি বার্তার অবস্থা যাচাই হচ্ছে — শেষ হলে নতুন কথোপকথন খুলুন"
+            return
+        }
         stopStreaming(cancelServer: false)
         currentClientMessageId = nil
         conversationId = nil     // server creates one on the first send
+        selectedSessionIdentity = UUID().uuidString
         currentProjectId = nil
         conversationTitle = "ALMA AI"
         localIdByServerId = [:]  // 1.5: optimistic-ID maps never leak across conversations
@@ -2794,9 +2836,7 @@ final class AssistantVM {
                             projectId: currentProjectId,
                             resume: .init(approve: approve,
                                           fallbackModelId: approve ? nil : fallback))
-        streamTask = Task { [weak self] in
-            await self?.runTurn(body: body)
-        }
+        startDirectTurn(body)
     }
 
     func send(_ raw: String, isAutoContinue: Bool = false, askCardId: String? = nil, autoContinueFromTurnId: String? = nil) {
@@ -2836,7 +2876,8 @@ final class AssistantVM {
             newConversationClientMessageId: conversationId == nil
                 ? (currentClientMessageId ?? recoverableTurn?.clientMessageId) : nil,
             text: text,
-            files: files, askCardId: askCardId, createdAt: Date())
+            files: files, askCardId: askCardId, createdAt: Date(),
+            sessionIdentity: conversationId == nil ? selectedSessionIdentity : nil)
         queuedOwnerMessages.append(queued)
         pendingFiles.removeAll { sentPendingIds.contains($0.id) }
         errorToast = "বার্তাটি অপেক্ষায় আছে — চলতি উত্তর শেষ হলে পাঠানো হবে"
@@ -2890,11 +2931,10 @@ final class AssistantVM {
                 conversationId: conversationId, turnId: nil,
                 clientMessageId: clientMessageId, lastSeq: -1, startedAt: Date(),
                 message: text, files: files, modelId: modelId ?? "auto",
-                projectId: currentProjectId, askCardId: askCardId)
+                projectId: currentProjectId, askCardId: askCardId,
+                sessionIdentity: selectedSessionIdentity)
         }
-        streamTask = Task { [weak self] in
-            await self?.runTurn(body: body)
-        }
+        startDirectTurn(body)
     }
 
     private func scheduleQueuedOwnerMessage() {
@@ -2931,8 +2971,11 @@ final class AssistantVM {
                   if let queuedConversationId = $0.conversationId {
                       return queuedConversationId == conversationId
                   }
-                  return conversationId == nil
-                      && $0.newConversationClientMessageId == activeNewConversationSendId
+                  guard conversationId == nil else { return false }
+                  if let queuedSessionIdentity = $0.sessionIdentity {
+                      return queuedSessionIdentity == selectedSessionIdentity
+                  }
+                  return $0.newConversationClientMessageId == activeNewConversationSendId
               }) else { return }
         let queued = queuedOwnerMessages.remove(at: index)
         startPreparedTurn(text: queued.text, files: queued.files,
@@ -2940,17 +2983,37 @@ final class AssistantVM {
                           clientMessageId: queued.id)
     }
 
-    private func runTurn(body: ChatBody) async {
+    private func startDirectTurn(_ body: ChatBody) {
+        let generation = UUID()
+        let sessionIdentity = selectedSessionIdentity
+        streamTaskGeneration = generation
+        streamTask = Task { [weak self] in
+            await self?.runTurn(body: body, generation: generation,
+                                sessionIdentity: sessionIdentity)
+        }
+    }
+
+    private func ownsDirectTurn(generation: UUID, sessionIdentity: String) -> Bool {
+        streamTaskGeneration == generation && selectedSessionIdentity == sessionIdentity
+    }
+
+    private func runTurn(body: ChatBody, generation: UUID,
+                         sessionIdentity: String) async {
         var handedToRecovery = false
         defer {
-            if !handedToRecovery {
+            let stillOwnsDirectTransport = streamTaskGeneration == generation
+            if !handedToRecovery, stillOwnsDirectTransport {
                 isStreaming = false
                 thinkingLive = false
                 settleLiveMode()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
                 scheduleQueuedOwnerMessage()
             }
-            streamTask = nil
+            if stillOwnsDirectTransport {
+                streamTask = nil
+                streamTaskGeneration = nil
+            }
+            durableHandoffGenerations.remove(generation)
         }
         // Phase 2: one buffer per turn — deltas coalesce off-main and land as
         // batched reducer applies (roadmap 2.3).
@@ -2971,6 +3034,9 @@ final class AssistantVM {
                     try await AssistantNet.streamEvents(request: req, buffer: buffer, firstEvent: firstEvent)
                 }
             } catch is WatchdogTimeout {
+                guard ownsDirectTurn(generation: generation, sessionIdentity: sessionIdentity) else {
+                    throw CancellationError()
+                }
                 // A continuation has already been atomically claimed by the
                 // direct /chat route. The legacy worker handoff requires a
                 // user message and would turn this control action into a second
@@ -2980,16 +3046,33 @@ final class AssistantVM {
                 }
                 try await runWorkerFallback(body: body, buffer: buffer)
             } catch AlmaAPIError.notAuthenticated {
+                guard ownsDirectTurn(generation: generation, sessionIdentity: sessionIdentity) else {
+                    throw CancellationError()
+                }
                 // One cookie refresh + retry, mirroring AlmaAPI.perform. The retry
                 // carries the SAME clientMessageId — if the first attempt secretly
                 // created the turn, the server answers 202 duplicate (caught below).
                 AlmaAPI.shared.invalidateCookieCache()
                 await AlmaAPI.shared.syncCookies()
+                guard ownsDirectTurn(generation: generation, sessionIdentity: sessionIdentity) else {
+                    throw CancellationError()
+                }
                 try await AssistantNet.streamEvents(request: req, buffer: buffer)
+            }
+            // Cancellation is cooperative. A socket may return normally just after
+            // durable replay took ownership; the old generation must not finalize
+            // or settle beside its successor.
+            guard ownsDirectTurn(generation: generation, sessionIdentity: sessionIdentity) else {
+                handedToRecovery = durableHandoffGenerations.remove(generation) != nil
+                return
             }
             // Server truth (final card ids/statuses, tool rows, cost) merges into the
             // tail in place — never a wholesale replace (prose must not blink).
-            await finalizeTurn()
+            guard await finalizeTurn(expectedGeneration: generation,
+                                     expectedSessionIdentity: sessionIdentity) else {
+                handedToRecovery = recoverableTurn != nil
+                return
+            }
             AlmaTurnLog.event("turn.terminal", "stream-done")
             fireAutoContinueIfNeeded()
         } catch is CancellationError {
@@ -2997,11 +3080,15 @@ final class AssistantVM {
             // must never let this cancelled OLD task finalize against the newly
             // selected mutable conversationId. Preserve only a deliberately
             // recoverable server turn; explicit Stop clears it before cancelling.
-            let transportWasHandedOff = directStreamHandoffPending
-            if transportWasHandedOff { directStreamHandoffPending = false }
+            let transportWasHandedOff = durableHandoffGenerations.remove(generation) != nil
             handedToRecovery = transportWasHandedOff || recoverableTurn != nil
             AlmaTurnLog.event("turn.streamCancelled", handedToRecovery ? "preserved" : "stopped")
         } catch let dup as AssistantNet.DuplicateTurn {
+            guard ownsDirectTurn(generation: generation, sessionIdentity: sessionIdentity) else {
+                durableHandoffGenerations.remove(generation)
+                handedToRecovery = true
+                return
+            }
             // A retry raced an EXISTING turn (Phase 3 idempotency) — observe it,
             // never re-run (roadmap invariant 2).
             AlmaTurnLog.event("turn.duplicateObserved", dup.turnId)
@@ -3011,16 +3098,39 @@ final class AssistantVM {
             }
             do {
                 try await tailDurableTurn(dup.turnId, afterSeq: -1, buffer: buffer)
-                await finalizeTurn()
+                guard ownsDirectTurn(generation: generation, sessionIdentity: sessionIdentity),
+                      await finalizeTurn(expectedGeneration: generation,
+                                         expectedSessionIdentity: sessionIdentity) else {
+                    handedToRecovery = true
+                    return
+                }
             } catch {
+                guard !Task.isCancelled,
+                      ownsDirectTurn(generation: generation,
+                                     sessionIdentity: sessionIdentity) else {
+                    handedToRecovery = durableHandoffGenerations.remove(generation) != nil
+                        || recoverableTurn != nil
+                    return
+                }
                 handedToRecovery = true
                 reconnecting = true
                 ensureStreamingTail()
                 Task { [weak self] in await self?.recoverTurnState(trigger: "duplicate-tail-drop") }
             }
         } catch AlmaAPIError.notAuthenticated {
+            guard ownsDirectTurn(generation: generation, sessionIdentity: sessionIdentity) else {
+                durableHandoffGenerations.remove(generation)
+                handedToRecovery = true
+                return
+            }
             authExpired = true
         } catch {
+            if !ownsDirectTurn(generation: generation, sessionIdentity: sessionIdentity) {
+                durableHandoffGenerations.remove(generation)
+                handedToRecovery = true
+                AlmaTurnLog.event("turn.streamCancelled", "durable-generation-handoff")
+                return
+            }
             let kind = TurnFailureKind.classify(error)
             AlmaTurnLog.event("turn.transportDisconnected", "\(kind) turnId=\(currentTurnId ?? "nil")")
             switch kind {
@@ -3103,7 +3213,8 @@ final class AssistantVM {
         }
         if let cid = conversationId, let cmid = body.clientMessageId {
             recoverableTurn = RecoverableTurn(conversationId: cid, turnId: enq.turnId,
-                                              clientMessageId: cmid, lastSeq: -1, startedAt: Date())
+                                              clientMessageId: cmid, lastSeq: -1, startedAt: Date(),
+                                              sessionIdentity: selectedSessionIdentity)
         }
         try await tailDurableTurn(enq.turnId, afterSeq: -1, buffer: buffer)
     }
@@ -3172,9 +3283,15 @@ final class AssistantVM {
                 // PR 5: the turn is now addressable — persist the recovery descriptor
                 // so even process death can find its way back.
                 if let cid = conversationId, let cmid = currentClientMessageId {
-                    recoverableTurn = RecoverableTurn(conversationId: cid, turnId: id,
-                                                      clientMessageId: cmid,
-                                                      lastSeq: seqBox.value, startedAt: Date())
+                    var descriptor = recoverableTurn ?? RecoverableTurn(
+                        conversationId: cid, turnId: id, clientMessageId: cmid,
+                        lastSeq: seqBox.value, startedAt: Date(),
+                        sessionIdentity: selectedSessionIdentity)
+                    descriptor.conversationId = cid
+                    descriptor.turnId = id
+                    descriptor.lastSeq = seqBox.value
+                    descriptor.sessionIdentity = selectedSessionIdentity
+                    recoverableTurn = descriptor
                 }
             case .personalMode(let active):
                 personalMode = active
@@ -3430,6 +3547,7 @@ final class AssistantVM {
     func stopStreaming(cancelServer: Bool = true) {
         streamTask?.cancel()
         streamTask = nil
+        streamTaskGeneration = nil
         // Conversation switch / Stop also ends any reconnect-recovery loop; server
         // work is only cancelled when explicitly asked (roadmap invariant 9).
         recoveryTask?.cancel()
@@ -3440,6 +3558,7 @@ final class AssistantVM {
             // Never resurrect that pre-ID request on relaunch.
             recoverableTurn = nil
             currentClientMessageId = nil
+            durableHandoffGenerations.removeAll()
             if let tid = currentTurnId {
                 Task {
                     let _: OkResponse? = try? await AlmaAPI.shared.send(
@@ -3623,7 +3742,8 @@ final class AssistantVM {
         recoverableTurn = RecoverableTurn(
             conversationId: conversationId, turnId: currentTurnId,
             clientMessageId: "fixture-recovery-client", lastSeq: 0,
-            startedAt: Date(), message: "স্টক sync চালাও", files: [], modelId: "auto")
+            startedAt: Date(), message: "স্টক sync চালাও", files: [], modelId: "auto",
+            sessionIdentity: selectedSessionIdentity)
     }
 
     func runMergeReadinessReconnect() async {
@@ -10063,105 +10183,6 @@ private struct AgentUploadedFileViewerSheet: View {
 }
 
 @available(iOS 17.0, *)
-private struct AgentSessionFilesHub: View {
-    enum Filter: String, CaseIterable, Identifiable {
-        case all = "সব", uploaded = "আপলোড", generated = "তৈরি করা"
-        var id: String { rawValue }
-    }
-    @Bindable var vm: AssistantVM
-    let onSourceMessage: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var scheme
-    @State private var filter: Filter = .all
-    @State private var selected: AgentSessionFile?
-
-    private var rows: [AgentSessionFile] {
-        switch filter {
-        case .all: return vm.sessionFiles
-        case .uploaded: return vm.sessionFiles.filter { $0.origin == .uploaded }
-        case .generated: return vm.sessionFiles.filter { $0.origin == .generated }
-        }
-    }
-
-    var body: some View {
-        let pal = AgentPalette(scheme)
-        NavigationStack {
-            VStack(spacing: 10) {
-                Picker("ফাইল ধরন", selection: $filter) {
-                    ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                if rows.isEmpty {
-                    ContentUnavailableView("কোনো ফাইল নেই", systemImage: "folder",
-                                           description: Text("এই কথোপকথনের আপলোড ও তৈরি করা ফাইল এখানে থাকবে।"))
-                } else {
-                    List(rows) { file in
-                        HStack(spacing: 10) {
-                            Button { selected = file } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: icon(file))
-                                        .font(.system(size: 20, weight: .semibold))
-                                        .foregroundStyle(file.origin == .uploaded ? AgentPalette.teal : AgentPalette.coral)
-                                        .frame(width: 38, height: 38)
-                                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(file.name).font(.system(size: 14, weight: .semibold))
-                                            .foregroundStyle(pal.ink).lineLimit(2)
-                                        Text("\(file.origin == .uploaded ? "আপলোড" : "তৈরি করা") · \(file.typeLabel)")
-                                            .font(.system(size: 11)).foregroundStyle(pal.muted)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(pal.muted)
-                                }
-                                .frame(minHeight: 52)
-                            }
-                            if let messageId = file.messageId {
-                                Button {
-                                    dismiss()
-                                    onSourceMessage(messageId)
-                                } label: {
-                                    Image(systemName: "arrow.turn.up.left")
-                                        .frame(width: 44, height: 44)
-                                        .accessibilityLabel("উৎস মেসেজে যান")
-                                }
-                            }
-                        }
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                }
-            }
-            .background(pal.card)
-            .navigationTitle("ফাইলস · \(almaBn(vm.sessionFiles.count))")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button("বন্ধ করুন") { dismiss() } }
-            }
-            .sheet(item: $selected) { file in
-                if file.origin == .generated, let artifactId = file.artifactId {
-                    AgentArtifactViewerSheet(
-                        artifactId: artifactId, fallbackTitle: file.name, vm: vm)
-                } else {
-                    AgentUploadedFileViewerSheet(file: file, vm: vm)
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-        .presentationCornerRadius(28)
-    }
-
-    private func icon(_ file: AgentSessionFile) -> String {
-        if file.mediaType == "application/pdf" { return "doc.richtext.fill" }
-        if file.mediaType.hasPrefix("image/") { return "photo.fill" }
-        if file.mediaType == "text/markdown" { return "text.document.fill" }
-        return "doc.fill"
-    }
-}
-
-@available(iOS 17.0, *)
 private struct AgentInlineUploadedFileCard: View {
     let ref: AgentFileRef
     let messageId: String
@@ -10427,228 +10448,6 @@ struct AgentRowDebugOverlay: ViewModifier {
 }
 
 @available(iOS 17.0, *)
-private struct AgentConversationShareSheet: UIViewControllerRepresentable {
-    let url: URL
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [url], applicationActivities: nil)
-    }
-    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
-}
-
-@available(iOS 17.0, *)
-private struct AlmaConversationMenuSheet: View {
-    @Bindable var vm: AssistantVM
-    let onSelect: (AgentConversationMenuAction) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        let pal = AgentPalette(scheme)
-        NavigationStack {
-            List {
-                Section {
-                    row("কথোপকথন শেয়ার", "square.and.arrow.up", .share, pal)
-                    row(vm.currentProjectId == nil ? "প্রজেক্টে যোগ করুন" : "প্রজেক্ট বদলান",
-                        "folder.badge.plus", .project, pal)
-                    if vm.currentProjectId != nil {
-                        row("প্রজেক্ট থেকে সরান", "folder.badge.minus", .removeProject, pal)
-                    }
-                    row("ফাইলস · \(almaBn(vm.sessionFiles.count))", "folder", .files, pal)
-                    row("এই চ্যাটে খুঁজুন", "magnifyingglass", .search, pal)
-                }
-                Section("এক্সপোর্ট") {
-                    row("PDF", "doc.richtext", .exportPDF, pal)
-                    row("Markdown", "doc.plaintext", .exportMarkdown, pal)
-                    row("Plain text", "text.alignleft", .exportText, pal)
-                    if vm.exportingConversation {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("সম্পূর্ণ কথোপকথন তৈরি হচ্ছে…")
-                                .font(.system(size: 13)).foregroundStyle(pal.muted)
-                        }
-                    }
-                }
-                Section("ম্যানেজ") {
-                    row("নাম বদলান", "pencil", .rename, pal)
-                    row("আর্কাইভ", "archivebox", .archive, pal)
-                    row("মুছুন", "trash", .delete, pal, destructive: true)
-                }
-                if vm.conversationId == nil {
-                    Text("কথোপকথন শুরু হলে এই অপশনগুলো ব্যবহার করা যাবে।")
-                        .font(.system(size: 12)).foregroundStyle(pal.muted)
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(pal.card)
-            .navigationTitle(vm.conversationTitle)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("বন্ধ করুন") { dismiss() }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-        .presentationCornerRadius(28)
-    }
-
-    private func row(_ title: String, _ icon: String, _ action: AgentConversationMenuAction,
-                     _ pal: AgentPalette, destructive: Bool = false) -> some View {
-        Button {
-            AlmaAgentHaptics.selection()
-            onSelect(action)
-        } label: {
-            Label(title, systemImage: icon)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(destructive ? Color.red : pal.ink)
-                .frame(minHeight: 44)
-        }
-        .disabled(vm.conversationId == nil || vm.exportingConversation)
-    }
-}
-
-@available(iOS 17.0, *)
-private struct AgentProjectAssignmentSheet: View {
-    @Bindable var vm: AssistantVM
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var scheme
-    @State private var search = ""
-    @State private var busyId: String?
-    @State private var inlineError: String?
-    @State private var showProjectForm = false
-
-    private var filtered: [AgentProject] {
-        guard !search.isEmpty else { return vm.projects }
-        return vm.projects.filter { $0.name.localizedCaseInsensitiveContains(search) }
-    }
-
-    var body: some View {
-        let pal = AgentPalette(scheme)
-        NavigationStack {
-            List {
-                Section {
-                    projectRow(id: nil, name: "কোনো প্রজেক্ট নয়", icon: "tray", pal: pal)
-                    ForEach(filtered) { project in
-                        projectRow(id: project.id, name: project.name, icon: "folder", pal: pal)
-                    }
-                }
-                if let inlineError {
-                    Section {
-                        Label(inlineError, systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 12)).foregroundStyle(.red)
-                    }
-                }
-                Section {
-                    Button {
-                        showProjectForm = true
-                    } label: {
-                        Label("নতুন প্রজেক্ট", systemImage: "plus.circle.fill")
-                            .frame(minHeight: 44)
-                    }
-                }
-            }
-            .searchable(text: $search, prompt: "প্রজেক্ট খুঁজুন")
-            .navigationTitle("প্রজেক্ট বাছাই")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button("বন্ধ করুন") { dismiss() } }
-            }
-            .task {
-                let process = ProcessInfo.processInfo
-                let fixture = process.environment["ALMA_ASSISTANT_PROJECT_SHEET"] == "1"
-                    || process.arguments.contains("ALMA_ASSISTANT_PROJECT_SHEET=1")
-                if !fixture { await vm.loadProjects() }
-            }
-            .sheet(isPresented: $showProjectForm, onDismiss: { Task { await vm.loadProjects() } }) {
-                AgentProjectFormSheet(vm: vm)
-            }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-        .presentationCornerRadius(28)
-    }
-
-    private func projectRow(id: String?, name: String, icon: String, pal: AgentPalette) -> some View {
-        let key = id ?? "none"
-        return Button {
-            guard busyId == nil else { return }
-            busyId = key
-            inlineError = nil
-            Task {
-                let saved = await vm.assignConversationProject(id)
-                busyId = nil
-                if saved { dismiss() }
-                else { inlineError = "পরিবর্তন সংরক্ষণ হয়নি — আবার চেষ্টা করুন।" }
-            }
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: icon).foregroundStyle(AgentPalette.coral)
-                Text(name).foregroundStyle(pal.ink)
-                Spacer()
-                if busyId == key { ProgressView().controlSize(.small) }
-                else if vm.currentProjectId == id { Image(systemName: "checkmark.circle.fill").foregroundStyle(AgentPalette.teal) }
-            }
-            .frame(minHeight: 44)
-        }
-        .disabled(busyId != nil)
-    }
-}
-
-@available(iOS 17.0, *)
-private struct AgentConversationSearchSheet: View {
-    @Bindable var vm: AssistantVM
-    let onSelect: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var scheme
-    @State private var query = ""
-
-    private var matches: [AgentChatMessage] {
-        guard !query.isEmpty else { return [] }
-        return vm.messages.filter { $0.text.localizedCaseInsensitiveContains(query) }
-    }
-
-    var body: some View {
-        let pal = AgentPalette(scheme)
-        NavigationStack {
-            List {
-                Section {
-                    Text("বর্তমানে লোড করা মেসেজে খোঁজা হচ্ছে; পুরনো মেসেজ আনলে ফলও বাড়বে।")
-                        .font(.system(size: 11.5)).foregroundStyle(pal.muted)
-                }
-                ForEach(matches) { message in
-                    Button {
-                        dismiss()
-                        onSelect(message.id)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(message.role == .user ? "আপনি" : "ALMA")
-                                .font(.system(size: 11, weight: .bold)).foregroundStyle(AgentPalette.coral)
-                            Text(message.text.replacingOccurrences(of: "\n", with: " "))
-                                .font(.system(size: 14)).foregroundStyle(pal.ink).lineLimit(3)
-                        }
-                        .frame(minHeight: 44, alignment: .leading)
-                    }
-                }
-                if !query.isEmpty && matches.isEmpty {
-                    Text("কোনো মিল পাওয়া যায়নি")
-                        .font(.system(size: 13)).foregroundStyle(pal.muted)
-                }
-            }
-            .searchable(text: $query, prompt: "এই চ্যাটে খুঁজুন")
-            .navigationTitle("চ্যাট সার্চ")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button("বন্ধ করুন") { dismiss() } }
-            }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-        .presentationCornerRadius(28)
-    }
-}
-
-@available(iOS 17.0, *)
 struct AssistantScreen: View {
     @State private var vm = AssistantVM()
     @Namespace private var backgroundTaskNamespace
@@ -10666,16 +10465,6 @@ struct AssistantScreen: View {
     /// generation-counter fan-out left every superseded task alive on MainActor).
     @State private var scrollDebounceTask: Task<Void, Never>?
     @State private var showArtifacts = false
-    @State private var showFilesHub = false
-    @State private var showConversationMenu = false
-    @State private var showProjectAssignment = false
-    @State private var showConversationSearch = false
-    @State private var conversationShare: AgentConversationSharePayload?
-    @State private var searchTargetId: String?
-    @State private var renameText = ""
-    @State private var showRenamePrompt = false
-    @State private var showArchiveConfirmation = false
-    @State private var showDeleteConfirmation = false
     /// DEBUG self-test hook (ALMA_ASSISTANT_VIEWERTEST=1) — presents the zoomable
     /// image viewer with its সংরক্ষণ button for a headless fixture screenshot.
     @State private var debugViewer: PortalImagePreview?
@@ -10694,10 +10483,7 @@ struct AssistantScreen: View {
 
     private var hasBlockingPresentation: Bool {
         vm.showSidebar || vm.showVoice || debugViewer != nil || toolSheet != nil
-            || activitySheet != nil || showConversationMenu || showProjectAssignment
-            || showConversationSearch || conversationShare != nil || showArtifacts
-            || showFilesHub || showBackgroundTasks || showRenamePrompt
-            || showArchiveConfirmation || showDeleteConfirmation
+            || activitySheet != nil || showArtifacts || showBackgroundTasks
     }
 
     /// During a new streaming turn the previous settled reply keeps ownership of
@@ -10916,11 +10702,6 @@ struct AssistantScreen: View {
                         scrollToBottom(proxy: proxy)
                     }
                 }
-                .onChange(of: searchTargetId) { _, id in
-                    guard let id else { return }
-                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
-                    searchTargetId = nil
-                }
                 .overlay(alignment: .bottom) {
                     // Web parity: centered 40pt frosted circle just above the composer.
                     if !nearBottom {
@@ -10984,7 +10765,6 @@ struct AssistantScreen: View {
             AlmaTurnLog.event("assistant.open.begin")
             barHooks.onMenu = { Self.presentDrawer(vm) }
             barHooks.onNewChat = { Task { await vm.newChat() } }
-            barHooks.onConversationMenu = { showConversationMenu = true }
             // DEBUG self-test hooks (never fire in production — the env vars are only
             // set by the local `simctl launch` self-test, same pattern as
             // ALMA_OPEN_COMPANION / ALMA_FADE_DEMO):
@@ -11073,25 +10853,6 @@ struct AssistantScreen: View {
                         .init(name: "supplier-price-list.pdf", mediaType: "application/pdf",
                               data: Data("fixture".utf8), image: nil, state: .failed),
                     ]
-                } else if argFlag("ALMA_ASSISTANT_CONVERSATION_MENU") {
-                    vm.conversationId = "fixture-conversation"
-                    vm.conversationTitle = "স্টক অডিট"
-                    showConversationMenu = true
-                } else if argFlag("ALMA_ASSISTANT_PROJECT_SHEET") {
-                    vm.conversationId = "fixture-conversation"
-                    vm.conversationTitle = "স্টক অডিট"
-                    vm.currentProjectId = "fixture-trading"
-                    vm.projects = [
-                        .init(id: "fixture-trading", name: "ALMA Trading",
-                              description: nil, systemInstructions: nil, businessId: "ALMA_TRADING"),
-                        .init(id: "fixture-lifestyle", name: "ALMA Lifestyle",
-                              description: nil, systemInstructions: nil, businessId: "ALMA_LIFESTYLE"),
-                    ]
-                    showProjectAssignment = true
-                } else if argFlag("ALMA_ASSISTANT_FILES_HUB") {
-                    vm.conversationId = "fixture-conversation"
-                    vm.conversationTitle = "স্টক অডিট"
-                    showFilesHub = true
                 }
                 AlmaTurnLog.event("assistant.contentReady", "fixture=parity count=\(vm.messages.count)")
                 return
@@ -11190,25 +10951,8 @@ struct AssistantScreen: View {
         .sheet(item: $activitySheet) { req in
             AgentThoughtProcessSheet(request: req)
         }
-        .sheet(isPresented: $showConversationMenu) {
-            AlmaConversationMenuSheet(vm: vm, onSelect: handleConversationMenu)
-        }
-        .sheet(isPresented: $showProjectAssignment) {
-            AgentProjectAssignmentSheet(vm: vm)
-        }
-        .sheet(isPresented: $showConversationSearch) {
-            AgentConversationSearchSheet(vm: vm) { id in searchTargetId = id }
-        }
-        .sheet(item: $conversationShare) { payload in
-            AgentConversationShareSheet(url: payload.url)
-        }
         .sheet(isPresented: $showArtifacts) {
             AgentArtifactsSheet(vm: vm, openWeb: openWeb)
-        }
-        .sheet(isPresented: $showFilesHub) {
-            AgentSessionFilesHub(vm: vm) { messageId in
-                searchTargetId = messageId
-            }
         }
         .sheet(isPresented: $showBackgroundTasks) {
             AgentBackgroundTasksSheet(vm: vm, selectedDetent: $backgroundTaskDetent)
@@ -11228,15 +10972,15 @@ struct AssistantScreen: View {
         // Artifacts badge — web header-badge parity: appears only when this
         // conversation actually has artifacts; tap → glossy list/detail sheet.
         .overlay(alignment: .topTrailing) {
-            if !vm.sessionFiles.isEmpty && !vm.authExpired {
+            if !vm.artifacts.isEmpty && !vm.authExpired {
                 Button {
                     AlmaAgentHaptics.light()
-                    showFilesHub = true
+                    showArtifacts = true
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "doc.richtext")
                             .font(.system(size: 11, weight: .semibold))
-                        Text(almaBn(vm.sessionFiles.count))
+                        Text(almaBn(vm.artifacts.count))
                             .font(.system(size: 11.5, weight: .bold))
                     }
                     .foregroundStyle(AgentPalette.coral)
@@ -11252,72 +10996,6 @@ struct AssistantScreen: View {
         }
         .overlay(alignment: .bottom) {
             if let toast = vm.errorToast { toastView(toast, pal) }
-        }
-        .alert("কথোপকথনের নাম", isPresented: $showRenamePrompt) {
-            TextField("নাম", text: $renameText)
-            Button("বাতিল", role: .cancel) {}
-            Button("সংরক্ষণ") {
-                guard let cid = vm.conversationId else { return }
-                Task { await vm.renameConversation(cid, title: renameText) }
-            }
-        }
-        .alert("কথোপকথন আর্কাইভ করবেন?", isPresented: $showArchiveConfirmation) {
-            Button("বাতিল", role: .cancel) {}
-            Button("আর্কাইভ") {
-                guard let cid = vm.conversationId else { return }
-                Task { await vm.archiveConversation(cid) }
-            }
-        } message: {
-            Text("এটি মূল তালিকা থেকে সরে যাবে।")
-        }
-        .alert("কথোপকথন স্থায়ীভাবে মুছবেন?", isPresented: $showDeleteConfirmation) {
-            Button("বাতিল", role: .cancel) {}
-            Button("মুছুন", role: .destructive) {
-                guard let cid = vm.conversationId else { return }
-                Task { await vm.deleteConversation(cid) }
-            }
-        } message: {
-            Text("এই কাজটি ফেরানো যাবে না।")
-        }
-    }
-
-    private func handleConversationMenu(_ action: AgentConversationMenuAction) {
-        func afterDismiss(_ work: @escaping () -> Void) {
-            showConversationMenu = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.32, execute: work)
-        }
-        switch action {
-        case .share:
-            Task {
-                if let url = await vm.exportConversation(.share) {
-                    afterDismiss { conversationShare = .init(url: url) }
-                }
-            }
-        case .project:
-            afterDismiss { showProjectAssignment = true }
-        case .removeProject:
-            Task {
-                if await vm.assignConversationProject(nil) { showConversationMenu = false }
-            }
-        case .files:
-            afterDismiss { showFilesHub = true }
-        case .search:
-            afterDismiss { showConversationSearch = true }
-        case .exportPDF, .exportMarkdown, .exportText:
-            let format: AgentConversationExportFormat = action == .exportPDF
-                ? .pdf : (action == .exportMarkdown ? .markdown : .plainText)
-            Task {
-                if let url = await vm.exportConversation(format) {
-                    afterDismiss { conversationShare = .init(url: url) }
-                }
-            }
-        case .rename:
-            renameText = vm.conversationTitle
-            afterDismiss { showRenamePrompt = true }
-        case .archive:
-            afterDismiss { showArchiveConfirmation = true }
-        case .delete:
-            afterDismiss { showDeleteConfirmation = true }
         }
     }
 
@@ -11434,7 +11112,6 @@ struct AgentScrollViewportKey: PreferenceKey {
 final class AssistantBarHooks: NSObject {
     var onMenu: (() -> Void)?
     var onNewChat: (() -> Void)?
-    var onConversationMenu: (() -> Void)?
     @objc func menuTapped() {
         AlmaAgentHaptics.selection()
         onMenu?()
@@ -11442,10 +11119,6 @@ final class AssistantBarHooks: NSObject {
     @objc func newChatTapped() {
         AlmaAgentHaptics.light()
         onNewChat?()
-    }
-    @objc func conversationMenuTapped() {
-        AlmaAgentHaptics.selection()
-        onConversationMenu?()
     }
 }
 
@@ -11503,12 +11176,7 @@ extension AlmaTabBarController {
             let plus = AlmaWebTabViewController.coralBarButton(
                 icon: "plus", label: "নতুন চ্যাট", target: hooks,
                 action: #selector(AssistantBarHooks.newChatTapped))
-            let options = AlmaWebTabViewController.glassBarButton(
-                icon: "ellipsis", label: "কথোপকথনের অপশন", target: hooks,
-                action: #selector(AssistantBarHooks.conversationMenuTapped), light: !AlmaTheme.isDark)
-            // UIKit lays index 0 at the trailing edge: keep the coral plus in its
-            // original position, with the new 44pt ellipsis immediately beside it.
-            host.navigationItem.rightBarButtonItems = [plus, options]
+            host.navigationItem.rightBarButtonItem = plus
             objc_setAssociatedObject(host, &assistantBarHooksKey, hooks, .OBJC_ASSOCIATION_RETAIN)
             let nav = Self.darkNav(root: host, tabTitle: "Assistant", icon: "sparkles", largeTitles: false)
             navRef.value = nav
