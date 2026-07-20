@@ -35,6 +35,7 @@ import {
   type AdapterResolver,
   type ProviderAdapter,
 } from '@/agent/providers/runtime/adapter';
+import { createCapabilityGate } from '@/agent/providers/runtime/capabilities';
 import {
   CHARS_PER_TOKEN,
   MODEL_FABRIC_CONTRACT_VERSION,
@@ -156,9 +157,10 @@ export async function invokeModel(raw: unknown, deps: ModelFabricDeps): Promise<
   const constraints = prepared.constraints;
   const resolver = resolverOf(deps.adapters);
 
-  // 5. capability gate (SPEC-157, optional until wired)
-  if (deps.capabilities && payload.requiredCapabilities?.length) {
-    const unsupported = deps.capabilities.check(constraints.provider, constraints.model, payload.requiredCapabilities);
+  // 5. capability gate (SPEC-157) — default to the static capability registry
+  if (payload.requiredCapabilities?.length) {
+    const gate = deps.capabilities ?? createCapabilityGate();
+    const unsupported = gate.check(constraints.provider, constraints.model, payload.requiredCapabilities);
     if (unsupported) return fail('FAILED_FINAL', [MODEL_REASON_CODES.CAPABILITY_UNSUPPORTED, ...unsupported]);
   }
 
