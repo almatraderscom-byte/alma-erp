@@ -1,0 +1,10 @@
+$ npx vitest run src/agent/autonomy src/agent/approvals
+
+ RUN  v4.1.9 /home/user/alma-erp
+
+
+ Test Files  7 passed (7)
+      Tests  70 passed (70)
+   Start at  14:01:55
+   Duration  1.20s (transform 750ms, setup 0ms, import 1.22s, tests 109ms, environment 1ms)
+
