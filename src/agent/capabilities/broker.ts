@@ -21,7 +21,7 @@ import {
   validateRequest,
 } from '@/agent/contracts'
 import { z } from 'zod'
-import { INTENT_CLASSES } from '@/agent/control-plane/admission/intent'
+import { INTENT_CLASSES } from '@/agent/control-plane/admission'
 import { getManifest } from '@/agent/tools/manifests'
 // Import from the decoupled G08 registry PACKAGE path explicitly: the bare
 // specifier '@/agent/tools/registry' resolves to the monolith FILE (registry.ts),

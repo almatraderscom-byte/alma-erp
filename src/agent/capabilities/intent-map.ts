@@ -20,7 +20,7 @@ import {
   validateRequest,
 } from '@/agent/contracts'
 import { z } from 'zod'
-import { INTENT_CLASSES, type IntentClass } from '@/agent/control-plane/admission/intent'
+import { INTENT_CLASSES, type IntentClass } from '@/agent/control-plane/admission'
 import { CAPABILITIES } from './store'
 import type { Capability } from './capability.schema'
 
