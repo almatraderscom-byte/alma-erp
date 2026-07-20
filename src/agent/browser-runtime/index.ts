@@ -9,3 +9,4 @@ export * from './runtime';
 export * from './observation-state';
 export * from './replan';
 export * from './hard-stops';
+export * from './chaos';
