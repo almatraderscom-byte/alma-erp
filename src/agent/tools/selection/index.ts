@@ -9,3 +9,4 @@
 export * from './retrieval'
 export * from './shortlist'
 export * from './schema-minimizer'
+export * from './arg-validation'
