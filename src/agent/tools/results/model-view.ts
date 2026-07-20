@@ -71,9 +71,19 @@ export function buildModelView(
     return { evidenceId: rec.evidenceId, view: redacted, truncated: false, redactedKeys, originalBytes, viewBytes: Buffer.byteLength(serialized, 'utf8') }
   }
   // Fail-closed: hand back a marked, byte-capped preview referencing evidence.
-  const preview = serialized.slice(0, cap)
-  const view = { _truncated: true, evidenceId: rec.evidenceId, preview, note: `result exceeded ${cap} bytes; full payload in evidence ${rec.evidenceId}` }
-  return { evidenceId: rec.evidenceId, view, truncated: true, redactedKeys, originalBytes, viewBytes: Buffer.byteLength(JSON.stringify(view), 'utf8') }
+  // The FINAL serialized view (wrapper + JSON-escaped preview) must fit `cap`, so
+  // trim the preview deterministically until the whole envelope is within budget.
+  const note = `result exceeded ${cap} bytes; full payload in evidence ${rec.evidenceId}`
+  const overhead = Buffer.byteLength(JSON.stringify({ _truncated: true, evidenceId: rec.evidenceId, preview: '', note }), 'utf8')
+  let previewLen = Math.max(0, cap - overhead)
+  let view: unknown = { _truncated: true, evidenceId: rec.evidenceId, preview: serialized.slice(0, previewLen), note }
+  let viewBytes = Buffer.byteLength(JSON.stringify(view), 'utf8')
+  while (viewBytes > cap && previewLen > 0) {
+    previewLen = Math.max(0, Math.floor(previewLen * 0.9) - 1)
+    view = { _truncated: true, evidenceId: rec.evidenceId, preview: serialized.slice(0, previewLen), note }
+    viewBytes = Buffer.byteLength(JSON.stringify(view), 'utf8')
+  }
+  return { evidenceId: rec.evidenceId, view, truncated: true, redactedKeys, originalBytes, viewBytes }
 }
 
 // ── Identity-enforced boundary ──────────────────────────────────────────────
