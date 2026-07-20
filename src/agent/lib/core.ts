@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, HEAD_TOOL_BUDGET } from '@/agent/config'
 import { getModel } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
+import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { buildActiveSkillsBlock } from '@/agent/lib/skill-engine/runtime'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
@@ -969,6 +970,12 @@ export async function* runAgentTurn(
   // buildTurnApiMessages), keeping the system block byte-stable across turns.
   const systemBlocks = [...stableSystem]
   let volatileText = volatileSystem.map((b) => b.text).join('\n')
+  // Model identity (parity with runAlternateProviderTurn): pin the REAL running
+  // model and flag a mid-chat model switch, so the head never hallucinates "I am
+  // Claude Sonnet". Best-effort; prepended so it sits high in the per-turn context.
+  const prevTurnModelId = await loadPreviousTurnModelId(conversationId)
+  const identityNote = buildModelIdentityNote(chatModel.id, prevTurnModelId)
+  volatileText = volatileText ? `${identityNote}\n\n${volatileText}` : identityNote
   const authorizationNote = ownerTurnAuthorizationNote(turnAuthorization)
   if (authorizationNote) {
     volatileText = volatileText ? `${authorizationNote}\n\n${volatileText}` : authorizationNote
