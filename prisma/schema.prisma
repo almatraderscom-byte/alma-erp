@@ -2001,6 +2001,7 @@ model AgentConversation {
   modelId            String          @default("claude-sonnet-4-6") @map("model")
   source             String          @default("web")
   archived           Boolean         @default(false)
+  pinned             Boolean         @default(false)
   summarizedAt       DateTime?       @map("summarized_at")
   lastMessageAt      DateTime?       @map("last_message_at")
   totalCostUsd       Float           @default(0) @map("total_cost_usd")

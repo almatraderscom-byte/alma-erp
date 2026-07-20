@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildMessagesPagePlan, MESSAGES_PAGE_MAX } from '@/agent/lib/messages-page'
+import { buildMessageCursorWhere, buildMessagesPagePlan, MESSAGES_PAGE_MAX } from '@/agent/lib/messages-page'
 
 /** Roadmap 4.1 — the message pagination/delta query plan. */
 describe('Phase 4 — buildMessagesPagePlan', () => {
@@ -23,6 +23,30 @@ describe('Phase 4 — buildMessagesPagePlan', () => {
     expect(plan.createdAt).toEqual({ lt: anchor })
     expect(plan.take).toBe(40)
     expect(plan.fetchDescThenReverse).toBe(true)
+  })
+
+  it('after anchor pages NEWER history in chronological order', () => {
+    const anchor = new Date('2026-07-14T10:00:00Z')
+    const plan = buildMessagesPagePlan({ limit: '24', afterCreatedAt: anchor })
+    expect(plan.createdAt).toEqual({ gt: anchor })
+    expect(plan.take).toBe(24)
+    expect(plan.fetchDescThenReverse).toBe(false)
+  })
+
+  it('composite cursors retain rows tied on createdAt', () => {
+    const anchor = { createdAt: new Date('2026-07-14T10:00:00Z'), id: 'm-20' }
+    expect(buildMessageCursorWhere('after', anchor)).toEqual({
+      OR: [
+        { createdAt: { gt: anchor.createdAt } },
+        { createdAt: anchor.createdAt, id: { gt: 'm-20' } },
+      ],
+    })
+    expect(buildMessageCursorWhere('before', anchor)).toEqual({
+      OR: [
+        { createdAt: { lt: anchor.createdAt } },
+        { createdAt: anchor.createdAt, id: { lt: 'm-20' } },
+      ],
+    })
   })
 
   it('since = ascending delta poll, wins over before', () => {

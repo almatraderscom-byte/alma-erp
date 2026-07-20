@@ -5,7 +5,7 @@ import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { toolResultPreview } from '@/agent/lib/tool-labels'
 import { decodeUnicodeEscapes } from '@/agent/lib/decode-unicode-escapes'
-import { buildMessagesPagePlan } from '@/agent/lib/messages-page'
+import { buildMessageCursorWhere, buildMessagesPagePlan } from '@/agent/lib/messages-page'
 import { buildAgentPresentationV1 } from '@/agent/lib/presentation/build-presentation'
 
 export async function GET(
@@ -36,23 +36,42 @@ export async function GET(
   // Roadmap 4.1 — additive pagination/delta params; absent params = legacy full
   // history so existing clients keep identical behavior.
   const beforeId = req.nextUrl.searchParams.get('before')
-  let beforeCreatedAt: Date | null = null
+  const afterId = req.nextUrl.searchParams.get('after')
+  let beforeAnchor: { createdAt: Date; id: string } | null = null
+  let afterAnchor: { createdAt: Date; id: string } | null = null
   if (beforeId) {
     const anchor = await prisma.agentMessage.findUnique({
       where: { id: beforeId },
-      select: { createdAt: true, conversationId: true },
+      select: { id: true, createdAt: true, conversationId: true },
     })
-    if (anchor && anchor.conversationId === id) beforeCreatedAt = anchor.createdAt
+    if (anchor && anchor.conversationId === id) beforeAnchor = anchor
+  }
+  if (afterId) {
+    const anchor = await prisma.agentMessage.findUnique({
+      where: { id: afterId },
+      select: { id: true, createdAt: true, conversationId: true },
+    })
+    if (anchor && anchor.conversationId === id) afterAnchor = anchor
   }
   const plan = buildMessagesPagePlan({
     limit: req.nextUrl.searchParams.get('limit'),
     since: req.nextUrl.searchParams.get('since'),
-    beforeCreatedAt,
+    beforeCreatedAt: beforeAnchor?.createdAt,
+    afterCreatedAt: afterAnchor?.createdAt,
   })
 
+  const cursorWhere = beforeAnchor
+    ? buildMessageCursorWhere('before', beforeAnchor)
+    : afterAnchor
+      ? buildMessageCursorWhere('after', afterAnchor)
+      : plan.createdAt
+        ? { createdAt: plan.createdAt }
+        : {}
+  const direction = plan.fetchDescThenReverse ? 'desc' : 'asc'
+
   let messages = await prisma.agentMessage.findMany({
-    where: { conversationId: id, ...(plan.createdAt ? { createdAt: plan.createdAt } : {}) },
-    orderBy: { createdAt: plan.fetchDescThenReverse ? 'desc' : 'asc' },
+    where: { conversationId: id, ...cursorWhere },
+    orderBy: [{ createdAt: direction }, { id: direction }],
     ...(plan.take ? { take: plan.take } : {}),
     select: {
       id: true,

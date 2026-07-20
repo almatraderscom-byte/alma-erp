@@ -46,6 +46,72 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
         }
         let path = url.path
+        if scenario == "attachmentAtomic" {
+            if path == "/api/assistant/upload" {
+                // Long enough for the Simulator to prove Send was tapped while
+                // upload was still active. The eventual stable ref is then bound
+                // to the exact clientMessageId by the production VM path.
+                respond(status: 201, object: [
+                    "bucket": "agent-files",
+                    "path": "fixture/atomic-photo.jpg",
+                    "mediaType": "image/jpeg",
+                ])
+                return
+            }
+            if path == "/api/assistant/chat" {
+                let object = request.httpBody.flatMap {
+                    try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+                }
+                let files = object?["files"] as? [[String: Any]] ?? []
+                let bodyPath = files.first?["path"] as? String
+                let bodyClientMessageId = object?["clientMessageId"] as? String
+                // URLProtocol may receive a body-less canonical copy of a streamed
+                // request. DEBUG-only headers are derived from the same ChatBody
+                // immediately before JSON encoding, so the verifier remains exact.
+                let pathFingerprint = bodyPath
+                    ?? request.value(forHTTPHeaderField: "X-ALMA-Fixture-File-Path")
+                let clientMessageId = bodyClientMessageId
+                    ?? request.value(forHTTPHeaderField: "X-ALMA-Fixture-Client-Message")
+                let fileCount = object == nil
+                    ? Int(request.value(forHTTPHeaderField: "X-ALMA-Fixture-File-Count") ?? "0") ?? 0
+                    : files.count
+                let bound = fileCount == 1
+                    && pathFingerprint == "fixture/atomic-photo.jpg"
+                    && !(clientMessageId ?? "").isEmpty
+                guard bound else {
+                    respond(status: 422, json: ["error": "attachment_fingerprint_mismatch"])
+                    return
+                }
+                let frames = [
+                    "data: {\"type\":\"conversation_id\",\"id\":\"fixture-atomic-conversation\"}\n\n",
+                    "data: {\"type\":\"turn_id\",\"id\":\"fixture-atomic-turn\"}\n\n",
+                    "data: {\"type\":\"thinking_delta\",\"delta\":\"Attachment binding যাচাই করছি…\"}\n\n",
+                    "data: {\"type\":\"text_delta\",\"delta\":\"ছবি ও বার্তা একই transaction-এ গ্রহণ হয়েছে Boss।\"}\n\n",
+                    "data: {\"type\":\"done\",\"messageId\":\"fixture-atomic-assistant\",\"needContinue\":false}\n\n",
+                ].joined()
+                respond(status: 200, data: Data(frames.utf8), contentType: "text/event-stream")
+                return
+            }
+            if path.contains("/conversations/fixture-atomic-conversation/messages") {
+                respond(status: 200, object: [[
+                    "id": "fixture-atomic-owner", "role": "user",
+                    "content": [
+                        ["type": "text", "text": "এই ছবির স্টক গুনে দাও"],
+                        ["type": "file_ref", "bucket": "agent-files",
+                         "path": "fixture/atomic-photo.jpg", "mediaType": "image/jpeg"],
+                    ],
+                ], [
+                    "id": "fixture-atomic-assistant", "role": "assistant",
+                    "content": [["type": "text",
+                                 "text": "ছবি ও বার্তা একই transaction-এ গ্রহণ হয়েছে Boss।"]],
+                ]])
+                return
+            }
+            if path.contains("/open-tasks") || path.contains("/artifacts") {
+                respond(status: 200, object: [])
+                return
+            }
+        }
         if scenario == "turnRecovery" {
             if path == "/api/assistant/models" {
                 respond(status: 200, object: ["defaultModelId": "auto", "models": []])
@@ -167,7 +233,7 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
                 let rows: [[String: Any]] = [[
                     "id": "fix-a-parity", "role": "assistant",
                     "content": [[
-                        "type": "ask_card", "askCardId": "fix-ask",
+                        "type": "ask_card", "askCardId": "fix-ask-askFailure",
                         "question": "কোন রিপোর্ট format দরকার Boss?",
                         "options": ["PDF", "Markdown", "দুটোই"], "status": "pending",
                     ]],
@@ -180,7 +246,7 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
             let rows: [[String: Any]] = [[
                 "id": "fix-a-parity", "role": "assistant",
                 "content": [[
-                    "type": "confirm_card", "pendingActionId": "fix-approval",
+                    "type": "confirm_card", "pendingActionId": "fix-approval-\(scenario)",
                     "summary": "Merge readiness approval", "status": status,
                 ]],
             ]]

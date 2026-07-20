@@ -39,6 +39,37 @@ import ObjectiveC
 import os.signpost
 import CoreText
 
+// MARK: - Parity v2 subsystem rollout controls
+
+enum AgentParitySubsystem: String, CaseIterable {
+    case library = "library"
+    case conversationMenu = "conversation-menu"
+    case hugeSession = "huge-session"
+}
+
+enum AgentParityFlags {
+    private static let prefix = "alma.assistant.parity-v2."
+
+    /// Defaults ON inside the feature branch. Internal/dogfood builds can stage
+    /// each presentation subsystem independently through launch environment or
+    /// UserDefaults, while the existing `AlmaSwiftUIFlag` remains the immediate
+    /// whole-screen rollback. Reliability state schemas are deliberately not
+    /// switchable off after data has been written.
+    static func isEnabled(_ subsystem: AgentParitySubsystem) -> Bool {
+        let key = prefix + subsystem.rawValue
+        let envKey = "ALMA_PARITY_V2_" + subsystem.rawValue
+            .replacingOccurrences(of: "-", with: "_").uppercased()
+        if let raw = ProcessInfo.processInfo.environment[envKey], !raw.isEmpty {
+            return raw != "0" && raw.lowercased() != "false"
+        }
+        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }
+
+    static func set(_ enabled: Bool, for subsystem: AgentParitySubsystem) {
+        UserDefaults.standard.set(enabled, forKey: prefix + subsystem.rawValue)
+    }
+}
+
 // MARK: - Palette (web token parity: globals.css / agent-ambient.css)
 
 @available(iOS 17.0, *)
@@ -148,6 +179,7 @@ struct AgentConversation: Decodable, Identifiable, Equatable {
     var modelId: String?
     var source: String?
     var archived: Bool?
+    var pinned: Bool?
     var updatedAt: String?
 }
 
@@ -261,7 +293,40 @@ struct AgentMessageWire: Decodable {
 /// but consume this explicit truth bit so a future compacted/thinner timeline
 /// can never silently drop the self-verification badge.
 struct AgentMessagePresentationWire: Decodable {
+    let version: Int?
+    let messageId: String?
+    let blocks: [AgentPresentationBlockWire]?
+    let usage: AgentPresentationUsageWire?
     let selfCorrected: Bool?
+}
+
+struct AgentPresentationBlockWire: Decodable {
+    let id: String
+    let type: String
+    let text: String?
+    let state: String?
+    let activityType: String?
+    let label: String?
+    let detail: String?
+    let status: String?
+    let toolName: String?
+    let result: String?
+    let screenshot: String?
+    let artifactId: String?
+    let title: String?
+    let kind: String?
+    let pendingActionId: String?
+    let askCardId: String?
+}
+
+struct AgentPresentationUsageWire: Decodable {
+    let tokensIn: Int?
+    let tokensOut: Int?
+    let cacheCreation: Int?
+    let cacheRead: Int?
+    let costUsd: Double?
+    let apiRounds: Int?
+    let roundCostsUsd: [Double]?
 }
 
 // Sidebar data (web AgentSidebar parity)
@@ -545,6 +610,15 @@ struct TranscribeResponse: Decodable { let text: String? }
 @available(iOS 17.0, *)
 struct AgentChatMessage: Identifiable, Equatable {
     enum Role { case user, assistant }
+    enum OutgoingState: String, Codable, Equatable {
+        case waitingForAttachments
+        case queued
+        case submitting
+        case checking
+        case accepted
+        case failed
+        case cancelled
+    }
     struct Tool: Identifiable, Equatable {
         let id: String
         var name: String
@@ -654,6 +728,10 @@ struct AgentChatMessage: Identifiable, Equatable {
     /// stability — feedback/artifact POSTs must use THIS id, never the local one.
     var serverId: String?
     let role: Role
+    /// Gate 1: a locally-authored owner intent remains inspectable until the
+    /// server assigns durable identity. Settled server rows leave these nil.
+    var clientMessageId: String?
+    var outgoingState: OutgoingState?
     var text: String = ""
     var imagePaths: [String] = []
     var fileRefs: [AgentFileRef] = []
@@ -772,7 +850,78 @@ struct AgentChatMessage: Identifiable, Equatable {
         if m.timeline.contains(where: { if case .text = $0 { return true }; return false }) {
             Self.applyPersistedBlocks(to: &m)
         }
+        // Prefer the server's canonical, versioned projection whenever present.
+        // Its stable block ids make cold-load, poll and reconnect byte-for-byte
+        // equivalent; legacy timeline/content remain the forward-compatible fallback.
+        if let presentation = wire.presentation,
+           presentation.version == 1,
+           presentation.messageId == nil || presentation.messageId == wire.id,
+           presentation.blocks?.isEmpty == false {
+            Self.applyCanonicalPresentation(presentation, to: &m)
+        }
         return m
+    }
+
+    static func applyCanonicalPresentation(_ presentation: AgentMessagePresentationWire,
+                                           to message: inout AgentChatMessage) {
+        var projected: [TurnBlock] = []
+        var projectedTools: [Tool] = []
+        var superseded = Set<String>()
+        for block in presentation.blocks ?? [] {
+            switch block.type {
+            case "prose":
+                projected.append(.prose(id: block.id, text: block.text ?? ""))
+                if block.state == "superseded" { superseded.insert(block.id) }
+            case "activity":
+                let isTool = block.activityType == "tool"
+                let toolId = isTool ? block.id : nil
+                let ok = block.status == "failed" ? false : true
+                projected.append(.activity(.init(
+                    id: block.id,
+                    kind: isTool ? .tool : .thinking,
+                    label: block.label ?? (isTool ? "টুল" : "যাচাই"),
+                    thinkFull: block.detail ?? "",
+                    toolId: toolId,
+                    ok: ok,
+                    live: false,
+                    screenshot: block.screenshot)))
+                if isTool {
+                    projectedTools.append(.init(
+                        id: block.id, name: block.toolName ?? block.label ?? "টুল", ok: ok,
+                        preview: block.result.map { String($0.prefix(160)) }, live: false,
+                        inputPretty: nil, resultFull: block.result, screenshot: block.screenshot))
+                }
+            case "file":
+                if let artifactId = block.artifactId {
+                    projected.append(.file(
+                        id: block.id, artifactId: artifactId,
+                        name: block.title ?? "ডকুমেন্ট"))
+                }
+            case "confirm_card":
+                if let id = block.pendingActionId {
+                    projected.append(.confirmCard(id: block.id, pendingActionId: id))
+                }
+            case "ask_card":
+                if let id = block.askCardId {
+                    projected.append(.askCard(id: block.id, askCardId: id))
+                }
+            default:
+                continue
+            }
+        }
+        message.blocks = projected
+        message.supersededBlockIds = superseded
+        if !projectedTools.isEmpty { message.tools = projectedTools }
+        message.selfCorrected = presentation.selfCorrected == true || !superseded.isEmpty
+        if let usage = presentation.usage {
+            message.tokensIn = usage.tokensIn ?? message.tokensIn
+            message.tokensOut = usage.tokensOut ?? message.tokensOut
+            message.cacheCreation = usage.cacheCreation ?? message.cacheCreation
+            message.cacheRead = usage.cacheRead ?? message.cacheRead
+            message.apiRounds = usage.apiRounds ?? message.apiRounds
+            message.roundCostsUsd = usage.roundCostsUsd ?? message.roundCostsUsd
+            if let cost = usage.costUsd { message.costUsd = String(format: "%.4f", cost) }
+        }
     }
 
     /// Rebuild the interleaved prose ↔ activity TurnBlocks from the persisted
@@ -1077,28 +1226,125 @@ struct AgentChatMessage: Identifiable, Equatable {
 @Observable
 @MainActor
 final class AssistantVM {
+    enum ActionLifecycleState: String, Codable {
+        case pending, submitting, checking, accepted, executing
+        case approved, rejected, answered, expired, cancelled, failed
+
+        var isTerminal: Bool {
+            switch self {
+            case .approved, .rejected, .answered, .expired, .cancelled: return true
+            default: return false
+            }
+        }
+    }
+
+    struct ActionRegistryRecord: Codable {
+        var kind: String
+        var state: ActionLifecycleState
+        var selectedOption: String?
+        var updatedAt: Date
+    }
+
+    private struct ActionRegistrySnapshot: Codable {
+        var records: [String: ActionRegistryRecord] = [:]
+        var askDraftText: [String: String] = [:]
+        var askChosenOption: [String: String] = [:]
+        var askOtherActiveIds: Set<String> = []
+        var opinionDraftText: [String: String] = [:]
+        var opinionOpenIds: Set<String> = []
+    }
+
+    private static let actionRegistryKey = "alma.assistant.actionRegistry.v2"
+    private static func loadActionRegistry() -> ActionRegistrySnapshot {
+        guard let data = UserDefaults.standard.data(forKey: actionRegistryKey),
+              var value = try? JSONDecoder().decode(ActionRegistrySnapshot.self, from: data)
+        else { return .init() }
+        // A process can die after the tap but before its response. Relaunch must
+        // show truthful reconciliation, never resurrect an indefinite spinner.
+        for id in value.records.keys where value.records[id]?.state == .submitting {
+            value.records[id]?.state = .checking
+        }
+        return value
+    }
+
     // Thread state
     var conversationId: String?
     var conversationTitle: String = "ALMA AI"
     var currentProjectId: String?
     var messages: [AgentChatMessage] = []
     var loadingHistory = false
+    /// Gate 1 source of truth. The composer no longer owns an ephemeral @State
+    /// string that disappears on navigation/process death.
+    var composerDraft = "" {
+        didSet { persistCurrentComposerDraft() }
+    }
+    private var restoringComposerDraft = false
     /// VM-level duplicate-submit guard. UI disabled states are secondary; this is
     /// the canonical protection shared by chat cards, sheets and voice actions.
     private var submittingActionKeys: Set<String> = []
+    private var actionRegistry: [String: ActionRegistryRecord] = AssistantVM.loadActionRegistry().records
     func isSubmittingAction(_ key: String) -> Bool { submittingActionKeys.contains(key) }
     @discardableResult private func beginSubmitting(_ key: String) -> Bool {
-        submittingActionKeys.insert(key).inserted
+        guard submittingActionKeys.insert(key).inserted else { return false }
+        if let descriptor = actionDescriptor(for: key) {
+            setActionState(descriptor.id, kind: descriptor.kind, state: .submitting)
+        }
+        return true
     }
-    private func finishSubmitting(_ key: String) { submittingActionKeys.remove(key) }
+    private func finishSubmitting(_ key: String) {
+        submittingActionKeys.remove(key)
+        guard let descriptor = actionDescriptor(for: key),
+              actionRegistry[descriptor.id]?.state == .submitting else { return }
+        setActionState(descriptor.id, kind: descriptor.kind, state: .pending)
+    }
     /// Ask-card input belongs to the conversation state, not the transient card
     /// view. A reconciliation refresh may rebuild the row after a failed POST;
     /// retaining these values keeps the owner's answer visible and retryable.
-    var askDraftText: [String: String] = [:]
-    var askChosenOption: [String: String] = [:]
-    var askOtherActiveIds: Set<String> = []
-    var opinionDraftText: [String: String] = [:]
-    var opinionOpenIds: Set<String> = []
+    var askDraftText: [String: String] = AssistantVM.loadActionRegistry().askDraftText {
+        didSet { persistActionRegistry() }
+    }
+    var askChosenOption: [String: String] = AssistantVM.loadActionRegistry().askChosenOption {
+        didSet { persistActionRegistry() }
+    }
+    var askOtherActiveIds: Set<String> = AssistantVM.loadActionRegistry().askOtherActiveIds {
+        didSet { persistActionRegistry() }
+    }
+    var opinionDraftText: [String: String] = AssistantVM.loadActionRegistry().opinionDraftText {
+        didSet { persistActionRegistry() }
+    }
+    var opinionOpenIds: Set<String> = AssistantVM.loadActionRegistry().opinionOpenIds {
+        didSet { persistActionRegistry() }
+    }
+
+    func actionState(_ id: String) -> ActionLifecycleState? { actionRegistry[id]?.state }
+
+    private func actionDescriptor(for key: String) -> (id: String, kind: String)? {
+        if key.hasPrefix("action:") { return (String(key.dropFirst(7)), "approval") }
+        if key.hasPrefix("ask:") { return (String(key.dropFirst(4)), "ask") }
+        return nil
+    }
+
+    private func persistActionRegistry() {
+        let snapshot = ActionRegistrySnapshot(
+            records: actionRegistry, askDraftText: askDraftText,
+            askChosenOption: askChosenOption, askOtherActiveIds: askOtherActiveIds,
+            opinionDraftText: opinionDraftText, opinionOpenIds: opinionOpenIds)
+        if let data = try? JSONEncoder().encode(snapshot) {
+            UserDefaults.standard.set(data, forKey: Self.actionRegistryKey)
+        }
+    }
+
+    private func setActionState(_ id: String, kind: String,
+                                state: ActionLifecycleState, selectedOption: String? = nil) {
+        var record = actionRegistry[id]
+            ?? .init(kind: kind, state: .pending, selectedOption: nil, updatedAt: Date())
+        record.kind = kind
+        record.state = state
+        if let selectedOption { record.selectedOption = selectedOption }
+        record.updatedAt = Date()
+        actionRegistry[id] = record
+        persistActionRegistry()
+    }
     private func clearAskDraft(_ cardId: String) {
         askDraftText.removeValue(forKey: cardId)
         askChosenOption.removeValue(forKey: cardId)
@@ -1148,6 +1394,7 @@ final class AssistantVM {
         let newConversationClientMessageId: String?
         let text: String
         let files: [AgentFileRef]
+        var attachmentIds: [UUID]? = nil
         let askCardId: String?
         let createdAt: Date
         /// Distinguishes separate server-unassigned chats. Two provisional chats
@@ -1196,6 +1443,9 @@ final class AssistantVM {
         var modelId: String? = nil
         var projectId: String? = nil
         var askCardId: String? = nil
+        /// Local attachment transaction identities bound to this exact request.
+        /// They are removed from the composer only after server acceptance.
+        var attachmentIds: [UUID]? = nil
         /// Stable identity for the locally selected chat before the server has
         /// assigned a conversation id. Persisted for kill/relaunch recovery.
         var sessionIdentity: String? = nil
@@ -1232,7 +1482,25 @@ final class AssistantVM {
     /// Explicit transport ownership handoff. Some control turns intentionally
     /// have no recovery descriptor, so descriptor existence cannot identify a
     /// direct-SSE cancellation that durable replay now owns.
-    private var selectedSessionIdentity = UUID().uuidString
+    private static let selectedSessionIdentityKey = "alma.assistant.selectedSessionIdentity.v2"
+    private static func loadOrCreateSelectedSessionIdentity() -> String {
+        let defaults = UserDefaults.standard
+        if let value = defaults.string(forKey: selectedSessionIdentityKey), !value.isEmpty {
+            return value
+        }
+        let value = UUID().uuidString
+        defaults.set(value, forKey: selectedSessionIdentityKey)
+        return value
+    }
+    /// The locally-selected provisional chat must survive process death. Without
+    /// this stable identity, its draft and attachment transaction remain safely
+    /// stored but become unreachable after bootstrap adopts the server pointer.
+    private var selectedSessionIdentity = AssistantVM.loadOrCreateSelectedSessionIdentity() {
+        didSet {
+            UserDefaults.standard.set(selectedSessionIdentity,
+                                      forKey: Self.selectedSessionIdentityKey)
+        }
+    }
     private var streamTaskGeneration: UUID?
     private var durableHandoffGenerations: Set<UUID> = []
     private var statusRecoveryFailureCount = 0
@@ -1332,6 +1600,7 @@ final class AssistantVM {
     // Native voice-to-voice console
     var showVoice = false
     var conversations: [AgentConversation] = []
+    private var pinnedOverrides: [String: Bool] = [:]
     var conversationsCursor: String?
     var loadingConversations = false
     var loadingMoreConversations = false
@@ -1347,14 +1616,18 @@ final class AssistantVM {
 
     // S8 additive — artifacts + durable Plan-Drive background work.
     fileprivate var artifacts: [AgentArtifactWire] = []
+    private var indexedSessionFileMessages: [AgentChatMessage] = []
+    private var sessionFileIndexConversationId: String?
+    var sessionFilesIndexLoading = false
     var sessionFiles: [AgentSessionFile] {
         var rows: [AgentSessionFile] = []
         var seen = Set<String>()
-        for message in messages {
+        for message in searchableMessages + indexedSessionFileMessages {
             for ref in message.fileRefs where seen.insert("\(ref.bucket)/\(ref.path)").inserted {
                 let rawName = URL(fileURLWithPath: ref.path).lastPathComponent
+                let origin: AgentSessionFile.Origin = message.role == .assistant ? .generated : .uploaded
                 rows.append(.init(
-                    id: "uploaded:\(ref.bucket):\(ref.path)", origin: .uploaded,
+                    id: "\(origin.rawValue):\(ref.bucket):\(ref.path)", origin: origin,
                     name: rawName.removingPercentEncoding ?? rawName,
                     mediaType: ref.mediaType, createdAt: message.createdAt,
                     messageId: message.id, fileRef: ref, artifactId: nil, artifactContent: nil))
@@ -1363,7 +1636,10 @@ final class AssistantVM {
         for artifact in artifacts {
             let kind = artifact.type?.lowercased() ?? "file"
             let media = kind == "markdown" ? "text/markdown"
-                : (kind == "pdf" ? "application/pdf" : (kind == "html" ? "text/html" : "text/plain"))
+                : (kind == "pdf" ? "application/pdf"
+                    : (["jpeg", "jpg"].contains(kind) ? "image/jpeg"
+                        : (["png", "webp", "gif"].contains(kind) ? "image/\(kind)"
+                            : (kind == "html" ? "text/html" : "text/plain"))))
             var name = artifact.title?.isEmpty == false ? artifact.title! : "ALMA file"
             if URL(fileURLWithPath: name).pathExtension.isEmpty {
                 name += kind == "markdown" ? ".md" : (kind == "pdf" ? ".pdf" : ".txt")
@@ -1409,7 +1685,9 @@ final class AssistantVM {
                 }
             }
         }
-        return items.filter { !decided.contains($0.id) }
+        return items.filter {
+            !decided.contains($0.id) && actionRegistry[$0.id]?.state.isTerminal != true
+        }
     }
     private var usesBackgroundTaskDebugFixture = false
     var planDriveBusyPlanId: String?
@@ -1420,18 +1698,181 @@ final class AssistantVM {
     var ttsLoadingId: String?
     private var ttsPlayer: AVAudioPlayer?
     private var ttsDelegate: AssistantTTSDelegate?
+    private var ttsChunks: [String] = []
+    private var ttsGeneration = UUID()
 
     // Composer attachments
     struct PendingFile: Identifiable, Equatable {
-        enum State: Equatable { case uploading, ready(AgentFileRef), failed }
-        let id = UUID()
+        enum State: Equatable { case uploading, waitingForNetwork, ready(AgentFileRef), failed }
+        let id: UUID
         let name: String
         let mediaType: String
         let data: Data
         let image: UIImage?
+        let cacheFileName: String
         var state: State = .uploading
+
+        init(id: UUID = UUID(), name: String, mediaType: String, data: Data,
+             image: UIImage?, cacheFileName: String? = nil, state: State = .uploading) {
+            self.id = id
+            self.name = name
+            self.mediaType = mediaType
+            self.data = data
+            self.image = image
+            self.cacheFileName = cacheFileName ?? "\(id.uuidString).attachment"
+            self.state = state
+        }
     }
-    var pendingFiles: [PendingFile] = []
+    var pendingFiles: [PendingFile] = [] {
+        didSet { persistCurrentComposerDraft() }
+    }
+
+    private struct PendingFileSnapshot: Codable {
+        let id: UUID
+        let name: String
+        let mediaType: String
+        let cacheFileName: String
+        let state: String
+        let fileRef: AgentFileRef?
+    }
+
+    private struct ComposerDraftSnapshot: Codable {
+        var text: String
+        var files: [PendingFileSnapshot]
+    }
+
+    private struct PendingAttachmentSend: Codable {
+        let clientMessageId: String
+        var conversationId: String?
+        let sessionIdentity: String
+        let text: String
+        let attachmentIds: [UUID]
+        let askCardId: String?
+        let createdAt: Date
+    }
+
+    private static let composerDraftsKey = "alma.assistant.composerDrafts.v2"
+    private static let pendingAttachmentSendKey = "alma.assistant.pendingAttachmentSend.v2"
+    private var pendingAttachmentSend: PendingAttachmentSend? = AssistantVM.loadPendingAttachmentSend() {
+        didSet {
+            if let pendingAttachmentSend,
+               let data = try? JSONEncoder().encode(pendingAttachmentSend) {
+                UserDefaults.standard.set(data, forKey: Self.pendingAttachmentSendKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.pendingAttachmentSendKey)
+            }
+        }
+    }
+
+    var hasPendingAttachmentSend: Bool { pendingAttachmentSend != nil }
+    var composerSubmissionPending: Bool {
+        if let pendingAttachmentSend,
+           pendingAttachmentSend.sessionIdentity == selectedSessionIdentity { return true }
+        if let recoverableTurn,
+           recoverableTurn.sessionIdentity == selectedSessionIdentity,
+           recoverableTurn.message == composerDraft { return true }
+        return queuedOwnerMessages.contains { queued in
+            let sameConversation = queued.conversationId != nil
+                ? queued.conversationId == conversationId
+                : queued.sessionIdentity == selectedSessionIdentity
+            return sameConversation && queued.text == composerDraft
+        }
+    }
+
+    private var composerDraftKey: String {
+        if let conversationId { return "conversation:\(conversationId)" }
+        return "session:\(selectedSessionIdentity)"
+    }
+
+    private static func loadComposerDrafts() -> [String: ComposerDraftSnapshot] {
+        guard let data = UserDefaults.standard.data(forKey: composerDraftsKey) else { return [:] }
+        return (try? JSONDecoder().decode([String: ComposerDraftSnapshot].self, from: data)) ?? [:]
+    }
+
+    private static func loadPendingAttachmentSend() -> PendingAttachmentSend? {
+        guard let data = UserDefaults.standard.data(forKey: pendingAttachmentSendKey) else { return nil }
+        return try? JSONDecoder().decode(PendingAttachmentSend.self, from: data)
+    }
+
+    private static func attachmentCacheDirectory() -> URL? {
+        guard let root = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        let directory = root.appendingPathComponent("ALMAAgentAttachmentTransactions", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true,
+                attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+            return directory
+        } catch {
+            return nil
+        }
+    }
+
+    private func persistCurrentComposerDraft() {
+        guard !restoringComposerDraft else { return }
+        var store = Self.loadComposerDrafts()
+        let files = pendingFiles.map { file -> PendingFileSnapshot in
+            let state: String
+            let ref: AgentFileRef?
+            switch file.state {
+            case .uploading: state = "uploading"; ref = nil
+            case .waitingForNetwork: state = "waitingForNetwork"; ref = nil
+            case .ready(let value): state = "ready"; ref = value
+            case .failed: state = "failed"; ref = nil
+            }
+            return .init(id: file.id, name: file.name, mediaType: file.mediaType,
+                         cacheFileName: file.cacheFileName, state: state, fileRef: ref)
+        }
+        if composerDraft.isEmpty && files.isEmpty {
+            store.removeValue(forKey: composerDraftKey)
+        } else {
+            store[composerDraftKey] = .init(text: composerDraft, files: files)
+        }
+        if let data = try? JSONEncoder().encode(store) {
+            UserDefaults.standard.set(data, forKey: Self.composerDraftsKey)
+        }
+    }
+
+    private func restoreCurrentComposerDraft() {
+        restoringComposerDraft = true
+        defer { restoringComposerDraft = false }
+        let snapshot = Self.loadComposerDrafts()[composerDraftKey]
+        composerDraft = snapshot?.text ?? ""
+        let directory = Self.attachmentCacheDirectory()
+        pendingFiles = (snapshot?.files ?? []).compactMap { item in
+            guard let directory,
+                  let data = try? Data(contentsOf: directory.appendingPathComponent(item.cacheFileName))
+            else { return nil }
+            let state: PendingFile.State
+            switch item.state {
+            case "ready":
+                guard let ref = item.fileRef else { return nil }
+                state = .ready(ref)
+            case "failed": state = .failed
+            default: state = .waitingForNetwork
+            }
+            return PendingFile(
+                id: item.id, name: item.name, mediaType: item.mediaType, data: data,
+                image: item.mediaType.hasPrefix("image/") ? UIImage(data: data) : nil,
+                cacheFileName: item.cacheFileName, state: state)
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            for file in self.pendingFiles where file.state == .waitingForNetwork {
+                self.retryPendingFile(file.id)
+            }
+            self.tryStartPendingAttachmentSend()
+        }
+    }
+
+    private func migrateComposerDraft(from oldKey: String, to newKey: String) {
+        guard oldKey != newKey else { return }
+        var store = Self.loadComposerDrafts()
+        if let value = store.removeValue(forKey: oldKey) { store[newKey] = value }
+        if let data = try? JSONEncoder().encode(store) {
+            UserDefaults.standard.set(data, forKey: Self.composerDraftsKey)
+        }
+    }
 
     // Mic (recording bar: waveform + timer, web VoiceWaveform parity)
     var isRecording = false
@@ -1442,6 +1883,19 @@ final class AssistantVM {
     private var meterTask: Task<Void, Never>?
     /// Text the mic transcription appends — the composer view observes this.
     var dictatedText: String = ""
+    private static let dictationFailureKey = "alma.assistant.dictationFailure.v2"
+    var dictationFailure: String? = UserDefaults.standard.string(forKey: AssistantVM.dictationFailureKey) {
+        didSet {
+            if let dictationFailure {
+                UserDefaults.standard.set(dictationFailure, forKey: Self.dictationFailureKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.dictationFailureKey)
+            }
+        }
+    }
+    var canRetryDictation: Bool {
+        dictationFailure != nil && FileManager.default.fileExists(atPath: recordingURL.path)
+    }
 
     // Model pill + picker (web AgentModelSelector parity)
     var modelLabel: String?          // live label from the stream's model_info event
@@ -1493,13 +1947,22 @@ final class AssistantVM {
     var signedURLs: [String: URL] = [:]
 
     private var pollTask: Task<Void, Never>?
+    private static let parityLocalMigrationKey = "alma.assistant.parity-v2.local-migration"
 
     // ── Bootstrap + polling ────────────────────────────────────────────────
 
     func bootstrap() async {
+        migrateParityLocalStateIfNeeded()
+        restoreDurableDictationRecoveryIfNeeded()
         registerObserversOnce()
         await loadModels()
-        await loadActiveConversation()
+        if !shouldRestoreProvisionalSession {
+            await loadActiveConversation()
+        } else {
+            conversationId = nil
+            AlmaTurnLog.event("composer.provisionalRestored", selectedSessionIdentity)
+        }
+        restoreCurrentComposerDraft()
         await recoverFromPersistedDescriptor()
         async let drive: Void = loadPlanDrive()
         async let todos: Void = loadDailyAgentTodos()
@@ -1510,6 +1973,53 @@ final class AssistantVM {
         // became terminal while the app was dead. Recovery clears that stale
         // descriptor; this drain then resumes the exact scoped conversation.
         scheduleQueuedOwnerMessage()
+    }
+
+    /// One-way, non-lossy migration. Earlier builds kept an unfinished dictation
+    /// only in NSTemporaryDirectory; copy it into the durable Application Support
+    /// location before bootstrap. Existing queue/recoverable-turn keys retain
+    /// their original names and are therefore read in place without rewriting.
+    private func migrateParityLocalStateIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard defaults.integer(forKey: Self.parityLocalMigrationKey) < 2 else { return }
+        let legacyDictation = FileManager.default.temporaryDirectory
+            .appendingPathComponent("alma-dictation.m4a")
+        let durableDictation = recordingURL
+        if FileManager.default.fileExists(atPath: legacyDictation.path),
+           !FileManager.default.fileExists(atPath: durableDictation.path) {
+            do {
+                try FileManager.default.copyItem(at: legacyDictation, to: durableDictation)
+                dictationFailure = "আগের অসমাপ্ত voice recording রাখা আছে — Retry করুন"
+                AlmaTurnLog.event("migration.dictation", "legacy-to-durable")
+            } catch {
+                AlmaTurnLog.event("migration.dictationFailed", String(describing: error))
+            }
+        }
+        defaults.set(2, forKey: Self.parityLocalMigrationKey)
+        AlmaTurnLog.event("migration.localState", "v2")
+    }
+
+    /// This check deliberately runs on every launch, not only during the one-time
+    /// temp-file migration. A kill can happen after the durable file is written
+    /// but before transcription returns; the remaining bytes are themselves the
+    /// recovery source of truth.
+    private func restoreDurableDictationRecoveryIfNeeded() {
+        guard FileManager.default.fileExists(atPath: recordingURL.path) else { return }
+        if dictationFailure == nil {
+            dictationFailure = "অসমাপ্ত voice recording রাখা আছে — Retry করুন"
+        }
+        AlmaTurnLog.event("dictation.recoveryReady", "durable-audio-present")
+    }
+
+    private var shouldRestoreProvisionalSession: Bool {
+        guard !selectedSessionIdentity.hasPrefix("server:") else { return false }
+        if let pendingAttachmentSend,
+           pendingAttachmentSend.conversationId == nil,
+           pendingAttachmentSend.sessionIdentity == selectedSessionIdentity { return true }
+        guard let snapshot = Self.loadComposerDrafts()["session:\(selectedSessionIdentity)"] else {
+            return false
+        }
+        return !snapshot.text.isEmpty || !snapshot.files.isEmpty
     }
 
     /// PR 5 — kill/relaunch recovery: the persisted descriptor outlives the
@@ -1536,8 +2046,7 @@ final class AssistantVM {
             conversationTitle = "ALMA AI"
             localIdByServerId = [:]
             lastSyncStamp = nil
-            paginatedPrefixCount = 0
-            canLoadOlder = false
+            resetHistoryWindowState()
             messages = []
             openTasks = []
             artifacts = []
@@ -1580,7 +2089,9 @@ final class AssistantVM {
         }
         conversationId = rt.conversationId
         if !messages.contains(where: { $0.role == .user && $0.text == text }) {
-            var owner = AgentChatMessage(id: "local-recovered-\(rt.clientMessageId)", role: .user, text: text)
+            var owner = AgentChatMessage(
+                id: "local-recovered-\(rt.clientMessageId)", role: .user,
+                clientMessageId: rt.clientMessageId, outgoingState: .checking, text: text)
             owner.fileRefs = files
             messages.append(owner)
         }
@@ -1633,6 +2144,7 @@ final class AssistantVM {
                 self.isInBackground = false
                 self.lastForegroundAt = Date()
                 AlmaTurnLog.event("turn.foreground")
+                self.resumePendingAttachmentUploads()
                 await self.recoverTurnState(trigger: "foreground")
             }
         })
@@ -1646,6 +2158,7 @@ final class AssistantVM {
                 // would otherwise silently disable the poll loop + stall
                 // watchdog for the rest of the session.
                 self.isInBackground = false
+                self.resumePendingAttachmentUploads()
                 await self.recoverTurnState(trigger: "active")               // idempotent re-check
             }
         })
@@ -1678,12 +2191,50 @@ final class AssistantVM {
     // A native chat row can contain rich text, tools and cards. Keep the initial
     // window compact like ChatGPT/Claude; older messages remain one tap away.
     static let historyWindow = 24
+    /// Keep the mounted SwiftUI tree bounded even after many "older" pages.
+    /// Rich agent rows can contain markdown, media and action cards, so mounting
+    /// an entire multi-year conversation is materially more expensive than
+    /// keeping a small reversible viewport cache.
+    static let mountedHistoryLimit = historyWindow * 3
+    static let historyCacheLimit = historyWindow * 12
     /// Max createdAt seen in the last window (ISO — lexicographic order works).
     private var lastSyncStamp: String?
-    /// Rows PREPENDED via "load older" — merge preserves them above the window.
-    private var paginatedPrefixCount = 0
+    /// Rows evicted from either side of the mounted window. They remain ordered
+    /// and searchable, and can be promoted back without another network hop.
+    private var olderHistoryCache: [AgentChatMessage] = []
+    private var newerHistoryCache: [AgentChatMessage] = []
+    private var serverHasOlder = false
+    private var serverHasNewer = false
     var canLoadOlder = false
     var loadingOlder = false
+    var canLoadNewer: Bool { !newerHistoryCache.isEmpty || serverHasNewer }
+
+    /// Bounded local index used by Search in this chat. Dedupe is important while
+    /// an optimistic row is being replaced by its canonical server row.
+    var searchableMessages: [AgentChatMessage] {
+        var seen = Set<String>()
+        return (olderHistoryCache + messages + newerHistoryCache).filter { seen.insert($0.id).inserted }
+    }
+
+    private func resetHistoryWindowState() {
+        olderHistoryCache = []
+        newerHistoryCache = []
+        serverHasOlder = false
+        serverHasNewer = false
+        canLoadOlder = false
+    }
+
+    private func trimHistoryCaches() {
+        if olderHistoryCache.count > Self.historyCacheLimit {
+            olderHistoryCache.removeFirst(olderHistoryCache.count - Self.historyCacheLimit)
+            serverHasOlder = true
+        }
+        if newerHistoryCache.count > Self.historyCacheLimit {
+            newerHistoryCache.removeLast(newerHistoryCache.count - Self.historyCacheLimit)
+            // Trimmed rows are recoverable through the additive `after` cursor.
+            serverHasNewer = true
+        }
+    }
 
     func loadMessages(showSpinner: Bool = false) async {
         guard let cid = conversationId else { return }
@@ -1696,7 +2247,8 @@ final class AssistantVM {
             // Never clobber an in-flight optimistic/streaming tail with the poll.
             guard !isStreaming else { return }
             mergeServerMessages(wire)
-            canLoadOlder = wire.count >= Self.historyWindow || paginatedPrefixCount > 0
+            serverHasOlder = wire.count >= Self.historyWindow
+            canLoadOlder = !olderHistoryCache.isEmpty || serverHasOlder
             authExpired = false
             await loadOpenTasks()
         } catch AlmaAPIError.notAuthenticated { authExpired = true } catch {
@@ -1725,23 +2277,143 @@ final class AssistantVM {
         AlmaTurnLog.event("sync.olderPage.begin", "mounted=\(messages.count)")
         loadingOlder = true
         defer { loadingOlder = false }
-        guard let older: [AgentMessageWire] = try? await AlmaAPI.shared.get(
-            "/api/assistant/conversations/\(cid)/messages",
-            query: ["limit": String(Self.historyWindow), "before": oldest.id]) else { return }
-        canLoadOlder = older.count >= Self.historyWindow
-        // A server without cursor support echoes rows we already hold — drop them
-        // (graceful against an un-upgraded backend during rollout).
-        let known = Set(messages.map(\.id))
-        let fresh = older.filter { !known.contains($0.id) }
-        guard !fresh.isEmpty else { canLoadOlder = false; return }
-        let rows = fresh.map(AgentChatMessage.from)
+        let rows: [AgentChatMessage]
+        if !olderHistoryCache.isEmpty {
+            let count = min(Self.historyWindow, olderHistoryCache.count)
+            rows = Array(olderHistoryCache.suffix(count))
+            olderHistoryCache.removeLast(count)
+        } else {
+            guard let older: [AgentMessageWire] = try? await AlmaAPI.shared.get(
+                "/api/assistant/conversations/\(cid)/messages",
+                query: ["limit": String(Self.historyWindow), "before": oldest.id]) else { return }
+            serverHasOlder = older.count >= Self.historyWindow
+            // A server without cursor support echoes rows we already hold — drop them
+            // (graceful against an un-upgraded backend during rollout).
+            let known = Set((olderHistoryCache + messages + newerHistoryCache).map(\.id))
+            rows = older.filter { !known.contains($0.id) }.map(AgentChatMessage.from)
+            guard !rows.isEmpty else {
+                serverHasOlder = false
+                canLoadOlder = !olderHistoryCache.isEmpty
+                return
+            }
+        }
         var tx = Transaction()
         tx.disablesAnimations = true
-        withTransaction(tx) { messages.insert(contentsOf: rows, at: 0) }
-        paginatedPrefixCount += rows.count
+        withTransaction(tx) {
+            messages.insert(contentsOf: rows, at: 0)
+            if messages.count > Self.mountedHistoryLimit {
+                let overflow = messages.count - Self.mountedHistoryLimit
+                newerHistoryCache.insert(contentsOf: messages.suffix(overflow), at: 0)
+                messages.removeLast(overflow)
+            }
+        }
+        if !newerHistoryCache.isEmpty { serverHasNewer = true }
+        canLoadOlder = !olderHistoryCache.isEmpty || serverHasOlder
+        trimHistoryCaches()
         AlmaTurnLog.event(
             "sync.olderPage.end",
-            "added=\(rows.count) mounted=\(messages.count) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+            "added=\(rows.count) mounted=\(messages.count) cachedOlder=\(olderHistoryCache.count) cachedNewer=\(newerHistoryCache.count) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+    }
+
+    /// Reverse of `loadOlderMessages`: restores an evicted newer page and moves
+    /// the opposite edge into the older cache. No row disappears from the local
+    /// session index and the mounted tree never exceeds the fixed budget.
+    func loadNewerMessages() async {
+        guard canLoadNewer else { return }
+        let rows: [AgentChatMessage]
+        if !newerHistoryCache.isEmpty {
+            let count = min(Self.historyWindow, newerHistoryCache.count)
+            rows = Array(newerHistoryCache.prefix(count))
+            newerHistoryCache.removeFirst(count)
+        } else {
+            guard serverHasNewer, let cid = conversationId, let newest = messages.last,
+                  let newer: [AgentMessageWire] = try? await AlmaAPI.shared.get(
+                    "/api/assistant/conversations/\(cid)/messages",
+                    query: ["limit": String(Self.historyWindow), "after": newest.serverId ?? newest.id])
+            else { return }
+            let known = Set((olderHistoryCache + messages + newerHistoryCache).map { $0.serverId ?? $0.id })
+            rows = newer.filter { !known.contains($0.id) }.map(AgentChatMessage.from)
+            serverHasNewer = newer.count >= Self.historyWindow
+            guard !rows.isEmpty else { serverHasNewer = false; return }
+        }
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) {
+            messages.append(contentsOf: rows)
+            if messages.count > Self.mountedHistoryLimit {
+                let overflow = messages.count - Self.mountedHistoryLimit
+                olderHistoryCache.append(contentsOf: messages.prefix(overflow))
+                messages.removeFirst(overflow)
+            }
+        }
+        canLoadOlder = !olderHistoryCache.isEmpty || serverHasOlder
+        trimHistoryCaches()
+        AlmaTurnLog.event("sync.newerPage", "mounted=\(messages.count) cachedOlder=\(olderHistoryCache.count) cachedNewer=\(newerHistoryCache.count)")
+    }
+
+    /// Promote a cached search hit into the mounted window while preserving its
+    /// exact id. The caller can then scroll to it using the normal ScrollView id.
+    @discardableResult
+    func focusCachedMessage(_ id: String) -> Bool {
+        guard !messages.contains(where: { $0.id == id }) else { return true }
+        guard !isStreaming, recoverableTurn == nil else {
+            errorToast = "চলতি উত্তর শেষ হলে পুরোনো message খুলুন — বর্তমান stream অক্ষত আছে"
+            return false
+        }
+        let all = searchableMessages
+        guard let hit = all.firstIndex(where: { $0.id == id }) else { return false }
+        let half = Self.mountedHistoryLimit / 2
+        let start = max(0, min(hit - half, max(0, all.count - Self.mountedHistoryLimit)))
+        let end = min(all.count, start + Self.mountedHistoryLimit)
+        olderHistoryCache = Array(all[..<start])
+        messages = Array(all[start..<end])
+        newerHistoryCache = Array(all[end...])
+        canLoadOlder = !olderHistoryCache.isEmpty || serverHasOlder
+        trimHistoryCaches()
+        AlmaTurnLog.event("search.promote", "id=\(id) mounted=\(messages.count)")
+        return true
+    }
+
+    /// Library may index a source far outside the bounded chat cache. Materialize
+    /// a small server-backed window around that exact durable message before the
+    /// view scrolls; scrolling to an unmounted id is intentionally never treated
+    /// as success.
+    @discardableResult
+    func focusSessionFileSource(_ id: String) async -> Bool {
+        if focusCachedMessage(id) { return true }
+        guard !isStreaming, recoverableTurn == nil else { return false }
+        guard let cid = conversationId,
+              let target = indexedSessionFileMessages.first(where: { $0.id == id }) else {
+            errorToast = "File-এর source message পাওয়া যায়নি"
+            return false
+        }
+        let identity = selectedSessionIdentity
+        async let olderWire: [AgentMessageWire]? = try? await AlmaAPI.shared.get(
+            "/api/assistant/conversations/\(cid)/messages",
+            query: ["limit": String(Self.historyWindow), "before": id])
+        async let newerWire: [AgentMessageWire]? = try? await AlmaAPI.shared.get(
+            "/api/assistant/conversations/\(cid)/messages",
+            query: ["limit": String(Self.historyWindow), "after": id])
+        let (olderValue, newerValue) = await (olderWire, newerWire)
+        guard conversationId == cid, selectedSessionIdentity == identity,
+              !isStreaming, recoverableTurn == nil else {
+            AlmaTurnLog.event("library.sourcePromotionDiscarded", "selection-or-turn-changed")
+            return false
+        }
+        guard let olderValue, let newerValue else {
+            errorToast = "Source message লোড হয়নি — নেটওয়ার্ক দেখে Retry করুন"
+            return false
+        }
+        var seen = Set<String>()
+        let window = (olderValue.map(AgentChatMessage.from) + [target] + newerValue.map(AgentChatMessage.from))
+            .filter { seen.insert($0.id).inserted }
+        olderHistoryCache = []
+        newerHistoryCache = []
+        messages = Array(window.suffix(Self.mountedHistoryLimit))
+        serverHasOlder = olderValue.count >= Self.historyWindow
+        serverHasNewer = newerValue.count >= Self.historyWindow
+        canLoadOlder = serverHasOlder
+        AlmaTurnLog.event("library.sourcePromoted", "id=\(id) mounted=\(messages.count)")
+        return messages.contains(where: { $0.id == id })
     }
 
     /// Local ("stream-…" / "local-…") id per server message id — keeps SwiftUI row
@@ -1797,6 +2469,10 @@ final class AssistantVM {
             if incoming[i].thinkingMs == nil { incoming[i].thinkingMs = old.thinkingMs }
             if old.role == .user, !old.localImages.isEmpty { incoming[i].localImages = old.localImages }
             if old.role == .user, incoming[i].fileRefs.isEmpty { incoming[i].fileRefs = old.fileRefs }
+            if old.role == .user {
+                incoming[i].clientMessageId = old.clientMessageId
+                incoming[i].outgoingState = old.outgoingState == .failed ? .failed : .accepted
+            }
             // Delegation cards are live-session state (the server persists only a
             // plain tool row, web parity) — the settle merge must not eat them.
             if incoming[i].delegations.isEmpty { incoming[i].delegations = old.delegations }
@@ -1815,14 +2491,65 @@ final class AssistantVM {
         }
         // 1.4: authoritative reconciliation applies in ONE non-animated transaction —
         // height changes from server truth must not run springs mid-scroll.
-        // 4.1: rows prepended by "load older" sit ABOVE the refreshed window and
-        // are preserved verbatim (they are settled history — nothing to merge).
-        let prefix = Array(messages.prefix(paginatedPrefixCount))
+        // Reconcile in place while keeping the mounted tree bounded. When the
+        // owner is browsing older history, genuinely newer rows go into the
+        // reversible forward cache rather than duplicating the mounted prefix.
+        let browsingOlder = !newerHistoryCache.isEmpty || serverHasNewer
+        let incomingById = Dictionary(uniqueKeysWithValues: incoming.map { ($0.id, $0) })
+        var reconciled = messages.map { incomingById[$0.id] ?? $0 }
+        var known = Set(reconciled.map(\.id))
+        let additions = incoming.filter { known.insert($0.id).inserted }
+        if browsingOlder {
+            var cachedKnown = Set(newerHistoryCache.map(\.id))
+            newerHistoryCache.append(contentsOf: additions.filter { cachedKnown.insert($0.id).inserted })
+        } else {
+            reconciled.append(contentsOf: additions)
+            if reconciled.count > Self.mountedHistoryLimit {
+                let overflow = reconciled.count - Self.mountedHistoryLimit
+                let evicted = Array(reconciled.prefix(overflow))
+                var olderKnown = Set(olderHistoryCache.map(\.id))
+                olderHistoryCache.append(contentsOf: evicted.filter { olderKnown.insert($0.id).inserted })
+                reconciled.removeFirst(overflow)
+            }
+        }
+        trimHistoryCaches()
         var tx = Transaction()
         tx.disablesAnimations = true
-        withTransaction(tx) { messages = prefix + incoming }
+        withTransaction(tx) { messages = reconciled }
+        reconcileVisibleActionsWithRegistry()
         if let maxStamp = wire.compactMap(\.createdAt).max() { lastSyncStamp = maxStamp }
         AlmaTurnLog.event("turn.messagesReconciled", "count=\(incoming.count)")
+    }
+
+    /// Fold server cards into the one durable action registry, then project any
+    /// locally-known terminal state back into every mounted copy of that card.
+    /// This prevents history refresh, sheets and pending counters from drifting.
+    private func reconcileVisibleActionsWithRegistry() {
+        for i in messages.indices {
+            for j in messages[i].confirmCards.indices {
+                let card = messages[i].confirmCards[j]
+                if card.status != "pending",
+                   let state = ActionLifecycleState(rawValue: card.status) {
+                    setActionState(card.id, kind: "approval", state: state)
+                } else if let record = actionRegistry[card.id], record.state.isTerminal {
+                    messages[i].confirmCards[j].status = record.state.rawValue
+                } else if actionRegistry[card.id] == nil {
+                    setActionState(card.id, kind: "approval", state: .pending)
+                }
+            }
+            for j in messages[i].askCards.indices {
+                let card = messages[i].askCards[j]
+                if card.status == "answered" {
+                    setActionState(card.id, kind: "ask", state: .answered,
+                                   selectedOption: card.selectedOption)
+                } else if let record = actionRegistry[card.id], record.state == .answered {
+                    messages[i].askCards[j].status = "answered"
+                    messages[i].askCards[j].selectedOption = record.selectedOption
+                } else if actionRegistry[card.id] == nil {
+                    setActionState(card.id, kind: "ask", state: .pending)
+                }
+            }
+        }
     }
 
     /// Stream ended: settle the tail in place FIRST (prose stays on screen), then
@@ -2228,6 +2955,11 @@ final class AssistantVM {
             }
         }
         if !preserveDescriptor { recoverableTurn = nil }
+        if let clientMessageId = currentClientMessageId {
+            for index in messages.indices where messages[index].clientMessageId == clientMessageId {
+                messages[index].outgoingState = preserveDescriptor ? .checking : .failed
+            }
+        }
         AlmaTurnLog.event("turn.terminal", preserveDescriptor
                           ? "recovery:paused-offline" : "recovery:failed-no-turn")
         errorToast = message
@@ -2324,6 +3056,11 @@ final class AssistantVM {
 
     @discardableResult
     func archiveConversation(_ id: String) async -> Bool {
+        guard !conversationMutationBlocked(for: id) else {
+            errorToast = "চলতি কাজ শেষ বা Cancel করার পর Archive করুন"
+            AlmaAgentHaptics.warning()
+            return false
+        }
         guard beginSubmitting("conversation:\(id)") else { return false }
         defer { finishSubmitting("conversation:\(id)") }
         do {
@@ -2338,6 +3075,43 @@ final class AssistantVM {
             AlmaAgentHaptics.error()
             return false
         }
+    }
+
+    @discardableResult
+    func toggleConversationPin() async -> Bool {
+        guard let cid = conversationId,
+              beginSubmitting("conversation:\(cid)") else { return false }
+        defer { finishSubmitting("conversation:\(cid)") }
+        let old = conversations.first(where: { $0.id == cid })?.pinned ?? false
+        do {
+            let updated: AgentConversation = try await AlmaAPI.shared.send(
+                "PATCH", "/api/assistant/conversations/\(cid)", body: ["pinned": !old])
+            if let index = conversations.firstIndex(where: { $0.id == cid }) {
+                conversations[index] = updated
+            }
+            pinnedOverrides[cid] = updated.pinned ?? !old
+            AlmaAgentHaptics.success()
+            return true
+        } catch {
+            errorToast = "পিন বদলানো গেল না — আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
+            return false
+        }
+    }
+
+    var currentConversationPinned: Bool {
+        guard let conversationId else { return false }
+        if let pinned = pinnedOverrides[conversationId] { return pinned }
+        return conversations.first(where: { $0.id == conversationId })?.pinned ?? false
+    }
+
+    var conversationMutationBlocked: Bool {
+        conversationId.map { conversationMutationBlocked(for: $0) } ?? false
+    }
+
+    func conversationMutationBlocked(for id: String) -> Bool {
+        (conversationId == id && (isStreaming || recoverableTurn != nil))
+            || activeBackgroundTurns.contains(where: { $0.conversationId == id })
     }
 
     @discardableResult
@@ -2388,6 +3162,7 @@ final class AssistantVM {
             errorToast = "চলতি উত্তর শেষ হলে অন্য কথোপকথন খুলুন — বর্তমান কাজটি সুরক্ষিত আছে"
             return
         }
+        persistCurrentComposerDraft()
         restoreTick += 1     // screen replays the session-opening awakening
         stopStreaming(cancelServer: false)
         currentClientMessageId = nil
@@ -2399,11 +3174,16 @@ final class AssistantVM {
         conversationTitle = selected?.title?.isEmpty == false ? selected!.title! : "ALMA AI"
         localIdByServerId = [:]   // 1.5: optimistic-ID maps never leak across conversations
         lastSyncStamp = nil       // 4.1: window/delta cursors are per-conversation
-        paginatedPrefixCount = 0
-        canLoadOlder = false
+        resetHistoryWindowState()
         messages = []
         openTasks = []
         artifacts = []
+        indexedSessionFileMessages = []
+        sessionFileIndexConversationId = nil
+        // Restore only after the old timeline is gone. A persisted attachment
+        // transaction may re-create its waiting owner intent; it must land in
+        // the destination conversation, never briefly in the previous one.
+        restoreCurrentComposerDraft()
         await loadMessages(showSpinner: true)
         restoreReadyTick += 1   // history loaded → awakening may resolve to success
         await loadArtifacts()
@@ -2418,6 +3198,7 @@ final class AssistantVM {
             errorToast = "চলতি উত্তর শেষ হলে নতুন কথোপকথন খুলুন — বর্তমান কাজটি সুরক্ষিত আছে"
             return
         }
+        persistCurrentComposerDraft()
         stopStreaming(cancelServer: false)
         currentClientMessageId = nil
         conversationId = nil     // server creates one on the first send
@@ -2426,21 +3207,27 @@ final class AssistantVM {
         conversationTitle = "ALMA AI"
         localIdByServerId = [:]  // 1.5: optimistic-ID maps never leak across conversations
         lastSyncStamp = nil      // 4.1: window/delta cursors are per-conversation
-        paginatedPrefixCount = 0
-        canLoadOlder = false
+        resetHistoryWindowState()
         // Owner rule 2026-07-12: a NEW chat always starts on Auto (router picks) —
         // it must not inherit the previous conversation's pinned model (the picker
         // was silently carrying over e.g. Sonnet 4.6 from the last-opened chat).
         modelId = nil
         messages = []
-        pendingFiles = []
+        restoreCurrentComposerDraft()
         openTasks = []
         artifacts = []
+        indexedSessionFileMessages = []
+        sessionFileIndexConversationId = nil
         AlmaAgentHaptics.light()
     }
 
     @discardableResult
     func deleteConversation(_ id: String) async -> Bool {
+        guard !conversationMutationBlocked(for: id) else {
+            errorToast = "চলতি কাজ শেষ বা Cancel করার পর Delete করুন"
+            AlmaAgentHaptics.warning()
+            return false
+        }
         guard beginSubmitting("conversation:\(id)") else { return false }
         defer { finishSubmitting("conversation:\(id)") }
         do {
@@ -2584,6 +3371,38 @@ final class AssistantVM {
             "/api/assistant/conversations/\(cid)/artifacts") {
             artifacts = rows
         }
+    }
+
+    /// Library indexes the complete session independently of the mounted chat
+    /// viewport. Each page is released after extracting file-bearing rows, so a
+    /// huge conversation does not turn into a huge SwiftUI tree or memory spike.
+    func loadFullSessionFileIndex() async {
+        guard let cid = conversationId,
+              sessionFileIndexConversationId != cid,
+              !sessionFilesIndexLoading else { return }
+        sessionFilesIndexLoading = true
+        defer { sessionFilesIndexLoading = false }
+        var fileRows: [AgentChatMessage] = []
+        var before: String?
+        var seenAnchors = Set<String>()
+        for _ in 0..<200 {
+            var query: [String: String?] = ["limit": "200"]
+            if let before { query["before"] = before }
+            guard let wire: [AgentMessageWire] = try? await AlmaAPI.shared.get(
+                "/api/assistant/conversations/\(cid)/messages", query: query) else {
+                errorToast = "Library-এর পুরোনো file index পুরোটা লোড হয়নি — Retry করুন"
+                return
+            }
+            let page = wire.map(AgentChatMessage.from)
+            fileRows.append(contentsOf: page.filter { !$0.fileRefs.isEmpty })
+            guard wire.count == 200, let anchor = wire.first?.id,
+                  seenAnchors.insert(anchor).inserted else { break }
+            before = anchor
+        }
+        var ids = Set<String>()
+        indexedSessionFileMessages = fileRows.filter { ids.insert($0.id).inserted }
+        sessionFileIndexConversationId = cid
+        AlmaTurnLog.event("library.indexReady", "messagesWithFiles=\(indexedSessionFileMessages.count)")
     }
 
     /// Web parity: GET /api/assistant/plan-driver, polled while the chat is open
@@ -2749,38 +3568,96 @@ final class AssistantVM {
     }
 
     func toggleTTS(for message: AgentChatMessage) {
-        if ttsPlayingId == message.id {
+        if ttsPlayingId == message.id || ttsLoadingId == message.id {
+            ttsGeneration = UUID()
             ttsPlayer?.stop()
             ttsPlayer = nil
             ttsPlayingId = nil
+            ttsLoadingId = nil
+            ttsChunks = []
             return
         }
         guard ttsLoadingId == nil else { return }
+        ttsGeneration = UUID()
+        let generation = ttsGeneration
+        ttsChunks = Self.ttsChunks(for: message.text)
+        guard !ttsChunks.isEmpty else { return }
         ttsLoadingId = message.id
         AlmaAgentHaptics.light()
         Task { [weak self] in
-            guard let self else { return }
-            defer { self.ttsLoadingId = nil }
-            do {
-                let mp3 = try await AssistantNet.postJSONForData(
-                    path: "/api/assistant/tts", body: ["text": String(message.text.prefix(600))])
-                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-                try AVAudioSession.sharedInstance().setActive(true)
-                let player = try AVAudioPlayer(data: mp3)
-                let delegate = AssistantTTSDelegate { [weak self] in
-                    Task { @MainActor in
-                        self?.ttsPlayingId = nil
-                        self?.ttsPlayer = nil
-                    }
-                }
-                player.delegate = delegate
-                self.ttsDelegate = delegate
-                self.ttsPlayer = player
-                self.ttsPlayingId = message.id
-                player.play()
-            } catch {
-                self.errorToast = "ভয়েস চালানো গেল না"
+            await self?.playNextTTSChunk(messageId: message.id, generation: generation)
+        }
+    }
+
+    private static func ttsChunks(for text: String, limit: Int = 550) -> [String] {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return [] }
+        let units = normalized.components(separatedBy: "\n")
+            .flatMap { line in
+                line.split(whereSeparator: { ".!?।!?".contains($0) })
+                    .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             }
+            .filter { !$0.isEmpty }
+        var result: [String] = []
+        var current = ""
+        for unit in units {
+            if unit.count > limit {
+                if !current.isEmpty { result.append(current); current = "" }
+                var start = unit.startIndex
+                while start < unit.endIndex {
+                    let end = unit.index(start, offsetBy: limit, limitedBy: unit.endIndex) ?? unit.endIndex
+                    result.append(String(unit[start..<end]))
+                    start = end
+                }
+            } else if current.isEmpty {
+                current = unit
+            } else if current.count + unit.count + 2 <= limit {
+                current += "। " + unit
+            } else {
+                result.append(current)
+                current = unit
+            }
+        }
+        if !current.isEmpty { result.append(current) }
+        return result
+    }
+
+    private func playNextTTSChunk(messageId: String, generation: UUID) async {
+        guard generation == ttsGeneration else { return }
+        guard !ttsChunks.isEmpty else {
+            ttsLoadingId = nil
+            ttsPlayingId = nil
+            ttsPlayer = nil
+            return
+        }
+        let chunk = ttsChunks.removeFirst()
+        ttsLoadingId = messageId
+        do {
+            let mp3 = try await AssistantNet.postJSONForData(
+                path: "/api/assistant/tts", body: ["text": chunk])
+            guard generation == ttsGeneration else { return }
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+            let player = try AVAudioPlayer(data: mp3)
+            let delegate = AssistantTTSDelegate { [weak self] in
+                Task { @MainActor in
+                    guard let self, generation == self.ttsGeneration else { return }
+                    self.ttsPlayer = nil
+                    await self.playNextTTSChunk(messageId: messageId, generation: generation)
+                }
+            }
+            player.delegate = delegate
+            ttsDelegate = delegate
+            ttsPlayer = player
+            ttsLoadingId = nil
+            ttsPlayingId = messageId
+            player.play()
+        } catch {
+            guard generation == ttsGeneration else { return }
+            ttsLoadingId = nil
+            ttsPlayingId = nil
+            ttsChunks = []
+            errorToast = "ভয়েস চালানো গেল না — আবার চেষ্টা করুন"
         }
     }
 
@@ -2845,39 +3722,71 @@ final class AssistantVM {
         }   // manual message resets the budget and cancels a queued machine turn
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let structuredAutoContinue = isAutoContinue && autoContinueFromTurnId != nil
+        if !structuredAutoContinue, pendingAttachmentSend != nil {
+            errorToast = "আগের attachment-সহ বার্তাটি প্রস্তুত হচ্ছে — লেখা ও ফাইল নিরাপদ আছে"
+            return
+        }
+        if !structuredAutoContinue, pendingFiles.contains(where: { $0.state == .failed }) {
+            errorToast = "ব্যর্থ attachment-টি Retry বা Remove না করা পর্যন্ত Send হবে না"
+            AlmaAgentHaptics.warning()
+            return
+        }
+        let attachmentIds = structuredAutoContinue ? [] : pendingFiles.map(\.id)
         let readyPendingFiles = pendingFiles.filter {
             if case .ready = $0.state { return true } else { return false }
         }
         let readyFiles: [AgentFileRef] = readyPendingFiles.compactMap {
             if case .ready(let ref) = $0.state { return ref } else { return nil }
         }
-        guard !text.isEmpty || !readyFiles.isEmpty || structuredAutoContinue else { return }
+        guard !text.isEmpty || !pendingFiles.isEmpty || structuredAutoContinue else { return }
+        if !structuredAutoContinue, readyPendingFiles.count != pendingFiles.count {
+            let clientMessageId = UUID().uuidString
+            pendingAttachmentSend = .init(
+                clientMessageId: clientMessageId, conversationId: conversationId,
+                sessionIdentity: selectedSessionIdentity, text: text,
+                attachmentIds: attachmentIds, askCardId: askCardId, createdAt: Date())
+            upsertLocalOwnerIntent(
+                clientMessageId: clientMessageId, text: text, files: readyFiles,
+                attachmentIds: attachmentIds, state: .waitingForAttachments)
+            errorToast = "Attachment upload হচ্ছে — শেষ হলেই এই বার্তাটি পাঠানো হবে"
+            AlmaAgentTickHaptic.ownerSend()
+            AlmaTurnLog.event("turn.waitingForAttachments", "count=\(attachmentIds.count)")
+            return
+        }
+        let clientMessageId = structuredAutoContinue ? nil : UUID().uuidString
         if isStreaming || recoverableTurn != nil {
             guard !structuredAutoContinue else { return }
             queueOwnerMessage(text: text, files: readyFiles, askCardId: askCardId,
-                              sentPendingIds: Set(readyPendingFiles.map(\.id)))
+                              sentPendingIds: [], clientMessageId: clientMessageId,
+                              attachmentIds: attachmentIds)
             return
         }
         startPreparedTurn(text: text, files: readyFiles,
                           localImages: readyPendingFiles.compactMap(\.image),
                           isAutoContinue: isAutoContinue, askCardId: askCardId,
                           autoContinueFromTurnId: autoContinueFromTurnId,
-                          clientMessageId: structuredAutoContinue ? nil : UUID().uuidString)
-        let sentIds = Set(readyPendingFiles.map(\.id))
-        pendingFiles.removeAll { sentIds.contains($0.id) }
+                          clientMessageId: clientMessageId,
+                          attachmentIds: attachmentIds)
     }
 
     private func queueOwnerMessage(text: String, files: [AgentFileRef], askCardId: String?,
-                                   sentPendingIds: Set<UUID>) {
+                                   sentPendingIds: Set<UUID>,
+                                   clientMessageId: String? = nil,
+                                   attachmentIds: [UUID] = []) {
+        let intentId = clientMessageId ?? UUID().uuidString
         let queued = QueuedOwnerMessage(
-            id: UUID().uuidString, conversationId: conversationId,
+            id: intentId, conversationId: conversationId,
             newConversationClientMessageId: conversationId == nil
                 ? (currentClientMessageId ?? recoverableTurn?.clientMessageId) : nil,
             text: text,
-            files: files, askCardId: askCardId, createdAt: Date(),
+            files: files, attachmentIds: attachmentIds,
+            askCardId: askCardId, createdAt: Date(),
             sessionIdentity: conversationId == nil ? selectedSessionIdentity : nil)
         queuedOwnerMessages.append(queued)
         pendingFiles.removeAll { sentPendingIds.contains($0.id) }
+        upsertLocalOwnerIntent(
+            clientMessageId: intentId, text: text, files: files,
+            attachmentIds: attachmentIds, state: .queued)
         errorToast = "বার্তাটি অপেক্ষায় আছে — চলতি উত্তর শেষ হলে পাঠানো হবে"
         AlmaAgentTickHaptic.ownerSend()
         AlmaTurnLog.event("turn.ownerMessageQueued", "count=\(queuedOwnerMessages.count)")
@@ -2886,17 +3795,21 @@ final class AssistantVM {
     private func startPreparedTurn(text: String, files: [AgentFileRef], localImages: [UIImage] = [],
                                    isAutoContinue: Bool = false, askCardId: String? = nil,
                                    autoContinueFromTurnId: String? = nil,
-                                   clientMessageId: String?) {
+                                   clientMessageId: String?, attachmentIds: [UUID] = []) {
         let structuredAutoContinue = isAutoContinue && autoContinueFromTurnId != nil
         guard !isStreaming, recoverableTurn == nil else { return }
         AlmaAgentTickHaptic.ownerSend()
         // A structured continuation is server control state, not a new owner
         // message. Rendering a bubble here was the native-only duplicate-turn bug.
         if !structuredAutoContinue {
-            var userMsg = AgentChatMessage(id: "local-\(UUID().uuidString)", role: .user, text: text)
-            userMsg.localImages = localImages
-            userMsg.fileRefs = files
-            messages.append(userMsg)
+            let intentId = clientMessageId ?? UUID().uuidString
+            upsertLocalOwnerIntent(
+                clientMessageId: intentId, text: text, files: files,
+                attachmentIds: attachmentIds, state: .submitting)
+            if let index = messages.firstIndex(where: { $0.clientMessageId == intentId }),
+               !localImages.isEmpty {
+                messages[index].localImages = localImages
+            }
         }
         isStreaming = true
         lastLiveEventAt = Date()   // stall clock starts at the send, not at first event
@@ -2930,6 +3843,7 @@ final class AssistantVM {
                 clientMessageId: clientMessageId, lastSeq: -1, startedAt: Date(),
                 message: text, files: files, modelId: modelId ?? "auto",
                 projectId: currentProjectId, askCardId: askCardId,
+                attachmentIds: attachmentIds,
                 sessionIdentity: selectedSessionIdentity)
         }
         startDirectTurn(body)
@@ -2956,10 +3870,17 @@ final class AssistantVM {
     }
 
     private func adoptNewConversationId(_ id: String) {
+        let previousDraftKey = composerDraftKey
         bindQueuedOwnerMessages(
             to: id,
             clientMessageId: currentClientMessageId ?? recoverableTurn?.clientMessageId)
         conversationId = id
+        migrateComposerDraft(from: previousDraftKey, to: composerDraftKey)
+        if var pendingAttachmentSend,
+           pendingAttachmentSend.sessionIdentity == selectedSessionIdentity {
+            pendingAttachmentSend.conversationId = id
+            self.pendingAttachmentSend = pendingAttachmentSend
+        }
     }
 
     private func drainQueuedOwnerMessageIfPossible() {
@@ -2978,7 +3899,8 @@ final class AssistantVM {
         let queued = queuedOwnerMessages.remove(at: index)
         startPreparedTurn(text: queued.text, files: queued.files,
                           askCardId: queued.askCardId,
-                          clientMessageId: queued.id)
+                          clientMessageId: queued.id,
+                          attachmentIds: queued.attachmentIds ?? [])
     }
 
     private func startDirectTurn(_ body: ChatBody) {
@@ -3021,6 +3943,13 @@ final class AssistantVM {
             var req = URLRequest(url: AssistantNet.base.appendingPathComponent("/api/assistant/chat"))
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            #if DEBUG
+            if AlmaMergeReadinessURLProtocol.scenario == "attachmentAtomic" {
+                req.setValue(String(body.files.count), forHTTPHeaderField: "X-ALMA-Fixture-File-Count")
+                req.setValue(body.files.first?.path ?? "", forHTTPHeaderField: "X-ALMA-Fixture-File-Path")
+                req.setValue(body.clientMessageId ?? "", forHTTPHeaderField: "X-ALMA-Fixture-Client-Message")
+            }
+            #endif
             req.httpBody = try JSONEncoder().encode(body)
 
             let firstEvent = AssistantNet.EventFlag()
@@ -3094,6 +4023,12 @@ final class AssistantVM {
             if conversationId == nil, let duplicateConversationId = dup.conversationId {
                 adoptNewConversationId(duplicateConversationId)
             }
+            if var descriptor = recoverableTurn {
+                descriptor.conversationId = conversationId
+                descriptor.turnId = dup.turnId
+                recoverableTurn = descriptor
+                markOutgoingAccepted(clientMessageId: descriptor.clientMessageId)
+            }
             do {
                 try await tailDurableTurn(dup.turnId, afterSeq: -1, buffer: buffer)
                 guard ownsDirectTurn(generation: generation, sessionIdentity: sessionIdentity),
@@ -3156,9 +4091,18 @@ final class AssistantVM {
                 }
             case .authentication:
                 authExpired = true
-            case .server, .terminalAgentError:
-                errorToast = kind.banglaMessage
-                AlmaAgentHaptics.error()
+            case .server(let status):
+                // A 5xx can arrive after the server accepted the idempotency key,
+                // so it remains acceptance-unknown and is reconciled/retried with
+                // that same key. A 4xx is a definite rejection and may expose the
+                // normal failed-message actions.
+                await failRecovery(
+                    preserveDescriptor: status >= 500,
+                    message: status >= 500
+                        ? "Server status নিশ্চিত নয় — বার্তাটি নিরাপদ আছে, আবার যাচাই করুন"
+                        : kind.banglaMessage)
+            case .terminalAgentError:
+                await failRecovery(preserveDescriptor: false, message: kind.banglaMessage)
             }
         }
     }
@@ -3210,9 +4154,14 @@ final class AssistantVM {
             adoptNewConversationId(enqueuedConversationId)
         }
         if let cid = conversationId, let cmid = body.clientMessageId {
-            recoverableTurn = RecoverableTurn(conversationId: cid, turnId: enq.turnId,
-                                              clientMessageId: cmid, lastSeq: -1, startedAt: Date(),
-                                              sessionIdentity: selectedSessionIdentity)
+            var descriptor = recoverableTurn ?? RecoverableTurn(
+                conversationId: cid, turnId: enq.turnId,
+                clientMessageId: cmid, lastSeq: -1, startedAt: Date(),
+                sessionIdentity: selectedSessionIdentity)
+            descriptor.conversationId = cid
+            descriptor.turnId = enq.turnId
+            recoverableTurn = descriptor
+            markOutgoingAccepted(clientMessageId: cmid)
         }
         try await tailDurableTurn(enq.turnId, afterSeq: -1, buffer: buffer)
     }
@@ -3275,6 +4224,7 @@ final class AssistantVM {
                 if var rt = recoverableTurn {
                     rt.conversationId = id
                     recoverableTurn = rt
+                    markOutgoingAccepted(clientMessageId: rt.clientMessageId)
                 }
             case .turnId(let id):
                 currentTurnId = id
@@ -3290,6 +4240,7 @@ final class AssistantVM {
                     descriptor.lastSeq = seqBox.value
                     descriptor.sessionIdentity = selectedSessionIdentity
                     recoverableTurn = descriptor
+                    markOutgoingAccepted(clientMessageId: cmid)
                 }
             case .personalMode(let active):
                 personalMode = active
@@ -3481,6 +4432,9 @@ final class AssistantVM {
                 // authoritative replay rebuilds the tail without doubling.
                 if let turnId { currentTurnId = turnId }
                 if conversationId == nil, let convId { adoptNewConversationId(convId) }
+                if let clientMessageId = recoverableTurn?.clientMessageId {
+                    markOutgoingAccepted(clientMessageId: clientMessageId)
+                }
                 if pendingReplayReset {
                     pendingReplayReset = false
                     resetStreamingTailForReplay()
@@ -3580,6 +4534,34 @@ final class AssistantVM {
 
     // ── Phase 0 stress fixture (roadmap) ───────────────────────────────────
 
+    #if DEBUG
+    /// Gate 1 proof: make a real local image transaction, immediately press Send
+    /// while its mocked upload is still delayed, then let the normal VM bind and
+    /// submit it. The URLProtocol rejects the chat request unless the file ref and
+    /// stable clientMessageId arrive together.
+    func runAttachmentAtomicFixture() {
+        conversationId = nil
+        selectedSessionIdentity = "fixture:attachment-atomic"
+        conversationTitle = "ALMA AI"
+        messages = []
+        composerDraft = "এই ছবির স্টক গুনে দাও"
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 220, height: 150))
+        let image = renderer.image { context in
+            UIColor(red: 0.12, green: 0.18, blue: 0.30, alpha: 1).setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 220, height: 150))
+            UIColor(red: 1.00, green: 0.43, blue: 0.31, alpha: 1).setFill()
+            context.fill(CGRect(x: 28, y: 34, width: 164, height: 82))
+        }
+        attachImage(image)
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard let self else { return }
+            self.send(self.composerDraft)
+            AlmaTurnLog.event("attachment.atomic.waiting", "send-during-upload")
+        }
+    }
+    #endif
+
     /// Local reproduction fixture — ALMA_ASSISTANT_FIXTURE=1. Builds 40 mixed
     /// rows (long/short Bangla + Banglish, interleaved thinking/tool/prose
     /// blocks, one 2,000+ char reply), then streams 1,000 small deltas into a
@@ -3654,6 +4636,12 @@ final class AssistantVM {
             .init(id: "fix-artifact", messageId: "fix-a-parity", type: "markdown",
                   title: "স্টক-অডিট.md", content: "# স্টক অডিট\n\nযাচাই করা রিপোর্ট।",
                   version: 1, createdAt: "2026-07-14T10:00:00.000Z"),
+            .init(id: "fix-generated-jpeg", messageId: "fix-a-parity", type: "jpeg",
+                  title: "ALMA-campaign.jpg", content: "https://picsum.photos/seed/alma-library/900/700",
+                  version: 1, createdAt: "2026-07-14T10:03:00.000Z"),
+            .init(id: "fix-generated-pdf", messageId: "fix-a-parity", type: "pdf",
+                  title: "স্টক-সারাংশ.pdf", content: "ALMA stock summary\n\nGenerated PDF fixture preview.",
+                  version: 1, createdAt: "2026-07-14T10:04:00.000Z"),
             .init(id: "fix-plan-artifact", messageId: "fix-a-doc", type: "markdown",
                   title: "ঈদ-ক্যাম্পেইন-প্ল্যান.md", content: doc.text,
                   version: 1, createdAt: "2026-07-14T10:05:00.000Z"),
@@ -3683,6 +4671,23 @@ final class AssistantVM {
     func loadMergeReadinessActionFixture() {
         loadParityFixture()
         messages = Array(messages.prefix(2))
+        let scenario = ProcessInfo.processInfo.environment["ALMA_MERGE_MOCK"]
+            ?? ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("ALMA_MERGE_MOCK=") })?
+                .replacingOccurrences(of: "ALMA_MERGE_MOCK=", with: "")
+            ?? "default"
+        let suffix = scenario.replacingOccurrences(of: "[^A-Za-z0-9_-]", with: "-",
+                                                    options: .regularExpression)
+        for messageIndex in messages.indices {
+            messages[messageIndex].confirmCards = messages[messageIndex].confirmCards.map { card in
+                .init(id: "fix-approval-\(suffix)", summary: card.summary, status: card.status,
+                      actionType: card.actionType, costEstimate: card.costEstimate,
+                      approvedAt: card.approvedAt)
+            }
+            messages[messageIndex].askCards = messages[messageIndex].askCards.map { card in
+                .init(id: "fix-ask-\(suffix)", question: card.question, options: card.options,
+                      status: card.status, selectedOption: card.selectedOption)
+            }
+        }
         conversationId = "fixture-conversation"
     }
 
@@ -3835,6 +4840,95 @@ final class AssistantVM {
             if let i = self.messages.lastIndex(where: { $0.isStreaming }) { self.messages[i].isStreaming = false }
         }
     }
+
+    /// Gate 8 deterministic fixture: six hundred logical rich rows with only a
+    /// fixed-size middle window mounted. It exercises cache promotion, search
+    /// targeting, a 60k-character response and media rows without touching the
+    /// server. Available only to local DEBUG Simulator launches.
+    func loadHugeSessionFixture(logicalCount: Int = 600) {
+        let started = Date()
+        let rowCount = max(600, logicalCount)
+        let sentence = "ALMA সেশন যাচাই: বিক্রয়, স্টক, approval, generated file এবং follow-up একই ক্রমে রাখা হয়েছে। "
+        var rows: [AgentChatMessage] = []
+        rows.reserveCapacity(rowCount)
+        for index in 0..<rowCount {
+            if index % 2 == 0 {
+                rows.append(AgentChatMessage(
+                    id: "huge-u-\(index)", role: .user,
+                    text: "সেশন বার্তা \(index): আগের কাজের exact অবস্থা দেখাও।"))
+            } else {
+                var reply = AgentChatMessage(
+                    id: "huge-a-\(index)", role: .assistant,
+                    text: index == 301 ? String(repeating: sentence, count: 700) : String(repeating: sentence, count: 2))
+                if index % 17 == 1 {
+                    reply.timeline = [.tool(id: "huge-tool-\(index)", name: "get_session_state", ok: true,
+                                            live: false, inputPretty: nil, resultFull: nil, shot: nil)]
+                }
+                rows.append(reply)
+            }
+        }
+        conversationId = "fixture-huge-session"
+        selectedSessionIdentity = "server:fixture-huge-session"
+        conversationTitle = "Huge session proof"
+        let middleStart = (rows.count - Self.mountedHistoryLimit) / 2
+        let middleEnd = middleStart + Self.mountedHistoryLimit
+        olderHistoryCache = Array(rows[..<middleStart])
+        messages = Array(rows[middleStart..<middleEnd])
+        newerHistoryCache = Array(rows[middleEnd...])
+        serverHasOlder = false
+        canLoadOlder = true
+        isStreaming = false
+        trimHistoryCaches()
+        AlmaTurnLog.event(
+            "hugeSession.ready",
+            "logical=\(rows.count) mounted=\(messages.count) indexed=\(searchableMessages.count) giant=\(rows[301].text.count) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+    }
+
+    /// Gate 5 relaunch fixture. The bytes are intentionally not valid speech: the
+    /// proof surface is the durable recovery contract (draft + audio + Retry),
+    /// while the real transcription request remains covered by the upload path.
+    func loadDictationRecoveryFixture() {
+        loadParityFixture()
+        composerDraft = "এই draft-টি voice retry-এর পরও থাকবে"
+        do {
+            try Data(repeating: 0x41, count: 4_096).write(to: recordingURL, options: .atomic)
+            dictationFailure = "ভয়েস বোঝা যায়নি — রেকর্ডিং রাখা আছে"
+            AlmaTurnLog.event("dictation.fixture", "durable-retry-ready")
+        } catch {
+            errorToast = "Dictation fixture তৈরি করা যায়নি"
+        }
+    }
+
+    #if DEBUG
+    var debugSelectedSessionIdentity: String { selectedSessionIdentity }
+    var debugShouldRestoreProvisionalSession: Bool { shouldRestoreProvisionalSession }
+    func debugRestoreComposerDraft() { restoreCurrentComposerDraft() }
+    func debugRestoreDurableDictationRecovery() { restoreDurableDictationRecoveryIfNeeded() }
+    func debugSetActiveBackgroundConversation(_ id: String) {
+        activeBackgroundTurns = [.init(
+            id: "debug-background-turn", conversationId: id,
+            conversationTitle: "Background", kind: "owner", input: "work",
+            startedAt: "2026-07-20T00:00:00Z", updatedAt: nil)]
+    }
+
+    /// More rows than the reversible in-memory forward cache can hold. The
+    /// excess intentionally represents rows recoverable from the server `after`
+    /// cursor; the debug assertions prove the mount stays bounded and the forward
+    /// affordance remains available rather than silently declaring end-of-chat.
+    func loadHistoryCacheOverflowFixture() {
+        let rows = (0..<500).map {
+            AgentChatMessage(id: "overflow-\($0)", role: $0.isMultiple(of: 2) ? .user : .assistant,
+                             text: "row \($0)")
+        }
+        conversationId = "fixture-cache-overflow"
+        selectedSessionIdentity = "server:fixture-cache-overflow"
+        olderHistoryCache = []
+        messages = Array(rows.prefix(Self.mountedHistoryLimit))
+        newerHistoryCache = Array(rows.dropFirst(Self.mountedHistoryLimit))
+        serverHasNewer = false
+        trimHistoryCaches()
+    }
+    #endif
 
     /// Focused visual fixture for the Background Tasks surface. It never calls the
     /// server and is reachable only through a local simulator launch argument.
@@ -4193,7 +5287,8 @@ final class AssistantVM {
         // A very fast first response can finish between the two events of a
         // physical double-tap. The in-flight set blocks overlap; this terminal
         // guard blocks the immediately-following second mutation as well.
-        if let knownStatus = currentConfirmStatus(cardId), knownStatus != "pending" {
+        if let knownStatus = currentConfirmStatus(cardId),
+           ["approved", "executed", "rejected", "expired", "cancelled"].contains(knownStatus) {
             return true
         }
         guard beginSubmitting("action:\(cardId)") else { return false }
@@ -4241,6 +5336,14 @@ final class AssistantVM {
     }
 
     private func currentConfirmStatus(_ cardId: String) -> String? {
+        actionRegistry[cardId].map { record in
+            record.state == .accepted || record.state == .executing ? "approved" : record.state.rawValue
+        }
+            ?? confirmTerminalStatus[cardId]
+            ?? messages.lazy.flatMap(\.confirmCards).first(where: { $0.id == cardId })?.status
+    }
+
+    private func serverConfirmStatus(_ cardId: String) -> String? {
         confirmTerminalStatus[cardId]
             ?? messages.lazy.flatMap(\.confirmCards).first(where: { $0.id == cardId })?.status
     }
@@ -4262,6 +5365,7 @@ final class AssistantVM {
     /// explicit terminal presentation instead of a generic transient toast.
     @discardableResult
     private func reconcileActionFailure(cardId: String, error: Error) async -> Bool {
+        setActionState(cardId, kind: "approval", state: .checking)
         if case AlmaAPIError.http(let status, let body) = error {
             if status == 410 {
                 setConfirmStatus(cardId, "expired")
@@ -4275,7 +5379,7 @@ final class AssistantVM {
                     setConfirmStatus(cardId, serverStatus)
                 }
                 await loadMessages()
-                if let resolved = currentConfirmStatus(cardId), resolved != "pending" {
+                if let resolved = serverConfirmStatus(cardId), resolved != "pending" {
                     errorToast = resolved == "expired"
                         ? "এই অনুমোদনের মেয়াদ শেষ হয়েছে"
                         : "সিদ্ধান্তটি আগেই সংরক্ষিত হয়েছে"
@@ -4288,19 +5392,45 @@ final class AssistantVM {
             }
         }
         await loadMessages()
-        if let resolved = currentConfirmStatus(cardId), resolved != "pending" {
+        if let resolved = serverConfirmStatus(cardId), resolved != "pending" {
             errorToast = "সিদ্ধান্তটি সার্ভারে সংরক্ষিত ছিল — অবস্থা মিলিয়ে নেওয়া হয়েছে"
             AlmaAgentHaptics.selection()
             return true
         }
         errorToast = "সিদ্ধান্ত নিশ্চিত করা যায়নি — কার্ডটি রাখা হয়েছে, আবার চেষ্টা করুন"
+        setActionState(cardId, kind: "approval", state: .failed)
         AlmaAgentHaptics.error()
         return false
+    }
+
+    func checkActionStatus(_ cardId: String) async {
+        setActionState(cardId, kind: "approval", state: .checking)
+        await loadMessages()
+        if let status = serverConfirmStatus(cardId), status != "pending" {
+            setConfirmStatus(cardId, status)
+            errorToast = status == "expired"
+                ? "এই অনুমোদনের মেয়াদ শেষ হয়েছে"
+                : "সার্ভারের সিদ্ধান্ত মিলিয়ে নেওয়া হয়েছে"
+        } else {
+            setActionState(cardId, kind: "approval", state: .pending)
+            errorToast = "সিদ্ধান্ত এখনো অপেক্ষায় আছে"
+        }
     }
 
     private func setConfirmStatus(_ cardId: String, _ status: String) {
         if status == "pending" { confirmTerminalStatus.removeValue(forKey: cardId) }
         else { confirmTerminalStatus[cardId] = status }
+        let state: ActionLifecycleState
+        switch status {
+        case "approved": state = .approved
+        case "executed": state = .approved
+        case "rejected": state = .rejected
+        case "expired": state = .expired
+        case "cancelled": state = .cancelled
+        case "failed": state = .failed
+        default: state = .pending
+        }
+        setActionState(cardId, kind: "approval", state: state)
         for i in messages.indices {
             if let j = messages[i].confirmCards.firstIndex(where: { $0.id == cardId }) {
                 messages[i].confirmCards[j].status = status
@@ -4323,6 +5453,7 @@ final class AssistantVM {
                     messages[i].askCards[j].selectedOption = option
                 }
             }
+            setActionState(cardId, kind: "ask", state: .answered, selectedOption: option)
             AlmaAgentHaptics.success()
             clearAskDraft(cardId)
             // Voice owns its own spoken continuation, so it persists here with
@@ -4338,6 +5469,7 @@ final class AssistantVM {
                         messages[i].askCards[j].selectedOption = option
                     }
                 }
+                setActionState(cardId, kind: "ask", state: .answered, selectedOption: option)
                 errorToast = "উত্তরটি আগেই সংরক্ষিত হয়েছে"
                 AlmaAgentHaptics.selection()
                 clearAskDraft(cardId)
@@ -4355,9 +5487,11 @@ final class AssistantVM {
             errorToast = selected == nil
                 ? "প্রশ্নটির অবস্থা বদলেছে — আবার দেখে চেষ্টা করুন"
                 : "এই প্রশ্নের অন্য উত্তর আগেই সংরক্ষিত হয়েছে"
+            setActionState(cardId, kind: "ask", state: .failed)
             AlmaAgentHaptics.warning()
             return false
         } catch {
+            setActionState(cardId, kind: "ask", state: .checking)
             await loadMessages()
             if messages.lazy.flatMap(\.askCards).first(where: { $0.id == cardId })?.status == "answered" {
                 errorToast = "উত্তরটি সার্ভারে সংরক্ষিত ছিল — অবস্থা মিলিয়ে নেওয়া হয়েছে"
@@ -4366,6 +5500,7 @@ final class AssistantVM {
                 return true
             }
             errorToast = "উত্তর সংরক্ষণ করা গেল না — আবার চেষ্টা করুন"
+            setActionState(cardId, kind: "ask", state: .failed)
             AlmaAgentHaptics.error()
             return false
         }
@@ -4375,13 +5510,21 @@ final class AssistantVM {
 
     /// Message ids (local UI ids) whose feedback is already filed this session.
     var feedbackSentIds: Set<String> = []
+    var feedbackSubmittingIds: Set<String> = []
+    var feedbackFailedIds: Set<String> = []
 
     /// One tap files a structured correction row — POST /api/assistant/feedback.
-    /// Best-effort like the web client: feedback must never break the chat.
+    /// The icon settles only after server acceptance; a failed request remains
+    /// actionable so the owner can retry without the row shifting underneath.
     func sendFeedback(kind: String, for message: AgentChatMessage) {
+        guard !feedbackSubmittingIds.contains(message.id) else { return }
         AlmaAgentHaptics.light()
-        feedbackSentIds.insert(message.id)
-        guard let cid = conversationId else { return }
+        guard let cid = conversationId else {
+            feedbackFailedIds.insert(message.id)
+            return
+        }
+        feedbackSubmittingIds.insert(message.id)
+        feedbackFailedIds.remove(message.id)
         struct FeedbackBody: Encodable {
             let kind: String
             let conversationId: String
@@ -4390,9 +5533,19 @@ final class AssistantVM {
         let serverId = message.serverId
             ?? (message.id.hasPrefix("local-") || message.id.hasPrefix("stream-") ? nil : message.id)
         Task {
-            let _: OkResponse? = try? await AlmaAPI.shared.send(
-                "POST", "/api/assistant/feedback",
-                body: FeedbackBody(kind: kind, conversationId: cid, messageId: serverId))
+            do {
+                let _: OkResponse = try await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/feedback",
+                    body: FeedbackBody(kind: kind, conversationId: cid, messageId: serverId))
+                feedbackSubmittingIds.remove(message.id)
+                feedbackSentIds.insert(message.id)
+                AlmaAgentHaptics.success()
+            } catch {
+                feedbackSubmittingIds.remove(message.id)
+                feedbackFailedIds.insert(message.id)
+                errorToast = "মতামত সংরক্ষণ হয়নি — আবার চেষ্টা করুন"
+                AlmaAgentHaptics.error()
+            }
         }
     }
 
@@ -4517,13 +5670,28 @@ final class AssistantVM {
 
     private func enqueueAttachment(data: Data, name: String, mediaType: String, image: UIImage?) {
         let file = PendingFile(name: name, mediaType: mediaType, data: data, image: image)
+        guard let directory = Self.attachmentCacheDirectory() else {
+            errorToast = "ফাইলটি নিরাপদে প্রস্তুত করা যায়নি — আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
+            return
+        }
+        do {
+            try data.write(
+                to: directory.appendingPathComponent(file.cacheFileName),
+                options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        } catch {
+            errorToast = "ফাইলটি নিরাপদে প্রস্তুত করা যায়নি — আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
+            return
+        }
         pendingFiles.append(file)
         uploadPendingFile(file.id)
     }
 
     func retryPendingFile(_ id: UUID) {
         guard let i = pendingFiles.firstIndex(where: { $0.id == id }),
-              pendingFiles[i].state == .failed else { return }
+              pendingFiles[i].state == .failed || pendingFiles[i].state == .waitingForNetwork
+        else { return }
         pendingFiles[i].state = .uploading
         uploadPendingFile(id)
     }
@@ -4532,6 +5700,13 @@ final class AssistantVM {
         guard let file = pendingFiles.first(where: { $0.id == fileId }) else { return }
         Task { [weak self] in
             do {
+                #if DEBUG
+                if AlmaMergeReadinessURLProtocol.scenario == "attachmentAtomic" {
+                    // Deterministic visual hold: prove the production Send path
+                    // creates a durable waiting intent before upload can finish.
+                    try await Task.sleep(for: .seconds(8))
+                }
+                #endif
                 struct UploadResponse: Decodable { let bucket: String; let path: String; let mediaType: String }
                 let data = try await AssistantNet.uploadMultipart(
                     path: "/api/assistant/upload", fileField: "file",
@@ -4543,16 +5718,191 @@ final class AssistantVM {
                 self.pendingFiles[i].state = .ready(.init(
                     bucket: up.bucket, path: up.path, mediaType: up.mediaType))
                 AlmaAgentHaptics.success()
+                self.tryStartPendingAttachmentSend()
             } catch {
                 guard let self, let i = self.pendingFiles.firstIndex(where: { $0.id == fileId }) else { return }
-                self.pendingFiles[i].state = .failed
-                self.errorToast = "\(file.name) আপলোড হয়নি — কার্ডে চাপ দিয়ে আবার চেষ্টা করুন"
-                AlmaAgentHaptics.error()
+                if case .offline = TurnFailureKind.classify(error) {
+                    self.pendingFiles[i].state = .waitingForNetwork
+                    self.errorToast = "অফলাইন — \(file.name) নিরাপদে আছে, সংযোগ এলে আবার পাঠানো হবে"
+                    AlmaAgentHaptics.warning()
+                } else {
+                    self.pendingFiles[i].state = .failed
+                    self.errorToast = "\(file.name) আপলোড হয়নি — কার্ডে চাপ দিয়ে আবার চেষ্টা করুন"
+                    AlmaAgentHaptics.error()
+                }
             }
         }
     }
 
-    func removePendingFile(_ id: UUID) { pendingFiles.removeAll { $0.id == id } }
+    func removePendingFile(_ id: UUID) {
+        if pendingAttachmentSend?.attachmentIds.contains(id) == true {
+            let clientMessageId = pendingAttachmentSend?.clientMessageId
+            pendingAttachmentSend = nil
+            if let clientMessageId {
+                messages.removeAll { $0.clientMessageId == clientMessageId && $0.outgoingState == .waitingForAttachments }
+            }
+            errorToast = "অপেক্ষার Send বাতিল হয়েছে — লেখা অক্ষত আছে"
+        }
+        pendingFiles.removeAll { $0.id == id }
+    }
+
+    func retryOutgoingMessage(_ message: AgentChatMessage) {
+        guard let clientMessageId = message.clientMessageId,
+              message.role == .user, !isStreaming else { return }
+        if let pending = pendingAttachmentSend,
+           pending.clientMessageId == clientMessageId {
+            for id in pending.attachmentIds { retryPendingFile(id) }
+            tryStartPendingAttachmentSend()
+            return
+        }
+        if queuedOwnerMessages.contains(where: { $0.id == clientMessageId }) {
+            scheduleQueuedOwnerMessage()
+            return
+        }
+        if let descriptor = recoverableTurn,
+           descriptor.clientMessageId == clientMessageId {
+            for index in messages.indices where messages[index].clientMessageId == clientMessageId {
+                messages[index].outgoingState = .checking
+            }
+            resumePreTurnDescriptor(descriptor)
+            return
+        }
+        // A definite pre-acceptance failure has no recovery descriptor. Reuse
+        // the original idempotency key and exact bound refs so a late server
+        // acceptance still reconciles to one message rather than duplicating it.
+        startPreparedTurn(
+            text: message.text, files: message.fileRefs,
+            localImages: message.localImages, clientMessageId: clientMessageId)
+    }
+
+    func editOutgoingMessage(_ message: AgentChatMessage) {
+        guard let clientMessageId = message.clientMessageId,
+              message.role == .user,
+              message.outgoingState == .waitingForAttachments
+                || message.outgoingState == .queued
+                || message.outgoingState == .failed else { return }
+        queuedOwnerMessages.removeAll { $0.id == clientMessageId }
+        if pendingAttachmentSend?.clientMessageId == clientMessageId {
+            pendingAttachmentSend = nil
+        }
+        if recoverableTurn?.clientMessageId == clientMessageId {
+            // `.failed` means bounded reconciliation proved no accepted turn;
+            // unknown acceptance is represented by `.checking` and cannot edit.
+            recoverableTurn = nil
+        }
+        composerDraft = message.text
+        for index in messages.indices where messages[index].clientMessageId == clientMessageId {
+            messages[index].outgoingState = .cancelled
+        }
+        errorToast = "বার্তাটি composer-এ ফিরেছে — সম্পাদনা করে আবার পাঠান"
+        AlmaAgentHaptics.selection()
+    }
+
+    func cancelOutgoingMessage(_ message: AgentChatMessage) {
+        guard let clientMessageId = message.clientMessageId,
+              message.role == .user,
+              message.outgoingState != .accepted,
+              message.outgoingState != .cancelled else { return }
+        queuedOwnerMessages.removeAll { $0.id == clientMessageId }
+        if pendingAttachmentSend?.clientMessageId == clientMessageId {
+            pendingAttachmentSend = nil
+        }
+        if recoverableTurn?.clientMessageId == clientMessageId {
+            stopStreaming(cancelServer: true)
+        }
+        for index in messages.indices where messages[index].clientMessageId == clientMessageId {
+            messages[index].outgoingState = .cancelled
+        }
+        if composerDraft.isEmpty { composerDraft = message.text }
+        errorToast = "Send বাতিল হয়েছে — লেখা ও attachment composer-এ আছে"
+        AlmaAgentHaptics.warning()
+    }
+
+    private func upsertLocalOwnerIntent(clientMessageId: String, text: String,
+                                        files: [AgentFileRef], attachmentIds: [UUID],
+                                        state: AgentChatMessage.OutgoingState) {
+        let selected = attachmentIds.compactMap { id in pendingFiles.first { $0.id == id } }
+        if let index = messages.firstIndex(where: { $0.clientMessageId == clientMessageId }) {
+            messages[index].text = text
+            messages[index].fileRefs = files
+            messages[index].localImages = selected.compactMap(\.image)
+            messages[index].outgoingState = state
+            return
+        }
+        var owner = AgentChatMessage(
+            id: "local-\(clientMessageId)", role: .user,
+            clientMessageId: clientMessageId, outgoingState: state, text: text)
+        owner.fileRefs = files
+        owner.localImages = selected.compactMap(\.image)
+        messages.append(owner)
+    }
+
+    private func tryStartPendingAttachmentSend() {
+        guard let pending = pendingAttachmentSend,
+              pending.sessionIdentity == selectedSessionIdentity,
+              pending.conversationId == conversationId else { return }
+        let selected = pending.attachmentIds.compactMap { id in
+            pendingFiles.first { $0.id == id }
+        }
+        guard selected.count == pending.attachmentIds.count else {
+            errorToast = "একটি attachment পাওয়া যাচ্ছে না — লেখা অক্ষত আছে"
+            return
+        }
+        if selected.contains(where: { $0.state == .failed }) {
+            errorToast = "একটি attachment upload হয়নি — Retry বা Remove করুন"
+            return
+        }
+        guard selected.allSatisfy({ if case .ready = $0.state { return true }; return false }) else {
+            return
+        }
+        let refs = selected.compactMap { file -> AgentFileRef? in
+            if case .ready(let ref) = file.state { return ref }
+            return nil
+        }
+        upsertLocalOwnerIntent(
+            clientMessageId: pending.clientMessageId, text: pending.text,
+            files: refs, attachmentIds: pending.attachmentIds, state: .queued)
+        pendingAttachmentSend = nil
+        if isStreaming || recoverableTurn != nil {
+            queueOwnerMessage(
+                text: pending.text, files: refs, askCardId: pending.askCardId,
+                sentPendingIds: [], clientMessageId: pending.clientMessageId,
+                attachmentIds: pending.attachmentIds)
+        } else {
+            startPreparedTurn(
+                text: pending.text, files: refs,
+                localImages: selected.compactMap(\.image), askCardId: pending.askCardId,
+                clientMessageId: pending.clientMessageId,
+                attachmentIds: pending.attachmentIds)
+        }
+    }
+
+    private func resumePendingAttachmentUploads() {
+        let ids = pendingFiles.compactMap { file -> UUID? in
+            file.state == .waitingForNetwork ? file.id : nil
+        }
+        for id in ids { retryPendingFile(id) }
+        tryStartPendingAttachmentSend()
+    }
+
+    private func markOutgoingAccepted(clientMessageId: String) {
+        let descriptor = recoverableTurn.flatMap {
+            $0.clientMessageId == clientMessageId ? $0 : nil
+        }
+        let text = descriptor?.message
+        let attachmentIds = Set(descriptor?.attachmentIds ?? [])
+        for index in messages.indices where messages[index].clientMessageId == clientMessageId {
+            messages[index].outgoingState = .accepted
+        }
+        if let text, composerDraft == text { composerDraft = "" }
+        if !attachmentIds.isEmpty {
+            pendingFiles.removeAll { attachmentIds.contains($0.id) }
+        }
+        if pendingAttachmentSend?.clientMessageId == clientMessageId {
+            pendingAttachmentSend = nil
+        }
+        AlmaTurnLog.event("turn.ownerIntentAccepted", clientMessageId)
+    }
 
     func signedURL(for path: String) async -> URL? {
         if let u = signedURLs[path] { return u }
@@ -4566,7 +5916,11 @@ final class AssistantVM {
     // ── Mic → text (Whisper) ───────────────────────────────────────────────
 
     private var recordingURL: URL {
-        FileManager.default.temporaryDirectory.appendingPathComponent("alma-dictation.m4a")
+        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ALMAAssistant", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true,
+                                                 attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+        return root.appendingPathComponent("pending-dictation.m4a")
     }
 
     func toggleRecording() {
@@ -4592,6 +5946,7 @@ final class AssistantVM {
                     rec.record()
                     self.recorder = rec
                     self.isRecording = true
+                    self.dictationFailure = nil
                     self.recordingSeconds = 0
                     self.micLevel = 0.06
                     AlmaAgentHaptics.commit()
@@ -4623,6 +5978,7 @@ final class AssistantVM {
         recorder = nil
         isRecording = false
         try? FileManager.default.removeItem(at: recordingURL)
+        dictationFailure = nil
         AlmaAgentHaptics.light()
     }
 
@@ -4631,22 +5987,55 @@ final class AssistantVM {
         recorder?.stop()
         recorder = nil
         isRecording = false
-        transcribing = true
         AlmaAgentHaptics.light()
+        transcribePendingDictation()
+    }
+
+    func retryDictation() {
+        guard FileManager.default.fileExists(atPath: recordingURL.path) else {
+            dictationFailure = nil
+            return
+        }
+        AlmaAgentHaptics.light()
+        transcribePendingDictation()
+    }
+
+    func discardPendingDictation() {
+        try? FileManager.default.removeItem(at: recordingURL)
+        dictationFailure = nil
+        transcribing = false
+    }
+
+    private func transcribePendingDictation() {
+        guard !transcribing else { return }
+        transcribing = true
+        // Persist a visible recovery marker before starting the async request.
+        // If iOS kills the process here, bootstrap finds both marker + audio and
+        // offers the exact Retry instead of hiding the surviving recording.
+        dictationFailure = "Voice transcription চলছে — বন্ধ হলেও Retry করা যাবে"
         Task { [weak self] in
             guard let self else { return }
             defer { self.transcribing = false }
-            guard let audio = try? Data(contentsOf: self.recordingURL), audio.count > 1_000 else { return }
+            guard let audio = try? Data(contentsOf: self.recordingURL), audio.count > 1_000 else {
+                self.dictationFailure = "রেকর্ডিংটি পাওয়া যায়নি"
+                return
+            }
             do {
                 let data = try await AssistantNet.uploadMultipart(
                     path: "/api/assistant/transcribe", fileField: "file",
                     filename: "dictation.m4a", mime: "audio/mp4", data: audio)
                 let t = try JSONDecoder().decode(TranscribeResponse.self, from: data)
                 if let text = t.text, !text.isEmpty {
-                    self.dictatedText = text
+                    self.composerDraft = self.composerDraft.isEmpty
+                        ? text : self.composerDraft + " " + text
+                    try? FileManager.default.removeItem(at: self.recordingURL)
+                    self.dictationFailure = nil
+                } else {
+                    self.dictationFailure = "কথা বোঝা যায়নি"
                 }
             } catch {
-                self.errorToast = "ভয়েস বোঝা যায়নি — আবার বলুন"
+                self.dictationFailure = "ভয়েস বোঝা যায়নি — রেকর্ডিং রাখা আছে"
+                self.errorToast = "ভয়েস বোঝা যায়নি — আবার চেষ্টা করুন"
             }
         }
     }
@@ -4763,6 +6152,7 @@ struct AlmaSelectableRichText: UIViewRepresentable {
         tv.textContainerInset = .zero
         tv.textContainer.lineFragmentPadding = 0
         tv.textContainer.widthTracksTextView = true
+        tv.adjustsFontForContentSizeCategory = true
         tv.setContentHuggingPriority(.required, for: .vertical)
         tv.setContentCompressionResistancePriority(.required, for: .vertical)
         tv.tintColor = tint
@@ -4918,7 +6308,7 @@ struct AgentMarkdownText: View {
     /// selection can span the whole paragraph: coral headers, • bullets, serif body,
     /// resolved bold/italic/code (UITextView doesn't interpret markdown intents).
     static func attributedParagraph(_ s: String, pal: AgentPalette) -> NSAttributedString {
-        let body = UIFont.almaSerif(15.5)
+        let body = UIFontMetrics(forTextStyle: .body).scaledFont(for: UIFont.almaSerif(15.5))
         let ink = UIColor(pal.ink)
         let out = NSMutableAttributedString()
         let para = NSMutableParagraphStyle()
@@ -4933,8 +6323,10 @@ struct AgentMarkdownText: View {
             if trimmed.hasPrefix("###") || trimmed.hasPrefix("##") || trimmed.hasPrefix("# ") {
                 let title = String(trimmed.drop(while: { $0 == "#" || $0 == " " }))
                 let size: CGFloat = trimmed.hasPrefix("# ") ? 18 : 16
+                let heading = UIFontMetrics(forTextStyle: .headline)
+                    .scaledFont(for: UIFont.systemFont(ofSize: size, weight: .semibold))
                 out.append(NSAttributedString(string: title, attributes: [
-                    .font: UIFont.systemFont(ofSize: size, weight: .semibold),
+                    .font: heading,
                     .foregroundColor: UIColor(AgentPalette.coral),
                 ]))
             } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("• ") {
@@ -4985,7 +6377,7 @@ struct AgentMarkdownText: View {
                     EmptyView()
                 } else if trimmed.hasPrefix("###") || trimmed.hasPrefix("##") || trimmed.hasPrefix("# ") {
                     Text(trimmed.drop(while: { $0 == "#" || $0 == " " }))
-                        .font(.system(size: trimmed.hasPrefix("# ") ? 18 : 16, weight: .semibold))
+                        .font(.system(trimmed.hasPrefix("# ") ? .title3 : .headline, weight: .semibold))
                         .foregroundStyle(AgentPalette.coral)
                         .padding(.top, 2)
                 } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("• ") {
@@ -5004,10 +6396,10 @@ struct AgentMarkdownText: View {
         if let a = try? AttributedString(markdown: s,
                                          options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
             return Text(a)
-                .font(.system(size: 15.5, design: .serif))
+                .font(.system(.body, design: .serif))
                 .foregroundStyle(pal.ink)
         }
-        return Text(s).font(.system(size: 15.5, design: .serif)).foregroundStyle(pal.ink)
+        return Text(s).font(.system(.body, design: .serif)).foregroundStyle(pal.ink)
     }
 
     /// Web parity: fenced ```copy/caption/post/text = the branded coral copy card;
@@ -5058,6 +6450,47 @@ struct AgentMarkdownText: View {
         .background(pal.card.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
             .strokeBorder(pal.borderSubtle, lineWidth: 1))
+    }
+}
+
+/// A single generated response can be tens of thousands of characters. Parse a
+/// bounded first slice initially, then opt into the full markdown tree only when
+/// the owner asks. Copy/share/TTS continue to use the original complete string.
+@available(iOS 17.0, *)
+private struct AgentProgressiveMarkdownText: View {
+    let text: String
+    let pal: AgentPalette
+    var selectable = false
+    @State private var expanded = false
+    private static let initialCharacterBudget = 12_000
+
+    private var isGiant: Bool {
+        AgentParityFlags.isEnabled(.hugeSession) && text.count > Self.initialCharacterBudget
+    }
+    private var visibleText: String {
+        guard isGiant, !expanded else { return text }
+        return String(text.prefix(Self.initialCharacterBudget))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AgentMarkdownText(text: visibleText, pal: pal, selectable: selectable)
+            if isGiant {
+                Button {
+                    AlmaAgentHaptics.selection()
+                    withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() }
+                } label: {
+                    Label(expanded ? "বড় উত্তরটি সংক্ষিপ্ত করুন" : "পুরো বড় উত্তরটি দেখুন",
+                          systemImage: expanded ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AgentPalette.coral)
+                        .frame(minHeight: 44)
+                }
+                .accessibilityHint(expanded
+                    ? "প্রথম বারো হাজার অক্ষরে ফিরবে"
+                    : "সম্পূর্ণ উত্তর render করবে")
+            }
+        }
     }
 }
 
@@ -5166,8 +6599,14 @@ struct AgentMessageRow: View {
                                 .frame(width: 80, height: 80)
                                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         }
-                        ForEach(message.imagePaths, id: \.self) { p in
-                            AgentChatImage(path: p, vm: vm)
+                        // The settled server row contains the same file_ref as
+                        // the optimistic local preview. Prefer the local pixels
+                        // while they exist; after relaunch (no local UIImage) the
+                        // signed remote thumbnail remains the authoritative view.
+                        if message.localImages.isEmpty {
+                            ForEach(message.imagePaths, id: \.self) { p in
+                                AgentChatImage(path: p, vm: vm)
+                            }
                         }
                     }
                 }
@@ -5179,7 +6618,8 @@ struct AgentMessageRow: View {
                     // Owner ask build-70 round 4: bubble text is DIRECTLY selectable
                     // in place (native grabbers + system Copy menu) — no context menu.
                     AlmaSelectableRichText(plain: message.text,
-                                           font: .systemFont(ofSize: 15),
+                                           font: UIFontMetrics(forTextStyle: .body)
+                                            .scaledFont(for: .systemFont(ofSize: 15)),
                                            color: .white, lineSpacing: 3.5)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
@@ -5190,6 +6630,36 @@ struct AgentMessageRow: View {
                                                        bottomTrailingRadius: 6, topTrailingRadius: 20,
                                                        style: .continuous))
                         .shadow(color: AgentPalette.coral.opacity(0.20), radius: 4, y: 1)
+                }
+                if let state = message.outgoingState, state != .accepted {
+                    VStack(alignment: .trailing, spacing: 7) {
+                        HStack(spacing: 5) {
+                            if state == .submitting || state == .checking {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Image(systemName: outgoingStateIcon(state))
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            Text(outgoingStateLabel(state))
+                                .font(.system(size: 10.5, weight: .semibold))
+                        }
+                        .foregroundStyle(state == .failed ? Color.red : pal.mutedHi)
+                        .accessibilityElement(children: .combine)
+                        if state == .waitingForAttachments || state == .queued || state == .failed {
+                            HStack(spacing: 14) {
+                                Button("আবার চেষ্টা") { vm.retryOutgoingMessage(message) }
+                                Button("সম্পাদনা") { vm.editOutgoingMessage(message) }
+                                Button("বাতিল", role: .destructive) { vm.cancelOutgoingMessage(message) }
+                            }
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(pal.mutedHi)
+                            .buttonStyle(.plain)
+                        } else if state == .checking {
+                            Button("বাতিল", role: .destructive) { vm.cancelOutgoingMessage(message) }
+                                .font(.system(size: 11, weight: .semibold))
+                                .buttonStyle(.plain)
+                        }
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -5228,7 +6698,7 @@ struct AgentMessageRow: View {
                                         AgentTypingCursor()
                                     }
                                 } else {
-                                    AgentMarkdownText(text: message.text, pal: pal)
+                                    AgentProgressiveMarkdownText(text: message.text, pal: pal)
                                         // 1.4: cap ONLY the collapsed state; expanded rows size
                                         // naturally (never a greedy .infinity inside the lazy list).
                                         .frame(maxHeight: long && !expandedLong ? 340 : nil, alignment: .top)
@@ -5347,11 +6817,40 @@ struct AgentMessageRow: View {
                         showsBackgroundTaskAnchor: showsBackgroundTaskAnchor,
                         backgroundTaskHandoff: backgroundTaskHandoff,
                         backgroundTaskNamespace: backgroundTaskNamespace,
-                        onBackgroundTasks: onBackgroundTasks)
+                        onBackgroundTasks: onBackgroundTasks,
+                        onSelectText: {
+                            onActivitySheet(.init(message: message, kind: .selectText, slice: message.text))
+                        },
+                        onShowActivity: {
+                            onActivitySheet(.init(message: message, kind: .summary))
+                        })
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 26)
+        }
+    }
+
+    private func outgoingStateLabel(_ state: AgentChatMessage.OutgoingState) -> String {
+        switch state {
+        case .waitingForAttachments: return "Attachment প্রস্তুত হচ্ছে"
+        case .queued: return "অপেক্ষায় আছে"
+        case .submitting: return "পাঠানো হচ্ছে"
+        case .checking: return "Server status যাচাই হচ্ছে"
+        case .accepted: return "পাঠানো হয়েছে"
+        case .failed: return "পাঠানো যায়নি — লেখা ও ফাইল রাখা আছে"
+        case .cancelled: return "বাতিল — composer-এ রাখা আছে"
+        }
+    }
+
+    private func outgoingStateIcon(_ state: AgentChatMessage.OutgoingState) -> String {
+        switch state {
+        case .waitingForAttachments: return "paperclip"
+        case .queued: return "clock.arrow.circlepath"
+        case .submitting, .checking: return "arrow.triangle.2.circlepath"
+        case .accepted: return "checkmark"
+        case .failed: return "exclamationmark.circle.fill"
+        case .cancelled: return "xmark.circle"
         }
     }
 }
@@ -6093,7 +7592,10 @@ struct AgentMessageActions: View {
     let backgroundTaskHandoff: Bool
     let backgroundTaskNamespace: Namespace.ID
     let onBackgroundTasks: () -> Void
+    let onSelectText: () -> Void
+    let onShowActivity: () -> Void
     @State private var copied = false
+    @State private var moreOpen = false
     // Debug self-test hook (never set in production launches): ALMA_FEEDBACK_OPEN=1
     // pre-opens the 👎 reason chips so the fixture screenshot proves the row.
     @State private var reasonsOpen =
@@ -6128,6 +7630,11 @@ struct AgentMessageActions: View {
             .padding(.top, 2)
             if reasonsOpen && !feedbackSent {
                 feedbackReasonsRow
+            }
+            if vm.feedbackFailedIds.contains(message.id) {
+                Text("মতামত সংরক্ষণ হয়নি — আবার চাপুন")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(AgentPalette.coral)
             }
             if message.selfCorrected {
                 // Truth badge (web parity): the honesty guard caught a false
@@ -6190,8 +7697,8 @@ struct AgentMessageActions: View {
         }
     }
 
-    /// Time + copy/TTS/feedback/সংরক্ষণ — everything except the cost figure and
-    /// final ALMA/Background Tasks line.
+    /// Screenshot-locked order: Copy, Read aloud, Helpful, Not helpful, Share,
+    /// More. Every target stays 44pt and in place after interaction.
     @ViewBuilder private var actionButtons: some View {
             if let rel = relativeTime(message.createdAt) {
                 Text(rel).font(.system(size: 10)).foregroundStyle(pal.muted)
@@ -6205,8 +7712,9 @@ struct AgentMessageActions: View {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .font(.system(size: 12))
                     .foregroundStyle(copied ? AgentPalette.teal : pal.muted)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 44, height: 44)
             }
+            .accessibilityLabel("Copy")
             Button {
                 vm.toggleTTS(for: message)
             } label: {
@@ -6221,56 +7729,94 @@ struct AgentMessageActions: View {
                             .foregroundStyle(pal.muted)
                     }
                 }
-                .frame(width: 28, height: 28)
+                .frame(width: 44, height: 44)
                 .background(vm.ttsPlayingId == message.id ? AgentPalette.coral.opacity(0.1) : .clear,
                             in: RoundedRectangle(cornerRadius: 8))
             }
-            // 👍/👎 correction loop (web FeedbackButtons parity) — one tap files a
-            // structured row in agent_owner_feedback for the weekly report.
-            if feedbackSent {
-                HStack(spacing: 3) {
-                    Image(systemName: "checkmark").font(.system(size: 9, weight: .semibold))
-                    Text("নোট করেছি").font(.system(size: 10.5, weight: .medium))
-                }
-                .foregroundStyle(AgentPalette.teal.opacity(0.9))
-                .padding(.horizontal, 2)
-            } else {
-                Button {
-                    reasonsOpen = false
-                    vm.sendFeedback(kind: "good", for: message)
-                } label: {
-                    Image(systemName: "hand.thumbsup")
-                        .font(.system(size: 12))
-                        .foregroundStyle(pal.muted)
-                        .frame(width: 28, height: 28)
-                }
-                Button {
-                    AlmaAgentHaptics.light()
-                    withAnimation(.snappy(duration: 0.2)) { reasonsOpen.toggle() }
-                } label: {
-                    Image(systemName: "hand.thumbsdown")
-                        .font(.system(size: 12))
-                        .foregroundStyle(reasonsOpen ? AgentPalette.coral : pal.muted)
-                        .frame(width: 28, height: 28)
-                }
-            }
-            // Manual "সংরক্ষণ" — file this reply as a conversation artifact.
-            if artifactDetectable {
-                if vm.artifactSavedIds.contains(message.id) {
-                    Text("সংরক্ষিত")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(AgentPalette.teal.opacity(0.9))
-                } else {
-                    Button {
-                        Task { await vm.saveArtifactManually(from: message) }
-                    } label: {
-                        Text("সংরক্ষণ")
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(pal.muted)
-                            .padding(.horizontal, 6)
-                            .frame(height: 28)
+            .accessibilityLabel(vm.ttsPlayingId == message.id ? "Read aloud বন্ধ করুন" : "Read aloud")
+            Button {
+                reasonsOpen = false
+                vm.sendFeedback(kind: "good", for: message)
+            } label: {
+                Group {
+                    if vm.feedbackSubmittingIds.contains(message.id) {
+                        AlmaMiniLoader(mode: .thinking, size: 13)
+                    } else {
+                        Image(systemName: feedbackSent ? "checkmark" : "hand.thumbsup")
+                            .font(.system(size: 12))
                     }
                 }
+                .foregroundStyle(feedbackSent ? AgentPalette.teal : pal.muted)
+                .frame(width: 44, height: 44)
+            }
+            .disabled(feedbackSent || vm.feedbackSubmittingIds.contains(message.id))
+            .accessibilityLabel("Helpful")
+            Button {
+                AlmaAgentHaptics.light()
+                withAnimation(.snappy(duration: 0.2)) { reasonsOpen.toggle() }
+            } label: {
+                Image(systemName: "hand.thumbsdown")
+                    .font(.system(size: 12))
+                    .foregroundStyle(reasonsOpen ? AgentPalette.coral : pal.muted)
+                    .frame(width: 44, height: 44)
+            }
+            .disabled(feedbackSent || vm.feedbackSubmittingIds.contains(message.id))
+            .accessibilityLabel("Not helpful")
+            ShareLink(item: message.text, preview: SharePreview("ALMA response", image: Image(systemName: "sparkles"))) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 12))
+                    .foregroundStyle(pal.muted)
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("Share this response")
+            Button {
+                AlmaAgentHaptics.light()
+                moreOpen.toggle()
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(pal.muted)
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("More")
+            .popover(isPresented: $moreOpen, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Button {
+                        moreOpen = false
+                        onSelectText()
+                    } label: {
+                        Label("টেক্সট সিলেক্ট করুন", systemImage: "text.cursor")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16).frame(height: 46)
+                    }
+                    Button {
+                        moreOpen = false
+                        onShowActivity()
+                    } label: {
+                        Label("কাজের বিবরণ", systemImage: "list.bullet.rectangle")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16).frame(height: 46)
+                    }
+                    if artifactDetectable {
+                        Divider().opacity(0.18)
+                        Button {
+                            moreOpen = false
+                            Task { await vm.saveArtifactManually(from: message) }
+                        } label: {
+                            Label(vm.artifactSavedIds.contains(message.id) ? "সংরক্ষিত" : "ফাইল হিসেবে সংরক্ষণ",
+                                  systemImage: vm.artifactSavedIds.contains(message.id) ? "checkmark" : "tray.and.arrow.down")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16).frame(height: 46)
+                        }
+                        .disabled(vm.artifactSavedIds.contains(message.id))
+                    }
+                }
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(pal.ink)
+                .frame(width: 250)
+                .padding(.vertical, 6)
+                .background(.ultraThinMaterial)
+                .presentationCompactAdaptation(.popover)
             }
     }
 
@@ -6386,6 +7932,7 @@ struct AgentConfirmCardView: View {
         Binding(get: { vm.opinionDraftText[card.id, default: ""] },
                 set: { vm.opinionDraftText[card.id] = $0 })
     }
+    private var recoveryState: AssistantVM.ActionLifecycleState? { vm.actionState(card.id) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -6404,6 +7951,20 @@ struct AgentConfirmCardView: View {
             Text(card.summary)
                 .font(.system(size: 14)).foregroundStyle(pal.ink).lineSpacing(3)
                 .padding(.horizontal, 16).padding(.bottom, 12)
+            if card.status == "pending", recoveryState == .failed || recoveryState == .checking {
+                HStack(spacing: 7) {
+                    Image(systemName: recoveryState == .checking
+                          ? "arrow.triangle.2.circlepath" : "exclamationmark.circle")
+                    Text(recoveryState == .checking
+                         ? "সার্ভারের অবস্থা যাচাই দরকার" : "সিদ্ধান্ত নিশ্চিত হয়নি")
+                    Spacer()
+                    Button("Status দেখুন") { Task { await vm.checkActionStatus(card.id) } }
+                        .fontWeight(.semibold)
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(recoveryState == .failed ? Color.red : pal.mutedHi)
+                .padding(.horizontal, 16).padding(.bottom, 10)
+            }
             if card.status == "pending" {
                 if showOpinion {
                     VStack(alignment: .leading, spacing: 10) {
@@ -6819,32 +8380,61 @@ struct AgentAskCardsPager: View {
                 }
                 .buttonStyle(AlmaAgentPressStyle())
             } else {
-                AgentAskCardView(
-                    card: card, pal: pal,
-                    pageIndex: cards.count > 1 ? idx : nil,
-                    pageCount: cards.count,
-                    onPrev: { withAnimation(.snappy(duration: 0.22)) { index = max(0, idx - 1) } },
-                    onNext: { withAnimation(.snappy(duration: 0.22)) { index = min(cards.count - 1, idx + 1) } },
-                    onClose: card.status == "pending"
-                        ? { withAnimation(.snappy(duration: 0.22)) { closed = true } } : nil,
-                    submitting: vm.isSubmittingAction("ask:\(card.id)"),
-                    chosen: Binding(
-                        get: { vm.askChosenOption[card.id] },
-                        set: { option in
-                            if let option { vm.askChosenOption[card.id] = option }
-                            else { vm.askChosenOption.removeValue(forKey: card.id) }
-                        }),
-                    otherActive: Binding(
-                        get: { vm.askOtherActiveIds.contains(card.id) },
-                        set: { active in
-                            if active { vm.askOtherActiveIds.insert(card.id) }
-                            else { vm.askOtherActiveIds.remove(card.id) }
-                        }),
-                    otherText: Binding(
-                        get: { vm.askDraftText[card.id, default: ""] },
-                        set: { vm.askDraftText[card.id] = $0 })
-                ) { option in
-                    onAnswer(card, option)
+                VStack(spacing: 8) {
+                    AgentAskCardView(
+                        card: card, pal: pal,
+                        pageIndex: cards.count > 1 ? idx : nil,
+                        pageCount: cards.count,
+                        onPrev: { withAnimation(.snappy(duration: 0.22)) { index = max(0, idx - 1) } },
+                        onNext: { withAnimation(.snappy(duration: 0.22)) { index = min(cards.count - 1, idx + 1) } },
+                        onClose: card.status == "pending"
+                            ? { withAnimation(.snappy(duration: 0.22)) { closed = true } } : nil,
+                        submitting: vm.isSubmittingAction("ask:\(card.id)"),
+                        chosen: Binding(
+                            get: { vm.askChosenOption[card.id] },
+                            set: { option in
+                                if let option { vm.askChosenOption[card.id] = option }
+                                else { vm.askChosenOption.removeValue(forKey: card.id) }
+                            }),
+                        otherActive: Binding(
+                            get: { vm.askOtherActiveIds.contains(card.id) },
+                            set: { active in
+                                if active { vm.askOtherActiveIds.insert(card.id) }
+                                else { vm.askOtherActiveIds.remove(card.id) }
+                            }),
+                        otherText: Binding(
+                            get: { vm.askDraftText[card.id, default: ""] },
+                            set: { vm.askDraftText[card.id] = $0 })
+                    ) { option in
+                        onAnswer(card, option)
+                    }
+
+                    if vm.actionState(card.id) == .failed {
+                        HStack(spacing: 10) {
+                            Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                                .foregroundStyle(AgentPalette.coral)
+                            Text("উত্তর রাখা আছে — পাঠানো হয়নি")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(pal.muted)
+                            Spacer(minLength: 0)
+                            Button("আবার চেষ্টা") {
+                                let answer: String
+                                if vm.askOtherActiveIds.contains(card.id) {
+                                    answer = vm.askDraftText[card.id, default: ""]
+                                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                                } else {
+                                    answer = vm.askChosenOption[card.id] ?? ""
+                                }
+                                guard !answer.isEmpty else { return }
+                                onAnswer(card, answer)
+                            }
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(AgentPalette.coral)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(AgentPalette.coral.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    }
                 }
                 .id("\(card.id)-\(idx)")
                 .transition(.asymmetric(
@@ -7052,7 +8642,7 @@ struct AgentTurnBlocksView: View {
                 // DIRECTLY selectable in the chat — long-press/double-tap marks with
                 // native grabbers and the system Copy menu. No context menu here (it
                 // would swallow the long-press); whole-reply copy lives in the footer.
-                AgentMarkdownText(text: text, pal: pal, selectable: true)
+                AgentProgressiveMarkdownText(text: text, pal: pal, selectable: true)
                     .padding(.vertical, 2)
             }
         }
@@ -7358,7 +8948,6 @@ struct AgentComposerView: View {
     @Bindable var vm: AssistantVM
     let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var scheme
-    @State private var draft = ""
     @State private var photoItem: PhotosPickerItem?
     @State private var showAttachmentChoices = false
     @State private var showPhotoPicker = false
@@ -7386,16 +8975,52 @@ struct AgentComposerView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 10)
                 }
+                if vm.hasPendingAttachmentSend {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text("Attachment প্রস্তুত হচ্ছে — Send নিরাপদে অপেক্ষায়")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AgentPalette.coral)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                } else if vm.composerSubmissionPending {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text("বার্তাটি server-এ নিশ্চিত হচ্ছে…")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(pal.mutedHi)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                }
+                if let failure = vm.dictationFailure, vm.canRetryDictation, !vm.isRecording {
+                    HStack(spacing: 8) {
+                        Image(systemName: "waveform.badge.exclamationmark")
+                        Text(failure).lineLimit(1)
+                        Spacer(minLength: 0)
+                        Button("Retry") { vm.retryDictation() }
+                            .fontWeight(.semibold)
+                        Button { vm.discardPendingDictation() } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .accessibilityLabel("রেকর্ডিং বাতিল")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AgentPalette.coral)
+                    .padding(.horizontal, 10)
+                }
                 if !vm.pendingFiles.isEmpty && !vm.isRecording { attachmentsRow(pal) }
                 if vm.isRecording {
                     recordingBar(pal)
                 } else {
                     TextField(vm.transcribing ? "বুঝে নিচ্ছি…" : "বার্তা লিখুন…",
-                              text: $draft, axis: .vertical)
-                        .font(.system(size: 16))
+                              text: $vm.composerDraft, axis: .vertical)
+                        .font(.body)
                         .foregroundStyle(pal.ink)
                         .lineLimit(1...5)
                         .focused($focused)
+                        .disabled(vm.composerSubmissionPending)
                         .padding(.horizontal, 10)
                         .padding(.top, 8)
                     controlsRow(pal)
@@ -7412,7 +9037,8 @@ struct AgentComposerView: View {
         }
         .onChange(of: vm.dictatedText) { _, newValue in
             guard !newValue.isEmpty else { return }
-            draft = draft.isEmpty ? newValue : draft + " " + newValue
+            vm.composerDraft = vm.composerDraft.isEmpty
+                ? newValue : vm.composerDraft + " " + newValue
             Task { @MainActor in vm.dictatedText = "" }
         }
         // NP-3: Monitor staff quick actions prefill the composer (web /agent?draft=…).
@@ -7476,7 +9102,7 @@ struct AgentComposerView: View {
     private func consumePrefill() {
         guard let text = AlmaComposerPrefill.pending else { return }
         AlmaComposerPrefill.pending = nil
-        draft = text
+        vm.composerDraft = text
         focused = true
     }
 
@@ -7535,6 +9161,10 @@ struct AgentComposerView: View {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                                         .fill(Color.black.opacity(0.45))
                                     AlmaMiniLoader(mode: .thinking, size: 18)
+                                } else if f.state == .waitingForNetwork {
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.black.opacity(0.45))
+                                    Image(systemName: "wifi.slash").foregroundStyle(.white)
                                 } else if f.state == .failed {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                                         .fill(Color.red.opacity(0.4))
@@ -7543,7 +9173,9 @@ struct AgentComposerView: View {
                             }
                             .contentShape(Rectangle())
                             .onTapGesture {
-                                if f.state == .failed { vm.retryPendingFile(f.id) }
+                                if f.state == .failed || f.state == .waitingForNetwork {
+                                    vm.retryPendingFile(f.id)
+                                }
                             }
                         Button { vm.removePendingFile(f.id) } label: {
                             Image(systemName: "xmark")
@@ -7660,14 +9292,13 @@ struct AgentComposerView: View {
     }
 
     private var sendEnabled: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || vm.pendingFiles.contains { if case .ready = $0.state { return true } else { return false } }
+        !vm.composerSubmissionPending
+            && (!vm.composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !vm.pendingFiles.isEmpty)
     }
 
     private func send() {
-        let text = draft
-        draft = ""
-        vm.send(text)
+        vm.send(vm.composerDraft)
     }
 }
 
@@ -8066,12 +9697,14 @@ struct AgentSideDrawer: View {
                             Button(role: .destructive) { deleteTarget = c } label: {
                                 Label("মুছুন", systemImage: "trash")
                             }
+                            .disabled(vm.conversationMutationBlocked(for: c.id))
                             Button {
                                 Task { await vm.archiveConversation(c.id) }
                             } label: {
                                 Label("আর্কাইভ", systemImage: "archivebox")
                             }
                             .tint(.orange)
+                            .disabled(vm.conversationMutationBlocked(for: c.id))
                             Button {
                                 renameText = c.title ?? ""
                                 renameTarget = c
@@ -10157,6 +11790,27 @@ private struct AgentUploadedFileViewerSheet: View {
     }
 
     private func load() async {
+        if let content = file.artifactContent {
+            do {
+                let safe = file.name.replacingOccurrences(of: "/", with: "-")
+                let target = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("alma-file-\(file.id.hashValue)-\(safe)")
+                if file.mediaType.hasPrefix("image/"),
+                   let remote = URL(string: content), remote.scheme != nil {
+                    let (data, response) = try await URLSession.shared.data(from: remote)
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+                    guard status < 300 else { throw URLError(.badServerResponse) }
+                    try data.write(to: target, options: .atomic)
+                } else {
+                    try Data(content.utf8).write(to: target, options: .atomic)
+                }
+                localURL = target
+                AlmaAgentHaptics.success()
+            } catch {
+                loadError = "ফাইল প্রস্তুত করা যায়নি — আবার চেষ্টা করুন"
+            }
+            return
+        }
         guard let ref = file.fileRef, let signed = await vm.signedURL(for: ref.path) else {
             loadError = "ডাউনলোড লিংক পাওয়া যায়নি"
             return
@@ -10178,6 +11832,283 @@ private struct AgentUploadedFileViewerSheet: View {
             AlmaAgentHaptics.error()
         }
     }
+}
+
+// MARK: - Unified session Library (v2 screenshot-locked large surface)
+
+@available(iOS 17.0, *)
+private struct AgentLibrarySheet: View {
+    enum Filter: String, CaseIterable { case all = "All", uploaded = "Uploaded", generated = "Generated" }
+
+    @Bindable var vm: AssistantVM
+    let onShowInConversation: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var filter: Filter = .all
+    @State private var selected: AgentSessionFile?
+
+    private var files: [AgentSessionFile] {
+        switch filter {
+        case .all: return vm.sessionFiles
+        case .uploaded: return vm.sessionFiles.filter { $0.origin == .uploaded }
+        case .generated: return vm.sessionFiles.filter { $0.origin == .generated }
+        }
+    }
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        NavigationStack {
+            ZStack {
+                AgentAuroraBackground()
+                VStack(spacing: 0) {
+                    Picker("Library filter", selection: $filter) {
+                        ForEach(Filter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 18).padding(.vertical, 12)
+
+                    if vm.sessionFilesIndexLoading && files.isEmpty {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                            Text("পুরো কথোপকথনের file index লোড হচ্ছে…")
+                                .font(.footnote)
+                                .foregroundStyle(pal.muted)
+                        }
+                        .frame(maxHeight: .infinity)
+                    } else if files.isEmpty {
+                        ContentUnavailableView {
+                            Label("Library খালি", systemImage: "square.grid.2x2")
+                        } description: {
+                            Text(vm.sessionFiles.isEmpty
+                                 ? "এই কথোপকথনে এখনো uploaded বা generated file নেই"
+                                 : "এই filter-এ কোনো file নেই")
+                        }
+                        .frame(maxHeight: .infinity)
+                    } else {
+                        ScrollView {
+                            LazyVGrid(columns: [
+                                GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12),
+                            ], spacing: 14) {
+                                ForEach(files) { file in
+                                    AgentLibraryTile(file: file, vm: vm, pal: pal) {
+                                        selected = file
+                                    }
+                                    .contextMenu {
+                                        Button { selected = file } label: {
+                                            Label("Open / Preview", systemImage: "eye")
+                                        }
+                                        if let messageId = file.messageId {
+                                            Button {
+                                                dismiss()
+                                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                                                    onShowInConversation(messageId)
+                                                }
+                                            } label: {
+                                                Label("Show in conversation", systemImage: "text.bubble")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 16).padding(.bottom, 30)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Library")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(pal.ink)
+                            .frame(width: 38, height: 38)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel("Close Library")
+                }
+            }
+        }
+        .sheet(item: $selected) { AgentUploadedFileViewerSheet(file: $0, vm: vm) }
+        .task { await vm.loadFullSessionFileIndex() }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.hidden)
+        .presentationCornerRadius(30)
+        .presentationBackground(.ultraThinMaterial)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentLibraryTile: View {
+    let file: AgentSessionFile
+    let vm: AssistantVM
+    let pal: AgentPalette
+    let action: () -> Void
+    @State private var thumbnailURL: URL?
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 9) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(pal.card.opacity(0.72))
+                    if file.mediaType.hasPrefix("image/"), let thumbnailURL {
+                        AsyncImage(url: thumbnailURL) { phase in
+                            if let image = phase.image {
+                                image.resizable().scaledToFill()
+                            } else {
+                                semanticPreview
+                            }
+                        }
+                    } else if file.mediaType == "text/markdown", let text = file.artifactContent {
+                        Text(String(text.prefix(180)))
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(pal.mutedHi)
+                            .lineLimit(8)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    } else {
+                        semanticPreview
+                    }
+                }
+                .frame(height: 132)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Color.white.opacity(0.1)))
+
+                Text(file.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(pal.ink).lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(file.typeLabel)
+                    Text("·")
+                    Text(file.origin == .uploaded ? "Uploaded" : "Generated")
+                }
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(pal.muted)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(AlmaAgentPressStyle())
+        .task {
+            guard file.mediaType.hasPrefix("image/") else { return }
+            if let ref = file.fileRef {
+                thumbnailURL = await vm.signedURL(for: ref.path)
+            } else if let content = file.artifactContent,
+                      let url = URL(string: content), url.scheme != nil {
+                thumbnailURL = url
+            }
+        }
+    }
+
+    @ViewBuilder private var semanticPreview: some View {
+        VStack(spacing: 9) {
+            Image(systemName: icon)
+                .font(.system(size: 34, weight: .light))
+                .foregroundStyle(AgentPalette.coral)
+            Text(file.typeLabel)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(pal.mutedHi)
+        }
+    }
+
+    private var icon: String {
+        if file.mediaType == "application/pdf" { return "doc.richtext.fill" }
+        if file.mediaType == "text/markdown" { return "text.document.fill" }
+        if file.mediaType.hasPrefix("image/") { return "photo.fill" }
+        return "doc.fill"
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentConversationProjectPicker: View {
+    @Bindable var vm: AssistantVM
+    @Environment(\.dismiss) private var dismiss
+    @State private var search = ""
+
+    private var rows: [AgentProject] {
+        search.isEmpty ? vm.projects : vm.projects.filter { $0.name.localizedCaseInsensitiveContains(search) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Button {
+                    Task { if await vm.assignConversationProject(nil) { dismiss() } }
+                } label: {
+                    Label("কোনো Project নয়", systemImage: vm.currentProjectId == nil ? "checkmark.circle.fill" : "circle")
+                }
+                ForEach(rows) { project in
+                    Button {
+                        Task { if await vm.assignConversationProject(project.id) { dismiss() } }
+                    } label: {
+                        HStack {
+                            Label(project.name, systemImage: "folder")
+                            Spacer()
+                            if vm.currentProjectId == project.id { Image(systemName: "checkmark") }
+                        }
+                    }
+                }
+            }
+            .searchable(text: $search, prompt: "Project খুঁজুন")
+            .navigationTitle(vm.currentProjectId == nil ? "Add to Project" : "Move to Project")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Close") { dismiss() } } }
+            .task { await vm.loadProjects() }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentConversationSearchSheet: View {
+    @Bindable var vm: AssistantVM
+    let onSelect: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+
+    private var matches: [AgentChatMessage] {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        return vm.searchableMessages.filter { $0.text.localizedCaseInsensitiveContains(query) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List(matches) { message in
+                Button {
+                    guard vm.focusCachedMessage(message.id) else { return }
+                    dismiss()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { onSelect(message.id) }
+                } label: {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(message.role == .user ? "আপনি" : "ALMA")
+                            .font(.caption.weight(.semibold)).foregroundStyle(AgentPalette.coral)
+                        Text(message.text).lineLimit(3)
+                    }
+                }
+            }
+            .overlay {
+                if !query.isEmpty && matches.isEmpty {
+                    ContentUnavailableView.search(text: query)
+                }
+            }
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
+                        prompt: "এই chat-এ খুঁজুন")
+            .navigationTitle("Search in this chat")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Close") { dismiss() } } }
+        }
+        .presentationDetents([.large])
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentConversationShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 @available(iOS 17.0, *)
@@ -10463,6 +12394,14 @@ struct AssistantScreen: View {
     /// generation-counter fan-out left every superseded task alive on MainActor).
     @State private var scrollDebounceTask: Task<Void, Never>?
     @State private var showArtifacts = false
+    @State private var showLibrary = false
+    @State private var showProjectPicker = false
+    @State private var showConversationSearch = false
+    @State private var showRenameConversation = false
+    @State private var showDeleteConversation = false
+    @State private var renameConversationText = ""
+    @State private var conversationShareURL: URL?
+    @State private var timelineScrollTarget: String?
     /// DEBUG self-test hook (ALMA_ASSISTANT_VIEWERTEST=1) — presents the zoomable
     /// image viewer with its সংরক্ষণ button for a headless fixture screenshot.
     @State private var debugViewer: PortalImagePreview?
@@ -10481,7 +12420,8 @@ struct AssistantScreen: View {
 
     private var hasBlockingPresentation: Bool {
         vm.showSidebar || vm.showVoice || debugViewer != nil || toolSheet != nil
-            || activitySheet != nil || showArtifacts || showBackgroundTasks
+            || activitySheet != nil || showArtifacts || showLibrary || showProjectPicker
+            || showConversationSearch || showBackgroundTasks
     }
 
     /// During a new streaming turn the previous settled reply keeps ownership of
@@ -10599,6 +12539,27 @@ struct AssistantScreen: View {
                                 : .asymmetric(insertion: .opacity.combined(with: .offset(y: 12)),
                                               removal: .opacity))
                         }
+                        if vm.canLoadNewer {
+                            Button {
+                                AlmaAgentHaptics.selection()
+                                let anchorId = vm.messages.last?.id
+                                Task {
+                                    await vm.loadNewerMessages()
+                                    if let anchorId {
+                                        var tx = Transaction(); tx.disablesAnimations = true
+                                        withTransaction(tx) { proxy.scrollTo(anchorId, anchor: .top) }
+                                    }
+                                }
+                            } label: {
+                                Label("আরও নতুন মেসেজ", systemImage: "arrow.down.circle")
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundStyle(pal.muted)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 9)
+                            }
+                            .buttonStyle(AlmaAgentPressStyle())
+                            .accessibilityHint("পরের cached page দেখাবে; বর্তমান জায়গা অপরিবর্তিত থাকবে")
+                        }
                         // A brand-new chat intentionally has no reply footer.
                         // ALMA identity + Background Tasks belong to a settled
                         // assistant reply, never to the empty welcome state.
@@ -10700,6 +12661,12 @@ struct AssistantScreen: View {
                         scrollToBottom(proxy: proxy)
                     }
                 }
+                .onChange(of: timelineScrollTarget) { _, target in
+                    guard let target else { return }
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { proxy.scrollTo(target, anchor: .center) }
+                    timelineScrollTarget = nil
+                }
                 .overlay(alignment: .bottom) {
                     // Web parity: centered 40pt frosted circle just above the composer.
                     if !nearBottom {
@@ -10761,8 +12728,33 @@ struct AssistantScreen: View {
         }
         .task {
             AlmaTurnLog.event("assistant.open.begin")
+            AlmaTurnLog.event(
+                "accessibility.settings",
+                "reduceMotion=\(UIAccessibility.isReduceMotionEnabled) reduceTransparency=\(UIAccessibility.isReduceTransparencyEnabled) contentSize=\(UIApplication.shared.preferredContentSizeCategory.rawValue)")
             barHooks.onMenu = { Self.presentDrawer(vm) }
             barHooks.onNewChat = { Task { await vm.newChat() } }
+            barHooks.isPinned = { vm.currentConversationPinned }
+            barHooks.hasProject = { vm.currentProjectId != nil }
+            barHooks.canMutateConversation = { !vm.conversationMutationBlocked }
+            barHooks.onShare = {
+                Task { conversationShareURL = await vm.exportConversation(.share) }
+            }
+            barHooks.onPin = { Task { await vm.toggleConversationPin() } }
+            barHooks.onProject = { showProjectPicker = true }
+            barHooks.onLibrary = { showLibrary = true }
+            barHooks.onSearch = { showConversationSearch = true }
+            barHooks.onExport = { format in
+                Task { conversationShareURL = await vm.exportConversation(format) }
+            }
+            barHooks.onRename = {
+                renameConversationText = vm.conversationTitle
+                showRenameConversation = true
+            }
+            barHooks.onArchive = {
+                guard let id = vm.conversationId else { return }
+                Task { await vm.archiveConversation(id) }
+            }
+            barHooks.onDelete = { showDeleteConversation = true }
             // DEBUG self-test hooks (never fire in production — the env vars are only
             // set by the local `simctl launch` self-test, same pattern as
             // ALMA_OPEN_COMPANION / ALMA_FADE_DEMO):
@@ -10799,12 +12791,27 @@ struct AssistantScreen: View {
             }
             // Roadmap Phase 0 — local scroll/streaming stress fixture; skips the
             // server entirely (no bootstrap) so layout is tested in isolation.
+            if argFlag("ALMA_ASSISTANT_HUGE_SESSION") {
+                vm.loadHugeSessionFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=huge mounted=\(vm.messages.count) indexed=\(vm.searchableMessages.count)")
+                return
+            }
+            if argFlag("ALMA_ASSISTANT_DICTATION_RECOVERY") {
+                vm.loadDictationRecoveryFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=dictation-recovery")
+                return
+            }
             if argFlag("ALMA_ASSISTANT_FIXTURE") {
                 vm.loadDebugFixture()
                 AlmaTurnLog.event("assistant.contentReady", "fixture=stress count=\(vm.messages.count)")
                 return
             }
             #if DEBUG
+            if argFlag("ALMA_ASSISTANT_ATTACHMENT_ATOMIC") {
+                vm.runAttachmentAtomicFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=attachment-atomic")
+                return
+            }
             if argFlag("ALMA_ASSISTANT_QUEUE_HOLD") {
                 vm.loadMergeReadinessQueueFixture()
                 AlmaTurnLog.event("assistant.contentReady", "fixture=queue-hold")
@@ -10853,6 +12860,12 @@ struct AssistantScreen: View {
                     ]
                 }
                 AlmaTurnLog.event("assistant.contentReady", "fixture=parity count=\(vm.messages.count)")
+                if argFlag("ALMA_ASSISTANT_LIBRARY") {
+                    Task {
+                        try? await Task.sleep(nanoseconds: 650_000_000)
+                        showLibrary = true
+                    }
+                }
                 return
             }
             // Chat-parity batch — full-screen image viewer incl. the ⬇ save button.
@@ -10952,11 +12965,46 @@ struct AssistantScreen: View {
         .sheet(isPresented: $showArtifacts) {
             AgentArtifactsSheet(vm: vm, openWeb: openWeb)
         }
+        .sheet(isPresented: $showLibrary) {
+            AgentLibrarySheet(vm: vm) { messageId in
+                Task {
+                    if await vm.focusSessionFileSource(messageId) {
+                        timelineScrollTarget = messageId
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showProjectPicker) {
+            AgentConversationProjectPicker(vm: vm)
+        }
+        .sheet(isPresented: $showConversationSearch) {
+            AgentConversationSearchSheet(vm: vm) { messageId in timelineScrollTarget = messageId }
+        }
+        .sheet(item: $conversationShareURL) { url in
+            AgentConversationShareSheet(url: url)
+        }
         .sheet(isPresented: $showBackgroundTasks) {
             AgentBackgroundTasksSheet(vm: vm, selectedDetent: $backgroundTaskDetent)
                 .presentationDetents([.medium, .large], selection: $backgroundTaskDetent)
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(28)
+        }
+        .alert("Rename conversation", isPresented: $showRenameConversation) {
+            TextField("নাম", text: $renameConversationText)
+            Button("Save") {
+                guard let id = vm.conversationId else { return }
+                Task { await vm.renameConversation(id, title: renameConversationText) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Delete this conversation?", isPresented: $showDeleteConversation) {
+            Button("Delete", role: .destructive) {
+                guard let id = vm.conversationId else { return }
+                Task { await vm.deleteConversation(id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("এই conversation ও এর message স্থায়ীভাবে মুছে যাবে।")
         }
         .onChange(of: hasBlockingPresentation) { _, shown in
             FloatingChatHead.shared.setSuppressed(shown, reason: "assistant-presentation")
@@ -11110,6 +13158,18 @@ struct AgentScrollViewportKey: PreferenceKey {
 final class AssistantBarHooks: NSObject {
     var onMenu: (() -> Void)?
     var onNewChat: (() -> Void)?
+    var isPinned: (() -> Bool)?
+    var hasProject: (() -> Bool)?
+    var canMutateConversation: (() -> Bool)?
+    var onShare: (() -> Void)?
+    var onPin: (() -> Void)?
+    var onProject: (() -> Void)?
+    var onLibrary: (() -> Void)?
+    var onSearch: (() -> Void)?
+    var onExport: ((AgentConversationExportFormat) -> Void)?
+    var onRename: (() -> Void)?
+    var onArchive: (() -> Void)?
+    var onDelete: (() -> Void)?
     @objc func menuTapped() {
         AlmaAgentHaptics.selection()
         onMenu?()
@@ -11117,6 +13177,50 @@ final class AssistantBarHooks: NSObject {
     @objc func newChatTapped() {
         AlmaAgentHaptics.light()
         onNewChat?()
+    }
+
+    func conversationMenu() -> UIMenu {
+        UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
+            guard let self else { completion([]); return }
+            let share = UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) { _ in
+                self.onShare?()
+            }
+            let pin = UIAction(title: self.isPinned?() == true ? "Unpin" : "Pin",
+                               image: UIImage(systemName: self.isPinned?() == true ? "pin.slash" : "pin")) { _ in
+                self.onPin?()
+            }
+            let project = UIAction(title: self.hasProject?() == true ? "Move to Project" : "Add to Project",
+                                   image: UIImage(systemName: "folder")) { _ in self.onProject?() }
+            let library = UIAction(title: "Uploaded files", image: UIImage(systemName: "square.grid.2x2")) { _ in
+                self.onLibrary?()
+            }
+            var primaryItems: [UIMenuElement] = [share, pin, project]
+            if AgentParityFlags.isEnabled(.library) { primaryItems.append(library) }
+            let primary = UIMenu(options: .displayInline, children: primaryItems)
+
+            let search = UIAction(title: "Search in this chat", image: UIImage(systemName: "magnifyingglass")) { _ in
+                self.onSearch?()
+            }
+            let export = UIMenu(title: "Export", image: UIImage(systemName: "arrow.down.doc"), children: [
+                UIAction(title: "Plain text", image: UIImage(systemName: "doc.plaintext")) { _ in self.onExport?(.plainText) },
+                UIAction(title: "Markdown", image: UIImage(systemName: "text.document")) { _ in self.onExport?(.markdown) },
+                UIAction(title: "PDF", image: UIImage(systemName: "doc.richtext")) { _ in self.onExport?(.pdf) },
+            ])
+            let rename = UIAction(title: "Rename", image: UIImage(systemName: "pencil")) { _ in self.onRename?() }
+            let conflictAttributes: UIMenuElement.Attributes = self.canMutateConversation?() == false ? .disabled : []
+            let archive = UIAction(title: "Archive", image: UIImage(systemName: "archivebox"),
+                                   attributes: conflictAttributes) { _ in self.onArchive?() }
+            let managementItems: [UIMenuElement] = AgentParityFlags.isEnabled(.conversationMenu)
+                ? [search, export, rename, archive]
+                : [archive]
+            let management = UIMenu(options: .displayInline, children: managementItems)
+            var deleteAttributes: UIMenuElement.Attributes = [.destructive]
+            deleteAttributes.formUnion(conflictAttributes)
+            let delete = UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: deleteAttributes) { _ in
+                self.onDelete?()
+            }
+            completion([primary, management, UIMenu(options: .displayInline, children: [delete])])
+        }])
     }
 }
 
@@ -11174,7 +13278,12 @@ extension AlmaTabBarController {
             let plus = AlmaWebTabViewController.coralBarButton(
                 icon: "plus", label: "নতুন চ্যাট", target: hooks,
                 action: #selector(AssistantBarHooks.newChatTapped))
-            host.navigationItem.rightBarButtonItem = plus
+            let more = UIBarButtonItem(image: UIImage(systemName: "ellipsis"), menu: hooks.conversationMenu())
+            more.accessibilityLabel = "Conversation menu"
+            more.tintColor = AlmaTheme.isDark ? .white : .label
+            // The system menu is a compact source-anchored frosted popover. It
+            // never adapts to a bottom sheet and does not resign the composer.
+            host.navigationItem.rightBarButtonItems = [more, plus]
             objc_setAssociatedObject(host, &assistantBarHooksKey, hooks, .OBJC_ASSOCIATION_RETAIN)
             let nav = Self.darkNav(root: host, tabTitle: "Assistant", icon: "sparkles", largeTitles: false)
             navRef.value = nav
