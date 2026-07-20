@@ -56,3 +56,8 @@ export function toolSchemaBundle(schemas: Array<{ name: string; schema: string }
     : '';
   return { id: 'tool_schema', kind: 'tool_schema', content, cacheable: false, version };
 }
+
+/** SPEC-048 — dynamic request suffix (the user's actual request; always last). */
+export function requestSuffixBundle(userText: string, version = '1'): ContextBundle {
+  return { id: 'request_suffix', kind: 'request_suffix', content: `USER REQUEST:\n${userText}`, cacheable: false, version };
+}
