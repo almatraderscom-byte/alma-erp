@@ -12,3 +12,8 @@ import type { Budget } from './budget';
 export function businessBudget(tenantId: string, businessId: string, yearMonth: string, limitNanoUsd: number): Budget {
   return { scope: 'business', key: `business:${tenantId}:${businessId}:${yearMonth}`, limitNanoUsd };
 }
+
+/** SPEC-033 — per-user / service-account monthly budget. */
+export function userBudget(tenantId: string, actorId: string, yearMonth: string, limitNanoUsd: number): Budget {
+  return { scope: 'user', key: `user:${tenantId}:${actorId}:${yearMonth}`, limitNanoUsd };
+}
