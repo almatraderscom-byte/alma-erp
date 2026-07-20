@@ -1,0 +1,2 @@
+# cache must be deterministic — no provider/model CALL:
+  NONE — deterministic caching (INV-01)
