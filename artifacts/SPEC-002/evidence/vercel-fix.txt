@@ -1,0 +1,6 @@
+# Vercel review fix — bare + relative imports
+
+$ printf "import '@/agent/config';" > src/app/probe.ts; node check-forbidden-imports.mjs
+FAIL — 1 NEW forbidden import(s) (regression):
+  src/app/__p.ts  ->  @/agent/config  (erp-app→agent)
+-> bare side-effect import now FLAGGED (was silently missed before)

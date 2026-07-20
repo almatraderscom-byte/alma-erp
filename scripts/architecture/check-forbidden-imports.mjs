@@ -33,15 +33,25 @@ const FORBIDDEN = {
   'shared-lib': ['agent', 'agent-contracts'],
 };
 
-const IMPORT_RE = /(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|(?:import|require)\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+// Matches: `import x from '...'` / `export ... from '...'`; bare side-effect
+// `import '...'`; and `import(...)` / `require('...')`. The bare-import case was
+// previously missed (Vercel review), letting `import '@/agent/foo'` slip past.
+const IMPORT_RE = /(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\s*['"]([^'"]+)['"]|(?:import|require)\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 // Architecture ratchet: the target rule (ERP/shared must not import agent) is
 // already violated by pre-existing production code that this group is forbidden
 // to modify. We freeze those known violations in a baseline and fail only on
 // NEW violations, so the boundary can only tighten, never regress.
 import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import { REPO_ROOT } from './_shared.mjs';
+
+// Resolve a relative import against the importing file so `../agent/x` and
+// `./agent/x` are classified the same as `@/agent/x` (previously missed).
+function resolveSpec(fromRel, spec) {
+  if (spec.startsWith('.')) return posix.normalize(posix.join(posix.dirname(fromRel), spec));
+  return spec;
+}
 
 const BASELINE_PATH = join(REPO_ROOT, 'docs/architecture/forbidden-imports.baseline.json');
 const keyOf = (v) => `${v.file} -> ${v.importSpec}`;
@@ -66,9 +76,9 @@ function scan() {
     let m;
     IMPORT_RE.lastIndex = 0;
     while ((m = IMPORT_RE.exec(src))) {
-      const spec = m[1] || m[2];
+      const spec = m[1] || m[2] || m[3];
       if (!spec) continue;
-      const to = importTargetZone(spec);
+      const to = importTargetZone(resolveSpec(path, spec));
       if (to && forbidden.includes(to)) {
         violations.push({ file: path, fromZone: from, importSpec: spec, toZone: to });
       }

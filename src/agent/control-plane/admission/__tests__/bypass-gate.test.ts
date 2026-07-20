@@ -34,4 +34,23 @@ describe('isAdmissionBypass', () => {
     expect(isAdmissionBypass('src/app/x.ts', 'react')).toBeNull();
     expect(isAdmissionBypass('src/app/x.ts', '@/lib/money')).toBeNull();
   });
+
+  // Vercel review: relative-path imports of internal stages were previously
+  // missed, letting agent code outside the package bypass the gateway.
+  it('flags a relative-path import of an internal stage (sibling in control-plane)', () => {
+    const v = isAdmissionBypass('src/agent/control-plane/foo.ts', './admission/normalize');
+    expect(v).not.toBeNull();
+    expect(v?.module).toBe('normalize');
+  });
+
+  it('flags a deeper relative-path import (../.. traversal)', () => {
+    const v = isAdmissionBypass('src/agent/lib/x.ts', '../control-plane/admission/dedup');
+    expect(v?.module).toBe('dedup');
+  });
+
+  it('does NOT flag a relative import that stays inside the package', () => {
+    // e.g. an admission-internal file — already covered — but also a relative
+    // path that resolves outside the admission internals is fine.
+    expect(isAdmissionBypass('src/agent/control-plane/foo.ts', './admission/gateway')).toBeNull();
+  });
 });
