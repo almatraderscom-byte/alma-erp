@@ -18,6 +18,7 @@ import { costAuthorizationStage } from './stages/cost-authorization'
 import { approvalObligationStage } from './stages/approval-obligation'
 import { executionAdapterStage } from './stages/execution-adapter'
 import { evidenceCaptureStage } from './stages/evidence-capture'
+import { auditFinalizationStage } from './stages/audit-finalization'
 
 /** The default production stage order. Grows as each stage spec lands. */
 export const DEFAULT_STAGES: readonly GatewayStage[] = [
@@ -28,4 +29,5 @@ export const DEFAULT_STAGES: readonly GatewayStage[] = [
   approvalObligationStage, // SPEC-126
   executionAdapterStage, // SPEC-127
   evidenceCaptureStage, // SPEC-128
+  auditFinalizationStage, // SPEC-129
 ]

@@ -94,10 +94,21 @@ export function runPipeline(ctx: GatewayContext, stages: readonly GatewayStage[]
   let cur = ctx
   for (const stage of stages) {
     const r = stage(cur)
-    if (!isSuccess(r)) return r
+    if (!isSuccess(r)) {
+      // Safety-net (SPEC-129): a stage aborted AFTER a cost reservation was made —
+      // release it so a reserved budget is never leaked on the abort path.
+      releaseReservation(cur)
+      return r
+    }
     cur = r.value
   }
   return completed(cur, cur.evidenceId ? [cur.evidenceId] : [], { gateway: GATEWAY_CONTRACT_VERSION })
+}
+
+/** Release a pending cost reservation (structural call — keeps the contract decoupled from G04). */
+function releaseReservation(ctx: GatewayContext): void {
+  const store = ctx.deps.budgetStore as { release?(id: string): void } | undefined
+  if (ctx.reservation && store?.release) store.release(ctx.reservation.id)
 }
 
 /** Helper for stages: advance the context (COMPLETED with the updated ctx). */
