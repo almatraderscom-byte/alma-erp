@@ -53,12 +53,11 @@ export const heavyHeadModelId = (fallback = 'xai-grok-4.20'): string => {
   return isKnownModelId(id) ? id : DEFAULT_MODEL_ID
 }
 
-// Anthropic head EMERGENCY kill-switch. Owner rule 2026-07-20: credits are back, so
-// this is NO LONGER a blanket default-on redirect — an explicit Opus/Sonnet pick now
-// runs real Claude whenever the key + Monitor toggle allow it (see resolveHeadModelId).
-// Set ANTHROPIC_HEAD_DOWN=true|1 only to FORCE every explicit Claude pick back onto the
-// heavy head (e.g. credits exhausted again); unset/false = honour the pick. Does NOT
-// touch the finance/CRITICAL sub-agent guard, which is a separate path.
+// NOTE: ANTHROPIC_HEAD_DOWN no longer gates the owner's EXPLICIT model pick — the
+// Monitor toggle is the single owner-facing switch for that (see resolveHeadModelId).
+// The env flag still lives in model-enabled.ts::isAnthropicAllowed, which governs the
+// AUTO/heavy tier + background subsystems (cs, morale, digests) — those keep failing to
+// Gemini while it is truthy. Owner rule 2026-07-20: don't reintroduce it on the pick path.
 
 // Marketing head: when the owner's message is marketing/content work, Qwen answers
 // DIRECTLY as the head (runs the full agent loop) — exactly like DeepSeek does for
@@ -500,21 +499,21 @@ export async function resolveHeadModelId(opts: {
   //    behaviour: routine→DeepSeek, marketing→Qwen, sensitive→Sonnet).
   const requested = opts.requestedModelId?.trim()
   if (requested && requested !== AUTO_MODEL_ID && isKnownModelId(requested)) {
-    // Explicit Anthropic pick (Opus/Sonnet from the picker). HONOUR it when Claude
-    // is actually usable; only redirect to the heavy head when it is genuinely down.
-    // Owner rule 2026-07-20: credits are back, so a topped-up Opus pick MUST run real
-    // Opus — the old blanket ANTHROPIC_HEAD_DOWN default silently swallowed every
-    // Claude pick regardless of balance, which is why "Opus select korleo DeepSeek
-    // aslo". Decide from cheap, real signals (no extra paid probe):
-    //   - hard kill-switch  : ANTHROPIC_HEAD_DOWN=true|1 forces redirect (emergency).
-    //   - missing API key   : no ANTHROPIC_API_KEY → Claude can't run at all.
-    //   - Monitor toggle OFF: owner disabled this model in the Monitor panel.
-    // Any of those → heavy head; otherwise the explicit Claude head runs below.
+    // Explicit Anthropic pick (Opus/Sonnet from the picker). Owner rule 2026-07-20:
+    // the Monitor toggle is the ONE owner-facing switch — if the owner has NOT turned
+    // the model off in Monitor and picks it in chat, it must RUN. No env flag to hunt
+    // down (the old blanket ANTHROPIC_HEAD_DOWN default silently swallowed every Claude
+    // pick regardless of balance — that is exactly what this removes). Only two guards,
+    // both real necessities, neither owner-config:
+    //   - Monitor toggle OFF: the owner's own kill-switch — respect it.
+    //   - missing API key   : without ANTHROPIC_API_KEY Claude physically cannot run,
+    //                         so redirect instead of hard-400'ing the owner's chat.
+    // Either → heavy head; otherwise the explicit Claude head runs below. (If credits
+    // ever run out again, the owner flips the model OFF in Monitor — same one switch.)
     if (getModel(requested).provider === 'anthropic') {
-      const hardDown = /^(1|true)$/i.test(process.env.ANTHROPIC_HEAD_DOWN?.trim() || '')
       const keyPresent = Boolean(process.env.ANTHROPIC_API_KEY?.trim())
       const monitorOn = await isModelEnabled(requested).catch(() => false)
-      if (hardDown || !keyPresent || !monitorOn) {
+      if (!keyPresent || !monitorOn) {
         return heavy('anthropic_down_explicit_redirect')
       }
     }

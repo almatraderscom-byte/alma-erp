@@ -72,13 +72,12 @@ describe('resolveHeadModelId — routine fast-path', () => {
 })
 
 describe('resolveHeadModelId — explicit model selection vs Auto', () => {
-  // Owner rule 2026-07-20: credits are back. An explicit Claude pin (Opus/Sonnet)
-  // is now HONOURED whenever Claude is actually usable — ANTHROPIC_HEAD_DOWN not
-  // hard-set, the API key present, and the Monitor toggle on. The redirect only
-  // fires when one of those signals says Claude is genuinely down.
-  describe('with Anthropic head available (key present, not hard-down)', () => {
+  // Owner rule 2026-07-20: the Monitor toggle is the ONE owner-facing switch. If the
+  // owner has NOT turned the model off in Monitor and picks it in chat, it RUNS — no
+  // env flag involved. Redirect only when the model is Monitor-OFF or the API key is
+  // missing (Claude can't physically run without a key).
+  describe('with Anthropic head available (key present, Monitor on)', () => {
     beforeAll(() => {
-      delete process.env.ANTHROPIC_HEAD_DOWN
       process.env.ANTHROPIC_API_KEY = 'sk-test-key'
     })
     afterAll(() => {
@@ -99,51 +98,27 @@ describe('resolveHeadModelId — explicit model selection vs Auto', () => {
         expect(decision.modelId).toBe(modelId)
       },
     )
-  })
 
-  describe('while Anthropic head is HARD down (ANTHROPIC_HEAD_DOWN=true, emergency)', () => {
-    beforeAll(() => {
+    it('an ANTHROPIC_HEAD_DOWN env value does NOT affect an explicit pick', async () => {
       process.env.ANTHROPIC_HEAD_DOWN = 'true'
-      process.env.ANTHROPIC_API_KEY = 'sk-test-key'
-    })
-    afterAll(() => {
-      delete process.env.ANTHROPIC_HEAD_DOWN
-      delete process.env.ANTHROPIC_API_KEY
-    })
-
-    it('redirects an explicitly-pinned Anthropic head to the heavy head so the chat still answers', async () => {
-      for (const modelId of ['claude-sonnet-4-6', 'claude-opus-4-8']) {
+      try {
         const decision = await resolveHeadModelId({
-          requestedModelId: modelId,
+          requestedModelId: 'claude-opus-4-8',
           lastUserText: 'aj koto sale holo',
           personalMode: false,
           businessId: 'ALMA_LIFESTYLE',
         })
-        expect(decision.tier).toBe('heavy')
-        expect(decision.modelId).toBe('xai-grok-4.20')
-        expect(decision.via).toBe('anthropic_down_explicit_redirect')
+        expect(decision.tier).toBe('explicit')
+        expect(decision.modelId).toBe('claude-opus-4-8')
+      } finally {
+        delete process.env.ANTHROPIC_HEAD_DOWN
       }
-    })
-
-    it('still honours a non-Anthropic explicit pin exactly (e.g. DeepSeek)', async () => {
-      const decision = await resolveHeadModelId({
-        requestedModelId: 'or-deepseek-v4-flash',
-        lastUserText: 'aj koto sale holo',
-        personalMode: false,
-        businessId: 'ALMA_LIFESTYLE',
-      })
-      expect(decision.tier).toBe('explicit')
-      expect(decision.modelId).toBe('or-deepseek-v4-flash')
     })
   })
 
-  describe('missing ANTHROPIC_API_KEY redirects a Claude pick even when not hard-down', () => {
-    beforeAll(() => {
-      delete process.env.ANTHROPIC_HEAD_DOWN
+  describe('redirects a Claude pick only on a real down signal', () => {
+    it('redirects Opus to the heavy head when no API key is configured', async () => {
       delete process.env.ANTHROPIC_API_KEY
-    })
-
-    it('redirects Opus to the heavy head when no key is configured', async () => {
       const decision = await resolveHeadModelId({
         requestedModelId: 'claude-opus-4-8',
         lastUserText: 'aj koto sale holo',
@@ -152,6 +127,18 @@ describe('resolveHeadModelId — explicit model selection vs Auto', () => {
       })
       expect(decision.tier).toBe('heavy')
       expect(decision.via).toBe('anthropic_down_explicit_redirect')
+    })
+
+    it('a non-Anthropic explicit pin is honoured regardless of key/env', async () => {
+      delete process.env.ANTHROPIC_API_KEY
+      const decision = await resolveHeadModelId({
+        requestedModelId: 'or-deepseek-v4-flash',
+        lastUserText: 'aj koto sale holo',
+        personalMode: false,
+        businessId: 'ALMA_LIFESTYLE',
+      })
+      expect(decision.tier).toBe('explicit')
+      expect(decision.modelId).toBe('or-deepseek-v4-flash')
     })
   })
 
