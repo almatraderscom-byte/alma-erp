@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A9F000000000000000000003 /* AssistantParityV2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F000000000000000000002 /* AssistantParityV2Tests.swift */; };
+		B9F000000000000000000003 /* AssistantParityV2UITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9F000000000000000000002 /* AssistantParityV2UITests.swift */; };
 		E1AA9900000000000000B001 /* alma_approval.caf in Resources */ = {isa = PBXBuildFile; fileRef = E1AA9900000000000000A001 /* alma_approval.caf */; };
 		E1AA9900000000000000B002 /* alma_urgent.caf in Resources */ = {isa = PBXBuildFile; fileRef = E1AA9900000000000000A002 /* alma_urgent.caf */; };
 		E1AA9900000000000000B003 /* alma_reminder.caf in Resources */ = {isa = PBXBuildFile; fileRef = E1AA9900000000000000A003 /* alma_reminder.caf */; };
@@ -148,6 +150,20 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		A9F00000000000000000000C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 504EC3031FED79650016851F;
+			remoteInfo = App;
+		};
+		B9F00000000000000000000C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 504EC3031FED79650016851F;
+			remoteInfo = App;
+		};
 		B1AA2200000000000000F002 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
@@ -172,6 +188,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A9F000000000000000000002 /* AssistantParityV2Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantParityV2Tests.swift; sourceTree = "<group>"; };
+		A9F000000000000000000008 /* AppParityV2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppParityV2Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B9F000000000000000000002 /* AssistantParityV2UITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantParityV2UITests.swift; sourceTree = "<group>"; };
+		B9F000000000000000000008 /* AppParityV2UITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppParityV2UITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E1AA9900000000000000A001 /* alma_approval.caf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = alma_approval.caf; sourceTree = "<group>"; };
 		E1AA9900000000000000A002 /* alma_urgent.caf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = alma_urgent.caf; sourceTree = "<group>"; };
 		E1AA9900000000000000A003 /* alma_reminder.caf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = alma_reminder.caf; sourceTree = "<group>"; };
@@ -330,6 +350,20 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A9F000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B9F000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -355,6 +389,8 @@
 			isa = PBXGroup;
 			children = (
 				504EC3061FED79650016851F /* App */,
+				A9F000000000000000000001 /* AppParityV2Tests */,
+				B9F000000000000000000001 /* AppParityV2UITests */,
 				B1AA2200000000000000E001 /* AlmaWidget */,
 				504EC3051FED79650016851F /* Products */,
 				7F8756D8B27F46E3366F6CEA /* Pods */,
@@ -366,6 +402,8 @@
 			isa = PBXGroup;
 			children = (
 				504EC3041FED79650016851F /* App.app */,
+				A9F000000000000000000008 /* AppParityV2Tests.xctest */,
+				B9F000000000000000000008 /* AppParityV2UITests.xctest */,
 				B1AA2200000000000000A002 /* AlmaWidgetExtension.appex */,
 			);
 			name = Products;
@@ -536,6 +574,22 @@
 			path = CreativeStudioSamples;
 			sourceTree = "<group>";
 		};
+		A9F000000000000000000001 /* AppParityV2Tests */ = {
+			isa = PBXGroup;
+			children = (
+				A9F000000000000000000002 /* AssistantParityV2Tests.swift */,
+			);
+			path = AppParityV2Tests;
+			sourceTree = "<group>";
+		};
+		B9F000000000000000000001 /* AppParityV2UITests */ = {
+			isa = PBXGroup;
+			children = (
+				B9F000000000000000000002 /* AssistantParityV2UITests.swift */,
+			);
+			path = AppParityV2UITests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -577,6 +631,42 @@
 			productReference = B1AA2200000000000000A002 /* AlmaWidgetExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		A9F000000000000000000007 /* AppParityV2Tests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A9F00000000000000000000B /* Build configuration list for PBXNativeTarget "AppParityV2Tests" */;
+			buildPhases = (
+				A9F000000000000000000004 /* Sources */,
+				A9F000000000000000000005 /* Frameworks */,
+				A9F000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A9F00000000000000000000D /* PBXTargetDependency */,
+			);
+			name = AppParityV2Tests;
+			productName = AppParityV2Tests;
+			productReference = A9F000000000000000000008 /* AppParityV2Tests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		B9F000000000000000000007 /* AppParityV2UITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B9F00000000000000000000B /* Build configuration list for PBXNativeTarget "AppParityV2UITests" */;
+			buildPhases = (
+				B9F000000000000000000004 /* Sources */,
+				B9F000000000000000000005 /* Frameworks */,
+				B9F000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B9F00000000000000000000D /* PBXTargetDependency */,
+			);
+			name = AppParityV2UITests;
+			productName = AppParityV2UITests;
+			productReference = B9F000000000000000000008 /* AppParityV2UITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -586,6 +676,14 @@
 				LastSwiftUpdateCheck = 0920;
 				LastUpgradeCheck = 0920;
 				TargetAttributes = {
+					A9F000000000000000000007 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = 504EC3031FED79650016851F;
+					};
+					B9F000000000000000000007 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = 504EC3031FED79650016851F;
+					};
 					504EC3031FED79650016851F = {
 						CreatedOnToolsVersion = 9.2;
 						LastSwiftMigration = 1100;
@@ -612,6 +710,8 @@
 			targets = (
 				504EC3031FED79650016851F /* App */,
 				B1AA2200000000000000A001 /* AlmaWidgetExtension */,
+				A9F000000000000000000007 /* AppParityV2Tests */,
+				B9F000000000000000000007 /* AppParityV2UITests */,
 			);
 		};
 /* End PBXProject section */
@@ -650,6 +750,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		B1AA2200000000000000C003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A9F000000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B9F000000000000000000006 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -820,6 +934,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A9F000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A9F000000000000000000003 /* AssistantParityV2Tests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B9F000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B9F000000000000000000003 /* AssistantParityV2UITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -827,6 +957,16 @@
 			isa = PBXTargetDependency;
 			target = B1AA2200000000000000A001 /* AlmaWidgetExtension */;
 			targetProxy = B1AA2200000000000000F002 /* PBXContainerItemProxy */;
+		};
+		A9F00000000000000000000D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 504EC3031FED79650016851F /* App */;
+			targetProxy = A9F00000000000000000000C /* PBXContainerItemProxy */;
+		};
+		B9F00000000000000000000D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 504EC3031FED79650016851F /* App */;
+			targetProxy = B9F00000000000000000000C /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -1045,6 +1185,76 @@
 			};
 			name = Release;
 		};
+		A9F000000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 5D9FLR3MMA;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks @executable_path/../../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.almatraders.erp.parityv2tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/App.app/App";
+			};
+			name = Debug;
+		};
+		A9F00000000000000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = AF51FD2D460BCFE21FA515B2 /* Pods-App.release.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 5D9FLR3MMA;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks @executable_path/../../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.almatraders.erp.parityv2tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/App.app/App";
+			};
+			name = Release;
+		};
+		B9F000000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 5D9FLR3MMA;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.almatraders.erp.parityv2uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = App;
+			};
+			name = Debug;
+		};
+		B9F00000000000000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 5D9FLR3MMA;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.almatraders.erp.parityv2uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = App;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1071,6 +1281,24 @@
 			buildConfigurations = (
 				B1AA2200000000000000D002 /* Debug */,
 				B1AA2200000000000000D003 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A9F00000000000000000000B /* Build configuration list for PBXNativeTarget "AppParityV2Tests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A9F000000000000000000009 /* Debug */,
+				A9F00000000000000000000A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B9F00000000000000000000B /* Build configuration list for PBXNativeTarget "AppParityV2UITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B9F000000000000000000009 /* Debug */,
+				B9F00000000000000000000A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
