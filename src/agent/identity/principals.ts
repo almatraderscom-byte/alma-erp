@@ -73,3 +73,41 @@ export function workflowPrincipal(identity: ExecutionIdentity, roles: string[] =
   if (!parsed.success) throw new Error(`invalid WorkflowPrincipal: ${parsed.error.issues[0]?.message}`);
   return parsed.data as WorkflowPrincipal;
 }
+
+/** SPEC-104 — a credential/service-account acting with scoped permissions. */
+export interface CredentialPrincipal {
+  kind: 'credential';
+  tenantId: string;
+  credentialId: string;
+  scopes: string[];
+}
+export const credentialPrincipalSchema: z.ZodType<CredentialPrincipal> = z.object({
+  kind: z.literal('credential'),
+  tenantId: z.string().min(1),
+  credentialId: z.string().min(1),
+  scopes: z.array(z.string()),
+}) as z.ZodType<CredentialPrincipal>;
+export function credentialPrincipal(tenantId: string, credentialId: string, scopes: string[] = []): CredentialPrincipal {
+  const p: CredentialPrincipal = { kind: 'credential', tenantId, credentialId, scopes: [...scopes] };
+  const parsed = credentialPrincipalSchema.safeParse(p);
+  if (!parsed.success) throw new Error(`invalid CredentialPrincipal: ${parsed.error.issues[0]?.message}`);
+  return parsed.data as CredentialPrincipal;
+}
+
+/** The unified principal union (all four kinds). */
+export type Principal = HumanPrincipal | AgentPrincipal | WorkflowPrincipal | CredentialPrincipal;
+
+/** Stable identity key for a principal (tenant-scoped). */
+export function principalKey(p: Principal): string {
+  switch (p.kind) {
+    case 'human': return `human:${p.tenantId}:${p.actorId}`;
+    case 'agent': return `agent:${p.tenantId}:${p.agentId}`;
+    case 'workflow': return `workflow:${p.tenantId}:${p.workflowId}`;
+    case 'credential': return `credential:${p.tenantId}:${p.credentialId}`;
+  }
+}
+
+/** Roles/scopes a principal carries (credentials expose scopes as roles). */
+export function principalRoles(p: Principal): string[] {
+  return p.kind === 'credential' ? p.scopes : p.roles;
+}
