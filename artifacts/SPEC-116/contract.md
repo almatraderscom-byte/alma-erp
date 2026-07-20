@@ -1,0 +1,3 @@
+# SPEC-116 Contract — Data export approval rules
+ExportApprovalRule: an export is autonomous only when destination is known-internal AND rowCount is a known integer ≤ ceiling AND not marked sensitive; external/unknown destination, sensitive data, unknown scope, or over-ceiling ⇒ require_approval; non-export ⇒ abstain. Owner-tunable ceiling/destinations, zod-validated.
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-116 commit>` → parent tree MATCH.
