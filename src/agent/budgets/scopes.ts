@@ -32,3 +32,8 @@ export function turnBudget(correlationId: string, limitNanoUsd: number): Budget 
 export function modelCallBudget(correlationId: string, stepId: string, limitNanoUsd: number): Budget {
   return { scope: 'model_call', key: `call:${correlationId}:${stepId}`, limitNanoUsd };
 }
+
+/** SPEC-037 — total budget across one tool/agent loop (bounds runaway loops). */
+export function toolLoopBudget(workflowId: string, limitNanoUsd: number): Budget {
+  return { scope: 'tool_loop', key: `toolloop:${workflowId}`, limitNanoUsd };
+}
