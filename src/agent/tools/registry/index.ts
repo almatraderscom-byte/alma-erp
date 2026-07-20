@@ -9,3 +9,4 @@
  */
 export * from './inventory.schema'
 export * from './inventory'
+export * from './io-schema'
