@@ -1,0 +1,3 @@
+$ node scripts/architecture/check-forbidden-imports.mjs
+known (baselined) pre-existing violations: 101
+PASS — no NEW forbidden imports. ERP app/api → agent: 0. Boundary did not regress.

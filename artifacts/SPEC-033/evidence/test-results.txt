@@ -1,0 +1,10 @@
+$ npx vitest run src/agent/budgets src/agent/control-plane/cost
+
+ RUN  v4.1.9 /home/user/alma-erp
+
+
+ Test Files  4 passed (4)
+      Tests  17 passed (17)
+   Start at  10:00:59
+   Duration  577ms (transform 357ms, setup 0ms, import 514ms, tests 23ms, environment 0ms)
+
