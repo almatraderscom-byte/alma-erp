@@ -28,7 +28,7 @@ describe('filterAuthorized', () => {
 
 describe('toModelView (INV-07 bounded view)', () => {
   it('exposes only text/tags/atMs — no embedding, no ids', () => {
-    const v = toModelView(rec('alma')) as Record<string, unknown>;
+    const v = toModelView(rec('alma')) as unknown as Record<string, unknown>;
     expect(v.text).toBe('secret');
     expect(v.embedding).toBeUndefined();
     expect(v.id).toBeUndefined();

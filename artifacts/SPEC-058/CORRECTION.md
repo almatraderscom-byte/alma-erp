@@ -1,0 +1,2 @@
+# SPEC-058 Correction (integrity note)
+The first attempt cast `MemoryView` directly to `Record<string, unknown>` in the test, a TS error the scoped vitest run did not catch (esbuild does not typecheck) and the guarded committer only gated on vitest. Full-repo typecheck flagged it at G06 certification. Fixed to `as unknown as Record<...>`; guarded committer hardened to also gate on scoped typecheck. Re-verified: full-repo tsc exit 0, memory suite green.
