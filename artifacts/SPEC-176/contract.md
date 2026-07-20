@@ -1,0 +1,3 @@
+# SPEC-176 Contract — ERP and office workflow templates
+ERP_OFFICE_TEMPLATES + registry/validate: known back-office workflows (create_order with cancel compensator, adjust_inventory reconcilable, generate_report read-only) as validated G14 templates; ERP writes route through the G13 gateway at runtime, reports never mutate.
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-176 commit>` → parent tree MATCH.
