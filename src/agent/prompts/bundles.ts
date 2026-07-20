@@ -47,3 +47,12 @@ export function memoryBundle(items: string[], version = '1'): ContextBundle {
   const content = items.length ? 'RELEVANT MEMORY:\n' + items.map((m) => `- ${m}`).join('\n') : '';
   return { id: 'memory', kind: 'memory', content, cacheable: false, version };
 }
+
+/** SPEC-047 — exact tool-schema bundle (dynamic; the tools available this turn). */
+export function toolSchemaBundle(schemas: Array<{ name: string; schema: string }>, version = '1'): ContextBundle {
+  const sorted = [...schemas].sort((a, b) => a.name.localeCompare(b.name));
+  const content = sorted.length
+    ? 'AVAILABLE TOOLS:\n' + sorted.map((s) => `${s.name}: ${s.schema}`).join('\n')
+    : '';
+  return { id: 'tool_schema', kind: 'tool_schema', content, cacheable: false, version };
+}

@@ -1,0 +1,2 @@
+# context assembly must be deterministic — no provider/model/db CALL:
+  NONE — context compiler is deterministic (INV-01)
