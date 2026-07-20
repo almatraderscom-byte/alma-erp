@@ -37,3 +37,8 @@ export function modelCallBudget(correlationId: string, stepId: string, limitNano
 export function toolLoopBudget(workflowId: string, limitNanoUsd: number): Budget {
   return { scope: 'tool_loop', key: `toolloop:${workflowId}`, limitNanoUsd };
 }
+
+/** SPEC-038 — per browser-automation task budget (long/expensive tasks). */
+export function browserTaskBudget(taskId: string, limitNanoUsd: number): Budget {
+  return { scope: 'browser_task', key: `browser:${taskId}`, limitNanoUsd };
+}
