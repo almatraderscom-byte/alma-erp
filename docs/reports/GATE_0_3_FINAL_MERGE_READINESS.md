@@ -90,3 +90,19 @@ are still pending and native XCTest/XCUITest coverage is unavailable. The
 rejected Gate 9 presentation is isolated, current loader/composer preservation
 is verified, and the known reliability blockers found by local and GitHub review
 have been addressed. Do not merge or deploy without owner approval.
+
+## Parity v2 addendum — 2026-07-20
+
+The v2 reference pack superseded the old UI phase order while preserving this
+branch's Gate 0–3 reliability foundation. Work continued only on the dedicated
+`agent-phase-ios-parity-v2-gates-0-10` worktree/branch.
+
+- Native XCTest and XCUITest targets now exist and are wired into the shared App
+  scheme; focused reliability/parity tests and anchored menu→Library UI coverage pass.
+- The v2 attachment-loss P0 is covered by durable provisional identity, draft,
+  attachment bytes, acceptance transaction, retry/cancel, and relaunch tests.
+- The corrected anchored root menu is Gate 7 and the large unified Library is
+  Gate 6. They are not detented root sheets and do not replace the Gate 0–3
+  queue/approval/recovery state machines.
+- Final v2 details and evidence are recorded in
+  `docs/reports/ALMA_IOS_PARITY_V2_GATE_0_10_FINAL.md`.
