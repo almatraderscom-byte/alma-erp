@@ -1,0 +1,7 @@
+# Vercel review fix — relative + bare imports (admission bypass gate)
+
+$ relative-path probe:
+FAIL — 1 bypass(es):
+  src/agent/control-plane/__p.ts -> ./admission/normalize (internal: normalize)
+
+-> relative './admission/normalize' now FLAGGED (was missed)

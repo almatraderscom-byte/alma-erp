@@ -11,8 +11,25 @@ const ROOT = process.cwd();
 const SKIP = new Set(['node_modules', '.next', '.git', 'dist', 'build', 'coverage']);
 const ADMISSION_PATH = 'src/agent/control-plane/admission/';
 const INTERNAL = ['registry', 'normalize', 'fast-path', 'intent', 'complexity', 'planning', 'risk', 'dedup'];
-const IMPORT_RE = /(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|(?:import|require)\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-const TO_ADMISSION = /agent\/control-plane\/admission\/([a-z0-9-]+)/;
+// Also matches bare side-effect imports `import '...'` (Vercel review).
+const IMPORT_RE = /(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\s*['"]([^'"]+)['"]|(?:import|require)\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+const TO_ADMISSION = /(?:^|\/)src\/agent\/control-plane\/admission\/([a-z0-9-]+)/;
+
+// Resolve a spec from `fromRel` to a repo-relative path so relative imports
+// (`./admission/x`, `../admission/x`) are caught, not just alias/absolute ones.
+function resolveToRepoPath(fromRel, spec) {
+  if (spec.startsWith('.')) {
+    const parts = fromRel.split('/').slice(0, -1);
+    for (const seg of spec.split('/')) {
+      if (seg === '.' || seg === '') continue;
+      if (seg === '..') parts.pop();
+      else parts.push(seg);
+    }
+    return parts.join('/');
+  }
+  if (spec.startsWith('@/')) return 'src/' + spec.slice(2);
+  return spec;
+}
 
 function walkSafe(dir) {
   const out = [];
@@ -39,9 +56,9 @@ function main() {
     let m;
     IMPORT_RE.lastIndex = 0;
     while ((m = IMPORT_RE.exec(src))) {
-      const spec = m[1] || m[2];
+      const spec = m[1] || m[2] || m[3];
       if (!spec) continue;
-      const hit = TO_ADMISSION.exec(spec);
+      const hit = TO_ADMISSION.exec(resolveToRepoPath(rel, spec));
       if (hit && INTERNAL.includes(hit[1])) violations.push({ file: rel, importSpec: spec, module: hit[1] });
     }
   }
