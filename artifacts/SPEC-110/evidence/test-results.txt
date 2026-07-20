@@ -1,0 +1,10 @@
+$ npx vitest run src/agent/policy src/agent/identity
+
+ RUN  v4.1.9 /home/user/alma-erp
+
+
+ Test Files  11 passed (11)
+      Tests  101 passed (101)
+   Start at  12:31:42
+   Duration  1.11s (transform 465ms, setup 0ms, import 841ms, tests 112ms, environment 1ms)
+
