@@ -939,16 +939,22 @@ final class AlmaVoiceEngine {
 
     func answer(_ card: Card, option: String) {
         guard let aid = card.askCardId else { return }
-        if let i = cards.firstIndex(where: { $0.id == card.id }) {
-            cards[i].status = option
-        }
-        // Answering an ask continues the conversation with the chosen option —
-        // record it AND drive the next turn (web parity).
+        // Persist first, then let the voice engine own exactly ONE spoken turn.
+        // The chat VM must not also start its default text continuation here.
         Task { [weak self] in
-            await self?.chatVM?.answerAskCard(aid, option: option)
+            guard let self else { return }
+            let saved = await self.chatVM?.answerAskCard(
+                aid, option: option, continueInChat: false) ?? false
+            guard saved else {
+                self.tts.sayNow("উত্তরটা সংরক্ষণ করা যায়নি Boss, আবার চেষ্টা করুন।")
+                return
+            }
+            if let i = self.cards.firstIndex(where: { $0.id == card.id }) {
+                self.cards[i].status = option
+            }
+            self.tts.stopAll()
+            self.runTurn(option)
         }
-        tts.stopAll()
-        runTurn(option)
     }
 
     /// Premium-model permission — approve re-runs the SAME question with resume.

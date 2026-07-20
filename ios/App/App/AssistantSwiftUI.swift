@@ -68,6 +68,68 @@ struct AgentPalette {
     var codeBg: Color { dark ? Color.black.opacity(0.45) : Color(red: 0.118, green: 0.118, blue: 0.157) }
 }
 
+// MARK: - Shared ALMA Agent interaction foundation
+
+/// Behaviour-only press grammar. Labels keep their existing shape, color and
+/// layout; the style adds the same immediate depth response everywhere.
+@available(iOS 17.0, *)
+struct AlmaAgentPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.86 : 1)
+            .brightness(configuration.isPressed ? 0.035 : 0)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.975 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.11), value: configuration.isPressed)
+            .contentShape(Rectangle())
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AlmaAgentMinimumHitTarget: ViewModifier {
+    func body(content: Content) -> some View {
+        content.frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+    }
+}
+
+@available(iOS 17.0, *)
+extension View {
+    func almaAgentHitTarget() -> some View { modifier(AlmaAgentMinimumHitTarget()) }
+}
+
+/// One semantic haptic policy for Agent interactions. The wrapper keeps direct
+/// UIKit generator choices out of action code and can evolve without restyling UI.
+@MainActor
+enum AlmaAgentHaptics {
+    static func selection() { UISelectionFeedbackGenerator().selectionChanged() }
+    static func light() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+    static func commit() { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+    static func rigid() { UIImpactFeedbackGenerator(style: .rigid).impactOccurred() }
+    static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+    static func warning() { UINotificationFeedbackGenerator().notificationOccurred(.warning) }
+    static func error() { UINotificationFeedbackGenerator().notificationOccurred(.error) }
+}
+
+/// Material fallback used by newly-added Agent surfaces and adopted incrementally
+/// by existing cards. Reduce Transparency gets a solid ALMA card, never clear text.
+@available(iOS 17.0, *)
+struct AlmaAgentGlassBackground<S: Shape>: ViewModifier {
+    let shape: S
+    let pal: AgentPalette
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        content.background {
+            if reduceTransparency {
+                shape.fill(pal.card)
+            } else {
+                shape.fill(.ultraThinMaterial)
+            }
+        }
+    }
+}
+
 /// Bangla digits — same convention as the web `toBn()`.
 func almaBn(_ n: Int) -> String {
     let bn = ["০","১","২","৩","৪","৫","৬","৭","৮","৯"]
@@ -980,6 +1042,14 @@ final class AssistantVM {
     var conversationTitle: String = "ALMA AI"
     var messages: [AgentChatMessage] = []
     var loadingHistory = false
+    /// VM-level duplicate-submit guard. UI disabled states are secondary; this is
+    /// the canonical protection shared by chat cards, sheets and voice actions.
+    private var submittingActionKeys: Set<String> = []
+    func isSubmittingAction(_ key: String) -> Bool { submittingActionKeys.contains(key) }
+    @discardableResult private func beginSubmitting(_ key: String) -> Bool {
+        submittingActionKeys.insert(key).inserted
+    }
+    private func finishSubmitting(_ key: String) { submittingActionKeys.remove(key) }
     // Awakening animation bridge (spec): bumped when a DIFFERENT conversation is
     // opened from the drawer so the screen replays the session-opening character;
     // readyTick fires once its history has loaded (success is gated on this).
@@ -1245,7 +1315,7 @@ final class AssistantVM {
     func selectModel(_ id: String?) {
         let previous = modelId
         modelId = id
-        UISelectionFeedbackGenerator().selectionChanged()
+        AlmaAgentHaptics.selection()
         guard let cid = conversationId else { return }
         Task { [weak self] in
             do {
@@ -1880,7 +1950,7 @@ final class AssistantVM {
         recoverableTurn = nil            // nothing recoverable exists (PR 5)
         AlmaTurnLog.event("turn.terminal", "recovery:failed-no-turn")
         errorToast = "পাঠানো যায়নি — আবার চেষ্টা করুন"
-        UINotificationFeedbackGenerator().notificationOccurred(.error)
+        AlmaAgentHaptics.error()
     }
 
     // ── Conversations + sidebar data (web AgentSidebar parity) ────────────
@@ -2019,7 +2089,7 @@ final class AssistantVM {
         pendingFiles = []
         openTasks = []
         artifacts = []
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        AlmaAgentHaptics.light()
     }
 
     func deleteConversation(_ id: String) async {
@@ -2244,7 +2314,7 @@ final class AssistantVM {
         }
         guard ttsLoadingId == nil else { return }
         ttsLoadingId = message.id
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        AlmaAgentHaptics.light()
         Task { [weak self] in
             guard let self else { return }
             defer { self.ttsLoadingId = nil }
@@ -2466,13 +2536,13 @@ final class AssistantVM {
                 } else {
                     // No conversation was ever created — nothing recoverable exists.
                     errorToast = kind.banglaMessage
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                    AlmaAgentHaptics.error()
                 }
             case .authentication:
                 authExpired = true
             case .server, .terminalAgentError:
                 errorToast = kind.banglaMessage
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                AlmaAgentHaptics.error()
             }
         }
     }
@@ -3353,17 +3423,19 @@ final class AssistantVM {
     var confirmApprovedAt: [String: Date] = [:]
 
     func approveAction(_ cardId: String, approve: Bool) async {
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        if approve { confirmApprovedAt[cardId] = Date() }
+        guard beginSubmitting("action:\(cardId)") else { return }
+        defer { finishSubmitting("action:\(cardId)") }
+        AlmaAgentHaptics.commit()
         let summary = messages
             .flatMap(\.confirmCards)
             .first(where: { $0.id == cardId })?
             .summary.split(separator: "\n").first.map(String.init) ?? ""
-        setConfirmStatus(cardId, approve ? "approved" : "rejected")
         do {
             let _: OkResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/actions/\(cardId)/\(approve ? "approve" : "reject")")
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            if approve { confirmApprovedAt[cardId] = Date() }
+            setConfirmStatus(cardId, approve ? "approved" : "rejected")
+            AlmaAgentHaptics.success()
             // Owner-hit 2026-07-16: a REJECT left the thread dead silent — no
             // loader, no acknowledgment (approve is covered server-side: the
             // route writes a progress note and enqueues a continuation turn,
@@ -3389,9 +3461,8 @@ final class AssistantVM {
                 return
             }
         } catch {
-            setConfirmStatus(cardId, "pending")
             errorToast = error.localizedDescription
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            AlmaAgentHaptics.error()
         }
         await loadMessages()
     }
@@ -3405,20 +3476,30 @@ final class AssistantVM {
         }
     }
 
-    func answerAskCard(_ cardId: String, option: String) async {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        for i in messages.indices {
-            if let j = messages[i].askCards.firstIndex(where: { $0.id == cardId }) {
-                messages[i].askCards[j].status = "answered"
-                messages[i].askCards[j].selectedOption = option
+    @discardableResult
+    func answerAskCard(_ cardId: String, option: String, continueInChat: Bool = true) async -> Bool {
+        guard beginSubmitting("ask:\(cardId)") else { return false }
+        defer { finishSubmitting("ask:\(cardId)") }
+        AlmaAgentHaptics.light()
+        do {
+            let _: OkResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/ask-cards/\(cardId)/answer", body: ["option": option])
+            for i in messages.indices {
+                if let j = messages[i].askCards.firstIndex(where: { $0.id == cardId }) {
+                    messages[i].askCards[j].status = "answered"
+                    messages[i].askCards[j].selectedOption = option
+                }
             }
+            AlmaAgentHaptics.success()
+            // Voice owns its own spoken continuation, so it persists here with
+            // continueInChat=false and starts exactly one voice turn itself.
+            if continueInChat { send(option, askCardId: cardId) }
+            return true
+        } catch {
+            errorToast = "উত্তর সংরক্ষণ করা গেল না — আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
+            return false
         }
-        let _: OkResponse? = try? await AlmaAPI.shared.send(
-            "POST", "/api/assistant/ask-cards/\(cardId)/answer", body: ["option": option])
-        // Feed the choice back into the chat so the agent continues instantly (web
-        // onQuickSend parity). The card id rides along (AGENT-IOS-001) so the turn
-        // binds this answer to the EXACT question — no text-match guessing.
-        send(option, askCardId: cardId)
     }
 
     // ── Owner feedback on a settled reply (roadmap Phase 1 correction loop) ──
@@ -3429,7 +3510,7 @@ final class AssistantVM {
     /// One tap files a structured correction row — POST /api/assistant/feedback.
     /// Best-effort like the web client: feedback must never break the chat.
     func sendFeedback(kind: String, for message: AgentChatMessage) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        AlmaAgentHaptics.light()
         feedbackSentIds.insert(message.id)
         guard let cid = conversationId else { return }
         struct FeedbackBody: Encodable {
@@ -3483,7 +3564,10 @@ final class AssistantVM {
     func saveArtifactManually(from message: AgentChatMessage) async {
         guard let cid = conversationId,
               let detected = Self.detectArtifact(in: message.text) else { return }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let actionKey = "artifact:\(message.id)"
+        guard beginSubmitting(actionKey) else { return }
+        defer { finishSubmitting(actionKey) }
+        AlmaAgentHaptics.light()
         struct ArtifactBody: Encodable {
             let conversationId: String
             let messageId: String?
@@ -3501,10 +3585,11 @@ final class AssistantVM {
                                    type: detected.type, title: detected.title,
                                    content: detected.content))
             artifactSavedIds.insert(message.id)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            AlmaAgentHaptics.success()
             await loadArtifacts()
         } catch {
             errorToast = "সংরক্ষণ করা গেল না — আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
         }
     }
 
@@ -3512,11 +3597,19 @@ final class AssistantVM {
     func submitOpinion(_ cardId: String, note: String) async {
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        setConfirmStatus(cardId, "rejected")
-        let _: OkResponse? = try? await AlmaAPI.shared.send(
-            "POST", "/api/assistant/actions/\(cardId)/reject")
-        send(trimmed)
+        guard beginSubmitting("action:\(cardId)") else { return }
+        defer { finishSubmitting("action:\(cardId)") }
+        AlmaAgentHaptics.commit()
+        do {
+            let _: OkResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/actions/\(cardId)/reject")
+            setConfirmStatus(cardId, "rejected")
+            AlmaAgentHaptics.success()
+            send(trimmed)
+        } catch {
+            errorToast = "মতামত সংরক্ষণ করা গেল না — আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
+        }
     }
 
     // ── Attachments ────────────────────────────────────────────────────────
@@ -3591,7 +3684,7 @@ final class AssistantVM {
                     self.isRecording = true
                     self.recordingSeconds = 0
                     self.micLevel = 0.06
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    AlmaAgentHaptics.commit()
                     // Web VoiceWaveform parity: live RMS level drives the 34-bar wave.
                     self.meterTask?.cancel()
                     self.meterTask = Task { [weak self] in
@@ -3620,7 +3713,7 @@ final class AssistantVM {
         recorder = nil
         isRecording = false
         try? FileManager.default.removeItem(at: recordingURL)
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        AlmaAgentHaptics.light()
     }
 
     private func finishRecording() {
@@ -3629,7 +3722,7 @@ final class AssistantVM {
         recorder = nil
         isRecording = false
         transcribing = true
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        AlmaAgentHaptics.light()
         Task { [weak self] in
             guard let self else { return }
             defer { self.transcribing = false }
@@ -4019,7 +4112,7 @@ struct AgentMarkdownText: View {
                 Spacer()
                 Button {
                     UIPasteboard.general.string = body
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    AlmaAgentHaptics.light()
                 } label: {
                     Label("কপি করুন", systemImage: "doc.on.doc")
                         .font(.system(size: 11.5, weight: .semibold))
@@ -4076,7 +4169,7 @@ struct AgentChatImage: View {
                 // once and the tile stayed dead "ছবি নেই" forever). Retry re-signs
                 // and reloads instead of leaving a permanent broken tile.
                 Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    AlmaAgentHaptics.light()
                     failed = false
                     url = nil
                 } label: {
@@ -4088,7 +4181,7 @@ struct AgentChatImage: View {
                     .frame(width: 80, height: 80)
                     .background(pal.card.opacity(0.4), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AlmaAgentPressStyle())
             } else if let url {
                 AsyncImage(url: url) { phase in
                     switch phase {
@@ -4237,12 +4330,12 @@ struct AgentMessageRow: View {
                                         .contextMenu {
                                             Button {
                                                 UIPasteboard.general.string = message.text
-                                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                                AlmaAgentHaptics.commit()
                                             } label: {
                                                 Label("কপি করুন", systemImage: "doc.on.doc")
                                             }
                                             Button {
-                                                UISelectionFeedbackGenerator().selectionChanged()
+                                                AlmaAgentHaptics.selection()
                                                 onActivitySheet(.init(message: message, kind: .selectText, slice: message.text))
                                             } label: {
                                                 Label("টেক্সট সিলেক্ট করুন", systemImage: "text.cursor")
@@ -4251,7 +4344,7 @@ struct AgentMessageRow: View {
                                 }
                                 if long {
                                     Button {
-                                        UISelectionFeedbackGenerator().selectionChanged()
+                                        AlmaAgentHaptics.selection()
                                         withAnimation(.easeOut(duration: 0.3)) { expandedLong.toggle() }
                                     } label: {
                                         HStack(spacing: 4) {
@@ -4307,7 +4400,7 @@ struct AgentMessageRow: View {
                     })
                     let bottomAskCards = message.askCards.filter { !inlineAskIds.contains($0.id) }
                     if !bottomAskCards.isEmpty {
-                        AgentAskCardsPager(cards: bottomAskCards, pal: pal) { card, option in
+                        AgentAskCardsPager(cards: bottomAskCards, pal: pal, vm: vm) { card, option in
                             Task { await vm.answerAskCard(card.id, option: option) }
                         }
                     }
@@ -4813,7 +4906,7 @@ struct AgentThoughtProcessSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Button {
                     guard hasDetail else { return }
-                    UISelectionFeedbackGenerator().selectionChanged()
+                    AlmaAgentHaptics.selection()
                     withAnimation(.easeOut(duration: 0.18)) {
                         if open { openItems.remove(index) } else { openItems.insert(index) }
                     }
@@ -4834,7 +4927,7 @@ struct AgentThoughtProcessSheet: View {
                     .padding(.vertical, 2)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AlmaAgentPressStyle())
                 if open {
                     if let body = item.body, !body.isEmpty {
                         Text(body)
@@ -5176,7 +5269,7 @@ struct AgentMessageActions: View {
                             .background(pal.card.opacity(0.6), in: Capsule())
                             .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.35), lineWidth: 1))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(AlmaAgentPressStyle())
                 }
             }
             .padding(.vertical, 2)
@@ -5191,7 +5284,7 @@ struct AgentMessageActions: View {
             }
             Button {
                 UIPasteboard.general.string = message.text
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                AlmaAgentHaptics.light()
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) { copied = true }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { copied = false }
             } label: {
@@ -5238,7 +5331,7 @@ struct AgentMessageActions: View {
                         .frame(width: 28, height: 28)
                 }
                 Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    AlmaAgentHaptics.light()
                     withAnimation(.snappy(duration: 0.2)) { reasonsOpen.toggle() }
                 } label: {
                     Image(systemName: "hand.thumbsdown")
@@ -5374,6 +5467,7 @@ struct AgentConfirmCardView: View {
     let onDecide: (Bool) -> Void
     @State private var showOpinion = false
     @State private var opinionText = ""
+    private var submitting: Bool { vm.isSubmittingAction("action:\(card.id)") }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -5411,12 +5505,15 @@ struct AgentConfirmCardView: View {
                             Button {
                                 Task { await vm.submitOpinion(card.id, note: opinionText) }
                             } label: {
-                                Text("পাঠান")
+                                Group {
+                                    if submitting { ProgressView().tint(.white) }
+                                    else { Text("পাঠান") }
+                                }
                                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
                                     .padding(.horizontal, 16).padding(.vertical, 8)
                                     .background(AgentPalette.coral, in: Capsule())
                             }
-                            .disabled(opinionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(submitting || opinionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             Button { showOpinion = false } label: {
                                 Text("বাতিল").font(.system(size: 13)).foregroundStyle(pal.muted)
                             }
@@ -5427,7 +5524,10 @@ struct AgentConfirmCardView: View {
                     VStack(spacing: 0) {
                         HStack(spacing: 8) {
                             Button { onDecide(true) } label: {
-                                Text("অনুমোদন")
+                                Group {
+                                    if submitting { ProgressView().tint(.white) }
+                                    else { Text("অনুমোদন") }
+                                }
                                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
                                     .frame(maxWidth: .infinity).padding(.vertical, 10)
                                     .background(AgentPalette.coral, in: RoundedRectangle(cornerRadius: 12))
@@ -5440,9 +5540,10 @@ struct AgentConfirmCardView: View {
                                     .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(pal.borderSubtle))
                             }
                         }
+                        .disabled(submitting)
                         .padding(.horizontal, 16).padding(.bottom, 10)
                         Button {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            AlmaAgentHaptics.light()
                             showOpinion = true
                         } label: {
                             HStack(spacing: 8) {
@@ -5458,7 +5559,7 @@ struct AgentConfirmCardView: View {
                             }
                             .padding(.horizontal, 16).padding(.vertical, 12)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(AlmaAgentPressStyle())
                         .overlay(alignment: .top) { Rectangle().fill(pal.borderSubtle).frame(height: 1) }
                     }
                 }
@@ -5479,7 +5580,8 @@ struct AgentConfirmCardView: View {
                 .padding(.horizontal, 16).padding(.bottom, 14)
             }
         }
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .modifier(AlmaAgentGlassBackground(
+            shape: RoundedRectangle(cornerRadius: 20, style: .continuous), pal: pal))
         .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
             .strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
         .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
@@ -5529,7 +5631,7 @@ struct AgentDelegationCardView: View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 guard d.summary?.isEmpty == false else { return }
-                UISelectionFeedbackGenerator().selectionChanged()
+                AlmaAgentHaptics.selection()
                 withAnimation(.snappy(duration: 0.2)) { open.toggle() }
             } label: {
                 HStack(alignment: .top, spacing: 10) {
@@ -5567,7 +5669,7 @@ struct AgentDelegationCardView: View {
                 .padding(.horizontal, 14).padding(.vertical, 11)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AlmaAgentPressStyle())
             if open, let summary = d.summary, !summary.isEmpty {
                 Rectangle().fill(pal.borderSubtle).frame(height: 1)
                 Text(summary)
@@ -5612,6 +5714,7 @@ struct AgentAskCardView: View {
     var onPrev: (() -> Void)? = nil
     var onNext: (() -> Void)? = nil
     var onClose: (() -> Void)? = nil
+    var submitting = false
     let onAnswer: (String) -> Void
     @State private var chosen: String?
     @State private var otherActive = false
@@ -5630,6 +5733,7 @@ struct AgentAskCardView: View {
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(idx > 0 ? pal.ink : pal.muted.opacity(0.35))
                                     .frame(width: 28, height: 28)
+                                    .almaAgentHitTarget()
                             }
                             .disabled(idx == 0)
                             Text("\(almaBn(idx + 1)) / \(almaBn(pageCount))")
@@ -5641,13 +5745,14 @@ struct AgentAskCardView: View {
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(idx < pageCount - 1 ? pal.ink : pal.muted.opacity(0.35))
                                     .frame(width: 28, height: 28)
+                                    .almaAgentHitTarget()
                             }
                             .disabled(idx >= pageCount - 1)
                         }
                         Spacer()
                         if let onClose {
                             Button {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                AlmaAgentHaptics.light()
                                 onClose()
                             } label: {
                                 Image(systemName: "xmark")
@@ -5656,6 +5761,7 @@ struct AgentAskCardView: View {
                                     .foregroundStyle(pal.muted)
                                     .frame(width: 28, height: 28)
                                     .background(Color.white.opacity(0.06), in: Circle())
+                                    .almaAgentHitTarget()
                             }
                         }
                     }
@@ -5672,7 +5778,7 @@ struct AgentAskCardView: View {
                     ForEach(Array(card.options.enumerated()), id: \.offset) { idx, opt in
                         let active = !otherActive && chosen == opt
                         Button {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            AlmaAgentHaptics.light()
                             chosen = opt; otherActive = false
                             onAnswer(opt)
                         } label: {
@@ -5694,14 +5800,15 @@ struct AgentAskCardView: View {
                             }
                             .padding(.horizontal, 16).padding(.vertical, 12)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(AlmaAgentPressStyle())
+                        .disabled(submitting)
                         if idx < card.options.count - 1 {
                             Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1).padding(.leading, 18)
                         }
                     }
                     Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
                     Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        AlmaAgentHaptics.light()
                         otherActive = true; chosen = nil
                     } label: {
                         HStack(spacing: 10) {
@@ -5715,7 +5822,8 @@ struct AgentAskCardView: View {
                         }
                         .padding(.horizontal, 16).padding(.vertical, 13)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(AlmaAgentPressStyle())
+                    .disabled(submitting)
                     if otherActive {
                         HStack(spacing: 8) {
                             TextField("আপনার মতামত…", text: $otherText)
@@ -5731,6 +5839,7 @@ struct AgentAskCardView: View {
                                     .font(.system(size: 28))
                                     .foregroundStyle(AgentPalette.coral)
                             }
+                            .disabled(submitting)
                         }
                         .padding(.horizontal, 18).padding(.bottom, 14)
                     }
@@ -5747,7 +5856,9 @@ struct AgentAskCardView: View {
                 .padding(18)
             }
         }
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay { if submitting { ProgressView().tint(AgentPalette.coral) } }
+        .modifier(AlmaAgentGlassBackground(
+            shape: RoundedRectangle(cornerRadius: 22, style: .continuous), pal: pal))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
             .strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
         .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
@@ -5760,6 +5871,7 @@ struct AgentAskCardView: View {
 struct AgentAskCardsPager: View {
     let cards: [AgentChatMessage.AskCard]
     let pal: AgentPalette
+    let vm: AssistantVM
     let onAnswer: (AgentChatMessage.AskCard, String) -> Void
     @State private var index = 0
     @State private var closed = false
@@ -5770,7 +5882,7 @@ struct AgentAskCardsPager: View {
         Group {
             if closed {
                 Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    AlmaAgentHaptics.light()
                     withAnimation(.snappy(duration: 0.22)) { closed = false }
                 } label: {
                     HStack(spacing: 6) {
@@ -5787,7 +5899,7 @@ struct AgentAskCardsPager: View {
                     .background(AgentPalette.coral.opacity(0.08), in: Capsule())
                     .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.3), lineWidth: 1))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AlmaAgentPressStyle())
             } else {
                 AgentAskCardView(
                     card: card, pal: pal,
@@ -5796,7 +5908,8 @@ struct AgentAskCardsPager: View {
                     onPrev: { withAnimation(.snappy(duration: 0.22)) { index = max(0, idx - 1) } },
                     onNext: { withAnimation(.snappy(duration: 0.22)) { index = min(cards.count - 1, idx + 1) } },
                     onClose: card.status == "pending"
-                        ? { withAnimation(.snappy(duration: 0.22)) { closed = true } } : nil
+                        ? { withAnimation(.snappy(duration: 0.22)) { closed = true } } : nil,
+                    submitting: vm.isSubmittingAction("ask:\(card.id)")
                 ) { option in
                     onAnswer(card, option)
                 }
@@ -5834,7 +5947,7 @@ struct AgentToolScreenshotThumb: View {
             EmptyView()
         } else {
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                AlmaAgentHaptics.light()
                 preview = PortalImagePreview(urls: [urlString], index: 0)
             } label: {
                 AsyncImage(url: URL(string: urlString)) { phase in
@@ -5869,7 +5982,7 @@ struct AgentToolScreenshotThumb: View {
                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AlmaAgentPressStyle())
             .fullScreenCover(item: $preview) { PortalImageViewer(preview: $0, showsSave: true) }
         }
     }
@@ -5890,7 +6003,7 @@ struct AgentCompactActivityRow: View {
 
     var body: some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            AlmaAgentHaptics.light()
             onTap()
         } label: {
             HStack(spacing: 8) {
@@ -5921,7 +6034,7 @@ struct AgentCompactActivityRow: View {
             .frame(minHeight: 40)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AlmaAgentPressStyle())
     }
 }
 
@@ -5981,7 +6094,7 @@ struct AgentTurnBlocksView: View {
                     }
                 case .askCard(_, let aid):
                     if let card = message.askCards.first(where: { $0.id == aid }) {
-                        AgentAskCardsPager(cards: [card], pal: pal) { card, option in
+                        AgentAskCardsPager(cards: [card], pal: pal, vm: vm) { card, option in
                             Task { await vm.answerAskCard(card.id, option: option) }
                         }
                     }
@@ -6076,7 +6189,7 @@ struct AgentSettledSummaryRow: View {
 
     var body: some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            AlmaAgentHaptics.light()
             onTap()
         } label: {
             HStack(spacing: 8) {
@@ -6096,7 +6209,7 @@ struct AgentSettledSummaryRow: View {
             .frame(minHeight: 40)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AlmaAgentPressStyle())
     }
 
     private var summaryText: String {
@@ -6136,7 +6249,7 @@ struct AgentModelSwitchCardView: View {
             if card.status == "pending" {
                 HStack(spacing: 10) {
                     Button {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        AlmaAgentHaptics.commit()
                         onDecide(true)
                     } label: {
                         Text("\(card.toLabel)-এ চালাও")
@@ -6146,7 +6259,7 @@ struct AgentModelSwitchCardView: View {
                             .background(AgentPalette.coral, in: Capsule())
                     }
                     Button {
-                        UISelectionFeedbackGenerator().selectionChanged()
+                        AlmaAgentHaptics.selection()
                         onDecide(false)
                     } label: {
                         Text("সস্তা মডেলেই চালাও")
@@ -6312,7 +6425,8 @@ struct AgentComposerView: View {
             }
             .padding(8)
             .background(pal.glassFill)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .modifier(AlmaAgentGlassBackground(
+                shape: RoundedRectangle(cornerRadius: 24, style: .continuous), pal: pal))
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
             .overlay(AgentNeonBorder(cornerRadius: 24))   // web agent-neon-input parity
             .padding(.horizontal, 12)
@@ -6405,7 +6519,8 @@ struct AgentComposerView: View {
                                 .frame(width: 18, height: 18)
                                 .background(Color.black.opacity(0.65), in: Circle())
                         }
-                        .offset(x: 5, y: -5)
+                        .almaAgentHitTarget()
+                        .offset(x: 13, y: -13)
                     }
                 }
             }
@@ -6421,10 +6536,12 @@ struct AgentComposerView: View {
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(pal.muted)
                     .frame(width: 36, height: 36)
+                    .almaAgentHitTarget()
             }
+            .accessibilityLabel("ছবি যোগ করুন")
             // Model picker pill — opens the native sheet with EVERY enabled model.
             Button {
-                UISelectionFeedbackGenerator().selectionChanged()
+                AlmaAgentHaptics.selection()
                 showModelPicker = true
             } label: {
                 HStack(spacing: 3) {
@@ -6440,8 +6557,11 @@ struct AgentComposerView: View {
                 .overlay(Capsule().strokeBorder(
                     vm.isAutoModel ? pal.borderSubtle : AgentPalette.coral.opacity(0.35), lineWidth: 1))
                 .frame(maxWidth: 150)
+                .almaAgentHitTarget()
             }
             .disabled(vm.isStreaming)
+            .accessibilityLabel("মডেল বাছাই")
+            .accessibilityValue(vm.modelPillLabel)
             .sheet(isPresented: $showModelPicker) {
                 AgentModelPickerSheet(vm: vm)
             }
@@ -6459,17 +6579,21 @@ struct AgentComposerView: View {
                 .foregroundStyle(vm.isRecording ? .white : pal.muted)
                 .frame(width: 36, height: 36)
                 .background(vm.isRecording ? AnyShapeStyle(AgentPalette.coral) : AnyShapeStyle(.clear), in: Circle())
+                .almaAgentHitTarget()
             }
+            .accessibilityLabel(vm.isRecording ? "রেকর্ডিং বন্ধ করুন" : "কণ্ঠে লিখুন")
             // voice-to-voice — the NATIVE orb console (AssistantVoiceSwiftUI.swift)
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                AlmaAgentHaptics.light()
                 vm.showVoice = true
             } label: {
                 Image(systemName: "waveform")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(AgentPalette.teal)
                     .frame(width: 36, height: 36)
+                    .almaAgentHitTarget()
             }
+            .accessibilityLabel("ভয়েস কথোপকথন")
             // send / stop
             Button {
                 if vm.isStreaming { vm.stopStreaming() } else {
@@ -6485,8 +6609,10 @@ struct AgentComposerView: View {
                                 : AnyShapeStyle(pal.card.opacity(0.5)),
                                 in: Circle())
                     .shadow(color: sendEnabled ? AgentPalette.coral.opacity(0.35) : .clear, radius: 5, y: 2)
+                    .almaAgentHitTarget()
             }
             .disabled(!sendEnabled && !vm.isStreaming)
+            .accessibilityLabel(vm.isStreaming ? "উত্তর থামান" : "বার্তা পাঠান")
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: vm.isStreaming)
         }
     }
@@ -6762,7 +6888,7 @@ struct AgentSideDrawer: View {
 
     private func tabButton(_ label: String, index: Int, pal: AgentPalette) -> some View {
         Button {
-            UISelectionFeedbackGenerator().selectionChanged()
+            AlmaAgentHaptics.selection()
             withAnimation(.snappy(duration: 0.2)) { tab = index }
             if index == 1 { Task { await vm.loadMemories(scope: memScope) } }
         } label: {
@@ -6774,7 +6900,7 @@ struct AgentSideDrawer: View {
                 .background(tab == index ? AnyShapeStyle(AgentPalette.coral) : AnyShapeStyle(.clear),
                             in: Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AlmaAgentPressStyle())
     }
 
     // ── চ্যাট tab ──────────────────────────────────────────────────────────
@@ -6798,7 +6924,7 @@ struct AgentSideDrawer: View {
         VStack(spacing: 10) {
             // নতুন চ্যাট — one clear primary action, iOS-style filled capsule.
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                AlmaAgentHaptics.light()
                 Task { await vm.newChat() }
                 close()
             } label: {
@@ -6812,7 +6938,7 @@ struct AgentSideDrawer: View {
                 .background(AgentPalette.coral, in: Capsule())
                 .shadow(color: AgentPalette.coral.opacity(0.3), radius: 6, y: 2)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AlmaAgentPressStyle())
             .padding(.horizontal, 14)
             .padding(.top, 12)
 
@@ -6961,7 +7087,7 @@ struct AgentSideDrawer: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AlmaAgentPressStyle())
     }
 
     private func shortDate(_ iso: String?) -> String {
@@ -7100,7 +7226,7 @@ struct AgentSideDrawer: View {
                 }
                 Spacer()
                 Button {
-                    UISelectionFeedbackGenerator().selectionChanged()
+                    AlmaAgentHaptics.selection()
                     Task { await vm.toggleMemoryPin(m.id, pinned: m.pinned) }
                 } label: {
                     Text("📌").font(.system(size: 11))
@@ -7264,7 +7390,7 @@ struct AgentOpenTasksChipView: View {
 
     var body: some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            AlmaAgentHaptics.light()
             showSheet = true
         } label: {
             HStack(spacing: 7) {
@@ -7292,7 +7418,7 @@ struct AgentOpenTasksChipView: View {
             .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.4), lineWidth: 1))
             .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AlmaAgentPressStyle())
         .padding(.bottom, 16)
         .sheet(isPresented: $showSheet) {
             AgentPendingTasksSheet(vm: vm)
@@ -7370,7 +7496,7 @@ struct AgentPendingTasksSheet: View {
             }
             HStack(spacing: 8) {
                 Button {
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    AlmaAgentHaptics.commit()
                     Task { await approve(task); dismiss() }
                 } label: {
                     Group {
@@ -7386,7 +7512,7 @@ struct AgentPendingTasksSheet: View {
                     .shadow(color: AgentPalette.coral.opacity(0.3), radius: 6, y: 2)
                 }
                 Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    AlmaAgentHaptics.light()
                     Task { await reject(task); dismiss() }
                 } label: {
                     Text("বাতিল")
@@ -7401,7 +7527,7 @@ struct AgentPendingTasksSheet: View {
             }
             .disabled(busy)
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                AlmaAgentHaptics.light()
                 withAnimation(.snappy(duration: 0.2)) {
                     opineForId = opineForId == task.id ? nil : task.id
                 }
@@ -7421,7 +7547,7 @@ struct AgentPendingTasksSheet: View {
                 .padding(.vertical, 4)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AlmaAgentPressStyle())
             if opineForId == task.id {
                 HStack(spacing: 8) {
                     TextField("আপনার মতামত লিখুন — ALMA সেই অনুযায়ী ঠিক করবে…",
@@ -7434,7 +7560,7 @@ struct AgentPendingTasksSheet: View {
                     Button {
                         let t = opineText.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !t.isEmpty else { return }
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        AlmaAgentHaptics.commit()
                         Task { await opine(task, note: t); dismiss() }
                     } label: {
                         Image(systemName: "arrow.up")
@@ -7535,7 +7661,7 @@ private struct AgentBackgroundTasksAnchor: View {
 
     var body: some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            AlmaAgentHaptics.light()
             action()
         } label: {
             HStack(spacing: 5) {
@@ -7555,7 +7681,7 @@ private struct AgentBackgroundTasksAnchor: View {
             .padding(.vertical, 5)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AlmaAgentPressStyle())
         .matchedGeometryEffect(id: "alma-background-task-anchor", in: namespace)
         .animation(.spring(response: 0.48, dampingFraction: 0.84), value: handoff)
         .accessibilityLabel(label)
@@ -7756,7 +7882,7 @@ private struct AgentBackgroundTasksSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        AlmaAgentHaptics.light()
                         withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
                             selectedDetent = selectedDetent == .large ? .medium : .large
                         }
@@ -7994,7 +8120,7 @@ private struct AgentBackgroundTasksSheet: View {
                 }
                 if !todayExpanded && todayWork.count > displayedTodos.count {
                     Button {
-                        UISelectionFeedbackGenerator().selectionChanged()
+                        AlmaAgentHaptics.selection()
                         // Avoid animating the height of the entire 30+ row
                         // subtree. The header chevron still animates locally.
                         todayExpanded = true
@@ -8005,7 +8131,7 @@ private struct AgentBackgroundTasksSheet: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(AlmaAgentPressStyle())
                     .overlay(alignment: .top) {
                         Divider().overlay(pal.borderSubtle).padding(.horizontal, 12)
                     }
@@ -8087,7 +8213,7 @@ private struct AgentBackgroundTasksSheet: View {
 
     private func todayWorkHeader(pal: AgentPalette) -> some View {
         Button {
-            UISelectionFeedbackGenerator().selectionChanged()
+            AlmaAgentHaptics.selection()
             todayExpanded.toggle()
         } label: {
             HStack(spacing: 7) {
@@ -8117,7 +8243,7 @@ private struct AgentBackgroundTasksSheet: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AlmaAgentPressStyle())
         .accessibilityLabel("আজকের \(todayWork.count)টি কাজের মধ্যে \(completedTodoCount)টি শেষ")
     }
 
@@ -8183,7 +8309,7 @@ private struct AgentBackgroundTasksSheet: View {
     private func collapsibleHeader(_ title: String, count: Int,
                                    isExpanded: Binding<Bool>, pal: AgentPalette) -> some View {
         Button {
-            UISelectionFeedbackGenerator().selectionChanged()
+            AlmaAgentHaptics.selection()
             withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
                 isExpanded.wrappedValue.toggle()
             }
@@ -8204,7 +8330,7 @@ private struct AgentBackgroundTasksSheet: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AlmaAgentPressStyle())
     }
 
     private func runningRow(_ item: AgentBackgroundRunningItem, pal: AgentPalette,
@@ -8242,7 +8368,7 @@ private struct AgentBackgroundTasksSheet: View {
             }
             Spacer(minLength: 2)
             Button {
-                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                AlmaAgentHaptics.rigid()
                 confirm = Confirm(source: item.source, sourceId: item.sourceId,
                                   title: "এই background task বন্ধ করবেন?", button: "Stop task")
             } label: {
@@ -8260,7 +8386,7 @@ private struct AgentBackgroundTasksSheet: View {
                 .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .strokeBorder(pal.borderSubtle, lineWidth: 1))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AlmaAgentPressStyle())
             .disabled(runningControlBusy)
             .accessibilityLabel("\(item.title) বন্ধ করুন")
         }
@@ -8305,7 +8431,7 @@ private struct AgentBackgroundTasksSheet: View {
         let stopped = item.status == "stopped"
         let tint = failed ? AgentPalette.coral : stopped ? pal.muted : AgentPalette.teal
         return Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            AlmaAgentHaptics.light()
             selectedFinished = item
         } label: {
             HStack(spacing: 12) {
@@ -8333,7 +8459,7 @@ private struct AgentBackgroundTasksSheet: View {
             .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous)
                 .strokeBorder(tint.opacity(0.12), lineWidth: 1))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AlmaAgentPressStyle())
         .accessibilityHint("Task input এবং result খুলুন")
     }
 
@@ -8712,7 +8838,7 @@ private struct AgentPlanDriveCard: View {
         ) {
             if let c = confirm {
                 Button(c.button, role: c.action == "abandon" ? .destructive : nil) {
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    AlmaAgentHaptics.commit()
                     Task { await vm.planDriveAct(planId: c.planId, action: c.action) }
                 }
                 Button("থাক", role: .cancel) {}
@@ -8816,7 +8942,7 @@ private struct AgentPlanDriveCard: View {
         let open = expanded.contains(d.planId)
         VStack(alignment: .leading, spacing: 7) {
             Button {
-                UISelectionFeedbackGenerator().selectionChanged()
+                AlmaAgentHaptics.selection()
                 withAnimation(.snappy(duration: 0.22)) {
                     if open { expanded.remove(d.planId) } else { expanded.insert(d.planId) }
                 }
@@ -8850,7 +8976,7 @@ private struct AgentPlanDriveCard: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AlmaAgentPressStyle())
             if open {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(Array(steps.enumerated()), id: \.element.id) { i, s in
@@ -8896,7 +9022,7 @@ private struct AgentPlanDriveCard: View {
 
     private func actBtn(_ label: String, _ color: Color, action: @escaping () -> Void) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            AlmaAgentHaptics.light()
             action()
         } label: {
             Text(label)
@@ -8906,7 +9032,7 @@ private struct AgentPlanDriveCard: View {
                 .background(color.opacity(0.1), in: Capsule())
                 .overlay(Capsule().strokeBorder(color.opacity(0.35), lineWidth: 1))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AlmaAgentPressStyle())
     }
 }
 
@@ -8968,7 +9094,7 @@ private struct AgentArtifactsSheet: View {
         VStack(spacing: 10) {
             ForEach(vm.artifacts) { a in
                 Button {
-                    UISelectionFeedbackGenerator().selectionChanged()
+                    AlmaAgentHaptics.selection()
                     withAnimation(.snappy(duration: 0.2)) { selected = a }
                 } label: {
                     HStack(spacing: 11) {
@@ -9007,7 +9133,7 @@ private struct AgentArtifactsSheet: View {
                     .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AlmaAgentPressStyle())
             }
             if vm.artifacts.isEmpty {
                 Text("এই চ্যাটে কোনো আর্টিফ্যাক্ট নেই")
@@ -9026,7 +9152,7 @@ private struct AgentArtifactsSheet: View {
             HStack(spacing: 8) {
                 Button {
                     UIPasteboard.general.string = content
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    AlmaAgentHaptics.light()
                     copied = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { copied = false }
                 } label: {
@@ -9036,13 +9162,13 @@ private struct AgentArtifactsSheet: View {
                         .padding(.horizontal, 11).padding(.vertical, 7)
                         .background(Color.white.opacity(0.08), in: Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AlmaAgentPressStyle())
                 Spacer()
             }
             if isWebOnly(a) {
                 // Live HTML/SVG preview stays a web feature — offer the escape.
                 Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    AlmaAgentHaptics.light()
                     let open = openWeb
                     dismiss()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
@@ -9069,7 +9195,7 @@ private struct AgentArtifactsSheet: View {
                     .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .strokeBorder(AgentPalette.coral.opacity(0.3), lineWidth: 1))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AlmaAgentPressStyle())
                 AgentMarkdownText(text: "```\n\(content)\n```", pal: pal)
             } else if (a.type ?? "").lowercased() == "code", !content.contains("```") {
                 AgentMarkdownText(text: "```\n\(content)\n```", pal: pal)
@@ -9232,7 +9358,7 @@ struct AssistantScreen: View {
                         // top after the non-animated prepend.
                         if vm.canLoadOlder && !vm.messages.isEmpty {
                             Button {
-                                UISelectionFeedbackGenerator().selectionChanged()
+                                AlmaAgentHaptics.selection()
                                 let anchorId = vm.messages.first?.id
                                 Task {
                                     await vm.loadOlderMessages()
@@ -9255,7 +9381,7 @@ struct AssistantScreen: View {
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 8)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(AlmaAgentPressStyle())
                             .padding(.bottom, 6)
                         }
                         if !vm.loadingHistory && vm.messages.isEmpty && !vm.isStreaming {
@@ -9391,7 +9517,7 @@ struct AssistantScreen: View {
                     // Web parity: centered 40pt frosted circle just above the composer.
                     if !nearBottom {
                         Button {
-                            UISelectionFeedbackGenerator().selectionChanged()
+                            AlmaAgentHaptics.selection()
                             scrollToBottom(proxy: proxy)
                         } label: {
                             Image(systemName: "arrow.down")
@@ -9429,6 +9555,7 @@ struct AssistantScreen: View {
                 }
             }
         }
+        .buttonStyle(AlmaAgentPressStyle())
         .claudeTopFade()
         // Pull stage ABOVE the top fade (under it, the fade's blur washes it out).
         .overlay(alignment: .top) { AgentPullStage(state: agentPull) }
@@ -9607,7 +9734,7 @@ struct AssistantScreen: View {
         .overlay(alignment: .topTrailing) {
             if !vm.artifacts.isEmpty && !vm.authExpired {
                 Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    AlmaAgentHaptics.light()
                     showArtifacts = true
                 } label: {
                     HStack(spacing: 5) {
@@ -9622,7 +9749,7 @@ struct AssistantScreen: View {
                     .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.4), lineWidth: 1))
                     .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AlmaAgentPressStyle())
                 .padding(.trailing, 14).padding(.top, 6)
                 .transition(.scale(scale: 0.8).combined(with: .opacity))
             }
@@ -9741,15 +9868,16 @@ struct AgentScrollViewportKey: PreferenceKey {
 
 /// Bridges the UIKit nav-bar buttons (glass hamburger / coral compose — the exact
 /// Claude-style buttons the web Assistant tab already had) into the SwiftUI screen.
+@MainActor
 final class AssistantBarHooks: NSObject {
     var onMenu: (() -> Void)?
     var onNewChat: (() -> Void)?
     @objc func menuTapped() {
-        UISelectionFeedbackGenerator().selectionChanged()
+        AlmaAgentHaptics.selection()
         onMenu?()
     }
     @objc func newChatTapped() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        AlmaAgentHaptics.light()
         onNewChat?()
     }
 }
@@ -9876,7 +10004,7 @@ struct AgentArtifactFileCard: View {
 
     var body: some View {
         Button {
-            UISelectionFeedbackGenerator().selectionChanged()
+            AlmaAgentHaptics.selection()
             showViewer = true
         } label: {
             HStack(spacing: 12) {
@@ -9909,7 +10037,7 @@ struct AgentArtifactFileCard: View {
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(pal.borderSubtle, lineWidth: 1))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AlmaAgentPressStyle())
         .padding(.vertical, 2)
         .sheet(isPresented: $showViewer) {
             AgentArtifactViewerSheet(artifactId: artifactId, fallbackTitle: name, vm: vm)
@@ -9960,7 +10088,7 @@ struct AgentArtifactViewerSheet: View {
                     Button {
                         UIPasteboard.general.string = artifact?.content ?? ""
                         copied = true
-                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                        AlmaAgentHaptics.success()
                     } label: {
                         Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     }
