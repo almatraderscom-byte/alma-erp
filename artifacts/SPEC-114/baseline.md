@@ -1,0 +1,2 @@
+# SPEC-114 Baseline — External publishing approval rules
+New in the G12 owned zone (src/agent/autonomy | src/agent/approvals). Builds on SPEC-111 ApprovalRule/AutonomyEngine, SPEC-112 approval contract, G11 policy, G01 ComponentResult. Discovery: `git status` + `find src/agent/autonomy src/agent/approvals`. No callers yet (wired at integration). No provider/model/DB/network calls (INV-01) — verified by model-call-scan. Tenant isolation enforced upstream (G11) before autonomy. Tests: src/agent/approvals/__tests__/publishing-rule.test.ts (8 cases). Files: see changed-files.md.
