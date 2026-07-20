@@ -8,3 +8,4 @@
  */
 export * from './retrieval'
 export * from './shortlist'
+export * from './schema-minimizer'
