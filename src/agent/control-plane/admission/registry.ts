@@ -12,6 +12,7 @@ import { fastPathStage } from './fast-path';
 import { intentStage } from './intent';
 import { complexityStage } from './complexity';
 import { planningStage } from './planning';
+import { riskStage } from './risk';
 
 export const ADMISSION_STAGES: AdmissionStage[] = [
   normalizeStage, // SPEC-012
@@ -19,7 +20,8 @@ export const ADMISSION_STAGES: AdmissionStage[] = [
   intentStage, // SPEC-015
   complexityStage, // SPEC-016
   planningStage, // SPEC-017
-  // SPEC-018 risk, SPEC-019 dedup — appended below.
+  riskStage, // SPEC-018
+  // SPEC-019 dedup — appended below.
 ];
 
 export function admissionPipeline(): AdmissionStage[] {
