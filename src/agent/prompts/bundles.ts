@@ -25,3 +25,8 @@ export const DEFAULT_ALMA_CONSTITUTION = [
 export function constitutionBundle(content: string = DEFAULT_ALMA_CONSTITUTION, version = '1'): ContextBundle {
   return { id: 'constitution', kind: 'constitution', content, cacheable: true, version };
 }
+
+/** SPEC-043 — domain skill instructions bundle (cacheable, stable per skill). */
+export function skillBundle(skillId: string, instructions: string, version = '1'): ContextBundle {
+  return { id: `skill:${skillId}`, kind: 'skill', content: instructions, cacheable: true, version };
+}
