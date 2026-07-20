@@ -238,6 +238,13 @@ final class AlmaAPI: NSObject {
         try await send(method, path, body: Optional<AnyEncodable>.none)
     }
 
+    /// Mutations such as DELETE that intentionally return HTTP 204. `perform`
+    /// still validates auth/status; only the impossible JSON decode is skipped.
+    func sendNoContent(_ method: String, _ path: String) async throws {
+        _ = try await perform(request: makeRequest(method: method, path: path, query: [:], bodyData: nil))
+        await AlmaRequestCache.shared.invalidateAll()
+    }
+
     /// POST/PATCH with query params (some routes read searchParams on writes —
     /// e.g. POST /api/settings/telegram-ops/health?business_id=…). Additive, S9.
     func send<T: Decodable, B: Encodable>(_ method: String, _ path: String,

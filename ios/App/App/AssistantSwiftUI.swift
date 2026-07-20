@@ -35,6 +35,7 @@ import AVFoundation
 import PhotosUI
 import ObjectiveC
 import os.signpost
+import CoreText
 
 // MARK: - Palette (web token parity: globals.css / agent-ambient.css)
 
@@ -150,6 +151,7 @@ struct AgentConversation: Decodable, Identifiable, Equatable {
 
 struct ActiveConversationPointer: Decodable {
     let conversationId: String?
+    let projectId: String?
     let modelId: String?
 }
 
@@ -273,6 +275,23 @@ struct AgentProject: Decodable, Identifiable, Equatable {
 struct AgentConversationsPage: Decodable {
     let conversations: [AgentConversation]
     let nextCursor: String?
+}
+
+enum AgentConversationExportFormat {
+    case share, plainText, markdown, pdf
+}
+
+private enum AgentConversationExportError: Error { case pageLimitExceeded }
+
+struct AgentConversationSharePayload: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+enum AgentConversationMenuAction: Equatable {
+    case share, project, removeProject, files, search
+    case exportPDF, exportMarkdown, exportText
+    case rename, archive, delete
 }
 
 struct AgentMemoryRow: Decodable, Identifiable, Equatable {
@@ -1040,6 +1059,7 @@ final class AssistantVM {
     // Thread state
     var conversationId: String?
     var conversationTitle: String = "ALMA AI"
+    var currentProjectId: String?
     var messages: [AgentChatMessage] = []
     var loadingHistory = false
     /// VM-level duplicate-submit guard. UI disabled states are secondary; this is
@@ -1334,6 +1354,7 @@ final class AssistantVM {
     // Errors / auth
     var authExpired = false
     var errorToast: String?
+    var exportingConversation = false
 
     // Signed image URLs (path → url), resolved lazily per thumbnail
     var signedURLs: [String: URL] = [:]
@@ -1430,6 +1451,7 @@ final class AssistantVM {
             let ptr: ActiveConversationPointer = try await AlmaAPI.shared.get("/api/assistant/active-conversation")
             if let cid = ptr.conversationId {
                 conversationId = cid
+                currentProjectId = ptr.projectId
                 modelId = ptr.modelId
                 await loadMessages(showSpinner: messages.isEmpty)
                 await loadArtifacts()
@@ -1962,6 +1984,11 @@ final class AssistantVM {
             let page: AgentConversationsPage = try await AlmaAPI.shared.get(
                 "/api/assistant/conversations", query: ["paginated": "true", "limit": "30"])
             conversations = page.conversations.filter { $0.archived != true }
+            if let cid = conversationId,
+               let active = conversations.first(where: { $0.id == cid }) {
+                conversationTitle = active.title?.isEmpty == false ? active.title! : "ALMA AI"
+                currentProjectId = active.projectId
+            }
             conversationsCursor = page.nextCursor
             authExpired = false
         } catch AlmaAPIError.notAuthenticated { authExpired = true } catch {
@@ -2016,19 +2043,61 @@ final class AssistantVM {
         let _: Empty? = try? await AlmaAPI.shared.send("DELETE", "/api/assistant/memory/\(id)")
     }
 
-    func renameConversation(_ id: String, title: String) async {
+    @discardableResult
+    func renameConversation(_ id: String, title: String) async -> Bool {
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return }
-        if let i = conversations.firstIndex(where: { $0.id == id }) { conversations[i].title = t }
-        let _: OkResponse? = try? await AlmaAPI.shared.send("PATCH", "/api/assistant/conversations/\(id)",
-                                                            body: ["title": t])
+        guard !t.isEmpty, beginSubmitting("conversation:\(id)") else { return false }
+        defer { finishSubmitting("conversation:\(id)") }
+        do {
+            let updated: AgentConversation = try await AlmaAPI.shared.send(
+                "PATCH", "/api/assistant/conversations/\(id)", body: ["title": t])
+            if let i = conversations.firstIndex(where: { $0.id == id }) { conversations[i] = updated }
+            if conversationId == id { conversationTitle = updated.title ?? "ALMA AI" }
+            AlmaAgentHaptics.success()
+            return true
+        } catch {
+            errorToast = "নাম বদলানো গেল না — আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
+            return false
+        }
     }
 
-    func archiveConversation(_ id: String) async {
-        conversations.removeAll { $0.id == id }
-        let _: OkResponse? = try? await AlmaAPI.shared.send("PATCH", "/api/assistant/conversations/\(id)",
-                                                            body: ["archived": true])
-        if conversationId == id { await newChat() }
+    @discardableResult
+    func archiveConversation(_ id: String) async -> Bool {
+        guard beginSubmitting("conversation:\(id)") else { return false }
+        defer { finishSubmitting("conversation:\(id)") }
+        do {
+            let _: AgentConversation = try await AlmaAPI.shared.send(
+                "PATCH", "/api/assistant/conversations/\(id)", body: ["archived": true])
+            conversations.removeAll { $0.id == id }
+            if conversationId == id { await newChat() }
+            AlmaAgentHaptics.success()
+            return true
+        } catch {
+            errorToast = "আর্কাইভ করা গেল না — আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
+            return false
+        }
+    }
+
+    @discardableResult
+    func assignConversationProject(_ projectId: String?) async -> Bool {
+        guard let cid = conversationId,
+              beginSubmitting("conversation:\(cid)") else { return false }
+        defer { finishSubmitting("conversation:\(cid)") }
+        struct Body: Encodable { let projectId: String? }
+        do {
+            let updated: AgentConversation = try await AlmaAPI.shared.send(
+                "PATCH", "/api/assistant/conversations/\(cid)", body: Body(projectId: projectId))
+            currentProjectId = updated.projectId
+            if let i = conversations.firstIndex(where: { $0.id == cid }) { conversations[i] = updated }
+            AlmaAgentHaptics.success()
+            return true
+        } catch {
+            errorToast = "প্রজেক্ট বদলানো গেল না — আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
+            return false
+        }
     }
 
     func saveProject(id: String?, name: String, description: String,
@@ -2058,7 +2127,10 @@ final class AssistantVM {
         restoreTick += 1     // screen replays the session-opening awakening
         stopStreaming(cancelServer: false)
         conversationId = id
-        modelId = conversations.first { $0.id == id }?.modelId   // pinned model follows the chat
+        let selected = conversations.first { $0.id == id }
+        modelId = selected?.modelId   // pinned model follows the chat
+        currentProjectId = selected?.projectId
+        conversationTitle = selected?.title?.isEmpty == false ? selected!.title! : "ALMA AI"
         localIdByServerId = [:]   // 1.5: optimistic-ID maps never leak across conversations
         lastSyncStamp = nil       // 4.1: window/delta cursors are per-conversation
         paginatedPrefixCount = 0
@@ -2077,6 +2149,8 @@ final class AssistantVM {
     func newChat() async {
         stopStreaming(cancelServer: false)
         conversationId = nil     // server creates one on the first send
+        currentProjectId = nil
+        conversationTitle = "ALMA AI"
         localIdByServerId = [:]  // 1.5: optimistic-ID maps never leak across conversations
         lastSyncStamp = nil      // 4.1: window/delta cursors are per-conversation
         paginatedPrefixCount = 0
@@ -2092,12 +2166,108 @@ final class AssistantVM {
         AlmaAgentHaptics.light()
     }
 
-    func deleteConversation(_ id: String) async {
+    @discardableResult
+    func deleteConversation(_ id: String) async -> Bool {
+        guard beginSubmitting("conversation:\(id)") else { return false }
+        defer { finishSubmitting("conversation:\(id)") }
         do {
-            struct Empty: Decodable {}
-            let _: Empty? = try? await AlmaAPI.shared.send("DELETE", "/api/assistant/conversations/\(id)")
+            try await AlmaAPI.shared.sendNoContent("DELETE", "/api/assistant/conversations/\(id)")
             conversations.removeAll { $0.id == id }
             if conversationId == id { await newChat() }
+            AlmaAgentHaptics.success()
+            return true
+        } catch {
+            errorToast = "কথোপকথন মুছতে পারিনি — আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
+            return false
+        }
+    }
+
+    /// Builds a complete, server-backed transcript in bounded 50-row pages. The
+    /// mounted chat window and composer draft are left untouched.
+    func exportConversation(_ format: AgentConversationExportFormat) async -> URL? {
+        guard let cid = conversationId, !exportingConversation else { return nil }
+        exportingConversation = true
+        defer { exportingConversation = false }
+        do {
+            var wire: [AgentMessageWire] = []
+            var before: String?
+            var reachedBeginning = false
+            for _ in 0..<200 {
+                var query: [String: String?] = ["limit": "50"]
+                query["before"] = before
+                let page: [AgentMessageWire] = try await AlmaAPI.shared.get(
+                    "/api/assistant/conversations/\(cid)/messages", query: query)
+                guard !page.isEmpty else { reachedBeginning = true; break }
+                wire.insert(contentsOf: page, at: 0)
+                if page.count < 50 { reachedBeginning = true; break }
+                let next = page.first?.id
+                guard next != before else { break }
+                before = next
+            }
+            guard reachedBeginning else { throw AgentConversationExportError.pageLimitExceeded }
+            let rows = wire.map(AgentChatMessage.from)
+            let title = conversationTitle.isEmpty ? "ALMA AI" : conversationTitle
+            let plain = rows.map { row in
+                let speaker = row.role == .user ? "আপনি" : "ALMA"
+                return "\(speaker)\n\(row.text.trimmingCharacters(in: .whitespacesAndNewlines))"
+            }.joined(separator: "\n\n")
+            let markdown = "# \(title)\n\n" + rows.map { row in
+                let speaker = row.role == .user ? "আপনি" : "ALMA"
+                return "## \(speaker)\n\n\(row.text.trimmingCharacters(in: .whitespacesAndNewlines))"
+            }.joined(separator: "\n\n")
+            let safeTitle = title.replacingOccurrences(of: "/", with: "-").prefix(70)
+            let base = FileManager.default.temporaryDirectory.appendingPathComponent(String(safeTitle))
+            let url: URL
+            switch format {
+            case .share, .plainText:
+                url = base.appendingPathExtension("txt")
+                try plain.data(using: .utf8)?.write(to: url, options: .atomic)
+            case .markdown:
+                url = base.appendingPathExtension("md")
+                try markdown.data(using: .utf8)?.write(to: url, options: .atomic)
+            case .pdf:
+                url = base.appendingPathExtension("pdf")
+                try Self.writeTranscriptPDF(title: title, body: plain, to: url)
+            }
+            AlmaAgentHaptics.success()
+            return url
+        } catch {
+            errorToast = "কথোপকথন এক্সপোর্ট করা গেল না — আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
+            return nil
+        }
+    }
+
+    private static func writeTranscriptPDF(title: String, body: String, to url: URL) throws {
+        let page = CGRect(x: 0, y: 0, width: 595, height: 842)
+        let margin: CGFloat = 48
+        let text = "\(title)\n\n\(body)"
+        let attributed = NSAttributedString(string: text, attributes: [
+            .font: UIFont.systemFont(ofSize: 12),
+            .foregroundColor: UIColor.black,
+        ])
+        let framesetter = CTFramesetterCreateWithAttributedString(attributed)
+        let renderer = UIGraphicsPDFRenderer(bounds: page)
+        try renderer.writePDF(to: url) { context in
+            var location = 0
+            while location < attributed.length {
+                context.beginPage()
+                let cg = context.cgContext
+                cg.saveGState()
+                cg.translateBy(x: 0, y: page.height)
+                cg.scaleBy(x: 1, y: -1)
+                let path = CGPath(rect: CGRect(
+                    x: margin, y: margin, width: page.width - margin * 2,
+                    height: page.height - margin * 2), transform: nil)
+                let frame = CTFramesetterCreateFrame(
+                    framesetter, CFRange(location: location, length: 0), path, nil)
+                CTFrameDraw(frame, cg)
+                let visible = CTFrameGetVisibleStringRange(frame)
+                cg.restoreGState()
+                guard visible.length > 0 else { break }
+                location += visible.length
+            }
         }
     }
 
@@ -2348,6 +2518,7 @@ final class AssistantVM {
         let message: String
         let files: [AgentFileRef]
         let modelId: String?
+        var projectId: String? = nil
         var voice: Bool? = nil    // voice console turns: TTS-friendly replies
         /// Roadmap PR 5 — idempotency key: one key = at most one stored message and
         /// one server turn, however many times transport makes us retry.
@@ -2387,6 +2558,7 @@ final class AssistantVM {
         ensureStreamingTail()
         let body = ChatBody(conversationId: conversationId, message: "",
                             files: [], modelId: modelId ?? "auto",
+                            projectId: currentProjectId,
                             resume: .init(approve: approve,
                                           fallbackModelId: approve ? nil : fallback))
         streamTask = Task { [weak self] in
@@ -2440,6 +2612,7 @@ final class AssistantVM {
 
         let body = ChatBody(conversationId: conversationId, message: text,
                             files: readyFiles, modelId: modelId ?? "auto",
+                            projectId: currentProjectId,
                             clientMessageId: clientMessageId, askCardId: askCardId,
                             autoContinueFromTurnId: autoContinueFromTurnId)
         streamTask = Task { [weak self] in
@@ -9264,6 +9437,228 @@ struct AgentRowDebugOverlay: ViewModifier {
 }
 
 @available(iOS 17.0, *)
+private struct AgentConversationShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+@available(iOS 17.0, *)
+private struct AlmaConversationMenuSheet: View {
+    @Bindable var vm: AssistantVM
+    let onSelect: (AgentConversationMenuAction) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        NavigationStack {
+            List {
+                Section {
+                    row("কথোপকথন শেয়ার", "square.and.arrow.up", .share, pal)
+                    row(vm.currentProjectId == nil ? "প্রজেক্টে যোগ করুন" : "প্রজেক্ট বদলান",
+                        "folder.badge.plus", .project, pal)
+                    if vm.currentProjectId != nil {
+                        row("প্রজেক্ট থেকে সরান", "folder.badge.minus", .removeProject, pal)
+                    }
+                    row("ফাইলস · \(almaBn(vm.artifacts.count))", "folder", .files, pal)
+                    row("এই চ্যাটে খুঁজুন", "magnifyingglass", .search, pal)
+                }
+                Section("এক্সপোর্ট") {
+                    row("PDF", "doc.richtext", .exportPDF, pal)
+                    row("Markdown", "doc.plaintext", .exportMarkdown, pal)
+                    row("Plain text", "text.alignleft", .exportText, pal)
+                    if vm.exportingConversation {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("সম্পূর্ণ কথোপকথন তৈরি হচ্ছে…")
+                                .font(.system(size: 13)).foregroundStyle(pal.muted)
+                        }
+                    }
+                }
+                Section("ম্যানেজ") {
+                    row("নাম বদলান", "pencil", .rename, pal)
+                    row("আর্কাইভ", "archivebox", .archive, pal)
+                    row("মুছুন", "trash", .delete, pal, destructive: true)
+                }
+                if vm.conversationId == nil {
+                    Text("কথোপকথন শুরু হলে এই অপশনগুলো ব্যবহার করা যাবে।")
+                        .font(.system(size: 12)).foregroundStyle(pal.muted)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(pal.card)
+            .navigationTitle(vm.conversationTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("বন্ধ করুন") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(28)
+    }
+
+    private func row(_ title: String, _ icon: String, _ action: AgentConversationMenuAction,
+                     _ pal: AgentPalette, destructive: Bool = false) -> some View {
+        Button {
+            AlmaAgentHaptics.selection()
+            onSelect(action)
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(destructive ? Color.red : pal.ink)
+                .frame(minHeight: 44)
+        }
+        .disabled(vm.conversationId == nil || vm.exportingConversation)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentProjectAssignmentSheet: View {
+    @Bindable var vm: AssistantVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var search = ""
+    @State private var busyId: String?
+    @State private var inlineError: String?
+    @State private var showProjectForm = false
+
+    private var filtered: [AgentProject] {
+        guard !search.isEmpty else { return vm.projects }
+        return vm.projects.filter { $0.name.localizedCaseInsensitiveContains(search) }
+    }
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        NavigationStack {
+            List {
+                Section {
+                    projectRow(id: nil, name: "কোনো প্রজেক্ট নয়", icon: "tray", pal: pal)
+                    ForEach(filtered) { project in
+                        projectRow(id: project.id, name: project.name, icon: "folder", pal: pal)
+                    }
+                }
+                if let inlineError {
+                    Section {
+                        Label(inlineError, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12)).foregroundStyle(.red)
+                    }
+                }
+                Section {
+                    Button {
+                        showProjectForm = true
+                    } label: {
+                        Label("নতুন প্রজেক্ট", systemImage: "plus.circle.fill")
+                            .frame(minHeight: 44)
+                    }
+                }
+            }
+            .searchable(text: $search, prompt: "প্রজেক্ট খুঁজুন")
+            .navigationTitle("প্রজেক্ট বাছাই")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button("বন্ধ করুন") { dismiss() } }
+            }
+            .task {
+                let process = ProcessInfo.processInfo
+                let fixture = process.environment["ALMA_ASSISTANT_PROJECT_SHEET"] == "1"
+                    || process.arguments.contains("ALMA_ASSISTANT_PROJECT_SHEET=1")
+                if !fixture { await vm.loadProjects() }
+            }
+            .sheet(isPresented: $showProjectForm, onDismiss: { Task { await vm.loadProjects() } }) {
+                AgentProjectFormSheet(vm: vm)
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(28)
+    }
+
+    private func projectRow(id: String?, name: String, icon: String, pal: AgentPalette) -> some View {
+        let key = id ?? "none"
+        return Button {
+            guard busyId == nil else { return }
+            busyId = key
+            inlineError = nil
+            Task {
+                let saved = await vm.assignConversationProject(id)
+                busyId = nil
+                if saved { dismiss() }
+                else { inlineError = "পরিবর্তন সংরক্ষণ হয়নি — আবার চেষ্টা করুন।" }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon).foregroundStyle(AgentPalette.coral)
+                Text(name).foregroundStyle(pal.ink)
+                Spacer()
+                if busyId == key { ProgressView().controlSize(.small) }
+                else if vm.currentProjectId == id { Image(systemName: "checkmark.circle.fill").foregroundStyle(AgentPalette.teal) }
+            }
+            .frame(minHeight: 44)
+        }
+        .disabled(busyId != nil)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentConversationSearchSheet: View {
+    @Bindable var vm: AssistantVM
+    let onSelect: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var query = ""
+
+    private var matches: [AgentChatMessage] {
+        guard !query.isEmpty else { return [] }
+        return vm.messages.filter { $0.text.localizedCaseInsensitiveContains(query) }
+    }
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        NavigationStack {
+            List {
+                Section {
+                    Text("বর্তমানে লোড করা মেসেজে খোঁজা হচ্ছে; পুরনো মেসেজ আনলে ফলও বাড়বে।")
+                        .font(.system(size: 11.5)).foregroundStyle(pal.muted)
+                }
+                ForEach(matches) { message in
+                    Button {
+                        dismiss()
+                        onSelect(message.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(message.role == .user ? "আপনি" : "ALMA")
+                                .font(.system(size: 11, weight: .bold)).foregroundStyle(AgentPalette.coral)
+                            Text(message.text.replacingOccurrences(of: "\n", with: " "))
+                                .font(.system(size: 14)).foregroundStyle(pal.ink).lineLimit(3)
+                        }
+                        .frame(minHeight: 44, alignment: .leading)
+                    }
+                }
+                if !query.isEmpty && matches.isEmpty {
+                    Text("কোনো মিল পাওয়া যায়নি")
+                        .font(.system(size: 13)).foregroundStyle(pal.muted)
+                }
+            }
+            .searchable(text: $query, prompt: "এই চ্যাটে খুঁজুন")
+            .navigationTitle("চ্যাট সার্চ")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button("বন্ধ করুন") { dismiss() } }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(28)
+    }
+}
+
+@available(iOS 17.0, *)
 struct AssistantScreen: View {
     @State private var vm = AssistantVM()
     @Namespace private var backgroundTaskNamespace
@@ -9281,6 +9676,15 @@ struct AssistantScreen: View {
     /// generation-counter fan-out left every superseded task alive on MainActor).
     @State private var scrollDebounceTask: Task<Void, Never>?
     @State private var showArtifacts = false
+    @State private var showConversationMenu = false
+    @State private var showProjectAssignment = false
+    @State private var showConversationSearch = false
+    @State private var conversationShare: AgentConversationSharePayload?
+    @State private var searchTargetId: String?
+    @State private var renameText = ""
+    @State private var showRenamePrompt = false
+    @State private var showArchiveConfirmation = false
+    @State private var showDeleteConfirmation = false
     /// DEBUG self-test hook (ALMA_ASSISTANT_VIEWERTEST=1) — presents the zoomable
     /// image viewer with its সংরক্ষণ button for a headless fixture screenshot.
     @State private var debugViewer: PortalImagePreview?
@@ -9513,6 +9917,11 @@ struct AssistantScreen: View {
                         scrollToBottom(proxy: proxy)
                     }
                 }
+                .onChange(of: searchTargetId) { _, id in
+                    guard let id else { return }
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
+                    searchTargetId = nil
+                }
                 .overlay(alignment: .bottom) {
                     // Web parity: centered 40pt frosted circle just above the composer.
                     if !nearBottom {
@@ -9576,6 +9985,7 @@ struct AssistantScreen: View {
             AlmaTurnLog.event("assistant.open.begin")
             barHooks.onMenu = { Self.presentDrawer(vm) }
             barHooks.onNewChat = { Task { await vm.newChat() } }
+            barHooks.onConversationMenu = { showConversationMenu = true }
             // DEBUG self-test hooks (never fire in production — the env vars are only
             // set by the local `simctl launch` self-test, same pattern as
             // ALMA_OPEN_COMPANION / ALMA_FADE_DEMO):
@@ -9620,6 +10030,22 @@ struct AssistantScreen: View {
             // Parity roadmap — persisted verification-retry composition only.
             if argFlag("ALMA_ASSISTANT_PARITY") {
                 vm.loadParityFixture()
+                if argFlag("ALMA_ASSISTANT_CONVERSATION_MENU") {
+                    vm.conversationId = "fixture-conversation"
+                    vm.conversationTitle = "স্টক অডিট"
+                    showConversationMenu = true
+                } else if argFlag("ALMA_ASSISTANT_PROJECT_SHEET") {
+                    vm.conversationId = "fixture-conversation"
+                    vm.conversationTitle = "স্টক অডিট"
+                    vm.currentProjectId = "fixture-trading"
+                    vm.projects = [
+                        .init(id: "fixture-trading", name: "ALMA Trading",
+                              description: nil, systemInstructions: nil, businessId: "ALMA_TRADING"),
+                        .init(id: "fixture-lifestyle", name: "ALMA Lifestyle",
+                              description: nil, systemInstructions: nil, businessId: "ALMA_LIFESTYLE"),
+                    ]
+                    showProjectAssignment = true
+                }
                 AlmaTurnLog.event("assistant.contentReady", "fixture=parity count=\(vm.messages.count)")
                 return
             }
@@ -9717,6 +10143,18 @@ struct AssistantScreen: View {
         .sheet(item: $activitySheet) { req in
             AgentThoughtProcessSheet(request: req)
         }
+        .sheet(isPresented: $showConversationMenu) {
+            AlmaConversationMenuSheet(vm: vm, onSelect: handleConversationMenu)
+        }
+        .sheet(isPresented: $showProjectAssignment) {
+            AgentProjectAssignmentSheet(vm: vm)
+        }
+        .sheet(isPresented: $showConversationSearch) {
+            AgentConversationSearchSheet(vm: vm) { id in searchTargetId = id }
+        }
+        .sheet(item: $conversationShare) { payload in
+            AgentConversationShareSheet(url: payload.url)
+        }
         .sheet(isPresented: $showArtifacts) {
             AgentArtifactsSheet(vm: vm, openWeb: openWeb)
         }
@@ -9756,6 +10194,72 @@ struct AssistantScreen: View {
         }
         .overlay(alignment: .bottom) {
             if let toast = vm.errorToast { toastView(toast, pal) }
+        }
+        .alert("কথোপকথনের নাম", isPresented: $showRenamePrompt) {
+            TextField("নাম", text: $renameText)
+            Button("বাতিল", role: .cancel) {}
+            Button("সংরক্ষণ") {
+                guard let cid = vm.conversationId else { return }
+                Task { await vm.renameConversation(cid, title: renameText) }
+            }
+        }
+        .alert("কথোপকথন আর্কাইভ করবেন?", isPresented: $showArchiveConfirmation) {
+            Button("বাতিল", role: .cancel) {}
+            Button("আর্কাইভ") {
+                guard let cid = vm.conversationId else { return }
+                Task { await vm.archiveConversation(cid) }
+            }
+        } message: {
+            Text("এটি মূল তালিকা থেকে সরে যাবে।")
+        }
+        .alert("কথোপকথন স্থায়ীভাবে মুছবেন?", isPresented: $showDeleteConfirmation) {
+            Button("বাতিল", role: .cancel) {}
+            Button("মুছুন", role: .destructive) {
+                guard let cid = vm.conversationId else { return }
+                Task { await vm.deleteConversation(cid) }
+            }
+        } message: {
+            Text("এই কাজটি ফেরানো যাবে না।")
+        }
+    }
+
+    private func handleConversationMenu(_ action: AgentConversationMenuAction) {
+        func afterDismiss(_ work: @escaping () -> Void) {
+            showConversationMenu = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.32, execute: work)
+        }
+        switch action {
+        case .share:
+            Task {
+                if let url = await vm.exportConversation(.share) {
+                    afterDismiss { conversationShare = .init(url: url) }
+                }
+            }
+        case .project:
+            afterDismiss { showProjectAssignment = true }
+        case .removeProject:
+            Task {
+                if await vm.assignConversationProject(nil) { showConversationMenu = false }
+            }
+        case .files:
+            afterDismiss { showArtifacts = true }
+        case .search:
+            afterDismiss { showConversationSearch = true }
+        case .exportPDF, .exportMarkdown, .exportText:
+            let format: AgentConversationExportFormat = action == .exportPDF
+                ? .pdf : (action == .exportMarkdown ? .markdown : .plainText)
+            Task {
+                if let url = await vm.exportConversation(format) {
+                    afterDismiss { conversationShare = .init(url: url) }
+                }
+            }
+        case .rename:
+            renameText = vm.conversationTitle
+            afterDismiss { showRenamePrompt = true }
+        case .archive:
+            afterDismiss { showArchiveConfirmation = true }
+        case .delete:
+            afterDismiss { showDeleteConfirmation = true }
         }
     }
 
@@ -9872,6 +10376,7 @@ struct AgentScrollViewportKey: PreferenceKey {
 final class AssistantBarHooks: NSObject {
     var onMenu: (() -> Void)?
     var onNewChat: (() -> Void)?
+    var onConversationMenu: (() -> Void)?
     @objc func menuTapped() {
         AlmaAgentHaptics.selection()
         onMenu?()
@@ -9879,6 +10384,10 @@ final class AssistantBarHooks: NSObject {
     @objc func newChatTapped() {
         AlmaAgentHaptics.light()
         onNewChat?()
+    }
+    @objc func conversationMenuTapped() {
+        AlmaAgentHaptics.selection()
+        onConversationMenu?()
     }
 }
 
@@ -9933,8 +10442,15 @@ extension AlmaTabBarController {
             host.navigationItem.leftBarButtonItem = AlmaWebTabViewController.glassBarButton(
                 icon: "line.3.horizontal", label: "চ্যাট হিস্টরি", target: hooks, action: #selector(AssistantBarHooks.menuTapped),
                 light: !AlmaTheme.isDark)
-            host.navigationItem.rightBarButtonItem = AlmaWebTabViewController.coralBarButton(
-                icon: "plus", label: "নতুন চ্যাট", target: hooks, action: #selector(AssistantBarHooks.newChatTapped))
+            let plus = AlmaWebTabViewController.coralBarButton(
+                icon: "plus", label: "নতুন চ্যাট", target: hooks,
+                action: #selector(AssistantBarHooks.newChatTapped))
+            let options = AlmaWebTabViewController.glassBarButton(
+                icon: "ellipsis", label: "কথোপকথনের অপশন", target: hooks,
+                action: #selector(AssistantBarHooks.conversationMenuTapped), light: !AlmaTheme.isDark)
+            // UIKit lays index 0 at the trailing edge: keep the coral plus in its
+            // original position, with the new 44pt ellipsis immediately beside it.
+            host.navigationItem.rightBarButtonItems = [plus, options]
             objc_setAssociatedObject(host, &assistantBarHooksKey, hooks, .OBJC_ASSOCIATION_RETAIN)
             let nav = Self.darkNav(root: host, tabTitle: "Assistant", icon: "sparkles", largeTitles: false)
             navRef.value = nav
