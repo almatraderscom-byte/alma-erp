@@ -1,0 +1,7 @@
+$ PARENTOF=$(git rev-parse 'HEAD~1^{tree}')   # pre-spec baseline
+$ git revert --no-commit HEAD                   # invert SPEC-045
+$ REVTREE=$(git write-tree)
+parent(pre-spec) tree: ee04848c5cc40104d54d29804f5e74de23bb10e3
+post-revert   tree:    ee04848c5cc40104d54d29804f5e74de23bb10e3
+RESULT: MATCH — revert restores exact pre-spec baseline
+$ git reset --hard HEAD                          # restore committed spec state

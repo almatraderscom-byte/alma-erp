@@ -35,3 +35,9 @@ export function skillBundle(skillId: string, instructions: string, version = '1'
 export function policyBundle(policyText: string, version = '1'): ContextBundle {
   return { id: 'policy', kind: 'policy', content: policyText, cacheable: true, version };
 }
+
+/** SPEC-045 — structured workflow-state bundle (dynamic; breaks the cache prefix). */
+export function workflowStateBundle(state: Record<string, unknown>, version = '1'): ContextBundle {
+  const content = 'WORKFLOW STATE:\n' + JSON.stringify(state, Object.keys(state).sort(), 2);
+  return { id: 'workflow_state', kind: 'workflow_state', content, cacheable: false, version };
+}
