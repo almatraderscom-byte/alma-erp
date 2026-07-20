@@ -1,0 +1,2 @@
+# memory must be deterministic — no provider/model/db CALL (embeddings passed in):
+  NONE — deterministic; embeddings are inputs (INV-01)
