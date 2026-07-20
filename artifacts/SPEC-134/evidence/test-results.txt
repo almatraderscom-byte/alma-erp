@@ -1,0 +1,10 @@
+$ npx vitest run src/agent/workflows src/worker/workflows
+
+ RUN  v4.1.9 /home/user/alma-erp
+
+
+ Test Files  4 passed (4)
+      Tests  41 passed (41)
+   Start at  15:24:01
+   Duration  697ms (transform 247ms, setup 0ms, import 372ms, tests 54ms, environment 0ms)
+

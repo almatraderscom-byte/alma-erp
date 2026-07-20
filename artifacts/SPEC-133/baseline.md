@@ -1,0 +1,2 @@
+# SPEC-133 Baseline — Durable workflow state
+New in the G12 owned zone (src/agent/workflows | src/worker/workflows). Builds on G01 ComponentResult/ExecutionIdentity and the durable-workflow invariants (INV-06 reconcile-not-retry). Discovery: `git status` + `find src/agent/autonomy src/agent/approvals`. No callers yet (wired at integration). No provider/model/DB/network calls (INV-01) — verified by model-call-scan. Tenant isolation enforced upstream (G11) before autonomy. Tests: src/agent/workflows/__tests__/state.test.ts (10 cases). Files: see changed-files.md.
