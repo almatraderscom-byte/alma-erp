@@ -1,0 +1,3 @@
+# SPEC-118 Contract — Approval expiry and revocation
+resolveUsable / isUsable / consumeApproval / revoke: a valid grant is usable only while live, un-revoked (revocation effective at/before now), and un-consumed; consumeApproval mints a single-use consumption record and a second attempt with it fails (no replay). Expiry/revocation/consumption all fail closed.
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-118 commit>` → parent tree MATCH.

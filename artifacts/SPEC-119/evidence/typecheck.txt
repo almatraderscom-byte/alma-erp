@@ -1,0 +1,4 @@
+$ npx tsc --noEmit -p src/agent/autonomy/tsconfig.json
+src/agent/approvals/audit.ts(44,19): error TS2339: Property 'reasonCodes' does not exist on type 'ComponentResult<ApprovalGrant>'.
+  Property 'reasonCodes' does not exist on type 'ComponentSuccess<ApprovalGrant>'.
+(TYPE ERRORS)
