@@ -53,3 +53,23 @@ export function agentPrincipal(identity: ExecutionIdentity, roles: string[] = []
   if (!parsed.success) throw new Error(`invalid AgentPrincipal: ${parsed.error.issues[0]?.message}`);
   return parsed.data as AgentPrincipal;
 }
+
+/** SPEC-103 — a workflow acting as a principal (automated multi-step run). */
+export interface WorkflowPrincipal {
+  kind: 'workflow';
+  tenantId: string;
+  workflowId: string;
+  roles: string[];
+}
+export const workflowPrincipalSchema: z.ZodType<WorkflowPrincipal> = z.object({
+  kind: z.literal('workflow'),
+  tenantId: z.string().min(1),
+  workflowId: z.string().min(1),
+  roles: z.array(z.string()),
+}) as z.ZodType<WorkflowPrincipal>;
+export function workflowPrincipal(identity: ExecutionIdentity, roles: string[] = []): WorkflowPrincipal {
+  const p: WorkflowPrincipal = { kind: 'workflow', tenantId: identity.tenantId, workflowId: identity.workflowId, roles: [...roles] };
+  const parsed = workflowPrincipalSchema.safeParse(p);
+  if (!parsed.success) throw new Error(`invalid WorkflowPrincipal: ${parsed.error.issues[0]?.message}`);
+  return parsed.data as WorkflowPrincipal;
+}
