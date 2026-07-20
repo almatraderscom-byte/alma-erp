@@ -63,6 +63,8 @@ export interface GatewayContext {
   estimatedCostNanoUsd: number
   observedAtMs: number
   deps: GatewayDeps
+  /** Tenant the tool operates ON; must match identity.tenantId (cross-tenant guard, SPEC-123). */
+  resourceTenantId?: string
   // ── accumulators (set by later stages) ──
   reservation?: { id: string; amountNanoUsd: number }
   obligations?: string[]
@@ -121,6 +123,7 @@ const gatewayPayloadSchema = z.object({
   args: z.record(z.unknown()),
   action: z.string().min(1),
   estimatedCostNanoUsd: z.number().int().nonnegative().optional(),
+  resourceTenantId: z.string().min(1).optional(),
 })
 export type GatewayPayload = z.infer<typeof gatewayPayloadSchema>
 
@@ -146,6 +149,7 @@ export function invokeTool(
     estimatedCostNanoUsd: req.payload.estimatedCostNanoUsd ?? 0,
     observedAtMs: deps.observedAtMs,
     deps,
+    ...(req.payload.resourceTenantId ? { resourceTenantId: req.payload.resourceTenantId } : {}),
   }
   const result = runPipeline(ctx, stages)
   if (!isSuccess(result)) return result

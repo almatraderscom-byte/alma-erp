@@ -9,3 +9,4 @@
 export * from './contract'
 export * from './gateway'
 export * from './stages/schema-validation'
+export * from './stages/identity-validation'
