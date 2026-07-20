@@ -6,3 +6,4 @@
  */
 export * from './contract';
 export * from './queue';
+export * from './fairness';
