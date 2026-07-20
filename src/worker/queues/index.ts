@@ -9,3 +9,4 @@ export * from './queue';
 export * from './fairness';
 export * from './concurrency';
 export * from './scheduling';
+export * from './worker-lease';
