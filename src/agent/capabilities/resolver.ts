@@ -20,7 +20,7 @@ import {
   validateRequest,
 } from '@/agent/contracts'
 import { z } from 'zod'
-import { INTENT_CLASSES, type IntentClass } from '@/agent/control-plane/admission/intent'
+import { INTENT_CLASSES, type IntentClass } from '@/agent/control-plane/admission'
 import { CAPABILITY_SCOPES, CAPABILITY_TIERS, type Capability, type CapabilityScope } from './capability.schema'
 import { capabilitiesForIntent, capabilitiesForClass } from './intent-map'
 import { evaluatePermission, type ActorContext } from './permission'

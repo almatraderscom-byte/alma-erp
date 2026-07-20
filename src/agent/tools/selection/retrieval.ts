@@ -19,7 +19,7 @@ import {
   validateRequest,
 } from '@/agent/contracts'
 import { z } from 'zod'
-import { INTENT_CLASSES } from '@/agent/control-plane/admission/intent'
+import { INTENT_CLASSES } from '@/agent/control-plane/admission'
 import { CAPABILITY_SCOPES } from '@/agent/capabilities'
 import { resolveCapabilities, type ResolveInput } from '@/agent/capabilities'
 import { manifestsForDomain, domains as allDomains, getManifest } from '@/agent/tools/manifests'

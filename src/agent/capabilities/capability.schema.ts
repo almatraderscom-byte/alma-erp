@@ -15,7 +15,7 @@
  * Deterministic: pure types + zod. No LLM, no network, no DB call (INV-01).
  */
 import { z } from 'zod'
-import { INTENT_CLASSES } from '@/agent/control-plane/admission/intent'
+import { INTENT_CLASSES } from '@/agent/control-plane/admission'
 
 export const CAPABILITY_CONTRACT_VERSION = '1.0.0' as const
 
