@@ -9,11 +9,13 @@
 import type { AdmissionStage } from './gateway';
 import { normalizeStage } from './normalize';
 import { fastPathStage } from './fast-path';
+import { intentStage } from './intent';
 
 export const ADMISSION_STAGES: AdmissionStage[] = [
   normalizeStage, // SPEC-012
   fastPathStage, // SPEC-013
-  // SPEC-015..018 classifiers, SPEC-019 dedup — appended below.
+  intentStage, // SPEC-015
+  // SPEC-016..018 classifiers, SPEC-019 dedup — appended below.
 ];
 
 export function admissionPipeline(): AdmissionStage[] {
