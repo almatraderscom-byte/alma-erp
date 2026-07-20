@@ -44,6 +44,8 @@ export interface ModelInvocationPayload {
   requiredCapabilities?: string[];
   /** T2 role hint (ops / orders / cs / marketing / research) */
   role?: string;
+  /** T1 classify: closed label set the model output must belong to */
+  labels?: string[];
   /** T4 only: explicit approval token for frontier escalation */
   approvalToken?: string;
   /** T0 only: deterministic template key the resolver dispatches on */
@@ -82,6 +84,7 @@ export const modelInvocationPayloadSchema: z.ZodType<ModelInvocationPayload> = z
   maxOutputTokens: z.number().int().positive().optional(),
   requiredCapabilities: z.array(z.string().min(1)).optional(),
   role: z.string().min(1).optional(),
+  labels: z.array(z.string().min(1)).optional(),
   approvalToken: z.string().min(1).optional(),
   deterministicKey: z.string().min(1).optional(),
   deterministicVars: z.record(z.string()).optional(),
