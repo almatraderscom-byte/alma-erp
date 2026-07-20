@@ -1,0 +1,3 @@
+# SPEC-198 Contract — Model bake-off automation
+rankModels / pickWinner: ranks candidate models on golden-task results by a deterministic composite score (accuracy rewarded, cost + latency penalised) with a hard min-accuracy floor — a cheap-but-inaccurate model is disqualified, never chosen; returns null if all disqualified (fail-closed). No LLM judges (INV-01).
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-198 commit>` → parent tree MATCH.
