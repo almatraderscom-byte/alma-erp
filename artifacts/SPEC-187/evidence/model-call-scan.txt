@@ -1,0 +1,2 @@
+# policy must be deterministic — no LLM/DB/network (INV-01, permission never via LLM):
+  NONE — deterministic authz (INV-01/INV-05)
