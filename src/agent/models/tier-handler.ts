@@ -21,6 +21,7 @@ import type { TierModelRegistry } from './registry';
 import type { Clock } from './ports';
 import { createT0Handler } from './t0';
 import { createT1Handler } from './t1';
+import { createT2Handler } from './t2';
 
 /** Concrete per-call constraints a handler emits for a provider invocation. */
 export interface TierConstraints {
@@ -61,10 +62,12 @@ export type TierHandlerTable = Partial<Record<ModelTier, TierHandler>>;
  *
  *   T0 → SPEC-152 (deterministic)
  *   T1 → SPEC-153 (classifier / extractor)
+ *   T2 → SPEC-154 (cheap specialist)
  */
 export function defaultTierHandlers(): TierHandlerTable {
   return {
     T0: createT0Handler(),
     T1: createT1Handler(),
+    T2: createT2Handler(),
   };
 }

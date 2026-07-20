@@ -13,4 +13,5 @@ export * from './contract';
 export * from './tier-handler';
 export * from './t0';
 export * from './t1';
+export * from './t2';
 export * from './fabric';
