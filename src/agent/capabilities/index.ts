@@ -9,3 +9,4 @@
 export * from './capability.schema'
 export * from './store'
 export * from './capability-model'
+export * from './intent-map'
