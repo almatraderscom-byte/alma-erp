@@ -33,6 +33,8 @@ import UIKit
 import WebKit
 import AVFoundation
 import PhotosUI
+import UniformTypeIdentifiers
+import QuickLook
 import ObjectiveC
 import os.signpost
 import CoreText
@@ -515,10 +517,34 @@ struct AgentModelsResponse: Decodable {
     let models: [AgentModelInfo]?
 }
 
-struct AgentFileRef: Codable, Equatable {
+struct AgentFileRef: Codable, Hashable {
     let bucket: String
     let path: String
     let mediaType: String
+}
+
+struct AgentSessionFile: Identifiable, Equatable {
+    enum Origin: String { case uploaded, generated }
+    let id: String
+    let origin: Origin
+    let name: String
+    let mediaType: String
+    let createdAt: String?
+    let messageId: String?
+    let fileRef: AgentFileRef?
+    let artifactId: String?
+    let artifactContent: String?
+
+    var typeLabel: String {
+        if mediaType == "application/pdf" { return "PDF" }
+        if mediaType == "text/markdown" { return "Markdown" }
+        if mediaType.hasPrefix("image/") { return "Image" }
+        return URL(fileURLWithPath: name).pathExtension.uppercased().nilIfEmpty ?? "File"
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 struct OkResponse: Decodable { let ok: Bool?; let success: Bool?; let message: String? }
@@ -641,6 +667,7 @@ struct AgentChatMessage: Identifiable, Equatable {
     let role: Role
     var text: String = ""
     var imagePaths: [String] = []
+    var fileRefs: [AgentFileRef] = []
     var localImages: [UIImage] = []   // optimistic composer thumbnails (user msgs)
     var confirmCards: [ConfirmCard] = []
     var askCards: [AskCard] = []
@@ -698,7 +725,12 @@ struct AgentChatMessage: Identifiable, Equatable {
                 let t = block.text ?? ""
                 m.text = m.text.isEmpty ? t : m.text + "\n" + t
             case "file_ref":
-                if let p = block.path, (block.mediaType ?? "").hasPrefix("image") { m.imagePaths.append(p) }
+                if let bucket = block.bucket, let path = block.path {
+                    let ref = AgentFileRef(bucket: bucket, path: path,
+                                           mediaType: block.mediaType ?? "application/octet-stream")
+                    m.fileRefs.append(ref)
+                    if ref.mediaType.hasPrefix("image") { m.imagePaths.append(path) }
+                }
             case "confirm_card":
                 if let pid = block.pendingActionId {
                     m.confirmCards.append(.init(id: pid, summary: block.summary ?? "",
@@ -1246,6 +1278,35 @@ final class AssistantVM {
 
     // S8 additive — artifacts + durable Plan-Drive background work.
     fileprivate var artifacts: [AgentArtifactWire] = []
+    var sessionFiles: [AgentSessionFile] {
+        var rows: [AgentSessionFile] = []
+        var seen = Set<String>()
+        for message in messages {
+            for ref in message.fileRefs where seen.insert("\(ref.bucket)/\(ref.path)").inserted {
+                let rawName = URL(fileURLWithPath: ref.path).lastPathComponent
+                rows.append(.init(
+                    id: "uploaded:\(ref.bucket):\(ref.path)", origin: .uploaded,
+                    name: rawName.removingPercentEncoding ?? rawName,
+                    mediaType: ref.mediaType, createdAt: message.createdAt,
+                    messageId: message.id, fileRef: ref, artifactId: nil, artifactContent: nil))
+            }
+        }
+        for artifact in artifacts {
+            let kind = artifact.type?.lowercased() ?? "file"
+            let media = kind == "markdown" ? "text/markdown"
+                : (kind == "pdf" ? "application/pdf" : (kind == "html" ? "text/html" : "text/plain"))
+            var name = artifact.title?.isEmpty == false ? artifact.title! : "ALMA file"
+            if URL(fileURLWithPath: name).pathExtension.isEmpty {
+                name += kind == "markdown" ? ".md" : (kind == "pdf" ? ".pdf" : ".txt")
+            }
+            rows.append(.init(
+                id: "generated:\(artifact.id)", origin: .generated, name: name,
+                mediaType: media, createdAt: artifact.createdAt,
+                messageId: artifact.messageId, fileRef: nil, artifactId: artifact.id,
+                artifactContent: artifact.content))
+        }
+        return rows.sorted { ($0.createdAt ?? "") > ($1.createdAt ?? "") }
+    }
     fileprivate var planDrive: AgentPlanDrivePanel?
     fileprivate var dailyAgentTodos: [AgentDailyTodo] = []
     fileprivate var officeDailyDuties: [AgentOfficeDuty] = []
@@ -1295,7 +1356,10 @@ final class AssistantVM {
     struct PendingFile: Identifiable, Equatable {
         enum State: Equatable { case uploading, ready(AgentFileRef), failed }
         let id = UUID()
-        let image: UIImage
+        let name: String
+        let mediaType: String
+        let data: Data
+        let image: UIImage?
         var state: State = .uploading
     }
     var pendingFiles: [PendingFile] = []
@@ -1590,6 +1654,7 @@ final class AssistantVM {
             if incoming[i].thinking == nil { incoming[i].thinking = old.thinking }
             if incoming[i].thinkingMs == nil { incoming[i].thinkingMs = old.thinkingMs }
             if old.role == .user, !old.localImages.isEmpty { incoming[i].localImages = old.localImages }
+            if old.role == .user, incoming[i].fileRefs.isEmpty { incoming[i].fileRefs = old.fileRefs }
             // Delegation cards are live-session state (the server persists only a
             // plain tool row, web parity) — the settle merge must not eat them.
             if incoming[i].delegations.isEmpty { incoming[i].delegations = old.delegations }
@@ -2574,7 +2639,10 @@ final class AssistantVM {
         }   // manual message resets the budget and cancels a queued machine turn
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let structuredAutoContinue = isAutoContinue && autoContinueFromTurnId != nil
-        let readyFiles: [AgentFileRef] = pendingFiles.compactMap {
+        let readyPendingFiles = pendingFiles.filter {
+            if case .ready = $0.state { return true } else { return false }
+        }
+        let readyFiles: [AgentFileRef] = readyPendingFiles.compactMap {
             if case .ready(let ref) = $0.state { return ref } else { return nil }
         }
         guard !text.isEmpty || !readyFiles.isEmpty || structuredAutoContinue, !isStreaming else { return }
@@ -2584,12 +2652,14 @@ final class AssistantVM {
         // message. Rendering a bubble here was the native-only duplicate-turn bug.
         if !structuredAutoContinue {
             var userMsg = AgentChatMessage(id: "local-\(UUID().uuidString)", role: .user, text: text)
-            userMsg.localImages = pendingFiles.compactMap {
-                if case .failed = $0.state { return nil } else { return $0.image }
-            }
+            userMsg.localImages = readyPendingFiles.compactMap(\.image)
+            userMsg.fileRefs = readyFiles
             messages.append(userMsg)
         }
-        pendingFiles = []
+        // A text-only send must not silently discard an upload that is still in
+        // progress or failed. Those cards remain until the owner retries/cancels.
+        let sentIds = Set(readyPendingFiles.map(\.id))
+        pendingFiles.removeAll { sentIds.contains($0.id) }
         isStreaming = true
         lastLiveEventAt = Date()   // stall clock starts at the send, not at first event
         thinkingLive = true
@@ -3113,8 +3183,14 @@ final class AssistantVM {
     /// Σ/cache/ধাপ footer.
     func loadParityFixture() {
         var rows: [AgentChatMessage] = []
-        rows.append(AgentChatMessage(id: "fix-u-parity", role: .user,
-                                     text: "স্টকের কাজটা কি হয়েছে?"))
+        var fixtureOwner = AgentChatMessage(id: "fix-u-parity", role: .user,
+                                            text: "স্টকের কাজটা কি হয়েছে?")
+        fixtureOwner.createdAt = "2026-07-14T09:58:00.000Z"
+        fixtureOwner.fileRefs = [
+            .init(bucket: "agent-files", path: "fixture/stock-input.pdf", mediaType: "application/pdf"),
+            .init(bucket: "agent-files", path: "fixture/showroom.jpg", mediaType: "image/jpeg"),
+        ]
+        rows.append(fixtureOwner)
         let parityJSON = #"""
         {"id":"fix-a-parity","role":"assistant",
          "content":[
@@ -3165,6 +3241,14 @@ final class AssistantVM {
             + (1...14).map { "**ধাপ \(almaBn($0)):** কনটেন্ট তৈরি, অডিয়েন্স বাছাই, বাজেট ভাগ, ক্রিয়েটিভ টেস্ট আর ফলোআপ — প্রতিদিন সকাল ১০টায় রিপোর্ট।" }.joined(separator: "\n\n")
             + "\n\n**নোট:** প্রতিটা ধাপের ফলাফল রাতের রিপোর্টে যোগ হবে, আর বাজেট ছাড়ানোর আগে অনুমোদন কার্ড আসবে। শেষ দিনে পুরো ক্যাম্পেইনের লাভ-ক্ষতির হিসাব একসাথে দেখানো হবে।"
         rows.append(doc)
+        artifacts = [
+            .init(id: "fix-artifact", messageId: "fix-a-parity", type: "markdown",
+                  title: "স্টক-অডিট.md", content: "# স্টক অডিট\n\nযাচাই করা রিপোর্ট।",
+                  version: 1, createdAt: "2026-07-14T10:00:00.000Z"),
+            .init(id: "fix-plan-artifact", messageId: "fix-a-doc", type: "markdown",
+                  title: "ঈদ-ক্যাম্পেইন-প্ল্যান.md", content: doc.text,
+                  version: 1, createdAt: "2026-07-14T10:05:00.000Z"),
+        ]
         messages = rows
     }
 
@@ -3789,30 +3873,64 @@ final class AssistantVM {
 
     func attachImage(_ image: UIImage) {
         guard let jpeg = image.jpegData(compressionQuality: 0.85) else { return }
-        let file = PendingFile(image: image)
+        enqueueAttachment(data: jpeg,
+                          name: "photo-\(Int(Date().timeIntervalSince1970)).jpg",
+                          mediaType: "image/jpeg", image: image)
+    }
+
+    func attachDocument(data: Data, name: String, mediaType: String) {
+        guard data.count <= 10 * 1024 * 1024 else {
+            errorToast = "ফাইলটি ১০ MB-এর বেশি"
+            AlmaAgentHaptics.error()
+            return
+        }
+        let serverAcceptedTypes: Set<String> = [
+            "application/pdf", "image/jpeg", "image/png", "image/webp",
+            "image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence",
+        ]
+        guard serverAcceptedTypes.contains(mediaType.lowercased()) else {
+            errorToast = "এখন JPEG, PNG, WebP, HEIC ও PDF যোগ করা যায়"
+            AlmaAgentHaptics.warning()
+            return
+        }
+        enqueueAttachment(data: data, name: name, mediaType: mediaType, image: UIImage(data: data))
+    }
+
+    private func enqueueAttachment(data: Data, name: String, mediaType: String, image: UIImage?) {
+        let file = PendingFile(name: name, mediaType: mediaType, data: data, image: image)
         pendingFiles.append(file)
-        let fileId = file.id
+        uploadPendingFile(file.id)
+    }
+
+    func retryPendingFile(_ id: UUID) {
+        guard let i = pendingFiles.firstIndex(where: { $0.id == id }),
+              pendingFiles[i].state == .failed else { return }
+        pendingFiles[i].state = .uploading
+        uploadPendingFile(id)
+    }
+
+    private func uploadPendingFile(_ fileId: UUID) {
+        guard let file = pendingFiles.first(where: { $0.id == fileId }) else { return }
         Task { [weak self] in
             do {
                 struct UploadResponse: Decodable { let bucket: String; let path: String; let mediaType: String }
                 let data = try await AssistantNet.uploadMultipart(
                     path: "/api/assistant/upload", fileField: "file",
-                    filename: "photo-\(Int(Date().timeIntervalSince1970)).jpg",
-                    mime: "image/jpeg", data: jpeg,
+                    filename: file.name,
+                    mime: file.mediaType, data: file.data,
                     extraFields: ["conversationId": self?.conversationId ?? "general"])
                 let up = try JSONDecoder().decode(UploadResponse.self, from: data)
-                await MainActor.run {
-                    guard let self, let i = self.pendingFiles.firstIndex(where: { $0.id == fileId }) else { return }
-                    self.pendingFiles[i].state = .ready(.init(bucket: up.bucket, path: up.path, mediaType: up.mediaType))
-                }
+                guard let self, let i = self.pendingFiles.firstIndex(where: { $0.id == fileId }) else { return }
+                self.pendingFiles[i].state = .ready(.init(
+                    bucket: up.bucket, path: up.path, mediaType: up.mediaType))
+                AlmaAgentHaptics.success()
             } catch {
-                await MainActor.run {
-                    guard let self, let i = self.pendingFiles.firstIndex(where: { $0.id == fileId }) else { return }
-                    self.pendingFiles[i].state = .failed
-                }
+                guard let self, let i = self.pendingFiles.firstIndex(where: { $0.id == fileId }) else { return }
+                self.pendingFiles[i].state = .failed
+                self.errorToast = "\(file.name) আপলোড হয়নি — কার্ডে চাপ দিয়ে আবার চেষ্টা করুন"
+                AlmaAgentHaptics.error()
             }
         }
-        _ = file // silence "never mutated" on some toolchains
     }
 
     func removePendingFile(_ id: UUID) { pendingFiles.removeAll { $0.id == id } }
@@ -4433,6 +4551,10 @@ struct AgentMessageRow: View {
                             AgentChatImage(path: p, vm: vm)
                         }
                     }
+                }
+                ForEach(message.fileRefs.filter { !$0.mediaType.hasPrefix("image/") },
+                        id: \.self) { ref in
+                    AgentInlineUploadedFileCard(ref: ref, messageId: message.id, vm: vm)
                 }
                 if !message.text.isEmpty {
                     // Owner ask build-70 round 4: bubble text is DIRECTLY selectable
@@ -6555,6 +6677,32 @@ struct AgentThinkingRow: View {
 
 // MARK: - Composer (web AgentComposer parity)
 
+@available(iOS 17.0, *)
+private struct AgentCameraPicker: UIViewControllerRepresentable {
+    let onImage: (UIImage) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let parent: AgentCameraPicker
+        init(_ parent: AgentCameraPicker) { self.parent = parent }
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage { parent.onImage(image) }
+            parent.dismiss()
+        }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { parent.dismiss() }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
+}
+
 /// NP-3 (AG-07.staff): staff quick actions on the LIVE Business Monitor prefill
 /// the chat composer — the web's `/agent?draft=…` deep link, natively. The
 /// pending text survives even if the composer isn't mounted yet (tab not built).
@@ -6574,6 +6722,10 @@ struct AgentComposerView: View {
     @Environment(\.colorScheme) private var scheme
     @State private var draft = ""
     @State private var photoItem: PhotosPickerItem?
+    @State private var showAttachmentChoices = false
+    @State private var showPhotoPicker = false
+    @State private var showDocumentPicker = false
+    @State private var showCamera = false
     @State private var showModelPicker = false
     @FocusState private var focused: Bool
 
@@ -6624,6 +6776,40 @@ struct AgentComposerView: View {
                 photoItem = nil
             }
         }
+        .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
+        .confirmationDialog("ফাইল যোগ করুন", isPresented: $showAttachmentChoices,
+                            titleVisibility: .visible) {
+            Button("ছবি থেকে") { showPhotoPicker = true }
+            Button("ক্যামেরা") { showCamera = true }
+                .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+            Button("Files থেকে") { showDocumentPicker = true }
+            Button("বাতিল", role: .cancel) {}
+        }
+        .fileImporter(isPresented: $showDocumentPicker,
+                      allowedContentTypes: [.pdf, .image], allowsMultipleSelection: true) { result in
+            guard case .success(let urls) = result else { return }
+            for url in urls {
+                let accessed = url.startAccessingSecurityScopedResource()
+                defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+                guard let data = try? Data(contentsOf: url) else { continue }
+                let type = (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType)?
+                    .preferredMIMEType ?? "application/octet-stream"
+                vm.attachDocument(data: data, name: url.lastPathComponent, mediaType: type)
+            }
+        }
+        .sheet(isPresented: $showCamera) {
+            AgentCameraPicker { image in vm.attachImage(image) }
+                .ignoresSafeArea()
+        }
+        .task {
+            let process = ProcessInfo.processInfo
+            let demo = process.environment["ALMA_ASSISTANT_ATTACHMENT_MENU"] == "1"
+                || process.arguments.contains("ALMA_ASSISTANT_ATTACHMENT_MENU=1")
+            if demo {
+                try? await Task.sleep(for: .milliseconds(900))
+                showAttachmentChoices = true
+            }
+        }
     }
 
     /// Recording bar — web parity: ✕ cancel, live 34-bar waveform, mm:ss, ✓ confirm.
@@ -6669,8 +6855,20 @@ struct AgentComposerView: View {
             HStack(spacing: 8) {
                 ForEach(vm.pendingFiles) { f in
                     ZStack(alignment: .topTrailing) {
-                        Image(uiImage: f.image)
-                            .resizable().scaledToFill()
+                        Group {
+                            if let image = f.image {
+                                Image(uiImage: image).resizable().scaledToFill()
+                            } else {
+                                VStack(spacing: 4) {
+                                    Image(systemName: f.mediaType == "application/pdf" ? "doc.richtext.fill" : "doc.fill")
+                                        .font(.system(size: 22)).foregroundStyle(AgentPalette.coral)
+                                    Text(f.name).font(.system(size: 8, weight: .medium))
+                                        .foregroundStyle(pal.ink).lineLimit(2)
+                                }
+                                .padding(5)
+                                .background(pal.card)
+                            }
+                        }
                             .frame(width: 64, height: 64)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .overlay {
@@ -6683,6 +6881,10 @@ struct AgentComposerView: View {
                                         .fill(Color.red.opacity(0.4))
                                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.white)
                                 }
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                if f.state == .failed { vm.retryPendingFile(f.id) }
                             }
                         Button { vm.removePendingFile(f.id) } label: {
                             Image(systemName: "xmark")
@@ -6704,14 +6906,16 @@ struct AgentComposerView: View {
 
     @ViewBuilder private func controlsRow(_ pal: AgentPalette) -> some View {
         HStack(spacing: 4) {
-            PhotosPicker(selection: $photoItem, matching: .images) {
+            Button {
+                showAttachmentChoices = true
+            } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(pal.muted)
                     .frame(width: 36, height: 36)
                     .almaAgentHitTarget()
             }
-            .accessibilityLabel("ছবি যোগ করুন")
+            .accessibilityLabel("ফাইল যোগ করুন")
             // Model picker pill — opens the native sheet with EVERY enabled model.
             Button {
                 AlmaAgentHaptics.selection()
@@ -9209,6 +9413,239 @@ private struct AgentPlanDriveCard: View {
     }
 }
 
+// MARK: - Unified session Files (roadmap Phase 3)
+
+@available(iOS 17.0, *)
+private struct AgentQuickLookPreview: UIViewControllerRepresentable {
+    let url: URL
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        let url: URL
+        init(url: URL) { self.url = url }
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+        func previewController(_ controller: QLPreviewController,
+                               previewItemAt index: Int) -> QLPreviewItem { url as NSURL }
+    }
+    func makeCoordinator() -> Coordinator { Coordinator(url: url) }
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+    func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
+}
+
+@available(iOS 17.0, *)
+private struct AgentUploadedFileViewerSheet: View {
+    let file: AgentSessionFile
+    let vm: AssistantVM
+    @Environment(\.dismiss) private var dismiss
+    @State private var localURL: URL?
+    @State private var loadError: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let localURL {
+                    AgentQuickLookPreview(url: localURL)
+                } else if let loadError {
+                    ContentUnavailableView {
+                        Label("ফাইল খোলা যায়নি", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(loadError)
+                    } actions: {
+                        Button("আবার চেষ্টা করুন") { self.loadError = nil; Task { await load() } }
+                    }
+                } else {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("ফাইল প্রস্তুত হচ্ছে…").font(.system(size: 13)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle(file.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("বন্ধ করুন") { dismiss() } }
+                if let localURL {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        ShareLink(item: localURL) {
+                            Image(systemName: "square.and.arrow.up")
+                                .frame(minWidth: 44, minHeight: 44)
+                                .accessibilityLabel("শেয়ার বা Files-এ সেভ")
+                        }
+                    }
+                }
+            }
+            .task { if localURL == nil && loadError == nil { await load() } }
+        }
+        .onDisappear {
+            guard let localURL,
+                  localURL.lastPathComponent.hasPrefix("alma-file-") else { return }
+            try? FileManager.default.removeItem(at: localURL)
+        }
+    }
+
+    private func load() async {
+        guard let ref = file.fileRef, let signed = await vm.signedURL(for: ref.path) else {
+            loadError = "ডাউনলোড লিংক পাওয়া যায়নি"
+            return
+        }
+        do {
+            let (data, response) = try await URLSession.shared.data(from: signed)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+            guard status < 300 else {
+                throw URLError(.badServerResponse)
+            }
+            let safe = file.name.replacingOccurrences(of: "/", with: "-")
+            let target = FileManager.default.temporaryDirectory
+                .appendingPathComponent("alma-file-\(file.id.hashValue)-\(safe)")
+            try data.write(to: target, options: .atomic)
+            localURL = target
+            AlmaAgentHaptics.success()
+        } catch {
+            loadError = "ডাউনলোড ব্যর্থ — নেটওয়ার্ক দেখে আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentSessionFilesHub: View {
+    enum Filter: String, CaseIterable, Identifiable {
+        case all = "সব", uploaded = "আপলোড", generated = "তৈরি করা"
+        var id: String { rawValue }
+    }
+    @Bindable var vm: AssistantVM
+    let onSourceMessage: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var filter: Filter = .all
+    @State private var selected: AgentSessionFile?
+
+    private var rows: [AgentSessionFile] {
+        switch filter {
+        case .all: return vm.sessionFiles
+        case .uploaded: return vm.sessionFiles.filter { $0.origin == .uploaded }
+        case .generated: return vm.sessionFiles.filter { $0.origin == .generated }
+        }
+    }
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        NavigationStack {
+            VStack(spacing: 10) {
+                Picker("ফাইল ধরন", selection: $filter) {
+                    ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                if rows.isEmpty {
+                    ContentUnavailableView("কোনো ফাইল নেই", systemImage: "folder",
+                                           description: Text("এই কথোপকথনের আপলোড ও তৈরি করা ফাইল এখানে থাকবে।"))
+                } else {
+                    List(rows) { file in
+                        HStack(spacing: 10) {
+                            Button { selected = file } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: icon(file))
+                                        .font(.system(size: 20, weight: .semibold))
+                                        .foregroundStyle(file.origin == .uploaded ? AgentPalette.teal : AgentPalette.coral)
+                                        .frame(width: 38, height: 38)
+                                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(file.name).font(.system(size: 14, weight: .semibold))
+                                            .foregroundStyle(pal.ink).lineLimit(2)
+                                        Text("\(file.origin == .uploaded ? "আপলোড" : "তৈরি করা") · \(file.typeLabel)")
+                                            .font(.system(size: 11)).foregroundStyle(pal.muted)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(pal.muted)
+                                }
+                                .frame(minHeight: 52)
+                            }
+                            if let messageId = file.messageId {
+                                Button {
+                                    dismiss()
+                                    onSourceMessage(messageId)
+                                } label: {
+                                    Image(systemName: "arrow.turn.up.left")
+                                        .frame(width: 44, height: 44)
+                                        .accessibilityLabel("উৎস মেসেজে যান")
+                                }
+                            }
+                        }
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                }
+            }
+            .background(pal.card)
+            .navigationTitle("ফাইলস · \(almaBn(vm.sessionFiles.count))")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button("বন্ধ করুন") { dismiss() } }
+            }
+            .sheet(item: $selected) { file in
+                if file.origin == .generated, let artifactId = file.artifactId {
+                    AgentArtifactViewerSheet(
+                        artifactId: artifactId, fallbackTitle: file.name, vm: vm)
+                } else {
+                    AgentUploadedFileViewerSheet(file: file, vm: vm)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(28)
+    }
+
+    private func icon(_ file: AgentSessionFile) -> String {
+        if file.mediaType == "application/pdf" { return "doc.richtext.fill" }
+        if file.mediaType.hasPrefix("image/") { return "photo.fill" }
+        if file.mediaType == "text/markdown" { return "text.document.fill" }
+        return "doc.fill"
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentInlineUploadedFileCard: View {
+    let ref: AgentFileRef
+    let messageId: String
+    let vm: AssistantVM
+    @Environment(\.colorScheme) private var scheme
+    @State private var selected: AgentSessionFile?
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        let rawName = URL(fileURLWithPath: ref.path).lastPathComponent
+        let name = rawName.removingPercentEncoding ?? rawName
+        Button {
+            selected = .init(id: "uploaded:\(ref.bucket):\(ref.path)", origin: .uploaded,
+                             name: name, mediaType: ref.mediaType, createdAt: nil,
+                             messageId: messageId, fileRef: ref, artifactId: nil, artifactContent: nil)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: ref.mediaType == "application/pdf" ? "doc.richtext.fill" : "doc.fill")
+                    .font(.system(size: 20)).foregroundStyle(AgentPalette.coral)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name).font(.system(size: 13, weight: .semibold)).foregroundStyle(pal.ink).lineLimit(1)
+                    Text(ref.mediaType == "application/pdf" ? "PDF" : "File")
+                        .font(.system(size: 10)).foregroundStyle(pal.muted)
+                }
+                Spacer()
+                Image(systemName: "arrow.down.circle").foregroundStyle(pal.muted)
+            }
+            .padding(12)
+            .frame(maxWidth: 280, minHeight: 52)
+            .modifier(AlmaAgentGlassBackground(
+                shape: RoundedRectangle(cornerRadius: 14, style: .continuous), pal: pal))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(pal.borderSubtle))
+        }
+        .sheet(item: $selected) { AgentUploadedFileViewerSheet(file: $0, vm: vm) }
+    }
+}
+
 // MARK: - Artifacts sheet (S8 additive; web AgentArtifactsPanel parity, display-only)
 
 /// Glossy list → detail sheet for the conversation's artifacts. Text/markdown/code
@@ -9463,7 +9900,7 @@ private struct AlmaConversationMenuSheet: View {
                     if vm.currentProjectId != nil {
                         row("প্রজেক্ট থেকে সরান", "folder.badge.minus", .removeProject, pal)
                     }
-                    row("ফাইলস · \(almaBn(vm.artifacts.count))", "folder", .files, pal)
+                    row("ফাইলস · \(almaBn(vm.sessionFiles.count))", "folder", .files, pal)
                     row("এই চ্যাটে খুঁজুন", "magnifyingglass", .search, pal)
                 }
                 Section("এক্সপোর্ট") {
@@ -9676,6 +10113,7 @@ struct AssistantScreen: View {
     /// generation-counter fan-out left every superseded task alive on MainActor).
     @State private var scrollDebounceTask: Task<Void, Never>?
     @State private var showArtifacts = false
+    @State private var showFilesHub = false
     @State private var showConversationMenu = false
     @State private var showProjectAssignment = false
     @State private var showConversationSearch = false
@@ -10030,7 +10468,14 @@ struct AssistantScreen: View {
             // Parity roadmap — persisted verification-retry composition only.
             if argFlag("ALMA_ASSISTANT_PARITY") {
                 vm.loadParityFixture()
-                if argFlag("ALMA_ASSISTANT_CONVERSATION_MENU") {
+                if argFlag("ALMA_ASSISTANT_FILE_CARD") {
+                    vm.messages = Array(vm.messages.prefix(1))
+                } else if argFlag("ALMA_ASSISTANT_UPLOAD_FAILED") {
+                    vm.pendingFiles = [
+                        .init(name: "supplier-price-list.pdf", mediaType: "application/pdf",
+                              data: Data("fixture".utf8), image: nil, state: .failed),
+                    ]
+                } else if argFlag("ALMA_ASSISTANT_CONVERSATION_MENU") {
                     vm.conversationId = "fixture-conversation"
                     vm.conversationTitle = "স্টক অডিট"
                     showConversationMenu = true
@@ -10045,6 +10490,10 @@ struct AssistantScreen: View {
                               description: nil, systemInstructions: nil, businessId: "ALMA_LIFESTYLE"),
                     ]
                     showProjectAssignment = true
+                } else if argFlag("ALMA_ASSISTANT_FILES_HUB") {
+                    vm.conversationId = "fixture-conversation"
+                    vm.conversationTitle = "স্টক অডিট"
+                    showFilesHub = true
                 }
                 AlmaTurnLog.event("assistant.contentReady", "fixture=parity count=\(vm.messages.count)")
                 return
@@ -10158,6 +10607,11 @@ struct AssistantScreen: View {
         .sheet(isPresented: $showArtifacts) {
             AgentArtifactsSheet(vm: vm, openWeb: openWeb)
         }
+        .sheet(isPresented: $showFilesHub) {
+            AgentSessionFilesHub(vm: vm) { messageId in
+                searchTargetId = messageId
+            }
+        }
         .sheet(isPresented: $showBackgroundTasks) {
             AgentBackgroundTasksSheet(vm: vm, selectedDetent: $backgroundTaskDetent)
                 .presentationDetents([.medium, .large], selection: $backgroundTaskDetent)
@@ -10170,15 +10624,15 @@ struct AssistantScreen: View {
         // Artifacts badge — web header-badge parity: appears only when this
         // conversation actually has artifacts; tap → glossy list/detail sheet.
         .overlay(alignment: .topTrailing) {
-            if !vm.artifacts.isEmpty && !vm.authExpired {
+            if !vm.sessionFiles.isEmpty && !vm.authExpired {
                 Button {
                     AlmaAgentHaptics.light()
-                    showArtifacts = true
+                    showFilesHub = true
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "doc.richtext")
                             .font(.system(size: 11, weight: .semibold))
-                        Text(almaBn(vm.artifacts.count))
+                        Text(almaBn(vm.sessionFiles.count))
                             .font(.system(size: 11.5, weight: .bold))
                     }
                     .foregroundStyle(AgentPalette.coral)
@@ -10242,7 +10696,7 @@ struct AssistantScreen: View {
                 if await vm.assignConversationProject(nil) { showConversationMenu = false }
             }
         case .files:
-            afterDismiss { showArtifacts = true }
+            afterDismiss { showFilesHub = true }
         case .search:
             afterDismiss { showConversationSearch = true }
         case .exportPDF, .exportMarkdown, .exportText:
@@ -10628,7 +11082,7 @@ struct AgentArtifactViewerSheet: View {
         }
         do {
             let rows: [AgentArtifactWire] = try await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/artifacts")
-            guard let a = rows.first(where: { $0.id == artifactId }) ?? rows.last else {
+            guard let a = rows.first(where: { $0.id == artifactId }) else {
                 loadError = "ফাইলটা আর নেই"
                 return
             }
