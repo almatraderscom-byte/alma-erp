@@ -1,0 +1,3 @@
+# SPEC-187 Contract — Cost-per-success evaluation
+evaluateCostPerSuccess / costPerSuccessRegressed: total nano-USD spend / successful golden tasks — a cheap-but-failing run inflates the metric; Infinity when nothing succeeds (always a regression); malformed (float/negative) cost and unknown tasks ignored. Integer nano-USD only (INV-01).
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-187 commit>` → parent tree MATCH.

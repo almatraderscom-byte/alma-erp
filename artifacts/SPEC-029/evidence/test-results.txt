@@ -1,0 +1,10 @@
+$ npx vitest run src/agent/finops
+
+ RUN  v4.1.9 /home/user/alma-erp
+
+
+ Test Files  9 passed (9)
+      Tests  52 passed (52)
+   Start at  08:52:35
+   Duration  1.04s (transform 392ms, setup 0ms, import 665ms, tests 68ms, environment 1ms)
+

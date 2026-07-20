@@ -1,0 +1,3 @@
+# governor must be deterministic — no provider/model/db CALL:
+$ rg call/import signals in src/agent/budgets src/agent/control-plane/cost
+  NONE — budget math is deterministic (INV-01)

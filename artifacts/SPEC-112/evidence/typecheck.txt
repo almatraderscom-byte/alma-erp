@@ -1,0 +1,2 @@
+$ npx tsc --noEmit -p src/agent/autonomy/tsconfig.json
+(exit 0 — 0 type errors)

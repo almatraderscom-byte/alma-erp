@@ -1,0 +1,11 @@
+$ node scripts/architecture/freeze-gate.mjs
+=== AIOS Architecture Freeze Baseline Gate (G01 / SPEC-010) ===
+[PASS] contracts-typecheck  
+[PASS] contracts-tests         Duration  909ms (transform 322ms, setup 0ms, import 547ms, tests 82ms, enviro
+[PASS] forbidden-imports    PASS — no NEW forbidden imports. ERP app/api → agent: 0. Boundary did not regres
+[PASS] ownership            PASS — every changed file is within the session owner zones
+[PASS] adr-lint             PASS — all ADRs well-formed and sequential
+[FAIL] proof-complete       FAIL — incomplete proof or non-PASS verdict
+---
+FREEZE BASELINE: FAIL
+exit=1

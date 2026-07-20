@@ -1,0 +1,3 @@
+# SPEC-132 Contract — Workflow versioning
+pinAtStart / templateForPin / assertNoVersionDrift / isMigrationAllowed: a running instance pins its template version for life; resolve returns the exact pinned template or null (never falls back to another version); any version drift on resume is rejected; migration of an in-flight instance is DENY by default (INV-09), forward-only and only when explicit.
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-132 commit>` → parent tree MATCH.

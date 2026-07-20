@@ -1,0 +1,4 @@
+$ node scripts/architecture/check-adr.mjs
+ADR lint: 1 record(s)
+PASS — all ADRs well-formed and sequential
+exit=0

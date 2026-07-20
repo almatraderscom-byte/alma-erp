@@ -1,0 +1,3 @@
+# SPEC-119 Contract — Approval evidence and audit
+deriveApprovalEvent / approvalAuditEvent / toG01AuditEvent: derives an identity-correlated audit event (pending/granted/denied/expired/revoked/consumed) with approverKey + reason codes from a lifecycle state, and projects it onto the shared G01 AuditEvent stream (component='approvals'). Deterministic — observedAtMs injected.
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-119 commit>` → parent tree MATCH.

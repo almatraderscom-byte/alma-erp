@@ -1,0 +1,2 @@
+# SPEC-193 Baseline — Cost and quality dashboard
+New in the G12 owned zone (src/agent/observability | src/agent/release). Builds on G01 ComponentResult, G19 evals, and the completed component surface. Discovery: `git status` + `find src/agent/autonomy src/agent/approvals`. No callers yet (wired at integration). No provider/model/DB/network calls (INV-01) — verified by model-call-scan. Tenant isolation enforced upstream (G11) before autonomy. Tests: src/agent/observability/__tests__/dashboard-cost-quality.test.ts (3 cases). Files: see changed-files.md.

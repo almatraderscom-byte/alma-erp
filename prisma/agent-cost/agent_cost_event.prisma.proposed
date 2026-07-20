@@ -1,0 +1,27 @@
+// PROPOSED additive Prisma model — G03 / SPEC-028.
+// NOT applied by this group. The integration session appends this to the live
+// prisma/schema.prisma and runs an ADDITIVE migration (no existing table touched).
+// Mirrors src/agent/finops/ledger.ts CostEvent. Amounts are integer nano-USD
+// stored as BigInt (avoids float; no BDT).
+
+model AgentCostEvent {
+  id             String   @id                       // `${correlationId}:${stepId}`
+  tenantId       String
+  businessId     String?
+  actorId        String
+  agentId        String?
+  workflowId     String
+  stepId         String
+  correlationId  String
+  provider       String
+  model          String
+  estimatedNano  BigInt                              // nano-USD
+  actualNano     BigInt?                             // null when usage unknown
+  status         String                              // RECONCILED|OVER|UNDER|UNKNOWN
+  priceVerified  Boolean  @default(false)
+  observedAt     DateTime
+
+  @@index([tenantId, correlationId])
+  @@index([provider, model])
+  @@map("agent_cost_event")
+}

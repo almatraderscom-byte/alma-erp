@@ -1,0 +1,2 @@
+$ rg -n "control-plane" src/app src/lib   (ERP must NOT import agent control-plane)
+NO MATCHES — one-way dependency intact

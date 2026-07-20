@@ -1,0 +1,10 @@
+$ npx vitest run src/agent/cache
+
+ RUN  v4.1.9 /home/user/alma-erp
+
+
+ Test Files  3 passed (3)
+      Tests  12 passed (12)
+   Start at  10:52:17
+   Duration  383ms (transform 196ms, setup 0ms, import 267ms, tests 15ms, environment 0ms)
+

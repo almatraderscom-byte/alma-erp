@@ -1,0 +1,2 @@
+$ rg -n "agent/budgets|control-plane/cost" src/app src/lib
+NO MATCHES — one-way dependency intact

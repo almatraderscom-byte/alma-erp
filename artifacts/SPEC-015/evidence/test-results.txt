@@ -1,0 +1,10 @@
+$ npx vitest run src/agent/control-plane
+
+ RUN  v4.1.9 /home/user/alma-erp
+
+
+ Test Files  5 passed (5)
+      Tests  32 passed (32)
+   Start at  07:45:02
+   Duration  812ms (transform 455ms, setup 0ms, import 665ms, tests 43ms, environment 1ms)
+

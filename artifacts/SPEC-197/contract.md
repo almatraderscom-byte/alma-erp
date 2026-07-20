@@ -1,0 +1,3 @@
+# SPEC-197 Contract — Automatic rollback thresholds
+decideRollback: compares canary metrics to baseline and returns CONTINUE (as good or better) / HALT (too little data — fail-closed) / ROLLBACK (success-rate drop, latency, or cost regression beyond threshold) automatically (INV-08). Deterministic, integer nano-USD (INV-01).
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-197 commit>` → parent tree MATCH.

@@ -1,0 +1,10 @@
+$ npx vitest run src/agent/context
+
+ RUN  v4.1.9 /home/user/alma-erp
+
+
+ Test Files  5 passed (5)
+      Tests  17 passed (17)
+   Start at  10:21:04
+   Duration  553ms (transform 183ms, setup 0ms, import 265ms, tests 27ms, environment 0ms)
+

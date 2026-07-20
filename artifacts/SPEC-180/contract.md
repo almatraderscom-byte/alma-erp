@@ -1,0 +1,3 @@
+# SPEC-180 Contract — Known-workflow no-planner evaluation
+certifyKnownWorkflows / needsPlanner / ALL_KNOWN_TEMPLATES: aggregates every domain template and proves each is valid (G14), planner-free (no plan/head step), unique-id across domains, and drivable to completion through the pure G14 reducer with NO planning decision — executable proof (INV-10) that routine business tasks run without the expensive head.
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-180 commit>` → parent tree MATCH.

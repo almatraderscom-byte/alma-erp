@@ -21,6 +21,7 @@ import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
 import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearchDeferral, TOOL_SEARCH_ENABLED, SLIM_ROUTER_ENABLED } from '@/agent/tools/select-tools'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool, type ToolResult } from '@/agent/tools/registry'
+import { enforcementEnabled, guardToolCall } from '@/agent/enforcement/enforced-tool-runner'
 import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -1358,7 +1359,27 @@ export async function* runAgentTurn(
           }
         }
         const started = Date.now()
-        const result = personalMode
+        // AIOS mandatory enforcement (flag-gated, OFF in prod) — native Claude path.
+        // Same door as the multi-model path: every tool call is forced through
+        // policy + autonomy/approval before it can run.
+        const aiosGuard = enforcementEnabled()
+          ? guardToolCall({
+              identity: {
+                tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),
+                actorId: 'owner',
+                agentId: chatModel.id,
+                workflowId: String(conversationId ?? 'conversation'),
+                stepId: String(tb.id ?? 'step'),
+                correlationId: String(conversationId ?? 'turn'),
+              },
+              model: chatModel.id,
+              toolName: tb.name,
+              attributes: tb.input as Record<string, unknown>,
+            })
+          : null
+        const result = aiosGuard && !aiosGuard.allow
+          ? { success: false as const, error: aiosGuard.message }
+          : personalMode
           ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref })
           : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization, ownerVoicePref })
         return { tb, result, durationMs: Date.now() - started }

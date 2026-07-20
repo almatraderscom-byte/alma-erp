@@ -1,0 +1,3 @@
+# SPEC-191 Contract — End-to-end trace model
+buildTrace: stitches component spans sharing one correlationId into an ordered trace (component path, duration, worst-status rollup); fail-closed on mixed correlation ids, empty, or malformed spans. Deterministic — timestamps supplied on spans (INV-01).
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-191 commit>` → parent tree MATCH.

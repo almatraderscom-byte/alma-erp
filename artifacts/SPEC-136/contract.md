@@ -1,0 +1,3 @@
+# SPEC-136 Contract — Idempotency keys
+idempotencyKey / resolveIdempotency: a stable key per (instance, step, pinned template) — deliberately NOT the attempt — so every attempt of a logical operation shares one key and the downstream dedups; resolveIdempotency returns PROCEED (no record), SKIP (committed, returns result ref), or RECONCILE (in-flight/unknown/key-mismatch — never re-runs a side effect, INV-06).
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-136 commit>` → parent tree MATCH.

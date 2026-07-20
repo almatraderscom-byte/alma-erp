@@ -1,0 +1,3 @@
+# SPEC-186 Contract — Tool-selection evaluation
+evaluateToolSelection: precision/recall of exposed tools per golden task vs the expected set — over-exposure (extra/dangerous tools) lowers precision (a security signal), under-exposure lowers recall (a capability gap); deterministic mean scores + per-task missing/extra lists.
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-186 commit>` → parent tree MATCH.

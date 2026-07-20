@@ -1,0 +1,10 @@
+$ node src/agent/control-plane/admission/check-admission-bypass.mjs
+admission bypass gate: 2013 files scanned
+PASS — no code bypasses the admission gateway (public entrypoints only)
+exit=0
+
+# ratchet proof: inject outsider importing internal module
+FAIL — 1 bypass(es):
+  src/agent/__probe.ts -> @/agent/control-plane/admission/normalize (internal: normalize)
+# removed -> PASS
+PASS — no code bypasses the admission gateway (public entrypoints only)

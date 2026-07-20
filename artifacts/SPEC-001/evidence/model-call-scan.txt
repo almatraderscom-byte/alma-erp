@@ -1,0 +1,2 @@
+$ rg -n "fetch\(|googleapis|openrouter|anthropic|prisma" src/agent/contracts scripts/architecture
+NO provider/model/db calls in contracts (deterministic, pure)

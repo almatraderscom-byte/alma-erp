@@ -1,0 +1,10 @@
+$ npx vitest run src/agent/memory
+
+ RUN  v4.1.9 /home/user/alma-erp
+
+
+ Test Files  2 passed (2)
+      Tests  10 passed (10)
+   Start at  10:30:16
+   Duration  402ms (transform 217ms, setup 0ms, import 305ms, tests 17ms, environment 0ms)
+
