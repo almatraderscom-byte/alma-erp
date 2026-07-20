@@ -7,8 +7,8 @@ The change is additive and nothing in production imports it, so revert is clean
 and side-effect-free.
 
 ```text
-parent(pre-spec) tree: f93be0efddd97811892bde4abd0fe73605ac84ca
-post-revert   tree:    f93be0efddd97811892bde4abd0fe73605ac84ca
+parent(pre-spec) tree: d280a1553fa2768f6d1f46a5b35cdfec77a76f9a
+post-revert   tree:    d280a1553fa2768f6d1f46a5b35cdfec77a76f9a
 RESULT: MATCH — revert restores exact pre-spec baseline
 ```
 
