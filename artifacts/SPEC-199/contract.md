@@ -1,0 +1,3 @@
+# SPEC-199 Contract — Workflow optimization recommendations
+recommendOptimizations: reads aggregated workflow stats and emits deterministic, actionable recommendations — harden a flaky step (fail-rate over threshold), reduce cost on an expensive workflow, optimise a slow step, remove an always-skipped dead step; nothing for a healthy workflow. Advice only, never auto-applied (INV-01).
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-199 commit>` → parent tree MATCH.

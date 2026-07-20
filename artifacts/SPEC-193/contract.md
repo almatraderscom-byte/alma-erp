@@ -1,0 +1,3 @@
+# SPEC-193 Contract — Cost and quality dashboard
+buildCostQualityDashboard: deterministic dashboard data model — total nano-USD spend, spend-by-dimension with share (sorted), success rate, verified-claim rate; malformed cost rows ignored. Pure computation; the UI renders the model (INV-01, integer nano-USD). UI wiring in src/app/agent-ops is deferred to integration to avoid the ERP-boundary gate.
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-193 commit>` → parent tree MATCH.

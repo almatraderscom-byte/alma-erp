@@ -1,0 +1,3 @@
+# SPEC-192 Contract — Agent operational SLOs
+evaluateSlo + DEFAULT_AGENT_SLO: declares success-rate / p95-latency / cost-per-success objectives and evaluates a measurement window, reporting met/breached objectives; empty window is a fail-closed 'no_data' breach. Deterministic, integer nano-USD (INV-01).
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-192 commit>` → parent tree MATCH.
