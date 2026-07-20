@@ -11,6 +11,9 @@
  * live only behind the execution adapter seam.
  */
 import type { GatewayStage } from './contract'
+import { schemaValidationStage } from './stages/schema-validation'
 
 /** The default production stage order. Grows as each stage spec lands. */
-export const DEFAULT_STAGES: readonly GatewayStage[] = []
+export const DEFAULT_STAGES: readonly GatewayStage[] = [
+  schemaValidationStage, // SPEC-122
+]

@@ -8,3 +8,4 @@
  */
 export * from './contract'
 export * from './gateway'
+export * from './stages/schema-validation'
