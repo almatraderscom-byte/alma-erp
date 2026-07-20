@@ -1,0 +1,10 @@
+$ npx vitest run src/agent/observability src/agent/release
+
+ RUN  v4.1.9 /home/user/alma-erp
+
+
+ Test Files  2 passed (2)
+      Tests  8 passed (8)
+   Start at  16:18:58
+   Duration  366ms (transform 91ms, setup 0ms, import 131ms, tests 16ms, environment 0ms)
+
