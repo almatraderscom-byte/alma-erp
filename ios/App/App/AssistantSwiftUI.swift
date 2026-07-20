@@ -4847,6 +4847,21 @@ final class AssistantVM {
     /// server. Available only to local DEBUG Simulator launches.
     func loadHugeSessionFixture(logicalCount: Int = 600) {
         let started = Date()
+        // A DEBUG fixture must be independent of whatever durable turn the same
+        // Simulator exercised immediately before it. Otherwise a persisted
+        // recovery descriptor correctly blocks history promotion and makes this
+        // deterministic Gate 8 fixture order-dependent.
+        streamTask?.cancel()
+        streamTask = nil
+        streamTaskGeneration = nil
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        recoverableTurn = nil
+        currentClientMessageId = nil
+        currentTurnId = nil
+        reconnecting = false
+        isStreaming = false
+        thinkingLive = false
         let rowCount = max(600, logicalCount)
         let sentence = "ALMA সেশন যাচাই: বিক্রয়, স্টক, approval, generated file এবং follow-up একই ক্রমে রাখা হয়েছে। "
         var rows: [AgentChatMessage] = []
