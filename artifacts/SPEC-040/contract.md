@@ -1,0 +1,2 @@
+# SPEC-040 Contract — Overspend gate
+`checkBudgetInvariant(store, budget)` (spent+reserved <= limit), `checkAll`, `lcg` (deterministic PRNG). Property test: 2000 fuzzed authorize/settle/cancel ops, invariant asserted before+after each. Model-call bypass enforcement lands when call-sites are wired (later groups); today overspend is structurally impossible (private spent, mutated only via reserve/commit). Rollback: `git revert --no-edit <SPEC-040 commit>`.
