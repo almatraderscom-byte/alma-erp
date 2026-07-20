@@ -1,0 +1,5 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": { "noEmit": true, "types": ["node"] },
+  "include": ["**/*.ts", "../approvals/**/*.ts", "../policy/**/*.ts", "../identity/**/*.ts", "../contracts/**/*.ts"]
+}
