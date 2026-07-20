@@ -7,3 +7,4 @@
  * network at runtime (INV-01). Grows across G10 SPEC-091..094.
  */
 export * from './retrieval'
+export * from './shortlist'
