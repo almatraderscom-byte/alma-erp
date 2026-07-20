@@ -1,0 +1,3 @@
+# SPEC-196 Contract — Canary-release framework
+cohortBucket / inCanary / isMonotonicGrowth: deterministic canary cohort membership from a stable key hash (local sha256, no randomness — replayable, INV-01); 0%⇒none, 100%⇒all, membership monotonic as the rollout grows, roughly-even spread at intermediate percentages.
+Fail-closed (INV-05): when the decision cannot be verified, the safe side is chosen (ASK / DENY / not-usable), never act. Deterministic, no LLM/DB/clock — any time input is injected (INV-01). Result uses the G01 ComponentResult idiom; no boolean success, no thrown errors across the boundary. Rollback: `git revert --no-edit <SPEC-196 commit>` → parent tree MATCH.
