@@ -30,3 +30,8 @@ export function constitutionBundle(content: string = DEFAULT_ALMA_CONSTITUTION, 
 export function skillBundle(skillId: string, instructions: string, version = '1'): ContextBundle {
   return { id: `skill:${skillId}`, kind: 'skill', content: instructions, cacheable: true, version };
 }
+
+/** SPEC-044 — policy / guardrails bundle (cacheable; stable per policy version). */
+export function policyBundle(policyText: string, version = '1'): ContextBundle {
+  return { id: 'policy', kind: 'policy', content: policyText, cacheable: true, version };
+}
