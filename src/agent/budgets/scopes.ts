@@ -22,3 +22,8 @@ export function userBudget(tenantId: string, actorId: string, yearMonth: string,
 export function workflowBudget(workflowId: string, limitNanoUsd: number): Budget {
   return { scope: 'workflow', key: `workflow:${workflowId}`, limitNanoUsd };
 }
+
+/** SPEC-035 — per-turn budget (one inbound request / correlation). */
+export function turnBudget(correlationId: string, limitNanoUsd: number): Budget {
+  return { scope: 'turn', key: `turn:${correlationId}`, limitNanoUsd };
+}
