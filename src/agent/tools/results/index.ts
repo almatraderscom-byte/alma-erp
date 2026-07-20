@@ -8,3 +8,4 @@
  * Deterministic, no LLM/DB/network at runtime (INV-01). Grows across SPEC-095..100.
  */
 export * from './evidence-store'
+export * from './model-view'
