@@ -15,6 +15,7 @@ import { schemaValidationStage } from './stages/schema-validation'
 import { identityValidationStage } from './stages/identity-validation'
 import { policyDecisionStage } from './stages/policy-decision'
 import { costAuthorizationStage } from './stages/cost-authorization'
+import { approvalObligationStage } from './stages/approval-obligation'
 
 /** The default production stage order. Grows as each stage spec lands. */
 export const DEFAULT_STAGES: readonly GatewayStage[] = [
@@ -22,4 +23,5 @@ export const DEFAULT_STAGES: readonly GatewayStage[] = [
   identityValidationStage, // SPEC-123
   policyDecisionStage, // SPEC-124
   costAuthorizationStage, // SPEC-125
+  approvalObligationStage, // SPEC-126
 ]
