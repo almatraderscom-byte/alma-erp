@@ -1559,7 +1559,7 @@ final class AssistantVM {
                 scheduleQueuedOwnerMessage()
                 return
             }
-            await openConversation(recoverConversationId)   // ends in recoverTurnState
+            await openConversation(recoverConversationId, recoveringPersistedTurn: true)
         } else {
             currentTurnId = rt.turnId ?? currentTurnId
             await recoverTurnState(trigger: "relaunch")
@@ -2382,11 +2382,10 @@ final class AssistantVM {
         }
     }
 
-    func openConversation(_ id: String) async {
+    func openConversation(_ id: String, recoveringPersistedTurn: Bool = false) async {
         guard id != conversationId else { return }
-        if let recoverableTurn,
-           recoverableTurn.turnId == nil, recoverableTurn.conversationId == nil {
-            errorToast = "চলতি বার্তার অবস্থা যাচাই হচ্ছে — শেষ হলে অন্য কথোপকথন খুলুন"
+        if !recoveringPersistedTurn, isStreaming || recoverableTurn != nil {
+            errorToast = "চলতি উত্তর শেষ হলে অন্য কথোপকথন খুলুন — বর্তমান কাজটি সুরক্ষিত আছে"
             return
         }
         restoreTick += 1     // screen replays the session-opening awakening
@@ -2415,9 +2414,8 @@ final class AssistantVM {
     }
 
     func newChat() async {
-        if let recoverableTurn,
-           recoverableTurn.turnId == nil, recoverableTurn.conversationId == nil {
-            errorToast = "চলতি বার্তার অবস্থা যাচাই হচ্ছে — শেষ হলে নতুন কথোপকথন খুলুন"
+        if isStreaming || recoverableTurn != nil {
+            errorToast = "চলতি উত্তর শেষ হলে নতুন কথোপকথন খুলুন — বর্তমান কাজটি সুরক্ষিত আছে"
             return
         }
         stopStreaming(cancelServer: false)
