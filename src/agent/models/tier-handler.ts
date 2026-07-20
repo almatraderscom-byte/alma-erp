@@ -13,7 +13,7 @@
  * (152→156) registers exactly one tier's handler. The fabric fails closed with
  * MODEL_TIER_NOT_IMPLEMENTED for any tier without a handler.
  */
-import type { ComponentFailure } from '@/agent/contracts';
+import type { ComponentFailure, ExecutionIdentity } from '@/agent/contracts';
 import type { AdapterModality } from '@/agent/providers/runtime/adapter';
 import type { ModelInvocationPayload, ModelInvocationValue } from './contract';
 import type { ModelTier, TierDefinition } from './tiers';
@@ -23,6 +23,7 @@ import { createT0Handler } from './t0';
 import { createT1Handler } from './t1';
 import { createT2Handler } from './t2';
 import { createT3Handler } from './t3';
+import { createT4Handler } from './t4';
 
 /** Concrete per-call constraints a handler emits for a provider invocation. */
 export interface TierConstraints {
@@ -38,6 +39,7 @@ export interface TierConstraints {
 export interface TierPrepareContext {
   registry: TierModelRegistry;
   clock: Clock;
+  identity: ExecutionIdentity;
 }
 
 export type TierPrepared =
@@ -65,6 +67,7 @@ export type TierHandlerTable = Partial<Record<ModelTier, TierHandler>>;
  *   T1 → SPEC-153 (classifier / extractor)
  *   T2 → SPEC-154 (cheap specialist)
  *   T3 → SPEC-155 (standard reasoner)
+ *   T4 → SPEC-156 (frontier escalation; fail closed — approval + daily cap)
  */
 export function defaultTierHandlers(): TierHandlerTable {
   return {
@@ -72,5 +75,6 @@ export function defaultTierHandlers(): TierHandlerTable {
     T1: createT1Handler(),
     T2: createT2Handler(),
     T3: createT3Handler(),
+    T4: createT4Handler(), // default: reject-all approvals + zero cap (fail closed)
   };
 }

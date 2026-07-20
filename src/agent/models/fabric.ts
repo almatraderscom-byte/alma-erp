@@ -142,7 +142,7 @@ export async function invokeModel(raw: unknown, deps: ModelFabricDeps): Promise<
   const registry: TierModelRegistry = deps.registry ?? createTierModelRegistry();
   const clock = deps.clock ?? systemClock;
 
-  const prepared = handler.prepare(payload, def, { registry, clock });
+  const prepared = handler.prepare(payload, def, { registry, clock, identity });
   if (prepared.kind === 'FAILURE') return prepared.failure;
   if (prepared.kind === 'RESOLVED') {
     // T0 — deterministic, no provider call
