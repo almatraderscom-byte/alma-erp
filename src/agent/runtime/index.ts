@@ -7,3 +7,4 @@
  * regression gate (SPEC-170). Imports G16 tiers + G17 routing; no provider call.
  */
 export * from './de-escalation';
+export * from './head-planner';
