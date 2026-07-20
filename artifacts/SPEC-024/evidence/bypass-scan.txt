@@ -1,0 +1,2 @@
+$ rg -n "agent/finops|agent/providers/pricing" src/app src/lib
+NO MATCHES — one-way dependency intact
