@@ -14,4 +14,6 @@ export * from './tier-handler';
 export * from './t0';
 export * from './t1';
 export * from './t2';
+export * from './t3';
 export * from './fabric';
+export * from './cost-port';

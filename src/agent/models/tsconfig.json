@@ -1,11 +1,17 @@
 {
   "extends": "../../../tsconfig.json",
-  "compilerOptions": { "noEmit": true, "types": ["node"] },
+  "compilerOptions": {
+    "noEmit": true,
+    "types": [
+      "node"
+    ]
+  },
   "include": [
     "**/*.ts",
     "../contracts/**/*.ts",
     "../finops/**/*.ts",
     "../providers/**/*.ts",
-    "../budgets/**/*.ts"
+    "../budgets/**/*.ts",
+    "../control-plane/**/*.ts"
   ]
 }
