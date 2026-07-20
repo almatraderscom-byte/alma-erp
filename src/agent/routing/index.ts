@@ -9,3 +9,4 @@
  */
 export * from './performance-records';
 export * from './cost-quality-score';
+export * from './latency-availability-score';
