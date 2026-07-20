@@ -69,6 +69,7 @@ import {
 } from '@/agent/lib/claim-verifier'
 import { getModel, isKnownModelId } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
+import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
 import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 import { adapterFor } from '@/agent/lib/models/adapters'
 import { logRouteSpan } from '@/agent/lib/tool-telemetry'
@@ -706,6 +707,11 @@ async function* runAlternateProviderTurn(
   // a listen turn (assembled empty below), so the head physically cannot pivot
   // to work; this note shapes the tone.
   if (listenMode) volatileSections.push(LISTEN_MODE_NOTE)
+  // Model identity (fixes the "I am Claude Sonnet" hallucination): pin the REAL
+  // running model, and — when the owner switched models mid-chat — say so truthfully.
+  // Rides high so the head always knows who it is; best-effort, never blocks the turn.
+  const prevTurnModelId = await loadPreviousTurnModelId(conversationId)
+  volatileSections.push(buildModelIdentityNote(model.id, prevTurnModelId))
   // Phase 36: the behaviour contract for THIS turn (mode/tone/structure/
   // repair/uncertainty/commitment rules) — live only when the layer is ON;
   // shadow derives + records without steering. Rides right after the listen

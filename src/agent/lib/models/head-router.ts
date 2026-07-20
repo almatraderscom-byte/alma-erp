@@ -22,6 +22,7 @@ import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
 import { prisma } from '@/lib/prisma'
 import { isOutboundCallIntent } from '@/agent/lib/outbound-call-intent'
+import { isModelEnabled } from '@/agent/lib/models/model-enabled'
 import { getDefaultHeadModelId } from '@/agent/lib/models/routing-config'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
@@ -52,15 +53,12 @@ export const heavyHeadModelId = (fallback = 'xai-grok-4.20'): string => {
   return isKnownModelId(id) ? id : DEFAULT_MODEL_ID
 }
 
-// Anthropic head kill-switch. Owner command (2026-07): Anthropic credits are exhausted,
-// so every head turn that lands on an Anthropic model (the heavy tier OR an explicit
-// Sonnet/Opus pin in the model picker) 400s with a quota error and the owner's chat dies.
-// While this is truthy (DEFAULT — the credits are out right now), an explicitly-pinned
-// Anthropic head is transparently redirected to the heavy head (Gemini 3.1 Pro) so the
-// assistant keeps answering no matter what the picker says. Restore Claude by setting
-// ANTHROPIC_HEAD_DOWN=false (+ redeploy) once credits are topped up. Does NOT touch the
-// finance/CRITICAL sub-agent guard, which is a separate path.
-const anthropicHeadDown = (): boolean => process.env.ANTHROPIC_HEAD_DOWN !== 'false'
+// Anthropic head EMERGENCY kill-switch. Owner rule 2026-07-20: credits are back, so
+// this is NO LONGER a blanket default-on redirect — an explicit Opus/Sonnet pick now
+// runs real Claude whenever the key + Monitor toggle allow it (see resolveHeadModelId).
+// Set ANTHROPIC_HEAD_DOWN=true|1 only to FORCE every explicit Claude pick back onto the
+// heavy head (e.g. credits exhausted again); unset/false = honour the pick. Does NOT
+// touch the finance/CRITICAL sub-agent guard, which is a separate path.
 
 // Marketing head: when the owner's message is marketing/content work, Qwen answers
 // DIRECTLY as the head (runs the full agent loop) — exactly like DeepSeek does for
@@ -502,11 +500,23 @@ export async function resolveHeadModelId(opts: {
   //    behaviour: routine→DeepSeek, marketing→Qwen, sensitive→Sonnet).
   const requested = opts.requestedModelId?.trim()
   if (requested && requested !== AUTO_MODEL_ID && isKnownModelId(requested)) {
-    // While Anthropic credits are out, an explicitly-pinned Anthropic head would 400 on
-    // every turn. Transparently swap it for the heavy head (Gemini) so the pinned chat
-    // still answers; any non-Anthropic explicit pick is honoured exactly as before.
-    if (anthropicHeadDown() && getModel(requested).provider === 'anthropic') {
-      return heavy('anthropic_down_explicit_redirect')
+    // Explicit Anthropic pick (Opus/Sonnet from the picker). HONOUR it when Claude
+    // is actually usable; only redirect to the heavy head when it is genuinely down.
+    // Owner rule 2026-07-20: credits are back, so a topped-up Opus pick MUST run real
+    // Opus — the old blanket ANTHROPIC_HEAD_DOWN default silently swallowed every
+    // Claude pick regardless of balance, which is why "Opus select korleo DeepSeek
+    // aslo". Decide from cheap, real signals (no extra paid probe):
+    //   - hard kill-switch  : ANTHROPIC_HEAD_DOWN=true|1 forces redirect (emergency).
+    //   - missing API key   : no ANTHROPIC_API_KEY → Claude can't run at all.
+    //   - Monitor toggle OFF: owner disabled this model in the Monitor panel.
+    // Any of those → heavy head; otherwise the explicit Claude head runs below.
+    if (getModel(requested).provider === 'anthropic') {
+      const hardDown = /^(1|true)$/i.test(process.env.ANTHROPIC_HEAD_DOWN?.trim() || '')
+      const keyPresent = Boolean(process.env.ANTHROPIC_API_KEY?.trim())
+      const monitorOn = await isModelEnabled(requested).catch(() => false)
+      if (hardDown || !keyPresent || !monitorOn) {
+        return heavy('anthropic_down_explicit_redirect')
+      }
     }
     // Pinning the MARKETING head model (Qwen) must behave as the marketing head,
     // not a generic 'explicit' head. Owner rule: Qwen does FB/ads/marketing work

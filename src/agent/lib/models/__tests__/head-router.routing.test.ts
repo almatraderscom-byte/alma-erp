@@ -72,14 +72,17 @@ describe('resolveHeadModelId — routine fast-path', () => {
 })
 
 describe('resolveHeadModelId — explicit model selection vs Auto', () => {
-  // When Anthropic credits are healthy, an explicit pin (including Sonnet/Opus) is
-  // honoured exactly. The redirect below only kicks in while ANTHROPIC_HEAD_DOWN.
-  describe('with Anthropic head available', () => {
+  // Owner rule 2026-07-20: credits are back. An explicit Claude pin (Opus/Sonnet)
+  // is now HONOURED whenever Claude is actually usable — ANTHROPIC_HEAD_DOWN not
+  // hard-set, the API key present, and the Monitor toggle on. The redirect only
+  // fires when one of those signals says Claude is genuinely down.
+  describe('with Anthropic head available (key present, not hard-down)', () => {
     beforeAll(() => {
-      process.env.ANTHROPIC_HEAD_DOWN = 'false'
+      delete process.env.ANTHROPIC_HEAD_DOWN
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key'
     })
     afterAll(() => {
-      delete process.env.ANTHROPIC_HEAD_DOWN
+      delete process.env.ANTHROPIC_API_KEY
     })
 
     it.each(['claude-opus-4-8', 'or-deepseek-v4-flash', 'claude-sonnet-4-6'])(
@@ -98,8 +101,17 @@ describe('resolveHeadModelId — explicit model selection vs Auto', () => {
     )
   })
 
-  describe('while Anthropic head is down (owner command, credits out — default)', () => {
-    it('redirects an explicitly-pinned Anthropic head to Gemini so the chat still answers', async () => {
+  describe('while Anthropic head is HARD down (ANTHROPIC_HEAD_DOWN=true, emergency)', () => {
+    beforeAll(() => {
+      process.env.ANTHROPIC_HEAD_DOWN = 'true'
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key'
+    })
+    afterAll(() => {
+      delete process.env.ANTHROPIC_HEAD_DOWN
+      delete process.env.ANTHROPIC_API_KEY
+    })
+
+    it('redirects an explicitly-pinned Anthropic head to the heavy head so the chat still answers', async () => {
       for (const modelId of ['claude-sonnet-4-6', 'claude-opus-4-8']) {
         const decision = await resolveHeadModelId({
           requestedModelId: modelId,
@@ -122,6 +134,24 @@ describe('resolveHeadModelId — explicit model selection vs Auto', () => {
       })
       expect(decision.tier).toBe('explicit')
       expect(decision.modelId).toBe('or-deepseek-v4-flash')
+    })
+  })
+
+  describe('missing ANTHROPIC_API_KEY redirects a Claude pick even when not hard-down', () => {
+    beforeAll(() => {
+      delete process.env.ANTHROPIC_HEAD_DOWN
+      delete process.env.ANTHROPIC_API_KEY
+    })
+
+    it('redirects Opus to the heavy head when no key is configured', async () => {
+      const decision = await resolveHeadModelId({
+        requestedModelId: 'claude-opus-4-8',
+        lastUserText: 'aj koto sale holo',
+        personalMode: false,
+        businessId: 'ALMA_LIFESTYLE',
+      })
+      expect(decision.tier).toBe('heavy')
+      expect(decision.via).toBe('anthropic_down_explicit_redirect')
     })
   })
 
