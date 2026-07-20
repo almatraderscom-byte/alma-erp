@@ -342,6 +342,11 @@ enum AssistantNet {
         cfg.httpShouldSetCookies = true
         cfg.httpAdditionalHeaders = ["Accept": "text/event-stream",
                                      "X-Requested-With": "XMLHttpRequest"]
+        #if DEBUG
+        if AlmaMergeReadinessURLProtocol.scenario != nil {
+            cfg.protocolClasses = [AlmaMergeReadinessURLProtocol.self]
+        }
+        #endif
         return URLSession(configuration: cfg, delegate: AssistantRedirectBlocker(), delegateQueue: nil)
     }()
 

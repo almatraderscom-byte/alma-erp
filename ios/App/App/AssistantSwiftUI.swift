@@ -1102,6 +1102,23 @@ final class AssistantVM {
         submittingActionKeys.insert(key).inserted
     }
     private func finishSubmitting(_ key: String) { submittingActionKeys.remove(key) }
+    /// Ask-card input belongs to the conversation state, not the transient card
+    /// view. A reconciliation refresh may rebuild the row after a failed POST;
+    /// retaining these values keeps the owner's answer visible and retryable.
+    var askDraftText: [String: String] = [:]
+    var askChosenOption: [String: String] = [:]
+    var askOtherActiveIds: Set<String> = []
+    var opinionDraftText: [String: String] = [:]
+    var opinionOpenIds: Set<String> = []
+    private func clearAskDraft(_ cardId: String) {
+        askDraftText.removeValue(forKey: cardId)
+        askChosenOption.removeValue(forKey: cardId)
+        askOtherActiveIds.remove(cardId)
+    }
+    private func clearOpinionDraft(_ cardId: String) {
+        opinionDraftText.removeValue(forKey: cardId)
+        opinionOpenIds.remove(cardId)
+    }
     // Awakening animation bridge (spec): bumped when a DIFFERENT conversation is
     // opened from the drawer so the screen replays the session-opening character;
     // readyTick fires once its history has loaded (success is gated on this).
@@ -1129,15 +1146,61 @@ final class AssistantVM {
     private var pendingAutoContinueTurnId: String?
     private var autoContinueCount = 0
 
+    /// Owner-authored follow-ups are never dropped just because another turn is
+    /// still streaming. The queue is persisted so a process kill cannot erase an
+    /// ask answer, rejection explanation, opinion, or manually typed next message.
+    struct QueuedOwnerMessage: Codable, Identifiable, Equatable {
+        let id: String
+        var conversationId: String?
+        /// A queued follow-up written before the server assigns a conversation id
+        /// belongs to the exact first owner send that opened that chat. Never use
+        /// nil as a wildcard: after a chat switch that could deliver into a wholly
+        /// unrelated conversation.
+        let newConversationClientMessageId: String?
+        let text: String
+        let files: [AgentFileRef]
+        let askCardId: String?
+        let createdAt: Date
+    }
+    private static let queuedOwnerMessagesKey = "alma.assistant.queuedOwnerMessages"
+    private(set) var queuedOwnerMessages: [QueuedOwnerMessage] = AssistantVM.loadQueuedOwnerMessages() {
+        didSet {
+            if queuedOwnerMessages.isEmpty {
+                UserDefaults.standard.removeObject(forKey: Self.queuedOwnerMessagesKey)
+            } else if let data = try? JSONEncoder().encode(queuedOwnerMessages) {
+                UserDefaults.standard.set(data, forKey: Self.queuedOwnerMessagesKey)
+            }
+        }
+    }
+    private static func loadQueuedOwnerMessages() -> [QueuedOwnerMessage] {
+        guard let data = UserDefaults.standard.data(forKey: queuedOwnerMessagesKey) else { return [] }
+        return (try? JSONDecoder().decode([QueuedOwnerMessage].self, from: data)) ?? []
+    }
+    var queuedOwnerMessageCount: Int {
+        let activeNewConversationSendId = currentClientMessageId ?? recoverableTurn?.clientMessageId
+        return queuedOwnerMessages.filter { queued in
+            if let queuedConversationId = queued.conversationId {
+                return queuedConversationId == conversationId
+            }
+            return conversationId == nil
+                && queued.newConversationClientMessageId == activeNewConversationSendId
+        }.count
+    }
+
     // ── PR 5: durable-turn client state ─────────────────────────────────────
     /// Roadmap 4.3 — recovery descriptor, persisted so process death can't lose
     /// the running turn. Cleared only on terminal reconcile or explicit cancel.
     struct RecoverableTurn: Codable {
-        var conversationId: String
+        var conversationId: String?
         var turnId: String?
         var clientMessageId: String
         var lastSeq: Int
         var startedAt: Date
+        var message: String? = nil
+        var files: [AgentFileRef]? = nil
+        var modelId: String? = nil
+        var projectId: String? = nil
+        var askCardId: String? = nil
     }
     private static let recoverableTurnKey = "alma.assistant.recoverableTurn"
     private var recoverableTurn: RecoverableTurn? = AssistantVM.loadRecoverableTurn() {
@@ -1168,6 +1231,12 @@ final class AssistantVM {
     private var lastSendAt: Date?
     private var recoveryTask: Task<Void, Never>?
     private var recoveryInFlight = false
+    /// Explicit transport ownership handoff. Some control turns intentionally
+    /// have no recovery descriptor, so descriptor existence cannot identify a
+    /// direct-SSE cancellation that durable replay now owns.
+    private var directStreamHandoffPending = false
+    private var statusRecoveryFailureCount = 0
+    private let maxStatusRecoveryFailures = 5
     /// Observer tokens live in a box whose own (nonisolated) deinit unregisters
     /// them — a MainActor class deinit may not touch isolated stored state.
     private final class NotificationTokenBox {
@@ -1437,6 +1506,10 @@ final class AssistantVM {
         async let turns: Void = loadActiveBackgroundTurns()
         _ = await (drive, todos, turns)
         startPolling()
+        // A queued follow-up may outlive the process after the preceding turn
+        // became terminal while the app was dead. Recovery clears that stale
+        // descriptor; this drain then resumes the exact scoped conversation.
+        scheduleQueuedOwnerMessage()
     }
 
     /// PR 5 — kill/relaunch recovery: the persisted descriptor outlives the
@@ -1446,16 +1519,64 @@ final class AssistantVM {
     private func recoverFromPersistedDescriptor() async {
         guard let rt = recoverableTurn else { return }
         if isStreaming { return }   // active-conversation recovery already took it
-        if conversationId != rt.conversationId {
+        // The process can die after POST begins but before conversation_id/turn_id
+        // arrives. Re-submit the exact body with the same idempotency key; the
+        // server either returns the existing turn or creates the one missing turn.
+        if rt.turnId == nil {
+            resumePreTurnDescriptor(rt)
+            return
+        }
+        guard let recoverConversationId = rt.conversationId else {
+            recoverableTurn = nil
+            scheduleQueuedOwnerMessage()
+            return
+        }
+        if conversationId != recoverConversationId {
             let st: TurnStatusResponse? = try? await AlmaAPI.shared.get(
-                "/api/assistant/conversations/\(rt.conversationId)/turn-status")
-            guard st?.status == "running" else { recoverableTurn = nil; return }
-            await openConversation(rt.conversationId)   // ends in recoverTurnState
+                "/api/assistant/conversations/\(recoverConversationId)/turn-status")
+            guard st?.status == "running" else {
+                recoverableTurn = nil
+                scheduleQueuedOwnerMessage()
+                return
+            }
+            await openConversation(recoverConversationId)   // ends in recoverTurnState
         } else {
             currentTurnId = rt.turnId ?? currentTurnId
             await recoverTurnState(trigger: "relaunch")
         }
-        if !isStreaming { recoverableTurn = nil }        // nothing running — stale
+        if !isStreaming {
+            recoverableTurn = nil        // nothing running — stale
+            scheduleQueuedOwnerMessage()
+        }
+    }
+
+    private func resumePreTurnDescriptor(_ rt: RecoverableTurn) {
+        let text = rt.message ?? ""
+        let files = rt.files ?? []
+        guard !text.isEmpty || !files.isEmpty else {
+            recoverableTurn = nil
+            scheduleQueuedOwnerMessage()
+            return
+        }
+        conversationId = rt.conversationId ?? conversationId
+        if !messages.contains(where: { $0.role == .user && $0.text == text }) {
+            var owner = AgentChatMessage(id: "local-recovered-\(rt.clientMessageId)", role: .user, text: text)
+            owner.fileRefs = files
+            messages.append(owner)
+        }
+        isStreaming = true
+        thinkingLive = true
+        reconnecting = true
+        lastLiveEventAt = Date()
+        lastSendAt = rt.startedAt
+        currentClientMessageId = rt.clientMessageId
+        seqBox.value = rt.lastSeq
+        ensureStreamingTail()
+        let body = ChatBody(
+            conversationId: rt.conversationId, message: text, files: files,
+            modelId: rt.modelId ?? "auto", projectId: rt.projectId,
+            clientMessageId: rt.clientMessageId, askCardId: rt.askCardId)
+        streamTask = Task { [weak self] in await self?.runTurn(body: body) }
     }
 
     /// One-time observer registration (bootstrap can re-run; observers must not
@@ -1765,8 +1886,10 @@ final class AssistantVM {
                         // final message state, so a late server reply still lands.
                         AlmaTurnLog.event("turn.stallGiveUp", "\(self.maxStallRetries) retries")
                         self.stallRetryAttempt = 0
-                        self.errorToast = "এজেন্টের সাড়া পাওয়া যাচ্ছে না — শেষ অবস্থা এনে দিচ্ছি"
                         self.streamTask?.cancel()
+                        await self.failRecovery(
+                            preserveDescriptor: true,
+                            message: "সংযোগ পাওয়া যাচ্ছে না — বার্তাটি সুরক্ষিত আছে, পরে আবার যাচাই হবে")
                     } else {
                         self.stallRetryAttempt += 1
                         AlmaTurnLog.event("turn.stallRetry",
@@ -1802,7 +1925,23 @@ final class AssistantVM {
     /// triggers (foreground + didBecomeActive + poll tick + transport-drop) share
     /// one recovery loop. UI transport state is never treated as server turn state.
     func recoverTurnState(trigger: String) async {
+        // A pre-ID request is still fully addressable by its idempotency key.
+        // Foreground/poll reconnect retries that exact body; it must not wait for
+        // a conversation id that the dropped first response never delivered.
+        if let recoverableTurn,
+           recoverableTurn.turnId == nil,
+           recoverableTurn.conversationId == conversationId,
+           !isStreaming {
+            resumePreTurnDescriptor(recoverableTurn)
+            return
+        }
         guard let cid = conversationId else { return }
+        let matchingDescriptor = recoverableTurn.flatMap {
+            $0.conversationId == cid ? $0 : nil
+        }
+        if let descriptorTurnId = matchingDescriptor?.turnId {
+            currentTurnId = descriptorTurnId
+        }
         if isStreaming && !reconnecting {
             // "Streaming" is CLIENT belief, not proof of a live socket: a mid-turn
             // SSE connection can die silently, and this early-return made every
@@ -1835,7 +1974,17 @@ final class AssistantVM {
             if st != nil { break }
             try? await Task.sleep(nanoseconds: UInt64(500_000_000 * (attempt + 1)))
         }
-        guard let status = st else { return }   // unreachable — next trigger retries
+        guard let status = st else {
+            statusRecoveryFailureCount += 1
+            if statusRecoveryFailureCount >= maxStatusRecoveryFailures {
+                statusRecoveryFailureCount = 0
+                await failRecovery(
+                    preserveDescriptor: true,
+                    message: "সংযোগ পাওয়া যাচ্ছে না — বার্তাটি সুরক্ষিত আছে, পরে আবার যাচাই হবে")
+            }
+            return
+        }
+        statusRecoveryFailureCount = 0
         // 4.3 metric: foreground-to-recovery-state latency (no content, just ms).
         if let t0 = lastForegroundAt {
             lastForegroundAt = nil
@@ -1856,7 +2005,7 @@ final class AssistantVM {
             } else {
                 startRecoveryPolling(cid: cid)
             }
-        } else if reconnecting || isStreaming {
+        } else if reconnecting || isStreaming || matchingDescriptor?.turnId != nil {
             // We believed a turn was live. Is this terminal row OUR turn, or a stale
             // previous one (our send may have died before the server created a turn)?
             if isTerminalForOurTurn(status) {
@@ -1900,6 +2049,15 @@ final class AssistantVM {
     /// without a terminal (Redis-less replay page) we reconcile via status; if it
     /// can't be attached at all, plain status polling takes over.
     private func startDurableRecoveryTail(cid: String, turnId: String) {
+        // Recovery becomes the single transport owner. Without this handoff a
+        // stalled direct SSE could resume beside the full replay and both buffers
+        // would apply the same prose/tools/done events.
+        if let directStream = streamTask {
+            directStreamHandoffPending = true
+            streamTask = nil
+            directStream.cancel()
+            AlmaTurnLog.event("turn.streamHandoff", "direct-to-durable:\(turnId)")
+        }
         recoveryTask?.cancel()
         recoveryTask = Task { [weak self] in
             guard let self else { return }
@@ -1940,9 +2098,10 @@ final class AssistantVM {
             var delay = 1.0
             var elapsed = 0.0
             var sawRunning = false
-            // ~7 min bound — far beyond any healthy turn gap; the server's own
-            // 30-min ghost timeout is the backstop of last resort.
-            while elapsed < 420 {
+            // A dead network must not hold a generic loader for minutes. After a
+            // bounded 45s recovery window we settle the UI but keep the durable
+            // descriptor so a later poll/relaunch can resume the exact turn.
+            while elapsed < 45 {
                 try? await Task.sleep(nanoseconds: UInt64((delay + Double.random(in: 0...0.25)) * 1_000_000_000))
                 guard let self, !Task.isCancelled else { return }
                 elapsed += delay
@@ -1965,7 +2124,9 @@ final class AssistantVM {
                 delay = min(3.0, delay * 1.6)
             }
             guard let self, !Task.isCancelled else { return }
-            await self.finishRecovery(terminalStatus: "timeout")
+            await self.failRecovery(
+                preserveDescriptor: true,
+                message: "সংযোগ পাওয়া যাচ্ছে না — বার্তাটি সুরক্ষিত আছে, পরে আবার যাচাই হবে")
         }
     }
 
@@ -2015,12 +2176,14 @@ final class AssistantVM {
         // f2dfdc5d finished eligible and unclaimed). Same guarded no-op when no
         // continuation is pending.
         fireAutoContinueIfNeeded()
+        scheduleQueuedOwnerMessage()
     }
 
     /// The send never became a server turn — keep the owner's message row, drop the
     /// placeholder tail, and say so in Bangla (roadmap 1.1: bounded recovery proved
     /// no turn exists — only now may a failure surface).
-    private func failRecovery() async {
+    private func failRecovery(preserveDescriptor: Bool = false,
+                              message: String = "পাঠানো যায়নি — আবার চেষ্টা করুন") async {
         recoveryTask?.cancel()
         recoveryTask = nil
         isStreaming = false
@@ -2034,10 +2197,12 @@ final class AssistantVM {
                 messages[i].isStreaming = false
             }
         }
-        recoverableTurn = nil            // nothing recoverable exists (PR 5)
-        AlmaTurnLog.event("turn.terminal", "recovery:failed-no-turn")
-        errorToast = "পাঠানো যায়নি — আবার চেষ্টা করুন"
+        if !preserveDescriptor { recoverableTurn = nil }
+        AlmaTurnLog.event("turn.terminal", preserveDescriptor
+                          ? "recovery:paused-offline" : "recovery:failed-no-turn")
+        errorToast = message
         AlmaAgentHaptics.error()
+        if !preserveDescriptor { scheduleQueuedOwnerMessage() }
     }
 
     // ── Conversations + sidebar data (web AgentSidebar parity) ────────────
@@ -2191,6 +2356,7 @@ final class AssistantVM {
         guard id != conversationId else { return }
         restoreTick += 1     // screen replays the session-opening awakening
         stopStreaming(cancelServer: false)
+        currentClientMessageId = nil
         conversationId = id
         let selected = conversations.first { $0.id == id }
         modelId = selected?.modelId   // pinned model follows the chat
@@ -2209,10 +2375,12 @@ final class AssistantVM {
         let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/active-conversation",
                                                             body: ["conversationId": id])
         await recoverTurnState(trigger: "openConversation")
+        scheduleQueuedOwnerMessage()
     }
 
     func newChat() async {
         stopStreaming(cancelServer: false)
+        currentClientMessageId = nil
         conversationId = nil     // server creates one on the first send
         currentProjectId = nil
         conversationTitle = "ALMA AI"
@@ -2645,21 +2813,52 @@ final class AssistantVM {
         let readyFiles: [AgentFileRef] = readyPendingFiles.compactMap {
             if case .ready(let ref) = $0.state { return ref } else { return nil }
         }
-        guard !text.isEmpty || !readyFiles.isEmpty || structuredAutoContinue, !isStreaming else { return }
-        AlmaAgentTickHaptic.ownerSend()
+        guard !text.isEmpty || !readyFiles.isEmpty || structuredAutoContinue else { return }
+        if isStreaming || recoverableTurn != nil {
+            guard !structuredAutoContinue else { return }
+            queueOwnerMessage(text: text, files: readyFiles, askCardId: askCardId,
+                              sentPendingIds: Set(readyPendingFiles.map(\.id)))
+            return
+        }
+        startPreparedTurn(text: text, files: readyFiles,
+                          localImages: readyPendingFiles.compactMap(\.image),
+                          isAutoContinue: isAutoContinue, askCardId: askCardId,
+                          autoContinueFromTurnId: autoContinueFromTurnId,
+                          clientMessageId: structuredAutoContinue ? nil : UUID().uuidString)
+        let sentIds = Set(readyPendingFiles.map(\.id))
+        pendingFiles.removeAll { sentIds.contains($0.id) }
+    }
 
+    private func queueOwnerMessage(text: String, files: [AgentFileRef], askCardId: String?,
+                                   sentPendingIds: Set<UUID>) {
+        let queued = QueuedOwnerMessage(
+            id: UUID().uuidString, conversationId: conversationId,
+            newConversationClientMessageId: conversationId == nil
+                ? (currentClientMessageId ?? recoverableTurn?.clientMessageId) : nil,
+            text: text,
+            files: files, askCardId: askCardId, createdAt: Date())
+        queuedOwnerMessages.append(queued)
+        pendingFiles.removeAll { sentPendingIds.contains($0.id) }
+        errorToast = "বার্তাটি অপেক্ষায় আছে — চলতি উত্তর শেষ হলে পাঠানো হবে"
+        AlmaAgentTickHaptic.ownerSend()
+        AlmaTurnLog.event("turn.ownerMessageQueued", "count=\(queuedOwnerMessages.count)")
+    }
+
+    private func startPreparedTurn(text: String, files: [AgentFileRef], localImages: [UIImage] = [],
+                                   isAutoContinue: Bool = false, askCardId: String? = nil,
+                                   autoContinueFromTurnId: String? = nil,
+                                   clientMessageId: String?) {
+        let structuredAutoContinue = isAutoContinue && autoContinueFromTurnId != nil
+        guard !isStreaming, recoverableTurn == nil else { return }
+        AlmaAgentTickHaptic.ownerSend()
         // A structured continuation is server control state, not a new owner
         // message. Rendering a bubble here was the native-only duplicate-turn bug.
         if !structuredAutoContinue {
             var userMsg = AgentChatMessage(id: "local-\(UUID().uuidString)", role: .user, text: text)
-            userMsg.localImages = readyPendingFiles.compactMap(\.image)
-            userMsg.fileRefs = readyFiles
+            userMsg.localImages = localImages
+            userMsg.fileRefs = files
             messages.append(userMsg)
         }
-        // A text-only send must not silently discard an upload that is still in
-        // progress or failed. Those cards remain until the owner retries/cancels.
-        let sentIds = Set(readyPendingFiles.map(\.id))
-        pendingFiles.removeAll { sentIds.contains($0.id) }
         isStreaming = true
         lastLiveEventAt = Date()   // stall clock starts at the send, not at first event
         thinkingLive = true
@@ -2671,7 +2870,6 @@ final class AssistantVM {
         ownSendTick += 1
         // PR 5 — idempotency key: however transport fails, THIS send can only ever
         // become one server message + one turn + one execution.
-        let clientMessageId = structuredAutoContinue ? nil : UUID().uuidString
         currentClientMessageId = clientMessageId
         seqBox.value = -1
         sawTerminalEvent = false
@@ -2681,13 +2879,65 @@ final class AssistantVM {
         ensureStreamingTail()
 
         let body = ChatBody(conversationId: conversationId, message: text,
-                            files: readyFiles, modelId: modelId ?? "auto",
+                            files: files, modelId: modelId ?? "auto",
                             projectId: currentProjectId,
                             clientMessageId: clientMessageId, askCardId: askCardId,
                             autoContinueFromTurnId: autoContinueFromTurnId)
+        if let clientMessageId {
+            // Persist BEFORE starting network work. Process death between POST and
+            // conversation_id/turn_id can now replay the exact idempotent request.
+            recoverableTurn = RecoverableTurn(
+                conversationId: conversationId, turnId: nil,
+                clientMessageId: clientMessageId, lastSeq: -1, startedAt: Date(),
+                message: text, files: files, modelId: modelId ?? "auto",
+                projectId: currentProjectId, askCardId: askCardId)
+        }
         streamTask = Task { [weak self] in
             await self?.runTurn(body: body)
         }
+    }
+
+    private func scheduleQueuedOwnerMessage() {
+        Task { [weak self] in
+            await Task.yield()
+            self?.drainQueuedOwnerMessageIfPossible()
+        }
+    }
+
+    /// Bind only follow-ups belonging to THIS first send when the server reveals
+    /// its newly-created conversation id. Other nil-scoped queues remain parked
+    /// instead of leaking into whichever chat happens to be open next.
+    private func bindQueuedOwnerMessages(to conversationId: String,
+                                         clientMessageId: String?) {
+        guard let clientMessageId else { return }
+        for index in queuedOwnerMessages.indices
+        where queuedOwnerMessages[index].conversationId == nil
+            && queuedOwnerMessages[index].newConversationClientMessageId == clientMessageId {
+            queuedOwnerMessages[index].conversationId = conversationId
+        }
+    }
+
+    private func adoptNewConversationId(_ id: String) {
+        bindQueuedOwnerMessages(
+            to: id,
+            clientMessageId: currentClientMessageId ?? recoverableTurn?.clientMessageId)
+        conversationId = id
+    }
+
+    private func drainQueuedOwnerMessageIfPossible() {
+        let activeNewConversationSendId = currentClientMessageId ?? recoverableTurn?.clientMessageId
+        guard !isStreaming, recoverableTurn == nil,
+              let index = queuedOwnerMessages.firstIndex(where: {
+                  if let queuedConversationId = $0.conversationId {
+                      return queuedConversationId == conversationId
+                  }
+                  return conversationId == nil
+                      && $0.newConversationClientMessageId == activeNewConversationSendId
+              }) else { return }
+        let queued = queuedOwnerMessages.remove(at: index)
+        startPreparedTurn(text: queued.text, files: queued.files,
+                          askCardId: queued.askCardId,
+                          clientMessageId: queued.id)
     }
 
     private func runTurn(body: ChatBody) async {
@@ -2698,7 +2948,9 @@ final class AssistantVM {
                 thinkingLive = false
                 settleLiveMode()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
+                scheduleQueuedOwnerMessage()
             }
+            streamTask = nil
         }
         // Phase 2: one buffer per turn — deltas coalesce off-main and land as
         // batched reducer applies (roadmap 2.3).
@@ -2741,13 +2993,22 @@ final class AssistantVM {
             AlmaTurnLog.event("turn.terminal", "stream-done")
             fireAutoContinueIfNeeded()
         } catch is CancellationError {
-            await finalizeTurn()
+            // stopStreaming already owns visible settlement. A conversation switch
+            // must never let this cancelled OLD task finalize against the newly
+            // selected mutable conversationId. Preserve only a deliberately
+            // recoverable server turn; explicit Stop clears it before cancelling.
+            let transportWasHandedOff = directStreamHandoffPending
+            if transportWasHandedOff { directStreamHandoffPending = false }
+            handedToRecovery = transportWasHandedOff || recoverableTurn != nil
+            AlmaTurnLog.event("turn.streamCancelled", handedToRecovery ? "preserved" : "stopped")
         } catch let dup as AssistantNet.DuplicateTurn {
             // A retry raced an EXISTING turn (Phase 3 idempotency) — observe it,
             // never re-run (roadmap invariant 2).
             AlmaTurnLog.event("turn.duplicateObserved", dup.turnId)
             currentTurnId = dup.turnId
-            if conversationId == nil { conversationId = dup.conversationId }
+            if conversationId == nil, let duplicateConversationId = dup.conversationId {
+                adoptNewConversationId(duplicateConversationId)
+            }
             do {
                 try await tailDurableTurn(dup.turnId, afterSeq: -1, buffer: buffer)
                 await finalizeTurn()
@@ -2777,9 +3038,13 @@ final class AssistantVM {
                     requestLiveMode("thinking")
                     Task { [weak self] in await self?.recoverTurnState(trigger: "transport-drop") }
                 } else {
-                    // No conversation was ever created — nothing recoverable exists.
-                    errorToast = kind.banglaMessage
-                    AlmaAgentHaptics.error()
+                    // The response may have dropped before the server returned its
+                    // conversation/turn ids. The pre-POST descriptor + idempotency
+                    // key is still the only truth; settle visibly but preserve it.
+                    handedToRecovery = true
+                    await failRecovery(
+                        preserveDescriptor: true,
+                        message: "সংযোগ পাওয়া যাচ্ছে না — বার্তাটি সুরক্ষিত আছে, পরে আবার যাচাই হবে")
                 }
             case .authentication:
                 authExpired = true
@@ -2833,7 +3098,9 @@ final class AssistantVM {
                            files: body.files, clientMessageId: body.clientMessageId,
                            askCardId: body.askCardId))
         currentTurnId = enq.turnId
-        if conversationId == nil { conversationId = enq.conversationId }
+        if conversationId == nil, let enqueuedConversationId = enq.conversationId {
+            adoptNewConversationId(enqueuedConversationId)
+        }
         if let cid = conversationId, let cmid = body.clientMessageId {
             recoverableTurn = RecoverableTurn(conversationId: cid, turnId: enq.turnId,
                                               clientMessageId: cmid, lastSeq: -1, startedAt: Date())
@@ -2895,7 +3162,11 @@ final class AssistantVM {
         for ev in events {
             switch ev {
             case .conversationId(let id):
-                conversationId = id
+                adoptNewConversationId(id)
+                if var rt = recoverableTurn {
+                    rt.conversationId = id
+                    recoverableTurn = rt
+                }
             case .turnId(let id):
                 currentTurnId = id
                 // PR 5: the turn is now addressable — persist the recovery descriptor
@@ -3042,8 +3313,22 @@ final class AssistantVM {
                 isStreaming = false
             case .conversationCompacted(let newId):
                 // Server folded this thread into a fresh conversation (cost cap) —
-                // follow it, exactly like the web client.
-                conversationId = newId
+                // follow it, and migrate every queued follow-up/recovery descriptor
+                // so terminal drain cannot strand work under the predecessor id.
+                let oldId = conversationId
+                if let oldId {
+                    for index in queuedOwnerMessages.indices
+                    where queuedOwnerMessages[index].conversationId == oldId {
+                        queuedOwnerMessages[index].conversationId = newId
+                    }
+                    if var rt = recoverableTurn, rt.conversationId == oldId {
+                        rt.conversationId = newId
+                        recoverableTurn = rt
+                    }
+                    conversationId = newId
+                } else {
+                    adoptNewConversationId(newId)
+                }
             case .done(_, let tokensIn, let tokensOut, let costUsd, let needContinue, let apiRounds,
                        let cacheCreation, let cacheRead, let roundCostsUsd):
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
@@ -3080,7 +3365,7 @@ final class AssistantVM {
                 // NOW (stream provably attached) wipe the frozen partial so the
                 // authoritative replay rebuilds the tail without doubling.
                 if let turnId { currentTurnId = turnId }
-                if conversationId == nil, let convId { conversationId = convId }
+                if conversationId == nil, let convId { adoptNewConversationId(convId) }
                 if pendingReplayReset {
                     pendingReplayReset = false
                     resetStreamingTailForReplay()
@@ -3150,10 +3435,16 @@ final class AssistantVM {
         recoveryTask?.cancel()
         recoveryTask = nil
         reconnecting = false
-        if cancelServer, let tid = currentTurnId {
-            recoverableTurn = nil    // explicit cancel — nothing to recover (PR 5)
-            Task {
-                let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/turn/\(tid)/cancel")
+        if cancelServer {
+            // Explicit Stop is authoritative even before conversation_id/turn_id.
+            // Never resurrect that pre-ID request on relaunch.
+            recoverableTurn = nil
+            currentClientMessageId = nil
+            if let tid = currentTurnId {
+                Task {
+                    let _: OkResponse? = try? await AlmaAPI.shared.send(
+                        "POST", "/api/assistant/turn/\(tid)/cancel")
+                }
             }
         }
         isStreaming = false
@@ -3167,6 +3458,7 @@ final class AssistantVM {
                 messages[i].delegations[j].stopped = true
             }
         }
+        scheduleQueuedOwnerMessage()
     }
 
     // ── Phase 0 stress fixture (roadmap) ───────────────────────────────────
@@ -3251,6 +3543,102 @@ final class AssistantVM {
         ]
         messages = rows
     }
+
+    #if DEBUG
+    /// Merge-readiness-only held stream. It uses the production composer/send
+    /// queue path but never touches a server, so the simulator can prove that an
+    /// owner follow-up becomes a visible, persisted queue entry while busy.
+    func loadMergeReadinessQueueFixture() {
+        loadParityFixture()
+        conversationId = "fixture-conversation"
+        isStreaming = true
+        thinkingLive = true
+        currentTurnId = "fixture-held-turn"
+        ensureStreamingTail()
+        if let i = messages.lastIndex(where: { $0.isStreaming }) {
+            messages[i].thinking = "চলতি কাজ শেষ করছি…"
+        }
+    }
+
+    /// Keeps the real parity approval and ask cards at the bottom of the
+    /// transcript so deterministic 409/410/lost-response journeys can operate
+    /// the actual production views without scrolling through the long fixture.
+    func loadMergeReadinessActionFixture() {
+        loadParityFixture()
+        messages = Array(messages.prefix(2))
+        conversationId = "fixture-conversation"
+    }
+
+    func loadMergeReadinessMultiApprovalFixture() {
+        let json = #"""
+        {"id":"fix-a-multi","role":"assistant","content":[
+          {"type":"confirm_card","pendingActionId":"fix-approval-1","summary":"প্রথম অনুমোদন","status":"pending"},
+          {"type":"confirm_card","pendingActionId":"fix-approval-2","summary":"দ্বিতীয় অনুমোদন","status":"pending"},
+          {"type":"confirm_card","pendingActionId":"fix-approval-3","summary":"তৃতীয় অনুমোদন","status":"pending"}
+        ]}
+        """#
+        if let data = json.data(using: .utf8),
+           let row = (try? JSONDecoder().decode(AgentMessageWire.self, from: data)).map(AgentChatMessage.from) {
+            messages = [row]
+        }
+        conversationId = "fixture-conversation"
+    }
+
+    /// Seeds the same durable descriptor and rich pending state a real running
+    /// turn owns, then returns without networking so the process can be killed.
+    /// Relaunch uses the turnRecovery URLProtocol scenario to reattach by turn id.
+    func loadMergeReadinessRecoverySeed() {
+        let json = #"""
+        {"id":"fixture-recovery-assistant","role":"assistant","content":[
+          {"type":"text","text":"স্টক sync চলছে…"},
+          {"type":"confirm_card","pendingActionId":"fixture-recovery-approval","summary":"পুনরুদ্ধার হওয়া অনুমোদন","status":"pending"}
+        ],"timeline":[
+          {"t":"tool","id":"fixture-recovery-tool","name":"inventory_sync"}
+        ]}
+        """#
+        var owner = AgentChatMessage(id: "fixture-recovery-owner", role: .user,
+                                     text: "স্টক sync চালাও")
+        owner.createdAt = "2026-07-20T12:00:00.000Z"
+        messages = [owner]
+        if let data = json.data(using: .utf8),
+           var assistant = (try? JSONDecoder().decode(AgentMessageWire.self, from: data))
+            .map(AgentChatMessage.from) {
+            let tool = AgentChatMessage.Tool(
+                id: "fixture-recovery-tool", name: "inventory_sync", ok: nil,
+                preview: nil, live: true, inputPretty: nil, resultFull: nil)
+            assistant.tools = [tool]
+            assistant.phases = [.init(id: "fixture-recovery-phase", headline: "স্টক sync চলছে…",
+                                      tools: [tool], live: true)]
+            assistant.blocks.append(.activity(.init(
+                id: "fixture-recovery-activity", kind: .tool,
+                label: "inventory_sync", toolId: tool.id, live: true)))
+            assistant.isStreaming = true
+            messages.append(assistant)
+        }
+        conversationId = "fixture-recovery-conversation"
+        currentTurnId = "fixture-recovery-turn"
+        isStreaming = true
+        thinkingLive = true
+        currentClientMessageId = "fixture-recovery-client"
+        recoverableTurn = RecoverableTurn(
+            conversationId: conversationId, turnId: currentTurnId,
+            clientMessageId: "fixture-recovery-client", lastSeq: 0,
+            startedAt: Date(), message: "স্টক sync চালাও", files: [], modelId: "auto")
+    }
+
+    func runMergeReadinessReconnect() async {
+        lastLiveEventAt = .distantPast
+        await recoverTurnState(trigger: "stall")
+    }
+
+    func runMergeReadinessOfflineSettle() async {
+        lastLiveEventAt = .distantPast
+        for _ in 0..<maxStatusRecoveryFailures {
+            await recoverTurnState(trigger: "stall")
+            if !isStreaming { break }
+        }
+    }
+    #endif
 
     func loadDebugFixture() {
         let bnShort = "ঠিক আছে Boss, এটা এখনই দেখছি।"
@@ -3678,9 +4066,19 @@ final class AssistantVM {
     /// from the wire and wiped card.approvedAt — the render % restarted from 1
     /// on every poll, owner bug 2026-07-13). Keyed by pendingActionId.
     var confirmApprovedAt: [String: Date] = [:]
+    /// Server-authoritative terminal status also covers cards outside the mounted
+    /// 24-row history window (Pending Tasks is an independent endpoint).
+    private var confirmTerminalStatus: [String: String] = [:]
 
-    func approveAction(_ cardId: String, approve: Bool) async {
-        guard beginSubmitting("action:\(cardId)") else { return }
+    @discardableResult
+    func approveAction(_ cardId: String, approve: Bool) async -> Bool {
+        // A very fast first response can finish between the two events of a
+        // physical double-tap. The in-flight set blocks overlap; this terminal
+        // guard blocks the immediately-following second mutation as well.
+        if let knownStatus = currentConfirmStatus(cardId), knownStatus != "pending" {
+            return true
+        }
+        guard beginSubmitting("action:\(cardId)") else { return false }
         defer { finishSubmitting("action:\(cardId)") }
         AlmaAgentHaptics.commit()
         let summary = messages
@@ -3715,16 +4113,76 @@ final class AssistantVM {
                 // send() owns the timeline from here (bubble + streaming tail) —
                 // running loadMessages() underneath it would rebuild the array
                 // mid-stream and clobber both. The reply lands via the stream.
-                return
+                return true
             }
         } catch {
-            errorToast = error.localizedDescription
-            AlmaAgentHaptics.error()
+            return await reconcileActionFailure(cardId: cardId, error: error)
         }
         await loadMessages()
+        return true
+    }
+
+    private func currentConfirmStatus(_ cardId: String) -> String? {
+        confirmTerminalStatus[cardId]
+            ?? messages.lazy.flatMap(\.confirmCards).first(where: { $0.id == cardId })?.status
+    }
+
+    private func statusFromErrorBody(_ body: String) -> String? {
+        guard let data = body.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return json["status"] as? String
+    }
+
+    private func selectedOptionFromErrorBody(_ body: String) -> String? {
+        guard let data = body.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return json["selectedOption"] as? String
+    }
+
+    /// A lost response is not proof that a mutation failed. Re-read server truth
+    /// before deciding whether the card remains actionable. 409 and 410 receive
+    /// explicit terminal presentation instead of a generic transient toast.
+    @discardableResult
+    private func reconcileActionFailure(cardId: String, error: Error) async -> Bool {
+        if case AlmaAPIError.http(let status, let body) = error {
+            if status == 410 {
+                setConfirmStatus(cardId, "expired")
+                await loadMessages()
+                errorToast = "এই অনুমোদনের মেয়াদ শেষ হয়েছে"
+                AlmaAgentHaptics.warning()
+                return true
+            }
+            if status == 409 {
+                if let serverStatus = statusFromErrorBody(body), serverStatus != "pending" {
+                    setConfirmStatus(cardId, serverStatus)
+                }
+                await loadMessages()
+                if let resolved = currentConfirmStatus(cardId), resolved != "pending" {
+                    errorToast = resolved == "expired"
+                        ? "এই অনুমোদনের মেয়াদ শেষ হয়েছে"
+                        : "সিদ্ধান্তটি আগেই সংরক্ষিত হয়েছে"
+                    AlmaAgentHaptics.selection()
+                    return true
+                }
+                errorToast = "সার্ভারের অবস্থা বদলেছে — কার্ডটি রেখে আবার যাচাই করুন"
+                AlmaAgentHaptics.warning()
+                return false
+            }
+        }
+        await loadMessages()
+        if let resolved = currentConfirmStatus(cardId), resolved != "pending" {
+            errorToast = "সিদ্ধান্তটি সার্ভারে সংরক্ষিত ছিল — অবস্থা মিলিয়ে নেওয়া হয়েছে"
+            AlmaAgentHaptics.selection()
+            return true
+        }
+        errorToast = "সিদ্ধান্ত নিশ্চিত করা যায়নি — কার্ডটি রাখা হয়েছে, আবার চেষ্টা করুন"
+        AlmaAgentHaptics.error()
+        return false
     }
 
     private func setConfirmStatus(_ cardId: String, _ status: String) {
+        if status == "pending" { confirmTerminalStatus.removeValue(forKey: cardId) }
+        else { confirmTerminalStatus[cardId] = status }
         for i in messages.indices {
             if let j = messages[i].confirmCards.firstIndex(where: { $0.id == cardId }) {
                 messages[i].confirmCards[j].status = status
@@ -3748,11 +4206,47 @@ final class AssistantVM {
                 }
             }
             AlmaAgentHaptics.success()
+            clearAskDraft(cardId)
             // Voice owns its own spoken continuation, so it persists here with
             // continueInChat=false and starts exactly one voice turn itself.
             if continueInChat { send(option, askCardId: cardId) }
             return true
+        } catch AlmaAPIError.http(let status, let body) where status == 409 {
+            let selected = selectedOptionFromErrorBody(body)
+            if selected == option {
+                for i in messages.indices {
+                    if let j = messages[i].askCards.firstIndex(where: { $0.id == cardId }) {
+                        messages[i].askCards[j].status = "answered"
+                        messages[i].askCards[j].selectedOption = option
+                    }
+                }
+                errorToast = "উত্তরটি আগেই সংরক্ষিত হয়েছে"
+                AlmaAgentHaptics.selection()
+                clearAskDraft(cardId)
+                if continueInChat { send(option, askCardId: cardId) }
+                return true
+            }
+            await loadMessages()
+            let serverCard = messages.lazy.flatMap(\.askCards).first(where: { $0.id == cardId })
+            if serverCard?.status == "answered" {
+                errorToast = "উত্তরটি আগেই সংরক্ষিত হয়েছে"
+                AlmaAgentHaptics.selection()
+                clearAskDraft(cardId)
+                return true
+            }
+            errorToast = selected == nil
+                ? "প্রশ্নটির অবস্থা বদলেছে — আবার দেখে চেষ্টা করুন"
+                : "এই প্রশ্নের অন্য উত্তর আগেই সংরক্ষিত হয়েছে"
+            AlmaAgentHaptics.warning()
+            return false
         } catch {
+            await loadMessages()
+            if messages.lazy.flatMap(\.askCards).first(where: { $0.id == cardId })?.status == "answered" {
+                errorToast = "উত্তরটি সার্ভারে সংরক্ষিত ছিল — অবস্থা মিলিয়ে নেওয়া হয়েছে"
+                AlmaAgentHaptics.selection()
+                clearAskDraft(cardId)
+                return true
+            }
             errorToast = "উত্তর সংরক্ষণ করা গেল না — আবার চেষ্টা করুন"
             AlmaAgentHaptics.error()
             return false
@@ -3851,10 +4345,11 @@ final class AssistantVM {
     }
 
     /// "আমার মত" — reject pending action, then send owner's correction as a new turn.
-    func submitOpinion(_ cardId: String, note: String) async {
+    @discardableResult
+    func submitOpinion(_ cardId: String, note: String) async -> Bool {
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        guard beginSubmitting("action:\(cardId)") else { return }
+        guard !trimmed.isEmpty else { return false }
+        guard beginSubmitting("action:\(cardId)") else { return false }
         defer { finishSubmitting("action:\(cardId)") }
         AlmaAgentHaptics.commit()
         do {
@@ -3862,10 +4357,16 @@ final class AssistantVM {
                 "POST", "/api/assistant/actions/\(cardId)/reject")
             setConfirmStatus(cardId, "rejected")
             AlmaAgentHaptics.success()
+            clearOpinionDraft(cardId)
             send(trimmed)
+            return true
         } catch {
-            errorToast = "মতামত সংরক্ষণ করা গেল না — আবার চেষ্টা করুন"
-            AlmaAgentHaptics.error()
+            let reconciled = await reconcileActionFailure(cardId: cardId, error: error)
+            if reconciled, currentConfirmStatus(cardId) == "rejected" {
+                clearOpinionDraft(cardId)
+                send(trimmed)
+            }
+            return reconciled
         }
     }
 
@@ -5760,9 +6261,13 @@ struct AgentConfirmCardView: View {
     let pal: AgentPalette
     let vm: AssistantVM
     let onDecide: (Bool) -> Void
-    @State private var showOpinion = false
-    @State private var opinionText = ""
     private var submitting: Bool { vm.isSubmittingAction("action:\(card.id)") }
+    private var showOpinion: Bool { vm.opinionOpenIds.contains(card.id) }
+    private var opinionText: String { vm.opinionDraftText[card.id, default: ""] }
+    private var opinionTextBinding: Binding<String> {
+        Binding(get: { vm.opinionDraftText[card.id, default: ""] },
+                set: { vm.opinionDraftText[card.id] = $0 })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -5791,7 +6296,7 @@ struct AgentConfirmCardView: View {
                             Text("আপনার মত লিখুন")
                                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(pal.mutedHi)
                         }
-                        TextField("আপনার মতামত…", text: $opinionText, axis: .vertical)
+                        TextField("আপনার মতামত…", text: opinionTextBinding, axis: .vertical)
                             .font(.system(size: 14)).lineLimit(2...4)
                             .padding(10)
                             .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
@@ -5809,7 +6314,7 @@ struct AgentConfirmCardView: View {
                                     .background(AgentPalette.coral, in: Capsule())
                             }
                             .disabled(submitting || opinionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            Button { showOpinion = false } label: {
+                            Button { vm.opinionOpenIds.remove(card.id) } label: {
                                 Text("বাতিল").font(.system(size: 13)).foregroundStyle(pal.muted)
                             }
                         }
@@ -5839,7 +6344,7 @@ struct AgentConfirmCardView: View {
                         .padding(.horizontal, 16).padding(.bottom, 10)
                         Button {
                             AlmaAgentHaptics.light()
-                            showOpinion = true
+                            vm.opinionOpenIds.insert(card.id)
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: "text.bubble")
@@ -6010,10 +6515,10 @@ struct AgentAskCardView: View {
     var onNext: (() -> Void)? = nil
     var onClose: (() -> Void)? = nil
     var submitting = false
+    @Binding var chosen: String?
+    @Binding var otherActive: Bool
+    @Binding var otherText: String
     let onAnswer: (String) -> Void
-    @State private var chosen: String?
-    @State private var otherActive = false
-    @State private var otherText = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -6204,7 +6709,22 @@ struct AgentAskCardsPager: View {
                     onNext: { withAnimation(.snappy(duration: 0.22)) { index = min(cards.count - 1, idx + 1) } },
                     onClose: card.status == "pending"
                         ? { withAnimation(.snappy(duration: 0.22)) { closed = true } } : nil,
-                    submitting: vm.isSubmittingAction("ask:\(card.id)")
+                    submitting: vm.isSubmittingAction("ask:\(card.id)"),
+                    chosen: Binding(
+                        get: { vm.askChosenOption[card.id] },
+                        set: { option in
+                            if let option { vm.askChosenOption[card.id] = option }
+                            else { vm.askChosenOption.removeValue(forKey: card.id) }
+                        }),
+                    otherActive: Binding(
+                        get: { vm.askOtherActiveIds.contains(card.id) },
+                        set: { active in
+                            if active { vm.askOtherActiveIds.insert(card.id) }
+                            else { vm.askOtherActiveIds.remove(card.id) }
+                        }),
+                    otherText: Binding(
+                        get: { vm.askDraftText[card.id, default: ""] },
+                        set: { vm.askDraftText[card.id] = $0 })
                 ) { option in
                     onAnswer(card, option)
                 }
@@ -6729,10 +7249,25 @@ struct AgentComposerView: View {
     @State private var showModelPicker = false
     @FocusState private var focused: Bool
 
+    private var hasComposerPresentation: Bool {
+        showAttachmentChoices || showPhotoPicker || showDocumentPicker
+            || showCamera || showModelPicker
+    }
+
     var body: some View {
         let pal = AgentPalette(scheme)
         VStack(spacing: 0) {
             VStack(spacing: 8) {
+                if vm.queuedOwnerMessageCount > 0 {
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock.arrow.circlepath")
+                        Text("অপেক্ষায় \(almaBn(vm.queuedOwnerMessageCount))টি বার্তা")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AgentPalette.coral)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                }
                 if !vm.pendingFiles.isEmpty && !vm.isRecording { attachmentsRow(pal) }
                 if vm.isRecording {
                     recordingBar(pal)
@@ -6800,6 +7335,12 @@ struct AgentComposerView: View {
         .sheet(isPresented: $showCamera) {
             AgentCameraPicker { image in vm.attachImage(image) }
                 .ignoresSafeArea()
+        }
+        .onChange(of: hasComposerPresentation) { _, shown in
+            FloatingChatHead.shared.setSuppressed(shown, reason: "assistant-composer-presentation")
+        }
+        .onDisappear {
+            FloatingChatHead.shared.setSuppressed(false, reason: "assistant-composer-presentation")
         }
         .task {
             let process = ProcessInfo.processInfo
@@ -6973,11 +7514,15 @@ struct AgentComposerView: View {
             .accessibilityLabel("ভয়েস কথোপকথন")
             // send / stop
             Button {
-                if vm.isStreaming { vm.stopStreaming() } else {
+                if vm.isStreaming && sendEnabled {
+                    send()
+                } else if vm.isStreaming {
+                    vm.stopStreaming()
+                } else {
                     send()
                 }
             } label: {
-                Image(systemName: vm.isStreaming ? "stop.fill" : "arrow.up")
+                Image(systemName: vm.isStreaming && !sendEnabled ? "stop.fill" : "arrow.up")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(sendEnabled || vm.isStreaming ? .white : pal.muted)
                     .frame(width: 36, height: 36)
@@ -6989,7 +7534,9 @@ struct AgentComposerView: View {
                     .almaAgentHitTarget()
             }
             .disabled(!sendEnabled && !vm.isStreaming)
-            .accessibilityLabel(vm.isStreaming ? "উত্তর থামান" : "বার্তা পাঠান")
+            .accessibilityLabel(vm.isStreaming && sendEnabled
+                                ? "বার্তাটি অপেক্ষায় রাখুন"
+                                : (vm.isStreaming ? "উত্তর থামান" : "বার্তা পাঠান"))
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: vm.isStreaming)
         }
     }
@@ -7862,6 +8409,7 @@ struct AgentPendingTasksSheet: View {
 
     @ViewBuilder private func taskBlock(_ task: AgentOpenTask, pal: AgentPalette) -> some View {
         let busy = vm.openTaskBusyId == task.id
+            || task.pendingActionId.map { vm.isSubmittingAction("action:\($0)") } == true
         VStack(alignment: .leading, spacing: 10) {
             Text(task.title ?? task.note ?? "কাজ")
                 .font(.system(size: 14.5, design: .serif))
@@ -7874,7 +8422,7 @@ struct AgentPendingTasksSheet: View {
             HStack(spacing: 8) {
                 Button {
                     AlmaAgentHaptics.commit()
-                    Task { await approve(task); dismiss() }
+                    Task { if await approve(task) { dismiss() } }
                 } label: {
                     Group {
                         if busy { ProgressView().controlSize(.mini).tint(.white) }
@@ -7890,7 +8438,7 @@ struct AgentPendingTasksSheet: View {
                 }
                 Button {
                     AlmaAgentHaptics.light()
-                    Task { await reject(task); dismiss() }
+                    Task { if await reject(task) { dismiss() } }
                 } label: {
                     Text("বাতিল")
                         .font(.system(size: 13, weight: .medium))
@@ -7938,7 +8486,7 @@ struct AgentPendingTasksSheet: View {
                         let t = opineText.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !t.isEmpty else { return }
                         AlmaAgentHaptics.commit()
-                        Task { await opine(task, note: t); dismiss() }
+                        Task { if await opine(task, note: t) { dismiss() } }
                     } label: {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 14, weight: .semibold))
@@ -7959,31 +8507,36 @@ struct AgentPendingTasksSheet: View {
             .strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
     }
 
-    private func approve(_ task: AgentOpenTask) async {
+    private func approve(_ task: AgentOpenTask) async -> Bool {
         if task.kind == "approval_pending", let pid = task.pendingActionId {
-            await vm.approveAction(pid, approve: true)
+            return await vm.approveAction(pid, approve: true)
         } else {
             await vm.continueOpenTask(task)
+            return true
         }
     }
 
-    private func reject(_ task: AgentOpenTask) async {
+    private func reject(_ task: AgentOpenTask) async -> Bool {
         if task.kind == "approval_pending", let pid = task.pendingActionId {
-            await vm.approveAction(pid, approve: false)
+            return await vm.approveAction(pid, approve: false)
         } else {
             await vm.cancelOpenTask(task)
+            return true
         }
     }
 
     /// আমার মত — reject/park the pending work, then send the owner's note so the
     /// agent self-corrects (LOCKED: the 3rd option, everywhere).
-    private func opine(_ task: AgentOpenTask, note: String) async {
+    private func opine(_ task: AgentOpenTask, note: String) async -> Bool {
         if task.kind == "approval_pending", let pid = task.pendingActionId {
-            await vm.submitOpinion(pid, note: note)
+            let saved = await vm.submitOpinion(pid, note: note)
+            if saved { await vm.loadOpenTasks() }
+            return saved
         } else {
             vm.send(note)
+            await vm.loadOpenTasks()
+            return true
         }
-        await vm.loadOpenTasks()
     }
 }
 
@@ -10139,6 +10692,14 @@ struct AssistantScreen: View {
 
     private static let bottomID = "ALMA_BOTTOM"
 
+    private var hasBlockingPresentation: Bool {
+        vm.showSidebar || vm.showVoice || debugViewer != nil || toolSheet != nil
+            || activitySheet != nil || showConversationMenu || showProjectAssignment
+            || showConversationSearch || conversationShare != nil || showArtifacts
+            || showFilesHub || showBackgroundTasks || showRenamePrompt
+            || showArchiveConfirmation || showDeleteConfirmation
+    }
+
     /// During a new streaming turn the previous settled reply keeps ownership of
     /// the task anchor. On settle this id changes once, giving SwiftUI a single
     /// spring relocation instead of a disappear/reappear jump.
@@ -10465,9 +11026,46 @@ struct AssistantScreen: View {
                 AlmaTurnLog.event("assistant.contentReady", "fixture=stress count=\(vm.messages.count)")
                 return
             }
+            #if DEBUG
+            if argFlag("ALMA_ASSISTANT_QUEUE_HOLD") {
+                vm.loadMergeReadinessQueueFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=queue-hold")
+                return
+            }
+            if argFlag("ALMA_ASSISTANT_ACTION_FIXTURE") {
+                vm.loadMergeReadinessActionFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=actions")
+                return
+            }
+            if argFlag("ALMA_ASSISTANT_MULTI_APPROVAL") {
+                vm.loadMergeReadinessMultiApprovalFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=multi-approval")
+                return
+            }
+            if argFlag("ALMA_ASSISTANT_RECOVERY_SEED") {
+                vm.loadMergeReadinessRecoverySeed()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=recovery-seed")
+                if argFlag("ALMA_ASSISTANT_RECOVERY_TRIGGER") {
+                    Task {
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                        await vm.runMergeReadinessReconnect()
+                    }
+                } else if argFlag("ALMA_ASSISTANT_OFFLINE_SETTLE") {
+                    Task {
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                        await vm.runMergeReadinessOfflineSettle()
+                    }
+                }
+                return
+            }
+            #endif
             // Parity roadmap — persisted verification-retry composition only.
             if argFlag("ALMA_ASSISTANT_PARITY") {
                 vm.loadParityFixture()
+                if rawEnv["ALMA_MERGE_MOCK"] != nil
+                    || args.contains(where: { $0.hasPrefix("ALMA_MERGE_MOCK=") }) {
+                    vm.conversationId = "fixture-conversation"
+                }
                 if argFlag("ALMA_ASSISTANT_FILE_CARD") {
                     vm.messages = Array(vm.messages.prefix(1))
                 } else if argFlag("ALMA_ASSISTANT_UPLOAD_FAILED") {
@@ -10617,6 +11215,12 @@ struct AssistantScreen: View {
                 .presentationDetents([.medium, .large], selection: $backgroundTaskDetent)
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(28)
+        }
+        .onChange(of: hasBlockingPresentation) { _, shown in
+            FloatingChatHead.shared.setSuppressed(shown, reason: "assistant-presentation")
+        }
+        .onDisappear {
+            FloatingChatHead.shared.setSuppressed(false, reason: "assistant-presentation")
         }
         .overlay(alignment: .top) {
             if vm.authExpired { authBanner(pal) }

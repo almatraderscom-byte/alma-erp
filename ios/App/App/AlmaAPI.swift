@@ -20,6 +20,194 @@
 import Foundation
 import WebKit
 
+#if DEBUG
+/// Deterministic, simulator-only fault injector used by merge-readiness journeys.
+/// It is completely inert unless ALMA_MERGE_MOCK is supplied at process launch;
+/// production and ordinary debug sessions retain the real network stack.
+final class AlmaMergeReadinessURLProtocol: URLProtocol {
+    private static let multiLock = NSLock()
+    private static var multiResolvedActionIds: Set<String> = []
+    private static var multiRequestCounts: [String: Int] = [:]
+    private static var recoveryStreamServed = false
+    static var scenario: String? {
+        let process = ProcessInfo.processInfo
+        if let value = process.environment["ALMA_MERGE_MOCK"], !value.isEmpty { return value }
+        return process.arguments.first(where: { $0.hasPrefix("ALMA_MERGE_MOCK=") })?
+            .split(separator: "=", maxSplits: 1).last.map(String.init)
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        scenario != nil && request.url?.path.hasPrefix("/api/assistant/") == true
+    }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url, let scenario = Self.scenario else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
+        }
+        let path = url.path
+        if scenario == "turnRecovery" {
+            if path == "/api/assistant/models" {
+                respond(status: 200, object: ["defaultModelId": "auto", "models": []])
+                return
+            }
+            if path == "/api/assistant/active-conversation" {
+                respond(status: 200, object: [
+                    "conversationId": "fixture-recovery-conversation",
+                    "projectId": NSNull(), "modelId": NSNull(),
+                ])
+                return
+            }
+            if path.hasSuffix("/turn-status") {
+                respond(status: 200, object: [
+                    "status": Self.recoveryStreamServed ? "completed" : "running",
+                    "turnId": "fixture-recovery-turn",
+                    "startedAt": "2026-07-20T12:00:00.000Z",
+                    "continuationNeeded": false,
+                ])
+                return
+            }
+            if path.contains("/turn/fixture-recovery-turn/stream") {
+                Self.recoveryStreamServed = true
+                let frames = [
+                    "id: 0\ndata: {\"type\":\"turn_snapshot\",\"turnId\":\"fixture-recovery-turn\",\"conversationId\":\"fixture-recovery-conversation\",\"status\":\"running\",\"lastSeq\":0}\n\n",
+                    "id: 1\ndata: {\"type\":\"tool_start\",\"id\":\"fixture-recovery-tool\",\"name\":\"inventory_sync\"}\n\n",
+                    "id: 2\ndata: {\"type\":\"text_delta\",\"delta\":\"সংযোগ ফিরে এসেছে — আগের কাজটিই শেষ হয়েছে।\"}\n\n",
+                    "id: 3\ndata: {\"type\":\"tool_end\",\"id\":\"fixture-recovery-tool\",\"success\":true,\"resultPreview\":\"exact resume complete\"}\n\n",
+                    "id: 4\ndata: {\"type\":\"done\",\"messageId\":\"fixture-recovery-assistant\",\"needContinue\":false}\n\n",
+                ].joined()
+                respond(status: 200, data: Data(frames.utf8), contentType: "text/event-stream")
+                return
+            }
+            if path.contains("/conversations/fixture-recovery-conversation/messages") {
+                let running = !Self.recoveryStreamServed
+                let timeline: [[String: Any]] = running
+                    ? [["t": "tool", "id": "fixture-recovery-tool", "name": "inventory_sync"]]
+                    : [["t": "tool", "id": "fixture-recovery-tool", "name": "inventory_sync",
+                        "ok": true, "result": "exact resume complete"]]
+                respond(status: 200, object: [[
+                    "id": "fixture-recovery-owner", "role": "user",
+                    "content": [["type": "text", "text": "স্টক sync চালাও"]],
+                ], [
+                    "id": "fixture-recovery-assistant", "role": "assistant",
+                    "content": [
+                        ["type": "text", "text": running
+                            ? "স্টক sync চলছে…"
+                            : "সংযোগ ফিরে এসেছে — আগের কাজটিই শেষ হয়েছে।"],
+                        ["type": "confirm_card", "pendingActionId": "fixture-recovery-approval",
+                         "summary": "পুনরুদ্ধার হওয়া অনুমোদন", "status": "pending"],
+                    ],
+                    "timeline": timeline,
+                ]])
+                return
+            }
+            if path.contains("/artifacts") || path.contains("/background-turns")
+                || path.contains("/open-tasks") {
+                respond(status: 200, object: [])
+                return
+            }
+        }
+        if scenario == "approvalLost", path.contains("/actions/"),
+           (path.hasSuffix("/approve") || path.hasSuffix("/reject")) {
+            client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+            return
+        }
+        if scenario == "multiApproval", path.contains("/actions/"),
+           (path.hasSuffix("/approve") || path.hasSuffix("/reject")) {
+            let parts = path.split(separator: "/")
+            let actionId = parts.dropLast().last.map(String.init) ?? "unknown"
+            Self.multiLock.lock()
+            Self.multiRequestCounts[actionId, default: 0] += 1
+            let firstResolution = Self.multiResolvedActionIds.insert(actionId).inserted
+            Self.multiLock.unlock()
+            if firstResolution { respond(status: 200, json: ["ok": true]) }
+            else { respond(status: 409, json: ["error": "duplicate_resolution", "status": "approved"]) }
+            return
+        }
+        if path.contains("/actions/") && (path.hasSuffix("/approve") || path.hasSuffix("/reject")) {
+            if scenario == "approval410" {
+                respond(status: 410, json: ["error": "expired"])
+            } else if scenario == "opinionFailure" {
+                respond(status: 503, json: ["error": "fixture_failure"])
+            } else {
+                let decided = path.hasSuffix("/reject") ? "rejected" : "approved"
+                respond(status: 409, json: ["error": "already_resolved", "status": decided])
+            }
+            return
+        }
+        if path.contains("/ask-cards/") && path.hasSuffix("/answer") {
+            if scenario == "askFailure" {
+                respond(status: 503, json: ["error": "fixture_failure"])
+            } else {
+                respond(status: 409, json: ["error": "already_answered", "selectedOption": "স্টক অর্ডার"])
+            }
+            return
+        }
+        if path.contains("/messages") {
+            if scenario == "multiApproval" {
+                Self.multiLock.lock()
+                let resolved = Self.multiResolvedActionIds
+                let counts = Self.multiRequestCounts
+                Self.multiLock.unlock()
+                let cards: [[String: Any]] = (1...3).map { index in
+                    let actionId = "fix-approval-\(index)"
+                    let duplicate = counts[actionId, default: 0] > 1
+                    return [
+                        "type": "confirm_card", "pendingActionId": actionId,
+                        "summary": duplicate ? "DUPLICATE REQUEST \(index)" : "অনুমোদন \(index)",
+                        "status": resolved.contains(actionId) ? "approved" : "pending",
+                    ]
+                }
+                respond(status: 200, object: [[
+                    "id": "fix-a-multi", "role": "assistant", "content": cards,
+                ]])
+                return
+            }
+            if scenario == "askFailure" {
+                let rows: [[String: Any]] = [[
+                    "id": "fix-a-parity", "role": "assistant",
+                    "content": [[
+                        "type": "ask_card", "askCardId": "fix-ask",
+                        "question": "কোন রিপোর্ট format দরকার Boss?",
+                        "options": ["PDF", "Markdown", "দুটোই"], "status": "pending",
+                    ]],
+                ]]
+                respond(status: 200, object: rows)
+                return
+            }
+            let status = scenario == "approval410" ? "expired"
+                : (scenario == "opinionFailure" ? "pending" : "approved")
+            let rows: [[String: Any]] = [[
+                "id": "fix-a-parity", "role": "assistant",
+                "content": [[
+                    "type": "confirm_card", "pendingActionId": "fix-approval",
+                    "summary": "Merge readiness approval", "status": status,
+                ]],
+            ]]
+            respond(status: 200, object: rows)
+            return
+        }
+        respond(status: 503, json: ["error": "unhandled_merge_fixture", "path": path])
+    }
+
+    override func stopLoading() {}
+
+    private func respond(status: Int, json: [String: Any]) { respond(status: status, object: json) }
+    private func respond(status: Int, object: Any) {
+        let data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
+        respond(status: status, data: data, contentType: "application/json")
+    }
+    private func respond(status: Int, data: Data, contentType: String) {
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: status, httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": contentType])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+#endif
+
 // MARK: - Errors
 
 enum AlmaAPIError: LocalizedError {
@@ -108,6 +296,11 @@ final class AlmaAPI: NSObject {
             // Some Next.js middleware branches on this to answer JSON instead of HTML.
             "X-Requested-With": "XMLHttpRequest",
         ]
+        #if DEBUG
+        if AlmaMergeReadinessURLProtocol.scenario != nil {
+            config.protocolClasses = [AlmaMergeReadinessURLProtocol.self]
+        }
+        #endif
 
         // Delegate-based session so we can refuse redirect-following (see extension below):
         // a 307 → /login must reach our status check, not be transparently followed.
