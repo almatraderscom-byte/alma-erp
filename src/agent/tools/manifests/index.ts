@@ -6,3 +6,6 @@
  * G08 (SPEC-072..078).
  */
 export * from './manifest.schema'
+export * from './domain-package'
+export * from './derive-side-effects'
+export * from './loader'
