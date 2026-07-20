@@ -1358,6 +1358,21 @@ final class AssistantVM {
         UserDefaults.standard.set(data, forKey: Self.actionContinuationsKey)
     }
 
+    /// Cancel/edit is an explicit owner decision. Remove any durable action
+    /// continuation bound to that outgoing intent so reconciliation cannot
+    /// resurrect and auto-send it after a reload.
+    private func discardActionContinuation(clientMessageId: String) {
+        let keys = actionContinuations.compactMap { key, value in
+            value.clientMessageId == clientMessageId ? key : nil
+        }
+        guard !keys.isEmpty else { return }
+        for key in keys {
+            actionContinuations.removeValue(forKey: key)
+            resumedActionContinuationKeys.insert(key)
+        }
+        persistActionContinuations()
+    }
+
     private func setActionState(_ id: String, kind: String,
                                 state: ActionLifecycleState, selectedOption: String? = nil) {
         var record = actionRegistry[id]
@@ -1481,6 +1496,9 @@ final class AssistantVM {
     }
     func debugActionContinuationIsAccepted(key: String) -> Bool {
         actionContinuations[key]?.acceptedAt != nil
+    }
+    func debugHasActionContinuation(key: String) -> Bool {
+        actionContinuations[key] != nil
     }
     #endif
     // Awakening animation bridge (spec): bumped when a DIFFERENT conversation is
@@ -4928,6 +4946,68 @@ final class AssistantVM {
         messages = rows
     }
 
+    /// Focused native reading-surface proof. It reproduces the owner's reported
+    /// dense answer (tool trace + Bangla prose + Markdown table + code) without a
+    /// network dependency, while exercising the same production message views.
+    func loadReadingSurfaceFixture() {
+        queuedOwnerMessages = []
+        pendingFiles = []
+        dictationFailure = nil
+        var owner = AgentChatMessage(id: "reading-owner", role: .user,
+                                     text: "Real-time voice API গুলোর দাম ও ভালো setup তুলনা করো")
+        owner.createdAt = "2026-07-21T06:30:00.000Z"
+
+        var answer = AgentChatMessage(id: "reading-answer", role: .assistant)
+        answer.serverId = answer.id
+        answer.createdAt = "2026-07-21T06:31:00.000Z"
+        let prose = """
+        ## সবচেয়ে practical setup
+
+        Boss, বাংলা voice agent-এর জন্য **Deepgram STT → আপনার agent → Google TTS** সবচেয়ে ভারসাম্যপূর্ণ setup। এতে latency কম থাকে এবং provider বদলালেও conversation state ALMA-তেই থাকে।
+
+        | API | আনুমানিক মূল্য | সবচেয়ে ভালো ব্যবহার |
+        | --- | --- | --- |
+        | Deepgram | ~$0.005/min | দ্রুত speech-to-text |
+        | Google Cloud TTS | ~$0.000004/character | স্বাভাবিক বাংলা voice |
+        | ElevenLabs | ~$0.015/min | premium expressive voice |
+
+        > Live price বদলাতে পারে—production চালুর আগে provider dashboard থেকে আবার যাচাই করব।
+
+        **প্রস্তাবিত flow**
+
+        - ফোনের audio stream Deepgram-এ যাবে
+        - transcript ALMA agent বুঝে উত্তর তৈরি করবে
+        - Google TTS উত্তরটি স্বাভাবিক বাংলায় বলবে
+
+        ```swift
+        let pipeline = VoicePipeline(stt: .deepgram, tts: .google)
+        try await pipeline.start(language: "bn-BD")
+        ```
+        """
+        answer.text = prose
+        answer.blocks = [
+            .activity(.init(id: "reading-search", kind: .search,
+                            label: "Searched available tools")),
+            .activity(.init(id: "reading-tool", kind: .tool,
+                            label: "live_browser_look", toolId: "reading-tool", ok: true)),
+            .activity(.init(id: "reading-thought", kind: .thinking,
+                            label: "Let me be honest about this.",
+                            thinkFull: "Pricing claims need a fresh source check.")),
+            .prose(id: "reading-prose", text: prose),
+        ]
+        answer.tools = [.init(id: "reading-tool", name: "live_browser_look", ok: true,
+                              preview: nil, live: false, inputPretty: nil,
+                              resultFull: "Voice provider pricing page checked.")]
+        answer.tokensIn = 18800
+        answer.tokensOut = 2100
+        answer.cacheRead = 9600
+        answer.apiRounds = 3
+        answer.costUsd = "0.078765"
+        messages = [owner, answer]
+        conversationId = "fixture-reading-surface"
+        conversationTitle = "Voice API comparison"
+    }
+
     #if DEBUG
     /// Merge-readiness-only held stream. It uses the production composer/send
     /// queue path but never touches a server, so the simulator can prove that an
@@ -6163,6 +6243,7 @@ final class AssistantVM {
             // unknown acceptance is represented by `.checking` and cannot edit.
             recoverableTurn = nil
         }
+        discardActionContinuation(clientMessageId: clientMessageId)
         composerDraft = message.text
         for index in messages.indices where messages[index].clientMessageId == clientMessageId {
             messages[index].outgoingState = .cancelled
@@ -6183,6 +6264,7 @@ final class AssistantVM {
         if recoverableTurn?.clientMessageId == clientMessageId {
             stopStreaming(cancelServer: true)
         }
+        discardActionContinuation(clientMessageId: clientMessageId)
         for index in messages.indices where messages[index].clientMessageId == clientMessageId {
             messages[index].outgoingState = .cancelled
         }
@@ -6574,6 +6656,12 @@ struct AlmaSelectableRichText: UIViewRepresentable {
 }
 
 @available(iOS 17.0, *)
+struct AgentMarkdownTable: Equatable {
+    let header: [String]
+    let rows: [[String]]
+}
+
+@available(iOS 17.0, *)
 struct AgentMarkdownText: View {
     let text: String
     let pal: AgentPalette
@@ -6662,6 +6750,35 @@ struct AgentMarkdownText: View {
         return out
     }
 
+    /// GitHub-style pipe table → semantic rows. The delimiter row is structural
+    /// metadata and must never leak into the owner-facing answer as raw dashes.
+    static func parseTable(_ source: String) -> AgentMarkdownTable? {
+        func cells(_ line: String) -> [String] {
+            var parts = line.split(separator: "|", omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            if parts.first?.isEmpty == true { parts.removeFirst() }
+            if parts.last?.isEmpty == true { parts.removeLast() }
+            return parts
+        }
+        func isDelimiter(_ value: String) -> Bool {
+            let core = value.trimmingCharacters(in: CharacterSet(charactersIn: ":- "))
+            let dashCount = value.filter { $0 == "-" }.count
+            return core.isEmpty && dashCount >= 3
+        }
+        let lines = source.components(separatedBy: "\n").filter {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard lines.count >= 2 else { return nil }
+        let parsed = lines.map(cells)
+        guard parsed[0].count >= 2, parsed[1].count == parsed[0].count,
+              parsed[1].allSatisfy(isDelimiter) else { return nil }
+        let width = parsed[0].count
+        let rows = parsed.dropFirst(2).map { row in
+            Array((row + Array(repeating: "", count: width)).prefix(width))
+        }
+        return .init(header: parsed[0], rows: rows)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(segments) { seg in
@@ -6687,15 +6804,16 @@ struct AgentMarkdownText: View {
     }
 
     /// Mirror of `plainParagraph`'s per-line styling as ONE NSAttributedString so a
-    /// selection can span the whole paragraph: coral headers, • bullets, serif body,
+    /// selection can span the whole paragraph: clear headers, lists and quiet body,
     /// resolved bold/italic/code (UITextView doesn't interpret markdown intents).
     static func attributedParagraph(_ s: String, pal: AgentPalette) -> NSAttributedString {
-        let body = UIFontMetrics(forTextStyle: .body).scaledFont(for: UIFont.almaSerif(15.5))
+        let body = UIFontMetrics(forTextStyle: .body).scaledFont(
+            for: UIFont.systemFont(ofSize: 16.5, weight: .regular))
         let ink = UIColor(pal.ink)
         let out = NSMutableAttributedString()
         let para = NSMutableParagraphStyle()
-        para.lineSpacing = 3
-        para.paragraphSpacing = 6
+        para.lineSpacing = 4
+        para.paragraphSpacing = 9
         var first = true
         for line in s.components(separatedBy: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -6709,11 +6827,15 @@ struct AgentMarkdownText: View {
                     .scaledFont(for: UIFont.systemFont(ofSize: size, weight: .semibold))
                 out.append(NSAttributedString(string: title, attributes: [
                     .font: heading,
-                    .foregroundColor: UIColor(AgentPalette.coral),
+                    .foregroundColor: ink,
                 ]))
             } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("• ") {
                 out.append(NSAttributedString(string: "•  ", attributes: [.font: body, .foregroundColor: UIColor(pal.muted)]))
                 out.append(inlineNS(String(trimmed.dropFirst(2)), baseFont: body, color: ink))
+            } else if trimmed.hasPrefix("> ") {
+                out.append(NSAttributedString(string: "│  ", attributes: [
+                    .font: body, .foregroundColor: UIColor(AgentPalette.coral.opacity(0.75))]))
+                out.append(inlineNS(String(trimmed.dropFirst(2)), baseFont: body, color: UIColor(pal.mutedHi)))
             } else {
                 out.append(inlineNS(line, baseFont: body, color: ink))
             }
@@ -6746,7 +6868,13 @@ struct AgentMarkdownText: View {
                     }
                 }
             }
-            out.append(NSAttributedString(string: sub, attributes: [.font: font, .foregroundColor: color]))
+            var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+            if let link = run.link {
+                attrs[.link] = link
+                attrs[.foregroundColor] = UIColor(AgentPalette.teal)
+                attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            }
+            out.append(NSAttributedString(string: sub, attributes: attrs))
         }
         return out
     }
@@ -6760,12 +6888,17 @@ struct AgentMarkdownText: View {
                 } else if trimmed.hasPrefix("###") || trimmed.hasPrefix("##") || trimmed.hasPrefix("# ") {
                     Text(trimmed.drop(while: { $0 == "#" || $0 == " " }))
                         .font(.system(trimmed.hasPrefix("# ") ? .title3 : .headline, weight: .semibold))
-                        .foregroundStyle(AgentPalette.coral)
+                        .foregroundStyle(pal.ink)
                         .padding(.top, 2)
                 } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("• ") {
                     HStack(alignment: .top, spacing: 7) {
                         Text("•").foregroundStyle(pal.muted)
                         inline(String(trimmed.dropFirst(2)))
+                    }
+                } else if trimmed.hasPrefix("> ") {
+                    HStack(alignment: .top, spacing: 9) {
+                        Capsule().fill(AgentPalette.coral.opacity(0.65)).frame(width: 3)
+                        inline(String(trimmed.dropFirst(2))).foregroundStyle(pal.mutedHi)
                     }
                 } else {
                     inline(line)
@@ -6778,10 +6911,10 @@ struct AgentMarkdownText: View {
         if let a = try? AttributedString(markdown: s,
                                          options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
             return Text(a)
-                .font(.system(.body, design: .serif))
+                .font(.system(.body, design: .default))
                 .foregroundStyle(pal.ink)
         }
-        return Text(s).font(.system(.body, design: .serif)).foregroundStyle(pal.ink)
+        return Text(s).font(.system(.body, design: .default)).foregroundStyle(pal.ink)
     }
 
     /// Web parity: fenced ```copy/caption/post/text = the branded coral copy card;
@@ -6808,12 +6941,23 @@ struct AgentMarkdownText: View {
                             isCopyCard ? AgentPalette.coral.opacity(0.45) : .clear, lineWidth: 1))
                 }
             }
-            Text(body)
-                .font(.system(size: 13.5, design: isCopyCard ? .serif : .monospaced))
-                .foregroundStyle(isCopyCard ? pal.ink : Color.white.opacity(0.92))
-                .lineSpacing(3)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if isCopyCard {
+                Text(body)
+                    .font(.system(size: 15.5))
+                    .foregroundStyle(pal.ink)
+                    .lineSpacing(4)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ScrollView(.horizontal, showsIndicators: true) {
+                    Text(body)
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.bottom, 3)
+                }
+            }
         }
         .padding(12)
         .background(isCopyCard ? AgentPalette.coral.opacity(0.06) : pal.codeBg,
@@ -6823,15 +6967,75 @@ struct AgentMarkdownText: View {
     }
 
     @ViewBuilder private func tableCard(_ s: String) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            Text(s)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(pal.ink)
+        if let table = Self.parseTable(s) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Label("তথ্য", systemImage: "tablecells")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(pal.mutedHi)
+                    Spacer()
+                    Button {
+                        UIPasteboard.general.string = s
+                        AlmaAgentHaptics.light()
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(pal.muted)
+                            .frame(width: 36, height: 36)
+                    }
+                    .accessibilityLabel("টেবিল কপি করুন")
+                }
+                .padding(.leading, 12).padding(.trailing, 5)
+
+                Divider().overlay(pal.borderSubtle)
+                ScrollView(.horizontal, showsIndicators: true) {
+                    Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                        GridRow {
+                            ForEach(Array(table.header.enumerated()), id: \.offset) { index, value in
+                                tableCell(value, header: true, column: index)
+                            }
+                        }
+                        ForEach(Array(table.rows.enumerated()), id: \.offset) { rowIndex, row in
+                            Divider().gridCellColumns(max(1, table.header.count))
+                                .overlay(pal.borderSubtle.opacity(0.65))
+                            GridRow {
+                                ForEach(Array(row.enumerated()), id: \.offset) { index, value in
+                                    tableCell(value, header: false, column: index)
+                                        .background(rowIndex.isMultiple(of: 2)
+                                            ? Color.clear : pal.card.opacity(0.22))
+                                }
+                            }
+                        }
+                    }
+                    .padding(.bottom, 8)
+                }
+            }
+            .background(.ultraThinMaterial,
+                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(pal.borderSubtle, lineWidth: 1))
+        } else {
+            Text(s).font(.system(.caption, design: .monospaced)).foregroundStyle(pal.ink)
                 .padding(12)
+                .background(pal.card.opacity(0.65), in: RoundedRectangle(cornerRadius: 14))
         }
-        .background(pal.card.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .strokeBorder(pal.borderSubtle, lineWidth: 1))
+    }
+
+    private func tableCell(_ value: String, header: Bool, column: Int) -> some View {
+        let content = (try? AttributedString(markdown: value,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            .map(Text.init) ?? Text(value)
+        return content
+            .font(.system(size: header ? 12.5 : 13.5,
+                          weight: header ? .semibold : .regular))
+            .foregroundStyle(header ? pal.mutedHi : pal.ink)
+            .lineLimit(3)
+            .frame(minWidth: column == 0 ? 112 : 96, maxWidth: 190,
+                   minHeight: 42, alignment: .leading)
+            .padding(.horizontal, 11).padding(.vertical, 7)
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(pal.borderSubtle).frame(width: 1)
+            }
     }
 }
 
@@ -7624,7 +7828,7 @@ struct AgentThoughtProcessSheet: View {
         } else {
             // Claude iOS: the thought is plain prose on the sheet — no box around it.
             Text(prose)
-                .font(.system(size: 15, design: .serif))
+                .font(.system(size: 16))
                 .foregroundStyle(pal.ink.opacity(0.92))
                 .lineSpacing(6)
                 .textSelection(.enabled)
@@ -7977,7 +8181,6 @@ struct AgentMessageActions: View {
     let onSelectText: () -> Void
     let onShowActivity: () -> Void
     @State private var copied = false
-    @State private var moreOpen = false
     // Debug self-test hook (never set in production launches): ALMA_FEEDBACK_OPEN=1
     // pre-opens the 👎 reason chips so the fixture screenshot proves the row.
     @State private var reasonsOpen =
@@ -7995,20 +8198,11 @@ struct AgentMessageActions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Keep all existing metadata/actions above the identity/task anchor.
-            // ViewThatFits prevents a long cache/cost string from pushing an
-            // action off-screen on compact iPhones.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 6) {
-                    actionButtons
-                    Spacer(minLength: 10)
-                    costText
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) { actionButtons; Spacer(minLength: 0) }
-                    costText
-                }
+            HStack(spacing: 2) {
+                actionButtons
+                Spacer(minLength: 0)
             }
+            costText
             .padding(.top, 2)
             if reasonsOpen && !feedbackSent {
                 feedbackReasonsRow
@@ -8079,8 +8273,8 @@ struct AgentMessageActions: View {
         }
     }
 
-    /// Screenshot-locked order: Copy, Read aloud, Helpful, Not helpful, Share,
-    /// More. Every target stays 44pt and in place after interaction.
+    /// Quiet primary row. Less-frequent capabilities remain in the native More
+    /// menu so compact iPhones never turn an answer footer into a toolbar wall.
     @ViewBuilder private var actionButtons: some View {
             if let rel = relativeTime(message.createdAt) {
                 Text(rel).font(.system(size: 10)).foregroundStyle(pal.muted)
@@ -8144,16 +8338,27 @@ struct AgentMessageActions: View {
             }
             .disabled(feedbackSent || vm.feedbackSubmittingIds.contains(message.id))
             .accessibilityLabel("Not helpful")
-            ShareLink(item: message.text, preview: SharePreview("ALMA response", image: Image(systemName: "sparkles"))) {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 12))
-                    .foregroundStyle(pal.muted)
-                    .frame(width: 44, height: 44)
-            }
-            .accessibilityLabel("Share this response")
-            Button {
-                AlmaAgentHaptics.light()
-                moreOpen.toggle()
+            Menu {
+                ShareLink(item: message.text,
+                          preview: SharePreview("ALMA response", image: Image(systemName: "sparkles"))) {
+                    Label("শেয়ার করুন", systemImage: "square.and.arrow.up")
+                }
+                Button(action: onSelectText) {
+                    Label("টেক্সট সিলেক্ট করুন", systemImage: "text.cursor")
+                }
+                Button(action: onShowActivity) {
+                    Label("কাজের বিবরণ", systemImage: "list.bullet.rectangle")
+                }
+                if artifactDetectable {
+                    Button {
+                        Task { await vm.saveArtifactManually(from: message) }
+                    } label: {
+                        Label(vm.artifactSavedIds.contains(message.id) ? "সংরক্ষিত" : "ফাইল হিসেবে সংরক্ষণ",
+                              systemImage: vm.artifactSavedIds.contains(message.id)
+                                ? "checkmark" : "tray.and.arrow.down")
+                    }
+                    .disabled(vm.artifactSavedIds.contains(message.id))
+                }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 13, weight: .semibold))
@@ -8161,50 +8366,10 @@ struct AgentMessageActions: View {
                     .frame(width: 44, height: 44)
             }
             .accessibilityLabel("More")
-            .popover(isPresented: $moreOpen, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Button {
-                        moreOpen = false
-                        onSelectText()
-                    } label: {
-                        Label("টেক্সট সিলেক্ট করুন", systemImage: "text.cursor")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16).frame(height: 46)
-                    }
-                    Button {
-                        moreOpen = false
-                        onShowActivity()
-                    } label: {
-                        Label("কাজের বিবরণ", systemImage: "list.bullet.rectangle")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16).frame(height: 46)
-                    }
-                    if artifactDetectable {
-                        Divider().opacity(0.18)
-                        Button {
-                            moreOpen = false
-                            Task { await vm.saveArtifactManually(from: message) }
-                        } label: {
-                            Label(vm.artifactSavedIds.contains(message.id) ? "সংরক্ষিত" : "ফাইল হিসেবে সংরক্ষণ",
-                                  systemImage: vm.artifactSavedIds.contains(message.id) ? "checkmark" : "tray.and.arrow.down")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 16).frame(height: 46)
-                        }
-                        .disabled(vm.artifactSavedIds.contains(message.id))
-                    }
-                }
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(pal.ink)
-                .frame(width: 250)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial)
-                .presentationCompactAdaptation(.popover)
-            }
     }
 
-    /// Web-footer parity (RC-4): Σ total (incl. cache) · ↑input ⚡cache-write
-    /// ♻cache-read ↓output $cost · N ধাপ — N = actual provider API rounds,
-    /// the same number the web cost badge shows, never UI phase count.
+    /// Human-readable usage summary. Detailed activity remains one tap away;
+    /// cryptic cache arrows no longer compete with the response itself.
     @ViewBuilder private var costText: some View {
         if let tin = message.tokensIn {
             let tout = message.tokensOut ?? 0
@@ -8212,14 +8377,15 @@ struct AgentMessageActions: View {
             let cr = message.cacheRead ?? 0
             let total = tin + tout + cw + cr
             let rounds = (message.apiRounds ?? 0) > 1 ? " · \(almaBn(message.apiRounds!)) ধাপ" : ""
-            Text("Σ\(almaBnCompact(total)) · ↑\(almaBnCompact(tin))"
-                 + (cw > 0 ? " ⚡\(almaBnCompact(cw))" : "")
-                 + (cr > 0 ? " ♻\(almaBnCompact(cr))" : "")
-                 + " ↓\(almaBnCompact(tout))"
-                 + (message.costUsd.map { " $\($0)\(rounds)" } ?? ""))
-                .font(.system(size: 9.5, design: .monospaced))
-                .foregroundStyle(pal.muted.opacity(0.8))
+            let cost = message.costUsd.map {
+                " · $" + (Double($0).map { String(format: "%.4f", $0) } ?? $0)
+            } ?? ""
+            Text("\(almaBnCompact(total)) tokens\(cost)\(rounds)")
+                .font(.caption2)
+                .foregroundStyle(pal.muted.opacity(0.76))
                 .lineLimit(1)
+                .accessibilityLabel(
+                    "মোট \(total) টোকেন; ইনপুট \(tin); আউটপুট \(tout); cache write \(cw); cache read \(cr)")
         }
     }
 
@@ -8516,8 +8682,9 @@ struct AgentDelegationCardView: View {
     @State private var open = false
 
     private static let roleIcon: [String: String] = [
-        "researcher": "🔎", "analyst": "📊", "marketer": "📣",
-        "content": "✍️", "ops": "🗂️", "cs": "💬",
+        "researcher": "magnifyingglass", "analyst": "chart.bar.xaxis",
+        "marketer": "megaphone", "content": "pencil.line",
+        "ops": "tray.full", "cs": "message",
     ]
 
     var body: some View {
@@ -8528,8 +8695,10 @@ struct AgentDelegationCardView: View {
                 withAnimation(.snappy(duration: 0.2)) { open.toggle() }
             } label: {
                 HStack(alignment: .top, spacing: 10) {
-                    Text(Self.roleIcon[d.role] ?? "🤝")
-                        .font(.system(size: 15))
+                    Image(systemName: Self.roleIcon[d.role] ?? "person.2")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(AgentPalette.coral.opacity(0.86))
+                        .frame(width: 22, height: 22)
                         .padding(.top, 1)
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
@@ -8574,9 +8743,9 @@ struct AgentDelegationCardView: View {
                     .padding(.horizontal, 14).padding(.vertical, 11)
             }
         }
-        .background(pal.card.opacity(0.8), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(pal.card.opacity(0.42), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
+            .strokeBorder(pal.borderSubtle.opacity(0.8), lineWidth: 1))
     }
 
     @ViewBuilder private var statusGlyph: some View {
@@ -8951,6 +9120,22 @@ struct AgentCompactActivityRow: View {
     var shimmer = false            // live headline while the model is thinking (Claude)
     let onTap: () -> Void
 
+    private var displayLabel: String {
+        let known: [String: String] = [
+            "Searched available tools": "উপযুক্ত টুল খুঁজেছে",
+            "Let me be honest about this.": "উত্তর দেওয়ার আগে সত্যতা যাচাই করেছে",
+            "live_browser_look": "লাইভ browser যাচাই করেছে",
+            "get_inventory_status": "স্টকের বর্তমান অবস্থা দেখেছে",
+            "inventory_sync": "স্টক sync করছে",
+        ]
+        if let value = known[label] { return value }
+        guard label.contains("_") else { return label }
+        return label.replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { $0.capitalized }
+            .joined(separator: " ")
+    }
+
     var body: some View {
         Button {
             AlmaAgentHaptics.light()
@@ -8967,8 +9152,8 @@ struct AgentCompactActivityRow: View {
                         .frame(width: 18, alignment: .center)
                     // Claude: chevron hugs the text; long labels truncate well before the
                     // screen edge (trailing gap keeps the row ending ~mid-right, never edge).
-                    Text(label)
-                        .font(.system(size: 14, weight: italic ? .regular : .medium))
+                    Text(displayLabel)
+                        .font(.subheadline.weight(italic ? .regular : .medium))
                         .italic(italic && !shimmer)   // live row was never italic (AlmaShimmerText parity)
                         .foregroundStyle(labelColor)
                         .lineLimit(1)
@@ -8980,11 +9165,12 @@ struct AgentCompactActivityRow: View {
                 .modifier(AgentGlyphShimmerModifier(active: shimmer))
                 Spacer(minLength: 0)
             }
-            .padding(.trailing, 96)
-            .frame(minHeight: 40)
+            .padding(.trailing, 20)
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(AlmaAgentPressStyle())
+        .accessibilityValue(displayLabel == label ? "" : label)
     }
 }
 
@@ -9495,10 +9681,19 @@ struct AgentComposerView: View {
             .modifier(AlmaAgentGlassBackground(
                 shape: RoundedRectangle(cornerRadius: 24, style: .continuous), pal: pal))
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay(AgentNeonBorder(cornerRadius: 24))   // web agent-neon-input parity
+            .overlay {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .strokeBorder(focused
+                        ? AgentPalette.coral.opacity(0.72)
+                        : pal.borderSubtle.opacity(0.85),
+                        lineWidth: focused ? 1.2 : 0.8)
+                    .animation(.easeOut(duration: 0.18), value: focused)
+            }
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
         }
+        .padding(.top, 6)
+        .background(.ultraThinMaterial)
         .onChange(of: vm.dictatedText) { _, newValue in
             guard !newValue.isEmpty else { return }
             vm.composerDraft = vm.composerDraft.isEmpty
@@ -10081,13 +10276,13 @@ struct AgentSideDrawer: View {
 
     @ViewBuilder private func drawer(_ pal: AgentPalette) -> some View {
         VStack(spacing: 0) {
-            // No web-style header — the sub-page shortcuts live on the AssistiveTouch
-            // button (owner call), so the drawer opens straight into content, iOS-style.
             Capsule()
                 .fill(pal.muted.opacity(0.35))
                 .frame(width: 36, height: 4.5)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 10)
+            sectionShortcuts(pal)
+                .padding(.top, 12)
             tabsBar(pal)
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
@@ -10099,24 +10294,69 @@ struct AgentSideDrawer: View {
         Rectangle().fill(pal.borderSubtle).frame(height: 1)
     }
 
+    /// Every Agent destination previously exposed by the floating AssistiveTouch
+    /// control remains available here. Keeping navigation in the drawer gives the
+    /// conversation a collision-free reading plane and a predictable home.
+    @ViewBuilder private func sectionShortcuts(_ pal: AgentPalette) -> some View {
+        let destinations: [(String, String, String?)] = [
+            ("Chat", "bubble.left.and.text.bubble.right", nil),
+            ("Studio", "wand.and.stars", "/agent/creative-studio"),
+            ("WhatsApp", "message.fill", "/agent/whatsapp"),
+            ("Monitor", "chart.bar.xaxis", "/agent/staff-monitor"),
+            ("Costs", "dollarsign.circle", "/agent/costs"),
+            ("Hub", "square.grid.2x2.fill", "/agent/hub"),
+        ]
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(destinations.enumerated()), id: \.offset) { _, item in
+                    Button {
+                        AlmaAgentHaptics.selection()
+                        if let path = item.2 {
+                            closeThen { openWeb(path, item.0) }
+                        } else {
+                            close()
+                        }
+                    } label: {
+                        VStack(spacing: 5) {
+                            Image(systemName: item.1)
+                                .font(.system(size: 15, weight: .medium))
+                            Text(item.0).font(.caption2.weight(.medium))
+                        }
+                        .foregroundStyle(item.2 == nil ? AgentPalette.coral : pal.mutedHi)
+                        .frame(width: 58, height: 52)
+                        .background(pal.card.opacity(0.44),
+                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(item.2 == nil
+                                ? AgentPalette.coral.opacity(0.35) : pal.borderSubtle,
+                                lineWidth: 1))
+                    }
+                    .buttonStyle(AlmaAgentPressStyle())
+                    .accessibilityLabel(item.0)
+                }
+            }
+            .padding(.horizontal, 14)
+        }
+    }
+
     /// চ্যাট / স্মৃতি — a native pill segmented control with the app's coral accent.
     @ViewBuilder private func tabsBar(_ pal: AgentPalette) -> some View {
         HStack(spacing: 4) {
-            tabButton("💬 চ্যাট", index: 0, pal: pal)
-            tabButton("🧠 স্মৃতি", index: 1, pal: pal)
+            tabButton("চ্যাট", icon: "bubble.left", index: 0, pal: pal)
+            tabButton("স্মৃতি", icon: "brain.head.profile", index: 1, pal: pal)
         }
         .padding(4)
         .background(Color.white.opacity(scheme == .dark ? 0.05 : 0.35), in: Capsule())
         .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
     }
 
-    private func tabButton(_ label: String, index: Int, pal: AgentPalette) -> some View {
+    private func tabButton(_ label: String, icon: String, index: Int, pal: AgentPalette) -> some View {
         Button {
             AlmaAgentHaptics.selection()
             withAnimation(.snappy(duration: 0.2)) { tab = index }
             if index == 1 { Task { await vm.loadMemories(scope: memScope) } }
         } label: {
-            Text(label)
+            Label(label, systemImage: icon)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(tab == index ? .white : pal.muted)
                 .frame(maxWidth: .infinity)
@@ -13357,6 +13597,17 @@ struct AssistantScreen: View {
                 AlmaTurnLog.event("assistant.contentReady", "fixture=stress count=\(vm.messages.count)")
                 return
             }
+            if argFlag("ALMA_ASSISTANT_READING_FIXTURE") {
+                vm.loadReadingSurfaceFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=reading-surface")
+                if !argFlag("ALMA_ASSISTANT_READING_BOTTOM") {
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(750))
+                        timelineScrollTarget = "reading-owner"
+                    }
+                }
+                return
+            }
             #if DEBUG
             if argFlag("ALMA_ASSISTANT_ATTACHMENT_ATOMIC") {
                 vm.runAttachmentAtomicFixture()
@@ -13568,8 +13819,14 @@ struct AssistantScreen: View {
         .onChange(of: hasBlockingPresentation) { _, shown in
             FloatingChatHead.shared.setSuppressed(shown, reason: "assistant-presentation")
         }
+        .onAppear {
+            // The Assistant already has its own conversation controls; the
+            // app-wide office chat head obscures long answers and the composer.
+            FloatingChatHead.shared.setSuppressed(true, reason: "assistant-screen")
+        }
         .onDisappear {
             FloatingChatHead.shared.setSuppressed(false, reason: "assistant-presentation")
+            FloatingChatHead.shared.setSuppressed(false, reason: "assistant-screen")
         }
         .overlay(alignment: .top) {
             if vm.authExpired { authBanner(pal) }
@@ -13789,20 +14046,6 @@ private var assistantBarHooksKey: UInt8 = 0
 
 extension AlmaTabBarController {
 
-    /// SF Symbols for the AssistiveTouch radial items (mirrors SpikeNativeShell's
-    /// private agentIcon, which is file-scoped there).
-    private static func assistantSectionIcon(_ title: String) -> String {
-        switch title {
-        case "Chat": return "bubble.left.and.text.bubble.right"
-        case "Studio": return "wand.and.stars"
-        case "WhatsApp": return "message.fill"
-        case "Monitor": return "chart.bar.xaxis"
-        case "Costs": return "dollarsign.circle"
-        case "Hub": return "square.grid.2x2.fill"
-        default: return "sparkles"
-        }
-    }
-
     /// Assistant tab: native SwiftUI chat when the S6 flag is on (iOS 17+), else the
     /// pre-S6b web construction (segmented Chat/Studio/WhatsApp/Monitor/Costs), verbatim.
     func makeAssistantTab() -> UINavigationController {
@@ -13846,37 +14089,6 @@ extension AlmaTabBarController {
             objc_setAssociatedObject(host, &assistantBarHooksKey, hooks, .OBJC_ASSOCIATION_RETAIN)
             let nav = Self.darkNav(root: host, tabTitle: "Assistant", icon: "sparkles", largeTitles: false)
             navRef.value = nav
-
-            // The AssistiveTouch-style floating sub-page nav the web Assistant tab had
-            // (owner: it must survive the native migration) — the proven UIKit
-            // AgentAssistiveNav, overlaid on the hosting view. "Chat" returns to the
-            // native chat (pops any pushed web screen).
-            // IOSP-1: assistive-nav pushes route through the SAME coordinator as every
-            // other link (pushSmart → AlmaNavCoordinator) — native when migrated,
-            // allowlisted web with telemetry otherwise. Replaces this file's private
-            // router-consult copy so there is exactly one navigation decision point.
-            func nativePushItem(_ title: String, _ path: String) -> AgentAssistiveNav.Item {
-                AgentAssistiveNav.Item(title: title, icon: Self.assistantSectionIcon(title)) { [weak self] in
-                    self?.pushSmart(on: navRef.value, path: path, title: title, icon: "sparkles")
-                }
-            }
-            let assistive = AgentAssistiveNav(items: [
-                AgentAssistiveNav.Item(title: "Chat", icon: Self.assistantSectionIcon("Chat")) {
-                    navRef.value?.popToRootViewController(animated: true)
-                },
-                nativePushItem("Studio", "/agent/creative-studio"),
-                // S8 audit: these three have native screens (AlmaNativeRouter cases
-                // /agent/whatsapp, /agent/staff-monitor, /agent/costs) — push them
-                // natively like Studio; nativePushItem still falls back to web.
-                nativePushItem("WhatsApp", "/agent/whatsapp"),
-                nativePushItem("Monitor", "/agent/staff-monitor"),
-                nativePushItem("Costs", "/agent/costs"),
-                // NP-1 (AG-09): the radial stays a SHORTCUT; the Hub is the
-                // canonical, discoverable list of every Agent surface.
-                nativePushItem("Hub", "/agent/hub"),
-            ])
-            host.view.addSubview(assistive)
-            assistive.attach(to: host.view, tabBarHeight: 49)
 
             return nav
         }

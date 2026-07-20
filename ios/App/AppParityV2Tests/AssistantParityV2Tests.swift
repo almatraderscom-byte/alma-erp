@@ -177,6 +177,42 @@ final class AssistantParityV2Tests: XCTestCase {
         afterAcceptance.debugRemoveActionContinuation(key: key)
     }
 
+    func testCancelAndEditRetirePersistedActionContinuations() {
+        let cancelKey = "ask:test-cancel-\(UUID().uuidString)"
+        let cancelVM = AssistantVM()
+        let cancelId = cancelVM.debugStableActionContinuationId(
+            key: cancelKey, text: "cancel me", askCardId: "ask-cancel")
+        let cancelMessage = AgentChatMessage(
+            id: "local-\(cancelId)", role: .user, clientMessageId: cancelId,
+            outgoingState: .failed, text: "cancel me")
+        cancelVM.cancelOutgoingMessage(cancelMessage)
+        XCTAssertFalse(AssistantVM().debugHasActionContinuation(key: cancelKey))
+
+        let editKey = "opinion:test-edit-\(UUID().uuidString)"
+        let editVM = AssistantVM()
+        let editId = editVM.debugStableActionContinuationId(
+            key: editKey, text: "edit me", askCardId: nil)
+        let editMessage = AgentChatMessage(
+            id: "local-\(editId)", role: .user, clientMessageId: editId,
+            outgoingState: .failed, text: "edit me")
+        editVM.editOutgoingMessage(editMessage)
+        XCTAssertFalse(AssistantVM().debugHasActionContinuation(key: editKey))
+    }
+
+    func testMarkdownTableParserRemovesDelimiterAndKeepsSemanticCells() {
+        let source = """
+        | API | Cost | Best for |
+        | :--- | ---: | --- |
+        | **Deepgram** | ~$0.005/min | STT |
+        | Google | ~$0.000004/char | TTS |
+        """
+        let table = AgentMarkdownText.parseTable(source)
+        XCTAssertEqual(table?.header, ["API", "Cost", "Best for"])
+        XCTAssertEqual(table?.rows.count, 2)
+        XCTAssertEqual(table?.rows.first, ["**Deepgram**", "~$0.005/min", "STT"])
+        XCTAssertFalse(table?.rows.flatMap { $0 }.contains("---") ?? true)
+    }
+
     func testAskAndOpinionDraftsPersistAcrossRelaunch() {
         let cardId = "fixture-persisted-action"
         let first = AssistantVM()

@@ -76,6 +76,53 @@ final class AssistantParityV2UITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["আজকের স্টক রিপোর্ট দাও"].exists)
     }
 
+    func testNativeReadingSurfaceUsesSemanticMarkdownAndQuietChrome() {
+        relaunch(fixture: "ALMA_ASSISTANT_READING_FIXTURE", mock: "reading")
+
+        XCTAssertTrue(app.staticTexts["লাইভ browser যাচাই করেছে"].waitForExistence(timeout: 4))
+        // Selectable settled prose is backed by UITextView, not StaticText.
+        let responseText = app.textViews.matching(
+            NSPredicate(format: "label CONTAINS %@", "সবচেয়ে practical setup")
+        ).firstMatch
+        XCTAssertTrue(responseText.exists)
+        XCTAssertTrue(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "Deepgram")
+        ).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "Google Cloud TTS")
+        ).firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["live_browser_look"].exists)
+        XCTAssertFalse(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "| --- |")
+        ).firstMatch.exists)
+        XCTAssertTrue(app.buttons["টেবিল কপি করুন"].exists)
+        XCTAssertTrue(app.buttons["ফাইল যোগ করুন"].exists)
+
+        let top = XCTAttachment(screenshot: app.screenshot())
+        top.name = "native-reading-surface-top"
+        top.lifetime = .keepAlways
+        add(top)
+
+        app.swipeUp(velocity: .fast)
+        app.swipeUp(velocity: .fast)
+        let bottom = XCTAttachment(screenshot: app.screenshot())
+        bottom.name = "native-reading-surface-bottom"
+        bottom.lifetime = .keepAlways
+        add(bottom)
+    }
+
+    func testAgentSectionRoutesLiveInDrawerNotOverConversation() {
+        let drawer = app.buttons["চ্যাট হিস্টরি"]
+        XCTAssertTrue(drawer.waitForExistence(timeout: 3))
+        drawer.tap()
+        XCTAssertTrue(app.buttons["Chat"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Studio"].exists)
+        XCTAssertTrue(app.buttons["WhatsApp"].exists)
+        XCTAssertTrue(app.buttons["Monitor"].exists)
+        XCTAssertTrue(app.buttons["Costs"].exists)
+        XCTAssertTrue(app.buttons["Hub"].exists)
+    }
+
     private func relaunch(fixture: String, mock: String) {
         app.terminate()
         app = XCUIApplication()
