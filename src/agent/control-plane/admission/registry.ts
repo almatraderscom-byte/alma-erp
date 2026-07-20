@@ -13,6 +13,7 @@ import { intentStage } from './intent';
 import { complexityStage } from './complexity';
 import { planningStage } from './planning';
 import { riskStage } from './risk';
+import { dedupStage } from './dedup';
 
 export const ADMISSION_STAGES: AdmissionStage[] = [
   normalizeStage, // SPEC-012
@@ -21,7 +22,7 @@ export const ADMISSION_STAGES: AdmissionStage[] = [
   complexityStage, // SPEC-016
   planningStage, // SPEC-017
   riskStage, // SPEC-018
-  // SPEC-019 dedup — appended below.
+  dedupStage, // SPEC-019 (runs last — dedups a fully-classified request)
 ];
 
 export function admissionPipeline(): AdmissionStage[] {
