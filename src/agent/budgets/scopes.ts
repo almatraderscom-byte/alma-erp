@@ -27,3 +27,8 @@ export function workflowBudget(workflowId: string, limitNanoUsd: number): Budget
 export function turnBudget(correlationId: string, limitNanoUsd: number): Budget {
   return { scope: 'turn', key: `turn:${correlationId}`, limitNanoUsd };
 }
+
+/** SPEC-036 — per single model-call ceiling (one call/step). */
+export function modelCallBudget(correlationId: string, stepId: string, limitNanoUsd: number): Budget {
+  return { scope: 'model_call', key: `call:${correlationId}:${stepId}`, limitNanoUsd };
+}
