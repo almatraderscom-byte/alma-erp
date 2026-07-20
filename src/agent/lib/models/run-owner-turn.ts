@@ -36,6 +36,7 @@ import {
 } from '@/agent/lib/workflow-run'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
+import { enforcementEnabled, guardToolCall } from '@/agent/enforcement/enforced-tool-runner'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
@@ -1569,7 +1570,28 @@ async function* runAlternateProviderTurn(
         // Re-emit tool_start with the parsed input so the UI shows the real target.
         yield { type: 'tool_start', id: call.id, name: call.name, input: call.input }
         const started = Date.now()
-        const result = personalMode
+        // AIOS mandatory enforcement (flag-gated, OFF in prod): force EVERY model's
+        // tool call through policy + autonomy/approval before it can run. A
+        // sensitive action (money/publish/HR/export) is held for owner approval;
+        // routine/read tools run. Identical decision for every model.
+        const aiosGuard = enforcementEnabled()
+          ? guardToolCall({
+              identity: {
+                tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),
+                actorId: 'owner',
+                agentId: model.id,
+                workflowId: String(conversationId ?? 'conversation'),
+                stepId: String(call.id ?? 'step'),
+                correlationId: String(turnId ?? conversationId ?? 'turn'),
+              },
+              model: model.id,
+              toolName: call.name,
+              attributes: call.input as Record<string, unknown>,
+            })
+          : null
+        const result = aiosGuard && !aiosGuard.allow
+          ? { success: false as const, error: aiosGuard.message }
+          : personalMode
           ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization, ownerVoicePref })
           : await executeTool(call.name, call.input, {
             conversationId,
