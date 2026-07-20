@@ -1,0 +1,3 @@
+# finops must be deterministic math — no provider/model/db CALL (provider names/URLs as pricing DATA are expected):
+$ rg call/import signals: fetch(|node:https|node-fetch|axios|from @anthropic-ai|from @google/(genai|generative-ai)|@prisma/client|\$queryRaw|\$executeRaw
+  NONE — cost accounting is pure deterministic math; provider names/URLs appear only as pricing data (INV-01)
