@@ -7,10 +7,11 @@
  * self-contained. `admit()` defaults to this ordered list.
  */
 import type { AdmissionStage } from './gateway';
+import { normalizeStage } from './normalize';
 
 export const ADMISSION_STAGES: AdmissionStage[] = [
-  // SPEC-012 normalize, SPEC-013 fast-path, SPEC-015..018 classifiers,
-  // SPEC-019 dedup — appended in numeric order as each spec lands.
+  normalizeStage, // SPEC-012
+  // SPEC-013 fast-path, SPEC-015..018 classifiers, SPEC-019 dedup — appended below.
 ];
 
 export function admissionPipeline(): AdmissionStage[] {

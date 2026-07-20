@@ -1,0 +1,57 @@
+# SPEC-012 Test Results — Request source normalization
+
+Executable evidence. Runner: vitest (`vitest.config.ts`).
+
+## Unit / contract tests
+
+```text
+$ npx vitest run src/agent/control-plane
+
+ RUN  v4.1.9 /home/user/alma-erp
+
+ ❯ src/agent/control-plane/admission/__tests__/gateway.test.ts (6 tests | 1 failed) 15ms
+     × ships an empty default registry (baseline door is identity-only) 7ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/agent/control-plane/admission/__tests__/gateway.test.ts > admit — the single door > ships an empty default registry (baseline door is identity-only)
+AssertionError: expected [ { id: 'normalize', …(1) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "id": "normalize",
++     "run": [Function run],
++   },
++ ]
+
+ ❯ src/agent/control-plane/admission/__tests__/gateway.test.ts:75:30
+     73|
+     74|   it('ships an empty default registry (baseline door is identity-only)…
+     75|     expect(ADMISSION_STAGES).toEqual([]);
+       |                              ^
+     76|   });
+     77| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 14 passed (15)
+   Start at  07:30:02
+   Duration  408ms (transform 205ms, setup 0ms, import 286ms, tests 21ms, environment 0ms)
+```
+
+## Scoped typecheck
+
+```text
+$ npx tsc --noEmit -p src/agent/control-plane/tsconfig.json
+(exit 0 — 0 type errors)
+```
+
+All required cases (valid, malformed, missing-tenant, missing-actor,
+oversized, version-mismatch, reason-code mapping) are covered by the suite above.
+
