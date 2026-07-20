@@ -33,3 +33,23 @@ export function humanPrincipal(identity: ExecutionIdentity, roles: string[] = []
   if (!parsed.success) throw new Error(`invalid HumanPrincipal: ${parsed.error.issues[0]?.message}`);
   return parsed.data as HumanPrincipal;
 }
+
+/** SPEC-102 — an agent (the AI acting on the owner's behalf). */
+export interface AgentPrincipal {
+  kind: 'agent';
+  tenantId: string;
+  agentId: string;
+  roles: string[];
+}
+export const agentPrincipalSchema: z.ZodType<AgentPrincipal> = z.object({
+  kind: z.literal('agent'),
+  tenantId: z.string().min(1),
+  agentId: z.string().min(1),
+  roles: z.array(z.string()),
+}) as z.ZodType<AgentPrincipal>;
+export function agentPrincipal(identity: ExecutionIdentity, roles: string[] = []): AgentPrincipal {
+  const p: AgentPrincipal = { kind: 'agent', tenantId: identity.tenantId, agentId: identity.agentId ?? identity.actorId, roles: [...roles] };
+  const parsed = agentPrincipalSchema.safeParse(p);
+  if (!parsed.success) throw new Error(`invalid AgentPrincipal: ${parsed.error.issues[0]?.message}`);
+  return parsed.data as AgentPrincipal;
+}
