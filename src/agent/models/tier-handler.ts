@@ -19,6 +19,7 @@ import type { ModelInvocationPayload, ModelInvocationValue } from './contract';
 import type { ModelTier, TierDefinition } from './tiers';
 import type { TierModelRegistry } from './registry';
 import type { Clock } from './ports';
+import { createT0Handler } from './t0';
 
 /** Concrete per-call constraints a handler emits for a provider invocation. */
 export interface TierConstraints {
@@ -54,9 +55,13 @@ export interface TierHandler {
 export type TierHandlerTable = Partial<Record<ModelTier, TierHandler>>;
 
 /**
- * The default handler set. Empty at SPEC-151; each subsequent spec appends its
- * tier handler here (additive). Callers/tests may pass their own table instead.
+ * The default handler set. Each spec appends its tier handler here (additive).
+ * Callers/tests may pass their own table instead.
+ *
+ *   T0 → SPEC-152 (deterministic)
  */
 export function defaultTierHandlers(): TierHandlerTable {
-  return {};
+  return {
+    T0: createT0Handler(),
+  };
 }
