@@ -41,3 +41,9 @@ export function workflowStateBundle(state: Record<string, unknown>, version = '1
   const content = 'WORKFLOW STATE:\n' + JSON.stringify(state, Object.keys(state).sort(), 2);
   return { id: 'workflow_state', kind: 'workflow_state', content, cacheable: false, version };
 }
+
+/** SPEC-046 — relevant memory bundle (dynamic; lowest priority, truncated first). */
+export function memoryBundle(items: string[], version = '1'): ContextBundle {
+  const content = items.length ? 'RELEVANT MEMORY:\n' + items.map((m) => `- ${m}`).join('\n') : '';
+  return { id: 'memory', kind: 'memory', content, cacheable: false, version };
+}
