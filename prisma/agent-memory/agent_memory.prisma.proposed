@@ -1,0 +1,18 @@
+// PROPOSED additive Prisma model — G06 / SPEC-055. NOT applied by this group.
+// Durable semantic memory backed by pgvector (Supabase, per CLAUDE.md Phase 3).
+// The integration session appends this to prisma/schema.prisma and runs an
+// ADDITIVE migration; live DB untouched by G06.
+model AgentMemory {
+  id            String   @id
+  tenantId      String
+  businessId    String?
+  actorId       String
+  text          String
+  embedding     Float[]                      // pgvector column in Supabase
+  tags          String[]
+  createdAt     DateTime
+  expiresAt     DateTime?                    // SPEC-059
+  supersededBy  String?                      // SPEC-059 correction chain
+  @@index([tenantId])
+  @@map("agent_memory")
+}
