@@ -13,9 +13,11 @@
 import type { GatewayStage } from './contract'
 import { schemaValidationStage } from './stages/schema-validation'
 import { identityValidationStage } from './stages/identity-validation'
+import { policyDecisionStage } from './stages/policy-decision'
 
 /** The default production stage order. Grows as each stage spec lands. */
 export const DEFAULT_STAGES: readonly GatewayStage[] = [
   schemaValidationStage, // SPEC-122
   identityValidationStage, // SPEC-123
+  policyDecisionStage, // SPEC-124
 ]

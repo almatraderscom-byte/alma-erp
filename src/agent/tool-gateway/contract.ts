@@ -23,6 +23,8 @@ import {
   validateRequest,
 } from '@/agent/contracts'
 import { z } from 'zod'
+import type { Principal } from '@/agent/identity/principals'
+import type { PolicyResource } from '@/agent/policy'
 
 export const GATEWAY_CONTRACT_VERSION = '1.0.0' as const
 
@@ -65,6 +67,10 @@ export interface GatewayContext {
   deps: GatewayDeps
   /** Tenant the tool operates ON; must match identity.tenantId (cross-tenant guard, SPEC-123). */
   resourceTenantId?: string
+  /** Authenticated principal + target resource for the policy stage (SPEC-124). */
+  principal?: Principal
+  resource?: PolicyResource
+  policyContext?: Record<string, unknown>
   // ── accumulators (set by later stages) ──
   reservation?: { id: string; amountNanoUsd: number }
   obligations?: string[]
