@@ -1,0 +1,3 @@
+# admission code must be deterministic — no direct provider/model/db call:
+$ rg -n "fetch\(|googleapis|openrouter|anthropic|@prisma/client|\$queryRaw" src/agent/control-plane
+  NONE — admission plane is deterministic (INV-01); model calls happen later via Cost Governor
