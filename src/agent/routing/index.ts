@@ -8,3 +8,4 @@
  * estimates and G16 model tiers/adapters; makes no real provider call.
  */
 export * from './performance-records';
+export * from './cost-quality-score';
