@@ -12,3 +12,4 @@
 export * from './adapter';
 export * from './fake-adapter';
 export * from './capabilities';
+export * from './timeout-quota';
