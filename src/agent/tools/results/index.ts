@@ -9,3 +9,4 @@
  */
 export * from './evidence-store'
 export * from './model-view'
+export * from './summarize'
