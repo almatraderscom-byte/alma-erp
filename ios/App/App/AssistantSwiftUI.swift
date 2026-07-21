@@ -273,6 +273,7 @@ struct AgentTimelineEntryWire: Decodable {
 
 struct AgentMessageWire: Decodable {
     let id: String
+    let clientMessageId: String?
     let role: String
     let content: [AgentContentBlock]?
     let thinking: String?
@@ -782,6 +783,8 @@ struct AgentChatMessage: Identifiable, Equatable {
     static func from(_ wire: AgentMessageWire) -> AgentChatMessage {
         var m = AgentChatMessage(id: wire.id, role: wire.role == "user" ? .user : .assistant)
         m.serverId = wire.id
+        m.clientMessageId = wire.clientMessageId
+        if wire.role == "user", wire.clientMessageId != nil { m.outgoingState = .accepted }
         // Canonical selfCorrected (mirrors the server presentation payload's rule):
         // a verify entry or a superseded draft means the answer was rewritten.
         m.selfCorrected = wire.presentation?.selfCorrected == true
@@ -1565,6 +1568,7 @@ final class AssistantVM {
         var sessionIdentity: String? = nil
     }
     private static let queuedOwnerMessagesKey = "alma.assistant.queuedOwnerMessages"
+    private var steeringSubmissions: Set<String> = []
     private(set) var queuedOwnerMessages: [QueuedOwnerMessage] = AssistantVM.loadQueuedOwnerMessages() {
         didSet {
             if queuedOwnerMessages.isEmpty {
@@ -2644,10 +2648,26 @@ final class AssistantVM {
         var incoming = wire.map(AgentChatMessage.from)
         let activeServerIds = Set(incoming.map(\.id))
 
+        // Exact idempotency identity wins. A positional "last local ↔ last
+        // server user" fallback used to pair a newly queued follow-up with the
+        // previous owner message and silently retire the wrong queue item.
+        for serverUser in incoming where serverUser.role == .user {
+            guard let clientMessageId = serverUser.clientMessageId,
+                  let localUser = messages.first(where: {
+                      $0.role == .user && $0.id.hasPrefix("local-")
+                          && $0.clientMessageId == clientMessageId
+                  }) else { continue }
+            _ = claimLocalRowId(serverId: serverUser.id, localId: localUser.id,
+                                activeServerIds: activeServerIds)
+        }
+
         // Pair the optimistic user message + streamed assistant tail with their
         // server rows (last user / last assistant AFTER that user message).
         let lastServerUser = incoming.lastIndex(where: { $0.role == .user })
-        if let localUser = messages.last(where: { $0.role == .user && $0.id.hasPrefix("local-") }),
+        if let localUser = messages.last(where: {
+               $0.role == .user && $0.id.hasPrefix("local-")
+                   && $0.outgoingState != .queued
+           }),
            let uIdx = lastServerUser, localIdByServerId[incoming[uIdx].id] == nil {
             _ = claimLocalRowId(serverId: incoming[uIdx].id, localId: localUser.id,
                                 activeServerIds: activeServerIds)
@@ -3940,6 +3960,19 @@ final class AssistantVM {
         var autoContinueFromTurnId: String? = nil
     }
 
+    private struct SteeringBody: Encodable {
+        let clientMessageId: String
+        let message: String
+        let files: [AgentFileRef]
+    }
+
+    private struct SteeringResponse: Decodable {
+        let success: Bool?
+        let messageId: String?
+        let duplicate: Bool?
+        let turnId: String?
+    }
+
     /// PR 3b — owner tapped the model-switch card: resume the paused turn on the
     /// chosen model (web parity: POST /chat with resume{}, same conversation).
     func resumeModelSwitch(messageId: String, approve: Bool) {
@@ -4037,13 +4070,55 @@ final class AssistantVM {
             askCardId: askCardId, createdAt: Date(),
             sessionIdentity: conversationId == nil ? selectedSessionIdentity : nil)
         queuedOwnerMessages.append(queued)
-        pendingFiles.removeAll { sentPendingIds.contains($0.id) }
+        let queuedAttachmentIds = Set(attachmentIds)
+        pendingFiles.removeAll {
+            sentPendingIds.contains($0.id) || queuedAttachmentIds.contains($0.id)
+        }
         upsertLocalOwnerIntent(
             clientMessageId: intentId, text: text, files: files,
             attachmentIds: attachmentIds, state: .queued)
-        errorToast = "বার্তাটি অপেক্ষায় আছে — চলতি উত্তর শেষ হলে পাঠানো হবে"
+        // Send means accepted by the local durable queue: clear the composer at
+        // once. The visible owner bubble carries the queued state separately.
+        if composerDraft.trimmingCharacters(in: .whitespacesAndNewlines) == text {
+            composerDraft = ""
+        }
+        errorToast = "বার্তাটি চলতি কাজে যোগ হচ্ছে"
         AlmaAgentTickHaptic.ownerSend()
         AlmaTurnLog.event("turn.ownerMessageQueued", "count=\(queuedOwnerMessages.count)")
+        Task { [weak self] in await self?.submitQueuedSteeringIfPossible() }
+    }
+
+    /// Persist queued follow-ups against the active server turn. The unique
+    /// clientMessageId makes retries safe; only a 2xx removes the local fallback.
+    private func submitQueuedSteeringIfPossible() async {
+        guard isStreaming, let turnId = currentTurnId, let cid = conversationId else { return }
+        let eligible = queuedOwnerMessages.filter { queued in
+            queued.conversationId == cid && !steeringSubmissions.contains(queued.id)
+        }
+        for queued in eligible {
+            guard isStreaming, currentTurnId == turnId, conversationId == cid else { return }
+            steeringSubmissions.insert(queued.id)
+            defer { steeringSubmissions.remove(queued.id) }
+            do {
+                let response: SteeringResponse = try await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/turn/\(turnId)/steer",
+                    body: SteeringBody(clientMessageId: queued.id,
+                                       message: queued.text, files: queued.files))
+                guard response.success == true else { continue }
+                queuedOwnerMessages.removeAll { $0.id == queued.id }
+                for index in messages.indices where messages[index].clientMessageId == queued.id {
+                    messages[index].outgoingState = .accepted
+                }
+                let ids = Set(queued.attachmentIds ?? [])
+                if !ids.isEmpty { removeAttachmentCacheFiles(ids) }
+                AlmaTurnLog.event("turn.ownerSteeringAccepted", queued.id)
+            } catch {
+                // The turn may have settled between the local tap and this POST.
+                // Keep the durable local item; terminal drain starts one ordinary
+                // follow-up turn so the owner's instruction is still never lost.
+                AlmaTurnLog.event("turn.ownerSteeringDeferred", "\(error)")
+            }
+        }
     }
 
     private func startPreparedTurn(text: String, files: [AgentFileRef], localImages: [UIImage] = [],
@@ -4811,6 +4886,9 @@ final class AssistantVM {
         if touchedStream, let i = messages.lastIndex(where: { $0.isStreaming }) {
             AgentChatMessage.refreshPhases(on: &messages[i], live: messages[i].text.isEmpty)
             streamGrowthTick &+= 1
+        }
+        if isStreaming, queuedOwnerMessageCount > 0 {
+            Task { [weak self] in await self?.submitQueuedSteeringIfPossible() }
         }
     }
 

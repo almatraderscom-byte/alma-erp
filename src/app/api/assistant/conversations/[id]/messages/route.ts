@@ -75,6 +75,7 @@ export async function GET(
     ...(plan.take ? { take: plan.take } : {}),
     select: {
       id: true,
+      clientRequestId: true,
       role: true,
       content: true,
       tokensIn: true,
@@ -186,6 +187,9 @@ export async function GET(
   // creation time (the turn that asked). Fallback: the last assistant message.
   const syntheticAskByMsg = new Map<string, Array<Record<string, unknown>>>()
   for (const a of askRows) {
+    // A newer owner instruction supersedes an unanswered question. Keep the row
+    // for audit, but do not resurrect its dead card into the live conversation.
+    if (a.status === 'superseded') continue
     if (askCardIds.has(a.id)) continue
     const target =
       assistantMsgs.find((m) => m.createdAt >= a.createdAt) ??
@@ -231,9 +235,9 @@ export async function GET(
     // action row (purged) is treated as 'expired' so the card settles, never
     // re-arming an approve/reject for an action that no longer exists.
     const baseContent = Array.isArray(m.content)
-      ? (m.content as Array<Record<string, unknown>>).map((b) => {
+      ? (m.content as Array<Record<string, unknown>>).flatMap((b) => {
           if (b?.type === 'confirm_card' && typeof b.pendingActionId === 'string') {
-            return {
+            return [{
               ...b,
               status: statusById.get(b.pendingActionId) ?? 'expired',
               failReason: failReasonById.get(b.pendingActionId),
@@ -241,23 +245,25 @@ export async function GET(
               ...(typeof b.summary === 'string'
                 ? { summary: decodeUnicodeEscapes(b.summary) }
                 : {}),
-            }
+            }]
           }
           if (b?.type === 'ask_card' && typeof b.askCardId === 'string') {
-            // Inject the CURRENT ask-card state onto the persisted breadcrumb. A
-            // missing row (purged) settles as 'superseded' so the card can never
-            // re-arm a question that no longer exists.
+            // Inject the CURRENT ask-card state onto the persisted breadcrumb.
+            // Missing/purged/superseded cards are audit-only and stay hidden.
             const row = askById.get(b.askCardId)
-            return {
+            // Superseded questions remain in the audit table, not as duplicate
+            // cards in the chat transcript.
+            if (!row || row.status === 'superseded') return []
+            return [{
               ...b,
-              status: row?.status ?? 'superseded',
-              selectedOption: row?.selectedOption ?? undefined,
+              status: row.status,
+              selectedOption: row.selectedOption ?? undefined,
               ...(typeof b.question === 'string'
                 ? { question: decodeUnicodeEscapes(b.question) }
                 : {}),
-            }
+            }]
           }
-          return b
+          return [b]
         })
       : m.content
     // Append any synthetic cards reconstructed from agent_pending_actions /
@@ -280,6 +286,7 @@ export async function GET(
     const timeline = Array.isArray(u.timeline) ? u.timeline : undefined
     return {
       ...m,
+      clientMessageId: m.clientRequestId ?? undefined,
       content,
       toolCalls,
       cacheCreation,

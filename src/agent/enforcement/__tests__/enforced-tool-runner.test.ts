@@ -6,12 +6,22 @@ const g = (toolName: string, attributes?: Record<string, unknown>, model = 'gemi
   guardToolCall({ identity, model, toolName, attributes });
 
 describe('classifyTool (model-agnostic action classes)', () => {
-  it('maps tools to the right sensitivity class', () => {
-    expect(classifyTool('wallet_refund').klass).toBe('financial');
-    expect(classifyTool('facebook_publish').klass).toBe('publishing');
-    expect(classifyTool('staff_fire').klass).toBe('hr');
-    expect(classifyTool('export_customers').klass).toBe('export');
-    expect(classifyTool('order_lookup').klass).toBe('routine');
+  it('uses exact registered names, never broad substrings', () => {
+    expect(classifyTool('send_whatsapp').klass).toBe('publishing');
+    // These consume an already-visible canonical approval; a second AIOS card
+    // would be duplicate approval, so this extra door treats them as routine.
+    expect(classifyTool('approve_pending_dispatch').klass).toBe('routine');
+    expect(classifyTool('approve_pending_staff_message').klass).toBe('routine');
+    expect(classifyTool('get_fb_recent_posts').klass).toBe('routine');
+    expect(classifyTool('get_unanswered_comments').klass).toBe('routine');
+    expect(classifyTool('get_expense_summary').klass).toBe('routine');
+    expect(classifyTool('read_screenshot').klass).toBe('routine');
+    expect(classifyTool('meta_ads_get_ad_accounts').klass).toBe('routine');
+  });
+
+  it('fails open for an unknown name so the extra door cannot break a turn', () => {
+    expect(classifyTool('future_internal_context_tool').klass).toBe('routine');
+    expect(g('future_internal_context_tool').allow).toBe(true);
   });
 });
 
@@ -20,24 +30,20 @@ describe('guardToolCall — every model forced through the same guardrails', () 
     const d = g('order_lookup');
     expect(d.allow).toBe(true);
   });
-  it('a money action NEEDS_APPROVAL (ceiling 0 → always ask)', () => {
-    const d = g('wallet_refund', { amountNano: 5000 });
-    expect(d.allow).toBe(false);
-    if (!d.allow) { expect(d.status).toBe('NEEDS_APPROVAL'); expect(d.klass).toBe('financial'); }
-  });
   it('a public publish NEEDS_APPROVAL', () => {
-    const d = g('facebook_publish', { audience: 'public' });
+    const d = g('send_whatsapp', { audience: 'external' });
     expect(d.allow).toBe(false);
     if (!d.allow) expect(d.status).toBe('NEEDS_APPROVAL');
   });
   it('the SAME decision holds regardless of which model asked', () => {
     for (const m of ['gemini-3.1-pro', 'claude-opus-4-8', 'or-deepseek-v4-flash', 'or-qwen3-max']) {
-      const d = guardToolCall({ identity, model: m, toolName: 'wallet_refund', attributes: { amountNano: 9999 } });
+      const d = guardToolCall({ identity, model: m, toolName: 'send_whatsapp', attributes: { audience: 'external' } });
       expect(d.allow).toBe(false); // no model can bypass
     }
   });
-  it('unknown money amount fails closed (asks)', () => {
-    expect(g('payroll_run').allow).toBe(false);
+  it('a natively-staged urgent call creates only its canonical approval', () => {
+    expect(g('send_urgent_alert', { tier: 3 }).allow).toBe(true);
+    expect(g('send_urgent_alert', { tier: 2 }).allow).toBe(false);
   });
 });
 
@@ -48,14 +54,14 @@ describe('enforcedExecuteTool — flag gates production behaviour', () => {
   it('OFF (default) → runs the real tool unchanged', async () => {
     process.env.AIOS_ENFORCE = '';
     expect(enforcementEnabled()).toBe(false);
-    const r = await enforcedExecuteTool({ identity, model: 'gemini-3.1-pro', toolName: 'wallet_refund', attributes: { amountNano: 5000 } }, async () => ({ success: true, ran: true }));
+    const r = await enforcedExecuteTool({ identity, model: 'gemini-3.1-pro', toolName: 'send_whatsapp' }, async () => ({ success: true, ran: true }));
     expect(r).toEqual({ success: true, ran: true });
   });
 
   it('ON → blocks a sensitive call and does NOT run the real tool', async () => {
     process.env.AIOS_ENFORCE = '1';
     let ran = false;
-    const r = await enforcedExecuteTool({ identity, model: 'gemini-3.1-pro', toolName: 'wallet_refund', attributes: { amountNano: 5000 } }, async () => { ran = true; return { success: true }; });
+    const r = await enforcedExecuteTool({ identity, model: 'gemini-3.1-pro', toolName: 'send_whatsapp' }, async () => { ran = true; return { success: true }; });
     expect(ran).toBe(false);
     expect((r as { errorCode: string }).errorCode).toBe('needs_approval');
   });
@@ -63,7 +69,18 @@ describe('enforcedExecuteTool — flag gates production behaviour', () => {
   it('ON → runs a routine tool for real', async () => {
     process.env.AIOS_ENFORCE = '1';
     let ran = false;
-    await enforcedExecuteTool({ identity, model: 'gemini-3.1-pro', toolName: 'order_lookup' }, async () => { ran = true; return { success: true }; });
+    await enforcedExecuteTool({ identity, model: 'gemini-3.1-pro', toolName: 'read_screenshot' }, async () => { ran = true; return { success: true }; });
     expect(ran).toBe(true);
+  });
+
+  it('ON → a benign tool executes exactly once (no retry/double-run trigger)', async () => {
+    process.env.AIOS_ENFORCE = 'true';
+    let executions = 0;
+    const result = await enforcedExecuteTool(
+      { identity, model: 'or-qwen3-max', toolName: 'get_unanswered_comments' },
+      async () => { executions += 1; return { success: true, replyCount: 1 }; },
+    );
+    expect(executions).toBe(1);
+    expect(result).toEqual({ success: true, replyCount: 1 });
   });
 });

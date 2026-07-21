@@ -715,7 +715,57 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     resumeOpts?: { approve: boolean; rememberChoice?: boolean; fallbackModelId?: string },
     autoContinueFromTurnId?: string,
   ) => {
-    if (streaming) return
+    if (streaming) {
+      // `setStreaming(true)` can render the queue-capable composer a few frames
+      // before the server's conversation/turn ids arrive. Keep ownership of this
+      // send until those durable ids exist instead of clearing and dropping it.
+      let turnId = activeTurnIdRef.current
+      let conversationId = activeConvIdRef.current
+      for (let attempt = 0; attempt < 40 && (!turnId || !conversationId); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        turnId = activeTurnIdRef.current
+        conversationId = activeConvIdRef.current
+      }
+      if (!turnId || !conversationId) {
+        toast.error('চলতি কাজটির queue তৈরি হয়নি — বার্তাটি input-এ ফিরিয়ে দেওয়া হয়েছে')
+        throw new Error('running turn identifiers unavailable')
+      }
+      const clientMessageId = crypto.randomUUID()
+      const fileRefs = pendingFiles.map((f) => f.remote).filter((f): f is NonNullable<typeof f> => Boolean(f))
+      if (fileRefs.length !== pendingFiles.length) {
+        toast.error('Attachment upload শেষ হয়নি — বার্তাটি input-এ ফিরিয়ে দেওয়া হয়েছে')
+        throw new Error('attachment upload incomplete')
+      }
+      const optimisticMessageId = nextId('user-queued')
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: optimisticMessageId,
+          role: 'user',
+          text,
+          createdAt: new Date().toISOString(),
+          files: pendingFiles.map((pf, idx) => ({
+            previewUrl: pf.previewUrl,
+            mediaType: pf.file.type,
+            path: fileRefs[idx]?.path,
+          })),
+        },
+      ])
+      try {
+        const res = await fetch(`/api/assistant/turn/${turnId}/steer`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientMessageId, message: text, files: fileRefs }),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        toast.success('বার্তাটি চলতি কাজে যোগ হয়েছে')
+      } catch (err) {
+        setMessages((prev) => prev.filter((message) => message.id !== optimisticMessageId))
+        toast.error(`বার্তাটি queue-তে যোগ হয়নি: ${err instanceof Error ? err.message : String(err)}`)
+        throw err
+      }
+      return
+    }
     // Only a real owner turn resets the bounded continuation budget.
     if (!resumeOpts && !autoContinueFromTurnId) autoContinueCountRef.current = 0
     pendingAutoContinueRef.current = null

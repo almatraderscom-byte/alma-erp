@@ -102,6 +102,9 @@ async function runContinuationInline(opts: { conversationId: string; message: st
 export async function enqueueAgentContinuation(opts: {
   conversationId: string
   message: string
+  /** Transport correctness (e.g. a last-moment owner steer) is not an optional
+   * approval convenience and must ignore the auto-continue preference. */
+  force?: boolean
   /** Reuse an already-visible progress turn (created at approve time so the app
    * shows the working spinner IMMEDIATELY) instead of opening a second one —
    * one coherent "active" span from the owner's tap to the final reply
@@ -109,7 +112,7 @@ export async function enqueueAgentContinuation(opts: {
   turnId?: string | null
 }): Promise<void> {
   if (!opts.conversationId) return
-  if (!(await autoContinueEnabled())) {
+  if (!opts.force && !(await autoContinueEnabled())) {
     if (opts.turnId) await finalizeTurnIfRunning(opts.turnId, 'done')
     return
   }

@@ -36,7 +36,7 @@ import {
 } from '@/agent/lib/workflow-run'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
-import { enforcementEnabled, guardToolCall } from '@/agent/enforcement/enforced-tool-runner'
+import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/agent/enforcement/enforced-tool-runner'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
@@ -48,6 +48,7 @@ import { captureAgentError } from '@/agent/lib/sentry'
 import { logCost } from '@/agent/lib/cost-events'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { isTurnCancelRequested } from '@/agent/lib/turn-status'
+import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import {
   shouldNudgeAdapterIntent,
@@ -1146,6 +1147,7 @@ async function* runAlternateProviderTurn(
   // Live-browser turns raise this cap (see BROWSER_TURN_MAX_ITERATIONS) — a real
   // UI task is 15–30 look→act rounds and must not die silently at the default cap.
   let maxIterations = MAX_TOOL_ITERATIONS
+  const claimedSteeringIds = new Set<string>()
 
   // LG-3: the action graph staged a card (thread paused at its interrupt) —
   // emit the ordinary confirm-card event + a fixed Bangla staging line; the
@@ -1191,6 +1193,17 @@ async function* runAlternateProviderTurn(
       // Owner hit Stop — cross-instance cancel flag (see core.ts for rationale).
       if (await isTurnCancelRequested(turnId)) { canceled = true; break }
 
+      // Pull durable owner follow-ups before every model round so a running job
+      // adapts in place instead of waiting for a second turn.
+      const steering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
+      for (const item of steering) claimedSteeringIds.add(item.id)
+      if (steering.length > 0) {
+        messages = [
+          ...messages,
+          ...steering.map((item) => ({ role: 'user' as const, content: item.prompt })),
+        ]
+      }
+
       const calls: Array<{ id: string; name: string; input: Record<string, unknown>; thoughtSignature?: string }> = []
       const toolNames = new Map<string, string>()
       let iterationText = ''
@@ -1231,7 +1244,7 @@ async function* runAlternateProviderTurn(
       // the request and bounce the owner to the cheap-head fallback.
       // A staged approval card ends the working part of the turn: everything
       // past it is spend on work the owner may reject (and it buries the card).
-      const cardStaged = confirmCardsEmitted > 0
+      const cardStaged = confirmCardsEmitted > 0 || emittedAskCards.length > 0
       const iterationTools =
         nearDeadline || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
           ? []
@@ -1361,6 +1374,23 @@ async function* runAlternateProviderTurn(
       }
 
       if (calls.length === 0 || signal?.aborted) {
+        // A follow-up can land while the provider is producing its final draft.
+        // Claim once more before committing it; the same turn then re-runs with
+        // Boss's latest instruction and the stale draft stays audit-only.
+        const lateSteering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
+        if (lateSteering.length > 0 && !signal?.aborted) {
+          for (const item of lateSteering) claimedSteeringIds.add(item.id)
+          for (let ti = timeline.length - 1; ti >= 0; ti--) {
+            const te = timeline[ti]
+            if (te.t === 'text') { te.state = 'superseded'; break }
+          }
+          messages = [
+            ...messages,
+            ...(iterationText.trim() ? [{ role: 'assistant' as const, content: iterationText }] : []),
+            ...lateSteering.map((item) => ({ role: 'user' as const, content: item.prompt })),
+          ]
+          continue
+        }
         // Fully empty round → nudge the model to continue instead of silently
         // ending the turn with a blank message. Bounded to 2 retries. Applies to
         // the FIRST round too (2026-07-12: gemini-2.5-flash answered the very
@@ -1589,7 +1619,18 @@ async function* runAlternateProviderTurn(
             })
           : null
         const result = aiosGuard && !aiosGuard.allow
-          ? { success: false as const, error: aiosGuard.message }
+          ? aiosGuard.status === 'NEEDS_APPROVAL'
+            ? await stageEnforcedToolApproval({
+                conversationId,
+                businessId,
+                turnId,
+                toolCallId: call.id,
+                toolName: call.name,
+                toolInput: call.input,
+                model: model.id,
+                klass: aiosGuard.klass as Exclude<typeof aiosGuard.klass, 'routine'>,
+              })
+            : { success: false as const, error: aiosGuard.message }
           : personalMode
           ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization, ownerVoicePref })
           : await executeTool(call.name, call.input, {
@@ -1702,20 +1743,20 @@ async function* runAlternateProviderTurn(
             }
           }
           if (typeof d.askCardId === 'string' && Array.isArray(d.options)) {
-            yield {
-              type: 'ask_card',
-              askCardId: d.askCardId,
-              question: typeof d.question === 'string' ? d.question : '',
-              options: d.options as string[],
+            if (!emittedAskCards.some((card) => card.askCardId === d.askCardId)) {
+              yield {
+                type: 'ask_card',
+                askCardId: d.askCardId,
+                question: typeof d.question === 'string' ? d.question : '',
+                options: d.options as string[],
+              }
+              emittedAskCards.push({
+                type: 'ask_card',
+                askCardId: d.askCardId,
+                question: typeof d.question === 'string' ? d.question : '',
+                options: d.options.map(String),
+              })
             }
-            // Breadcrumb so the question card re-renders after reload / poll (the
-            // durable agent_ask_cards row supplies live status at read time).
-            emittedAskCards.push({
-              type: 'ask_card',
-              askCardId: d.askCardId,
-              question: typeof d.question === 'string' ? d.question : '',
-              options: d.options.map(String),
-            })
           }
         }
 

@@ -3,9 +3,28 @@
  */
 import { prisma } from '@/lib/prisma'
 import type { AgentTool } from './registry'
+import { createHash } from 'crypto'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
+
+function normalized(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+/** ask_user is for missing information, never a post-work review/permission loop. */
+export function shouldCreateAskCard(input: {
+  ownerText: string
+  question: string
+}): boolean {
+  const owner = normalized(input.ownerText)
+  const question = normalized(input.question)
+  const ownerAskedForCopy = /(caption|primary\s*text|content|copy|ক্যাপশন).*(likh|lekho|লিখ|write|draft|detail|বিস্তারিত)|(likh|লিখ|write|draft).*(caption|primary\s*text|content|copy|ক্যাপশন)/i.test(owner)
+  const ownerAskedToPublish = /(paste|পেস্ট|post|পোস্ট|publish|ads?\s*manager|send|পাঠা)/i.test(owner)
+  const reviewOrNewEffect = /(কেমন\s*লাগ|ঠিক\s*আছে|paste|পেস্ট|post|পোস্ট|publish|ads?\s*manager|send|পাঠাব)/i.test(question)
+  if (ownerAskedForCopy && !ownerAskedToPublish && reviewOrNewEffect) return false
+  return true
+}
 
 const ask_user: AgentTool = {
   name: 'ask_user',
@@ -41,6 +60,24 @@ const ask_user: AgentTool = {
     if (!conversationId) return { success: false, error: 'conversationId is required' }
 
     try {
+      const latestOwner = await db.agentMessage.findFirst({
+        where: { conversationId, role: 'user' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { id: true, content: true, createdAt: true },
+      })
+      const ownerText = Array.isArray(latestOwner?.content)
+        ? latestOwner.content
+            .filter((b: unknown) => b && typeof b === 'object' && (b as { type?: unknown }).type === 'text')
+            .map((b: unknown) => String((b as { text?: unknown }).text ?? ''))
+            .join('\n')
+        : ''
+      if (!shouldCreateAskCard({ ownerText, question })) {
+        return {
+          success: false,
+          error: 'Boss already gave a clear drafting instruction. Complete it in chat; do not ask for review or permission to publish elsewhere.',
+        }
+      }
+
       // Phase 5: bind the question to the conversation's single in-flight
       // workflow AT CREATION (both head paths run this handler), so the owner's
       // answer can move the template state machine (e.g. image preview confirm).
@@ -52,22 +89,70 @@ const ask_user: AgentTool = {
         if (active.length === 1) workflowRunId = active[0].id
       } catch { /* fail-open — the card just goes unbound */ }
 
-      const card = await db.agentAskCard.create({
-        data: {
+      const serializedOptions = JSON.stringify(options)
+      const existing = await db.agentAskCard.findFirst({
+        where: { conversationId, status: 'pending' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      })
+      // A second ask_user call during the SAME owner request always reuses the
+      // first card, even if the model rephrased it. A genuinely newer owner
+      // message supersedes an older unanswered card and may ask one new thing.
+      if (existing && latestOwner?.createdAt && existing.createdAt >= latestOwner.createdAt) {
+        let existingOptions: string[] = options
+        try {
+          const parsed = JSON.parse(String(existing.options))
+          if (Array.isArray(parsed)) existingOptions = parsed.map(String)
+        } catch { /* keep validated current options as display fallback */ }
+        return {
+          success: true,
+          data: {
+            askCardId: existing.id as string,
+            question: existing.question as string,
+            options: existingOptions,
+            message: 'Existing clarifying question reused — wait for the owner choice.',
+            deduplicated: true,
+          },
+        }
+      }
+
+      // One conversation can wait on only one current clarification. A newer
+      // owner request supersedes any older unresolved row before its new card.
+      await db.agentAskCard.updateMany({
+        where: { conversationId, status: 'pending' },
+        data: { status: 'superseded' },
+      })
+      // Deterministic per owner-message identity. Concurrent/retried model calls
+      // can rephrase the question or receive different tool-call ids, but they
+      // still upsert ONE database row and therefore ONE actionable UI card.
+      const ownerRequestKey = String(latestOwner?.id ?? `${conversationId}:${ownerText}`)
+      const deterministicCardId = `ask_${createHash('sha256')
+        .update(`${conversationId}:${ownerRequestKey}`)
+        .digest('hex').slice(0, 32)}`
+      const card = await db.agentAskCard.upsert({
+        where: { id: deterministicCardId },
+        create: {
+          id: deterministicCardId,
           conversationId,
           question,
-          options: JSON.stringify(options),
+          options: serializedOptions,
           status: 'pending',
           ...(workflowRunId ? { workflowRunId } : {}),
         },
+        update: {},
       })
+
+      let persistedOptions = options
+      try {
+        const parsed = JSON.parse(String(card.options))
+        if (Array.isArray(parsed)) persistedOptions = parsed.map(String)
+      } catch { /* keep the validated options for display */ }
 
       return {
         success: true,
         data: {
           askCardId: card.id as string,
-          question,
-          options,
+          question: String(card.question),
+          options: persistedOptions,
           message: 'Clarifying question shown to owner — wait for their choice.',
         },
       }

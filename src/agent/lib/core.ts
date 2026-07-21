@@ -21,7 +21,7 @@ import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
 import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearchDeferral, TOOL_SEARCH_ENABLED, SLIM_ROUTER_ENABLED } from '@/agent/tools/select-tools'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool, type ToolResult } from '@/agent/tools/registry'
-import { enforcementEnabled, guardToolCall } from '@/agent/enforcement/enforced-tool-runner'
+import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/agent/enforcement/enforced-tool-runner'
 import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -42,6 +42,7 @@ import { captureAgentError } from '@/agent/lib/sentry'
 import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import { notifyOwner } from '@/agent/lib/notify-owner'
 import { isTurnCancelRequested } from '@/agent/lib/turn-status'
+import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { logCost } from '@/agent/lib/cost-events'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
@@ -1070,6 +1071,7 @@ export async function* runAgentTurn(
   // Live-browser turns raise this cap (see BROWSER_TURN_MAX_ITERATIONS) — a real
   // UI task is 15–30 look→act rounds and must not die silently at the default cap.
   let maxIterations = MAX_TOOL_ITERATIONS
+  const claimedSteeringIds = new Set<string>()
 
   try {
     for (let iteration = 0; iteration < maxIterations; iteration++) {
@@ -1080,6 +1082,18 @@ export async function* runAgentTurn(
       // signal. Stop persisting/answering and exit silently; the cancel endpoint
       // already set the terminal status.
       if (await isTurnCancelRequested(turnId)) { canceled = true; break }
+
+      const steering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
+      for (const item of steering) claimedSteeringIds.add(item.id)
+      if (steering.length > 0) {
+        messages = [
+          ...messages,
+          ...steering.map((item) => ({
+            role: 'user' as const,
+            content: [{ type: 'text' as const, text: item.prompt }],
+          })),
+        ]
+      }
 
       // Serverless deadline close → no more tools; force a Bangla progress
       // wrap-up instead of the function dying mid-task with a blank reply.
@@ -1096,7 +1110,8 @@ export async function* runAgentTurn(
       // expensive head physically cannot call another read/write tool — it must
       // either answer now or hand off to the cheap worker.
       const overBudget = headCanDelegate && headToolRounds >= HEAD_TOOL_BUDGET
-      const iterationTools = nearDeadline ? [] : overBudget ? delegateOnlyTools : toolsForModel
+      const cardStaged = emittedConfirmCards.length > 0 || emittedAskCards.length > 0
+      const iterationTools = nearDeadline || cardStaged ? [] : overBudget ? delegateOnlyTools : toolsForModel
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [
@@ -1208,6 +1223,38 @@ export async function* runAgentTurn(
       )
 
       if (toolUseBlocks.length === 0 || signal?.aborted) {
+        const lateSteering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
+        if (lateSteering.length > 0 && !signal?.aborted) {
+          for (const item of lateSteering) claimedSteeringIds.add(item.id)
+          // Native Claude streams its draft before we know this final round has
+          // no tool call. Retire that now-stale prose so the replacement is the
+          // ONE visible answer, not text appended as a conflicting second reply.
+          yield {
+            type: 'verification_retry',
+            attempt: 1,
+            maxAttempts: 1,
+            categories: ['owner_steering'],
+            snippets: [],
+          }
+          for (let ti = timeline.length - 1; ti >= 0; ti--) {
+            const te = timeline[ti]
+            if (te.t === 'text') { te.state = 'superseded'; break }
+          }
+          timeline.push({ t: 'verify', attempt: 1, max: 1 })
+          assistantTurns.pop()
+          messages = [
+            ...messages,
+            {
+              role: 'assistant',
+              content: currentBlocks as unknown as Anthropic.Messages.ContentBlockParam[],
+            },
+            ...lateSteering.map((item) => ({
+              role: 'user' as const,
+              content: [{ type: 'text' as const, text: item.prompt }],
+            })),
+          ]
+          continue
+        }
         if (!signal?.aborted && verifyRetries < MAX_VERIFY_RETRIES) {
           const finalText = currentBlocks
             .filter((b): b is Extract<CollectedBlock, { type: 'text' }> => b.type === 'text')
@@ -1378,7 +1425,18 @@ export async function* runAgentTurn(
             })
           : null
         const result = aiosGuard && !aiosGuard.allow
-          ? { success: false as const, error: aiosGuard.message }
+          ? aiosGuard.status === 'NEEDS_APPROVAL'
+            ? await stageEnforcedToolApproval({
+                conversationId,
+                businessId,
+                turnId,
+                toolCallId: tb.id,
+                toolName: tb.name,
+                toolInput: tb.input,
+                model: chatModel.id,
+                klass: aiosGuard.klass as Exclude<typeof aiosGuard.klass, 'routine'>,
+              })
+            : { success: false as const, error: aiosGuard.message }
           : personalMode
           ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref })
           : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization, ownerVoicePref })
@@ -1563,21 +1621,21 @@ export async function* runAgentTurn(
             }
           }
           if (typeof d.askCardId === 'string' && Array.isArray(d.options)) {
-            askCardsEmitted++
-            yield {
-              type: 'ask_card',
-              askCardId: d.askCardId,
-              question: typeof d.question === 'string' ? d.question : '',
-              options: d.options as string[],
+            if (!emittedAskCards.some((card) => card.askCardId === d.askCardId)) {
+              askCardsEmitted++
+              yield {
+                type: 'ask_card',
+                askCardId: d.askCardId,
+                question: typeof d.question === 'string' ? d.question : '',
+                options: d.options as string[],
+              }
+              emittedAskCards.push({
+                type: 'ask_card',
+                askCardId: d.askCardId,
+                question: typeof d.question === 'string' ? d.question : '',
+                options: d.options.map(String),
+              })
             }
-            // Breadcrumb so the question card re-renders after reload / poll (the
-            // durable agent_ask_cards row supplies live status at read time).
-            emittedAskCards.push({
-              type: 'ask_card',
-              askCardId: d.askCardId,
-              question: typeof d.question === 'string' ? d.question : '',
-              options: d.options.map(String),
-            })
           }
         }
 
