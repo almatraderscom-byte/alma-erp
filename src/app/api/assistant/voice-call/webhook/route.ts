@@ -15,10 +15,10 @@ import { type NextRequest } from 'next/server'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
-import { notifyOwner } from '@/agent/lib/notify-owner'
+import { dispatchVoiceCallDeliveries, persistVoiceCallReport } from '@/agent/lib/voice-call-delivery'
 
 export const runtime = 'nodejs'
-export const maxDuration = 30
+export const maxDuration = 120
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -111,53 +111,38 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (record) {
-    await db.agentVoiceCall.update({
-      where: { id: record.id },
-      data: {
-        elevenConvId: convId,
-        status: 'completed',
-        transcript,
-        summary,
-        durationSecs,
-        costCredits,
-        callSid: record.callSid ?? callSid,
-        endedAt: new Date(),
-      },
-    })
-  } else {
+  if (!record) {
     // Unmatched call (e.g. inbound or pre-feature). Store for the record anyway.
     record = await db.agentVoiceCall.create({
       data: {
         elevenConvId: convId,
         toNumber: data?.metadata?.phone_call?.external_number ?? 'unknown',
-        status: 'completed',
-        transcript,
-        summary,
-        durationSecs,
-        costCredits,
+        status: 'report_pending',
+        provider: 'elevenlabs',
         callSid,
-        endedAt: new Date(),
       },
+    })
+  } else if (!record.elevenConvId) {
+    record = await db.agentVoiceCall.update({
+      where: { id: record.id },
+      data: { elevenConvId: convId },
     })
   }
 
-  // Push the owner the result — who was called, how long, and what was said.
-  try {
-    const who = record.recipientName || record.toNumber || 'কল'
-    const mins = durationSecs != null ? `${Math.round(durationSecs / 60)} মিনিট` : ''
-    const lines = transcript
-      .filter((t) => t.message)
-      .map((t) => `${t.role === 'agent' ? '🗣️ এজেন্ট' : '👤 ' + who}: ${t.message}`)
-      .join('\n')
-    const message =
-      `📞 কল শেষ — ${who}${mins ? ` (${mins})` : ''}\n\n` +
-      (summary ? `সারাংশ: ${summary}\n\n` : '') +
-      (lines ? `কথোপকথন:\n${lines}`.slice(0, 1500) : 'কোনো কথোপকথন পাওয়া যায়নি।')
-    await notifyOwner({ tier: 2, title: `কল শেষ — ${who}`, message, category: 'report' })
-  } catch (err) {
-    console.warn('[voice-call webhook] owner notify failed:', err instanceof Error ? err.message : String(err))
-  }
+  await persistVoiceCallReport({
+    callRecordId: record.id,
+    callSid,
+    transcript,
+    summary,
+    durationSecs,
+    costBdt: costCredits,
+    status: 'completed',
+    provider: 'elevenlabs',
+  })
+  const deliveries = await dispatchVoiceCallDeliveries(record.id, 1, ['telegram']).catch((err) => {
+    console.warn('[voice-call webhook] immediate delivery failed; cron will retry:', err instanceof Error ? err.message : String(err))
+    return []
+  })
 
-  return Response.json({ ok: true, callId: record.id })
+  return Response.json({ ok: true, callId: record.id, deliveries })
 }

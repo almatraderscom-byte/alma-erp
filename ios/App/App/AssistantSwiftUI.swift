@@ -6563,7 +6563,7 @@ final class AssistantVM {
             }
             do {
                 let data = try await AssistantNet.uploadMultipart(
-                    path: "/api/assistant/transcribe", fileField: "file",
+                    path: "/api/assistant/transcribe", fileField: "audio",
                     filename: "dictation.m4a", mime: "audio/mp4", data: audio)
                 let t = try JSONDecoder().decode(TranscribeResponse.self, from: data)
                 if let text = t.text, !text.isEmpty {
@@ -8755,6 +8755,10 @@ struct AgentConfirmCardView: View {
         }
     }
     private var statusLabel: String {
+        if card.actionType == "agent_voice_call" {
+            if card.status == "approved" { return "কল চলছে — রিপোর্টের অপেক্ষা" }
+            if card.status == "executed" { return "কল শেষ — রিপোর্ট পাওয়া গেছে" }
+        }
         switch card.status {
         case "approved": return "অনুমোদিত"
         case "executed": return "সম্পন্ন হয়েছে"

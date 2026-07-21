@@ -114,7 +114,11 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
   // called, instead of the card silently vanishing on refresh. Live cards (from
   // the SSE stream) never set resolvedStatus, so they keep the interactive flow.
   if (action.resolvedStatus && action.resolvedStatus !== 'pending') {
-    const rec = RESOLVED_RECORD[action.resolvedStatus] ?? RESOLVED_RECORD.expired
+    const rec = action.actionType === 'agent_voice_call' && action.resolvedStatus === 'approved'
+      ? { icon: '📞', label: 'কল চলছে', tone: 'border tone-amber', text: 'ডায়াল হয়েছে — terminal report-এর অপেক্ষা' }
+      : action.actionType === 'agent_voice_call' && action.resolvedStatus === 'executed'
+        ? { icon: '✅', label: 'কল শেষ', tone: 'border tone-green', text: 'রিপোর্ট সংরক্ষিত ও delivery শুরু হয়েছে' }
+        : RESOLVED_RECORD[action.resolvedStatus] ?? RESOLVED_RECORD.expired
     return (
       <motion.div
         initial={{ opacity: 0, y: 6 }}

@@ -88,7 +88,7 @@ export function getVoiceCallConfig(): VoiceCallConfig {
   const enabled =
     killSwitch &&
     (provider === 'ngs'
-      ? Boolean(ngsApiKey && ngsApiSecret && ngsLiveWsUrl)
+      ? Boolean(ngsApiKey && ngsApiSecret && ngsLiveWsUrl && internalToken)
       : provider === 'relay' || provider === 'sarvam'
         ? Boolean(relayWssUrl && twilioAccountSid && twilioAuthToken && twilioFromNumber && internalToken)
         : Boolean(apiKey && agentId && agentPhoneNumberId))
@@ -121,6 +121,7 @@ export function voiceCallUnavailableReason(config = getVoiceCallConfig()): strin
   if (config.provider === 'ngs') {
     if (!config.ngsApiKey || !config.ngsApiSecret) return 'NGS_API_KEY / NGS_API_SECRET সেট করা নেই (infosoftbd Programmable Voice API)।'
     if (!config.ngsLiveWsUrl) return 'NGS_LIVE_WS_URL সেট করা নেই — Gemini Live bot-এর ws ঠিকানা বসান (যেমন ws://31.97.237.40:8766/ws)।'
+    if (!config.internalToken) return 'AGENT_INTERNAL_TOKEN সেট করা নেই — call stream signing ও terminal report-এর জন্য এটি আবশ্যক।'
     return null
   }
   if (config.provider === 'relay' || config.provider === 'sarvam') {
@@ -161,6 +162,8 @@ export interface PlaceCallInput {
   /** First line the agent speaks when the person picks up (Bangla). */
   firstMessage: string
   conversationId?: string | null
+  /** Approval row that authorized this asynchronous call. */
+  pendingActionId?: string | null
   /** Sarvam two-way path only: male → ashutosh/bulbul:v3, female → anushka/bulbul:v2.
    * Resolved from Boss's words (voice-provider-intent). Defaults to female. */
   voiceGender?: 'male' | 'female'
@@ -207,8 +210,11 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
       recipientName: input.recipientName ?? null,
       purpose: purpose || null,
       firstMessage,
-      status: 'initiated',
+      status: 'dispatching',
       conversationId: input.conversationId ?? null,
+      pendingActionId: input.pendingActionId ?? null,
+      provider: config.provider,
+      providerStatus: 'dispatching',
     },
   })
 
@@ -280,7 +286,7 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
       const err = data.message || `ElevenLabs HTTP ${res.status}: ${text.slice(0, 160)}`
       await db.agentVoiceCall.update({
         where: { id: record.id },
-        data: { status: 'failed', summary: err },
+        data: { status: 'failed', providerStatus: 'failed', summary: err, endedAt: new Date() },
       })
       return { ok: false, error: err, callRecordId: record.id }
     }
@@ -289,6 +295,8 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
       where: { id: record.id },
       data: {
         status: 'ringing',
+        providerStatus: 'ringing',
+        dialedAt: new Date(),
         elevenConvId: data.conversation_id ?? null,
         callSid: data.callSid ?? null,
       },
@@ -304,7 +312,7 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
     const msg = err instanceof Error ? err.message : String(err)
     await db.agentVoiceCall.update({
       where: { id: record.id },
-      data: { status: 'failed', summary: `কল দেওয়া যায়নি: ${msg}` },
+      data: { status: 'failed', providerStatus: 'failed', summary: `কল দেওয়া যায়নি: ${msg}`, endedAt: new Date() },
     }).catch(() => {})
     return { ok: false, error: `কল দেওয়া যায়নি: ${msg}`, callRecordId: record.id }
   }
@@ -420,7 +428,7 @@ async function placeRelayCall(
       const err = `Twilio ${res.status}: ${data.message ?? 'call create failed'}`
       await db.agentVoiceCall.update({
         where: { id: callRecordId },
-        data: { status: 'failed', summary: err },
+        data: { status: 'failed', providerStatus: 'failed', summary: err, endedAt: new Date() },
       })
       return { ok: false, error: err, callRecordId }
     }
@@ -429,6 +437,8 @@ async function placeRelayCall(
       where: { id: callRecordId },
       data: {
         status: 'ringing',
+        providerStatus: 'ringing',
+        dialedAt: new Date(),
         callSid: data.sid,
         // Diagnostic breadcrumb (token redacted): the exact ws endpoint Twilio was
         // told to dial — readable from the DB when a 64102 needs root-causing.
@@ -440,7 +450,7 @@ async function placeRelayCall(
     const msg = err instanceof Error ? err.message : String(err)
     await db.agentVoiceCall.update({
       where: { id: callRecordId },
-      data: { status: 'failed', summary: `কল দেওয়া যায়নি: ${msg}` },
+      data: { status: 'failed', providerStatus: 'failed', summary: `কল দেওয়া যায়নি: ${msg}`, endedAt: new Date() },
     }).catch(() => {})
     return { ok: false, error: `কল দেওয়া যায়নি: ${msg}`, callRecordId }
   }
@@ -507,19 +517,19 @@ async function placeSarvamMediaCall(
     const data = (await res.json().catch(() => ({}))) as { sid?: string; message?: string }
     if (!res.ok || !data.sid) {
       const err = `Twilio ${res.status}: ${data.message ?? 'call create failed'}`
-      await db.agentVoiceCall.update({ where: { id: callRecordId }, data: { status: 'failed', summary: err } })
+      await db.agentVoiceCall.update({ where: { id: callRecordId }, data: { status: 'failed', providerStatus: 'failed', summary: err, endedAt: new Date() } })
       return { ok: false, error: err, callRecordId }
     }
     await db.agentVoiceCall.update({
       where: { id: callRecordId },
-      data: { status: 'ringing', callSid: data.sid, summary: `sarvam media: ${voice.speaker}/${voice.model}` },
+      data: { status: 'ringing', providerStatus: 'ringing', dialedAt: new Date(), callSid: data.sid, summary: `sarvam media: ${voice.speaker}/${voice.model}` },
     })
     return { ok: true, callRecordId, callSid: data.sid }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     await db.agentVoiceCall.update({
       where: { id: callRecordId },
-      data: { status: 'failed', summary: `কল দেওয়া যায়নি: ${msg}` },
+      data: { status: 'failed', providerStatus: 'failed', summary: `কল দেওয়া যায়নি: ${msg}`, endedAt: new Date() },
     }).catch(() => {})
     return { ok: false, error: `কল দেওয়া যায়নি: ${msg}`, callRecordId }
   }
@@ -580,19 +590,19 @@ async function placeNgsLiveCall(
     const data = (await res.json().catch(() => ({}))) as { call_id?: string; status?: string }
     if (!res.ok || !data.call_id) {
       const err = `NGS ${res.status}: ${JSON.stringify(data).slice(0, 160)}`
-      await db.agentVoiceCall.update({ where: { id: callRecordId }, data: { status: 'failed', summary: err } })
+      await db.agentVoiceCall.update({ where: { id: callRecordId }, data: { status: 'failed', providerStatus: 'failed', summary: err, endedAt: new Date() } })
       return { ok: false, error: err, callRecordId }
     }
     await db.agentVoiceCall.update({
       where: { id: callRecordId },
-      data: { status: 'ringing', callSid: data.call_id, summary: `ngs live: ${voice}` },
+      data: { status: 'ringing', providerStatus: String(data.status ?? 'ringing'), dialedAt: new Date(), callSid: data.call_id, summary: `ngs live: ${voice}` },
     })
     return { ok: true, callRecordId, callSid: data.call_id }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     await db.agentVoiceCall.update({
       where: { id: callRecordId },
-      data: { status: 'failed', summary: `কল দেওয়া যায়নি: ${msg}` },
+      data: { status: 'failed', providerStatus: 'failed', summary: `কল দেওয়া যায়নি: ${msg}`, endedAt: new Date() },
     }).catch(() => {})
     return { ok: false, error: `কল দেওয়া যায়নি: ${msg}`, callRecordId }
   }

@@ -10,14 +10,10 @@
 import { type NextRequest } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { prisma } from '@/lib/prisma'
-import { notifyOwner } from '@/agent/lib/notify-owner'
+import { persistVoiceCallReport, dispatchVoiceCallDeliveries, type VoiceCallTerminalStatus } from '@/agent/lib/voice-call-delivery'
 
 export const runtime = 'nodejs'
-export const maxDuration = 30
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = prisma as any
+export const maxDuration = 120
 
 function verifyToken(provided: string): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -62,60 +58,29 @@ export async function POST(req: NextRequest) {
   const callRecordId = body.callRecordId
   if (!callRecordId) return Response.json({ error: 'missing_callRecordId' }, { status: 400 })
 
-  const record = await db.agentVoiceCall.findUnique({ where: { id: callRecordId } }).catch(() => null)
-  if (!record) return Response.json({ error: 'call_not_found' }, { status: 404 })
+  const allowed = new Set<VoiceCallTerminalStatus>(['completed', 'no_answer', 'busy', 'failed'])
+  const status = allowed.has(body.status as VoiceCallTerminalStatus)
+    ? body.status as VoiceCallTerminalStatus : 'completed'
+  const stored = await persistVoiceCallReport({
+    callRecordId,
+    callSid: body.callSid,
+    transcript: body.transcript,
+    summary: body.summary,
+    durationSecs: body.durationSecs,
+    status,
+    costBdt: body.costBdt,
+    provider: body.provider,
+  })
+  if (!stored) return Response.json({ error: 'call_not_found' }, { status: 404 })
 
-  const transcript = Array.isArray(body.transcript) ? body.transcript : []
-  const summary = typeof body.summary === 'string' ? body.summary.slice(0, 2000) : null
-  const durationSecs = Number.isFinite(body.durationSecs) ? Math.max(0, Math.round(Number(body.durationSecs))) : null
-  const status = body.status === 'no_answer' ? 'no_answer' : 'completed'
-  const costBdt = Number.isFinite(body.costBdt) ? Math.max(0, Math.round(Number(body.costBdt))) : null
-
-  await db.agentVoiceCall.update({
-    where: { id: callRecordId },
-    data: {
-      status,
-      transcript,
-      summary,
-      durationSecs,
-      callSid: record.callSid ?? body.callSid ?? null,
-      endedAt: new Date(),
-      ...(costBdt != null ? { costCredits: costBdt } : {}),
-    },
+  // Storage is the acknowledgement boundary. Owner-facing channels are independent,
+  // durable outbox rows; try immediately for low latency, cron retries any failure.
+  // Keep the worker ACK boundary short: Telegram is attempted immediately; push
+  // and the potentially long head continuation are drained by the durable cron.
+  const deliveries = await dispatchVoiceCallDeliveries(callRecordId, 1, ['telegram']).catch((err) => {
+    console.warn('[relay-report] immediate delivery failed; cron will retry:', err instanceof Error ? err.message : String(err))
+    return []
   })
 
-  // Same owner report format as the ElevenLabs webhook — who, how long, what was said.
-  try {
-    const who = record.recipientName || record.toNumber || 'কল'
-    const mins = durationSecs != null ? `${Math.max(1, Math.round(durationSecs / 60))} মিনিট` : ''
-    const lines = transcript
-      .filter((t) => t.message)
-      .map((t) => `${t.role === 'agent' ? '🗣️ এজেন্ট' : '👤 ' + who}: ${t.message}`)
-      .join('\n')
-    const costLine = costBdt != null ? `💸 আনুমানিক খরচ: ৳${costBdt}\n` : ''
-    // Cap the transcript generously (sendOwnerText splits >4096 into multiple messages,
-    // so it arrives complete). The summary above is always kept whole.
-    const MAX_TRANSCRIPT = 6000
-    const convo = lines
-      ? (lines.length > MAX_TRANSCRIPT ? `${lines.slice(0, MAX_TRANSCRIPT)}\n…(বাকি অংশ সংক্ষিপ্ত করা হলো)` : lines)
-      : ''
-    const message =
-      `📞 কল শেষ — ${who}${mins ? ` (${mins})` : ''}\n` +
-      costLine + '\n' +
-      (summary ? `সারাংশ: ${summary}\n\n` : '') +
-      (convo ? `কথোপকথন:\n${convo}` : 'কেউ কথা বলেনি / কল ধরা হয়নি।')
-    await notifyOwner({ tier: 2, title: `কল শেষ — ${who}`, message, category: 'report' })
-    // Also drop the result into the agent chat so the owner SEES it on screen, not only in
-    // Telegram (the summary line is enough here; the full transcript stays in Telegram).
-    if (record.conversationId) {
-      const chatText = `📞 কল শেষ — ${who}${mins ? ` (${mins})` : ''}।` + (summary ? ` সারাংশ: ${summary}` : '')
-      await db.agentMessage.create({
-        data: { conversationId: record.conversationId, role: 'assistant', content: [{ type: 'text', text: chatText }], tokensIn: 0, tokensOut: 0, costUsd: 0 },
-      }).catch(() => {})
-    }
-  } catch (err) {
-    console.warn('[relay-report] owner notify failed:', err instanceof Error ? err.message : String(err))
-  }
-
-  return Response.json({ ok: true, callId: callRecordId })
+  return Response.json({ ok: true, callId: callRecordId, deliveries })
 }
