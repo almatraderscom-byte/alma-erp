@@ -80,8 +80,12 @@ final class AssistantParityV2Tests: XCTestCase {
         """#
         let wire = try JSONDecoder().decode(AgentMessageWire.self, from: Data(json.utf8))
         let message = AgentChatMessage.from(wire)
-        XCTAssertEqual(message.blocks.map(\.id), ["m1:b0", "m1:b1", "m1:b2"])
-        XCTAssertEqual(message.supersededBlockIds, Set(["m1:b0"]))
+        XCTAssertEqual(message.blocks.map(\.id), ["m1:b1", "m1:b2"])
+        XCTAssertTrue(message.supersededBlockIds.isEmpty)
+        XCTAssertEqual(message.blocks.compactMap { block -> String? in
+            if case .prose(_, let text) = block { return text }
+            return nil
+        }, ["final"])
         XCTAssertEqual(message.tools.first?.id, "m1:b1")
         XCTAssertEqual(message.tokensIn, 10)
         XCTAssertEqual(message.apiRounds, 2)

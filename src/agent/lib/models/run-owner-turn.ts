@@ -1449,10 +1449,9 @@ async function* runAlternateProviderTurn(
               categories: Array.from(new Set(violations.map((v) => v.category))),
               snippets: violations.map((v) => v.matchedSnippet),
             }
-            // Presentation parity: the draft stays visible in the timeline but is
-            // truthfully marked superseded, and the verification event itself is
-            // persisted — so reload shows the same draft → যাচাই → final composition
-            // the live stream showed, instead of silently deleting the draft.
+            // Keep the rejected draft in the raw audit timeline, truthfully marked
+            // superseded, and persist the verification event. Owner-facing clients
+            // project only the verified replacement as prose.
             for (let ti = timeline.length - 1; ti >= 0; ti--) {
               const te = timeline[ti]
               if (te.t === 'text') { te.state = 'superseded'; break }

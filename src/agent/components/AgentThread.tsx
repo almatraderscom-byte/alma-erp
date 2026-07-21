@@ -53,11 +53,10 @@ function fmtTok(n: number): string {
 /** One entry in the unified activity timeline — a reasoning segment or a tool call. */
 export type TimelineEntry =
   | { t: 'think'; text: string }
-  /** `superseded`: verification rewrote this draft — it stays visible in its
-   *  chronological slot but is never presented as the verified final answer. */
+  /** `superseded`: verification rewrote this draft. It remains audit data and is
+   *  never rendered as a separate owner-facing reply. */
   | { t: 'text'; text: string; state?: 'superseded' }
-  /** The honesty guard re-checked the draft — a truthful activity row between
-   *  the superseded prose and its replacement (parity roadmap). */
+  /** The honesty guard re-checked the draft — rendered as activity, not prose. */
   | { t: 'verify'; attempt?: number; max?: number }
   | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; live?: boolean; id?: string; shot?: string }
   | { t: 'file'; id: string; name: string; kind?: string }
@@ -732,9 +731,10 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
   const segments = useMemo(() => {
     const segs: Seg[] = []
     for (const e of msg.timeline ?? []) {
-      if (e.t === 'text') {
-        segs.push({ kind: 'text', text: e.text })
-      } else if (e.t === 'file') {
+      // Timeline prose is retained for audit/debug only. Rendering every model
+      // round here made one turn look like several assistant replies.
+      if (e.t === 'text') continue
+      if (e.t === 'file') {
         segs.push({ kind: 'file', entry: e })
       } else {
         const last = segs[segs.length - 1]
@@ -742,8 +742,9 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
         else segs.push({ kind: 'steps', entries: [e] })
       }
     }
+    if (msg.text.trim()) segs.push({ kind: 'text', text: msg.text })
     return segs
-  }, [msg.timeline])
+  }, [msg.text, msg.timeline])
 
   if (segments.length === 0) return null
   const lastIdx = segments.length - 1
@@ -836,8 +837,8 @@ function ActivityTimeline({
       const lastEntry = i === entries.length - 1
       if (e.t === 'think' || e.t === 'verify') {
         // A persisted verification event renders as a truthful activity row with
-        // the same label the live stream showed (parity roadmap): the superseded
-        // draft stays visible around it, never silently deleted.
+        // the same label the live stream showed. Superseded prose remains only in
+        // raw audit data and is not rendered as another reply.
         const raw = e.t === 'verify'
           ? `নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি (${e.attempt ?? 1}/${e.max ?? e.attempt ?? 1})…`
           : e.text

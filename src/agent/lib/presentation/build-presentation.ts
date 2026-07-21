@@ -7,8 +7,8 @@
  * the same visible composition. The projection is:
  *   - PURE: same input → byte-identical output (deterministic ids by ordinal);
  *   - ADDITIVE: legacy response fields stay untouched next to it;
- *   - TRUTHFUL: a verification-superseded draft stays visible in chronological
- *     order but is never labelled as the verified final answer.
+ *   - TRUTHFUL: verification/progress history remains available as activity
+ *     metadata, while only one settled prose answer is owner-visible.
  *
  * Read-time only — nothing here writes to the database or changes model/tool
  * behaviour.
@@ -113,6 +113,44 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined
 }
 
+/**
+ * Choose the ONE settled owner-facing answer without destroying the raw audit
+ * timeline. Model/tool rounds may emit several prose drafts and the verifier may
+ * supersede one; those entries remain in usage.timeline for diagnostics, but
+ * they must never look like several assistant replies.
+ *
+ * Normally the last non-superseded timeline text is the settled answer. A
+ * deadline/continuation footer can be appended only to persisted content after
+ * the last timeline text; preserve that richer content instead of dropping it.
+ */
+export function selectSettledProse(content: unknown, timelineInput: unknown): string {
+  const contentBlocks = Array.isArray(content)
+    ? (content as Array<Record<string, unknown>>)
+    : []
+  const contentText = contentBlocks
+    .filter((b) => b?.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text as string)
+    .join('\n')
+    .trim()
+
+  const timeline = Array.isArray(timelineInput)
+    ? (timelineInput as TimelineEntryIn[]).filter((e) => e && typeof e === 'object')
+    : []
+  const settledTimelineText = [...timeline]
+    .reverse()
+    .find((e) => e.t === 'text' && e.state !== 'superseded' && typeof e.text === 'string' && e.text.trim())
+  const lastText = typeof settledTimelineText?.text === 'string'
+    ? settledTimelineText.text.trim()
+    : ''
+
+  if (!lastText) return contentText
+  if (!contentText) return lastText
+  // Accumulated tool-round narration ends with the actual final round. Collapse
+  // it to that last answer. If persisted content has a distinct suffix (deadline
+  // progress / continuation note), keep the complete stored message.
+  return contentText.endsWith(lastText) ? lastText : contentText
+}
+
 export function buildAgentPresentationV1(input: BuildPresentationInput): AgentPresentationV1 {
   const blocks: AgentPresentationBlockV1[] = []
   let ordinal = 0
@@ -121,22 +159,11 @@ export function buildAgentPresentationV1(input: BuildPresentationInput): AgentPr
   const timeline: TimelineEntryIn[] = Array.isArray(input.timeline)
     ? (input.timeline as TimelineEntryIn[]).filter((e) => e && typeof e === 'object')
     : []
-  const hasTimelineText = timeline.some((e) => e.t === 'text' && typeof e.text === 'string' && e.text.trim())
-
-  // Indices of prose blocks so the LAST non-superseded one can be marked final.
-  const proseIdx: number[] = []
-
-  if (hasTimelineText) {
+  if (timeline.length > 0) {
     for (const e of timeline) {
-      if (e.t === 'text' && typeof e.text === 'string' && e.text.trim()) {
-        proseIdx.push(blocks.length)
-        blocks.push({
-          id: nextId(),
-          type: 'prose',
-          text: e.text,
-          state: e.state === 'superseded' ? 'superseded' : 'progress',
-        })
-      } else if (e.t === 'think' && typeof e.text === 'string' && e.text.trim()) {
+      // Timeline prose is audit/progress data. The single settled prose block is
+      // selected below after all activity/file rows have been projected.
+      if (e.t === 'think' && typeof e.text === 'string' && e.text.trim()) {
         blocks.push({
           id: nextId(),
           type: 'activity',
@@ -178,74 +205,23 @@ export function buildAgentPresentationV1(input: BuildPresentationInput): AgentPr
       }
       // Unknown entry types are skipped (non-fatal, forward-compatible).
     }
-    // The last non-superseded prose block IS the verified settled answer.
-    for (let i = proseIdx.length - 1; i >= 0; i--) {
-      const b = blocks[proseIdx[i]]
-      if (b.type === 'prose' && b.state !== 'superseded') {
-        b.state = 'final'
-        break
-      }
-    }
   } else {
-    // Legacy projection: no text timeline → activity entries (or durable tool-call
-    // rows) first, then the persisted final content text as the single final prose.
-    if (timeline.length > 0) {
-      for (const e of timeline) {
-        if (e.t === 'think' && typeof e.text === 'string' && e.text.trim()) {
-          blocks.push({
-            id: nextId(),
-            type: 'activity',
-            activityType: 'thinking',
-            label: thinkHeadline(e.text),
-            detail: e.text,
-            status: 'done',
-          })
-        } else if (e.t === 'tool') {
-          blocks.push({
-            id: nextId(),
-            type: 'activity',
-            activityType: 'tool',
-            label: str(e.name) ?? 'টুল',
-            status: e.ok === false ? 'failed' : 'done',
-            toolName: str(e.name),
-            input: e.input,
-            result: str(e.result),
-            screenshot: str(e.shot),
-          })
-        } else if (e.t === 'file' && typeof e.id === 'string') {
-          blocks.push({
-            id: nextId(),
-            type: 'file',
-            artifactId: e.id,
-            title: str(e.name) ?? 'ডকুমেন্ট',
-            kind: str(e.kind),
-          })
-        }
-      }
-    } else {
-      for (const t of input.toolCalls ?? []) {
-        blocks.push({
-          id: nextId(),
-          type: 'activity',
-          activityType: 'tool',
-          label: t.name ?? 'টুল',
-          status: t.success === false ? 'failed' : 'done',
-          toolName: t.name,
-          result: t.result,
-        })
-      }
+    for (const t of input.toolCalls ?? []) {
+      blocks.push({
+        id: nextId(),
+        type: 'activity',
+        activityType: 'tool',
+        label: t.name ?? 'টুল',
+        status: t.success === false ? 'failed' : 'done',
+        toolName: t.name,
+        result: t.result,
+      })
     }
-    const contentBlocks = Array.isArray(input.content)
-      ? (input.content as Array<Record<string, unknown>>)
-      : []
-    const finalText = contentBlocks
-      .filter((b) => b?.type === 'text' && typeof b.text === 'string')
-      .map((b) => b.text as string)
-      .join('\n')
-      .trim()
-    if (finalText) {
-      blocks.push({ id: nextId(), type: 'prose', text: finalText, state: 'final' })
-    }
+  }
+
+  const finalText = selectSettledProse(input.content, timeline)
+  if (finalText) {
+    blocks.push({ id: nextId(), type: 'prose', text: finalText, state: 'final' })
   }
 
   // Cards live in persisted content (breadcrumbs + route-synthesized) — append in

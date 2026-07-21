@@ -674,10 +674,9 @@ struct AgentChatMessage: Identifiable, Equatable {
     /// Ordered SSE timeline — mirrors web `TimelineEntry` / server `usage.timeline`.
     enum TimelineEntry: Equatable {
         case think(String)
-        /// A user-visible prose segment in its true chronological slot (parity
-        /// roadmap RC-1 — these were silently dropped before, so cold-load showed
-        /// only the last paragraph). `superseded` = verification rewrote it: it
-        /// stays visible but is never the verified final answer.
+        /// Raw prose emitted during a model round. `superseded` means verification
+        /// rejected it; raw entries remain auditable but only the settled answer
+        /// becomes an owner-facing prose block.
         case text(String, superseded: Bool)
         case tool(id: String, name: String, ok: Bool?, live: Bool, inputPretty: String?, resultFull: String?, shot: String?)
         /// A tool filed a document as a conversation artifact (id = artifact id).
@@ -770,8 +769,8 @@ struct AgentChatMessage: Identifiable, Equatable {
     var costUsd: String?
     var createdAt: String?
     var isStreaming = false
-    /// Prose block ids the verification guard superseded — data-truth only; the
-    /// prose stays visible in place (roadmap invariant 3/4), never blanked.
+    /// Legacy projection metadata. New projections never expose superseded prose
+    /// as a visible block; selfCorrected carries the owner-facing signal instead.
     var supersededBlockIds: Set<String> = []
 
     /// The heartbeat's self-wake seed renders as a divider, never as an owner bubble
@@ -867,12 +866,15 @@ struct AgentChatMessage: Identifiable, Equatable {
                                            to message: inout AgentChatMessage) {
         var projected: [TurnBlock] = []
         var projectedTools: [Tool] = []
-        var superseded = Set<String>()
+        var sawSupersededDraft = false
         for block in presentation.blocks ?? [] {
             switch block.type {
             case "prose":
+                // Defense in depth for older/cached server projections: progress
+                // and superseded drafts are audit data, never separate replies.
+                if block.state == "superseded" { sawSupersededDraft = true }
+                guard block.state == nil || block.state == "final" else { continue }
                 projected.append(.prose(id: block.id, text: block.text ?? ""))
-                if block.state == "superseded" { superseded.insert(block.id) }
             case "activity":
                 let isTool = block.activityType == "tool"
                 let toolId = isTool ? block.id : nil
@@ -911,9 +913,9 @@ struct AgentChatMessage: Identifiable, Equatable {
             }
         }
         message.blocks = projected
-        message.supersededBlockIds = superseded
+        message.supersededBlockIds = []
         if !projectedTools.isEmpty { message.tools = projectedTools }
-        message.selfCorrected = presentation.selfCorrected == true || !superseded.isEmpty
+        message.selfCorrected = presentation.selfCorrected == true || sawSupersededDraft
         if let usage = presentation.usage {
             message.tokensIn = usage.tokensIn ?? message.tokensIn
             message.tokensOut = usage.tokensOut ?? message.tokensOut
@@ -930,15 +932,15 @@ struct AgentChatMessage: Identifiable, Equatable {
     /// settled/cold-loaded rows converge on the live composition by construction.
     static func applyPersistedBlocks(to m: inout AgentChatMessage) {
         var blocks: [TurnBlock] = []
-        var superseded: Set<String> = []
+        var lastSettledTimelineText = ""
         for e in m.timeline {
             switch e {
             case .text(let t, let isSuperseded):
-                // One prose segment per timeline entry (never merged into the
-                // previous one — segment boundaries are canonical).
-                let id = "bp-\(m.id)-\(blocks.count)"
-                blocks.append(.prose(id: id, text: t))
-                if isSuperseded { superseded.insert(id) }
+                // Timeline prose remains audit data. Only the final verified
+                // segment becomes owner-visible after all activity rows.
+                if !isSuperseded && !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    lastSettledTimelineText = t.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
             case .think(let t):
                 blocks = appendThinkBlock(blocks, chunk: t, messageId: m.id)
             case .tool(let id, let name, let ok, _, _, _, let shot):
@@ -948,6 +950,20 @@ struct AgentChatMessage: Identifiable, Equatable {
                 blocks.append(.file(id: "fb-\(m.id)-\(aid)", artifactId: aid, name: name))
             }
         }
+        let stored = m.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let settledText: String
+        if lastSettledTimelineText.isEmpty {
+            settledText = stored
+        } else if stored.isEmpty || stored.hasSuffix(lastSettledTimelineText) {
+            settledText = lastSettledTimelineText
+        } else {
+            // Preserve deadline/continuation suffixes that exist only in stored
+            // content and therefore cannot be recovered from the raw timeline.
+            settledText = stored
+        }
+        if !settledText.isEmpty {
+            blocks.append(.prose(id: "bp-\(m.id)-final", text: settledText))
+        }
         for card in m.confirmCards {
             blocks.append(.confirmCard(id: "bc-\(m.id)-\(card.id)", pendingActionId: card.id))
         }
@@ -955,7 +971,7 @@ struct AgentChatMessage: Identifiable, Equatable {
             blocks.append(.askCard(id: "bq-\(m.id)-\(card.id)", askCardId: card.id))
         }
         m.blocks = blocks
-        m.supersededBlockIds = superseded
+        m.supersededBlockIds = []
     }
 
     /// Live-parity label for a persisted verification event (same string the
@@ -4568,6 +4584,15 @@ final class AssistantVM {
                 requestLiveMode("searching")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    // Pre-tool prose is progress narration. Keep the activity/tool
+                    // evidence, but let the post-tool settled answer replace the
+                    // visible prose instead of stacking as a second reply.
+                    messages[i].text = ""
+                    messages[i].blocks.removeAll { block in
+                        if case .prose = block { return true }
+                        return false
+                    }
+                    messages[i].supersededBlockIds = []
                     messages[i].timeline = AgentChatMessage.pushOrUpdateTool(
                         messages[i].timeline, id: tid, name: name, inputPretty: inputPretty)
                     messages[i].blocks = AgentChatMessage.appendToolBlock(
@@ -4632,10 +4657,9 @@ final class AssistantVM {
                     messages[i].blocks.append(.askCard(id: "bq-\(messages[i].id)-\(aid)", askCardId: aid))
                 }
             case .verificationRetry(let attempt, let maxAttempts):
-                // Parity roadmap RC-2: NEVER blank the reply. The draft prose stays
-                // visible in place, marked superseded in data; a truthful verification
-                // activity row follows it, and the rewrite streams in after that —
-                // exactly the composition the server now persists (t:'verify').
+                // Preserve the rejected draft in audit data, but remove it from the
+                // owner-facing blocks. The verified replacement will be the only
+                // prose rendered when its text deltas arrive.
                 requestLiveMode("thinking")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
@@ -4645,9 +4669,12 @@ final class AssistantVM {
                         messages[i].supersededBlockIds.insert(pid)
                         messages[i].timeline.append(.text(draft, superseded: true))
                     }
-                    // Final-answer accumulator resets (server does the same with
-                    // finalText) — the visible blocks are untouched.
                     messages[i].text = ""
+                    messages[i].blocks.removeAll { block in
+                        if case .prose = block { return true }
+                        return false
+                    }
+                    messages[i].supersededBlockIds = []
                     messages[i].selfCorrected = true
                     let label = AgentChatMessage.verifyLabel(attempt: attempt, max: maxAttempts)
                     messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: label)
@@ -4860,9 +4887,8 @@ final class AssistantVM {
     /// scroll-gap and per-delta MainActor cost reproduce without a server.
     /// Parity roadmap visual fixture — ALMA_ASSISTANT_PARITY=1: ONLY the persisted
     /// verification-retry turn (no stress stream), decoded through the real wire
-    /// path, so a screenshot shows the exact cold-load composition: progress prose →
-    /// tool rows → superseded draft (visible) → verify row → corrected final +
-    /// Σ/cache/ধাপ footer.
+    /// path, so a screenshot proves progress/superseded drafts stay audit-only and
+    /// exactly one corrected final prose remains visible with the activity/footer.
     func loadParityFixture() {
         // Simulator proof fixtures must be visually deterministic. Do not let an
         // unrelated persisted queue/dictation warning from an earlier recovery
@@ -4899,17 +4925,33 @@ final class AssistantVM {
         """#
         if let d = parityJSON.data(using: .utf8),
            var wireRow = (try? JSONDecoder().decode(AgentMessageWire.self, from: d)).map(AgentChatMessage.from) {
+            let singleReplyProof = ProcessInfo.processInfo.environment["ALMA_SINGLE_REPLY_PROOF"] == "1"
+                || ProcessInfo.processInfo.arguments.contains("ALMA_SINGLE_REPLY_PROOF=1")
+            if singleReplyProof {
+                // Focused regression screenshot: keep the real three-round
+                // persisted timeline, but remove unrelated action/delegation
+                // cards so the one settled prose block fits in one viewport.
+                wireRow.confirmCards = []
+                wireRow.askCards = []
+                wireRow.blocks.removeAll {
+                    if case .confirmCard = $0 { return true }
+                    if case .askCard = $0 { return true }
+                    return false
+                }
+            }
             // Chat-parity batch demo state: delegation cards (done + running) so a
             // fixture screenshot proves the DelegationCard composition offline.
-            wireRow.delegations = [
-                .init(id: "fix-d1", role: "researcher", roleLabel: "গবেষক",
-                      task: "প্রতিযোগীদের ঈদ ক্যাম্পেইনের দাম যাচাই করো",
-                      done: true, success: true,
-                      summary: "তিনটা ব্র্যান্ড দেখা হয়েছে — গড় দাম ৳১,২৫০; আমাদের অফার প্রতিযোগিতামূলক।",
-                      toolsUsed: ["web_research", "compare_to_brand"]),
-                .init(id: "fix-d2", role: "cs", roleLabel: "কাস্টমার সার্ভিস",
-                      task: "WhatsApp inbox-এর নতুন প্রশ্নগুলোর খসড়া উত্তর"),
-            ]
+            if !singleReplyProof {
+                wireRow.delegations = [
+                    .init(id: "fix-d1", role: "researcher", roleLabel: "গবেষক",
+                          task: "প্রতিযোগীদের ঈদ ক্যাম্পেইনের দাম যাচাই করো",
+                          done: true, success: true,
+                          summary: "তিনটা ব্র্যান্ড দেখা হয়েছে — গড় দাম ৳১,২৫০; আমাদের অফার প্রতিযোগিতামূলক।",
+                          toolsUsed: ["web_research", "compare_to_brand"]),
+                    .init(id: "fix-d2", role: "cs", roleLabel: "কাস্টমার সার্ভিস",
+                          task: "WhatsApp inbox-এর নতুন প্রশ্নগুলোর খসড়া উত্তর"),
+                ]
+            }
             rows.append(wireRow)
         }
         // Footer-focused shot (ALMA_FEEDBACK_OPEN=1): stop at the first turn so
@@ -5176,9 +5218,8 @@ final class AssistantVM {
         big.text = String(repeating: bnLong, count: 14)
         rows.append(big)
 
-        // Parity roadmap — a PERSISTED (cold-load) verification-retry turn decoded
-        // through the real wire path: draft prose stays visible, truthful verify
-        // row between draft and corrected final, cache/rounds in the footer.
+        // Persisted verification-retry turn decoded through the real wire path:
+        // raw draft remains in timeline, but only one corrected prose is visible.
         rows.append(AgentChatMessage(id: "fix-u-parity", role: .user,
                                      text: "স্টকের কাজটা কি হয়েছে?"))
         let parityJSON = #"""
@@ -5475,8 +5516,8 @@ final class AssistantVM {
             "data: {\"type\":\"text_delta\",\"delta\":\"আজকের বিক্রি ভালো হয়েছে Boss।\"}", "",
             "data: {\"type\":\"text_delta\",",                              // multi-line data event
             "data: \"delta\":\" মাল্টি-লাইন ইভেন্টও ঠিকভাবে এসেছে।\"}", "",
-            // Parity roadmap RC-2 — the draft above must STAY visible (superseded in
-            // data), a truthful verify row follows, then the corrected final prose.
+            // The draft is retained as audit data but removed from visible prose;
+            // the truthful verify row remains before the corrected final.
             "data: {\"type\":\"verification_retry\",\"attempt\":1,\"maxAttempts\":2}", "",
             "data: {\"type\":\"text_delta\",\"delta\":\"যাচাই শেষে ঠিক করা উত্তর: আজকের মোট বিক্রি ৳৬,০৫২।\"}", "",
             "data: {\"type\":\"ask_card\",\"askCardId\":\"a1\",\"question\":\"কোনটা আগে করব Boss?\",\"options\":[\"স্টক অর্ডার\",\"ক্যাম্পেইন\",\"পরে বলব\"]}", "",
@@ -5546,9 +5587,8 @@ final class AssistantVM {
             check("turn_snapshot", tid == "t9" && st == "running" && seq == 7)
         } else { check("turn_snapshot", false) }
 
-        // Presentation parity (roadmap RC-1/RC-3/RC-4) — persisted wire row must
-        // decode every prose/verify segment and rebuild the SAME interleaved
-        // TurnBlock composition the live stream shows, superseded marked in data.
+        // Presentation parity — persisted wire keeps the raw prose/verify audit
+        // entries, while owner-facing blocks contain exactly one settled prose.
         let parityJSON = #"""
         {"id":"m-parity","role":"assistant",
          "content":[{"type":"text","text":"ঠিক করা উত্তর।"}],
@@ -5584,8 +5624,8 @@ final class AssistantVM {
                 case .askCard: return "ask"
                 }
             }
-            check("RC-3 canonical block fingerprint",
-                  fingerprint == ["prose", "search", "tool", "prose*", "think", "prose"])
+            check("RC-3 single-reply block fingerprint",
+                  fingerprint == ["search", "tool", "think", "prose"])
             // Chat-parity batch: a verify/superseded wire row marks the message
             // self-corrected (footer badge) — same rule as the server presentation.
             check("selfCorrected derived from wire", m.selfCorrected)
