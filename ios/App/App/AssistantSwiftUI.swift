@@ -8386,7 +8386,30 @@ struct AgentMessageActions: View {
                 .lineLimit(1)
                 .accessibilityLabel(
                     "মোট \(total) টোকেন; ইনপুট \(tin); আউটপুট \(tout); cache write \(cw); cache read \(cr)")
+            HStack(spacing: 0) {
+                usageMetric("Input", value: tin)
+                usageMetric("Output", value: tout)
+                usageMetric("Cache write", value: cw)
+                usageMetric("Cache read", value: cr)
+            }
+            .padding(.top, 3)
         }
+    }
+
+    private func usageMetric(_ title: String, value: Int) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title)
+                .font(.system(size: 8.5, weight: .medium))
+                .foregroundStyle(pal.muted.opacity(0.66))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+            Text(almaBnCompact(value))
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(pal.mutedHi.opacity(0.82))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
     private func relativeTime(_ iso: String?) -> String? {

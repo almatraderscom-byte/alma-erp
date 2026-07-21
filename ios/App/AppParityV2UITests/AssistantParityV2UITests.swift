@@ -97,6 +97,10 @@ final class AssistantParityV2UITests: XCTestCase {
         ).firstMatch.exists)
         XCTAssertTrue(app.buttons["টেবিল কপি করুন"].exists)
         XCTAssertTrue(app.buttons["ফাইল যোগ করুন"].exists)
+        XCTAssertTrue(app.staticTexts["Input"].exists)
+        XCTAssertTrue(app.staticTexts["Output"].exists)
+        XCTAssertTrue(app.staticTexts["Cache write"].exists)
+        XCTAssertTrue(app.staticTexts["Cache read"].exists)
 
         let top = XCTAttachment(screenshot: app.screenshot())
         top.name = "native-reading-surface-top"
