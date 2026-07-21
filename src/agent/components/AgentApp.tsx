@@ -17,6 +17,7 @@ import { toolDisplay } from '@/agent/lib/tool-labels'
 import { cn } from '@/lib/utils'
 import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { type PlanDrivePanelData, type PlanDriveAction } from '@/agent/components/monitor/PlanDriveTimeline'
+import { selectSettledProse } from '@/agent/lib/presentation/build-presentation'
 
 interface AgentAppProps {
   userName: string
@@ -96,6 +97,10 @@ type MessageRow = {
 function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
   return rows.map((r, rowIdx) => {
     const textBlocks = r.content.filter((b) => b.type === 'text')
+    const storedText = textBlocks.map((b) => b.text ?? '').join('')
+    const settledText = r.role === 'assistant'
+      ? selectSettledProse(r.content, r.timeline)
+      : storedText
     const fileBlocks = r.content.filter((b) => b.type === 'file_ref')
     // A single turn can create several pending actions (e.g. an expense AND a
     // post) — collect ALL of them so the approval card matches the agent's text
@@ -122,7 +127,7 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
     return {
       id: r.id,
       role: r.role as 'user' | 'assistant',
-      text: textBlocks.map((b) => b.text ?? '').join(''),
+      text: settledText,
       createdAt: r.createdAt,
       thinking: r.thinking,
       thinkingMs: r.thinkingMs,
@@ -950,6 +955,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             requestAnimationFrame(flushStreamBuffer)
           }
         } else if (evt.type === 'tool_start') {
+          // Prose emitted before a tool is progress narration, not a second
+          // owner-facing answer. Preserve it in the audit timeline, then clear
+          // the visible answer accumulator so the post-tool settled reply replaces
+          // it instead of stacking beneath it.
+          flushStreamBuffer()
           toolInFlight = true
           const d = toolDisplay(String(evt.name))
           setStreamMode('searching')
@@ -964,9 +974,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             if (idx >= 0) {
               const next = existing.slice()
               next[idx] = { ...next[idx], input: evt.input ?? next[idx].input }
-              return { ...m, toolActivity: next, timeline }
+              return { ...m, text: '', toolActivity: next, timeline }
             }
-            return { ...m, toolActivity: [...existing, { id: evt.id as string, name: evt.name as string, done: false, input: evt.input }], timeline }
+            return { ...m, text: '', toolActivity: [...existing, { id: evt.id as string, name: evt.name as string, done: false, input: evt.input }], timeline }
           }))
         } else if (evt.type === 'tool_end') {
           toolInFlight = false
@@ -1081,11 +1091,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               : m
           ))
         } else if (evt.type === 'verification_retry') {
-          // The honesty guard caught a completion claim that wasn't backed by a
-          // real tool call this turn, so the draft is being rewritten. The draft
-          // prose stays visible in the timeline, truthfully marked superseded, with
-          // a verification activity row after it (parity roadmap: never blank, never
-          // silently delete) — only the final-answer accumulator resets.
+          // The honesty guard caught a draft that must be rewritten. Keep it in
+          // the raw audit timeline as superseded, but remove it from the visible
+          // answer accumulator so the owner sees only the verified replacement.
           setStreamMode('searching')
           setStreamStatus('🔁 নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি…')
           setMessages((prev) => prev.map((m) => {

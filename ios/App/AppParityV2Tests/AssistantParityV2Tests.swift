@@ -3,6 +3,32 @@ import XCTest
 
 @MainActor
 final class AssistantParityV2Tests: XCTestCase {
+    func testTopModelMenuPreservesAutoAndProviderGrouping() {
+        let models = [
+            AgentModelInfo(id: "claude", label: "Claude", provider: "anthropic", enabled: true, isDefault: false),
+            AgentModelInfo(id: "gemini", label: "Gemini", provider: "google", enabled: true, isDefault: true),
+        ]
+
+        let elements = AssistantBarHooks.modelMenuElements(
+            models: models, selectedId: nil, onSelect: { _ in })
+        let menus = elements.compactMap { $0 as? UIMenu }
+        let actions = menus.flatMap(\.children).compactMap { $0 as? UIAction }
+
+        XCTAssertEqual(menus.count, 3)
+        XCTAssertEqual(actions.map(\.title), ["Auto", "Claude", "Gemini"])
+        XCTAssertEqual(actions.first?.state, .on)
+    }
+
+    func testRecoveryIdentityIndexCoalescesDuplicateRowsWithoutCrashing() {
+        let stale = AgentChatMessage(id: "local-recovery", role: .assistant, text: "stale")
+        let settled = AgentChatMessage(id: "local-recovery", role: .assistant, text: "settled")
+
+        let index = AssistantVM.identityIndex([stale, settled])
+
+        XCTAssertEqual(index.count, 1)
+        XCTAssertEqual(index["local-recovery"]?.text, "settled")
+    }
+
     func testHugeSessionMountAndSearchIndexStayBounded() {
         let vm = AssistantVM()
         vm.loadHugeSessionFixture()
@@ -80,8 +106,12 @@ final class AssistantParityV2Tests: XCTestCase {
         """#
         let wire = try JSONDecoder().decode(AgentMessageWire.self, from: Data(json.utf8))
         let message = AgentChatMessage.from(wire)
-        XCTAssertEqual(message.blocks.map(\.id), ["m1:b0", "m1:b1", "m1:b2"])
-        XCTAssertEqual(message.supersededBlockIds, Set(["m1:b0"]))
+        XCTAssertEqual(message.blocks.map(\.id), ["m1:b1", "m1:b2"])
+        XCTAssertTrue(message.supersededBlockIds.isEmpty)
+        XCTAssertEqual(message.blocks.compactMap { block -> String? in
+            if case .prose(_, let text) = block { return text }
+            return nil
+        }, ["final"])
         XCTAssertEqual(message.tools.first?.id, "m1:b1")
         XCTAssertEqual(message.tokensIn, 10)
         XCTAssertEqual(message.apiRounds, 2)

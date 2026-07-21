@@ -674,10 +674,9 @@ struct AgentChatMessage: Identifiable, Equatable {
     /// Ordered SSE timeline — mirrors web `TimelineEntry` / server `usage.timeline`.
     enum TimelineEntry: Equatable {
         case think(String)
-        /// A user-visible prose segment in its true chronological slot (parity
-        /// roadmap RC-1 — these were silently dropped before, so cold-load showed
-        /// only the last paragraph). `superseded` = verification rewrote it: it
-        /// stays visible but is never the verified final answer.
+        /// Raw prose emitted during a model round. `superseded` means verification
+        /// rejected it; raw entries remain auditable but only the settled answer
+        /// becomes an owner-facing prose block.
         case text(String, superseded: Bool)
         case tool(id: String, name: String, ok: Bool?, live: Bool, inputPretty: String?, resultFull: String?, shot: String?)
         /// A tool filed a document as a conversation artifact (id = artifact id).
@@ -770,8 +769,8 @@ struct AgentChatMessage: Identifiable, Equatable {
     var costUsd: String?
     var createdAt: String?
     var isStreaming = false
-    /// Prose block ids the verification guard superseded — data-truth only; the
-    /// prose stays visible in place (roadmap invariant 3/4), never blanked.
+    /// Legacy projection metadata. New projections never expose superseded prose
+    /// as a visible block; selfCorrected carries the owner-facing signal instead.
     var supersededBlockIds: Set<String> = []
 
     /// The heartbeat's self-wake seed renders as a divider, never as an owner bubble
@@ -867,12 +866,15 @@ struct AgentChatMessage: Identifiable, Equatable {
                                            to message: inout AgentChatMessage) {
         var projected: [TurnBlock] = []
         var projectedTools: [Tool] = []
-        var superseded = Set<String>()
+        var sawSupersededDraft = false
         for block in presentation.blocks ?? [] {
             switch block.type {
             case "prose":
+                // Defense in depth for older/cached server projections: progress
+                // and superseded drafts are audit data, never separate replies.
+                if block.state == "superseded" { sawSupersededDraft = true }
+                guard block.state == nil || block.state == "final" else { continue }
                 projected.append(.prose(id: block.id, text: block.text ?? ""))
-                if block.state == "superseded" { superseded.insert(block.id) }
             case "activity":
                 let isTool = block.activityType == "tool"
                 let toolId = isTool ? block.id : nil
@@ -911,9 +913,9 @@ struct AgentChatMessage: Identifiable, Equatable {
             }
         }
         message.blocks = projected
-        message.supersededBlockIds = superseded
+        message.supersededBlockIds = []
         if !projectedTools.isEmpty { message.tools = projectedTools }
-        message.selfCorrected = presentation.selfCorrected == true || !superseded.isEmpty
+        message.selfCorrected = presentation.selfCorrected == true || sawSupersededDraft
         if let usage = presentation.usage {
             message.tokensIn = usage.tokensIn ?? message.tokensIn
             message.tokensOut = usage.tokensOut ?? message.tokensOut
@@ -930,15 +932,15 @@ struct AgentChatMessage: Identifiable, Equatable {
     /// settled/cold-loaded rows converge on the live composition by construction.
     static func applyPersistedBlocks(to m: inout AgentChatMessage) {
         var blocks: [TurnBlock] = []
-        var superseded: Set<String> = []
+        var lastSettledTimelineText = ""
         for e in m.timeline {
             switch e {
             case .text(let t, let isSuperseded):
-                // One prose segment per timeline entry (never merged into the
-                // previous one — segment boundaries are canonical).
-                let id = "bp-\(m.id)-\(blocks.count)"
-                blocks.append(.prose(id: id, text: t))
-                if isSuperseded { superseded.insert(id) }
+                // Timeline prose remains audit data. Only the final verified
+                // segment becomes owner-visible after all activity rows.
+                if !isSuperseded && !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    lastSettledTimelineText = t.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
             case .think(let t):
                 blocks = appendThinkBlock(blocks, chunk: t, messageId: m.id)
             case .tool(let id, let name, let ok, _, _, _, let shot):
@@ -948,6 +950,20 @@ struct AgentChatMessage: Identifiable, Equatable {
                 blocks.append(.file(id: "fb-\(m.id)-\(aid)", artifactId: aid, name: name))
             }
         }
+        let stored = m.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let settledText: String
+        if lastSettledTimelineText.isEmpty {
+            settledText = stored
+        } else if stored.isEmpty || stored.hasSuffix(lastSettledTimelineText) {
+            settledText = lastSettledTimelineText
+        } else {
+            // Preserve deadline/continuation suffixes that exist only in stored
+            // content and therefore cannot be recovered from the raw timeline.
+            settledText = stored
+        }
+        if !settledText.isEmpty {
+            blocks.append(.prose(id: "bp-\(m.id)-final", text: settledText))
+        }
         for card in m.confirmCards {
             blocks.append(.confirmCard(id: "bc-\(m.id)-\(card.id)", pendingActionId: card.id))
         }
@@ -955,7 +971,7 @@ struct AgentChatMessage: Identifiable, Equatable {
             blocks.append(.askCard(id: "bq-\(m.id)-\(card.id)", askCardId: card.id))
         }
         m.blocks = blocks
-        m.supersededBlockIds = superseded
+        m.supersededBlockIds = []
     }
 
     /// Live-parity label for a persisted verification event (same string the
@@ -2594,28 +2610,61 @@ final class AssistantVM {
     /// identity stable when the server copy of a just-streamed turn replaces the tail.
     private var localIdByServerId: [String: String] = [:]
 
+    /// Keep the server-id -> local-row-id bridge one-to-one. Recovery can observe a
+    /// newer canonical row while an older row is still inside the 24-message window;
+    /// assigning both rows to the same optimistic id used to create duplicate keys
+    /// below and hard-crash Swift's `Dictionary(uniqueKeysWithValues:)` initializer.
+    private func claimLocalRowId(serverId: String, localId: String,
+                                 activeServerIds: Set<String>) -> Bool {
+        if localIdByServerId[serverId] == localId { return true }
+        let otherClaims = localIdByServerId.filter { $0.key != serverId && $0.value == localId }
+        for (otherServerId, _) in otherClaims where !activeServerIds.contains(otherServerId) {
+            localIdByServerId.removeValue(forKey: otherServerId)
+        }
+        guard !localIdByServerId.contains(where: { $0.key != serverId && $0.value == localId }) else {
+            AlmaTurnLog.event("sync.identityCollisionAvoided", "local=\(localId.suffix(8))")
+            return false
+        }
+        localIdByServerId[serverId] = localId
+        return true
+    }
+
+    /// Collision-safe identity index. Upstream rows should be unique, but recovery
+    /// is deliberately at-least-once and UI identity remapping is local state. A
+    /// duplicate therefore degrades to deterministic last-row-wins reconciliation
+    /// instead of terminating the process with a Swift assertion.
+    static func identityIndex(_ rows: [AgentChatMessage]) -> [String: AgentChatMessage] {
+        rows.reduce(into: [:]) { index, row in index[row.id] = row }
+    }
+
     /// Server truth replaces the thread WITHOUT clobbering the freshly streamed tail:
     /// the tail keeps its id (no remove+insert animation) and its richer streamed
     /// content wherever the server copy is thinner. Fixes "prose vanishes at stream end".
     private func mergeServerMessages(_ wire: [AgentMessageWire]) {
         var incoming = wire.map(AgentChatMessage.from)
+        let activeServerIds = Set(incoming.map(\.id))
 
         // Pair the optimistic user message + streamed assistant tail with their
         // server rows (last user / last assistant AFTER that user message).
         let lastServerUser = incoming.lastIndex(where: { $0.role == .user })
         if let localUser = messages.last(where: { $0.role == .user && $0.id.hasPrefix("local-") }),
            let uIdx = lastServerUser, localIdByServerId[incoming[uIdx].id] == nil {
-            localIdByServerId[incoming[uIdx].id] = localUser.id
+            _ = claimLocalRowId(serverId: incoming[uIdx].id, localId: localUser.id,
+                                activeServerIds: activeServerIds)
         }
         var pairedTail = false
         if let localTail = messages.last(where: { $0.role == .assistant && $0.id.hasPrefix("stream-") }) {
             if let aIdx = incoming.lastIndex(where: { $0.role == .assistant }),
                aIdx > (lastServerUser ?? -1) {
                 if localIdByServerId[incoming[aIdx].id] == nil {
-                    localIdByServerId[incoming[aIdx].id] = localTail.id
+                    _ = claimLocalRowId(serverId: incoming[aIdx].id, localId: localTail.id,
+                                        activeServerIds: activeServerIds)
                 }
-                pairedTail = true
-            } else if localIdByServerId.values.contains(localTail.id) {
+                pairedTail = localIdByServerId[incoming[aIdx].id] == localTail.id
+                    || localIdByServerId.contains { activeServerIds.contains($0.key) && $0.value == localTail.id }
+            } else if localIdByServerId.contains(where: {
+                activeServerIds.contains($0.key) && $0.value == localTail.id
+            }) {
                 pairedTail = true   // paired on an earlier merge
             }
         }
@@ -2669,7 +2718,11 @@ final class AssistantVM {
         // owner is browsing older history, genuinely newer rows go into the
         // reversible forward cache rather than duplicating the mounted prefix.
         let browsingOlder = !newerHistoryCache.isEmpty || serverHasNewer
-        let incomingById = Dictionary(uniqueKeysWithValues: incoming.map { ($0.id, $0) })
+        let incomingById = Self.identityIndex(incoming)
+        if incomingById.count != incoming.count {
+            AlmaTurnLog.event("sync.duplicateIdentityCoalesced",
+                              "rows=\(incoming.count) unique=\(incomingById.count)")
+        }
         var reconciled = messages.map { incomingById[$0.id] ?? $0 }
         var known = Set(reconciled.map(\.id))
         let additions = incoming.filter { known.insert($0.id).inserted }
@@ -4568,6 +4621,15 @@ final class AssistantVM {
                 requestLiveMode("searching")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    // Pre-tool prose is progress narration. Keep the activity/tool
+                    // evidence, but let the post-tool settled answer replace the
+                    // visible prose instead of stacking as a second reply.
+                    messages[i].text = ""
+                    messages[i].blocks.removeAll { block in
+                        if case .prose = block { return true }
+                        return false
+                    }
+                    messages[i].supersededBlockIds = []
                     messages[i].timeline = AgentChatMessage.pushOrUpdateTool(
                         messages[i].timeline, id: tid, name: name, inputPretty: inputPretty)
                     messages[i].blocks = AgentChatMessage.appendToolBlock(
@@ -4632,10 +4694,9 @@ final class AssistantVM {
                     messages[i].blocks.append(.askCard(id: "bq-\(messages[i].id)-\(aid)", askCardId: aid))
                 }
             case .verificationRetry(let attempt, let maxAttempts):
-                // Parity roadmap RC-2: NEVER blank the reply. The draft prose stays
-                // visible in place, marked superseded in data; a truthful verification
-                // activity row follows it, and the rewrite streams in after that —
-                // exactly the composition the server now persists (t:'verify').
+                // Preserve the rejected draft in audit data, but remove it from the
+                // owner-facing blocks. The verified replacement will be the only
+                // prose rendered when its text deltas arrive.
                 requestLiveMode("thinking")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
@@ -4645,9 +4706,12 @@ final class AssistantVM {
                         messages[i].supersededBlockIds.insert(pid)
                         messages[i].timeline.append(.text(draft, superseded: true))
                     }
-                    // Final-answer accumulator resets (server does the same with
-                    // finalText) — the visible blocks are untouched.
                     messages[i].text = ""
+                    messages[i].blocks.removeAll { block in
+                        if case .prose = block { return true }
+                        return false
+                    }
+                    messages[i].supersededBlockIds = []
                     messages[i].selfCorrected = true
                     let label = AgentChatMessage.verifyLabel(attempt: attempt, max: maxAttempts)
                     messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: label)
@@ -4860,9 +4924,8 @@ final class AssistantVM {
     /// scroll-gap and per-delta MainActor cost reproduce without a server.
     /// Parity roadmap visual fixture — ALMA_ASSISTANT_PARITY=1: ONLY the persisted
     /// verification-retry turn (no stress stream), decoded through the real wire
-    /// path, so a screenshot shows the exact cold-load composition: progress prose →
-    /// tool rows → superseded draft (visible) → verify row → corrected final +
-    /// Σ/cache/ধাপ footer.
+    /// path, so a screenshot proves progress/superseded drafts stay audit-only and
+    /// exactly one corrected final prose remains visible with the activity/footer.
     func loadParityFixture() {
         // Simulator proof fixtures must be visually deterministic. Do not let an
         // unrelated persisted queue/dictation warning from an earlier recovery
@@ -4899,17 +4962,33 @@ final class AssistantVM {
         """#
         if let d = parityJSON.data(using: .utf8),
            var wireRow = (try? JSONDecoder().decode(AgentMessageWire.self, from: d)).map(AgentChatMessage.from) {
+            let singleReplyProof = ProcessInfo.processInfo.environment["ALMA_SINGLE_REPLY_PROOF"] == "1"
+                || ProcessInfo.processInfo.arguments.contains("ALMA_SINGLE_REPLY_PROOF=1")
+            if singleReplyProof {
+                // Focused regression screenshot: keep the real three-round
+                // persisted timeline, but remove unrelated action/delegation
+                // cards so the one settled prose block fits in one viewport.
+                wireRow.confirmCards = []
+                wireRow.askCards = []
+                wireRow.blocks.removeAll {
+                    if case .confirmCard = $0 { return true }
+                    if case .askCard = $0 { return true }
+                    return false
+                }
+            }
             // Chat-parity batch demo state: delegation cards (done + running) so a
             // fixture screenshot proves the DelegationCard composition offline.
-            wireRow.delegations = [
-                .init(id: "fix-d1", role: "researcher", roleLabel: "গবেষক",
-                      task: "প্রতিযোগীদের ঈদ ক্যাম্পেইনের দাম যাচাই করো",
-                      done: true, success: true,
-                      summary: "তিনটা ব্র্যান্ড দেখা হয়েছে — গড় দাম ৳১,২৫০; আমাদের অফার প্রতিযোগিতামূলক।",
-                      toolsUsed: ["web_research", "compare_to_brand"]),
-                .init(id: "fix-d2", role: "cs", roleLabel: "কাস্টমার সার্ভিস",
-                      task: "WhatsApp inbox-এর নতুন প্রশ্নগুলোর খসড়া উত্তর"),
-            ]
+            if !singleReplyProof {
+                wireRow.delegations = [
+                    .init(id: "fix-d1", role: "researcher", roleLabel: "গবেষক",
+                          task: "প্রতিযোগীদের ঈদ ক্যাম্পেইনের দাম যাচাই করো",
+                          done: true, success: true,
+                          summary: "তিনটা ব্র্যান্ড দেখা হয়েছে — গড় দাম ৳১,২৫০; আমাদের অফার প্রতিযোগিতামূলক।",
+                          toolsUsed: ["web_research", "compare_to_brand"]),
+                    .init(id: "fix-d2", role: "cs", roleLabel: "কাস্টমার সার্ভিস",
+                          task: "WhatsApp inbox-এর নতুন প্রশ্নগুলোর খসড়া উত্তর"),
+                ]
+            }
             rows.append(wireRow)
         }
         // Footer-focused shot (ALMA_FEEDBACK_OPEN=1): stop at the first turn so
@@ -5176,9 +5255,8 @@ final class AssistantVM {
         big.text = String(repeating: bnLong, count: 14)
         rows.append(big)
 
-        // Parity roadmap — a PERSISTED (cold-load) verification-retry turn decoded
-        // through the real wire path: draft prose stays visible, truthful verify
-        // row between draft and corrected final, cache/rounds in the footer.
+        // Persisted verification-retry turn decoded through the real wire path:
+        // raw draft remains in timeline, but only one corrected prose is visible.
         rows.append(AgentChatMessage(id: "fix-u-parity", role: .user,
                                      text: "স্টকের কাজটা কি হয়েছে?"))
         let parityJSON = #"""
@@ -5475,8 +5553,8 @@ final class AssistantVM {
             "data: {\"type\":\"text_delta\",\"delta\":\"আজকের বিক্রি ভালো হয়েছে Boss।\"}", "",
             "data: {\"type\":\"text_delta\",",                              // multi-line data event
             "data: \"delta\":\" মাল্টি-লাইন ইভেন্টও ঠিকভাবে এসেছে।\"}", "",
-            // Parity roadmap RC-2 — the draft above must STAY visible (superseded in
-            // data), a truthful verify row follows, then the corrected final prose.
+            // The draft is retained as audit data but removed from visible prose;
+            // the truthful verify row remains before the corrected final.
             "data: {\"type\":\"verification_retry\",\"attempt\":1,\"maxAttempts\":2}", "",
             "data: {\"type\":\"text_delta\",\"delta\":\"যাচাই শেষে ঠিক করা উত্তর: আজকের মোট বিক্রি ৳৬,০৫২।\"}", "",
             "data: {\"type\":\"ask_card\",\"askCardId\":\"a1\",\"question\":\"কোনটা আগে করব Boss?\",\"options\":[\"স্টক অর্ডার\",\"ক্যাম্পেইন\",\"পরে বলব\"]}", "",
@@ -5546,9 +5624,8 @@ final class AssistantVM {
             check("turn_snapshot", tid == "t9" && st == "running" && seq == 7)
         } else { check("turn_snapshot", false) }
 
-        // Presentation parity (roadmap RC-1/RC-3/RC-4) — persisted wire row must
-        // decode every prose/verify segment and rebuild the SAME interleaved
-        // TurnBlock composition the live stream shows, superseded marked in data.
+        // Presentation parity — persisted wire keeps the raw prose/verify audit
+        // entries, while owner-facing blocks contain exactly one settled prose.
         let parityJSON = #"""
         {"id":"m-parity","role":"assistant",
          "content":[{"type":"text","text":"ঠিক করা উত্তর।"}],
@@ -5584,8 +5661,8 @@ final class AssistantVM {
                 case .askCard: return "ask"
                 }
             }
-            check("RC-3 canonical block fingerprint",
-                  fingerprint == ["prose", "search", "tool", "prose*", "think", "prose"])
+            check("RC-3 single-reply block fingerprint",
+                  fingerprint == ["search", "tool", "think", "prose"])
             // Chat-parity batch: a verify/superseded wire row marks the message
             // self-corrected (footer badge) — same rule as the server presentation.
             check("selfCorrected derived from wire", m.selfCorrected)
@@ -9620,18 +9697,18 @@ struct AgentComposerView: View {
     @Bindable var vm: AssistantVM
     let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var photoItem: PhotosPickerItem?
     @State private var showAttachmentChoices = false
     @State private var showPhotoPicker = false
     @State private var showDocumentPicker = false
     @State private var showCamera = false
     @State private var showScanner = false
-    @State private var showModelPicker = false
     @FocusState private var focused: Bool
 
     private var hasComposerPresentation: Bool {
         showAttachmentChoices || showPhotoPicker || showDocumentPicker
-            || showCamera || showScanner || showModelPicker
+            || showCamera || showScanner
     }
 
     var body: some View {
@@ -9687,36 +9764,33 @@ struct AgentComposerView: View {
                 if vm.isRecording {
                     recordingBar(pal)
                 } else {
-                    TextField(vm.transcribing ? "বুঝে নিচ্ছি…" : "বার্তা লিখুন…",
-                              text: $vm.composerDraft, axis: .vertical)
-                        .font(.body)
-                        .foregroundStyle(pal.ink)
-                        .lineLimit(1...5)
-                        .focused($focused)
-                        .disabled(vm.composerSubmissionPending)
-                        .padding(.horizontal, 10)
-                        .padding(.top, 8)
-                    controlsRow(pal)
+                    composerInputRow(pal)
                 }
             }
-            .padding(8)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
             .background(pal.glassFill)
             .modifier(AlmaAgentGlassBackground(
-                shape: RoundedRectangle(cornerRadius: 24, style: .continuous), pal: pal))
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                shape: RoundedRectangle(cornerRadius: 30, style: .continuous), pal: pal))
+            .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(focused
-                        ? AgentPalette.coral.opacity(0.72)
-                        : pal.borderSubtle.opacity(0.85),
-                        lineWidth: focused ? 1.2 : 0.8)
-                    .animation(.easeOut(duration: 0.18), value: focused)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                        .strokeBorder(focused
+                            ? Color.white.opacity(pal.dark ? 0.28 : 0.62)
+                            : pal.borderSubtle.opacity(0.95),
+                            lineWidth: focused ? 1.1 : 0.8)
+                    AgentNeonBorder(cornerRadius: 30)
+                        .opacity(focused ? 0.72 : 0.22)
+                }
+                .animation(.easeOut(duration: 0.2), value: focused)
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
+            .shadow(color: Color.black.opacity(pal.dark ? 0.28 : 0.10), radius: 18, y: 8)
+            .shadow(color: AgentPalette.coral.opacity(focused ? 0.12 : 0.04), radius: 18, y: 2)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 7)
         }
-        .padding(.top, 6)
-        .background(.ultraThinMaterial)
+        .padding(.top, 8)
         .onChange(of: vm.dictatedText) { _, newValue in
             guard !newValue.isEmpty else { return }
             vm.composerDraft = vm.composerDraft.isEmpty
@@ -9903,8 +9977,8 @@ struct AgentComposerView: View {
         }
     }
 
-    @ViewBuilder private func controlsRow(_ pal: AgentPalette) -> some View {
-        HStack(spacing: 4) {
+    @ViewBuilder private func composerInputRow(_ pal: AgentPalette) -> some View {
+        HStack(alignment: .bottom, spacing: 2) {
             Button {
                 showAttachmentChoices = true
             } label: {
@@ -9920,33 +9994,16 @@ struct AgentComposerView: View {
                     .presentationCompactAdaptation(.popover)
                     .presentationBackground(.ultraThinMaterial)
             }
-            // Model picker pill — opens the native sheet with EVERY enabled model.
-            Button {
-                AlmaAgentHaptics.selection()
-                showModelPicker = true
-            } label: {
-                HStack(spacing: 3) {
-                    Text(vm.modelPillLabel)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 7, weight: .semibold))
-                }
-                .foregroundStyle(vm.isAutoModel ? pal.muted : AgentPalette.coral)
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(pal.card.opacity(0.5), in: Capsule())
-                .overlay(Capsule().strokeBorder(
-                    vm.isAutoModel ? pal.borderSubtle : AgentPalette.coral.opacity(0.35), lineWidth: 1))
-                .frame(maxWidth: 150)
-                .almaAgentHitTarget()
-            }
-            .disabled(vm.isStreaming)
-            .accessibilityLabel("মডেল বাছাই")
-            .accessibilityValue(vm.modelPillLabel)
-            .sheet(isPresented: $showModelPicker) {
-                AgentModelPickerSheet(vm: vm)
-            }
-            Spacer(minLength: 4)
+            TextField(vm.transcribing ? "বুঝে নিচ্ছি…" : "বার্তা লিখুন…",
+                      text: $vm.composerDraft, axis: .vertical)
+                .font(.system(size: 17))
+                .foregroundStyle(pal.ink)
+                .lineLimit(1...5)
+                .focused($focused)
+                .disabled(vm.composerSubmissionPending)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 10)
+                .frame(minHeight: 46, alignment: .center)
             // mic → Whisper dictation
             Button { vm.toggleRecording() } label: {
                 Group {
@@ -9975,34 +10032,44 @@ struct AgentComposerView: View {
                     .almaAgentHitTarget()
             }
             .accessibilityLabel("ভয়েস কথোপকথন")
-            // send / stop
-            Button {
-                if vm.isStreaming && sendEnabled {
-                    send()
-                } else if vm.isStreaming {
-                    vm.stopStreaming()
-                } else {
-                    send()
+            // Kimi/iOS grammar: no inert send button in the empty state. It slides
+            // in only when text/file input is actionable; Stop still remains visible.
+            if showSendControl {
+                Button {
+                    if vm.isStreaming && sendEnabled {
+                        send()
+                    } else if vm.isStreaming {
+                        vm.stopStreaming()
+                    } else {
+                        send()
+                    }
+                } label: {
+                    Image(systemName: vm.isStreaming && !sendEnabled ? "stop.fill" : "arrow.up")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 38, height: 38)
+                        .background(
+                            LinearGradient(colors: [AgentPalette.coral, AgentPalette.coralDim],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing),
+                            in: Circle())
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.7))
+                        .shadow(color: AgentPalette.coral.opacity(0.32), radius: 7, y: 3)
+                        .almaAgentHitTarget()
                 }
-            } label: {
-                Image(systemName: vm.isStreaming && !sendEnabled ? "stop.fill" : "arrow.up")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(sendEnabled || vm.isStreaming ? .white : pal.muted)
-                    .frame(width: 36, height: 36)
-                    .background(sendEnabled || vm.isStreaming
-                                ? AnyShapeStyle(AgentPalette.coral)
-                                : AnyShapeStyle(pal.card.opacity(0.5)),
-                                in: Circle())
-                    .shadow(color: sendEnabled ? AgentPalette.coral.opacity(0.35) : .clear, radius: 5, y: 2)
-                    .almaAgentHitTarget()
+                .accessibilityLabel(vm.isStreaming && sendEnabled
+                                    ? "বার্তাটি অপেক্ষায় রাখুন"
+                                    : (vm.isStreaming ? "উত্তর থামান" : "বার্তা পাঠান"))
+                .transition(reduceMotion ? .opacity : .asymmetric(
+                    insertion: .move(edge: .trailing).combined(with: .opacity).combined(with: .scale(scale: 0.72)),
+                    removal: .move(edge: .trailing).combined(with: .opacity).combined(with: .scale(scale: 0.72))))
             }
-            .disabled(!sendEnabled && !vm.isStreaming)
-            .accessibilityLabel(vm.isStreaming && sendEnabled
-                                ? "বার্তাটি অপেক্ষায় রাখুন"
-                                : (vm.isStreaming ? "উত্তর থামান" : "বার্তা পাঠান"))
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: vm.isStreaming)
         }
+        .frame(minHeight: 48)
+        .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.78),
+                   value: showSendControl)
     }
+
+    private var showSendControl: Bool { sendEnabled || vm.isStreaming }
 
     private var sendEnabled: Bool {
         !vm.composerSubmissionPending
@@ -10807,7 +10874,6 @@ struct AgentProjectFormSheet: View {
 struct AgentEmptyStateView: View {
     let pal: AgentPalette
     let onPick: (String) -> Void
-    @State private var breathe = false
 
     private var dayPart: Int {
         var cal = Calendar.current
@@ -10820,10 +10886,10 @@ struct AgentEmptyStateView: View {
     }
 
     private var subtitle: String {
-        ["শুভ সকাল, Boss — দিনটা শুরু করি",
-         "শুভ দুপুর, Boss — কীভাবে সাহায্য করতে পারি",
-         "শুভ সন্ধ্যা, Boss — দিনটা গুছিয়ে নিই",
-         "শুভ রাত্রি, Boss — কী দেখে নেবো"][dayPart]
+        ["শুভ সকাল — দিনটা শুরু করি",
+         "শুভ দুপুর — কীভাবে সাহায্য করতে পারি",
+         "শুভ সন্ধ্যা — দিনটা গুছিয়ে নিই",
+         "শুভ রাত্রি — কী দেখে নেবো"][dayPart]
     }
 
     private var suggestions: [(String, String)] {
@@ -10848,11 +10914,11 @@ struct AgentEmptyStateView: View {
     }
 
     var body: some View {
-        // Owner call (2026-07-06): no orb, no suggestion chips — the clean greeting only.
-        VStack(spacing: 10) {
-            Text("✨").font(.system(size: 40))
-            Text("আস্সালামু আলাইকুম")
-                .font(.system(size: 19, weight: .semibold))
+        VStack(spacing: 8) {
+            AgentNewSessionHero(pal: pal)
+                .frame(height: 150)
+            Text("আস্সালামু আলাইকুম, Boss")
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
                 .foregroundStyle(pal.ink)
             Text(subtitle)
                 .font(.system(size: 13.5))
@@ -10860,9 +10926,8 @@ struct AgentEmptyStateView: View {
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 110)
+        .padding(.top, 58)
         .padding(.horizontal, 24)
-        .onAppear { breathe = true }   // state kept for API stability
     }
 }
 
@@ -13547,6 +13612,18 @@ struct AssistantScreen: View {
                 "reduceMotion=\(UIAccessibility.isReduceMotionEnabled) reduceTransparency=\(UIAccessibility.isReduceTransparencyEnabled) contentSize=\(UIApplication.shared.preferredContentSizeCategory.rawValue)")
             barHooks.onMenu = { Self.presentDrawer(vm) }
             barHooks.onNewChat = { Task { await vm.newChat() } }
+            barHooks.provideModelMenu = { completion in
+                Task { @MainActor in
+                    await vm.loadModels()
+                    completion(AssistantBarHooks.modelMenuElements(
+                        models: vm.models,
+                        selectedId: vm.modelId,
+                        onSelect: { vm.selectModel($0) }
+                    ))
+                }
+            }
+            barHooks.installModelMenu()
+            barHooks.updateModelLabel(vm.modelPillLabel, enabled: !vm.isStreaming)
             barHooks.isPinned = { vm.currentConversationPinned }
             barHooks.hasProject = { vm.currentProjectId != nil }
             barHooks.canMutateConversation = { !vm.conversationMutationBlocked }
@@ -13603,6 +13680,20 @@ struct AssistantScreen: View {
                         .first { $0.inputPretty != nil || $0.resultFull != nil }
                 }
             }
+            #if DEBUG
+            // Headless visual proof for the new-session hero + floating composer.
+            // This never ships an alternate production path; it only avoids a
+            // network/login dependency while simulator screenshots are captured.
+            if argFlag("ALMA_ASSISTANT_NEW_SESSION_UI") {
+                vm.messages = []
+                vm.conversationId = nil
+                vm.conversationTitle = "ALMA AI"
+                vm.modelId = nil
+                vm.composerDraft = rawEnv["ALMA_ASSISTANT_COMPOSER_TEXT"] ?? ""
+                AlmaTurnLog.event("assistant.contentReady", "fixture=new-session-ui")
+                return
+            }
+            #endif
             // Roadmap Phase 0 — local scroll/streaming stress fixture; skips the
             // server entirely (no bootstrap) so layout is tested in isolation.
             if argFlag("ALMA_ASSISTANT_HUGE_SESSION") {
@@ -13842,6 +13933,12 @@ struct AssistantScreen: View {
         .onChange(of: hasBlockingPresentation) { _, shown in
             FloatingChatHead.shared.setSuppressed(shown, reason: "assistant-presentation")
         }
+        .onChange(of: vm.modelPillLabel) { _, label in
+            barHooks.updateModelLabel(label, enabled: !vm.isStreaming)
+        }
+        .onChange(of: vm.isStreaming) { _, streaming in
+            barHooks.updateModelLabel(vm.modelPillLabel, enabled: !streaming)
+        }
         .onAppear {
             // The Assistant already has its own conversation controls; the
             // app-wide office chat head obscures long answers and the composer.
@@ -13994,9 +14091,84 @@ struct AgentScrollViewportKey: PreferenceKey {
 /// Bridges the UIKit nav-bar buttons (glass hamburger / coral compose — the exact
 /// Claude-style buttons the web Assistant tab already had) into the SwiftUI screen.
 @MainActor
+final class AssistantModelPillButton: UIButton {
+    private let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+    private let modelText = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        blur.translatesAutoresizingMaskIntoConstraints = false
+        blur.isUserInteractionEnabled = false
+        blur.layer.cornerRadius = 18
+        blur.clipsToBounds = true
+        addSubview(blur)
+
+        modelText.translatesAutoresizingMaskIntoConstraints = false
+        modelText.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        modelText.textColor = .secondaryLabel
+        modelText.lineBreakMode = .byTruncatingTail
+        let chevron = UIImageView(image: UIImage(systemName: "chevron.down",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 8.5, weight: .bold)))
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.tintColor = .tertiaryLabel
+        let stack = UIStackView(arrangedSubviews: [modelText, chevron])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 5
+        blur.contentView.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 108),
+            heightAnchor.constraint(equalToConstant: 36),
+            blur.leadingAnchor.constraint(equalTo: leadingAnchor),
+            blur.trailingAnchor.constraint(equalTo: trailingAnchor),
+            blur.topAnchor.constraint(equalTo: topAnchor),
+            blur.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: blur.contentView.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: blur.contentView.trailingAnchor, constant: -10),
+            stack.centerYAnchor.constraint(equalTo: blur.contentView.centerYAnchor),
+        ])
+        layer.cornerRadius = 18
+        layer.borderWidth = 0.75
+        layer.borderColor = UIColor.separator.withAlphaComponent(0.35).cgColor
+        accessibilityLabel = "মডেল বাছাই"
+        accessibilityTraits = .button
+        showsMenuAsPrimaryAction = true
+        changesSelectionAsPrimaryAction = false
+        update(label: "Auto", enabled: true)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func update(label: String, enabled: Bool) {
+        modelText.text = label
+        isEnabled = enabled
+        alpha = enabled ? 1 : 0.48
+        accessibilityValue = label
+    }
+
+    override var isHighlighted: Bool {
+        didSet {
+            UIView.animate(withDuration: 0.12) {
+                self.transform = self.isHighlighted
+                    ? CGAffineTransform(scaleX: 0.96, y: 0.96) : .identity
+                self.blur.alpha = self.isHighlighted ? 0.76 : 1
+            }
+        }
+    }
+}
+
+@MainActor
 final class AssistantBarHooks: NSObject {
     var onMenu: (() -> Void)?
     var onNewChat: (() -> Void)?
+    /// Supplies a fresh model snapshot whenever the system asks to open the
+    /// source-anchored menu. A deferred menu lets the API load finish without
+    /// falling back to an iPhone bottom sheet.
+    var provideModelMenu: ((@escaping ([UIMenuElement]) -> Void) -> Void)?
+    weak var modelButton: AssistantModelPillButton?
     var isPinned: (() -> Bool)?
     var hasProject: (() -> Bool)?
     var canMutateConversation: (() -> Bool)?
@@ -14016,6 +14188,67 @@ final class AssistantBarHooks: NSObject {
     @objc func newChatTapped() {
         AlmaAgentHaptics.light()
         onNewChat?()
+    }
+    func updateModelLabel(_ label: String, enabled: Bool) {
+        modelButton?.update(label: label, enabled: enabled)
+    }
+
+    func installModelMenu() {
+        let deferred = UIDeferredMenuElement.uncached { [weak self] completion in
+            Task { @MainActor in
+                guard let provider = self?.provideModelMenu else {
+                    completion([])
+                    return
+                }
+                AlmaAgentHaptics.selection()
+                provider(completion)
+            }
+        }
+        modelButton?.menu = UIMenu(children: [deferred])
+    }
+
+    static func modelMenuElements(
+        models: [AgentModelInfo], selectedId: String?,
+        onSelect: @escaping (String?) -> Void
+    ) -> [UIMenuElement] {
+        let isAuto = selectedId == nil || selectedId == "auto"
+        let auto = UIAction(
+            title: "Auto", image: UIImage(systemName: "bolt.fill"),
+            state: isAuto ? .on : .off
+        ) { _ in onSelect(nil) }
+
+        let providers: [(key: String, label: String)] = [
+            ("anthropic", "Anthropic"), ("google", "Google"),
+            ("openai", "OpenAI"), ("openrouter", "OpenRouter"),
+        ]
+        var sections: [UIMenuElement] = [
+            UIMenu(options: .displayInline, children: [auto])
+        ]
+        for provider in providers {
+            let children = models.filter { $0.provider == provider.key }.map { model in
+                UIAction(
+                    title: model.label,
+                    state: selectedId == model.id ? .on : .off
+                ) { _ in onSelect(model.id) }
+            }
+            if !children.isEmpty {
+                sections.append(UIMenu(
+                    title: provider.label, options: .displayInline, children: children))
+            }
+        }
+        let knownProviders = Set(providers.map(\.key))
+        let other = models.filter { model in
+            guard let provider = model.provider else { return true }
+            return !knownProviders.contains(provider)
+        }.map { model in
+            UIAction(title: model.label, state: selectedId == model.id ? .on : .off) { _ in
+                onSelect(model.id)
+            }
+        }
+        if !other.isEmpty {
+            sections.append(UIMenu(title: "Other", options: .displayInline, children: other))
+        }
+        return sections
     }
 
     func conversationMenu() -> UIMenu {
@@ -14096,10 +14329,14 @@ extension AlmaTabBarController {
                 barHooks: hooks)
             let host = AlmaHostingController(rootView: screen)
             host.title = "ALMA AI"
-            // The exact Claude bar the web Assistant had: glass hamburger + coral compose.
-            host.navigationItem.leftBarButtonItem = AlmaWebTabViewController.glassBarButton(
+            // Kimi-style top-left model chip: the composer now stays dedicated to
+            // composing, while model choice lives beside the session drawer.
+            let history = AlmaWebTabViewController.glassBarButton(
                 icon: "line.3.horizontal", label: "চ্যাট হিস্টরি", target: hooks, action: #selector(AssistantBarHooks.menuTapped),
                 light: !AlmaTheme.isDark)
+            let modelButton = AssistantModelPillButton()
+            hooks.modelButton = modelButton
+            host.navigationItem.leftBarButtonItems = [history, UIBarButtonItem(customView: modelButton)]
             let plus = AlmaWebTabViewController.coralBarButton(
                 icon: "plus", label: "নতুন চ্যাট", target: hooks,
                 action: #selector(AssistantBarHooks.newChatTapped))

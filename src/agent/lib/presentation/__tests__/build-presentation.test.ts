@@ -44,7 +44,7 @@ describe('buildAgentPresentationV1', () => {
     expect(p.blocks[2]).toMatchObject({ type: 'prose', state: 'final' })
   })
 
-  it('draft-verification-final: draft stays visible, truthfully superseded, one final', () => {
+  it('draft-verification-final: superseded draft stays audit-only, one visible final', () => {
     const p = buildAgentPresentationV1({
       messageId: MSG,
       content: [{ type: 'text', text: 'আসলে কাজটা এখনো হয়নি — এখন করে দিচ্ছি।' }],
@@ -54,17 +54,18 @@ describe('buildAgentPresentationV1', () => {
         { t: 'text', text: 'আসলে কাজটা এখনো হয়নি — এখন করে দিচ্ছি।' },
       ],
     })
-    expect(p.blocks).toHaveLength(3)
-    expect(p.blocks[0]).toMatchObject({ type: 'prose', text: 'কাজটা করে দিয়েছি Boss!', state: 'superseded' })
-    expect(p.blocks[1]).toMatchObject({
+    expect(p.blocks).toHaveLength(2)
+    expect(p.blocks[0]).toMatchObject({
       type: 'activity',
       activityType: 'verification',
       label: verificationLabel(1, 2),
     })
-    expect(p.blocks[2]).toMatchObject({ type: 'prose', state: 'final' })
-    // Exactly ONE final block — the superseded draft is never counted as an answer.
-    const finals = p.blocks.filter((b) => b.type === 'prose' && b.state === 'final')
-    expect(finals).toHaveLength(1)
+    expect(p.blocks[1]).toMatchObject({
+      type: 'prose',
+      text: 'আসলে কাজটা এখনো হয়নি — এখন করে দিচ্ছি।',
+      state: 'final',
+    })
+    expect(p.blocks.filter((b) => b.type === 'prose')).toHaveLength(1)
     // Additive selfCorrected marker — drives the clients' "নিজে যাচাই করে
     // ঠিক করেছে" badge from the canonical payload.
     expect(p.selfCorrected).toBe(true)
@@ -82,7 +83,7 @@ describe('buildAgentPresentationV1', () => {
     expect(p.selfCorrected).toBeUndefined()
   })
 
-  it('status-tool-status-final: intentional progress prose stays chronological, never mislabelled final', () => {
+  it('status-tool-status-final: progress prose stays audit-only and one final remains visible', () => {
     const p = buildAgentPresentationV1({
       messageId: MSG,
       timeline: [
@@ -94,15 +95,14 @@ describe('buildAgentPresentationV1', () => {
       ],
     })
     expect(p.blocks.map((b) => (b.type === 'prose' ? `prose:${b.state}` : b.type))).toEqual([
-      'prose:progress',
       'activity',
-      'prose:progress',
       'activity',
       'prose:final',
     ])
+    expect(p.blocks[2]).toMatchObject({ type: 'prose', text: 'Boss, সব মিলিয়ে রিপোর্ট রেডি।' })
   })
 
-  it('repeated-content: identical paragraphs keep distinct stable ids and all stay visible', () => {
+  it('repeated-content: repeated progress/final text produces one visible reply', () => {
     const p = buildAgentPresentationV1({
       messageId: MSG,
       timeline: [
@@ -112,9 +112,8 @@ describe('buildAgentPresentationV1', () => {
       ],
     })
     const prose = p.blocks.filter((b) => b.type === 'prose')
-    expect(prose).toHaveLength(2)
-    expect(new Set(prose.map((b) => b.id)).size).toBe(2)
-    expect(prose.map((b) => (b.type === 'prose' ? b.text : ''))).toEqual(['একই লাইন।', 'একই লাইন।'])
+    expect(prose).toHaveLength(1)
+    expect(prose[0]).toMatchObject({ type: 'prose', text: 'একই লাইন।', state: 'final' })
   })
 
   it('usage-four-rounds: cache totals and API-round count pass through exactly', () => {
@@ -206,7 +205,7 @@ describe('buildAgentPresentationV1', () => {
     expect(p.blocks[0]).toMatchObject({ state: 'final' })
   })
 
-  it('verification draft without replacement: draft stays superseded, content text is NOT invented as final', () => {
+  it('verification draft without replacement: unverified prose is never owner-visible', () => {
     // Deadline-abort edge: draft superseded, turn died before a replacement.
     const p = buildAgentPresentationV1({
       messageId: MSG,
@@ -216,8 +215,40 @@ describe('buildAgentPresentationV1', () => {
         { t: 'verify', attempt: 1, max: 2 },
       ],
     })
-    expect(p.blocks.map((b) => b.type)).toEqual(['prose', 'activity'])
-    expect(p.blocks[0]).toMatchObject({ state: 'superseded' })
-    expect(p.blocks.filter((b) => b.type === 'prose' && b.state === 'final')).toHaveLength(0)
+    expect(p.blocks.map((b) => b.type)).toEqual(['activity'])
+    expect(p.blocks.filter((b) => b.type === 'prose')).toHaveLength(0)
+  })
+
+  it('real regression shape: accumulated stored progress still projects only the final timeline reply', () => {
+    const p = buildAgentPresentationV1({
+      messageId: MSG,
+      content: [{ type: 'text', text: 'আগে setup করছি।\n\nBoss, setup শেষ।' }],
+      timeline: [
+        { t: 'text', text: 'ভুল draft', state: 'superseded' },
+        { t: 'verify', attempt: 1, max: 2 },
+        { t: 'text', text: 'আগে setup করছি।' },
+        { t: 'tool', name: 'live_browser_look', ok: true },
+        { t: 'text', text: 'Boss, setup শেষ।' },
+      ],
+    })
+
+    expect(p.blocks.filter((b) => b.type === 'prose')).toEqual([
+      { id: `${MSG}:b2`, type: 'prose', text: 'Boss, setup শেষ।', state: 'final' },
+    ])
+    expect(p.selfCorrected).toBe(true)
+  })
+
+  it('deadline suffix: preserves stored continuation detail absent from the timeline', () => {
+    const final = 'Boss, কাজটা এই ধাপ পর্যন্ত হয়েছে।'
+    const footer = '📌 “continue” বললে এখান থেকে চালাব।'
+    const p = buildAgentPresentationV1({
+      messageId: MSG,
+      content: [{ type: 'text', text: `${final}\n\n${footer}` }],
+      timeline: [{ t: 'text', text: final }],
+    })
+
+    expect(p.blocks.filter((b) => b.type === 'prose')).toEqual([
+      { id: `${MSG}:b0`, type: 'prose', text: `${final}\n\n${footer}`, state: 'final' },
+    ])
   })
 })
