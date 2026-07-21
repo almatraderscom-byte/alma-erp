@@ -27,7 +27,11 @@ $BridgeTokenFile   = 'C:\go2rtc\bridge-token.txt'
 $RtspFile   = 'C:\go2rtc\listen-rtsp.txt'
 $Ffmpeg     = 'C:\go2rtc\ffmpeg.exe'
 $ChunkSec   = 12                         # length of each audio grab (long enough for a full sentence)
-$SilenceDb  = -45                        # mean volume below this = silence, skip
+$SilenceDb  = -38                        # mean volume below this = silence, skip.
+                                         # Raised from -45: far-field room hum/echo was passing the
+                                         # old gate, so we paid to transcribe near-empty chunks all
+                                         # day. -38 only lets an actual raised voice through. If real
+                                         # requests get missed, lower a little (toward -42).
 $Chunk      = "$env:TEMP\alma-listen.wav"      # raw grab (silence check runs on this)
 $SendChunk  = "$env:TEMP\alma-listen-send.wav" # filtered copy actually sent (voice boosted)
 
