@@ -35,8 +35,26 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** Unicode word-boundary wake matching; "alma" no longer matches "Salma". */
-export function matchCameraWake(transcript: string, wakeWords: string[]): string | null {
+/**
+ * How far into the transcript the wake word may start and still count. Staff
+ * ADDRESS the camera first ("আলমা শোনো, …"), so a genuine wake sits at the very
+ * front — after at most a short greeting. A wake word appearing deep inside a
+ * long sentence is almost always noise / an STT hallucination, and forwarding it
+ * is exactly the spam that ran up the owner's cost. Owner-tunable via the
+ * `leadChars` argument (KV 'camera_wake_lead_chars' at the call site).
+ */
+export const DEFAULT_WAKE_LEAD_CHARS = 24
+
+/**
+ * Unicode word-boundary wake matching; "alma" never matches "Salma". The match
+ * must also LEAD the utterance — start within `leadChars` characters — so only
+ * speech actually addressed to the camera wakes it.
+ */
+export function matchCameraWake(
+  transcript: string,
+  wakeWords: string[],
+  leadChars: number = DEFAULT_WAKE_LEAD_CHARS,
+): string | null {
   for (const wakeWord of wakeWords) {
     const words = wakeWord.trim().split(/\s+/).filter(Boolean)
     if (words.length === 0) continue
@@ -44,6 +62,9 @@ export function matchCameraWake(transcript: string, wakeWords: string[]): string
     const matcher = new RegExp(`(^|[^\\p{L}\\p{N}])(${phrase})(?![\\p{L}\\p{N}])`, 'iu')
     const match = matcher.exec(transcript)
     if (!match) continue
+    // Position of the wake phrase itself (skip the leading boundary group).
+    const wakeStart = match.index + match[1].length
+    if (wakeStart > leadChars) continue
     const after = transcript.slice(match.index + match[0].length)
     return after.replace(/^[\s,।:;-]+/, '').trim()
   }

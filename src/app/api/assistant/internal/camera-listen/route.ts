@@ -48,19 +48,27 @@ export const maxDuration = 60
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-const DEFAULT_WAKE_WORDS = 'আলমা শোনো,আলমা,alma'
+// Only the full two-word wake phrase — bare "আলমা"/"alma" was a single short
+// token that matched far too easily (and that STT hallucinated), so it is gone.
+const DEFAULT_WAKE_WORDS = 'আলমা শোনো'
 
 /**
- * Domain prompt for the camera mic — biases STT toward the wake word and the
- * phrases staff actually say at the office, which matters a lot for distant,
- * echoey CCTV audio. Owner-tunable via KV 'camera_listen_stt_prompt'.
+ * Domain prompt for the camera mic — a NEUTRAL Bangla/anti-Hindi steer only.
+ *
+ * It deliberately does NOT list the wake word or the phrases staff say. A biased
+ * prompt (the old version primed "আলমা শোনো", "একজন কাস্টমার এসেছে", …) makes
+ * Whisper HALLUCINATE those exact phrases out of distant, echoey CCTV noise —
+ * which manufactured fake wake words and spammed the owner all day. Keep this
+ * generic. Owner-tunable via KV 'camera_listen_stt_prompt'.
  */
 const DEFAULT_STT_PROMPT =
   'অফিসের সিসিটিভি ক্যামেরার মাইক থেকে দূরের বাংলা কথা। ' +
-  'প্রায়ই বলা হয়: "আলমা শোনো", "বস", "একজন কাস্টমার এসেছে", "একটু আসবেন", ' +
-  '"ডেলিভারি এসেছে", "প্যাকেট রেডি"। ' +
   'Bangladeshi Bangla only — not Hindi, not Devanagari.'
 const DEFAULT_COOLDOWN_SEC = 15
+// Hard daily ceiling on paid STT calls from this listener, so a mis-tuned
+// silence gate or a stuck loop can never run up an unbounded OpenAI bill.
+// Owner-tunable via KV 'camera_listen_daily_cap'.
+const DEFAULT_DAILY_STT_CAP = 400
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024
 
 async function kvGet(key: string): Promise<string | null> {
@@ -127,7 +135,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'audio_too_large' }, { status: 413 })
   }
 
-  const enabled = ((await kvGet('camera_listen_enabled')) ?? 'on').toLowerCase() !== 'off'
+  // Default OFF. The listener stays silent (and free) until the owner explicitly
+  // turns it on via KV 'camera_listen_enabled=on'. This is the kill switch for the
+  // runaway-cost incident: even if the office-PC loop keeps POSTing, we bail here
+  // BEFORE any paid transcription runs.
+  const enabled = ((await kvGet('camera_listen_enabled')) ?? 'off').toLowerCase() === 'on'
   if (!enabled) return NextResponse.json({ ok: true, ignored: 'disabled' })
 
   const input = await parseInput(req)
@@ -143,10 +155,20 @@ export async function POST(req: NextRequest) {
     if (input.audio.size > MAX_AUDIO_BYTES) {
       return NextResponse.json({ error: 'audio_too_large' }, { status: 413 })
     }
+    // Hard daily ceiling on paid STT calls. Every non-silent chunk costs a Whisper
+    // call BEFORE we know if the wake word was said, so a busy room can bleed all
+    // day; this caps that bleed at a known number the owner can tune.
+    const cap = Number((await kvGet('camera_listen_daily_cap')) ?? DEFAULT_DAILY_STT_CAP) || DEFAULT_DAILY_STT_CAP
+    const dayKey = `camera_listen_stt_count:${new Date().toISOString().slice(0, 10)}`
+    const usedToday = Number((await kvGet(dayKey)) ?? 0) || 0
+    if (usedToday >= cap) {
+      return NextResponse.json({ ok: true, ignored: 'daily_stt_cap', usedToday, cap })
+    }
     try {
       const sttPrompt = (await kvGet('camera_listen_stt_prompt')) ?? DEFAULT_STT_PROMPT
       const t = await transcribeVoiceBangla(openai(), input.audio, sttPrompt)
       transcript = (t.text ?? '').trim()
+      await kvSet(dayKey, String(usedToday + 1))
       const durationSec = estimateAudioDurationSeconds(input.audio.size)
       void logCost({
         provider: 'openai',

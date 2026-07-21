@@ -19,6 +19,14 @@ const EXACT_KEYS = new Set([
   'content_engine_enabled',
   'content_engine_slots',
   'owner_call_lock_until',
+  // Camera listener controls — so the owner can re-enable / tune it without a
+  // redeploy after the runaway-cost fix (default is now OFF).
+  'camera_listen_enabled',
+  'camera_wake_words',
+  'camera_listen_cooldown_sec',
+  'camera_listen_stt_prompt',
+  'camera_listen_daily_cap',
+  'camera_listen_echo_guard_sec',
 ])
 
 const PREFIX_KEYS = [
