@@ -939,16 +939,22 @@ final class AlmaVoiceEngine {
 
     func answer(_ card: Card, option: String) {
         guard let aid = card.askCardId else { return }
-        if let i = cards.firstIndex(where: { $0.id == card.id }) {
-            cards[i].status = option
-        }
-        // Answering an ask continues the conversation with the chosen option —
-        // record it AND drive the next turn (web parity).
+        // Persist first, then let the voice engine own exactly ONE spoken turn.
+        // The chat VM must not also start its default text continuation here.
         Task { [weak self] in
-            await self?.chatVM?.answerAskCard(aid, option: option)
+            guard let self else { return }
+            let saved = await self.chatVM?.answerAskCard(
+                aid, option: option, continueInChat: false) ?? false
+            guard saved else {
+                self.tts.sayNow("উত্তরটা সংরক্ষণ করা যায়নি Boss, আবার চেষ্টা করুন।")
+                return
+            }
+            if let i = self.cards.firstIndex(where: { $0.id == card.id }) {
+                self.cards[i].status = option
+            }
+            self.tts.stopAll()
+            self.runTurn(option)
         }
-        tts.stopAll()
-        runTurn(option)
     }
 
     /// Premium-model permission — approve re-runs the SAME question with resume.
@@ -2109,7 +2115,7 @@ struct AlmaVoiceConsoleView: View {
                         .truncationMode(.head)
                 } else if !engine.replyText.isEmpty {
                     // Full reply readable: head-truncate → পুরনো লেখা সরে যায়, শেষটা সবসময় দেখা যায়।
-                    goldSir(engine.replyText)
+                    goldBoss(engine.replyText)
                         .font(.system(size: 16.5))
                         .multilineTextAlignment(.center)
                         .lineLimit(7)
@@ -2137,12 +2143,16 @@ struct AlmaVoiceConsoleView: View {
         .frame(minHeight: 66, alignment: .top)
     }
 
-    /// Web caption parity: "Sir"/"স্যার" render in gold inside the reply text.
-    private func goldSir(_ text: String) -> Text {
+    /// Owner-address policy: legacy/provider wording is normalized before it can
+    /// reach either the caption or VoiceOver; only Boss/বস is rendered.
+    private func goldBoss(_ text: String) -> Text {
+        let safe = text
+            .replacingOccurrences(of: "Sir", with: "Boss", options: .caseInsensitive)
+            .replacingOccurrences(of: "স্যার", with: "বস")
         var out = Text("")
-        var rest = Substring(text)
+        var rest = Substring(safe)
         while true {
-            let rs = ["Boss", "বস", "Sir", "স্যার"].compactMap { rest.range(of: $0) }.min { $0.lowerBound < $1.lowerBound }
+            let rs = ["Boss", "বস"].compactMap { rest.range(of: $0) }.min { $0.lowerBound < $1.lowerBound }
             guard let r = rs else { break }
             out = out + Text(String(rest[..<r.lowerBound])).foregroundStyle(ink)
             out = out + Text(String(rest[r])).foregroundStyle(gold)
@@ -3150,6 +3160,7 @@ private let almaTERM_MAP: [(String, String)] = [
     ("ETH", "ইথেরিয়াম"),
     ("OK", "ওকে"),
     ("Sir", "বস"),
+    ("স্যার", "বস"),
     ("বস", "বস"),
     ("AI", "এআই"),
     ("API", "এপিআই"),

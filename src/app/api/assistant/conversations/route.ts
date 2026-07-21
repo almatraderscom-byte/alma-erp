@@ -38,8 +38,12 @@ export async function GET(req: NextRequest) {
 
   let cursorUpdatedAt: Date | undefined
   let cursorId: string | undefined
+  let cursorPinned: boolean | undefined
   if (cursor) {
-    const [ts, id] = cursor.split('_')
+    const parts = cursor.split('_')
+    const hasPinnedPrefix = parts[0] === '0' || parts[0] === '1'
+    const [ts, id] = hasPinnedPrefix ? [parts[1], parts[2]] : [parts[0], parts[1]]
+    if (hasPinnedPrefix) cursorPinned = parts[0] === '1'
     if (ts && id) {
       cursorUpdatedAt = new Date(ts)
       cursorId = id
@@ -50,15 +54,29 @@ export async function GET(req: NextRequest) {
     where: {
       archived: false,
       ...(cursorUpdatedAt && cursorId
-        ? {
-            OR: [
-              { updatedAt: { lt: cursorUpdatedAt } },
-              { AND: [{ updatedAt: cursorUpdatedAt }, { id: { lt: cursorId } }] },
-            ],
-          }
+        ? cursorPinned === true
+          ? {
+              OR: [
+                { pinned: false },
+                {
+                  pinned: true,
+                  OR: [
+                    { updatedAt: { lt: cursorUpdatedAt } },
+                    { AND: [{ updatedAt: cursorUpdatedAt }, { id: { lt: cursorId } }] },
+                  ],
+                },
+              ],
+            }
+          : {
+              ...(cursorPinned === false ? { pinned: false } : {}),
+              OR: [
+                { updatedAt: { lt: cursorUpdatedAt } },
+                { AND: [{ updatedAt: cursorUpdatedAt }, { id: { lt: cursorId } }] },
+              ],
+            }
         : {}),
     },
-    orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+    orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }, { id: 'desc' }],
     take: take + 1,
     select: {
       id: true,
@@ -68,6 +86,7 @@ export async function GET(req: NextRequest) {
       modelId: true,
       source: true,
       archived: true,
+      pinned: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -77,7 +96,7 @@ export async function GET(req: NextRequest) {
   const page = hasMore ? conversations.slice(0, take) : conversations
   const last = page[page.length - 1]
   const nextCursor = hasMore && last
-    ? `${last.updatedAt.toISOString()}_${last.id}`
+    ? `${last.pinned ? '1' : '0'}_${last.updatedAt.toISOString()}_${last.id}`
     : null
 
   const paginated = req.nextUrl.searchParams.get('paginated') === 'true'

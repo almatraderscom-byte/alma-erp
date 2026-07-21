@@ -22,6 +22,7 @@ export async function PATCH(
   const data: Record<string, unknown> = {}
   if (typeof body.title === 'string') data.title = body.title.trim() || null
   if (typeof body.archived === 'boolean') data.archived = body.archived
+  if (typeof body.pinned === 'boolean') data.pinned = body.pinned
   if (body.projectId !== undefined) data.projectId = body.projectId || null
 
   if (typeof body.modelId === 'string') {
@@ -36,7 +37,7 @@ export async function PATCH(
   const updated = await prisma.agentConversation.update({
     where: { id },
     data,
-    select: { id: true, title: true, projectId: true, archived: true, modelId: true, updatedAt: true },
+    select: { id: true, title: true, projectId: true, archived: true, pinned: true, modelId: true, updatedAt: true },
   })
 
   return Response.json(updated)

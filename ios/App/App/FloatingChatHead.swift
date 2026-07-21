@@ -45,6 +45,16 @@ final class FloatingChatHead {
     private var onRight = true
     private var callWatch: Timer?
     private var incomingUp = false
+    private var suppressionReasons: Set<String> = []
+
+    /// Contextual native sheets own the full interaction plane. Hide the global
+    /// chat head while one is presented so it cannot cover or intercept a row;
+    /// restore it as soon as the presentation ends.
+    func setSuppressed(_ suppressed: Bool, reason: String) {
+        if suppressed { suppressionReasons.insert(reason) }
+        else { suppressionReasons.remove(reason) }
+        overlay?.isHidden = !suppressionReasons.isEmpty
+    }
 
     /// Create the overlay window + head. Safe to call more than once (no-op after first).
     func install() {
@@ -58,7 +68,7 @@ final class FloatingChatHead {
         let root = UIViewController()
         root.view.backgroundColor = .clear
         w.rootViewController = root
-        w.isHidden = false
+        w.isHidden = !suppressionReasons.isEmpty
 
         let b = FloatingHeadButton(frame: CGRect(x: 0, y: 0, width: size, height: size))
         b.onTap = { [weak self] in self?.openChat() }
