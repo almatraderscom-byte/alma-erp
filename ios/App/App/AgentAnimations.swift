@@ -291,6 +291,193 @@ struct AgentParticleField: View {
     }
 }
 
+// MARK: - New-session living wordmark
+
+/// An ALMA-owned idle stage for a brand-new conversation. It borrows Kimi's
+/// "the product is alive before you type" grammar without copying its artwork:
+/// the ALMA wordmark wraps a glass intelligence core whose aurora, orbit riders
+/// and signal bars stay in gentle motion. No progress claim is implied.
+@available(iOS 17.0, *)
+struct AgentNewSessionHero: View {
+    let pal: AgentPalette
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var clockStart = Date()
+
+    private var motionEnabled: Bool {
+        !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: motionEnabled ? 1.0 / 30.0 : 1,
+                                paused: !motionEnabled)) { context in
+            let t = context.date.timeIntervalSince(clockStart)
+            VStack(spacing: 15) {
+                HStack(spacing: 8) {
+                    AgentNewSessionWord(value: "AL", pal: pal)
+                    AgentNewSessionCore(t: t, motionEnabled: motionEnabled)
+                    AgentNewSessionWord(value: "MA", pal: pal)
+                }
+
+                AgentNewSessionSignalBars(t: t, pal: pal, motionEnabled: motionEnabled)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("ALMA প্রস্তুত")
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentNewSessionWord: View {
+    let value: String
+    let pal: AgentPalette
+
+    var body: some View {
+        Text(value)
+            .font(.system(size: 38, weight: .black, design: .rounded))
+            .tracking(4)
+            .foregroundStyle(LinearGradient(
+                colors: [pal.ink, pal.ink.opacity(0.72)],
+                startPoint: .top, endPoint: .bottom))
+            .shadow(color: AgentMotionColor.violet.opacity(pal.dark ? 0.34 : 0.12), radius: 10)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentNewSessionCore: View {
+    let t: TimeInterval
+    let motionEnabled: Bool
+
+    private var pulse: Double {
+        motionEnabled ? 1 + 0.035 * sin(t * 1.7) : 1
+    }
+
+    var body: some View {
+        ZStack {
+            aura
+            AgentNewSessionOrbit(width: 94, height: 42, angle: t * 25, color: AgentMotionColor.mint)
+            AgentNewSessionOrbit(width: 110, height: 54, angle: -t * 18 + 42, color: AgentPalette.coral)
+            glassCore
+            sparkle
+            AgentNewSessionSparks(t: t, motionEnabled: motionEnabled)
+        }
+        .frame(width: 112, height: 112)
+    }
+
+    private var aura: some View {
+        Circle()
+            .fill(RadialGradient(
+                colors: [AgentPalette.coral.opacity(0.30),
+                         AgentMotionColor.violet.opacity(0.17), .clear],
+                center: .center, startRadius: 5, endRadius: 64))
+            .frame(width: 128, height: 128)
+            .scaleEffect(pulse)
+    }
+
+    private var glassCore: some View {
+        RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .frame(width: 68, height: 68)
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [Color.white.opacity(0.19),
+                                 AgentMotionColor.violet.opacity(0.08),
+                                 AgentPalette.coral.opacity(0.12)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(AngularGradient(
+                        colors: [AgentPalette.coral, AgentMotionColor.gold,
+                                 AgentMotionColor.mint, AgentMotionColor.violet,
+                                 AgentPalette.coral],
+                        center: .center,
+                        angle: .degrees(t * 24)), lineWidth: 1.25)
+            }
+            .shadow(color: AgentMotionColor.violet.opacity(0.26), radius: 18)
+    }
+
+    private var sparkle: some View {
+        Image(systemName: "sparkles")
+            .font(.system(size: 28, weight: .medium))
+            .foregroundStyle(LinearGradient(
+                colors: [AgentMotionColor.mint, .white, AgentPalette.coralLt],
+                startPoint: .topLeading, endPoint: .bottomTrailing))
+            .rotationEffect(.degrees(motionEnabled ? sin(t * 0.9) * 7 : 0))
+            .scaleEffect(pulse)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentNewSessionOrbit: View {
+    let width: CGFloat
+    let height: CGFloat
+    let angle: Double
+    let color: Color
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Ellipse()
+                .stroke(color.opacity(0.20), style: StrokeStyle(lineWidth: 0.8, dash: [2.5, 5]))
+            Circle().fill(color).frame(width: 5, height: 5)
+                .shadow(color: color.opacity(0.8), radius: 4)
+        }
+        .frame(width: width, height: height)
+        .rotationEffect(.degrees(angle))
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentNewSessionSparks: View {
+    let t: TimeInterval
+    let motionEnabled: Bool
+
+    var body: some View {
+        ForEach(0..<6, id: \.self) { i in
+            Circle()
+                .fill(i.isMultiple(of: 2) ? AgentMotionColor.mint : AgentPalette.coralLt)
+                .frame(width: i.isMultiple(of: 3) ? 4 : 2.5,
+                       height: i.isMultiple(of: 3) ? 4 : 2.5)
+                .shadow(color: AgentMotionColor.mint.opacity(0.8), radius: 3)
+                .offset(x: sparkX(i), y: sparkY(i))
+                .opacity(sparkOpacity(i))
+        }
+    }
+
+    private func sparkX(_ i: Int) -> CGFloat {
+        CGFloat(cos(t * (0.65 + Double(i) * 0.07) + Double(i))) * CGFloat(54 + i * 3)
+    }
+
+    private func sparkY(_ i: Int) -> CGFloat {
+        CGFloat(sin(t * (0.75 + Double(i) * 0.05) + Double(i))) * CGFloat(28 + i * 2)
+    }
+
+    private func sparkOpacity(_ i: Int) -> Double {
+        motionEnabled ? 0.45 + 0.4 * sin(t + Double(i)) : 0.65
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentNewSessionSignalBars: View {
+    let t: TimeInterval
+    let pal: AgentPalette
+    let motionEnabled: Bool
+
+    private var activeIndex: Int { Int(t * 2) % 5 }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ForEach(0..<5, id: \.self) { i in
+                Capsule()
+                    .fill(i == activeIndex ? AgentMotionColor.mint : pal.muted.opacity(0.22))
+                    .frame(width: i == 2 ? 17 : 7, height: 3)
+            }
+        }
+        .opacity(motionEnabled ? 1 : 0.72)
+        .animation(.easeInOut(duration: 0.28), value: activeIndex)
+    }
+}
+
 // MARK: - A. Session-opening awakening
 
 @available(iOS 17.0, *)

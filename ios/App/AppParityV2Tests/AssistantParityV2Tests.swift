@@ -3,6 +3,16 @@ import XCTest
 
 @MainActor
 final class AssistantParityV2Tests: XCTestCase {
+    func testRecoveryIdentityIndexCoalescesDuplicateRowsWithoutCrashing() {
+        let stale = AgentChatMessage(id: "local-recovery", role: .assistant, text: "stale")
+        let settled = AgentChatMessage(id: "local-recovery", role: .assistant, text: "settled")
+
+        let index = AssistantVM.identityIndex([stale, settled])
+
+        XCTAssertEqual(index.count, 1)
+        XCTAssertEqual(index["local-recovery"]?.text, "settled")
+    }
+
     func testHugeSessionMountAndSearchIndexStayBounded() {
         let vm = AssistantVM()
         vm.loadHugeSessionFixture()

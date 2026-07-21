@@ -2610,28 +2610,61 @@ final class AssistantVM {
     /// identity stable when the server copy of a just-streamed turn replaces the tail.
     private var localIdByServerId: [String: String] = [:]
 
+    /// Keep the server-id -> local-row-id bridge one-to-one. Recovery can observe a
+    /// newer canonical row while an older row is still inside the 24-message window;
+    /// assigning both rows to the same optimistic id used to create duplicate keys
+    /// below and hard-crash Swift's `Dictionary(uniqueKeysWithValues:)` initializer.
+    private func claimLocalRowId(serverId: String, localId: String,
+                                 activeServerIds: Set<String>) -> Bool {
+        if localIdByServerId[serverId] == localId { return true }
+        let otherClaims = localIdByServerId.filter { $0.key != serverId && $0.value == localId }
+        for (otherServerId, _) in otherClaims where !activeServerIds.contains(otherServerId) {
+            localIdByServerId.removeValue(forKey: otherServerId)
+        }
+        guard !localIdByServerId.contains(where: { $0.key != serverId && $0.value == localId }) else {
+            AlmaTurnLog.event("sync.identityCollisionAvoided", "local=\(localId.suffix(8))")
+            return false
+        }
+        localIdByServerId[serverId] = localId
+        return true
+    }
+
+    /// Collision-safe identity index. Upstream rows should be unique, but recovery
+    /// is deliberately at-least-once and UI identity remapping is local state. A
+    /// duplicate therefore degrades to deterministic last-row-wins reconciliation
+    /// instead of terminating the process with a Swift assertion.
+    static func identityIndex(_ rows: [AgentChatMessage]) -> [String: AgentChatMessage] {
+        rows.reduce(into: [:]) { index, row in index[row.id] = row }
+    }
+
     /// Server truth replaces the thread WITHOUT clobbering the freshly streamed tail:
     /// the tail keeps its id (no remove+insert animation) and its richer streamed
     /// content wherever the server copy is thinner. Fixes "prose vanishes at stream end".
     private func mergeServerMessages(_ wire: [AgentMessageWire]) {
         var incoming = wire.map(AgentChatMessage.from)
+        let activeServerIds = Set(incoming.map(\.id))
 
         // Pair the optimistic user message + streamed assistant tail with their
         // server rows (last user / last assistant AFTER that user message).
         let lastServerUser = incoming.lastIndex(where: { $0.role == .user })
         if let localUser = messages.last(where: { $0.role == .user && $0.id.hasPrefix("local-") }),
            let uIdx = lastServerUser, localIdByServerId[incoming[uIdx].id] == nil {
-            localIdByServerId[incoming[uIdx].id] = localUser.id
+            _ = claimLocalRowId(serverId: incoming[uIdx].id, localId: localUser.id,
+                                activeServerIds: activeServerIds)
         }
         var pairedTail = false
         if let localTail = messages.last(where: { $0.role == .assistant && $0.id.hasPrefix("stream-") }) {
             if let aIdx = incoming.lastIndex(where: { $0.role == .assistant }),
                aIdx > (lastServerUser ?? -1) {
                 if localIdByServerId[incoming[aIdx].id] == nil {
-                    localIdByServerId[incoming[aIdx].id] = localTail.id
+                    _ = claimLocalRowId(serverId: incoming[aIdx].id, localId: localTail.id,
+                                        activeServerIds: activeServerIds)
                 }
-                pairedTail = true
-            } else if localIdByServerId.values.contains(localTail.id) {
+                pairedTail = localIdByServerId[incoming[aIdx].id] == localTail.id
+                    || localIdByServerId.contains { activeServerIds.contains($0.key) && $0.value == localTail.id }
+            } else if localIdByServerId.contains(where: {
+                activeServerIds.contains($0.key) && $0.value == localTail.id
+            }) {
                 pairedTail = true   // paired on an earlier merge
             }
         }
@@ -2685,7 +2718,11 @@ final class AssistantVM {
         // owner is browsing older history, genuinely newer rows go into the
         // reversible forward cache rather than duplicating the mounted prefix.
         let browsingOlder = !newerHistoryCache.isEmpty || serverHasNewer
-        let incomingById = Dictionary(uniqueKeysWithValues: incoming.map { ($0.id, $0) })
+        let incomingById = Self.identityIndex(incoming)
+        if incomingById.count != incoming.count {
+            AlmaTurnLog.event("sync.duplicateIdentityCoalesced",
+                              "rows=\(incoming.count) unique=\(incomingById.count)")
+        }
         var reconciled = messages.map { incomingById[$0.id] ?? $0 }
         var known = Set(reconciled.map(\.id))
         let additions = incoming.filter { known.insert($0.id).inserted }
@@ -9660,18 +9697,18 @@ struct AgentComposerView: View {
     @Bindable var vm: AssistantVM
     let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var photoItem: PhotosPickerItem?
     @State private var showAttachmentChoices = false
     @State private var showPhotoPicker = false
     @State private var showDocumentPicker = false
     @State private var showCamera = false
     @State private var showScanner = false
-    @State private var showModelPicker = false
     @FocusState private var focused: Bool
 
     private var hasComposerPresentation: Bool {
         showAttachmentChoices || showPhotoPicker || showDocumentPicker
-            || showCamera || showScanner || showModelPicker
+            || showCamera || showScanner
     }
 
     var body: some View {
@@ -9727,36 +9764,33 @@ struct AgentComposerView: View {
                 if vm.isRecording {
                     recordingBar(pal)
                 } else {
-                    TextField(vm.transcribing ? "বুঝে নিচ্ছি…" : "বার্তা লিখুন…",
-                              text: $vm.composerDraft, axis: .vertical)
-                        .font(.body)
-                        .foregroundStyle(pal.ink)
-                        .lineLimit(1...5)
-                        .focused($focused)
-                        .disabled(vm.composerSubmissionPending)
-                        .padding(.horizontal, 10)
-                        .padding(.top, 8)
-                    controlsRow(pal)
+                    composerInputRow(pal)
                 }
             }
-            .padding(8)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
             .background(pal.glassFill)
             .modifier(AlmaAgentGlassBackground(
-                shape: RoundedRectangle(cornerRadius: 24, style: .continuous), pal: pal))
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                shape: RoundedRectangle(cornerRadius: 30, style: .continuous), pal: pal))
+            .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(focused
-                        ? AgentPalette.coral.opacity(0.72)
-                        : pal.borderSubtle.opacity(0.85),
-                        lineWidth: focused ? 1.2 : 0.8)
-                    .animation(.easeOut(duration: 0.18), value: focused)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                        .strokeBorder(focused
+                            ? Color.white.opacity(pal.dark ? 0.28 : 0.62)
+                            : pal.borderSubtle.opacity(0.95),
+                            lineWidth: focused ? 1.1 : 0.8)
+                    AgentNeonBorder(cornerRadius: 30)
+                        .opacity(focused ? 0.72 : 0.22)
+                }
+                .animation(.easeOut(duration: 0.2), value: focused)
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
+            .shadow(color: Color.black.opacity(pal.dark ? 0.28 : 0.10), radius: 18, y: 8)
+            .shadow(color: AgentPalette.coral.opacity(focused ? 0.12 : 0.04), radius: 18, y: 2)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 7)
         }
-        .padding(.top, 6)
-        .background(.ultraThinMaterial)
+        .padding(.top, 8)
         .onChange(of: vm.dictatedText) { _, newValue in
             guard !newValue.isEmpty else { return }
             vm.composerDraft = vm.composerDraft.isEmpty
@@ -9943,8 +9977,8 @@ struct AgentComposerView: View {
         }
     }
 
-    @ViewBuilder private func controlsRow(_ pal: AgentPalette) -> some View {
-        HStack(spacing: 4) {
+    @ViewBuilder private func composerInputRow(_ pal: AgentPalette) -> some View {
+        HStack(alignment: .bottom, spacing: 2) {
             Button {
                 showAttachmentChoices = true
             } label: {
@@ -9960,33 +9994,16 @@ struct AgentComposerView: View {
                     .presentationCompactAdaptation(.popover)
                     .presentationBackground(.ultraThinMaterial)
             }
-            // Model picker pill — opens the native sheet with EVERY enabled model.
-            Button {
-                AlmaAgentHaptics.selection()
-                showModelPicker = true
-            } label: {
-                HStack(spacing: 3) {
-                    Text(vm.modelPillLabel)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 7, weight: .semibold))
-                }
-                .foregroundStyle(vm.isAutoModel ? pal.muted : AgentPalette.coral)
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(pal.card.opacity(0.5), in: Capsule())
-                .overlay(Capsule().strokeBorder(
-                    vm.isAutoModel ? pal.borderSubtle : AgentPalette.coral.opacity(0.35), lineWidth: 1))
-                .frame(maxWidth: 150)
-                .almaAgentHitTarget()
-            }
-            .disabled(vm.isStreaming)
-            .accessibilityLabel("মডেল বাছাই")
-            .accessibilityValue(vm.modelPillLabel)
-            .sheet(isPresented: $showModelPicker) {
-                AgentModelPickerSheet(vm: vm)
-            }
-            Spacer(minLength: 4)
+            TextField(vm.transcribing ? "বুঝে নিচ্ছি…" : "বার্তা লিখুন…",
+                      text: $vm.composerDraft, axis: .vertical)
+                .font(.system(size: 17))
+                .foregroundStyle(pal.ink)
+                .lineLimit(1...5)
+                .focused($focused)
+                .disabled(vm.composerSubmissionPending)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 10)
+                .frame(minHeight: 46, alignment: .center)
             // mic → Whisper dictation
             Button { vm.toggleRecording() } label: {
                 Group {
@@ -10015,34 +10032,44 @@ struct AgentComposerView: View {
                     .almaAgentHitTarget()
             }
             .accessibilityLabel("ভয়েস কথোপকথন")
-            // send / stop
-            Button {
-                if vm.isStreaming && sendEnabled {
-                    send()
-                } else if vm.isStreaming {
-                    vm.stopStreaming()
-                } else {
-                    send()
+            // Kimi/iOS grammar: no inert send button in the empty state. It slides
+            // in only when text/file input is actionable; Stop still remains visible.
+            if showSendControl {
+                Button {
+                    if vm.isStreaming && sendEnabled {
+                        send()
+                    } else if vm.isStreaming {
+                        vm.stopStreaming()
+                    } else {
+                        send()
+                    }
+                } label: {
+                    Image(systemName: vm.isStreaming && !sendEnabled ? "stop.fill" : "arrow.up")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 38, height: 38)
+                        .background(
+                            LinearGradient(colors: [AgentPalette.coral, AgentPalette.coralDim],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing),
+                            in: Circle())
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.7))
+                        .shadow(color: AgentPalette.coral.opacity(0.32), radius: 7, y: 3)
+                        .almaAgentHitTarget()
                 }
-            } label: {
-                Image(systemName: vm.isStreaming && !sendEnabled ? "stop.fill" : "arrow.up")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(sendEnabled || vm.isStreaming ? .white : pal.muted)
-                    .frame(width: 36, height: 36)
-                    .background(sendEnabled || vm.isStreaming
-                                ? AnyShapeStyle(AgentPalette.coral)
-                                : AnyShapeStyle(pal.card.opacity(0.5)),
-                                in: Circle())
-                    .shadow(color: sendEnabled ? AgentPalette.coral.opacity(0.35) : .clear, radius: 5, y: 2)
-                    .almaAgentHitTarget()
+                .accessibilityLabel(vm.isStreaming && sendEnabled
+                                    ? "বার্তাটি অপেক্ষায় রাখুন"
+                                    : (vm.isStreaming ? "উত্তর থামান" : "বার্তা পাঠান"))
+                .transition(reduceMotion ? .opacity : .asymmetric(
+                    insertion: .move(edge: .trailing).combined(with: .opacity).combined(with: .scale(scale: 0.72)),
+                    removal: .move(edge: .trailing).combined(with: .opacity).combined(with: .scale(scale: 0.72))))
             }
-            .disabled(!sendEnabled && !vm.isStreaming)
-            .accessibilityLabel(vm.isStreaming && sendEnabled
-                                ? "বার্তাটি অপেক্ষায় রাখুন"
-                                : (vm.isStreaming ? "উত্তর থামান" : "বার্তা পাঠান"))
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: vm.isStreaming)
         }
+        .frame(minHeight: 48)
+        .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.78),
+                   value: showSendControl)
     }
+
+    private var showSendControl: Bool { sendEnabled || vm.isStreaming }
 
     private var sendEnabled: Bool {
         !vm.composerSubmissionPending
@@ -10847,7 +10874,6 @@ struct AgentProjectFormSheet: View {
 struct AgentEmptyStateView: View {
     let pal: AgentPalette
     let onPick: (String) -> Void
-    @State private var breathe = false
 
     private var dayPart: Int {
         var cal = Calendar.current
@@ -10860,10 +10886,10 @@ struct AgentEmptyStateView: View {
     }
 
     private var subtitle: String {
-        ["শুভ সকাল, Boss — দিনটা শুরু করি",
-         "শুভ দুপুর, Boss — কীভাবে সাহায্য করতে পারি",
-         "শুভ সন্ধ্যা, Boss — দিনটা গুছিয়ে নিই",
-         "শুভ রাত্রি, Boss — কী দেখে নেবো"][dayPart]
+        ["শুভ সকাল — দিনটা শুরু করি",
+         "শুভ দুপুর — কীভাবে সাহায্য করতে পারি",
+         "শুভ সন্ধ্যা — দিনটা গুছিয়ে নিই",
+         "শুভ রাত্রি — কী দেখে নেবো"][dayPart]
     }
 
     private var suggestions: [(String, String)] {
@@ -10888,11 +10914,11 @@ struct AgentEmptyStateView: View {
     }
 
     var body: some View {
-        // Owner call (2026-07-06): no orb, no suggestion chips — the clean greeting only.
-        VStack(spacing: 10) {
-            Text("✨").font(.system(size: 40))
-            Text("আস্সালামু আলাইকুম")
-                .font(.system(size: 19, weight: .semibold))
+        VStack(spacing: 8) {
+            AgentNewSessionHero(pal: pal)
+                .frame(height: 150)
+            Text("আস্সালামু আলাইকুম, Boss")
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
                 .foregroundStyle(pal.ink)
             Text(subtitle)
                 .font(.system(size: 13.5))
@@ -10900,9 +10926,8 @@ struct AgentEmptyStateView: View {
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 110)
+        .padding(.top, 58)
         .padding(.horizontal, 24)
-        .onAppear { breathe = true }   // state kept for API stability
     }
 }
 
@@ -13249,6 +13274,7 @@ struct AssistantScreen: View {
     @State private var scrollDebounceTask: Task<Void, Never>?
     @State private var showArtifacts = false
     @State private var showLibrary = false
+    @State private var showModelPicker = false
     @State private var showProjectPicker = false
     @State private var showConversationSearch = false
     @State private var showRenameConversation = false
@@ -13275,7 +13301,7 @@ struct AssistantScreen: View {
     private var hasBlockingPresentation: Bool {
         vm.showSidebar || vm.showVoice || debugViewer != nil || toolSheet != nil
             || activitySheet != nil || showArtifacts || showLibrary || showProjectPicker
-            || showConversationSearch || showBackgroundTasks
+            || showModelPicker || showConversationSearch || showBackgroundTasks
     }
 
     /// During a new streaming turn the previous settled reply keeps ownership of
@@ -13587,6 +13613,8 @@ struct AssistantScreen: View {
                 "reduceMotion=\(UIAccessibility.isReduceMotionEnabled) reduceTransparency=\(UIAccessibility.isReduceTransparencyEnabled) contentSize=\(UIApplication.shared.preferredContentSizeCategory.rawValue)")
             barHooks.onMenu = { Self.presentDrawer(vm) }
             barHooks.onNewChat = { Task { await vm.newChat() } }
+            barHooks.onModelPicker = { showModelPicker = true }
+            barHooks.updateModelLabel(vm.modelPillLabel, enabled: !vm.isStreaming)
             barHooks.isPinned = { vm.currentConversationPinned }
             barHooks.hasProject = { vm.currentProjectId != nil }
             barHooks.canMutateConversation = { !vm.conversationMutationBlocked }
@@ -13643,6 +13671,20 @@ struct AssistantScreen: View {
                         .first { $0.inputPretty != nil || $0.resultFull != nil }
                 }
             }
+            #if DEBUG
+            // Headless visual proof for the new-session hero + floating composer.
+            // This never ships an alternate production path; it only avoids a
+            // network/login dependency while simulator screenshots are captured.
+            if argFlag("ALMA_ASSISTANT_NEW_SESSION_UI") {
+                vm.messages = []
+                vm.conversationId = nil
+                vm.conversationTitle = "ALMA AI"
+                vm.modelId = nil
+                vm.composerDraft = rawEnv["ALMA_ASSISTANT_COMPOSER_TEXT"] ?? ""
+                AlmaTurnLog.event("assistant.contentReady", "fixture=new-session-ui")
+                return
+            }
+            #endif
             // Roadmap Phase 0 — local scroll/streaming stress fixture; skips the
             // server entirely (no bootstrap) so layout is tested in isolation.
             if argFlag("ALMA_ASSISTANT_HUGE_SESSION") {
@@ -13844,6 +13886,9 @@ struct AssistantScreen: View {
                 }
             }
         }
+        .sheet(isPresented: $showModelPicker) {
+            AgentModelPickerSheet(vm: vm)
+        }
         .onReceive(NotificationCenter.default.publisher(for: AlmaAssistantLibraryRequest.note)) { _ in
             showLibrary = true
         }
@@ -13881,6 +13926,12 @@ struct AssistantScreen: View {
         }
         .onChange(of: hasBlockingPresentation) { _, shown in
             FloatingChatHead.shared.setSuppressed(shown, reason: "assistant-presentation")
+        }
+        .onChange(of: vm.modelPillLabel) { _, label in
+            barHooks.updateModelLabel(label, enabled: !vm.isStreaming)
+        }
+        .onChange(of: vm.isStreaming) { _, streaming in
+            barHooks.updateModelLabel(vm.modelPillLabel, enabled: !streaming)
         }
         .onAppear {
             // The Assistant already has its own conversation controls; the
@@ -14034,9 +14085,79 @@ struct AgentScrollViewportKey: PreferenceKey {
 /// Bridges the UIKit nav-bar buttons (glass hamburger / coral compose — the exact
 /// Claude-style buttons the web Assistant tab already had) into the SwiftUI screen.
 @MainActor
+final class AssistantModelPillButton: UIButton {
+    private let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+    private let modelText = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        blur.translatesAutoresizingMaskIntoConstraints = false
+        blur.isUserInteractionEnabled = false
+        blur.layer.cornerRadius = 18
+        blur.clipsToBounds = true
+        addSubview(blur)
+
+        modelText.translatesAutoresizingMaskIntoConstraints = false
+        modelText.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        modelText.textColor = .secondaryLabel
+        modelText.lineBreakMode = .byTruncatingTail
+        let chevron = UIImageView(image: UIImage(systemName: "chevron.down",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 8.5, weight: .bold)))
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.tintColor = .tertiaryLabel
+        let stack = UIStackView(arrangedSubviews: [modelText, chevron])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 5
+        blur.contentView.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 108),
+            heightAnchor.constraint(equalToConstant: 36),
+            blur.leadingAnchor.constraint(equalTo: leadingAnchor),
+            blur.trailingAnchor.constraint(equalTo: trailingAnchor),
+            blur.topAnchor.constraint(equalTo: topAnchor),
+            blur.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: blur.contentView.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: blur.contentView.trailingAnchor, constant: -10),
+            stack.centerYAnchor.constraint(equalTo: blur.contentView.centerYAnchor),
+        ])
+        layer.cornerRadius = 18
+        layer.borderWidth = 0.75
+        layer.borderColor = UIColor.separator.withAlphaComponent(0.35).cgColor
+        accessibilityLabel = "মডেল বাছাই"
+        accessibilityTraits = .button
+        update(label: "Auto", enabled: true)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func update(label: String, enabled: Bool) {
+        modelText.text = label
+        isEnabled = enabled
+        alpha = enabled ? 1 : 0.48
+        accessibilityValue = label
+    }
+
+    override var isHighlighted: Bool {
+        didSet {
+            UIView.animate(withDuration: 0.12) {
+                self.transform = self.isHighlighted
+                    ? CGAffineTransform(scaleX: 0.96, y: 0.96) : .identity
+                self.blur.alpha = self.isHighlighted ? 0.76 : 1
+            }
+        }
+    }
+}
+
+@MainActor
 final class AssistantBarHooks: NSObject {
     var onMenu: (() -> Void)?
     var onNewChat: (() -> Void)?
+    var onModelPicker: (() -> Void)?
+    weak var modelButton: AssistantModelPillButton?
     var isPinned: (() -> Bool)?
     var hasProject: (() -> Bool)?
     var canMutateConversation: (() -> Bool)?
@@ -14056,6 +14177,15 @@ final class AssistantBarHooks: NSObject {
     @objc func newChatTapped() {
         AlmaAgentHaptics.light()
         onNewChat?()
+    }
+    @objc func modelTapped() {
+        guard modelButton?.isEnabled != false else { return }
+        AlmaAgentHaptics.selection()
+        onModelPicker?()
+    }
+
+    func updateModelLabel(_ label: String, enabled: Bool) {
+        modelButton?.update(label: label, enabled: enabled)
     }
 
     func conversationMenu() -> UIMenu {
@@ -14136,10 +14266,15 @@ extension AlmaTabBarController {
                 barHooks: hooks)
             let host = AlmaHostingController(rootView: screen)
             host.title = "ALMA AI"
-            // The exact Claude bar the web Assistant had: glass hamburger + coral compose.
-            host.navigationItem.leftBarButtonItem = AlmaWebTabViewController.glassBarButton(
+            // Kimi-style top-left model chip: the composer now stays dedicated to
+            // composing, while model choice lives beside the session drawer.
+            let history = AlmaWebTabViewController.glassBarButton(
                 icon: "line.3.horizontal", label: "চ্যাট হিস্টরি", target: hooks, action: #selector(AssistantBarHooks.menuTapped),
                 light: !AlmaTheme.isDark)
+            let modelButton = AssistantModelPillButton()
+            modelButton.addTarget(hooks, action: #selector(AssistantBarHooks.modelTapped), for: .touchUpInside)
+            hooks.modelButton = modelButton
+            host.navigationItem.leftBarButtonItems = [history, UIBarButtonItem(customView: modelButton)]
             let plus = AlmaWebTabViewController.coralBarButton(
                 icon: "plus", label: "নতুন চ্যাট", target: hooks,
                 action: #selector(AssistantBarHooks.newChatTapped))
