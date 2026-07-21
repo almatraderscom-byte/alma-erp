@@ -13274,7 +13274,6 @@ struct AssistantScreen: View {
     @State private var scrollDebounceTask: Task<Void, Never>?
     @State private var showArtifacts = false
     @State private var showLibrary = false
-    @State private var showModelPicker = false
     @State private var showProjectPicker = false
     @State private var showConversationSearch = false
     @State private var showRenameConversation = false
@@ -13301,7 +13300,7 @@ struct AssistantScreen: View {
     private var hasBlockingPresentation: Bool {
         vm.showSidebar || vm.showVoice || debugViewer != nil || toolSheet != nil
             || activitySheet != nil || showArtifacts || showLibrary || showProjectPicker
-            || showModelPicker || showConversationSearch || showBackgroundTasks
+            || showConversationSearch || showBackgroundTasks
     }
 
     /// During a new streaming turn the previous settled reply keeps ownership of
@@ -13613,7 +13612,17 @@ struct AssistantScreen: View {
                 "reduceMotion=\(UIAccessibility.isReduceMotionEnabled) reduceTransparency=\(UIAccessibility.isReduceTransparencyEnabled) contentSize=\(UIApplication.shared.preferredContentSizeCategory.rawValue)")
             barHooks.onMenu = { Self.presentDrawer(vm) }
             barHooks.onNewChat = { Task { await vm.newChat() } }
-            barHooks.onModelPicker = { showModelPicker = true }
+            barHooks.provideModelMenu = { completion in
+                Task { @MainActor in
+                    await vm.loadModels()
+                    completion(AssistantBarHooks.modelMenuElements(
+                        models: vm.models,
+                        selectedId: vm.modelId,
+                        onSelect: { vm.selectModel($0) }
+                    ))
+                }
+            }
+            barHooks.installModelMenu()
             barHooks.updateModelLabel(vm.modelPillLabel, enabled: !vm.isStreaming)
             barHooks.isPinned = { vm.currentConversationPinned }
             barHooks.hasProject = { vm.currentProjectId != nil }
@@ -13886,9 +13895,6 @@ struct AssistantScreen: View {
                 }
             }
         }
-        .sheet(isPresented: $showModelPicker) {
-            AgentModelPickerSheet(vm: vm)
-        }
         .onReceive(NotificationCenter.default.publisher(for: AlmaAssistantLibraryRequest.note)) { _ in
             showLibrary = true
         }
@@ -14129,6 +14135,8 @@ final class AssistantModelPillButton: UIButton {
         layer.borderColor = UIColor.separator.withAlphaComponent(0.35).cgColor
         accessibilityLabel = "মডেল বাছাই"
         accessibilityTraits = .button
+        showsMenuAsPrimaryAction = true
+        changesSelectionAsPrimaryAction = false
         update(label: "Auto", enabled: true)
     }
 
@@ -14156,7 +14164,10 @@ final class AssistantModelPillButton: UIButton {
 final class AssistantBarHooks: NSObject {
     var onMenu: (() -> Void)?
     var onNewChat: (() -> Void)?
-    var onModelPicker: (() -> Void)?
+    /// Supplies a fresh model snapshot whenever the system asks to open the
+    /// source-anchored menu. A deferred menu lets the API load finish without
+    /// falling back to an iPhone bottom sheet.
+    var provideModelMenu: ((@escaping ([UIMenuElement]) -> Void) -> Void)?
     weak var modelButton: AssistantModelPillButton?
     var isPinned: (() -> Bool)?
     var hasProject: (() -> Bool)?
@@ -14178,14 +14189,66 @@ final class AssistantBarHooks: NSObject {
         AlmaAgentHaptics.light()
         onNewChat?()
     }
-    @objc func modelTapped() {
-        guard modelButton?.isEnabled != false else { return }
-        AlmaAgentHaptics.selection()
-        onModelPicker?()
-    }
-
     func updateModelLabel(_ label: String, enabled: Bool) {
         modelButton?.update(label: label, enabled: enabled)
+    }
+
+    func installModelMenu() {
+        let deferred = UIDeferredMenuElement.uncached { [weak self] completion in
+            Task { @MainActor in
+                guard let provider = self?.provideModelMenu else {
+                    completion([])
+                    return
+                }
+                AlmaAgentHaptics.selection()
+                provider(completion)
+            }
+        }
+        modelButton?.menu = UIMenu(children: [deferred])
+    }
+
+    static func modelMenuElements(
+        models: [AgentModelInfo], selectedId: String?,
+        onSelect: @escaping (String?) -> Void
+    ) -> [UIMenuElement] {
+        let isAuto = selectedId == nil || selectedId == "auto"
+        let auto = UIAction(
+            title: "Auto", image: UIImage(systemName: "bolt.fill"),
+            state: isAuto ? .on : .off
+        ) { _ in onSelect(nil) }
+
+        let providers: [(key: String, label: String)] = [
+            ("anthropic", "Anthropic"), ("google", "Google"),
+            ("openai", "OpenAI"), ("openrouter", "OpenRouter"),
+        ]
+        var sections: [UIMenuElement] = [
+            UIMenu(options: .displayInline, children: [auto])
+        ]
+        for provider in providers {
+            let children = models.filter { $0.provider == provider.key }.map { model in
+                UIAction(
+                    title: model.label,
+                    state: selectedId == model.id ? .on : .off
+                ) { _ in onSelect(model.id) }
+            }
+            if !children.isEmpty {
+                sections.append(UIMenu(
+                    title: provider.label, options: .displayInline, children: children))
+            }
+        }
+        let knownProviders = Set(providers.map(\.key))
+        let other = models.filter { model in
+            guard let provider = model.provider else { return true }
+            return !knownProviders.contains(provider)
+        }.map { model in
+            UIAction(title: model.label, state: selectedId == model.id ? .on : .off) { _ in
+                onSelect(model.id)
+            }
+        }
+        if !other.isEmpty {
+            sections.append(UIMenu(title: "Other", options: .displayInline, children: other))
+        }
+        return sections
     }
 
     func conversationMenu() -> UIMenu {
@@ -14272,7 +14335,6 @@ extension AlmaTabBarController {
                 icon: "line.3.horizontal", label: "চ্যাট হিস্টরি", target: hooks, action: #selector(AssistantBarHooks.menuTapped),
                 light: !AlmaTheme.isDark)
             let modelButton = AssistantModelPillButton()
-            modelButton.addTarget(hooks, action: #selector(AssistantBarHooks.modelTapped), for: .touchUpInside)
             hooks.modelButton = modelButton
             host.navigationItem.leftBarButtonItems = [history, UIBarButtonItem(customView: modelButton)]
             let plus = AlmaWebTabViewController.coralBarButton(

@@ -291,38 +291,23 @@ struct AgentParticleField: View {
     }
 }
 
-// MARK: - New-session living wordmark
+// MARK: - New-session interactive ALMA robot
 
-/// An ALMA-owned idle stage for a brand-new conversation. It borrows Kimi's
-/// "the product is alive before you type" grammar without copying its artwork:
-/// the ALMA wordmark wraps a glass intelligence core whose aurora, orbit riders
-/// and signal bars stay in gentle motion. No progress claim is implied.
+/// The new-chat mascot is a real SwiftUI character rather than a looping image:
+/// it breathes, blinks and shifts its weight autonomously, then runs a complete
+/// squash/jump/land state machine when the owner touches it.
 @available(iOS 17.0, *)
 struct AgentNewSessionHero: View {
     let pal: AgentPalette
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var clockStart = Date()
-
-    private var motionEnabled: Bool {
-        !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
-    }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: motionEnabled ? 1.0 / 30.0 : 1,
-                                paused: !motionEnabled)) { context in
-            let t = context.date.timeIntervalSince(clockStart)
-            VStack(spacing: 15) {
-                HStack(spacing: 8) {
-                    AgentNewSessionWord(value: "AL", pal: pal)
-                    AgentNewSessionCore(t: t, motionEnabled: motionEnabled)
-                    AgentNewSessionWord(value: "MA", pal: pal)
-                }
-
-                AgentNewSessionSignalBars(t: t, pal: pal, motionEnabled: motionEnabled)
-            }
+        HStack(spacing: 7) {
+            AgentNewSessionWord(value: "AL", pal: pal)
+            AgentCodexSpriteRobot()
+            AgentNewSessionWord(value: "MA", pal: pal)
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("ALMA প্রস্তুত")
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -333,7 +318,7 @@ private struct AgentNewSessionWord: View {
 
     var body: some View {
         Text(value)
-            .font(.system(size: 38, weight: .black, design: .rounded))
+            .font(.system(size: 36, weight: .black, design: .rounded))
             .tracking(4)
             .foregroundStyle(LinearGradient(
                 colors: [pal.ink, pal.ink.opacity(0.72)],
@@ -343,138 +328,394 @@ private struct AgentNewSessionWord: View {
 }
 
 @available(iOS 17.0, *)
-private struct AgentNewSessionCore: View {
-    let t: TimeInterval
-    let motionEnabled: Bool
+private struct AgentCodexSpriteRobot: View {
+    private struct SpriteBeat {
+        let row: Int
+        let column: Int
+        let milliseconds: Int
+    }
 
-    private var pulse: Double {
-        motionEnabled ? 1 + 0.035 * sin(t * 1.7) : 1
+    /// Exact timing table used by the installed Codex companion (sprite v2).
+    /// Idle is intentionally unhurried: the pet breathes and blinks over 6.6s.
+    private static let idleBeats = [
+        SpriteBeat(row: 0, column: 0, milliseconds: 1_680),
+        SpriteBeat(row: 0, column: 1, milliseconds: 660),
+        SpriteBeat(row: 0, column: 2, milliseconds: 660),
+        SpriteBeat(row: 0, column: 3, milliseconds: 840),
+        SpriteBeat(row: 0, column: 4, milliseconds: 840),
+        SpriteBeat(row: 0, column: 5, milliseconds: 1_920),
+    ]
+    private static let jumpBeats = (0..<5).map {
+        SpriteBeat(row: 4, column: $0, milliseconds: $0 == 4 ? 280 : 140)
+    }
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var row = 0
+    @State private var column = 0
+    @State private var jumping = false
+    @State private var jumpY: CGFloat = 0
+    @State private var playbackTask: Task<Void, Never>?
+
+    private var motionEnabled: Bool {
+        !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
     }
 
     var body: some View {
-        ZStack {
-            aura
-            AgentNewSessionOrbit(width: 94, height: 42, angle: t * 25, color: AgentMotionColor.mint)
-            AgentNewSessionOrbit(width: 110, height: 54, angle: -t * 18 + 42, color: AgentPalette.coral)
-            glassCore
-            sparkle
-            AgentNewSessionSparks(t: t, motionEnabled: motionEnabled)
-        }
-        .frame(width: 112, height: 112)
-    }
-
-    private var aura: some View {
-        Circle()
-            .fill(RadialGradient(
-                colors: [AgentPalette.coral.opacity(0.30),
-                         AgentMotionColor.violet.opacity(0.17), .clear],
-                center: .center, startRadius: 5, endRadius: 64))
-            .frame(width: 128, height: 128)
-            .scaleEffect(pulse)
-    }
-
-    private var glassCore: some View {
-        RoundedRectangle(cornerRadius: 22, style: .continuous)
-            .fill(.ultraThinMaterial)
-            .frame(width: 68, height: 68)
-            .overlay {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(LinearGradient(
-                        colors: [Color.white.opacity(0.19),
-                                 AgentMotionColor.violet.opacity(0.08),
-                                 AgentPalette.coral.opacity(0.12)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(AngularGradient(
-                        colors: [AgentPalette.coral, AgentMotionColor.gold,
-                                 AgentMotionColor.mint, AgentMotionColor.violet,
-                                 AgentPalette.coral],
-                        center: .center,
-                        angle: .degrees(t * 24)), lineWidth: 1.25)
-            }
-            .shadow(color: AgentMotionColor.violet.opacity(0.26), radius: 18)
-    }
-
-    private var sparkle: some View {
-        Image(systemName: "sparkles")
-            .font(.system(size: 28, weight: .medium))
-            .foregroundStyle(LinearGradient(
-                colors: [AgentMotionColor.mint, .white, AgentPalette.coralLt],
-                startPoint: .topLeading, endPoint: .bottomTrailing))
-            .rotationEffect(.degrees(motionEnabled ? sin(t * 0.9) * 7 : 0))
-            .scaleEffect(pulse)
-    }
-}
-
-@available(iOS 17.0, *)
-private struct AgentNewSessionOrbit: View {
-    let width: CGFloat
-    let height: CGFloat
-    let angle: Double
-    let color: Color
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
+        ZStack(alignment: .bottom) {
             Ellipse()
-                .stroke(color.opacity(0.20), style: StrokeStyle(lineWidth: 0.8, dash: [2.5, 5]))
-            Circle().fill(color).frame(width: 5, height: 5)
-                .shadow(color: color.opacity(0.8), radius: 4)
+                .fill(.black.opacity(0.18))
+                .frame(width: 48, height: 7)
+                .blur(radius: 3)
+                .scaleEffect(x: jumpY < 0 ? 0.62 : 1, y: 1)
+                .opacity(jumpY < 0 ? 0.30 : 0.70)
+                .offset(y: -2)
+
+            AgentCodexSpriteFrame(row: row, column: column)
+                .frame(width: 112, height: 121.34)
+                .offset(y: jumpY - 6)
         }
-        .frame(width: width, height: height)
-        .rotationEffect(.degrees(angle))
+        .frame(width: 112, height: 128)
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 0).onEnded { _ in playJump() })
+        .accessibilityLabel("ALMA robot")
+        .accessibilityHint("ছুঁলে লাফ দেয়")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { playJump() }
+        .onAppear { startIdle() }
+        .onDisappear { playbackTask?.cancel() }
+    }
+
+    private func startIdle() {
+        playbackTask?.cancel()
+        guard motionEnabled else {
+            row = 0
+            column = 0
+            return
+        }
+        playbackTask = Task { @MainActor in
+            while !Task.isCancelled {
+                for beat in Self.idleBeats {
+                    guard !Task.isCancelled else { return }
+                    row = beat.row
+                    column = beat.column
+                    try? await Task.sleep(for: .milliseconds(beat.milliseconds))
+                }
+            }
+        }
+    }
+
+    private func playJump() {
+        guard !jumping else { return }
+        guard motionEnabled else {
+            AlmaAgentHaptics.selection()
+            return
+        }
+        jumping = true
+        playbackTask?.cancel()
+        AlmaAgentHaptics.light()
+        withAnimation(.easeOut(duration: 0.20)) { jumpY = -28 }
+        playbackTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(205))
+            guard !Task.isCancelled else { return }
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.52)) { jumpY = 0 }
+
+            // Codex plays the five-frame jump run three times before returning
+            // to its long idle sequence; preserve that cadence exactly.
+            for _ in 0..<3 {
+                for beat in Self.jumpBeats {
+                    guard !Task.isCancelled else { return }
+                    row = beat.row
+                    column = beat.column
+                    try? await Task.sleep(for: .milliseconds(beat.milliseconds))
+                }
+            }
+            guard !Task.isCancelled else { return }
+            AlmaAgentHaptics.rigid()
+            jumping = false
+            startIdle()
+        }
     }
 }
 
 @available(iOS 17.0, *)
-private struct AgentNewSessionSparks: View {
+private struct AgentCodexSpriteFrame: View {
+    let row: Int
+    let column: Int
+
+    var body: some View {
+        GeometryReader { proxy in
+            Image("CodexPetSpritesheet")
+                .resizable()
+                .interpolation(.none)
+                .frame(width: proxy.size.width * 8, height: proxy.size.height * 11)
+                .offset(x: -CGFloat(column) * proxy.size.width,
+                        y: -CGFloat(row) * proxy.size.height)
+        }
+        .clipped()
+        .allowsHitTesting(false)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentInteractiveRobot: View {
+    let pal: AgentPalette
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var clockStart = Date()
+    @State private var jumpY: CGFloat = 0
+    @State private var scaleX: CGFloat = 1
+    @State private var scaleY: CGFloat = 1
+    @State private var pressing = false
+    @State private var delighted = false
+    @State private var landingBurst = 0
+    @State private var jumpTask: Task<Void, Never>?
+
+    private var motionEnabled: Bool {
+        !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: motionEnabled ? 1.0 / 30.0 : 1,
+                                paused: !motionEnabled)) { context in
+            let t = context.date.timeIntervalSince(clockStart)
+            let idleY = motionEnabled && !pressing && jumpY == 0 ? CGFloat(sin(t * 1.75) * 2.8) : 0
+            let tilt = motionEnabled && jumpY == 0 ? sin(t * 0.83) * 2.2 : 0
+
+            ZStack(alignment: .bottom) {
+                AgentRobotParticles(t: t, burst: landingBurst, enabled: motionEnabled)
+                Ellipse()
+                    .fill(Color.black.opacity(pal.dark ? 0.28 : 0.16))
+                    .frame(width: 55, height: 9)
+                    .blur(radius: 3)
+                    .scaleEffect(x: max(0.55, 1 + jumpY / 75), y: 1)
+                    .opacity(max(0.16, 0.72 + Double(jumpY / 70)))
+                    .offset(y: 1)
+
+                AgentRobotBody(t: t, delighted: delighted, motionEnabled: motionEnabled)
+                    .scaleEffect(x: scaleX, y: scaleY, anchor: .bottom)
+                    .rotationEffect(.degrees(tilt))
+                    .offset(y: idleY + jumpY - 8)
+            }
+            .frame(width: 112, height: 128)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in pressDown() }
+                    .onEnded { _ in jump() }
+            )
+        }
+        .accessibilityLabel("ALMA robot")
+        .accessibilityHint("ছুঁলে লাফ দেয়")
+        .accessibilityAddTraits(.isButton)
+        .onDisappear { jumpTask?.cancel() }
+    }
+
+    private func pressDown() {
+        guard !pressing else { return }
+        pressing = true
+        jumpTask?.cancel()
+        delighted = true
+        AlmaAgentHaptics.selection()
+        withAnimation(.easeOut(duration: 0.10)) {
+            jumpY = 5
+            scaleX = 1.12
+            scaleY = 0.84
+        }
+    }
+
+    private func jump() {
+        pressing = false
+        jumpTask?.cancel()
+        guard motionEnabled else {
+            withAnimation(.easeOut(duration: 0.14)) { scaleX = 1.05; scaleY = 0.95 }
+            withAnimation(.easeInOut(duration: 0.20).delay(0.14)) { scaleX = 1; scaleY = 1 }
+            delighted = false
+            return
+        }
+        jumpTask = Task { @MainActor in
+            withAnimation(.easeOut(duration: 0.18)) {
+                jumpY = -38
+                scaleX = 0.91
+                scaleY = 1.14
+            }
+            try? await Task.sleep(for: .milliseconds(185))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.20)) {
+                jumpY = 0
+                scaleX = 1.04
+                scaleY = 0.96
+            }
+            try? await Task.sleep(for: .milliseconds(205))
+            guard !Task.isCancelled else { return }
+            AlmaAgentHaptics.rigid()
+            landingBurst += 1
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.43)) {
+                scaleX = 1
+                scaleY = 1
+            }
+            try? await Task.sleep(for: .milliseconds(430))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.18)) { delighted = false }
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentRobotBody: View {
     let t: TimeInterval
+    let delighted: Bool
     let motionEnabled: Bool
+
+    private var limbSway: Double { motionEnabled ? sin(t * 1.75) * 5 : 0 }
+
+    var body: some View {
+        VStack(spacing: -7) {
+            AgentRobotHead(t: t, delighted: delighted, motionEnabled: motionEnabled)
+                .zIndex(2)
+            ZStack(alignment: .top) {
+                Capsule()
+                    .fill(AgentRobotColors.blueMid)
+                    .overlay(Capsule().stroke(AgentRobotColors.outline, lineWidth: 2.2))
+                    .frame(width: 15, height: 34)
+                    .rotationEffect(.degrees(-22 + limbSway), anchor: .top)
+                    .offset(x: -29, y: 5)
+                Capsule()
+                    .fill(AgentRobotColors.blueMid)
+                    .overlay(Capsule().stroke(AgentRobotColors.outline, lineWidth: 2.2))
+                    .frame(width: 15, height: 34)
+                    .rotationEffect(.degrees(22 - limbSway), anchor: .top)
+                    .offset(x: 29, y: 5)
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [AgentRobotColors.blueLight, AgentRobotColors.blueMid],
+                        startPoint: .top, endPoint: .bottom))
+                    .overlay(RoundedRectangle(cornerRadius: 15).stroke(AgentRobotColors.outline, lineWidth: 2.5))
+                    .frame(width: 50, height: 41)
+                    .overlay {
+                        Text(">_")
+                            .font(.system(size: 17, weight: .black, design: .monospaced))
+                            .foregroundStyle(AgentRobotColors.glow)
+                            .shadow(color: AgentRobotColors.glow.opacity(0.8), radius: 4)
+                    }
+                HStack(spacing: 13) {
+                    Capsule().fill(AgentRobotColors.blueMid)
+                        .overlay(Capsule().stroke(AgentRobotColors.outline, lineWidth: 2))
+                        .frame(width: 13, height: 22)
+                    Capsule().fill(AgentRobotColors.blueMid)
+                        .overlay(Capsule().stroke(AgentRobotColors.outline, lineWidth: 2))
+                        .frame(width: 13, height: 22)
+                }
+                .offset(y: 34)
+            }
+            .frame(width: 92, height: 60)
+        }
+        .shadow(color: AgentRobotColors.blueLight.opacity(0.40), radius: 12)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentRobotHead: View {
+    let t: TimeInterval
+    let delighted: Bool
+    let motionEnabled: Bool
+
+    private var blink: Bool {
+        motionEnabled && t.truncatingRemainder(dividingBy: 4.7) > 4.42
+    }
+
+    var body: some View {
+        AgentRobotCloudShape()
+            .fill(LinearGradient(
+                colors: [AgentRobotColors.blueLight, AgentRobotColors.blueMid, AgentRobotColors.blueDeep],
+                startPoint: .topLeading, endPoint: .bottomTrailing))
+            .overlay(AgentRobotCloudShape().stroke(AgentRobotColors.outline, lineWidth: 3))
+            .frame(width: 94, height: 75)
+            .overlay {
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .fill(AgentRobotColors.visor)
+                    .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.white.opacity(0.14), lineWidth: 1))
+                    .frame(width: 65, height: 41)
+                    .overlay {
+                        Text(delighted ? "^ ^" : (blink ? "– –" : "> _"))
+                            .font(.system(size: delighted ? 18 : 23, weight: .black, design: .monospaced))
+                            .foregroundStyle(AgentRobotColors.glow)
+                            .tracking(delighted ? 1 : -2)
+                            .shadow(color: AgentRobotColors.glow.opacity(0.90), radius: 5)
+                    }
+                    .offset(y: 6)
+            }
+    }
+}
+
+private enum AgentRobotColors {
+    static let blueLight = Color(red: 0.49, green: 0.72, blue: 1.00)
+    static let blueMid = Color(red: 0.27, green: 0.50, blue: 0.94)
+    static let blueDeep = Color(red: 0.20, green: 0.36, blue: 0.78)
+    static let outline = Color(red: 0.07, green: 0.12, blue: 0.29)
+    static let visor = Color(red: 0.08, green: 0.14, blue: 0.32)
+    static let glow = Color(red: 0.43, green: 1.00, blue: 0.97)
+}
+
+private struct AgentRobotCloudShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
+        }
+        var path = Path()
+        path.move(to: p(0.18, 0.91))
+        path.addCurve(to: p(0.04, 0.62), control1: p(0.08, 0.86), control2: p(0.02, 0.76))
+        path.addCurve(to: p(0.13, 0.34), control1: p(0.04, 0.48), control2: p(0.07, 0.39))
+        path.addCurve(to: p(0.35, 0.12), control1: p(0.17, 0.20), control2: p(0.25, 0.12))
+        path.addCurve(to: p(0.55, 0.10), control1: p(0.42, 0.02), control2: p(0.50, 0.03))
+        path.addCurve(to: p(0.78, 0.25), control1: p(0.65, 0.04), control2: p(0.74, 0.11))
+        path.addCurve(to: p(0.96, 0.56), control1: p(0.91, 0.28), control2: p(0.98, 0.40))
+        path.addCurve(to: p(0.84, 0.91), control1: p(0.98, 0.72), control2: p(0.93, 0.84))
+        path.addCurve(to: p(0.18, 0.91), control1: p(0.66, 1.01), control2: p(0.34, 1.01))
+        path.closeSubpath()
+        return path
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentRobotParticles: View {
+    let t: TimeInterval
+    let burst: Int
+    let enabled: Bool
 
     var body: some View {
         ForEach(0..<6, id: \.self) { i in
             Circle()
-                .fill(i.isMultiple(of: 2) ? AgentMotionColor.mint : AgentPalette.coralLt)
-                .frame(width: i.isMultiple(of: 3) ? 4 : 2.5,
-                       height: i.isMultiple(of: 3) ? 4 : 2.5)
-                .shadow(color: AgentMotionColor.mint.opacity(0.8), radius: 3)
-                .offset(x: sparkX(i), y: sparkY(i))
-                .opacity(sparkOpacity(i))
+                .fill(i.isMultiple(of: 2) ? AgentRobotColors.glow : AgentPalette.coralLt)
+                .frame(width: i.isMultiple(of: 3) ? 4 : 2.5)
+                .shadow(color: AgentRobotColors.glow.opacity(0.8), radius: 3)
+                .offset(x: CGFloat(cos(t * 0.7 + Double(i))) * CGFloat(48 + i * 3),
+                        y: CGFloat(sin(t * 0.8 + Double(i))) * 25 - 29)
+                .opacity(enabled ? 0.32 + 0.28 * sin(t + Double(i)) : 0.35)
         }
-    }
-
-    private func sparkX(_ i: Int) -> CGFloat {
-        CGFloat(cos(t * (0.65 + Double(i) * 0.07) + Double(i))) * CGFloat(54 + i * 3)
-    }
-
-    private func sparkY(_ i: Int) -> CGFloat {
-        CGFloat(sin(t * (0.75 + Double(i) * 0.05) + Double(i))) * CGFloat(28 + i * 2)
-    }
-
-    private func sparkOpacity(_ i: Int) -> Double {
-        motionEnabled ? 0.45 + 0.4 * sin(t + Double(i)) : 0.65
+        AgentRobotLandingBurst(trigger: burst)
     }
 }
 
 @available(iOS 17.0, *)
-private struct AgentNewSessionSignalBars: View {
-    let t: TimeInterval
-    let pal: AgentPalette
-    let motionEnabled: Bool
-
-    private var activeIndex: Int { Int(t * 2) % 5 }
+private struct AgentRobotLandingBurst: View {
+    let trigger: Int
+    @State private var spread: CGFloat = 0
 
     var body: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<5, id: \.self) { i in
+        ZStack {
+            ForEach(0..<8, id: \.self) { i in
                 Capsule()
-                    .fill(i == activeIndex ? AgentMotionColor.mint : pal.muted.opacity(0.22))
-                    .frame(width: i == 2 ? 17 : 7, height: 3)
+                    .fill(i.isMultiple(of: 2) ? AgentRobotColors.glow : AgentPalette.coralLt)
+                    .frame(width: 3, height: 9)
+                    .offset(y: -spread)
+                    .rotationEffect(.degrees(Double(i) * 45))
+                    .opacity(max(0, 1 - Double(spread / 25)))
             }
         }
-        .opacity(motionEnabled ? 1 : 0.72)
-        .animation(.easeInOut(duration: 0.28), value: activeIndex)
+        .offset(y: -7)
+        .onChange(of: trigger) { _, _ in
+            spread = 0
+            withAnimation(.easeOut(duration: 0.42)) { spread = 26 }
+        }
     }
 }
 

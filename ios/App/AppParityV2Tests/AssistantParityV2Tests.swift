@@ -3,6 +3,22 @@ import XCTest
 
 @MainActor
 final class AssistantParityV2Tests: XCTestCase {
+    func testTopModelMenuPreservesAutoAndProviderGrouping() {
+        let models = [
+            AgentModelInfo(id: "claude", label: "Claude", provider: "anthropic", enabled: true, isDefault: false),
+            AgentModelInfo(id: "gemini", label: "Gemini", provider: "google", enabled: true, isDefault: true),
+        ]
+
+        let elements = AssistantBarHooks.modelMenuElements(
+            models: models, selectedId: nil, onSelect: { _ in })
+        let menus = elements.compactMap { $0 as? UIMenu }
+        let actions = menus.flatMap(\.children).compactMap { $0 as? UIAction }
+
+        XCTAssertEqual(menus.count, 3)
+        XCTAssertEqual(actions.map(\.title), ["Auto", "Claude", "Gemini"])
+        XCTAssertEqual(actions.first?.state, .on)
+    }
+
     func testRecoveryIdentityIndexCoalescesDuplicateRowsWithoutCrashing() {
         let stale = AgentChatMessage(id: "local-recovery", role: .assistant, text: "stale")
         let settled = AgentChatMessage(id: "local-recovery", role: .assistant, text: "settled")
