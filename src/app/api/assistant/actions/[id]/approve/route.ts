@@ -179,6 +179,70 @@ async function runApprove(
 
   // ── Execute by type ────────────────────────────────────────────────────────
 
+  // AIOS mandatory-door hold: approval executes the exact immutable tool name
+  // + input once, then the existing route wrapper resumes the same conversation.
+  if (action.type === 'aios_enforced_tool') {
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) {
+      const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+      return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+    }
+    const toolName = String(payload.toolName ?? '')
+    const toolInput = payload.toolInput && typeof payload.toolInput === 'object'
+      ? payload.toolInput as Record<string, unknown>
+      : {}
+    try {
+      const { executeTool } = await import('@/agent/tools/registry')
+      const { buildActionEnvelope, signEnvelope } = await import('@/agent/lib/policy/capability-token')
+      const conversationId = resolveConversationId(action) ?? undefined
+      const sourceTurnId = typeof payload.sourceTurnId === 'string' && payload.sourceTurnId
+        ? payload.sourceTurnId
+        : undefined
+      // The owner just approved this immutable stored payload. Bind that exact
+      // approval to the canonical tool guard so stricter point-of-risk modes can
+      // execute it, while any payload drift still fails closed.
+      const approvalEnvelope = signEnvelope(buildActionEnvelope({
+        actor: 'owner',
+        surface: 'owner',
+        instructionOrigin: 'owner_direct',
+        tool: toolName,
+        input: toolInput,
+        riskTier: 'R3',
+        conversationId,
+        turnId: sourceTurnId,
+        businessId: action.businessId,
+        approvalRef: actionId,
+      }))
+      const result = await executeTool(toolName, toolInput, {
+        conversationId,
+        businessId: action.businessId,
+        modelId: String(payload.model ?? 'aios-approved'),
+        turnId: sourceTurnId,
+        turnAuthorization: { allowMutations: true, reason: 'workflow_continuation' },
+        instructionOrigin: 'owner_direct',
+        approvalEnvelope,
+      })
+      if (!result.success) throw new Error(result.error ?? 'approved tool failed')
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result: { toolName, output: result.data ?? null } },
+      })
+      await appendConversationNote(db, action, `অনুমোদিত কাজটি সম্পন্ন হয়েছে: ${toolName}`)
+      return Response.json({ success: true, toolName, result: result.data ?? null })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { toolName, error: message } },
+      })
+      await appendConversationNote(db, action, `অনুমোদিত কাজটি সম্পন্ন হয়নি: ${message}`)
+      return Response.json({ error: 'aios_tool_failed', message }, { status: 502 })
+    }
+  }
+
   // Delegation approval (test mode): owner approved the transfer → run the worker
   // now and post its summary back into the conversation.
   if (action.type === 'delegation') {

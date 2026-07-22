@@ -36,7 +36,8 @@ import {
 } from '@/agent/lib/workflow-run'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
-import { enforcementEnabled, guardToolCall } from '@/agent/enforcement/enforced-tool-runner'
+import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/agent/enforcement/enforced-tool-runner'
+import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
@@ -48,6 +49,7 @@ import { captureAgentError } from '@/agent/lib/sentry'
 import { logCost } from '@/agent/lib/cost-events'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { isTurnCancelRequested } from '@/agent/lib/turn-status'
+import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import {
   shouldNudgeAdapterIntent,
@@ -61,6 +63,7 @@ import {
 import {
   verifyClaimsAgainstLedger,
   buildVerificationReminder,
+  detectExplicitInstructionViolations,
   detectMissingCardViolation,
   detectProseChoiceViolation,
   detectFabricatedStatViolations,
@@ -71,7 +74,8 @@ import {
 import { getModel, isKnownModelId } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
-import { specialistLabel } from '@/agent/lib/models/specialist-roles'
+import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
+import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { adapterFor } from '@/agent/lib/models/adapters'
 import { logRouteSpan } from '@/agent/lib/tool-telemetry'
 import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
@@ -343,6 +347,7 @@ async function* runAlternateProviderTurn(
     if (typeof m.content === 'string' && m.content.trim()) recentUserTexts.unshift(m.content.trim())
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
+  let currentOwnerInstructions = lastUserText
   let turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
   const ownerRequirements = deriveOwnerTurnRequirements(lastUserText)
   // Which call voice Boss asked for — resolved from his OWN words and handed to the
@@ -658,6 +663,7 @@ async function* runAlternateProviderTurn(
   // Skill Engine V2 (gated OFF by default) — pick ≤3 on-demand skill procedures for
   // this turn from the message text; '' when disabled or nothing matches (fail-open).
   const activeSkillsBlock = suppressWork ? '' : await buildActiveSkillsBlock(lastUserText)
+  const ownerIntentTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
 
   const promptArgs = {
     projectInstructions: projectSystemInstructions,
@@ -684,7 +690,7 @@ async function* runAlternateProviderTurn(
     ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
     staffActiveTasksBlock: staffActiveTasksBlock || undefined,
     activeGroups: listenMode ? [] : toolSelection.groups,
-    activeToolNames: listenMode ? [] : toolSelection.tools.map((t) => t.name),
+    activeToolNames: listenMode ? [] : ownerIntentTools.map((t) => t.name),
     businessSnapshot,
     officePulse,
     headTier,
@@ -847,7 +853,7 @@ async function* runAlternateProviderTurn(
   // mutation filter (and its note) without a deploy.
   const intentGateOn = process.env.AGENT_OWNER_INTENT_GATE !== 'false'
   const selectedTools = filterToolDefsByControls(
-    intentGateOn ? filterToolsForOwnerTurn(toolSelection.tools, turnAuthorization) : [...toolSelection.tools],
+    intentGateOn ? filterToolsForOwnerTurn(ownerIntentTools, turnAuthorization) : [...ownerIntentTools],
     agentControls,
   )
   // xAI hard-caps tool definitions at 200 per request — the owner head carries 201,
@@ -1146,6 +1152,7 @@ async function* runAlternateProviderTurn(
   // Live-browser turns raise this cap (see BROWSER_TURN_MAX_ITERATIONS) — a real
   // UI task is 15–30 look→act rounds and must not die silently at the default cap.
   let maxIterations = MAX_TOOL_ITERATIONS
+  const claimedSteeringIds = new Set<string>()
 
   // LG-3: the action graph staged a card (thread paused at its interrupt) —
   // emit the ordinary confirm-card event + a fixed Bangla staging line; the
@@ -1191,6 +1198,20 @@ async function* runAlternateProviderTurn(
       // Owner hit Stop — cross-instance cancel flag (see core.ts for rationale).
       if (await isTurnCancelRequested(turnId)) { canceled = true; break }
 
+      // Pull durable owner follow-ups before every model round so a running job
+      // adapts in place instead of waiting for a second turn.
+      const steering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
+      for (const item of steering) claimedSteeringIds.add(item.id)
+      if (steering.length > 0) {
+        currentOwnerInstructions = [currentOwnerInstructions, ...steering.map((item) => item.prompt)]
+          .filter(Boolean)
+          .join('\n')
+        messages = [
+          ...messages,
+          ...steering.map((item) => ({ role: 'user' as const, content: item.prompt })),
+        ]
+      }
+
       const calls: Array<{ id: string; name: string; input: Record<string, unknown>; thoughtSignature?: string }> = []
       const toolNames = new Map<string, string>()
       let iterationText = ''
@@ -1231,7 +1252,7 @@ async function* runAlternateProviderTurn(
       // the request and bounce the owner to the cheap-head fallback.
       // A staged approval card ends the working part of the turn: everything
       // past it is spend on work the owner may reject (and it buries the card).
-      const cardStaged = confirmCardsEmitted > 0
+      const cardStaged = confirmCardsEmitted > 0 || emittedAskCards.length > 0
       const iterationTools =
         nearDeadline || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
           ? []
@@ -1361,6 +1382,26 @@ async function* runAlternateProviderTurn(
       }
 
       if (calls.length === 0 || signal?.aborted) {
+        // A follow-up can land while the provider is producing its final draft.
+        // Claim once more before committing it; the same turn then re-runs with
+        // Boss's latest instruction and the stale draft stays audit-only.
+        const lateSteering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
+        if (lateSteering.length > 0 && !signal?.aborted) {
+          for (const item of lateSteering) claimedSteeringIds.add(item.id)
+          currentOwnerInstructions = [currentOwnerInstructions, ...lateSteering.map((item) => item.prompt)]
+            .filter(Boolean)
+            .join('\n')
+          for (let ti = timeline.length - 1; ti >= 0; ti--) {
+            const te = timeline[ti]
+            if (te.t === 'text') { te.state = 'superseded'; break }
+          }
+          messages = [
+            ...messages,
+            ...(iterationText.trim() ? [{ role: 'assistant' as const, content: iterationText }] : []),
+            ...lateSteering.map((item) => ({ role: 'user' as const, content: item.prompt })),
+          ]
+          continue
+        }
         // Fully empty round → nudge the model to continue instead of silently
         // ending the turn with a blank message. Bounded to 2 retries. Applies to
         // the FIRST round too (2026-07-12: gemini-2.5-flash answered the very
@@ -1439,6 +1480,9 @@ async function* runAlternateProviderTurn(
           // BP6 — robotic-style gate (flag-gated inside → no-op when off).
           if (violations.length === 0) {
             violations.push(...detectRoboticStyleViolations(iterationText.trim()))
+          }
+          if (violations.length === 0) {
+            violations.push(...detectExplicitInstructionViolations(iterationText.trim(), currentOwnerInstructions))
           }
           if (violations.length > 0) {
             verifyRetries++
@@ -1532,6 +1576,7 @@ async function* runAlternateProviderTurn(
 
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
       let roundContractFailure: ToolRecord | undefined
+      const autoRanDelegationSummaries: string[] = []
       for (const call of calls) {
         // A required-tool failure already happened in this same model round.
         // Do not execute any queued follow-up calls: the failure is terminal for
@@ -1569,11 +1614,17 @@ async function* runAlternateProviderTurn(
         // Re-emit tool_start with the parsed input so the UI shows the real target.
         yield { type: 'tool_start', id: call.id, name: call.name, input: call.input }
         const started = Date.now()
+        const ownerIntentViolation = personalMode
+          ? null
+          : validateToolCallAgainstOwnerIntent({
+              ownerInstructions: currentOwnerInstructions,
+              toolName: call.name,
+            })
         // AIOS mandatory enforcement (flag-gated, OFF in prod): force EVERY model's
         // tool call through policy + autonomy/approval before it can run. A
         // sensitive action (money/publish/HR/export) is held for owner approval;
         // routine/read tools run. Identical decision for every model.
-        const aiosGuard = enforcementEnabled()
+        const aiosGuard = !ownerIntentViolation && enforcementEnabled()
           ? guardToolCall({
               identity: {
                 tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),
@@ -1588,8 +1639,21 @@ async function* runAlternateProviderTurn(
               attributes: call.input as Record<string, unknown>,
             })
           : null
-        const result = aiosGuard && !aiosGuard.allow
-          ? { success: false as const, error: aiosGuard.message }
+        const result = ownerIntentViolation
+          ? { success: false as const, error: ownerIntentViolation.message }
+          : aiosGuard && !aiosGuard.allow
+          ? aiosGuard.status === 'NEEDS_APPROVAL'
+            ? await stageEnforcedToolApproval({
+                conversationId,
+                businessId,
+                turnId,
+                toolCallId: call.id,
+                toolName: call.name,
+                toolInput: call.input,
+                model: model.id,
+                klass: aiosGuard.klass as Exclude<typeof aiosGuard.klass, 'routine'>,
+              })
+            : { success: false as const, error: aiosGuard.message }
           : personalMode
           ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization, ownerVoicePref })
           : await executeTool(call.name, call.input, {
@@ -1656,6 +1720,17 @@ async function* runAlternateProviderTurn(
 
         if (result.success && result.data != null && typeof result.data === 'object') {
           const d = result.data as Record<string, unknown>
+          if (call.name === 'delegate_to_specialist') {
+            const role = typeof call.input.role === 'string' ? call.input.role : ''
+            if (
+              d.awaitingApproval !== true
+              && AUTO_RUN_ROLES.has(role as SpecialistRole)
+              && typeof d.summary === 'string'
+              && d.summary.trim()
+            ) {
+              autoRanDelegationSummaries.push(d.summary.trim())
+            }
+          }
           // Delegation WAIT-gate: when a specialist hand-off is pending owner
           // approval, the head must STOP this turn (do not also write the answer
           // — that doubles cost). The confirm card decides Worker vs Sonnet.
@@ -1702,20 +1777,20 @@ async function* runAlternateProviderTurn(
             }
           }
           if (typeof d.askCardId === 'string' && Array.isArray(d.options)) {
-            yield {
-              type: 'ask_card',
-              askCardId: d.askCardId,
-              question: typeof d.question === 'string' ? d.question : '',
-              options: d.options as string[],
+            if (!emittedAskCards.some((card) => card.askCardId === d.askCardId)) {
+              yield {
+                type: 'ask_card',
+                askCardId: d.askCardId,
+                question: typeof d.question === 'string' ? d.question : '',
+                options: d.options as string[],
+              }
+              emittedAskCards.push({
+                type: 'ask_card',
+                askCardId: d.askCardId,
+                question: typeof d.question === 'string' ? d.question : '',
+                options: d.options.map(String),
+              })
             }
-            // Breadcrumb so the question card re-renders after reload / poll (the
-            // durable agent_ask_cards row supplies live status at read time).
-            emittedAskCards.push({
-              type: 'ask_card',
-              askCardId: d.askCardId,
-              question: typeof d.question === 'string' ? d.question : '',
-              options: d.options.map(String),
-            })
           }
         }
 
@@ -1777,6 +1852,21 @@ async function* runAlternateProviderTurn(
         const sep = finalText ? '\n\n' : ''
         finalText += sep + waitNote
         yield { type: 'text_delta', delta: sep + waitNote }
+        break
+      }
+
+      // Parity with core.ts: a direct-run marketer/content worker already owns
+      // the answer. Re-running the head after it returns doubles model work and
+      // can mutate the request into a second, contradictory response.
+      if (
+        autoRanDelegationSummaries.length > 0
+        && autoRanDelegationSummaries.length === calls.length
+      ) {
+        const combined = autoRanDelegationSummaries.join('\n\n')
+        const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+        finalText += sep + combined
+        timeline.push({ t: 'text', text: combined.slice(0, 6000) })
+        yield { type: 'text_delta', delta: sep + combined }
         break
       }
     }

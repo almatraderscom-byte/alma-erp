@@ -28,6 +28,8 @@ import {
   linkTurnAssistantMessage,
 } from '@/agent/lib/turn-status'
 import { createTurnEventPublisher } from '@/agent/lib/turn-events'
+import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
+import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
 import { ensurePersonalProject, isPersonalProject } from '@/lib/personal-space'
@@ -848,6 +850,21 @@ export async function POST(req: NextRequest) {
             const doneMessageId = (event as { messageId?: string }).messageId
             if (doneMessageId && turnId) await linkTurnAssistantMessage(turnId, doneMessageId)
             await finalizeTurnIfRunning(turnId, 'done', { continuationNeeded: event.needContinue === true })
+            // Close the tiny race where Boss's steer persisted after the model's
+            // final in-loop poll but before this terminal transition. The steer
+            // endpoint now rejects this finished turn, so anything claimed here
+            // is the complete last-moment set. Resume automatically; never lose
+            // it and never require Boss to send the same instruction again.
+            if (conversationId) {
+              const lastMomentSteering = await claimTurnSteeringMessages(turnId, conversationId, new Set())
+              if (lastMomentSteering.length > 0) {
+                await enqueueAgentContinuation({
+                  conversationId,
+                  message: lastMomentSteering.map((item) => item.prompt).join('\n\n'),
+                  force: true,
+                })
+              }
+            }
             const turnCost = (event as { costUsd?: number }).costUsd ?? 0
             if (turnCost > 0 && conversationId) {
               try {

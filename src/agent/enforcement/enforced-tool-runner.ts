@@ -12,9 +12,11 @@
  * read action runs. The model is only the brain that asks; this door decides.
  *
  * Model-agnostic by construction: `model` is a label used for audit only — the
- * decision is identical for every model. Deterministic (INV-01), fail-closed
- * (INV-05). Gated by `AIOS_ENFORCE` so it is OFF in production until the owner
- * turns it on (preview first).
+ * decision is identical for every model. Deterministic (INV-01). This additional
+ * door deliberately fails OPEN only for unknown tool identities so a stale list
+ * cannot break ordinary turns; the canonical registry/policy guards remain in
+ * force. Gated by `AIOS_ENFORCE` so it is OFF in production until the owner turns
+ * it on (preview first).
  */
 import { decidePolicy, rbacLayer, type PolicyDecision } from '@/agent/policy';
 import { agentPrincipal } from '@/agent/identity/principals';
@@ -24,6 +26,8 @@ import { publishingApprovalRule } from '@/agent/approvals/publishing-rule';
 import { hrApprovalRule } from '@/agent/approvals/hr-rule';
 import { exportApprovalRule } from '@/agent/approvals/export-rule';
 import { isSuccess, type ExecutionIdentity } from '@/agent/contracts';
+import { prisma } from '@/lib/prisma';
+import { hashInput } from '@/agent/lib/policy/capability-token';
 
 /** Is the mandatory door switched on? OFF by default (production-safe). */
 export function enforcementEnabled(): boolean {
@@ -33,19 +37,84 @@ export function enforcementEnabled(): boolean {
 
 export type ActionClass = 'financial' | 'publishing' | 'hr' | 'export' | 'routine';
 
-/** Classify a tool into an action + resource type from its name (deterministic). */
+/**
+ * Exact pre-execution approval list. Every name exists in tools/registry.ts and
+ * is a DIRECT owner-facing side effect. Tools classified as `stage` in the
+ * registry are deliberately absent: their handler only creates its established
+ * approval card, so blocking before that handler would prevent the real flow.
+ *
+ * Deliberate robustness rule approved by the owner: an unknown/new tool is
+ * routine here (fail-open at this additional door). The canonical registry,
+ * schema validation, authorization guard and the tool's own approval contract
+ * still apply; AIOS may never break a normal turn merely because its list lags.
+ */
+export const SENSITIVE_TOOL_ALLOWLIST: Readonly<Record<string, ActionClass>> = Object.freeze({
+  send_whatsapp: 'publishing',
+  whatsapp_call: 'publishing',
+  send_urgent_alert: 'publishing',
+  camera_speak: 'publishing',
+});
+
+/** Classify a tool using exact identity only — never substring guessing. */
 export function classifyTool(toolName: string): { action: string; resourceType: string; klass: ActionClass } {
-  const n = toolName.toLowerCase();
-  const has = (...ks: string[]) => ks.some((k) => n.includes(k));
-  if (has('refund', 'payout', 'payroll', 'wallet', 'payment', 'pay_', 'transfer', 'salary_pay', 'expense'))
-    return { action: `wallet.${n}`, resourceType: 'wallet', klass: 'financial' };
-  if (has('publish', 'facebook', 'instagram', 'whatsapp', 'post', 'broadcast', 'send_message', 'message_send', 'comment', 'ad_'))
-    return { action: `publish.${n}`, resourceType: 'post', klass: 'publishing' };
-  if (has('hire', 'fire', 'terminate', 'salary_set', 'staff_role', 'staff_remove', 'discipline'))
-    return { action: `hr.${n}`, resourceType: 'staff', klass: 'hr' };
-  if (has('export', 'download', 'dump', 'backup', 'share_external'))
-    return { action: `export.${n}`, resourceType: 'export', klass: 'export' };
+  const n = toolName.trim().toLowerCase();
+  const klass = SENSITIVE_TOOL_ALLOWLIST[n] ?? 'routine';
+  if (klass === 'financial') return { action: `wallet.${n}`, resourceType: 'wallet', klass };
+  if (klass === 'publishing') return { action: `publish.${n}`, resourceType: 'post', klass };
+  if (klass === 'hr') return { action: `hr.${n}`, resourceType: 'staff', klass };
+  if (klass === 'export') return { action: `export.${n}`, resourceType: 'export', klass };
   return { action: `tool.${n}`, resourceType: 'tool', klass: 'routine' };
+}
+
+/** Stage one exact held call. `dedupeKey` makes model retry/reconnect one card. */
+export async function stageEnforcedToolApproval(input: {
+  conversationId: string;
+  businessId: string;
+  turnId?: string | null;
+  toolCallId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  model: string;
+  klass: Exclude<ActionClass, 'routine'>;
+}): Promise<{ success: boolean; data?: Record<string, unknown>; error?: string }> {
+  try {
+    // Collapse provider retries even when the model assigns a NEW tool-call id:
+    // one turn + exact tool + exact canonical payload = one intended effect/card.
+    const dedupeKey = `aios:${input.turnId ?? input.conversationId}:${input.toolName}:${hashInput(input.toolInput)}`;
+    const exactInput = JSON.stringify(input.toolInput);
+    const summary = `${approvalMessage(input.klass)}\nAction: ${input.toolName}\nPayload: ${exactInput.slice(0, 1200)}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = await (prisma as any).agentPendingAction.upsert({
+      where: { dedupeKey },
+      create: {
+        dedupeKey,
+        conversationId: input.conversationId,
+        businessId: input.businessId,
+        type: 'aios_enforced_tool',
+        summary,
+        payload: {
+          toolName: input.toolName,
+          toolInput: input.toolInput,
+          model: input.model,
+          sourceTurnId: input.turnId ?? null,
+          sourceToolCallId: input.toolCallId,
+          aiosEnforced: true,
+        },
+      },
+      update: {},
+    });
+    return {
+      success: true,
+      data: {
+        pendingActionId: row.id as string,
+        summary: row.summary as string,
+        actionType: 'aios_enforced_tool',
+        awaitingApproval: true,
+      },
+    };
+  } catch (err) {
+    return { success: false, error: `AIOS approval hold failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
 }
 
 export type EnforcementDecision =
@@ -83,6 +152,13 @@ export function guardToolCall(input: {
   attributes?: Record<string, unknown>;
 }): EnforcementDecision {
   const { action, resourceType, klass } = classifyTool(input.toolName);
+  // Tier-3 urgent alert already creates its own immutable `urgent_notify`
+  // approval card. Let that staging handler run; wrapping it here would create
+  // two approvals for one call. Tier-2 remains a direct effect and is held here.
+  if (input.toolName.trim().toLowerCase() === 'send_urgent_alert'
+      && Number(input.attributes?.tier) === 3) {
+    return { allow: true, klass };
+  }
   const principal = agentPrincipal(input.identity, ['agent']); // the model acts on the owner's behalf
 
   // 1) Policy (G11): the agent principal is allowed to REQUEST agent actions;
