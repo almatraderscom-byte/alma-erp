@@ -4,6 +4,7 @@
 import { prisma } from '@/lib/prisma'
 import type { AgentTool } from './registry'
 import { createHash } from 'crypto'
+import { hasAffirmativeExternalAction, isCopyOnlyOwnerRequest } from '@/agent/lib/owner-intent-contract'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -21,17 +22,9 @@ export function shouldCreateAskCard(input: {
   const owner = normalized(input.ownerText)
   const question = normalized(input.question)
   const options = normalized((input.options ?? []).join(' '))
-  const ownerAskedForCopy = /(caption|primary\s*text|content|copy|ক্যাপশন).*(likh|lekho|লিখ|write|draft|detail|বিস্তারিত)|(likh|লিখ|write|draft).*(caption|primary\s*text|content|copy|ক্যাপশন)/i.test(owner)
-  // "paste/post কোরো না" is a prohibition, not permission to publish. Remove
-  // complete negated action phrases before looking for an affirmative effect.
-  const effectWord = '(?:paste|পেস্ট|post|পোস্ট|publish|ads?\\s*manager(?:-?এ)?|send|পাঠা(?:ও|বেন|তে)?)'
-  const negatedEffect = new RegExp(
-    `(?:কোথাও\\s*)?${effectWord}(?:\\s*(?:বা|or|/|,)\\s*${effectWord})*[^।.!?\\n]{0,24}?(?:কোরো|করো|করবেন|করবা|করিস|দেও|দিও|দেবে)?\\s*না|` +
-    `(?:do\\s+not|don't|never|without)\\s+(?:[^।.!?\\n]{0,16}\\s+)?${effectWord}`,
-    'gi',
-  )
-  const affirmativeOwner = owner.replace(negatedEffect, ' ')
-  const ownerAskedToPublish = new RegExp(effectWord, 'i').test(affirmativeOwner)
+  const ownerAskedForCopy = isCopyOnlyOwnerRequest(owner) ||
+    /(caption|primary\s*text|content|copy|ক্যাপশন).*(likh|lekho|লিখ|write|draft|detail|বিস্তারিত)|(likh|লিখ|write|draft).*(caption|primary\s*text|content|copy|ক্যাপশন)/i.test(owner)
+  const ownerAskedToPublish = hasAffirmativeExternalAction(owner)
   const postWorkAsk = `${question} ${options}`
   const reviewOrNewEffect = /(কেমন\s*লাগ|ঠিক\s*আছে|এখন\s*(?:কি|কী)\s*কর|এরপর\s*(?:কি|কী)|paste|পেস্ট|post|পোস্ট|publish|ads?\s*manager|send|পাঠাব|approve|অনুমোদন|wording\s*পরিবর্তন|নতুনভাবে\s*লিখ|রেখে\s*দিন|use\s*কর)/i.test(postWorkAsk)
   if (ownerAskedForCopy && !ownerAskedToPublish && reviewOrNewEffect) return false

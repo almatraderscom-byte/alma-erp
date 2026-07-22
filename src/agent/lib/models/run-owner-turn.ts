@@ -37,6 +37,7 @@ import {
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/agent/enforcement/enforced-tool-runner'
+import { validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
@@ -73,7 +74,8 @@ import {
 import { getModel, isKnownModelId } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
-import { specialistLabel } from '@/agent/lib/models/specialist-roles'
+import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
+import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { adapterFor } from '@/agent/lib/models/adapters'
 import { logRouteSpan } from '@/agent/lib/tool-telemetry'
 import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
@@ -1573,6 +1575,7 @@ async function* runAlternateProviderTurn(
 
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
       let roundContractFailure: ToolRecord | undefined
+      const autoRanDelegationSummaries: string[] = []
       for (const call of calls) {
         // A required-tool failure already happened in this same model round.
         // Do not execute any queued follow-up calls: the failure is terminal for
@@ -1610,11 +1613,17 @@ async function* runAlternateProviderTurn(
         // Re-emit tool_start with the parsed input so the UI shows the real target.
         yield { type: 'tool_start', id: call.id, name: call.name, input: call.input }
         const started = Date.now()
+        const ownerIntentViolation = personalMode
+          ? null
+          : validateToolCallAgainstOwnerIntent({
+              ownerInstructions: currentOwnerInstructions,
+              toolName: call.name,
+            })
         // AIOS mandatory enforcement (flag-gated, OFF in prod): force EVERY model's
         // tool call through policy + autonomy/approval before it can run. A
         // sensitive action (money/publish/HR/export) is held for owner approval;
         // routine/read tools run. Identical decision for every model.
-        const aiosGuard = enforcementEnabled()
+        const aiosGuard = !ownerIntentViolation && enforcementEnabled()
           ? guardToolCall({
               identity: {
                 tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),
@@ -1629,7 +1638,9 @@ async function* runAlternateProviderTurn(
               attributes: call.input as Record<string, unknown>,
             })
           : null
-        const result = aiosGuard && !aiosGuard.allow
+        const result = ownerIntentViolation
+          ? { success: false as const, error: ownerIntentViolation.message }
+          : aiosGuard && !aiosGuard.allow
           ? aiosGuard.status === 'NEEDS_APPROVAL'
             ? await stageEnforcedToolApproval({
                 conversationId,
@@ -1708,6 +1719,17 @@ async function* runAlternateProviderTurn(
 
         if (result.success && result.data != null && typeof result.data === 'object') {
           const d = result.data as Record<string, unknown>
+          if (call.name === 'delegate_to_specialist') {
+            const role = typeof call.input.role === 'string' ? call.input.role : ''
+            if (
+              d.awaitingApproval !== true
+              && AUTO_RUN_ROLES.has(role as SpecialistRole)
+              && typeof d.summary === 'string'
+              && d.summary.trim()
+            ) {
+              autoRanDelegationSummaries.push(d.summary.trim())
+            }
+          }
           // Delegation WAIT-gate: when a specialist hand-off is pending owner
           // approval, the head must STOP this turn (do not also write the answer
           // — that doubles cost). The confirm card decides Worker vs Sonnet.
@@ -1829,6 +1851,21 @@ async function* runAlternateProviderTurn(
         const sep = finalText ? '\n\n' : ''
         finalText += sep + waitNote
         yield { type: 'text_delta', delta: sep + waitNote }
+        break
+      }
+
+      // Parity with core.ts: a direct-run marketer/content worker already owns
+      // the answer. Re-running the head after it returns doubles model work and
+      // can mutate the request into a second, contradictory response.
+      if (
+        autoRanDelegationSummaries.length > 0
+        && autoRanDelegationSummaries.length === calls.length
+      ) {
+        const combined = autoRanDelegationSummaries.join('\n\n')
+        const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+        finalText += sep + combined
+        timeline.push({ t: 'text', text: combined.slice(0, 6000) })
+        yield { type: 'text_delta', delta: sep + combined }
         break
       }
     }

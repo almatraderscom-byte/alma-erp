@@ -22,6 +22,7 @@ import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearch
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool, type ToolResult } from '@/agent/tools/registry'
 import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/agent/enforcement/enforced-tool-runner'
+import { validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
 import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -1417,10 +1418,16 @@ export async function* runAgentTurn(
           }
         }
         const started = Date.now()
+        const ownerIntentViolation = personalMode
+          ? null
+          : validateToolCallAgainstOwnerIntent({
+              ownerInstructions: currentOwnerInstructions,
+              toolName: tb.name,
+            })
         // AIOS mandatory enforcement (flag-gated, OFF in prod) — native Claude path.
         // Same door as the multi-model path: every tool call is forced through
         // policy + autonomy/approval before it can run.
-        const aiosGuard = enforcementEnabled()
+        const aiosGuard = !ownerIntentViolation && enforcementEnabled()
           ? guardToolCall({
               identity: {
                 tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),
@@ -1435,7 +1442,9 @@ export async function* runAgentTurn(
               attributes: tb.input as Record<string, unknown>,
             })
           : null
-        const result = aiosGuard && !aiosGuard.allow
+        const result = ownerIntentViolation
+          ? { success: false as const, error: ownerIntentViolation.message }
+          : aiosGuard && !aiosGuard.allow
           ? aiosGuard.status === 'NEEDS_APPROVAL'
             ? await stageEnforcedToolApproval({
                 conversationId,

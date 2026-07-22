@@ -35,6 +35,13 @@ import { anthropicToolsToNeutral } from '@/agent/lib/models/neutral'
 const SUBAGENT_MAX_ITERATIONS = 4
 const SUBAGENT_MAX_TOKENS = 2048
 
+class SubAgentIncompleteError extends Error {
+  constructor(role: SpecialistRole) {
+    super(`SUBAGENT_INCOMPLETE: ${role} exhausted its tool budget without a tool-free final result`)
+    this.name = 'SubAgentIncompleteError'
+  }
+}
+
 const globalForSub = globalThis as unknown as { subAnthropic: Anthropic | undefined }
 function getClient(): Anthropic {
   if (!globalForSub.subAnthropic) {
@@ -107,12 +114,13 @@ async function runAnthropicSubAgent(args: {
   businessId: AgentBusinessId
   conversationId?: string
   signal?: AbortSignal
-}): Promise<{ summary: string; toolsUsed: string[]; inputTokens: number; outputTokens: number }> {
+}): Promise<{ summary: string; completed: boolean; toolsUsed: string[]; inputTokens: number; outputTokens: number }> {
   let messages: Anthropic.Messages.MessageParam[] = [{ role: 'user', content: args.task }]
   const toolsUsed: string[] = []
   let inputTokens = 0
   let outputTokens = 0
   let finalText = ''
+  let completed = false
 
   for (let i = 0; i < SUBAGENT_MAX_ITERATIONS; i++) {
     if (args.signal?.aborted) break
@@ -141,7 +149,10 @@ async function runAnthropicSubAgent(args: {
     const toolUses = resp.content.filter(
       (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use',
     )
-    if (toolUses.length === 0) break
+    if (toolUses.length === 0) {
+      completed = Boolean(textPieces)
+      break
+    }
 
     messages = [...messages, { role: 'assistant', content: resp.content }]
 
@@ -157,8 +168,41 @@ async function runAnthropicSubAgent(args: {
     messages = [...messages, { role: 'user', content: toolResults }]
   }
 
+  if (!completed && !args.signal?.aborted) {
+    messages = [
+      ...messages,
+      {
+        role: 'user',
+        content:
+          '[INTERNAL CONTROL] Tool budget is exhausted. Do not call tools, promise future work, or claim an action that did not complete. ' +
+          'Return a concise final status based only on the tool results above; clearly state anything still incomplete.',
+      },
+    ]
+    const wrapup = await getClient().messages.create(
+      {
+        model: args.model.apiModel,
+        max_tokens: SUBAGENT_MAX_TOKENS,
+        system: args.system,
+        messages,
+      },
+      { signal: args.signal },
+    )
+    inputTokens += wrapup.usage.input_tokens
+    outputTokens += wrapup.usage.output_tokens
+    const wrapupText = wrapup.content
+      .filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('\n')
+      .trim()
+    if (wrapupText) {
+      finalText = wrapupText
+      completed = true
+    }
+  }
+
   return {
     summary: finalText,
+    completed,
     toolsUsed: Array.from(new Set(toolsUsed)),
     inputTokens,
     outputTokens,
@@ -172,6 +216,7 @@ async function runWithModel(
   def: (typeof SPECIALIST_ROLES)[SpecialistRole],
 ): Promise<{
   summary: string
+  completed: boolean
   toolsUsed: string[]
   inputTokens: number
   outputTokens: number
@@ -217,6 +262,7 @@ async function runWithModel(
     signal: params.signal,
   }).then((r) => ({
     summary: r.text,
+    completed: r.completed,
     toolsUsed: r.toolsUsed,
     inputTokens: r.inputTokens,
     outputTokens: r.outputTokens,
@@ -265,6 +311,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
 
   try {
     let result = await runWithModel(model, tier, params, def)
+    if (!result.completed) throw new SubAgentIncompleteError(params.role)
 
     let summary = result.summary || '(সাব-এজেন্ট কোনো সারাংশ দেয়নি)'
     if (isOpenRouterProvider(model.provider) && needsCustomerFacingBanglaGate(params.role, tier)) {
@@ -316,6 +363,15 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
       fallbackUsed,
     }
   } catch (err) {
+    // A worker may already have executed tool calls before exhausting its loop.
+    // Retrying the whole task on another model could duplicate those effects.
+    if (err instanceof SubAgentIncompleteError) {
+      await captureAgentError(err, 'agent.subagent.incomplete', {
+        tool: `subagent:${params.role}`,
+        conversationId: params.conversationId,
+      })
+      return fail(err.message, model, tier)
+    }
     const fb = fallbackModelForTier(tier, model.id)
     if (fb && fb.id !== model.id) {
       console.warn(
@@ -326,6 +382,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
       tier = fb.provider === 'anthropic' ? 'critical' : tier
       try {
         const result = await runWithModel(model, tier, params, def)
+        if (!result.completed) throw new SubAgentIncompleteError(params.role)
         // Same customer-facing Bangla gate as the primary path — the fallback
         // reply reaches the customer through the exact same pipe.
         let fbSummary = result.summary || '(fallback সারাংশ)'
