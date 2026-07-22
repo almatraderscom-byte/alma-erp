@@ -82,14 +82,18 @@ export function validateToolCallAgainstOwnerIntent(input: {
   }
 }
 
-/** Remove impossible action tools before the model sees them; preserve order/cache shape otherwise. */
+/**
+ * A copy-only turn is deliberately text-only. Keeping even read schemas enabled
+ * lets weak providers emit an arbitrary remembered tool name outside the offered
+ * subset; the execution guard blocks it, but the failed call still pollutes the
+ * turn UI and can trigger retry loops. Read tools remain routine/allowed by the
+ * execution contract above — they are simply unnecessary for this explicit
+ * "write it here" route.
+ */
 export function filterToolsForOwnerIntent<T extends { name: string }>(
   ownerInstructions: string,
   tools: T[],
 ): T[] {
   if (!isCopyOnlyOwnerRequest(ownerInstructions)) return [...tools]
-  return tools.filter((tool) => !validateToolCallAgainstOwnerIntent({
-    ownerInstructions,
-    toolName: tool.name,
-  }))
+  return []
 }

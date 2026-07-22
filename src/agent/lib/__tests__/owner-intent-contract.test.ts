@@ -65,15 +65,13 @@ describe('owner intent contract — copy stays copy', () => {
     })).toBeNull()
   })
 
-  it('withholds delegation and external effects before the model sees copy-only tools', () => {
+  it('makes an explicit copy-only turn text-only before the model sees tools', () => {
     const tools = [
       { name: 'get_product' },
       { name: 'delegate_to_specialist' },
       { name: 'launch_campaign' },
       { name: 'ask_user' },
     ]
-    expect(filterToolsForOwnerIntent(exactIncident, tools).map((tool) => tool.name)).toEqual([
-      'get_product',
-    ])
+    expect(filterToolsForOwnerIntent(exactIncident, tools)).toEqual([])
   })
 })
