@@ -526,7 +526,7 @@ const NO_EMOJI_REQUEST = /(?:\b(?:no|without)\s+emojis?\b|(?:emoji|ইমোজ�
 const EMOJI_IN_REPLY = /\p{Extended_Pictographic}/u
 const READY_COPY_BLOCK = /```(?:copy|caption|post|text)\s*\n[\s\S]*?\S[\s\S]*?\n```/i
 const FENCED_BLOCK = /```[^\n]*\n[\s\S]*?\n```/g
-const COPY_POST_WORK_PROMPT = /(?:[?？]|(?:এখন\s+)?চাইলে|approve|approval|অনুমোদন|বললে|বলুন|আপনার\s+নির্দেশ|paste|পেস্ট|post|পোস্ট|publish|ads?\s*manager|campaign)/i
+const COPY_POST_WORK_PROMPT = /(?:[?？]|(?:এখন\s+)?চাইলে|approve|approval|অনুমোদন|বললে|বলুন|বলবেন|জানান|লাগলে|edit|এডিট|tweak|টুইক|আপনার\s+নির্দেশ|paste|পেস্ট|post|পোস্ট|publish|ads?\s*manager|campaign)/i
 
 export function detectExplicitInstructionViolations(
   replyText: string,

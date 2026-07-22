@@ -63,6 +63,14 @@ describe('detectExplicitInstructionViolations', () => {
     )
     expect(violations.map((violation) => violation.ruleId)).toContain('copy_only_post_work_question')
   })
+
+  it('rejects the live edit/tweak offer after otherwise valid copy', () => {
+    const violations = detectExplicitInstructionViolations(
+      'Boss, নিচে লিখে দিলাম।\n\n```copy\nপরিবারের matching আনন্দ, প্রতিটি ছবিতে।\n```\n\nএখন পড়ে দেখুন — এডিট/টুইক লাগলে জানান।',
+      'Family matching carousel-এর জন্য detailed primary text এখানেই লিখে দাও; কোথাও paste বা post কোরো না।',
+    )
+    expect(violations.map((violation) => violation.ruleId)).toContain('copy_only_post_work_question')
+  })
 })
 
 describe('buildVerificationReminder — output contracts stay text-only', () => {
