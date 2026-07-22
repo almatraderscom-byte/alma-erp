@@ -20,6 +20,7 @@ import { attachMemoryEmbedding, createOrUpdateAgentMemory } from '@/agent/lib/ag
 import { ERP_TOOLS } from './erp-tools'
 import { CONFIRM_TOOLS } from './confirm-tools'
 import { WA_TOOLS } from './wa-tools'
+import { find_tool } from './find-tool'
 import { STAFF_TOOLS } from './staff-tools'
 import { SETTINGS_TOOLS } from './settings-tools'
 import { SALAH_TOOLS } from './salah-tools'
@@ -556,6 +557,8 @@ export const TOOLS: AgentTool[] = [
   // (otherwise the head sees it but a call returns "Unknown tool").
   place_agent_call,
   ...ASK_TOOLS,
+  // Harness gap 5 — registry-wide tool discovery (dynamic schema load per turn).
+  find_tool,
   ...ADS_TOOLS,
   ...MARKETING_TOOLS,
   ...LOCATION_TOOLS,

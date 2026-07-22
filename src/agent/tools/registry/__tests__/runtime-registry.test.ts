@@ -36,9 +36,9 @@ describe('SPEC-079 feature-flag authority', () => {
 })
 
 describe('SPEC-079 registry assembly (live manifests)', () => {
-  it('builds all 326 tools under a legacy mode', () => {
+  it('builds all 327 tools under a legacy mode', () => {
     const r = buildRuntimeRegistry('shadow')
-    expect(r.toolCount).toBe(326)
+    expect(r.toolCount).toBe(327)
     expect(r.entries).toEqual([...r.entries].sort((a, b) => a.name.localeCompare(b.name)))
   })
   it('entries carry assembled facets (risk profile + schema + callability)', () => {
@@ -50,7 +50,7 @@ describe('SPEC-079 registry assembly (live manifests)', () => {
   })
   it('toolDefinitions produce a model-facing name/description/input_schema array', () => {
     const defs = toolDefinitions(buildRuntimeRegistry('shadow'))
-    expect(defs.length).toBe(326)
+    expect(defs.length).toBe(327)
     for (const d of defs.slice(0, 5)) {
       expect(typeof d.name).toBe('string')
       expect(d.input_schema).toBeDefined()
@@ -75,7 +75,7 @@ describe('SPEC-079 shadow comparison (migration evidence)', () => {
     expect(c.parity).toBe(true)
     expect(c.onlyInNew).toEqual([])
     expect(c.onlyInInventory).toEqual([])
-    expect(c.matched).toBe(326)
+    expect(c.matched).toBe(327)
   })
   it('detects drift', () => {
     const c = shadowCompare([m('only_new_tool')])

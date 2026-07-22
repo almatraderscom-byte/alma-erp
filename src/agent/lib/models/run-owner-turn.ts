@@ -37,6 +37,9 @@ import {
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/agent/enforcement/enforced-tool-runner'
+import { runPreToolHooks, runPostToolHooks } from '@/agent/lib/turn-hooks'
+import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
+import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
@@ -99,7 +102,7 @@ import {
   dbRowsToNeutral,
   systemBlocksToText,
 } from '@/agent/lib/models/neutral'
-import type { NeutralMsg } from '@/agent/lib/models/types'
+import type { NeutralMsg, NeutralTool } from '@/agent/lib/models/types'
 import type { CostProvider } from '@/agent/lib/pricing'
 
 export interface RunOwnerTurnOptions extends RunAgentTurnOptions {
@@ -878,6 +881,9 @@ async function* runAlternateProviderTurn(
   // can't be answered with generate_image / ads / list_owner_todos etc. — the head
   // has nothing to call, so it must simply respond in words.
   const neutralTools = listenMode ? [] : anthropicToolsToNeutral(cappedTools)
+  // Harness Gap 5 — schemas dynamically loaded by find_tool for the rest of this
+  // turn (appended after the base list; execution guards unchanged).
+  const dynamicNeutralTools: NeutralTool[] = []
   // Phase 3 request controller: parallel tool calls are legal ONLY when the whole
   // pack is pure reads (capability manifest). Any stage/write tool in the pack →
   // sequential, so the provider can never emit two confirm cards / writes chosen
@@ -1258,7 +1264,9 @@ async function* runAlternateProviderTurn(
           ? []
           : premiumOverBudget
             ? delegateOnlyNeutral
-            : neutralTools
+            : dynamicNeutralTools.length > 0
+              ? [...neutralTools, ...dynamicNeutralTools]
+              : neutralTools
       const batchRequiredTool = driveClientSeoBatch ? await getClientSeoBatchRequiredTool(conversationId) : null
       const memoryRequiredTool = ownerRequirements.remember
         && !toolRecords.some((r) => r.toolName === 'save_memory' && r.status === 'success')
@@ -1639,8 +1647,22 @@ async function* runAlternateProviderTurn(
               attributes: call.input as Record<string, unknown>,
             })
           : null
+        // Harness Gap 2 — generic pre-tool hooks (deterministic, fail-open),
+        // identical decision to the native Claude path.
+        const preHookDecision = !ownerIntentViolation
+          ? runPreToolHooks({
+              toolName: call.name,
+              input: call.input as Record<string, unknown>,
+              model: model.id,
+              personalMode,
+              businessId: String(businessId ?? ''),
+            })
+          : null
+        const hookBlocked = preHookDecision && preHookDecision.action === 'block' ? preHookDecision : null
         const result = ownerIntentViolation
           ? { success: false as const, error: ownerIntentViolation.message }
+          : hookBlocked
+          ? { success: false as const, error: hookBlocked.message }
           : aiosGuard && !aiosGuard.allow
           ? aiosGuard.status === 'NEEDS_APPROVAL'
             ? await stageEnforcedToolApproval({
@@ -1666,6 +1688,15 @@ async function* runAlternateProviderTurn(
             ownerVoicePref,
           })
         const durationMs = Date.now() - started
+        // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).
+        runPostToolHooks({
+          toolName: call.name,
+          input: call.input as Record<string, unknown>,
+          model: model.id,
+          success: result.success,
+          error: result.error,
+          durationMs,
+        })
 
         if (!result.success) {
           await captureAgentError(new Error(result.error ?? 'tool_failed'), 'agent.tool.failed', {
@@ -1828,6 +1859,44 @@ async function* runAlternateProviderTurn(
       }
 
       messages = appendToolExchange(messages, calls, toolResults)
+
+      // Harness Gap 5 — after a find_tool round, expose the matched tools'
+      // schemas for the remaining rounds of THIS turn (any head model).
+      // Execution authority unchanged: loaded tools still pass every guard.
+      for (const call of calls) {
+        if (call.name !== FIND_TOOL_NAME) continue
+        const res = toolResults.find((r) => r.id === call.id)?.result as
+          | { data?: { matches?: Array<{ name?: unknown }> } }
+          | undefined
+        const matchNames = (res?.data?.matches ?? [])
+          .map((m) => String(m?.name ?? ''))
+          .filter(Boolean)
+        if (matchNames.length === 0) continue
+        const already = new Set<string>([
+          ...neutralTools.map((t) => t.name),
+          ...dynamicNeutralTools.map((t) => t.name),
+        ])
+        for (const tool of await resolveToolsByName(matchNames.filter((n) => !already.has(n)))) {
+          if (dynamicNeutralTools.length >= MAX_DYNAMIC_TOOLS_PER_TURN) break
+          dynamicNeutralTools.push({
+            name: tool.name,
+            description: tool.description,
+            schema: tool.input_schema as object,
+          })
+        }
+      }
+
+      // Harness Gap 1 — one compact recovery instruction after a round with
+      // failed tool calls, so the head reasons about the error instead of
+      // repeating the identical call or apologising vaguely.
+      const failedThisRound = toolRecords
+        .slice(-calls.length)
+        .filter((r) => r.status === 'error')
+        .map((r) => ({ toolName: r.toolName, error: String(r.error ?? '') }))
+      const selfCorrectionNudge = buildSelfCorrectionNudge(failedThisRound)
+      if (selfCorrectionNudge) {
+        messages = [...messages, { role: 'user', content: selfCorrectionNudge }]
+      }
 
       // Never spend another expensive head round after a mandatory step failed.
       // The previous code noticed the failure only AFTER letting the model run

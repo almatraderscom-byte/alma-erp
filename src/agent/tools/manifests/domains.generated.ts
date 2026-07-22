@@ -160,6 +160,7 @@ export const DOMAIN_PACKAGES: readonly DomainPackage[] = [
   {
     domain: "core",
     manifests: [
+      {"name":"find_tool","domain":"core","title":"find tool","summary":"read tool in the core domain.","version":"1.0.0","status":"active","capability":{"mode":"read","risk":"low","sideEffects":["db_read"]},"io":{"inputSchemaId":"core.find_tool.input"},"ownership":{"team":"@alma/agent","zonePrefix":"src/agent/tools"},"routing":{"groups":["base"],"pools":["lifestyle"]}},
       {"name":"get_current_datetime","domain":"core","title":"get current datetime","summary":"read tool in the core domain.","version":"1.0.0","status":"active","capability":{"mode":"read","risk":"low","sideEffects":["db_read"]},"io":{"inputSchemaId":"core.get_current_datetime.input"},"ownership":{"team":"@alma/agent","zonePrefix":"src/agent/tools"},"routing":{"groups":["base","personal"],"pools":["lifestyle","personal","staff","trading"]}},
       {"name":"list_agent_projects","domain":"core","title":"list agent projects","summary":"read tool in the core domain.","version":"1.0.0","status":"active","capability":{"mode":"read","risk":"low","sideEffects":["db_read"]},"io":{"inputSchemaId":"core.list_agent_projects.input"},"ownership":{"team":"@alma/agent","zonePrefix":"src/agent/tools"},"routing":{"groups":["base"],"pools":["lifestyle","staff","trading"]}},
     ],
