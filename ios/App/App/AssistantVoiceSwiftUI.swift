@@ -166,6 +166,23 @@ final class AlmaVoiceEngine {
     private var closed = false
     private var streamingActive = false      // a live-STT listen is in flight
     private(set) var liveActive = false       // persistent Gemini Live full-duplex session
+
+    /// Never advertise realtime until the Gemini socket has actually completed its
+    /// setup handshake. The legacy safety path remains usable, but is labelled as
+    /// such so a failed Live connection cannot look successful to the owner.
+    var transportBadgeText: String {
+        if liveActive { return "রিয়েলটাইম" }
+        if sessionReady { return "সাধারণ ভয়েস" }
+        return "সংযোগ"
+    }
+
+    var transportReady: Bool { sessionReady }
+
+    var visibleStatusText: String {
+        if !sessionReady { return "সংযোগ হচ্ছে…" }
+        if liveActive && state == .idle { return "শুনছি…" }
+        return state.statusText
+    }
     // MIC GATE (half-duplex): true from the moment ANY TTS chunk starts until the
     // queue goes fully silent. While true, NO mic opens — not the STT listen, not
     // auto-listen, not the wake word. This is the guard that stops the agent from
@@ -2290,7 +2307,7 @@ final class AlmaTtsQueue: NSObject, AVAudioPlayerDelegate {
 // Pixel target: docs/voice-console-native/DESIGN-REFERENCE.html + the v2 preview
 // the owner confirmed 2026-07-06. Every component of that page exists here:
 // near-black #04070D canvas, state-hued aurora, twinkling STARFIELD with comets,
-// dot grid, top bar (ALMA. · এজেন্ট কনসোল · ঢাকা clock · ● LIVE), glass state
+// dot grid, top bar (ALMA. · এজেন্ট কনসোল · ঢাকা clock · verified transport), glass state
 // badge, the WebGL FLUID ORB ported 1:1 to Metal (runtime-compiled — no pbxproj
 // entry needed), 72-bar reactive waveform ring OUTSIDE the orb with a clear gap,
 // spinning conic accent ring, 5 orbiting energy motes, thinking satellites,
@@ -2519,9 +2536,10 @@ struct AlmaVoiceConsoleView: View {
         }
     }
 
-    // ── Top bar: ALMA. wordmark · এজেন্ট কনসোল | ঢাকা clock · ● LIVE · ✕ ──
+    // ── Top bar: ALMA. wordmark · clock · truthful transport status · ✕ ──
     private var topBar: some View {
-        HStack(spacing: 10) {
+        let transportColor = engine.liveActive ? good : (engine.transportReady ? gold : muted)
+        return HStack(spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 HStack(spacing: 0) {
                     Text("ALMA").font(.system(size: 19, weight: .heavy)).kerning(4.2).foregroundStyle(ink)
@@ -2535,14 +2553,17 @@ struct AlmaVoiceConsoleView: View {
                     .font(.system(size: 13)).monospacedDigit().foregroundStyle(muted)
             }
             HStack(spacing: 6) {
-                Circle().fill(good).frame(width: 7, height: 7)
-                    .shadow(color: good, radius: 5)
+                Circle().fill(transportColor).frame(width: 7, height: 7)
+                    .shadow(color: transportColor, radius: 5)
                     .opacity(liveBlink ? 0.35 : 1)
                     .onAppear {
                         guard !UIAccessibility.isReduceMotionEnabled else { return }
                         withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { liveBlink = true }
                     }
-                Text("LIVE").font(.system(size: 10.5, weight: .semibold)).kerning(1.9).foregroundStyle(good)
+                Text(engine.transportBadgeText)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .kerning(0.8)
+                    .foregroundStyle(transportColor)
             }
             Button {
                 engine.end(); dismiss()
@@ -2566,7 +2587,7 @@ struct AlmaVoiceConsoleView: View {
                 .fill(almaHSL(hue, 0.85, 0.62))
                 .frame(width: 8, height: 8)
                 .shadow(color: almaHSL(hue, 0.85, 0.62), radius: 6)
-            Text(engine.state.statusText)
+            Text(engine.visibleStatusText)
                 .font(.system(size: 13))
                 .foregroundStyle(engine.state == .error ? Color(red: 0.949, green: 0.627, blue: 0.557) : muted)
         }
@@ -2754,21 +2775,23 @@ struct AlmaVoiceConsoleView: View {
                         .overlay(Circle().strokeBorder(line, lineWidth: 1))
                 }
                 Button {
+                    guard !engine.liveActive else { return }
                     engine.convoMode.toggle()
                     UISelectionFeedbackGenerator().selectionChanged()
                 } label: {
                     HStack(spacing: 7) {
-                        Circle().fill(engine.convoMode ? good : faint)
+                        Circle().fill(engine.liveActive || engine.convoMode ? good : faint)
                             .frame(width: 7, height: 7)
-                            .shadow(color: engine.convoMode ? good : .clear, radius: 5)
-                        Text(engine.convoMode ? "কথোপকথন চালু" : "কথোপকথন বন্ধ")
+                            .shadow(color: engine.liveActive || engine.convoMode ? good : .clear, radius: 5)
+                        Text(engine.liveActive ? "লাইভ কথোপকথন" : (engine.convoMode ? "কথোপকথন চালু" : "কথোপকথন বন্ধ"))
                             .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(engine.convoMode ? muted : faint)
+                            .foregroundStyle(engine.liveActive || engine.convoMode ? muted : faint)
                     }
                     .padding(.horizontal, 16).padding(.vertical, 9)
                     .background(glass.opacity(0.06), in: Capsule())
-                    .overlay(Capsule().strokeBorder(engine.convoMode ? good.opacity(0.3) : line, lineWidth: 1))
+                    .overlay(Capsule().strokeBorder(engine.liveActive || engine.convoMode ? good.opacity(0.3) : line, lineWidth: 1))
                 }
+                .disabled(engine.liveActive)
                 Button { engine.end(); dismiss() } label: {
                     Text("চ্যাটে ফিরুন").font(.system(size: 13, weight: .medium))
                         .foregroundStyle(muted)

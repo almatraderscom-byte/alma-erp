@@ -18,4 +18,13 @@ describe('native voice upload contract', () => {
     expect(route).toContain("formData.get('audio')")
     expect(route).not.toContain("formData.get('file')")
   })
+
+  it('never labels the native console LIVE before the realtime socket is connected', () => {
+    const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
+
+    expect(voice).toContain('if liveActive { return "রিয়েলটাইম" }')
+    expect(voice).toContain('if sessionReady { return "সাধারণ ভয়েস" }')
+    expect(voice).toContain('return "সংযোগ হচ্ছে…"')
+    expect(voice).not.toContain('Text("LIVE")')
+  })
 })
