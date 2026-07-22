@@ -1474,7 +1474,11 @@ export default function PayrollPage() {
                       </button>
                     ))}
                   </div>
-                  <span className="mt-1 block text-[10px] text-muted">লেনদেনের খাতায় লেখা থাকবে — সবাই দেখবে কীভাবে পেমেন্ট হয়েছে।</span>
+                  <span className="mt-1 block text-[10px] text-muted">
+                    {review.type === 'ADVANCE'
+                      ? 'টাকা হাতে/বিকাশে দিয়ে থাকলে সিলেক্ট করুন — তাহলে ওয়ালেট ব্যালেন্স বাড়বে না, শুধু অগ্রিম বকেয়া হিসেবে ধরা হবে। টাকা ওয়ালেটে জমা রাখলে খালি রাখুন।'
+                      : 'লেনদেনের খাতায় লেখা থাকবে — সবাই দেখবে কীভাবে পেমেন্ট হয়েছে।'}
+                  </span>
                 </div>
               )}
               {ownerBkashFlow && review.action === 'APPROVE' && review.type === 'WITHDRAWAL' && review.paidVia === 'BKASH'

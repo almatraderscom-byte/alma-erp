@@ -487,6 +487,22 @@ struct PayrollAutomationResponse: Decodable {
 
 /// Tolerant decode for mutation responses — the payroll routes answer different
 /// apiSuccess shapes; the UI only needs "2xx + decoded", details come from reload.
+/// POST /api/payroll/wallet/advance-recovery → {ok, recovered, remaining} | {error}.
+struct PayrollAdvanceRecoveryResponse: Decodable {
+    let ok: Bool?
+    let error: String?
+    let recovered: Int?
+    let remaining: Int?
+    private enum Keys: String, CodingKey { case ok, error, recovered, remaining }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        ok = try? c.decodeIfPresent(Bool.self, forKey: .ok)
+        error = try? c.decodeIfPresent(String.self, forKey: .error)
+        recovered = payrollFlexInt(c, .recovered)
+        remaining = payrollFlexInt(c, .remaining)
+    }
+}
+
 struct PayrollOkResponse: Decodable {
     let ok: Bool?
     private enum Keys: String, CodingKey { case ok }
@@ -693,6 +709,7 @@ final class PayrollVM {
     var accrualBusy = false
     var automationBusy = false
     var compBusy = false
+    var advanceCutBusy = false
 
     func load(fresh: Bool = false) async {
         loading = true
@@ -844,6 +861,34 @@ final class PayrollVM {
                 "POST", "/api/payroll/wallet/accruals/run", body: ["business_id": businessId])
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             notice = "মাসিক স্যালারি অ্যাক্রুয়াল চেক সম্পন্ন হয়েছে"
+            await load(fresh: true)
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Cut outstanding advance from wallet balance — web recoverAdvance():
+    /// POST /api/payroll/wallet/advance-recovery  { employee_id, business_id }.
+    func recoverAdvance(employeeId: String) async {
+        guard !advanceCutBusy else { return }
+        advanceCutBusy = true
+        notice = nil
+        error = nil
+        defer { advanceCutBusy = false }
+        do {
+            let resp: PayrollAdvanceRecoveryResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/payroll/wallet/advance-recovery",
+                body: ["employee_id": employeeId, "business_id": businessId])
+            if resp.ok != true {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                self.error = resp.error ?? "অগ্রিম কাটা যায়নি"
+                return
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            let remaining = resp.remaining ?? 0
+            notice = "৳\((resp.recovered ?? 0).formatted()) অগ্রিম কাটা হয়েছে" +
+                (remaining > 0 ? " · বাকি ৳\(remaining.formatted())" : " · সম্পূর্ণ পরিশোধ")
             await load(fresh: true)
         } catch {
             UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -1086,7 +1131,7 @@ struct PayrollScreen: View {
         }
         .onChange(of: vm.pendingRequests) { _, _ in restoreBkashPending() }
         .sheet(item: $selected) { wallet in
-            PayrollEmployeeDetailSheet(wallet: wallet, openWeb: openWeb)
+            PayrollEmployeeDetailSheet(wallet: wallet, openWeb: openWeb, vm: vm)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -1820,7 +1865,9 @@ private struct PayrollReviewSheet: View {
     }
     private var valid: Bool {
         guard let a = amount, a > 0, a <= request.requestedAmount else { return false }
-        guard !paidVia.isEmpty else { return false }
+        // ADVANCE: channel optional — empty means the money stays in the wallet
+        // (no physical handover). WITHDRAWAL always pays out, so it's required.
+        guard request.type == "ADVANCE" || !paidVia.isEmpty else { return false }
         return !needsTxn || !txnTrimmed.isEmpty
     }
 
@@ -1847,7 +1894,8 @@ private struct PayrollReviewSheet: View {
                     HStack(spacing: 8) {
                         ForEach(Self.paidViaOptions, id: \.0) { value, label in
                             Button {
-                                paidVia = value
+                                // ADVANCE: tap again to clear — empty = money stays in wallet.
+                                paidVia = (request.type == "ADVANCE" && paidVia == value) ? "" : value
                             } label: {
                                 Text(label)
                                     .font(.caption.weight(.bold))
@@ -1859,8 +1907,13 @@ private struct PayrollReviewSheet: View {
                         }
                     }
                     if paidVia.isEmpty {
-                        Text("ক্যাশ/বিকাশ/নগদ/ব্যাংক — একটা বাছাই আবশ্যক; লেনদেনের খাতায় লেখা থাকবে।")
-                            .font(.caption2).foregroundStyle(PayrollPalette.amber600)
+                        Text(request.type == "ADVANCE"
+                             ? "টাকা হাতে/বিকাশে দিয়ে থাকলে সিলেক্ট করুন — তাহলে ওয়ালেট ব্যালেন্স বাড়বে না। ওয়ালেটে জমা রাখলে খালি রাখুন।"
+                             : "ক্যাশ/বিকাশ/নগদ/ব্যাংক — একটা বাছাই আবশ্যক; লেনদেনের খাতায় লেখা থাকবে।")
+                            .font(.caption2).foregroundStyle(request.type == "ADVANCE" ? Color.secondary : PayrollPalette.amber600)
+                    } else if request.type == "ADVANCE" {
+                        Text("অগ্রিম হাতে দেওয়া হয়েছে ধরা হবে — ওয়ালেট ব্যালেন্স বাড়বে না, শুধু অগ্রিম বকেয়া উঠবে; পরের বেতন থেকে অটো কাটা হবে।")
+                            .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
                 if let number = bkashPayoutNumber {
@@ -2375,9 +2428,11 @@ private struct PayrollWalletCard: View {
 private struct PayrollEmployeeDetailSheet: View {
     let wallet: PayrollEmployeeWallet
     let openWeb: (_ path: String, _ title: String) -> Void
+    var vm: PayrollVM? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var statementOpen = false
+    @State private var showAdvanceCutConfirm = false
 
     var body: some View {
         ScrollView {
@@ -2459,6 +2514,33 @@ private struct PayrollEmployeeDetailSheet: View {
                 moneyRow("Meal deductions", s.totalMealDeductions, PayrollPalette.red400)
                 moneyRow("Penalties", s.totalPenalties, PayrollPalette.red400)
                 moneyRow("Outstanding advance", s.outstandingAdvance, PayrollPalette.amber600)
+                if let vm, s.outstandingAdvance > 0, s.currentBalance > 0 {
+                    Button {
+                        showAdvanceCutConfirm = true
+                    } label: {
+                        Label(vm.advanceCutBusy ? "কাটা হচ্ছে…" : "ব্যালেন্স থেকে অগ্রিম কাটুন", systemImage: "scissors")
+                            .font(.footnote.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(PayrollPalette.amber600)
+                    .disabled(vm.advanceCutBusy)
+                    .confirmationDialog(
+                        "অগ্রিম কাটা",
+                        isPresented: $showAdvanceCutConfirm,
+                        titleVisibility: .visible
+                    ) {
+                        Button("কাটুন", role: .destructive) {
+                            Task {
+                                await vm.recoverAdvance(employeeId: wallet.employeeId)
+                                dismiss()
+                            }
+                        }
+                        Button("বাতিল", role: .cancel) {}
+                    } message: {
+                        Text("\(wallet.name)-এর ওয়ালেট ব্যালেন্স থেকে অগ্রিম বকেয়া কাটা হবে — সর্বোচ্চ ৳\(min(s.outstandingAdvance, max(0, s.currentBalance)).formatted())।")
+                    }
+                }
                 Divider().overlay(AlmaSwiftTheme.separator(colorScheme))
                 moneyRow("Held balance (liability)", s.companyLiability, PayrollPalette.pos(colorScheme), bold: true)
                 moneyRow("Withdrawable now", s.availableWithdrawable, PayrollPalette.pos(colorScheme))

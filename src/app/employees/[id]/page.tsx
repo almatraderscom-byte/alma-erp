@@ -167,6 +167,7 @@ export default function EmployeeDetailPage() {
   const [pendingCorrections, setPendingCorrections] = useState<PendingSalaryCorrectionRow[]>([])
   const [pendingCorrectionsLoading, setPendingCorrectionsLoading] = useState(false)
   const [reversingEntryId, setReversingEntryId] = useState<string | null>(null)
+  const [recoveringAdvance, setRecoveringAdvance] = useState(false)
   const [resettingAttendanceId, setResettingAttendanceId] = useState<string | null>(null)
 
   const employee = list?.employees.find(e => e.emp_id === decoded)
@@ -317,6 +318,35 @@ export default function EmployeeDetailPage() {
       toast.error((e as Error).message || 'Could not reverse accrual')
     } finally {
       setReversingEntryId(null)
+    }
+  }
+
+  async function recoverAdvanceFromBalance() {
+    if (!canWriteWallet || recoveringAdvance || !wallet) return
+    const outstanding = wallet.summary.outstandingAdvance || 0
+    const balance = Math.max(0, wallet.summary.currentBalance || 0)
+    const ok = await confirmDialog({
+      title: 'অগ্রিম কাটা',
+      message: `ওয়ালেট ব্যালেন্স থেকে অগ্রিম বকেয়া কাটা হবে — সর্বোচ্চ ${formatMoneyBDT(Math.min(outstanding, balance))}। কাটবেন?`,
+      confirmLabel: 'কাটুন',
+      danger: true,
+    })
+    if (!ok) return
+    setRecoveringAdvance(true)
+    try {
+      const res = await fetch('/api/payroll/wallet/advance-recovery', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employee_id: decoded, business_id: business.id }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.error || res.statusText)
+      toast.success(`৳ ${Number(j.recovered || 0).toLocaleString('en-BD')} অগ্রিম কাটা হয়েছে${Number(j.remaining || 0) > 0 ? ` · বাকি ৳ ${Number(j.remaining).toLocaleString('en-BD')}` : ' · সম্পূর্ণ পরিশোধ'}`)
+      void loadWallet()
+    } catch (e) {
+      toast.error((e as Error).message || 'অগ্রিম কাটা যায়নি')
+    } finally {
+      setRecoveringAdvance(false)
     }
   }
 
@@ -762,6 +792,46 @@ export default function EmployeeDetailPage() {
               <MiniStat label="Lifetime earned" value={wallet.summary.lifetimeEarned} />
               <MiniStat label="Lifetime withdrawn" value={wallet.summary.lifetimeWithdrawn} />
             </div>
+            {(wallet.summary.totalAdvanceDisbursed > 0 || wallet.summary.outstandingAdvance > 0) && (
+              <div className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-wider text-muted">মোট অগ্রিম নেওয়া</p>
+                      <p className="mt-1 font-mono text-sm font-bold text-cream">৳ {Number(wallet.summary.totalAdvanceDisbursed || 0).toLocaleString('en-BD')}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-wider text-muted">ফেরত হয়েছে</p>
+                      <p className="mt-1 font-mono text-sm font-bold text-emerald-600">৳ {Number(wallet.summary.totalAdvanceRecovered || 0).toLocaleString('en-BD')}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-wider text-muted">অগ্রিম বকেয়া</p>
+                      <p className={`mt-1 font-mono text-sm font-bold ${wallet.summary.outstandingAdvance > 0 ? 'text-amber-500' : 'text-emerald-600'}`}>৳ {Number(wallet.summary.outstandingAdvance || 0).toLocaleString('en-BD')}</p>
+                    </div>
+                  </div>
+                  {canWriteWallet && wallet.summary.outstandingAdvance > 0 && (
+                    Math.max(0, wallet.summary.currentBalance) > 0 ? (
+                      <Button size="xs" variant="gold" disabled={recoveringAdvance} onClick={() => void recoverAdvanceFromBalance()}>
+                        {recoveringAdvance ? '…' : 'ব্যালেন্স থেকে অগ্রিম কাটুন'}
+                      </Button>
+                    ) : (
+                      <p className="text-[10px] text-muted">ওয়ালেটে ব্যালেন্স নেই — বেতন জমা হলে অটো কাটা হবে।</p>
+                    )
+                  )}
+                </div>
+                {wallet.summary.outstandingAdvance === 0 && wallet.summary.totalAdvanceDisbursed > 0 && (
+                  <p className="mt-2 text-[10px] text-muted">অগ্রিম সম্পূর্ণ ফেরত হয়ে গেছে (বেতন থেকে অটো-কাটা) — নিচের লেজারে ADVANCE DISBURSEMENT ও ADVANCE RECOVERY সারি দেখুন।</p>
+                )}
+              </div>
+            )}
+            {(wallet.requests ?? []).filter(r => r.status === 'PENDING').map(r => (
+              <div key={r.id} className="rounded-2xl border border-gold/25 bg-gold/[0.06] p-3 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-cream">
+                  <span className="font-bold">{r.type === 'WITHDRAWAL' ? 'উত্তোলন' : 'অগ্রিম'} অনুরোধ পেন্ডিং</span> — ৳ {Number(r.requestedAmount || 0).toLocaleString('en-BD')} · {String(r.createdAt).slice(0, 10)}
+                </p>
+                <Link href="/payroll" className="text-[11px] font-bold text-gold hover:underline">Payroll পেজে অনুমোদন করুন →</Link>
+              </div>
+            ))}
             {!wallet.entries.length ? (
               <p className="text-xs text-muted">No ledger entries yet. Run monthly accrual from Payroll.</p>
             ) : (
