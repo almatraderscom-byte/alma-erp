@@ -37,7 +37,7 @@ import {
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/agent/enforcement/enforced-tool-runner'
-import { validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
+import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
@@ -663,6 +663,7 @@ async function* runAlternateProviderTurn(
   // Skill Engine V2 (gated OFF by default) — pick ≤3 on-demand skill procedures for
   // this turn from the message text; '' when disabled or nothing matches (fail-open).
   const activeSkillsBlock = suppressWork ? '' : await buildActiveSkillsBlock(lastUserText)
+  const ownerIntentTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
 
   const promptArgs = {
     projectInstructions: projectSystemInstructions,
@@ -689,7 +690,7 @@ async function* runAlternateProviderTurn(
     ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
     staffActiveTasksBlock: staffActiveTasksBlock || undefined,
     activeGroups: listenMode ? [] : toolSelection.groups,
-    activeToolNames: listenMode ? [] : toolSelection.tools.map((t) => t.name),
+    activeToolNames: listenMode ? [] : ownerIntentTools.map((t) => t.name),
     businessSnapshot,
     officePulse,
     headTier,
@@ -852,7 +853,7 @@ async function* runAlternateProviderTurn(
   // mutation filter (and its note) without a deploy.
   const intentGateOn = process.env.AGENT_OWNER_INTENT_GATE !== 'false'
   const selectedTools = filterToolDefsByControls(
-    intentGateOn ? filterToolsForOwnerTurn(toolSelection.tools, turnAuthorization) : [...toolSelection.tools],
+    intentGateOn ? filterToolsForOwnerTurn(ownerIntentTools, turnAuthorization) : [...ownerIntentTools],
     agentControls,
   )
   // xAI hard-caps tool definitions at 200 per request — the owner head carries 201,

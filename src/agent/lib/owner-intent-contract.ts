@@ -80,3 +80,15 @@ export function validateToolCallAgainstOwnerIntent(input: {
       'Do not retry with another action tool. Return the complete requested copy now in a fenced copy block.',
   }
 }
+
+/** Remove impossible action tools before the model sees them; preserve order/cache shape otherwise. */
+export function filterToolsForOwnerIntent<T extends { name: string }>(
+  ownerInstructions: string,
+  tools: T[],
+): T[] {
+  if (!isCopyOnlyOwnerRequest(ownerInstructions)) return [...tools]
+  return tools.filter((tool) => !validateToolCallAgainstOwnerIntent({
+    ownerInstructions,
+    toolName: tool.name,
+  }))
+}

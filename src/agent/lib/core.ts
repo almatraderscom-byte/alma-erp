@@ -22,7 +22,7 @@ import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearch
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool, type ToolResult } from '@/agent/tools/registry'
 import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/agent/enforcement/enforced-tool-runner'
-import { validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
+import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
 import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -890,7 +890,7 @@ export async function* runAgentTurn(
     selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId }),
     personalMode || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
   ])
-  const selectedTools = toolSelection.tools
+  const selectedTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
   const activeGroups = toolSelection.groups
 
   type ToolRecord = {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   hasAffirmativeExternalAction,
+  filterToolsForOwnerIntent,
   isCopyOnlyOwnerRequest,
   validateToolCallAgainstOwnerIntent,
 } from '../owner-intent-contract'
@@ -55,5 +56,18 @@ describe('owner intent contract — copy stays copy', () => {
       ownerInstructions: exactIncident,
       toolName: 'future_unknown_tool',
     })).toBeNull()
+  })
+
+  it('withholds delegation and external effects before the model sees copy-only tools', () => {
+    const tools = [
+      { name: 'get_product' },
+      { name: 'delegate_to_specialist' },
+      { name: 'launch_campaign' },
+      { name: 'ask_user' },
+    ]
+    expect(filterToolsForOwnerIntent(exactIncident, tools).map((tool) => tool.name)).toEqual([
+      'get_product',
+      'ask_user',
+    ])
   })
 })
