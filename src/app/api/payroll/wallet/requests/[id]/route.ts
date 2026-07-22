@@ -166,6 +166,26 @@ export async function PATCH(
         walletRequestId: request.id,
       },
     })
+    // Advance handed over physically (owner picked a payment channel): post the
+    // matching cash-out debit so the wallet balance is NOT inflated — the money
+    // left the company, only the outstanding-advance claim remains.
+    if (request.type === 'ADVANCE' && paidVia) {
+      await tx.employeeLedgerEntry.create({
+        data: {
+          employeeId: request.employeeId,
+          userId: request.userId,
+          businessId: request.businessId,
+          date: new Date(),
+          type: 'WITHDRAWAL',
+          amount: moneyDecimal(approvedAmount),
+          note: `অগ্রিম ${PAID_VIA_BN[paidVia]}-এ হাতে প্রদান`,
+          createdById: request.userId,
+          approvedById: ctx.userId,
+          source: 'advance_cash_out',
+          sourceRef: `advance_cash_out:${request.id}`,
+        },
+      })
+    }
     const updated = await tx.walletRequest.update({
       where: { id: request.id },
       data: {

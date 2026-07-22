@@ -120,6 +120,8 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
     note?: string
     approvedAmount?: number
     transactionId?: string
+    /** WALLET_ADVANCE/WALLET_WITHDRAWAL: how the money was physically handed over (CASH | BKASH | NAGAD | BANK). */
+    paid_via?: string
     operation_id?: string
     /** EXPENSE_REIMBURSEMENT only: 'wallet' (default, credit staff wallet) or 'instant' (owner already paid cash/bKash). */
     payoutMode?: 'wallet' | 'instant'
@@ -242,7 +244,7 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
     } else if (approval.module === 'PAYROLL' && approval.type === 'SALARY_ADVANCE') {
       response = await processSalaryAdvance(req, approval.id, approval.entityId, body.action, token.sub, String(token.name || token.email || 'Super Admin'), body.note)
     } else if (approval.module === 'PAYROLL' && (approval.type === 'WALLET_WITHDRAWAL' || approval.type === 'WALLET_ADVANCE')) {
-      response = await processWalletRequest(approval.id, approval.entityId, body.action, token.sub, body.note, body.approvedAmount, body.transactionId)
+      response = await processWalletRequest(approval.id, approval.entityId, body.action, token.sub, body.note, body.approvedAmount, body.transactionId, body.paid_via)
     } else if (approval.module === APPROVAL_MODULES.PAYROLL && approval.type === APPROVAL_TYPES.NO_CHECKOUT_FINE) {
       const result = await processNoCheckoutFine({
         approvalId: approval.id,
@@ -688,8 +690,18 @@ async function processWalletRequest(
   note?: string,
   approvedAmountInput?: number,
   transactionIdInput?: string,
+  paidViaInput?: string,
 ) {
   const transactionId = transactionIdInput?.trim().slice(0, 120) || null
+  const PAID_VIA_BN: Record<string, string> = {
+    CASH: 'ক্যাশ (নগদ হাতে)',
+    BKASH: 'বিকাশ',
+    NAGAD: 'নগদ (Nagad)',
+    BANK: 'ব্যাংক ট্রান্সফার',
+  }
+  const paidVia = paidViaInput && PAID_VIA_BN[String(paidViaInput).toUpperCase()]
+    ? String(paidViaInput).toUpperCase()
+    : null
   const request = await prisma.walletRequest.findUnique({ where: { id: requestId } })
   if (!request) {
     logEvent('error', 'approval.entity.missing', { approvalId, entityId: requestId, module: 'PAYROLL' })
@@ -800,7 +812,10 @@ async function processWalletRequest(
         date: new Date(),
         type: entryTypeForRequest(request.type),
         amount: moneyDecimal(approvedAmount),
-        note: note?.slice(0, 500) || request.reason,
+        note: [
+          paidVia ? `${PAID_VIA_BN[paidVia]}-এ প্রদান` : null,
+          note?.slice(0, 400) || request.reason,
+        ].filter(Boolean).join(' · '),
         createdById: request.userId,
         approvedById: actorUserId,
         source: 'wallet_request',
@@ -808,6 +823,26 @@ async function processWalletRequest(
         walletRequestId: request.id,
       },
     })
+    // Advance handed over physically (owner picked a payment channel): post the
+    // matching cash-out debit so the wallet balance is NOT inflated — the money
+    // left the company, only the outstanding-advance claim remains.
+    if (request.type === 'ADVANCE' && paidVia) {
+      await tx.employeeLedgerEntry.create({
+        data: {
+          employeeId: request.employeeId,
+          userId: request.userId,
+          businessId: request.businessId,
+          date: new Date(),
+          type: 'WITHDRAWAL',
+          amount: moneyDecimal(approvedAmount),
+          note: `অগ্রিম ${PAID_VIA_BN[paidVia]}-এ হাতে প্রদান`,
+          createdById: request.userId,
+          approvedById: actorUserId,
+          source: 'advance_cash_out',
+          sourceRef: `advance_cash_out:${request.id}`,
+        },
+      })
+    }
     const updated = await tx.walletRequest.update({
       where: { id: request.id },
       data: {
@@ -818,6 +853,7 @@ async function processWalletRequest(
         reviewedAt: new Date(),
         ledgerEntryId: entry.id,
         transactionId: request.type === 'WITHDRAWAL' ? transactionId : null,
+        paidVia,
       },
     })
     const approval = await resolveApprovalRequest({

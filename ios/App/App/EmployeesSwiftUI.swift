@@ -190,9 +190,13 @@ struct EmployeeWalletTotals: Decodable, Equatable {
     let lifetimeWithdrawn: Int
     let currentBalance: Int
     let companyLiability: Int
+    let totalAdvanceDisbursed: Int
+    let totalAdvanceRecovered: Int
+    let outstandingAdvance: Int
 
     private enum Keys: String, CodingKey {
         case lifetimeEarned, lifetimeWithdrawn, currentBalance, companyLiability
+        case totalAdvanceDisbursed, totalAdvanceRecovered, outstandingAdvance
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -200,6 +204,9 @@ struct EmployeeWalletTotals: Decodable, Equatable {
         lifetimeWithdrawn = employeeFlexInt(c, .lifetimeWithdrawn) ?? 0
         currentBalance = employeeFlexInt(c, .currentBalance) ?? 0
         companyLiability = employeeFlexInt(c, .companyLiability) ?? 0
+        totalAdvanceDisbursed = employeeFlexInt(c, .totalAdvanceDisbursed) ?? 0
+        totalAdvanceRecovered = employeeFlexInt(c, .totalAdvanceRecovered) ?? 0
+        outstandingAdvance = employeeFlexInt(c, .outstandingAdvance) ?? 0
     }
 }
 
@@ -386,6 +393,22 @@ struct EmployeeSalaryPatchResponse: Decodable {
         ok = try? c.decodeIfPresent(Bool.self, forKey: .ok)
         error = try? c.decodeIfPresent(String.self, forKey: .error)
         newSalary = employeeFlexInt(c, .new_salary)
+    }
+}
+
+/// POST /api/payroll/wallet/advance-recovery → {ok, recovered, remaining, entryId} | {error}.
+struct EmployeeAdvanceRecoveryResponse: Decodable {
+    let ok: Bool?
+    let error: String?
+    let recovered: Int?
+    let remaining: Int?
+    private enum Keys: String, CodingKey { case ok, error, recovered, remaining }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        ok = try? c.decodeIfPresent(Bool.self, forKey: .ok)
+        error = try? c.decodeIfPresent(String.self, forKey: .error)
+        recovered = employeeFlexInt(c, .recovered)
+        remaining = employeeFlexInt(c, .remaining)
     }
 }
 
@@ -586,6 +609,7 @@ final class EmployeeDetailVM {
     var correctionSubmitting = false
     var reversingEntryId: String? = nil
     var resettingAttendanceId: String? = nil
+    var recoveringAdvance = false
 
     /// Ran anything that changed the roster (salary edit)? The list screen refreshes.
     var rosterDirty = false
@@ -788,6 +812,34 @@ final class EmployeeDetailVM {
             await load(empId: empId)
         } catch {
             fail(error, fallback: "Could not reverse accrual")
+        }
+    }
+
+    /// POST /api/payroll/wallet/advance-recovery — web recoverAdvanceFromBalance verbatim.
+    func recoverAdvance(empId: String) async {
+        guard !recoveringAdvance else { return }
+        recoveringAdvance = true
+        actionError = nil
+        notice = nil
+        defer { recoveringAdvance = false }
+        do {
+            let body: [String: String] = [
+                "employee_id": empId,
+                "business_id": employeesBusinessId,
+            ]
+            let resp: EmployeeAdvanceRecoveryResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/payroll/wallet/advance-recovery", body: body)
+            if resp.ok != true {
+                actionError = resp.error ?? "অগ্রিম কাটা যায়নি"
+                return
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            let remaining = resp.remaining ?? 0
+            notice = "৳\((resp.recovered ?? 0).formatted()) অগ্রিম কাটা হয়েছে" +
+                (remaining > 0 ? " · বাকি ৳\(remaining.formatted())" : " · সম্পূর্ণ পরিশোধ")
+            await load(empId: empId)
+        } catch {
+            fail(error, fallback: "অগ্রিম কাটা যায়নি")
         }
     }
 
@@ -1185,6 +1237,7 @@ private struct EmployeeDetailSheet: View {
     // Destructive row actions collect their target first, then confirm in Bangla.
     @State private var reverseTarget: EmployeeWalletEntry? = nil
     @State private var showReverseConfirm = false
+    @State private var showAdvanceCutConfirm = false
     @State private var resetTarget: EmployeeAttendanceRecord? = nil
     @State private var showResetConfirm = false
     @State private var slipShare: EmployeeSlipFile? = nil
@@ -1203,6 +1256,7 @@ private struct EmployeeDetailSheet: View {
                 if let ok = vm.notice { detailNotice(ok, error: false) }
                 infoRows
                 walletStrip
+                advanceStrip
                 pendingCorrectionsBlock
                 attendanceBlock
                 ledgerBlock
@@ -1441,6 +1495,57 @@ private struct EmployeeDetailSheet: View {
                 .font(.footnote).foregroundStyle(EmployeePalette.red500)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12).employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        }
+    }
+
+    // ── Advance strip (web advance panel parity: মোট অগ্রিম / ফেরত / বকেয়া + cut) ──
+
+    @ViewBuilder private var advanceStrip: some View {
+        if let s = vm.wallet?.summary, s.totalAdvanceDisbursed > 0 || s.outstandingAdvance > 0 {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    walletStat("মোট অগ্রিম নেওয়া", s.totalAdvanceDisbursed, .primary)
+                    walletStat("ফেরত হয়েছে", s.totalAdvanceRecovered, EmployeePalette.emerald600)
+                    walletStat("অগ্রিম বকেয়া", s.outstandingAdvance,
+                               s.outstandingAdvance > 0 ? EmployeePalette.amber600 : EmployeePalette.emerald600)
+                }
+                if s.outstandingAdvance > 0 {
+                    if s.currentBalance > 0 {
+                        Button {
+                            showAdvanceCutConfirm = true
+                        } label: {
+                            Label(vm.recoveringAdvance ? "কাটা হচ্ছে…" : "ব্যালেন্স থেকে অগ্রিম কাটুন",
+                                  systemImage: "scissors")
+                                .font(.footnote.weight(.bold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(EmployeePalette.amber600)
+                        .disabled(vm.recoveringAdvance)
+                    } else {
+                        Text("ওয়ালেটে ব্যালেন্স নেই — বেতন জমা হলে অটো কাটা হবে।")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("অগ্রিম সম্পূর্ণ ফেরত হয়ে গেছে (বেতন থেকে অটো-কাটা) — নিচের লেজারে ADVANCE সারিগুলো দেখুন।")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .padding(12)
+            .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+            .confirmationDialog(
+                "অগ্রিম কাটা",
+                isPresented: $showAdvanceCutConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("কাটুন", role: .destructive) {
+                    Task { await vm.recoverAdvance(empId: employee.empId) }
+                }
+                Button("বাতিল", role: .cancel) {}
+            } message: {
+                let cut = min(s.outstandingAdvance, max(0, s.currentBalance))
+                Text("\(employee.name)-এর ওয়ালেট ব্যালেন্স থেকে অগ্রিম বকেয়া কাটা হবে — সর্বোচ্চ ৳\(cut.formatted())।")
+            }
         }
     }
 

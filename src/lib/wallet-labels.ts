@@ -35,6 +35,8 @@ export const WALLET_SOURCE_LABEL_BN: Record<string, string> = {
   attendance_exception_refund: 'জরিমানা ফেরত — অনুমতি মঞ্জুর',
   attendance_reset_reversal: 'জরিমানা ফেরত — চেক-ইন সংশোধন',
   monthly_accrual: 'মাসিক বেতন',
+  advance_cash_out: 'অগ্রিম হাতে প্রদান (ক্যাশ-আউট)',
+  advance_recovery_manual: 'অগ্রিম কাটা — ওয়ালেট ব্যালেন্স থেকে',
 }
 
 const BN_DIGITS: Record<string, string> = {
