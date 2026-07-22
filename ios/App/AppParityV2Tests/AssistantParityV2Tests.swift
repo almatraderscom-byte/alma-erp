@@ -29,6 +29,24 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(index["local-recovery"]?.text, "settled")
     }
 
+    func testRunningTurnSendClearsComposerAndCreatesOneVisibleQueueEntry() {
+        let vm = AssistantVM()
+        vm.loadMergeReadinessQueueFixture()
+        let instruction = "এই নির্দেশনাটি চলতি কাজে যোগ করো"
+        vm.composerDraft = instruction
+
+        vm.send(instruction)
+
+        XCTAssertEqual(vm.composerDraft, "")
+        XCTAssertEqual(vm.queuedOwnerMessages.count, 1)
+        let clientMessageId = vm.queuedOwnerMessages[0].id
+        XCTAssertEqual(vm.messages.filter { $0.clientMessageId == clientMessageId }.count, 1)
+        XCTAssertEqual(
+            vm.messages.first { $0.clientMessageId == clientMessageId }?.outgoingState,
+            .queued)
+        vm.cancelOutgoingMessage(vm.messages.first { $0.clientMessageId == clientMessageId }!)
+    }
+
     func testHugeSessionMountAndSearchIndexStayBounded() {
         let vm = AssistantVM()
         vm.loadHugeSessionFixture()

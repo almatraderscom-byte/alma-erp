@@ -1,11 +1,91 @@
 import { describe, it, expect } from 'vitest'
 import {
   detectClaimViolations,
+  detectExplicitInstructionViolations,
+  buildVerificationReminder,
   detectLedgerViolations,
   detectProseChoiceViolation,
   verifyClaimsAgainstLedger,
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
+
+describe('detectExplicitInstructionViolations', () => {
+  it('rejects an emoji after a live no-emoji instruction', () => {
+    const violations = detectExplicitInstructionViolations(
+      'Boss, ৩টা idea ready 😊',
+      'এখন ৮টির বদলে ৩টি করো এবং emoji ব্যবহার কোরো না।',
+    )
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('instruction_mismatch')
+  })
+
+  it('allows the same answer when it contains no emoji', () => {
+    expect(detectExplicitInstructionViolations(
+      'Boss, ৩টা idea নিচে দিলাম।',
+      'এখন ৮টির বদলে ৩টি করো এবং emoji ব্যবহার কোরো না।',
+    )).toHaveLength(0)
+  })
+
+  it('does not impose no-emoji unless the owner requested it', () => {
+    expect(detectExplicitInstructionViolations(
+      'Boss, ৩টা idea ready 😊',
+      'এখন ৮টির বদলে ৩টি করো।',
+    )).toHaveLength(0)
+  })
+
+  it('rejects the exact live copy-only failure with no deliverable', () => {
+    const violations = detectExplicitInstructionViolations(
+      'Boss, উপরের copy block-এ লিখে দিয়েছি। এখন Ads Manager-এ paste করব, নাকি আপনার কী নির্দেশ?',
+      'Family matching carousel-এর জন্য detailed primary text এখানেই লিখে দাও; কোথাও paste বা post কোরো না।',
+    )
+    expect(violations.map((violation) => violation.ruleId)).toContain('copy_only_missing_deliverable')
+  })
+
+  it('accepts a complete copy-only answer in a fenced copy block', () => {
+    expect(detectExplicitInstructionViolations(
+      'Boss, নিচে দিলাম।\n\n```copy\nএকই রঙে, একই ভালোবাসায়—পুরো পরিবারের matching মুহূর্ত।\n```',
+      'Family matching carousel-এর জন্য detailed primary text এখানেই লিখে দাও; কোথাও paste বা post কোরো না।',
+    )).toHaveLength(0)
+  })
+
+  it('rejects a post-work question after a complete copy-only deliverable', () => {
+    const violations = detectExplicitInstructionViolations(
+      '```copy\nপরিবারের matching আনন্দ, প্রতিটি ছবিতে।\n```\n\nএখন Ads Manager-এ paste করব?',
+      'Family matching carousel-এর জন্য detailed primary text এখানেই লিখে দাও; কোথাও paste বা post কোরো না।',
+    )
+    expect(violations.map((violation) => violation.ruleId)).toContain('copy_only_post_work_question')
+  })
+
+  it('rejects the live post-work Ads Manager offer even without a question mark', () => {
+    const violations = detectExplicitInstructionViolations(
+      'Boss, নিচে লিখে দিলাম।\n\n```copy\nপরিবারের matching আনন্দ, প্রতিটি ছবিতে।\n```\n\nএখন চাইলে এডিট করতে পারেন — আপনার approve দিলে Ads Manager-এ paste করার জন্য তৈরি।',
+      'Family matching carousel-এর জন্য detailed primary text এখানেই লিখে দাও; কোথাও paste বা post কোরো না।',
+    )
+    expect(violations.map((violation) => violation.ruleId)).toContain('copy_only_post_work_question')
+  })
+
+  it('rejects the live edit/tweak offer after otherwise valid copy', () => {
+    const violations = detectExplicitInstructionViolations(
+      'Boss, নিচে লিখে দিলাম।\n\n```copy\nপরিবারের matching আনন্দ, প্রতিটি ছবিতে।\n```\n\nএখন পড়ে দেখুন — এডিট/টুইক লাগলে জানান।',
+      'Family matching carousel-এর জন্য detailed primary text এখানেই লিখে দাও; কোথাও paste বা post কোরো না।',
+    )
+    expect(violations.map((violation) => violation.ruleId)).toContain('copy_only_post_work_question')
+  })
+})
+
+describe('buildVerificationReminder — output contracts stay text-only', () => {
+  it('does not send a copy-only rewrite through the generic action/tool branch', () => {
+    const reminder = buildVerificationReminder([{
+      category: 'instruction_mismatch',
+      ruleId: 'copy_only_missing_deliverable',
+      matchedSnippet: '(ready-to-use copy block অনুপস্থিত)',
+      requiredTools: [],
+    }])
+    expect(reminder).toContain('OUTPUT CONTRACT FAILED — TEXT-ONLY REWRITE')
+    expect(reminder).toContain('কোনো tool call, ask_user, delegation, approval')
+    expect(reminder).not.toContain('যদি action আসলেই দরকার')
+  })
+})
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Layer 1: Original regex claim detection

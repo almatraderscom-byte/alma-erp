@@ -17,4 +17,3 @@ export async function GET(req: NextRequest) {
   const results = await dispatchVoiceCallDeliveries(undefined, 20)
   return Response.json({ ok: true, processed: results.length, results })
 }
-

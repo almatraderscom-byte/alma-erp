@@ -106,6 +106,13 @@ describe('contradiction gates', () => {
     expect(slim).not.toContain('do it YOURSELF directly')
   })
 
+  it('slim routing states the copy-only exception before marketing delegation', () => {
+    const slim = buildSystemPromptBlocks({ businessId: 'ALMA_LIFESTYLE', headTier: 'heavy' })
+      .stable.map((b) => b.text).join('')
+    expect(slim).not.toContain('For ANY such task')
+    expect(slim.indexOf('COPY-ONLY EXCEPTION')).toBeLessThan(slim.indexOf('Marketing is delegate-by-default'))
+  })
+
   it('incident paragraphs replaced by workflow guards stay removed (regression locks)', () => {
     const full = buildSystemPromptBlocks({ businessId: 'ALMA_LIFESTYLE' })
       .stable.map((b) => b.text).join('')

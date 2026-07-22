@@ -35,7 +35,9 @@ const delegate_to_specialist: AgentTool = {
     'NOTE: "marketer" and "content" run DIRECTLY with no "transfer to worker?" card — just delegate marketing and it happens; ' +
     'their money/posting/dispatch steps still surface their own approval cards. ' +
     'The sub-agent gathers real data with its tools and returns a concise Bangla summary you can build on. ' +
-    'Prefer delegating discrete sub-tasks of multi-step work so each runs focused; keep simple single-step answers yourself.',
+    'Prefer delegating discrete sub-tasks of multi-step work so each runs focused; keep simple single-step answers yourself. ' +
+    'NEVER delegate a copy-only request (caption/primary text/copy/content requested in chat): write that text directly, especially ' +
+    'when the owner explicitly says not to paste, post, publish, send, open Ads Manager, or create a campaign.',
   input_schema: {
     type: 'object' as const,
     properties: {

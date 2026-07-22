@@ -9,6 +9,8 @@ import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
 export type AdapterTurnResult = {
   text: string
+  /** True only when the model produced a tool-free final response. */
+  completed: boolean
   inputTokens: number
   outputTokens: number
   /** Cached-prompt tokens read this turn. Adapters report inputTokens as
@@ -42,6 +44,7 @@ export async function runAdapterToolLoop(args: {
   let cacheWrite = 0
   let actualCostUsd: number | null = null
   let finalText = ''
+  let completed = false
   const adapter = adapterFor(args.model.provider)
 
   for (let i = 0; i < maxIterations; i++) {
@@ -73,7 +76,10 @@ export async function runAdapterToolLoop(args: {
     }
 
     if (iterationText.trim()) finalText = iterationText.trim()
-    if (calls.length === 0 || args.signal?.aborted) break
+    if (calls.length === 0 || args.signal?.aborted) {
+      completed = calls.length === 0 && Boolean(iterationText.trim()) && !args.signal?.aborted
+      break
+    }
 
     messages = [
       ...messages,
@@ -93,8 +99,46 @@ export async function runAdapterToolLoop(args: {
     }
   }
 
+  // A model may use tools on the final allowed iteration. Returning the text it
+  // wrote BEFORE those calls ("let me start...") as a successful summary is a
+  // false-completion bug. Force one tool-free wrap-up from the actual results.
+  if (!completed && !args.signal?.aborted) {
+    const wrapupMessages: NeutralMsg[] = [
+      ...messages,
+      {
+        role: 'user',
+        content:
+          '[INTERNAL CONTROL] Tool budget is exhausted. Do not call tools, promise future work, or claim an action that did not complete. ' +
+          'Return a concise final status based only on the tool results above; clearly state anything still incomplete.',
+      },
+    ]
+    let wrapupText = ''
+    for await (const ev of adapter.streamTurn({
+      apiModel: args.model.apiModel,
+      system: args.system,
+      messages: wrapupMessages,
+      tools: [],
+      thinking: args.model.thinking,
+      signal: args.signal,
+    })) {
+      if (ev.type === 'text_delta') wrapupText += ev.text
+      else if (ev.type === 'usage') {
+        inputTokens += ev.inputTokens
+        outputTokens += ev.outputTokens
+        cacheRead += ev.cacheRead ?? 0
+        cacheWrite += ev.cacheWrite ?? 0
+        if (ev.costUsd != null) actualCostUsd = (actualCostUsd ?? 0) + ev.costUsd
+      }
+    }
+    if (wrapupText.trim()) {
+      finalText = wrapupText.trim()
+      completed = true
+    }
+  }
+
   return {
     text: finalText,
+    completed,
     inputTokens,
     outputTokens,
     cacheRead,

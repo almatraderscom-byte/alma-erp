@@ -9,6 +9,7 @@
  *     with no successful read this turn (flag-gated).
  */
 import { AGENT_FACT_GATE, AGENT_STYLE_GATE } from '@/agent/config'
+import { isCopyOnlyOwnerRequest } from '@/agent/lib/owner-intent-contract'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ export type ClaimViolationCategory =
   | 'missing_card'
   | 'prose_choice'
   | 'missing_ask'
+  | 'instruction_mismatch'
   | 'fabricated_stat'
   | 'robotic_style'
 
@@ -516,6 +518,56 @@ export function detectRoboticStyleViolations(replyText: string): ClaimViolation[
   return out
 }
 
+// Explicit owner formatting constraints are not preferences. Models commonly
+// obey the semantic update (for example 8 → 3) but then re-apply their default
+// warm style and add an emoji. Keep this deliberately narrow and deterministic;
+// more constraints can be added only with equally unambiguous detectors.
+const NO_EMOJI_REQUEST = /(?:\b(?:no|without)\s+emojis?\b|(?:emoji|ইমোজি)[^।.!?\n]{0,24}?(?:ব্যবহার|use|দিও|দেও|দেবে|করো|কোরো|করবেন)[^।.!?\n]{0,12}?না)/i
+const EMOJI_IN_REPLY = /\p{Extended_Pictographic}/u
+const READY_COPY_BLOCK = /```(?:copy|caption|post|text)\s*\n[\s\S]*?\S[\s\S]*?\n```/i
+const FENCED_BLOCK = /```[^\n]*\n[\s\S]*?\n```/g
+const COPY_POST_WORK_PROMPT = /(?:[?？]|(?:এখন\s+)?চাইলে|approve|approval|অনুমোদন|বললে|বলুন|বলবেন|জানান|লাগলে|edit|এডিট|tweak|টুইক|আপনার\s+নির্দেশ|paste|পেস্ট|post|পোস্ট|publish|ads?\s*manager|campaign)/i
+
+export function detectExplicitInstructionViolations(
+  replyText: string,
+  ownerInstructions: string,
+): ClaimViolation[] {
+  const violations: ClaimViolation[] = []
+
+  if (NO_EMOJI_REQUEST.test(ownerInstructions) && EMOJI_IN_REPLY.test(replyText)) {
+    const match = replyText.match(EMOJI_IN_REPLY)
+    violations.push({
+      category: 'instruction_mismatch',
+      ruleId: 'owner_requested_no_emoji',
+      matchedSnippet: match?.[0] ?? 'emoji',
+      requiredTools: [],
+    })
+  }
+
+  if (isCopyOnlyOwnerRequest(ownerInstructions)) {
+    if (!READY_COPY_BLOCK.test(replyText)) {
+      violations.push({
+        category: 'instruction_mismatch',
+        ruleId: 'copy_only_missing_deliverable',
+        matchedSnippet: '(ready-to-use copy block অনুপস্থিত)',
+        requiredTools: [],
+      })
+    } else {
+      const outsideCopy = replyText.replace(FENCED_BLOCK, ' ').trim()
+      if (COPY_POST_WORK_PROMPT.test(outsideCopy)) {
+        violations.push({
+          category: 'instruction_mismatch',
+          ruleId: 'copy_only_post_work_question',
+          matchedSnippet: outsideCopy.slice(-100),
+          requiredTools: [],
+        })
+      }
+    }
+  }
+
+  return violations
+}
+
 export function verifyClaimsAgainstLedger(
   replyText: string,
   ledger: ToolLedgerEntry[],
@@ -573,6 +625,10 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'আপনি Boss-কে prose-এর ভিতরে option/সিদ্ধান্তের প্রশ্ন দিয়েছেন কিন্তু ask_user tool call করেননি — Boss টেক্সটের ভিতরের option-এ tap করতে পারেন না (HARD RULE 2026-07-07: choice মানেই ask_user, ব্যতিক্রম নেই)। ' +
     'আবার লিখুন: বিশ্লেষণ/প্রেক্ষাপট prose-এ রাখুন, কিন্তু option-এর তালিকা আর "কোনটা করবেন?" জাতীয় প্রশ্ন prose থেকে সম্পূর্ণ বাদ দিন — সেগুলো ask_user call-এ দিন (question + ২-৪টি ছোট tappable option, প্রতিটি option এক লাইনের)। ' +
     'reply-র শেষ কাজ = ask_user call।',
+  instruction_mismatch:
+    'Boss-এর এই turn-এর স্পষ্ট output contract ভাঙা হয়েছে। no-emoji বললে সব emoji বাদ দিন। ' +
+    'copy-only বললে সম্পূর্ণ ready-to-use লেখা একটি fenced ```copy block-এ দিন; কাজ হয়ে গেলে আর প্রশ্ন/option/permission চাইবেন না। ' +
+    'content/count/অন্য instruction বদলাবেন না।',
   fabricated_stat:
     'আপনি লাইভ ডেটা (সংখ্যা/অর্ডার/স্টক/বিক্রি/টাকা/হাজিরা) উল্লেখ করেছেন কিন্তু এই turn-এ কোনো read tool দিয়ে সেটা যাচাই করেননি। ' +
     'হয় এখনই relevant read tool (get_/list_/check_…) call করে আসল সংখ্যাটা আনুন, নয়তো সততা সঙ্গে বলুন সংখ্যাটা যাচাই করা হয়নি ("যাচাই করে দেখিনি — আনুমানিক")। মেমরি থেকে নিশ্চিত সংখ্যা দেবেন না।',
@@ -582,6 +638,26 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
 }
 
 export function buildVerificationReminder(violations: ClaimViolation[]): string {
+  const categories = new Set(violations.map((v) => v.category))
+
+  // Formatting/output-contract rewrites are not failed business actions. The
+  // generic reminder below tells the model to call a tool when an action is
+  // missing; weak heads followed that sentence and repeatedly tried ask_user or
+  // delegation for a copy-only request. Keep this correction path explicitly
+  // text-only so the rejected draft is replaced by one clean final answer.
+  if (categories.size === 1 && categories.has('instruction_mismatch')) {
+    const lines: string[] = ['[OUTPUT CONTRACT FAILED — TEXT-ONLY REWRITE]', '']
+    for (const v of violations) lines.push(`- ${v.matchedSnippet}`)
+    lines.push('')
+    lines.push(CATEGORY_GUIDANCE.instruction_mismatch)
+    lines.push('')
+    lines.push(
+      'এটি action failure নয়। কোনো tool call, ask_user, delegation, approval, option বা next-step প্রশ্ন করবেন না। ' +
+      'আগের draft সম্পূর্ণ replace করে এখন শুধু corrected final reply দিন।',
+    )
+    return lines.join('\n')
+  }
+
   const lines: string[] = ['[VERIFICATION FAILED — সিস্টেম চেক]', '']
   lines.push('আপনার শেষ উত্তরে নিম্নলিখিত দাবি ধরা পড়েছে যা corresponding tool ছাড়াই বলা হয়েছে:')
   for (const v of violations) {
@@ -599,7 +675,6 @@ export function buildVerificationReminder(violations: ClaimViolation[]): string 
   lines.push('   (খ) যদি action আগে থেকেই হয়ে আছে (button click/auto-mark) → relevant verify tool call করে confirm করুন এবং সততা সঙ্গে "ইতিমধ্যে হয়ে আছে" বলুন।')
   lines.push('   (গ) যদি action সম্ভব না বা ভুল ছিল → সততা সঙ্গে স্বীকার করুন: "করতে পারিনি/ভুল বলেছি"।')
   lines.push('')
-  const categories = new Set(violations.map((v) => v.category))
   for (const cat of categories) {
     lines.push(`[${cat}] ${CATEGORY_GUIDANCE[cat]}`)
   }

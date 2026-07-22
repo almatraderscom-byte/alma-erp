@@ -19,7 +19,7 @@ export interface PendingFile {
 }
 
 interface AgentComposerProps {
-  onSend: (text: string, files: PendingFile[]) => void
+  onSend: (text: string, files: PendingFile[]) => void | Promise<void>
   disabled: boolean
   onStop: () => void
   streaming: boolean
@@ -118,15 +118,23 @@ export default function AgentComposer({
   }, [text, isMobile])
 
   const send = useCallback(() => {
-    if ((!text.trim() && files.length === 0) || disabled || streaming) return
+    if ((!text.trim() && files.length === 0) || disabled) return
     if (files.some((f) => f.status === 'uploading')) { toast('ছবি আপলোড হচ্ছে — এক মুহূর্ত…'); return }
     impactMedium()
-    onSend(text, files)
+    const sentText = text
+    const sentFiles = files
+    const submission = onSend(sentText, sentFiles)
     setText('')
     setFiles([])
+    // Clear immediately once Send is tapped. If the durable transport rejects the
+    // item, restore it only when the owner has not started composing something new.
+    void Promise.resolve(submission).catch(() => {
+      setText((current) => current.length === 0 ? sentText : current)
+      setFiles((current) => current.length === 0 ? sentFiles : current)
+    })
     // NOTE: don't revoke the blob previews here — the live optimistic message still
     // renders them. AgentApp owns their lifecycle and revokes once the turn settles.
-  }, [text, files, disabled, streaming, onSend])
+  }, [text, files, disabled, onSend])
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey && !isMobile) {
@@ -209,7 +217,7 @@ export default function AgentComposer({
   }
 
   const anyUploading = files.some((f) => f.status === 'uploading')
-  const canSend = (text.trim().length > 0 || files.length > 0) && !disabled && !streaming && !anyUploading
+  const canSend = (text.trim().length > 0 || files.length > 0) && !disabled && !anyUploading
   const reduceMotion = useReducedMotion()
   // One spring for every composer micro-interaction — snappy, iOS-feeling.
   const springPop = reduceMotion
@@ -307,7 +315,7 @@ export default function AgentComposer({
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          disabled={disabled || streaming}
+          disabled={disabled}
           placeholder="বার্তা লিখুন…"
           rows={1}
           className="max-h-[120px] min-h-[44px] w-full resize-none bg-transparent px-2 py-2 text-base leading-relaxed text-cream placeholder-gray-400 focus:outline-none disabled:opacity-40"
@@ -319,7 +327,7 @@ export default function AgentComposer({
           <button
             type="button"
             onClick={() => { impactLight(); fileInputRef.current?.click() }}
-            disabled={disabled || streaming}
+            disabled={disabled}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition-all hover:bg-white/[0.05] hover:text-cream active:scale-90 active:bg-white/[0.08] disabled:opacity-30"
             aria-label="যোগ করুন"
           >
@@ -375,7 +383,7 @@ export default function AgentComposer({
 
           {/* Right: coral circular send ↔ stop — springy icon swap (Claude feel) */}
           <AnimatePresence mode="popLayout" initial={false}>
-            {streaming ? (
+            {streaming && !canSend ? (
               <motion.button
                 key="stop"
                 type="button"
