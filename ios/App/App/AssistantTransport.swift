@@ -388,7 +388,11 @@ enum AssistantNet {
         req.httpBody = try JSONEncoder().encode(body)
         let (data, resp) = try await streamSession.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw AlmaAPIError.http(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: "tts")
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            #if DEBUG
+            NSLog("ALMA-NET JSON %@ failed status=%d", path, status)
+            #endif
+            throw AlmaAPIError.http(status: status, body: "json_request_failed")
         }
         return data
     }

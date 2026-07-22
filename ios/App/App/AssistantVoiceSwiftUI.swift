@@ -280,6 +280,10 @@ final class AlmaVoiceEngine {
                     do { try await self.live.start() }
                     catch {
                         guard !self.closed else { return }
+                        #if DEBUG
+                        NSLog("ALMA-VOICE realtime start failed: %@", String(describing: error))
+                        #endif
+                        self.errorToast = "রিয়েলটাইম সংযোগ হয়নি—সাধারণ ভয়েস চালু হয়েছে।"
                         self.startLegacySession()
                     }
                 }
@@ -1361,7 +1365,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         socket.receive { [weak self, weak socket] result in
             guard let self, let socket, !self.stopped, self.ws === socket else { return }
             switch result {
-            case .failure:
+            case .failure(let error):
+                #if DEBUG
+                NSLog("ALMA-VOICE websocket receive failed: %@", String(describing: error))
+                #endif
                 if !self.reconnectUsingLatestHandle() {
                     self.fail("Live voice সংযোগ বন্ধ হয়েছে—নিরাপদ voice mode চালু হয়েছে।")
                 }
@@ -1375,6 +1382,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private func onMessage(_ text: String) {
         guard let data = text.data(using: .utf8),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        if let error = root["error"] as? [String: Any] {
+            #if DEBUG
+            let code = error["code"] ?? "unknown"
+            let status = error["status"] ?? "unknown"
+            NSLog("ALMA-VOICE server error code=%@ status=%@", String(describing: code), String(describing: status))
+            #endif
+            fail("রিয়েলটাইম voice server সংযোগ নেয়নি—সাধারণ ভয়েস চালু হয়েছে।")
+            return
+        }
         if root["setupComplete"] != nil {
             do {
                 try configureAudio()
@@ -1555,6 +1571,20 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         guard !stopped else { return }
         stop()
         DispatchQueue.main.async { [weak self] in self?.engine?.liveDidFail(message) }
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                    didOpenWithProtocol protocol: String?) {
+        #if DEBUG
+        NSLog("ALMA-VOICE websocket opened")
+        #endif
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                    didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        #if DEBUG
+        NSLog("ALMA-VOICE websocket closed code=%d", closeCode.rawValue)
+        #endif
     }
 }
 
