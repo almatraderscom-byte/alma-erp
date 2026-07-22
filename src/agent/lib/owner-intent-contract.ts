@@ -65,18 +65,19 @@ export function validateToolCallAgainstOwnerIntent(input: {
 
   const classification = TOOL_CLASSIFICATION[input.toolName]
   const isDelegation = input.toolName === 'delegate_to_specialist'
+  const isUnneededClarification = input.toolName === 'ask_user'
   const isExternalEffect = Boolean(
     classification
     && classification.mode !== 'read'
     && COPY_ONLY_EFFECT_DOMAINS.has(classification.domain),
   )
-  if (!isDelegation && !isExternalEffect) return null
+  if (!isDelegation && !isUnneededClarification && !isExternalEffect) return null
 
   return {
     code: 'OWNER_INTENT_MISMATCH',
     message:
       `OWNER_INTENT_MISMATCH: Boss requested only ready-to-use text in this chat and did not authorize ` +
-      `${input.toolName}, delegation, Ads Manager, campaign, paste, post, publish, or send. ` +
+      `${input.toolName}, clarification, delegation, Ads Manager, campaign, paste, post, publish, or send. ` +
       'Do not retry with another action tool. Return the complete requested copy now in a fenced copy block.',
   }
 }

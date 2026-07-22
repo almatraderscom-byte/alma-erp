@@ -9,6 +9,7 @@
  *     with no successful read this turn (flag-gated).
  */
 import { AGENT_FACT_GATE, AGENT_STYLE_GATE } from '@/agent/config'
+import { isCopyOnlyOwnerRequest } from '@/agent/lib/owner-intent-contract'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -523,19 +524,47 @@ export function detectRoboticStyleViolations(replyText: string): ClaimViolation[
 // more constraints can be added only with equally unambiguous detectors.
 const NO_EMOJI_REQUEST = /(?:\b(?:no|without)\s+emojis?\b|(?:emoji|ইমোজি)[^।.!?\n]{0,24}?(?:ব্যবহার|use|দিও|দেও|দেবে|করো|কোরো|করবেন)[^।.!?\n]{0,12}?না)/i
 const EMOJI_IN_REPLY = /\p{Extended_Pictographic}/u
+const READY_COPY_BLOCK = /```(?:copy|caption|post|text)\s*\n[\s\S]*?\S[\s\S]*?\n```/i
+const FENCED_BLOCK = /```[^\n]*\n[\s\S]*?\n```/g
 
 export function detectExplicitInstructionViolations(
   replyText: string,
   ownerInstructions: string,
 ): ClaimViolation[] {
-  if (!NO_EMOJI_REQUEST.test(ownerInstructions) || !EMOJI_IN_REPLY.test(replyText)) return []
-  const match = replyText.match(EMOJI_IN_REPLY)
-  return [{
-    category: 'instruction_mismatch',
-    ruleId: 'owner_requested_no_emoji',
-    matchedSnippet: match?.[0] ?? 'emoji',
-    requiredTools: [],
-  }]
+  const violations: ClaimViolation[] = []
+
+  if (NO_EMOJI_REQUEST.test(ownerInstructions) && EMOJI_IN_REPLY.test(replyText)) {
+    const match = replyText.match(EMOJI_IN_REPLY)
+    violations.push({
+      category: 'instruction_mismatch',
+      ruleId: 'owner_requested_no_emoji',
+      matchedSnippet: match?.[0] ?? 'emoji',
+      requiredTools: [],
+    })
+  }
+
+  if (isCopyOnlyOwnerRequest(ownerInstructions)) {
+    if (!READY_COPY_BLOCK.test(replyText)) {
+      violations.push({
+        category: 'instruction_mismatch',
+        ruleId: 'copy_only_missing_deliverable',
+        matchedSnippet: '(ready-to-use copy block অনুপস্থিত)',
+        requiredTools: [],
+      })
+    } else {
+      const outsideCopy = replyText.replace(FENCED_BLOCK, ' ').trim()
+      if (/[?？]/u.test(outsideCopy)) {
+        violations.push({
+          category: 'instruction_mismatch',
+          ruleId: 'copy_only_post_work_question',
+          matchedSnippet: outsideCopy.slice(-100),
+          requiredTools: [],
+        })
+      }
+    }
+  }
+
+  return violations
 }
 
 export function verifyClaimsAgainstLedger(
@@ -596,8 +625,9 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'আবার লিখুন: বিশ্লেষণ/প্রেক্ষাপট prose-এ রাখুন, কিন্তু option-এর তালিকা আর "কোনটা করবেন?" জাতীয় প্রশ্ন prose থেকে সম্পূর্ণ বাদ দিন — সেগুলো ask_user call-এ দিন (question + ২-৪টি ছোট tappable option, প্রতিটি option এক লাইনের)। ' +
     'reply-র শেষ কাজ = ask_user call।',
   instruction_mismatch:
-    'Boss এই turn-এ স্পষ্টভাবে emoji ব্যবহার করতে নিষেধ করেছেন, কিন্তু reply-তে emoji আছে। ' +
-    'একই উত্তর আবার সম্পূর্ণ emoji ছাড়া লিখুন; content/count/অন্য instruction বদলাবেন না।',
+    'Boss-এর এই turn-এর স্পষ্ট output contract ভাঙা হয়েছে। no-emoji বললে সব emoji বাদ দিন। ' +
+    'copy-only বললে সম্পূর্ণ ready-to-use লেখা একটি fenced ```copy block-এ দিন; কাজ হয়ে গেলে আর প্রশ্ন/option/permission চাইবেন না। ' +
+    'content/count/অন্য instruction বদলাবেন না।',
   fabricated_stat:
     'আপনি লাইভ ডেটা (সংখ্যা/অর্ডার/স্টক/বিক্রি/টাকা/হাজিরা) উল্লেখ করেছেন কিন্তু এই turn-এ কোনো read tool দিয়ে সেটা যাচাই করেননি। ' +
     'হয় এখনই relevant read tool (get_/list_/check_…) call করে আসল সংখ্যাটা আনুন, নয়তো সততা সঙ্গে বলুন সংখ্যাটা যাচাই করা হয়নি ("যাচাই করে দেখিনি — আনুমানিক")। মেমরি থেকে নিশ্চিত সংখ্যা দেবেন না।',

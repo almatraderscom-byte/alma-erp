@@ -41,6 +41,13 @@ describe('owner intent contract — copy stays copy', () => {
     })).toBeNull()
   })
 
+  it('does not ask a follow-up when the owner explicitly requested the copy now', () => {
+    expect(validateToolCallAgainstOwnerIntent({
+      ownerInstructions: exactIncident,
+      toolName: 'ask_user',
+    })?.code).toBe('OWNER_INTENT_MISMATCH')
+  })
+
   it('does not block an explicitly requested write-then-publish workflow', () => {
     const ownerInstructions = 'Family matching caption লিখে তারপর Facebook-এ post করো'
     expect(isCopyOnlyOwnerRequest(ownerInstructions)).toBe(false)
@@ -67,7 +74,6 @@ describe('owner intent contract — copy stays copy', () => {
     ]
     expect(filterToolsForOwnerIntent(exactIncident, tools).map((tool) => tool.name)).toEqual([
       'get_product',
-      'ask_user',
     ])
   })
 })

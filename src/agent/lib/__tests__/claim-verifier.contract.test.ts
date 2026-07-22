@@ -31,6 +31,29 @@ describe('detectExplicitInstructionViolations', () => {
       'এখন ৮টির বদলে ৩টি করো।',
     )).toHaveLength(0)
   })
+
+  it('rejects the exact live copy-only failure with no deliverable', () => {
+    const violations = detectExplicitInstructionViolations(
+      'Boss, উপরের copy block-এ লিখে দিয়েছি। এখন Ads Manager-এ paste করব, নাকি আপনার কী নির্দেশ?',
+      'Family matching carousel-এর জন্য detailed primary text এখানেই লিখে দাও; কোথাও paste বা post কোরো না।',
+    )
+    expect(violations.map((violation) => violation.ruleId)).toContain('copy_only_missing_deliverable')
+  })
+
+  it('accepts a complete copy-only answer in a fenced copy block', () => {
+    expect(detectExplicitInstructionViolations(
+      'Boss, নিচে দিলাম।\n\n```copy\nএকই রঙে, একই ভালোবাসায়—পুরো পরিবারের matching মুহূর্ত।\n```',
+      'Family matching carousel-এর জন্য detailed primary text এখানেই লিখে দাও; কোথাও paste বা post কোরো না।',
+    )).toHaveLength(0)
+  })
+
+  it('rejects a post-work question after a complete copy-only deliverable', () => {
+    const violations = detectExplicitInstructionViolations(
+      '```copy\nপরিবারের matching আনন্দ, প্রতিটি ছবিতে।\n```\n\nএখন Ads Manager-এ paste করব?',
+      'Family matching carousel-এর জন্য detailed primary text এখানেই লিখে দাও; কোথাও paste বা post কোরো না।',
+    )
+    expect(violations.map((violation) => violation.ruleId)).toContain('copy_only_post_work_question')
+  })
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
