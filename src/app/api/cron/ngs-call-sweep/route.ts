@@ -10,14 +10,18 @@
 import { type NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { reportNgsCallOutcome } from '@/agent/lib/ngs-call-outcome'
+import { requireAgentEnabled } from '@/agent/lib/guards'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+export const maxDuration = 120
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
 export async function GET(req: NextRequest) {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
   const secret = process.env.CRON_SECRET?.trim()
   if (!secret) return Response.json({ error: 'cron_unconfigured' }, { status: 503 })
   if (req.headers.get('authorization') !== `Bearer ${secret}`) {
@@ -25,28 +29,36 @@ export async function GET(req: NextRequest) {
   }
 
   const now = Date.now()
-  // Stuck 'ringing' calls: old enough to have resolved (>40s), not ancient (<30m).
-  // reportNgsCallOutcome asks NGS by callSid and no-ops on a non-NGS SID (the NGS GET
-  // returns nothing terminal → 'pending'), so it's safe to include any ringing row.
+  // Reconcile every unresolved NGS lifecycle state. Seven days keeps a wide repair
+  // window without scanning historical completed rows; the previous 30-minute cutoff
+  // permanently orphaned answered calls whose report callback was lost.
   const rows: Array<{ id: string }> = await db.agentVoiceCall.findMany({
     where: {
-      status: 'ringing',
+      OR: [
+        { provider: 'ngs' },
+        { provider: null, summary: { startsWith: 'ngs live:' } },
+      ],
+      status: { in: ['dispatching', 'ringing', 'answered', 'report_pending'] },
       callSid: { not: null },
-      createdAt: { lte: new Date(now - 40_000), gte: new Date(now - 30 * 60_000) },
+      createdAt: { lte: new Date(now - 40_000), gte: new Date(now - 7 * 24 * 60 * 60_000) },
     },
     select: { id: true },
     orderBy: { createdAt: 'asc' },
-    take: 15,
+    take: 50,
   })
 
   const results: Array<{ id: string; outcome: string }> = []
-  for (const row of rows) {
-    try {
-      const outcome = await reportNgsCallOutcome(row.id)
-      results.push({ id: row.id, outcome })
-    } catch (err) {
-      results.push({ id: row.id, outcome: `error: ${err instanceof Error ? err.message : String(err)}` })
-    }
+  // Bounded concurrency: avoid both a serial timeout and an NGS request spike.
+  for (let offset = 0; offset < rows.length; offset += 5) {
+    const batch = rows.slice(offset, offset + 5)
+    const batchResults = await Promise.all(batch.map(async (row) => {
+      try {
+        return { id: row.id, outcome: await reportNgsCallOutcome(row.id) }
+      } catch (err) {
+        return { id: row.id, outcome: `error: ${err instanceof Error ? err.message : String(err)}` }
+      }
+    }))
+    results.push(...batchResults)
   }
   return Response.json({ ok: true, checked: rows.length, results })
 }

@@ -60,6 +60,9 @@ export async function notifyOwner(opts: {
    * '/agent' or '/agent/live-watch'. Native-push only; ntfy/Telegram unaffected.
    */
   actionUrl?: string | null
+  /** Telegram routing policy. Default keeps legacy fallback behavior. Call-report
+   * delivery uses `never` because Telegram has its own durable required outbox. */
+  telegramMode?: 'fallback' | 'always' | 'never'
   /**
    * Internal: skip the quiet-hours (DND) gate. Set only by the morning digest
    * flush, which IS the delivery — it must never re-hold itself. Never set this
@@ -130,7 +133,9 @@ export async function notifyOwner(opts: {
   // Reliability fallback: a tier ≥2 alert (worker down, quota, staff send-failure)
   // must reach the owner even when ntfy is unreachable. If no ntfy channel landed,
   // push the same alert to the owner's Telegram — an independent transport.
-  if (opts.tier >= 2 && !Object.values(statuses).includes('sent')) {
+  const shouldTelegram = opts.telegramMode === 'always'
+    || (opts.telegramMode !== 'never' && opts.tier >= 2 && !Object.values(statuses).includes('sent'))
+  if (shouldTelegram) {
     channels.push('telegram_owner')
     try {
       const tg = await sendOwnerText(`🚨 ${opts.title}\n\n${opts.message}`)

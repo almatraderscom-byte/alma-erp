@@ -8,14 +8,14 @@
  * Shared by the sweep and the (best-effort) ngs-status webhook.
  */
 import { prisma } from '@/lib/prisma'
-import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
+import { persistVoiceCallReport } from '@/agent/lib/voice-call-delivery'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-const TERMINAL = new Set(['completed', 'no_answer', 'busy', 'failed'])
+const TERMINAL = new Set(['completed', 'no_answer', 'busy', 'failed', 'report_missing'])
 
-export type NgsOutcome = 'answered' | 'no_answer' | 'busy' | 'failed' | 'pending' | 'skip'
+export type NgsOutcome = 'answered' | 'report_missing' | 'no_answer' | 'busy' | 'failed' | 'pending' | 'skip'
 
 /** Ask NGS for the authoritative call state and report a FAILED (never-connected) call
  * into the row + agent chat + Telegram. Returns what happened (for logging). */
@@ -39,26 +39,49 @@ export async function reportNgsCallOutcome(rowId: string): Promise<NgsOutcome> {
 
   const ended = Boolean(String(call.end_time ?? '').trim())
   const established = Boolean(call.establihed_at ?? call.established_at) // NGS misspells "establihed_at"
-  if (!ended) return 'pending'      // still dialing/ringing
-  if (established) return 'answered' // the bot's /relay-report handles the transcript+summary
-
   const raw = String(call.status ?? '').toLowerCase()
+  if (!ended) {
+    await db.agentVoiceCall.update({
+      where: { id: rowId },
+      data: established
+        ? { status: 'answered', providerStatus: raw || 'answered', answeredAt: row.answeredAt ?? new Date() }
+        : { providerStatus: raw || 'ringing' },
+    }).catch(() => {})
+    return established ? 'answered' : 'pending'
+  }
+  if (established) {
+    if (row.reportReceivedAt) return 'skip'
+    const providerEndedAt = Date.parse(String(call.end_time ?? ''))
+    const reference = Number.isFinite(providerEndedAt) ? providerEndedAt : new Date(row.createdAt).getTime()
+    if (Date.now() - reference < 90_000) {
+      await db.agentVoiceCall.update({
+        where: { id: rowId },
+        data: { status: 'report_pending', providerStatus: raw || 'completed', answeredAt: row.answeredAt ?? new Date() },
+      }).catch(() => {})
+      return 'answered'
+    }
+    const who = row.recipientName || row.toNumber || 'কল'
+    await persistVoiceCallReport({
+      callRecordId: rowId,
+      status: 'report_missing',
+      summary: `${who}-এর সঙ্গে কল সংযুক্ত হয়ে শেষ হয়েছে, কিন্তু voice worker-এর transcript/report ৯০ সেকেন্ডের মধ্যে পৌঁছায়নি। Recovery চলছে।`,
+      provider: 'ngs',
+      authoritativeReport: false,
+    })
+    return 'report_missing'
+  }
+
   const mapped: 'busy' | 'no_answer' | 'failed' =
     raw.includes('busy') ? 'busy' : raw.includes('noanswer') || raw.includes('no answer') || raw.includes('no-answer') ? 'no_answer' : 'failed'
   const who = row.recipientName || row.toNumber || 'কল'
   const reason = mapped === 'busy' ? 'লাইন ব্যস্ত ছিল' : mapped === 'no_answer' ? 'কেউ ধরেননি' : 'কল যায়নি'
-  const text = `📞 বস, ${who} নম্বরে কল দেওয়া হয়েছিল — কিন্তু ${reason}। কথা হয়নি।`
+  const text = `Boss, ${who} নম্বরে কল দেওয়া হয়েছিল—কিন্তু ${reason}। কথা হয়নি।`
 
-  await db.agentVoiceCall.update({
-    where: { id: rowId },
-    data: { status: mapped, endedAt: new Date(), summary: text },
-  }).catch(() => {})
-
-  if (row.conversationId) {
-    await db.agentMessage.create({
-      data: { conversationId: row.conversationId, role: 'assistant', content: [{ type: 'text', text }], tokensIn: 0, tokensOut: 0, costUsd: 0 },
-    }).catch(() => {})
-  }
-  await sendOwnerText(text).catch(() => {})
+  await persistVoiceCallReport({
+    callRecordId: rowId,
+    status: mapped,
+    summary: text,
+    provider: 'ngs',
+  })
   return mapped
 }

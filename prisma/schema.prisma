@@ -4262,12 +4262,46 @@ model AgentVoiceCall {
   durationSecs   Int?      @map("duration_secs")
   costCredits    Int?      @map("cost_credits")
   conversationId String?   @map("conversation_id")
+  /// Pending approval that dispatched this asynchronous call. Approval is not
+  /// marked executed until the terminal report is durably stored.
+  pendingActionId String?   @map("pending_action_id")
+  provider        String?
+  providerStatus  String?   @map("provider_status")
+  dialedAt        DateTime? @map("dialed_at")
+  answeredAt      DateTime? @map("answered_at")
+  reportReceivedAt DateTime? @map("report_received_at")
   createdAt      DateTime  @default(now()) @map("created_at")
   endedAt        DateTime? @map("ended_at")
+  deliveries     AgentVoiceCallDelivery[]
 
   @@index([status, createdAt])
   @@index([conversationId])
+  @@index([pendingActionId])
   @@map("agent_voice_calls")
+}
+
+/// Durable per-channel delivery outbox for a terminal phone-call result. A call
+/// report is stored first, then Telegram/chat/agent-continuation are leased and
+/// retried independently; one broken channel can never suppress another.
+model AgentVoiceCallDelivery {
+  id          String    @id @default(uuid())
+  callId      String    @map("call_id")
+  call        AgentVoiceCall @relation(fields: [callId], references: [id], onDelete: Cascade)
+  /// telegram | push | continuation
+  channel     String
+  /// pending | processing | retry | delivered | dead
+  status      String    @default("pending")
+  attempts    Int       @default(0)
+  availableAt DateTime  @default(now()) @map("available_at")
+  leaseUntil  DateTime? @map("lease_until")
+  lastError   String?   @map("last_error") @db.Text
+  deliveredAt DateTime? @map("delivered_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([callId, channel])
+  @@index([status, availableAt])
+  @@map("agent_voice_call_deliveries")
 }
 
 /// Scheduled two-way calls — the agent queues a call for a future time (owner-approved

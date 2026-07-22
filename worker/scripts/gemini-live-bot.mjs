@@ -18,6 +18,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { GoogleGenAI, Modality, Type } from '@google/genai'
 import { muLawToPcm16, pcm16ToMuLaw } from '../src/voice-relay/sarvam-media.mjs'
+import { drainCallReportOutbox, persistCallReport, queueAndDeliverCallReport } from '../src/voice-call-report-outbox.mjs'
 
 const PORT = Number(process.env.GLIVE_PORT || 8766)
 const MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview'
@@ -377,17 +378,16 @@ class Call {
     } catch (e) { console.log(`[glive] ${this.id} summarize err ${e?.message || e}`); return null }
   }
 
-  // Post-call report → owner (mirrors the ElevenLabs/relay webhook): update the
-  // agent_voice_calls row + push the owner a Bangla transcript + summary. Fires once,
-  // fire-and-forget from close(). callRecordId = the `id` param (the DB row id in prod).
+  // Post-call report → durable local outbox → Vercel callback. The payload is on disk
+  // before the first request and is deleted only after a 2xx, so a transient failure or
+  // process restart cannot silently lose the transcript.
   async sendReport() {
     if (this.reported) return
-    this.reported = true
     this.flushTurn()
     const callRecordId = this.params?.id
     const APP_URL = (process.env.APP_URL || '').replace(/\/$/, '')
-    if (!callRecordId || !APP_URL || !AUTH_TOKEN || this.turns.length === 0) {
-      console.log(`[glive] ${this.id} report skipped (id=${callRecordId ? 'y' : 'n'} app=${APP_URL ? 'y' : 'n'} turns=${this.turns.length})`)
+    if (!callRecordId) {
+      console.log(`[glive] ${this.id} report cannot be queued: missing call record id`)
       return
     }
     const durationSecs = this.startedAt ? Math.max(0, Math.round((Date.now() - this.startedAt) / 1000)) : null
@@ -396,16 +396,20 @@ class Call {
     // ৳2.5–4.5/min; env-tunable). Rounded up to the minute the way carriers bill.
     const perMin = Number(process.env.GLIVE_COST_PER_MIN_BDT || 3.5)
     const costBdt = durationSecs != null ? Math.round(Math.ceil(durationSecs / 60) * perMin) : null
-    const summary = await this.summarize(this.turns)
+    const summary = this.turns.length > 0 ? await this.summarize(this.turns) : null
+    const payload = { callRecordId, callSid: this.callId, transcript: this.turns, summary, durationSecs, status, costBdt, provider: 'ngs' }
+    if (!APP_URL || !AUTH_TOKEN) {
+      await persistCallReport(payload).catch((e) => console.log(`[glive] ${this.id} report persistence failed: ${e?.message || e}`))
+      console.log(`[glive] ${this.id} report retained; APP_URL/AGENT_INTERNAL_TOKEN is missing`)
+      return
+    }
     try {
-      const res = await fetch(`${APP_URL}/api/assistant/voice-call/relay-report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-        body: JSON.stringify({ callRecordId, callSid: this.callId, transcript: this.turns, summary, durationSecs, status, costBdt, provider: 'ngs' }),
-        signal: AbortSignal.timeout(20_000),
-      })
-      console.log(`[glive] ${this.id} report POST ${res.status} (turns=${this.turns.length} dur=${durationSecs}s sum=${summary ? 'y' : 'n'} cost=৳${costBdt})`)
-    } catch (e) { console.log(`[glive] ${this.id} report err ${e?.message || e}`) }
+      const delivered = await queueAndDeliverCallReport(payload, { appUrl: APP_URL, token: AUTH_TOKEN })
+      this.reported = true
+      console.log(`[glive] ${this.id} report delivered HTTP ${delivered.status} attempt=${delivered.attempt} (turns=${this.turns.length} dur=${durationSecs}s sum=${summary ? 'y' : 'n'} cost=৳${costBdt})`)
+    } catch (e) {
+      console.log(`[glive] ${this.id} report queued for recovery: ${e?.message || e}`)
+    }
   }
 
   isOwnerCall() { const c = this.params?.callType; return !c || c === 'owner' }
@@ -537,8 +541,7 @@ class Call {
   close() {
     if (this.closed) return
     this.closed = true
-    // Post-call transcript + Bangla summary to the owner (fire-and-forget; runs once).
-    // Kicked off BEFORE teardown so it captures the accumulated turns.
+    // The asynchronous sender persists to disk before its first network request.
     void this.sendReport()
     for (const t of [this.drainer, this.diag, this.maxTimer, this._hangTimer]) if (t) clearInterval(t)
     try { this.live?.close() } catch { /* */ }
@@ -562,4 +565,12 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => c.close())
   ws.on('error', (e) => console.log('[glive] ws err', e.message))
 })
-server.listen(PORT, '0.0.0.0', () => console.log(`[glive] listening :${PORT} model=${MODEL} voice=${VOICE} maxMin=${MAX_MIN}`))
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`[glive] listening :${PORT} model=${MODEL} voice=${VOICE} maxMin=${MAX_MIN}`)
+  void drainCallReportOutbox().then((items) => {
+    if (items.length) console.log(`[glive] recovered ${items.filter((item) => item.ok).length}/${items.length} queued reports`)
+  }).catch((err) => console.log(`[glive] report outbox startup drain failed: ${err?.message || err}`))
+})
+setInterval(() => {
+  void drainCallReportOutbox().catch((err) => console.log(`[glive] report outbox drain failed: ${err?.message || err}`))
+}, 60_000).unref()

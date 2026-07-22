@@ -50,6 +50,7 @@
     "@capacitor/keyboard": "^7.0.6",
     "@capacitor/local-notifications": "^7.0.6",
     "@capawesome/capacitor-app-shortcuts": "^7.5.0",
+    "@google/genai": "2.8.0",
     "@google/generative-ai": "^0.24.1",
     "@langchain/core": "^1.2.3",
     "@langchain/langgraph": "^1.4.8",

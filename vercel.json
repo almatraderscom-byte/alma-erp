@@ -23,6 +23,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/assistant/internal/voice-call-delivery",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/live-activity-push",
       "schedule": "*/2 * * * *"
     },

@@ -1341,6 +1341,13 @@ async function runApprove(
       voiceGender?: 'male' | 'female'
       callType?: 'owner' | 'staff' | 'contact'
     }
+    // Claim before dialing: a double tap/reconnect may hit two serverless instances,
+    // but exactly one of them is allowed to create a paid external call.
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved' },
+    })
+    if (claimed.count !== 1) return Response.json({ error: 'already_resolved' }, { status: 409 })
     const result = await placeOutboundCall({
       toNumber: String(p.toNumber ?? p.phone ?? ''),
       recipientName: p.recipientName,
@@ -1349,6 +1356,7 @@ async function runApprove(
       voiceGender: p.voiceGender === 'male' ? 'male' : 'female',
       callType: p.callType === 'staff' ? 'staff' : p.callType === 'contact' ? 'contact' : 'owner',
       conversationId: resolveConversationId(action),
+      pendingActionId: actionId,
     })
     if (!result.ok) {
       await db.agentPendingAction.update({
@@ -1360,9 +1368,10 @@ async function runApprove(
     await db.agentPendingAction.update({
       where: { id: actionId },
       data: {
-        status: 'executed',
-        resolvedAt: new Date(),
-        result: { callRecordId: result.callRecordId, elevenConvId: result.elevenConvId, callSid: result.callSid },
+        // Provider accepted the dial request; the asynchronous terminal report
+        // owns the eventual `executed` transition.
+        status: 'approved',
+        result: { callRecordId: result.callRecordId, elevenConvId: result.elevenConvId, callSid: result.callSid, callStatus: 'ringing', reportReady: false },
       },
     })
     return Response.json({
@@ -2410,6 +2419,8 @@ async function beginApprovalProgress(actionId: string): Promise<{ turnId: string
     if (!conversationId) return null
 
     const isRender = action.type === 'image_gen' || action.type === 'video_gen'
+    const isVoiceCall = action.type === 'agent_voice_call'
+    const isAsync = isRender || isVoiceCall
     // Contextual, not canned (owner ask 2026-07-13 round 2): acknowledge the
     // SPECIFIC job like a person would, then keep the thread visibly working.
     const summaryLine = String(action.summary ?? '').split('\n')[0].slice(0, 80).trim()
@@ -2418,14 +2429,16 @@ async function beginApprovalProgress(actionId: string): Promise<{ turnId: string
       action,
       isRender
         ? '🎨 ঠিক আছে বস — ছবিটা বানানো শুরু করলাম (সাধারণত ৩০–৯০ সেকেন্ড)। রেডি হলেই এখানে preview দেখাব।'
-        : `⏳ অনুমোদন পেলাম বস${summaryLine ? ` — "${summaryLine}"` : ''} — এখনই করছি, শেষ করে ফলাফল জানাচ্ছি…`,
+        : isVoiceCall
+          ? `কলের অনুমোদন পেলাম Boss${summaryLine ? ` — "${summaryLine}"` : ''}। এখন ডায়াল করছি; রিং, উত্তর এবং terminal report আলাদা করে track করব।`
+          : `⏳ অনুমোদন পেলাম বস${summaryLine ? ` — "${summaryLine}"` : ''} — এখনই করছি, শেষ করে ফলাফল জানাচ্ছি…`,
     )
     const { createTurn } = await import('@/agent/lib/turn-status')
     const turnId = await createTurn(conversationId)
     if (!turnId) return null
 
-    if (isRender) {
-      // The render finishes in /internal/job-result — hand it the turn to close.
+    if (isAsync) {
+      // The async completion callback owns this visible turn.
       await db.agentPendingAction.update({
         where: { id: actionId },
         data: { payload: { ...(action.payload as Record<string, unknown>), progressTurnId: turnId } },
@@ -2451,7 +2464,7 @@ async function enqueueApprovalContinuation(actionId: string, reuseTurnId: string
   // time must not stay 'running' forever — except for renders, whose turn is
   // closed by /internal/job-result once the artifact lands.
   const settleProgress = async (actionType?: string) => {
-    if (reuseTurnId && actionType !== 'image_gen' && actionType !== 'video_gen') {
+    if (reuseTurnId && actionType !== 'image_gen' && actionType !== 'video_gen' && actionType !== 'agent_voice_call') {
       await finalizeTurnIfRunning(reuseTurnId, 'done')
     }
   }
@@ -2467,12 +2480,9 @@ async function enqueueApprovalContinuation(actionId: string, reuseTurnId: string
   // wasn't an approval, e.g. an idempotent no-op).
   if (action.status !== 'approved' && action.status !== 'executed') { await settleProgress(action.type); return }
 
-  // Async generation jobs (image/video) are NOT finished at approval time — the VPS
-  // worker produces the artifact 30–60s later and reports via /internal/job-result,
-  // which owns the continuation so the head resumes WITH the generated media already
-  // in the conversation. Firing here would run the head before the image exists, so it
-  // couldn't chain to the next step (e.g. an Instagram post) and the flow would stall.
-  if (action.type === 'image_gen' || action.type === 'video_gen') return
+  // Async jobs are not finished at approval time. Their terminal callback owns
+  // the continuation after the artifact/call report is durably in conversation.
+  if (action.type === 'image_gen' || action.type === 'video_gen' || action.type === 'agent_voice_call') return
 
   const summary = (action.summary ?? '').toString().slice(0, 200)
   const message =
