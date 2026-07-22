@@ -1355,9 +1355,36 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var pendingResumptionHandle: String?
     private var latestResumptionHandle: String?
     private var outputTranscript = ""
-    private var queuedAudio = 0
-    private var playbackDeadline = Date.distantPast
+
+    // Gemini emits native audio as many tiny PCM frames. A player callback for one
+    // frame is NOT the end of the model's turn: treating it that way made the UI
+    // bounce speaking → listening between words and could expose speaker echo to
+    // server VAD. Keep one turn-level playback state instead. We prebuffer a small
+    // amount (Gemini generates faster than realtime), then finish only after BOTH
+    // server turnComplete and the local queue have drained.
+    private var nextPlaybackBufferID = 0
+    private var pendingPlaybackBuffers = Set<Int>()
+    private var bufferedPlaybackDuration = 0.0
+    private var estimatedPlaybackEnd = Date.distantPast
     private var playbackGeneration = 0
+    private var modelAudioTurnOpen = false
+    private var modelTurnCompleteReceived = false
+    private var playbackStarted = false
+
+    // Natural barge-in without self-interruption. While model audio is active, the
+    // post-VoiceProcessingIO microphone is held locally. Only sustained speech well
+    // above the calibrated residual-echo floor opens the gate; the short pre-roll is
+    // then forwarded so Boss's first syllable is retained. Normal listening remains
+    // fully streaming and tap-free.
+    private var bargeInPending = false
+    private var bargeSpeechFrames = 0
+    private var echoCalibrationFrames = 0
+    private var echoFloorRMS = 0.008
+    private var micPreRoll: [Data] = []
+    private let playbackPrebufferSeconds = 0.16
+    private let bargeInMinimumRMS = 0.045
+    private let bargeInRequiredFrames = 12       // ≈240ms at the 20ms input tap
+    private let bargeInPreRollChunks = 14        // ≈280ms, including first syllable
     private let audioLock = NSLock()
     private var inputMuted = false
     private var speakerEnabled = true
@@ -1413,10 +1440,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             "realtimeInputConfig": [
                 "automaticActivityDetection": [
                     "disabled": false,
-                    "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
+                    "startOfSpeechSensitivity": "START_SENSITIVITY_LOW",
                     "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
-                    "prefixPaddingMs": 80,
-                    "silenceDurationMs": 500,
+                    "prefixPaddingMs": 250,
+                    "silenceDurationMs": 650,
                 ],
                 "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
                 "turnCoverage": "TURN_INCLUDES_ONLY_ACTIVITY",
@@ -1437,7 +1464,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         guard !configured else { return }
         let av = AVAudioSession.sharedInstance()
         try av.setCategory(.playAndRecord, mode: .voiceChat,
-                           options: [.allowBluetoothHFP])
+                           options: [.allowBluetoothHFP, .defaultToSpeaker])
+        try av.setPreferredIOBufferDuration(0.02)
         try av.setActive(true)
         audioLock.lock()
         let useSpeaker = speakerEnabled
@@ -1446,6 +1474,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
         let input = audioEngine.inputNode
         try input.setVoiceProcessingEnabled(true)
+        guard input.isVoiceProcessingEnabled,
+              audioEngine.outputNode.isVoiceProcessingEnabled else {
+            throw AlmaLiveVoiceError.audioStart
+        }
         let native = input.inputFormat(forBus: 0)
         guard native.sampleRate > 0, native.channelCount > 0 else { throw AlmaLiveVoiceError.noMic }
         guard let pcm16 = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000,
@@ -1468,7 +1500,6 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         tapInstalled = true
         audioEngine.prepare()
         do { try audioEngine.start() } catch { throw AlmaLiveVoiceError.audioStart }
-        player.play()
         configured = true
     }
 
@@ -1501,6 +1532,61 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         guard conversionError == nil, output.frameLength > 0,
               let samples = output.int16ChannelData?[0] else { return }
         let bytes = Data(bytes: samples, count: Int(output.frameLength) * MemoryLayout<Int16>.size)
+
+        var sendNormally = false
+        var startBargeIn = false
+        var preRoll: [Data] = []
+        audioLock.lock()
+        if modelAudioTurnOpen && !bargeInPending {
+            micPreRoll.append(bytes)
+            if micPreRoll.count > bargeInPreRollChunks {
+                micPreRoll.removeFirst(micPreRoll.count - bargeInPreRollChunks)
+            }
+
+            // Give VPIO a short window to settle and learn this route's residual
+            // speaker echo. Afterwards only a sustained signal materially above
+            // that floor can be Boss speaking over the model.
+            if echoCalibrationFrames < 10 {
+                echoCalibrationFrames += 1
+                echoFloorRMS = max(echoFloorRMS, rms * 0.85)
+                bargeSpeechFrames = 0
+            } else {
+                let threshold = max(bargeInMinimumRMS, echoFloorRMS * 2.35 + 0.008)
+                if rms >= threshold {
+                    bargeSpeechFrames += 1
+                } else {
+                    bargeSpeechFrames = max(0, bargeSpeechFrames - 2)
+                    // Adapt slowly only to samples classified as echo/room noise;
+                    // never let actual speech immediately raise its own threshold.
+                    echoFloorRMS = echoFloorRMS * 0.96 + rms * 0.04
+                }
+                if bargeSpeechFrames >= bargeInRequiredFrames {
+                    bargeInPending = true
+                    preRoll = micPreRoll
+                    micPreRoll.removeAll(keepingCapacity: true)
+                    bargeSpeechFrames = 0
+                    startBargeIn = true
+                }
+            }
+        } else {
+            sendNormally = true
+            micPreRoll.removeAll(keepingCapacity: true)
+            bargeSpeechFrames = 0
+        }
+        audioLock.unlock()
+
+        if startBargeIn {
+            #if DEBUG
+            NSLog("ALMA-VOICE local barge-in opened after sustained speech")
+            #endif
+            beginLocalBargeIn()
+            for chunk in preRoll { sendRealtimeAudio(chunk) }
+        } else if sendNormally {
+            sendRealtimeAudio(bytes)
+        }
+    }
+
+    private func sendRealtimeAudio(_ bytes: Data) {
         sendJSON(["realtimeInput": ["audio": [
             "mimeType": "audio/pcm;rate=16000",
             "data": bytes.base64EncodedString(),
@@ -1609,7 +1695,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     private func handleServerContent(_ content: [String: Any]) {
         if content["interrupted"] as? Bool == true {
-            interruptPlayback()
+            stopModelPlayback(interrupted: true)
             DispatchQueue.main.async { [weak self] in self?.engine?.liveWasInterrupted() }
         }
         if let input = content["inputTranscription"] as? [String: Any],
@@ -1631,7 +1717,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 playPCM(pcm)
             }
         }
-        if content["turnComplete"] as? Bool == true { outputTranscript = "" }
+        if content["generationComplete"] as? Bool == true {
+            forceStartBufferedPlayback()
+        }
+        if content["turnComplete"] as? Bool == true {
+            outputTranscript = ""
+            completeModelTurn()
+        }
     }
 
     private func playPCM(_ pcm: Data) {
@@ -1647,44 +1739,206 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             }
         }
         let duration = Double(buffer.frameLength) / format.sampleRate
-        audioLock.lock()
-        queuedAudio += 1
-        playbackGeneration += 1
-        let generation = playbackGeneration
         let now = Date()
-        playbackDeadline = max(now, playbackDeadline).addingTimeInterval(duration)
-        let deadline = playbackDeadline
-        audioLock.unlock()
-        DispatchQueue.main.async { [weak self] in self?.engine?.livePlaybackChanged(active: true, level: 0.65) }
-        // `.dataPlayedBack` is the authoritative end of audible output. The
-        // convenience overload may report only that a streaming buffer was
-        // consumed by the engine, which left the console visually stuck in
-        // "বলছি" on VoiceProcessingIO even after the reply had finished.
-        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            guard let self else { return }
-            self.audioLock.lock()
-            self.queuedAudio = max(0, self.queuedAudio - 1)
-            let silent = self.queuedAudio == 0
-            self.audioLock.unlock()
-            if silent {
-                DispatchQueue.main.async { [weak self] in self?.engine?.livePlaybackChanged(active: false, level: 0) }
-            }
+        var bufferID = 0
+        var generation = 0
+        var newTurn = false
+        var shouldStart = false
+        var alreadyStarted = false
+        var fallbackDeadline = Date.distantPast
+        audioLock.lock()
+        if bargeInPending {
+            audioLock.unlock()
+            return
         }
-        // VoiceProcessingIO does not consistently deliver player-node completion
-        // callbacks (notably in Simulator). The accumulated PCM duration is a
-        // deterministic fallback that cannot end early when more chunks arrive.
-        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline.timeIntervalSince(now)) + 0.08) { [weak self] in
+        if !modelAudioTurnOpen {
+            modelAudioTurnOpen = true
+            modelTurnCompleteReceived = false
+            playbackStarted = false
+            bufferedPlaybackDuration = 0
+            estimatedPlaybackEnd = .distantPast
+            pendingPlaybackBuffers.removeAll(keepingCapacity: true)
+            playbackGeneration += 1
+            echoCalibrationFrames = 0
+            echoFloorRMS = 0.008
+            bargeSpeechFrames = 0
+            micPreRoll.removeAll(keepingCapacity: true)
+            newTurn = true
+        }
+        generation = playbackGeneration
+        nextPlaybackBufferID += 1
+        bufferID = nextPlaybackBufferID
+        pendingPlaybackBuffers.insert(bufferID)
+        bufferedPlaybackDuration += duration
+        alreadyStarted = playbackStarted
+        if alreadyStarted {
+            estimatedPlaybackEnd = max(now, estimatedPlaybackEnd).addingTimeInterval(duration)
+            fallbackDeadline = estimatedPlaybackEnd
+        } else {
+            shouldStart = bufferedPlaybackDuration >= playbackPrebufferSeconds
+        }
+        audioLock.unlock()
+        let scheduledBufferID = bufferID
+        let scheduledGeneration = generation
+
+        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            self?.playbackBufferFinished(id: scheduledBufferID, generation: scheduledGeneration)
+        }
+
+        if shouldStart {
+            startBufferedPlayback(generation: scheduledGeneration, force: false)
+        } else if newTurn {
+            // A short answer can be smaller than the target prebuffer. Never make it
+            // wait indefinitely for another frame.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
+                self?.startBufferedPlayback(generation: scheduledGeneration, force: true)
+            }
+        } else if alreadyStarted {
+            armPlaybackDrainFallback(generation: scheduledGeneration, deadline: fallbackDeadline)
+        }
+    }
+
+    private func startBufferedPlayback(generation: Int, force: Bool) {
+        audioLock.lock()
+        guard !stopped, modelAudioTurnOpen, playbackGeneration == generation,
+              !playbackStarted, !pendingPlaybackBuffers.isEmpty,
+              force || bufferedPlaybackDuration >= playbackPrebufferSeconds else {
+            audioLock.unlock()
+            return
+        }
+        playbackStarted = true
+        echoCalibrationFrames = 0
+        echoFloorRMS = 0.008
+        bargeSpeechFrames = 0
+        micPreRoll.removeAll(keepingCapacity: true)
+        estimatedPlaybackEnd = Date().addingTimeInterval(bufferedPlaybackDuration)
+        let deadline = estimatedPlaybackEnd
+        let prebufferDuration = bufferedPlaybackDuration
+        audioLock.unlock()
+
+        if !player.isPlaying { player.play() }
+        #if DEBUG
+        NSLog("ALMA-VOICE playback turn started prebuffer=%.3fs", prebufferDuration)
+        #endif
+        DispatchQueue.main.async { [weak self] in
+            self?.engine?.livePlaybackChanged(active: true, level: 0.65)
+        }
+        armPlaybackDrainFallback(generation: generation, deadline: deadline)
+    }
+
+    private func forceStartBufferedPlayback() {
+        audioLock.lock()
+        let generation = playbackGeneration
+        let needsStart = modelAudioTurnOpen && !playbackStarted && !pendingPlaybackBuffers.isEmpty
+        audioLock.unlock()
+        if needsStart { startBufferedPlayback(generation: generation, force: true) }
+    }
+
+    private func playbackBufferFinished(id: Int, generation: Int) {
+        audioLock.lock()
+        guard playbackGeneration == generation else {
+            audioLock.unlock()
+            return
+        }
+        pendingPlaybackBuffers.remove(id)
+        let shouldFinish = modelAudioTurnOpen && modelTurnCompleteReceived
+            && pendingPlaybackBuffers.isEmpty
+        audioLock.unlock()
+        if shouldFinish { finishModelPlayback(generation: generation) }
+    }
+
+    /// VoiceProcessingIO occasionally omits per-buffer completion callbacks in the
+    /// simulator. One turn-level deadline is a fallback only; extending it for every
+    /// newly scheduled chunk prevents an older timer from ending speech mid-sentence.
+    private func armPlaybackDrainFallback(generation: Int, deadline: Date) {
+        let delay = max(0, deadline.timeIntervalSinceNow) + 0.12
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, !self.stopped else { return }
             self.audioLock.lock()
-            let shouldFinish = self.playbackGeneration == generation
-            if shouldFinish {
-                self.queuedAudio = 0
-                self.playbackDeadline = .distantPast
+            guard self.playbackGeneration == generation,
+                  self.playbackStarted,
+                  Date() >= self.estimatedPlaybackEnd.addingTimeInterval(0.08) else {
+                self.audioLock.unlock()
+                return
             }
+            self.pendingPlaybackBuffers.removeAll(keepingCapacity: true)
+            let shouldFinish = self.modelAudioTurnOpen && self.modelTurnCompleteReceived
             self.audioLock.unlock()
-            if shouldFinish { self.engine?.livePlaybackChanged(active: false, level: 0) }
+            if shouldFinish { self.finishModelPlayback(generation: generation) }
         }
-        if !player.isPlaying { player.play() }
+    }
+
+    private func completeModelTurn() {
+        audioLock.lock()
+        bargeInPending = false
+        bargeSpeechFrames = 0
+        micPreRoll.removeAll(keepingCapacity: true)
+        modelTurnCompleteReceived = true
+        let generation = playbackGeneration
+        let needsStart = modelAudioTurnOpen && !playbackStarted && !pendingPlaybackBuffers.isEmpty
+        let shouldFinish = modelAudioTurnOpen && pendingPlaybackBuffers.isEmpty
+        audioLock.unlock()
+        if needsStart { startBufferedPlayback(generation: generation, force: true) }
+        if shouldFinish { finishModelPlayback(generation: generation) }
+    }
+
+    private func finishModelPlayback(generation: Int) {
+        audioLock.lock()
+        guard playbackGeneration == generation, modelAudioTurnOpen,
+              modelTurnCompleteReceived, pendingPlaybackBuffers.isEmpty else {
+            audioLock.unlock()
+            return
+        }
+        modelAudioTurnOpen = false
+        playbackStarted = false
+        bufferedPlaybackDuration = 0
+        estimatedPlaybackEnd = .distantPast
+        playbackGeneration += 1
+        echoCalibrationFrames = 0
+        echoFloorRMS = 0.008
+        bargeSpeechFrames = 0
+        micPreRoll.removeAll(keepingCapacity: true)
+        audioLock.unlock()
+
+        player.stop()
+        #if DEBUG
+        NSLog("ALMA-VOICE playback turn finished")
+        #endif
+        DispatchQueue.main.async { [weak self] in
+            self?.engine?.livePlaybackChanged(active: false, level: 0)
+        }
+    }
+
+    private func beginLocalBargeIn() {
+        stopModelPlayback(interrupted: false)
+    }
+
+    private func stopModelPlayback(interrupted: Bool) {
+        audioLock.lock()
+        let wasActive = modelAudioTurnOpen || playbackStarted || !pendingPlaybackBuffers.isEmpty
+        pendingPlaybackBuffers.removeAll(keepingCapacity: true)
+        modelAudioTurnOpen = false
+        modelTurnCompleteReceived = false
+        playbackStarted = false
+        bufferedPlaybackDuration = 0
+        estimatedPlaybackEnd = .distantPast
+        playbackGeneration += 1
+        if interrupted { bargeInPending = false }
+        echoCalibrationFrames = 0
+        echoFloorRMS = 0.008
+        bargeSpeechFrames = 0
+        micPreRoll.removeAll(keepingCapacity: true)
+        audioLock.unlock()
+
+        player.stop()
+        #if DEBUG
+        if interrupted { NSLog("ALMA-VOICE server confirmed interruption") }
+        #endif
+        if wasActive {
+            DispatchQueue.main.async { [weak self] in
+                self?.engine?.livePlaybackChanged(active: false, level: 0)
+            }
+        }
     }
 
     func sendToolResponse(callId: String, result: String) {
@@ -1721,6 +1975,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     func setInputMuted(_ muted: Bool) {
         audioLock.lock()
         inputMuted = muted
+        micPreRoll.removeAll(keepingCapacity: true)
+        bargeSpeechFrames = 0
+        echoCalibrationFrames = 0
+        echoFloorRMS = 0.008
         audioLock.unlock()
     }
 
@@ -1734,21 +1992,23 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     func interruptPlayback() {
-        player.stop()
         audioLock.lock()
-        queuedAudio = 0
-        playbackGeneration += 1
-        playbackDeadline = .distantPast
+        // A deliberate orb tap is an immediate barge-in: discard any remaining
+        // model frames and let subsequent microphone frames flow without waiting
+        // for the sustained-speech gate.
+        bargeInPending = true
         audioLock.unlock()
-        if configured { player.play() }
-        DispatchQueue.main.async { [weak self] in self?.engine?.livePlaybackChanged(active: false, level: 0) }
+        stopModelPlayback(interrupted: false)
     }
 
     func recoverAudio() {
         guard configured else { return }
         try? AVAudioSession.sharedInstance().setActive(true)
         if !audioEngine.isRunning { try? audioEngine.start() }
-        if !player.isPlaying { player.play() }
+        audioLock.lock()
+        let shouldPlay = playbackStarted
+        audioLock.unlock()
+        if shouldPlay, !player.isPlaying { player.play() }
     }
 
     func stop() {
@@ -1771,9 +2031,18 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         hasConnectedOnce = false
         outputTranscript = ""
         audioLock.lock()
-        queuedAudio = 0
+        pendingPlaybackBuffers.removeAll(keepingCapacity: true)
+        bufferedPlaybackDuration = 0
+        estimatedPlaybackEnd = .distantPast
         playbackGeneration += 1
-        playbackDeadline = .distantPast
+        modelAudioTurnOpen = false
+        modelTurnCompleteReceived = false
+        playbackStarted = false
+        bargeInPending = false
+        bargeSpeechFrames = 0
+        echoCalibrationFrames = 0
+        echoFloorRMS = 0.008
+        micPreRoll.removeAll(keepingCapacity: true)
         audioLock.unlock()
     }
 

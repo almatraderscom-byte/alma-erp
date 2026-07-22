@@ -10,6 +10,10 @@ describe('live voice configuration', () => {
     expect(config.sessionResumption).toEqual({})
     expect(config.realtimeInputConfig?.activityHandling).toBe('START_OF_ACTIVITY_INTERRUPTS')
     expect(config.realtimeInputConfig?.automaticActivityDetection?.disabled).toBe(false)
+    expect(config.realtimeInputConfig?.automaticActivityDetection?.startOfSpeechSensitivity)
+      .toBe('START_SENSITIVITY_LOW')
+    expect(config.realtimeInputConfig?.automaticActivityDetection?.prefixPaddingMs).toBe(250)
+    expect(config.realtimeInputConfig?.automaticActivityDetection?.silenceDurationMs).toBe(650)
   })
 
   it('server-locks transport policy while leaving resumption and the SDK-broken repeated tool mask client-settable', () => {

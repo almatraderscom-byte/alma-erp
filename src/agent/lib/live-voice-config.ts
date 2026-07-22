@@ -35,10 +35,10 @@ export function buildLiveVoiceConfig(voiceName = DEFAULT_LIVE_VOICE_NAME): LiveC
     realtimeInputConfig: {
       automaticActivityDetection: {
         disabled: false,
-        startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_HIGH,
+        startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
         endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
-        prefixPaddingMs: 80,
-        silenceDurationMs: 500,
+        prefixPaddingMs: 250,
+        silenceDurationMs: 650,
       },
       activityHandling: ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
       turnCoverage: TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,

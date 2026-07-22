@@ -70,7 +70,21 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('String(data: data, encoding: .utf8)')
     expect(voice).toContain('ALMA-VOICE websocket send failed')
     expect(voice).toContain('completionCallbackType: .dataPlayedBack')
-    expect(voice).toContain('playbackDeadline = max(now, playbackDeadline).addingTimeInterval(duration)')
-    expect(voice).toContain('let shouldFinish = self.playbackGeneration == generation')
+    expect(voice).toContain('modelTurnCompleteReceived')
+    expect(voice).toContain('pendingPlaybackBuffers.isEmpty')
+    expect(voice).toContain('playbackPrebufferSeconds = 0.16')
+    expect(voice).not.toContain('private var queuedAudio')
+  })
+
+  it('holds model echo locally while preserving sustained natural barge-in', () => {
+    const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
+
+    expect(voice).toContain('bargeInRequiredFrames = 12')
+    expect(voice).toContain('bargeInPreRollChunks = 14')
+    expect(voice).toContain('echoFloorRMS * 2.35 + 0.008')
+    expect(voice).toContain('beginLocalBargeIn()')
+    expect(voice).toContain('for chunk in preRoll { sendRealtimeAudio(chunk) }')
+    expect(voice).toContain('input.isVoiceProcessingEnabled')
+    expect(voice).toContain('audioEngine.outputNode.isVoiceProcessingEnabled')
   })
 })
