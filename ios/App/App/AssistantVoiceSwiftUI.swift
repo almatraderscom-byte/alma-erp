@@ -1216,9 +1216,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var reconnecting = false
     private var hasConnectedOnce = false
     private var mintedSession: SessionResponse?
+    private var pendingResumptionHandle: String?
     private var latestResumptionHandle: String?
     private var outputTranscript = ""
     private var queuedAudio = 0
+    private var playbackDeadline = Date.distantPast
+    private var playbackGeneration = 0
     private let audioLock = NSLock()
 
     func start() async throws {
@@ -1244,10 +1247,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let socket = s.webSocketTask(with: url)
         ws = socket
         socketReady = false
+        pendingResumptionHandle = resumptionHandle
         socket.resume()
         receiveLoop(socket)
-        sendJSON(setupMessage(model: minted.model, voice: minted.voice,
-                              resumptionHandle: resumptionHandle), requireReady: false)
     }
 
     private func setupMessage(model: String, voice: String, resumptionHandle: String?) -> [String: Any] {
@@ -1373,7 +1375,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     self.fail("Live voice সংযোগ বন্ধ হয়েছে—নিরাপদ voice mode চালু হয়েছে।")
                 }
             case .success(let message):
-                if case .string(let text) = message { self.onMessage(text) }
+                switch message {
+                case .string(let text):
+                    self.onMessage(text)
+                case .data(let data):
+                    if let text = String(data: data, encoding: .utf8) { self.onMessage(text) }
+                @unknown default:
+                    break
+                }
                 if self.ws === socket { self.receiveLoop(socket) }
             }
         }
@@ -1492,9 +1501,21 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 destination[index] = Float(Int16(littleEndian: sample)) / 32_768
             }
         }
-        audioLock.lock(); queuedAudio += 1; audioLock.unlock()
+        let duration = Double(buffer.frameLength) / format.sampleRate
+        audioLock.lock()
+        queuedAudio += 1
+        playbackGeneration += 1
+        let generation = playbackGeneration
+        let now = Date()
+        playbackDeadline = max(now, playbackDeadline).addingTimeInterval(duration)
+        let deadline = playbackDeadline
+        audioLock.unlock()
         DispatchQueue.main.async { [weak self] in self?.engine?.livePlaybackChanged(active: true, level: 0.65) }
-        player.scheduleBuffer(buffer) { [weak self] in
+        // `.dataPlayedBack` is the authoritative end of audible output. The
+        // convenience overload may report only that a streaming buffer was
+        // consumed by the engine, which left the console visually stuck in
+        // "বলছি" on VoiceProcessingIO even after the reply had finished.
+        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             guard let self else { return }
             self.audioLock.lock()
             self.queuedAudio = max(0, self.queuedAudio - 1)
@@ -1503,6 +1524,20 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             if silent {
                 DispatchQueue.main.async { [weak self] in self?.engine?.livePlaybackChanged(active: false, level: 0) }
             }
+        }
+        // VoiceProcessingIO does not consistently deliver player-node completion
+        // callbacks (notably in Simulator). The accumulated PCM duration is a
+        // deterministic fallback that cannot end early when more chunks arrive.
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline.timeIntervalSince(now)) + 0.08) { [weak self] in
+            guard let self, !self.stopped else { return }
+            self.audioLock.lock()
+            let shouldFinish = self.playbackGeneration == generation
+            if shouldFinish {
+                self.queuedAudio = 0
+                self.playbackDeadline = .distantPast
+            }
+            self.audioLock.unlock()
+            if shouldFinish { self.engine?.livePlaybackChanged(active: false, level: 0) }
         }
         if !player.isPlaying { player.play() }
     }
@@ -1527,15 +1562,24 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
               let data = try? JSONSerialization.data(withJSONObject: object),
               let text = String(data: data, encoding: .utf8) else { return }
         ws?.send(.string(text)) { [weak self] error in
-            if error != nil, self?.configured == true {
-                self?.fail("Live voice পাঠানো যায়নি—নিরাপদ voice mode চালু হয়েছে।")
+            if let error {
+                #if DEBUG
+                NSLog("ALMA-VOICE websocket send failed: %@", String(describing: error))
+                #endif
+                if self?.configured == true || !requireReady {
+                    self?.fail("Live voice পাঠানো যায়নি—নিরাপদ voice mode চালু হয়েছে।")
+                }
             }
         }
     }
 
     func interruptPlayback() {
         player.stop()
-        audioLock.lock(); queuedAudio = 0; audioLock.unlock()
+        audioLock.lock()
+        queuedAudio = 0
+        playbackGeneration += 1
+        playbackDeadline = .distantPast
+        audioLock.unlock()
         if configured { player.play() }
         DispatchQueue.main.async { [weak self] in self?.engine?.livePlaybackChanged(active: false, level: 0) }
     }
@@ -1562,9 +1606,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         socketReady = false
         reconnecting = false
         mintedSession = nil
+        pendingResumptionHandle = nil
         latestResumptionHandle = nil
         hasConnectedOnce = false
         outputTranscript = ""
+        audioLock.lock()
+        queuedAudio = 0
+        playbackGeneration += 1
+        playbackDeadline = .distantPast
+        audioLock.unlock()
     }
 
     private func fail(_ message: String) {
@@ -1578,6 +1628,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         #if DEBUG
         NSLog("ALMA-VOICE websocket opened")
         #endif
+        guard !stopped, ws === webSocketTask, let minted = mintedSession else { return }
+        sendJSON(setupMessage(model: minted.model, voice: minted.voice,
+                              resumptionHandle: pendingResumptionHandle), requireReady: false)
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,

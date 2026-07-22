@@ -37,4 +37,19 @@ describe('native voice upload contract', () => {
     expect(transport).toContain('$0.name == "_vercel_share"')
     expect(transport).toContain('completionHandler(nil)')
   })
+
+  it('waits for the live socket to open before sending setup and accepts binary JSON frames', () => {
+    const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
+    const connectBody = voice.slice(voice.indexOf('private func connect('), voice.indexOf('private func setupMessage('))
+    const didOpenBody = voice.slice(voice.indexOf('didOpenWithProtocol'), voice.indexOf('didCloseWith'))
+
+    expect(connectBody).not.toContain('sendJSON(setupMessage')
+    expect(didOpenBody).toContain('sendJSON(setupMessage')
+    expect(voice).toContain('case .data(let data):')
+    expect(voice).toContain('String(data: data, encoding: .utf8)')
+    expect(voice).toContain('ALMA-VOICE websocket send failed')
+    expect(voice).toContain('completionCallbackType: .dataPlayedBack')
+    expect(voice).toContain('playbackDeadline = max(now, playbackDeadline).addingTimeInterval(duration)')
+    expect(voice).toContain('let shouldFinish = self.playbackGeneration == generation')
+  })
 })
