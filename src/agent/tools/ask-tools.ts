@@ -16,14 +16,69 @@ function normalized(value: string): string {
 export function shouldCreateAskCard(input: {
   ownerText: string
   question: string
+  options?: string[]
 }): boolean {
   const owner = normalized(input.ownerText)
   const question = normalized(input.question)
+  const options = normalized((input.options ?? []).join(' '))
   const ownerAskedForCopy = /(caption|primary\s*text|content|copy|ক্যাপশন).*(likh|lekho|লিখ|write|draft|detail|বিস্তারিত)|(likh|লিখ|write|draft).*(caption|primary\s*text|content|copy|ক্যাপশন)/i.test(owner)
-  const ownerAskedToPublish = /(paste|পেস্ট|post|পোস্ট|publish|ads?\s*manager|send|পাঠা)/i.test(owner)
-  const reviewOrNewEffect = /(কেমন\s*লাগ|ঠিক\s*আছে|paste|পেস্ট|post|পোস্ট|publish|ads?\s*manager|send|পাঠাব)/i.test(question)
+  // "paste/post কোরো না" is a prohibition, not permission to publish. Remove
+  // complete negated action phrases before looking for an affirmative effect.
+  const effectWord = '(?:paste|পেস্ট|post|পোস্ট|publish|ads?\\s*manager(?:-?এ)?|send|পাঠা(?:ও|বেন|তে)?)'
+  const negatedEffect = new RegExp(
+    `(?:কোথাও\\s*)?${effectWord}(?:\\s*(?:বা|or|/|,)\\s*${effectWord})*[^।.!?\\n]{0,24}?(?:কোরো|করো|করবেন|করবা|করিস|দেও|দিও|দেবে)?\\s*না|` +
+    `(?:do\\s+not|don't|never|without)\\s+(?:[^।.!?\\n]{0,16}\\s+)?${effectWord}`,
+    'gi',
+  )
+  const affirmativeOwner = owner.replace(negatedEffect, ' ')
+  const ownerAskedToPublish = new RegExp(effectWord, 'i').test(affirmativeOwner)
+  const postWorkAsk = `${question} ${options}`
+  const reviewOrNewEffect = /(কেমন\s*লাগ|ঠিক\s*আছে|এখন\s*(?:কি|কী)\s*কর|এরপর\s*(?:কি|কী)|paste|পেস্ট|post|পোস্ট|publish|ads?\s*manager|send|পাঠাব|approve|অনুমোদন|wording\s*পরিবর্তন|নতুনভাবে\s*লিখ|রেখে\s*দিন|use\s*কর)/i.test(postWorkAsk)
   if (ownerAskedForCopy && !ownerAskedToPublish && reviewOrNewEffect) return false
   return true
+}
+
+type OwnerMessageRow = {
+  id: string
+  content: unknown
+  createdAt: Date
+  usage?: unknown
+}
+
+function messageText(row: OwnerMessageRow | undefined): string {
+  if (!Array.isArray(row?.content)) return ''
+  return row.content
+    .filter((b: unknown) => b && typeof b === 'object' && (b as { type?: unknown }).type === 'text')
+    .map((b: unknown) => String((b as { text?: unknown }).text ?? ''))
+    .join('\n')
+}
+
+function steeringTarget(row: OwnerMessageRow | undefined): string | null {
+  if (!row?.usage || typeof row.usage !== 'object') return null
+  const steering = (row.usage as { steering?: unknown }).steering
+  if (!steering || typeof steering !== 'object') return null
+  const target = (steering as { targetTurnId?: unknown }).targetTurnId
+  return typeof target === 'string' && target ? target : null
+}
+
+/**
+ * Reconstruct only the current owner request. A live steering message is not a
+ * fresh task: pair every update for its target turn with the immediately
+ * preceding ordinary owner message. Older unrelated chat stays out.
+ */
+export function currentOwnerRequestText(rowsNewestFirst: OwnerMessageRow[]): string {
+  const latest = rowsNewestFirst[0]
+  if (!latest) return ''
+  const target = steeringTarget(latest)
+  if (!target) return messageText(latest)
+
+  const steeringRows = rowsNewestFirst.filter((row) => steeringTarget(row) === target)
+  const oldestSteeringIndex = Math.max(...steeringRows.map((row) => rowsNewestFirst.indexOf(row)))
+  const base = rowsNewestFirst.slice(oldestSteeringIndex + 1).find((row) => !steeringTarget(row))
+  return [base, ...steeringRows.slice().reverse()]
+    .map(messageText)
+    .filter(Boolean)
+    .join('\n')
 }
 
 const ask_user: AgentTool = {
@@ -60,18 +115,15 @@ const ask_user: AgentTool = {
     if (!conversationId) return { success: false, error: 'conversationId is required' }
 
     try {
-      const latestOwner = await db.agentMessage.findFirst({
+      const ownerRows: OwnerMessageRow[] = await db.agentMessage.findMany({
         where: { conversationId, role: 'user' },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        select: { id: true, content: true, createdAt: true },
+        take: 24,
+        select: { id: true, content: true, createdAt: true, usage: true },
       })
-      const ownerText = Array.isArray(latestOwner?.content)
-        ? latestOwner.content
-            .filter((b: unknown) => b && typeof b === 'object' && (b as { type?: unknown }).type === 'text')
-            .map((b: unknown) => String((b as { text?: unknown }).text ?? ''))
-            .join('\n')
-        : ''
-      if (!shouldCreateAskCard({ ownerText, question })) {
+      const latestOwner = ownerRows[0]
+      const ownerText = currentOwnerRequestText(ownerRows)
+      if (!shouldCreateAskCard({ ownerText, question, options })) {
         return {
           success: false,
           error: 'Boss already gave a clear drafting instruction. Complete it in chat; do not ask for review or permission to publish elsewhere.',

@@ -62,6 +62,7 @@ import {
 import {
   verifyClaimsAgainstLedger,
   buildVerificationReminder,
+  detectExplicitInstructionViolations,
   detectMissingCardViolation,
   detectProseChoiceViolation,
   detectFabricatedStatViolations,
@@ -344,6 +345,7 @@ async function* runAlternateProviderTurn(
     if (typeof m.content === 'string' && m.content.trim()) recentUserTexts.unshift(m.content.trim())
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
+  let currentOwnerInstructions = lastUserText
   let turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
   const ownerRequirements = deriveOwnerTurnRequirements(lastUserText)
   // Which call voice Boss asked for — resolved from his OWN words and handed to the
@@ -1198,6 +1200,9 @@ async function* runAlternateProviderTurn(
       const steering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
       for (const item of steering) claimedSteeringIds.add(item.id)
       if (steering.length > 0) {
+        currentOwnerInstructions = [currentOwnerInstructions, ...steering.map((item) => item.prompt)]
+          .filter(Boolean)
+          .join('\n')
         messages = [
           ...messages,
           ...steering.map((item) => ({ role: 'user' as const, content: item.prompt })),
@@ -1380,6 +1385,9 @@ async function* runAlternateProviderTurn(
         const lateSteering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
         if (lateSteering.length > 0 && !signal?.aborted) {
           for (const item of lateSteering) claimedSteeringIds.add(item.id)
+          currentOwnerInstructions = [currentOwnerInstructions, ...lateSteering.map((item) => item.prompt)]
+            .filter(Boolean)
+            .join('\n')
           for (let ti = timeline.length - 1; ti >= 0; ti--) {
             const te = timeline[ti]
             if (te.t === 'text') { te.state = 'superseded'; break }
@@ -1469,6 +1477,9 @@ async function* runAlternateProviderTurn(
           // BP6 — robotic-style gate (flag-gated inside → no-op when off).
           if (violations.length === 0) {
             violations.push(...detectRoboticStyleViolations(iterationText.trim()))
+          }
+          if (violations.length === 0) {
+            violations.push(...detectExplicitInstructionViolations(iterationText.trim(), currentOwnerInstructions))
           }
           if (violations.length > 0) {
             verifyRetries++

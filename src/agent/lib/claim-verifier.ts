@@ -24,6 +24,7 @@ export type ClaimViolationCategory =
   | 'missing_card'
   | 'prose_choice'
   | 'missing_ask'
+  | 'instruction_mismatch'
   | 'fabricated_stat'
   | 'robotic_style'
 
@@ -516,6 +517,27 @@ export function detectRoboticStyleViolations(replyText: string): ClaimViolation[
   return out
 }
 
+// Explicit owner formatting constraints are not preferences. Models commonly
+// obey the semantic update (for example 8 → 3) but then re-apply their default
+// warm style and add an emoji. Keep this deliberately narrow and deterministic;
+// more constraints can be added only with equally unambiguous detectors.
+const NO_EMOJI_REQUEST = /(?:\b(?:no|without)\s+emojis?\b|(?:emoji|ইমোজি)[^।.!?\n]{0,24}?(?:ব্যবহার|use|দিও|দেও|দেবে|করো|কোরো|করবেন)[^।.!?\n]{0,12}?না)/i
+const EMOJI_IN_REPLY = /\p{Extended_Pictographic}/u
+
+export function detectExplicitInstructionViolations(
+  replyText: string,
+  ownerInstructions: string,
+): ClaimViolation[] {
+  if (!NO_EMOJI_REQUEST.test(ownerInstructions) || !EMOJI_IN_REPLY.test(replyText)) return []
+  const match = replyText.match(EMOJI_IN_REPLY)
+  return [{
+    category: 'instruction_mismatch',
+    ruleId: 'owner_requested_no_emoji',
+    matchedSnippet: match?.[0] ?? 'emoji',
+    requiredTools: [],
+  }]
+}
+
 export function verifyClaimsAgainstLedger(
   replyText: string,
   ledger: ToolLedgerEntry[],
@@ -573,6 +595,9 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'আপনি Boss-কে prose-এর ভিতরে option/সিদ্ধান্তের প্রশ্ন দিয়েছেন কিন্তু ask_user tool call করেননি — Boss টেক্সটের ভিতরের option-এ tap করতে পারেন না (HARD RULE 2026-07-07: choice মানেই ask_user, ব্যতিক্রম নেই)। ' +
     'আবার লিখুন: বিশ্লেষণ/প্রেক্ষাপট prose-এ রাখুন, কিন্তু option-এর তালিকা আর "কোনটা করবেন?" জাতীয় প্রশ্ন prose থেকে সম্পূর্ণ বাদ দিন — সেগুলো ask_user call-এ দিন (question + ২-৪টি ছোট tappable option, প্রতিটি option এক লাইনের)। ' +
     'reply-র শেষ কাজ = ask_user call।',
+  instruction_mismatch:
+    'Boss এই turn-এ স্পষ্টভাবে emoji ব্যবহার করতে নিষেধ করেছেন, কিন্তু reply-তে emoji আছে। ' +
+    'একই উত্তর আবার সম্পূর্ণ emoji ছাড়া লিখুন; content/count/অন্য instruction বদলাবেন না।',
   fabricated_stat:
     'আপনি লাইভ ডেটা (সংখ্যা/অর্ডার/স্টক/বিক্রি/টাকা/হাজিরা) উল্লেখ করেছেন কিন্তু এই turn-এ কোনো read tool দিয়ে সেটা যাচাই করেননি। ' +
     'হয় এখনই relevant read tool (get_/list_/check_…) call করে আসল সংখ্যাটা আনুন, নয়তো সততা সঙ্গে বলুন সংখ্যাটা যাচাই করা হয়নি ("যাচাই করে দেখিনি — আনুমানিক")। মেমরি থেকে নিশ্চিত সংখ্যা দেবেন না।',

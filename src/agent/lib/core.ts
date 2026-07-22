@@ -55,6 +55,7 @@ import {
 } from '@/agent/lib/turn-authorization'
 import {
   buildVerificationReminder,
+  detectExplicitInstructionViolations,
   detectMissingCardViolation,
   detectProseChoiceViolation,
   MAX_VERIFY_RETRIES,
@@ -639,6 +640,7 @@ export async function* runAgentTurn(
     if (text.trim()) recentUserTexts.unshift(text.trim())
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
+  let currentOwnerInstructions = lastUserText
   const turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
   // Which call voice Boss asked for — resolved from his OWN words and handed to the
   // call tool through server context (server wins over model args). Scans the last 3
@@ -1086,6 +1088,9 @@ export async function* runAgentTurn(
       const steering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
       for (const item of steering) claimedSteeringIds.add(item.id)
       if (steering.length > 0) {
+        currentOwnerInstructions = [currentOwnerInstructions, ...steering.map((item) => item.prompt)]
+          .filter(Boolean)
+          .join('\n')
         messages = [
           ...messages,
           ...steering.map((item) => ({
@@ -1226,6 +1231,9 @@ export async function* runAgentTurn(
         const lateSteering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
         if (lateSteering.length > 0 && !signal?.aborted) {
           for (const item of lateSteering) claimedSteeringIds.add(item.id)
+          currentOwnerInstructions = [currentOwnerInstructions, ...lateSteering.map((item) => item.prompt)]
+            .filter(Boolean)
+            .join('\n')
           // Native Claude streams its draft before we know this final round has
           // no tool call. Retire that now-stale prose so the replacement is the
           // ONE visible answer, not text appended as a conflicting second reply.
@@ -1280,6 +1288,9 @@ export async function* runAgentTurn(
             // 2026-07-16). Same zero-card precondition: an emitted ask card
             // legitimately carries the question.
             violations.push(...detectProseChoiceViolation(finalText))
+          }
+          if (finalText && violations.length === 0) {
+            violations.push(...detectExplicitInstructionViolations(finalText, currentOwnerInstructions))
           }
           if (violations.length > 0) {
             verifyRetries++

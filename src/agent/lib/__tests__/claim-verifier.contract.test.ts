@@ -1,11 +1,37 @@
 import { describe, it, expect } from 'vitest'
 import {
   detectClaimViolations,
+  detectExplicitInstructionViolations,
   detectLedgerViolations,
   detectProseChoiceViolation,
   verifyClaimsAgainstLedger,
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
+
+describe('detectExplicitInstructionViolations', () => {
+  it('rejects an emoji after a live no-emoji instruction', () => {
+    const violations = detectExplicitInstructionViolations(
+      'Boss, ৩টা idea ready 😊',
+      'এখন ৮টির বদলে ৩টি করো এবং emoji ব্যবহার কোরো না।',
+    )
+    expect(violations).toHaveLength(1)
+    expect(violations[0].category).toBe('instruction_mismatch')
+  })
+
+  it('allows the same answer when it contains no emoji', () => {
+    expect(detectExplicitInstructionViolations(
+      'Boss, ৩টা idea নিচে দিলাম।',
+      'এখন ৮টির বদলে ৩টি করো এবং emoji ব্যবহার কোরো না।',
+    )).toHaveLength(0)
+  })
+
+  it('does not impose no-emoji unless the owner requested it', () => {
+    expect(detectExplicitInstructionViolations(
+      'Boss, ৩টা idea ready 😊',
+      'এখন ৮টির বদলে ৩টি করো।',
+    )).toHaveLength(0)
+  })
+})
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Layer 1: Original regex claim detection
