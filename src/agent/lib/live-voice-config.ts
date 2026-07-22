@@ -59,11 +59,17 @@ export function buildLiveVoiceConfig(voiceName = DEFAULT_LIVE_VOICE_NAME): LiveC
   }
 }
 
-/** Token constraints deliberately leave only the resumption handle client-settable.
- * Every safety/voice/tool field remains server-locked, while a rotating websocket
- * can attach the latest Google-issued handle without minting a broad API key. */
+/** Token constraints leave the resumption handle and function declaration in the
+ * client setup. @google/genai 2.8's token-mask generator serializes repeated tools
+ * as the invalid mask `tools.0`; the short-lived single-use token still locks the
+ * model, voice, system instruction, VAD, modality and transcription policy. Tool
+ * execution remains protected by ALMA's authenticated head route on the server. */
 export function buildLiveVoiceTokenConfig(voiceName = DEFAULT_LIVE_VOICE_NAME): LiveConnectConfig {
   const config = buildLiveVoiceConfig(voiceName)
-  const { sessionResumption: _clientHandle, ...locked } = config
+  const {
+    sessionResumption: _clientHandle,
+    tools: _clientFunctionDeclaration,
+    ...locked
+  } = config
   return locked
 }

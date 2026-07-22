@@ -12,11 +12,12 @@ describe('live voice configuration', () => {
     expect(config.realtimeInputConfig?.automaticActivityDetection?.disabled).toBe(false)
   })
 
-  it('server-locks the transport policy while leaving the resumption handle client-settable', () => {
+  it('server-locks transport policy while leaving resumption and the SDK-broken repeated tool mask client-settable', () => {
     expect(buildLiveVoiceConfig().sessionResumption).toEqual({})
     expect(buildLiveVoiceTokenConfig().sessionResumption).toBeUndefined()
     expect(buildLiveVoiceTokenConfig().systemInstruction).toBeTruthy()
-    expect(buildLiveVoiceTokenConfig().tools).toHaveLength(1)
+    expect(buildLiveVoiceConfig().tools).toHaveLength(1)
+    expect(buildLiveVoiceTokenConfig().tools).toBeUndefined()
   })
 
   it('forces owner requests through the existing head agent boundary', () => {

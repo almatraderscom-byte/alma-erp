@@ -27,4 +27,14 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('return "সংযোগ হচ্ছে…"')
     expect(voice).not.toContain('Text("LIVE")')
   })
+
+  it('allows only the one-time same-resource Vercel preview redirect in debug builds', () => {
+    const transport = readFileSync(join(ROOT, 'ios/App/App/AssistantTransport.swift'), 'utf8')
+
+    expect(transport).toContain('#if DEBUG')
+    expect(transport).toContain('original.host == redirect.host')
+    expect(transport).toContain('original.path == redirect.path')
+    expect(transport).toContain('$0.name == "_vercel_share"')
+    expect(transport).toContain('completionHandler(nil)')
+  })
 })
