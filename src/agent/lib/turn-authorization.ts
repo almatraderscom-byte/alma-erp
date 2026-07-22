@@ -29,8 +29,11 @@ const BARE_CONTINUATION_RE =
 // romanized Bangla by default and "amk pair code daw" is as explicit an action
 // request as "দাও" (2026-07-14 incident: the gate read it as information-only,
 // stripped live_browser_pair, and the head invented a wrong pairing flow).
+// Every -ao imperative also accepts the -aw spelling the owner actually types
+// ("pathaw"/"dekhaw"/"janaw" — live miss 2026-07-22: `message pathaw` was read
+// as information-only and send_whatsapp got stripped mid-instruction).
 const BANGLISH_IMPERATIVE_RE =
-  /\b(?:dao|daw|de|den|dibi|dibe|dis|koro|kor|korun|korbi|banao|banau|bana|chalao|calao|chala|pathao|patao|kholo|khulo|khol|dekhao|lagao|thamao|bondho|chalu|generate)\b/i
+  /\b(?:dao|daw|de|den|dibi|dibe|dis|koro|kor|korun|korbi|ban(?:ao|aw|au)|bana|chal(?:ao|aw)|cal(?:ao|aw)|chala|path(?:ao|aw)|pat(?:ao|aw)|kholo|khulo|khol|dekh(?:ao|aw)|lag(?:ao|aw)|tham(?:ao|aw)|bondho|chalu|generate)\b/i
 
 const EXPLICIT_ACTION_RE =
   /(\b(?:fix|create|make|add|update|change|edit|delete|remove|cancel|approve|reject|send|dispatch|assign|post|publish|upload|download|open|click|run|execute|start|continue|resume|retry|call|notify|schedule|set|save|remember|mark|log|generate|prepare|merge|apply|enable|disable)\b|(?:task|টাস্ক|কাজ)\s*(?:দাও|দেন|পাঠাও|assign|বানাও|তৈরি\s*করো)|(?:sms|message|মেসেজ|announcement|নোটিশ)\s*(?:দাও|পাঠাও|send)|(?:ছবি|image|photo|ভিডিও|video|reel|রিল|creative|ক্রিয়েটিভ)\s*(?:বানাও|তৈরি\s*করো|generate|make)|(?:audit|অডিট|research|রিসার্চ|বিশ্লেষণ|analysis|report|রিপোর্ট)\s*(?:করো|চালাও|run|বানাও|তৈরি\s*করো|prepare)|(?:website|ওয়েবসাইট|সাইট|browser|ব্রাউজার)\s*(?:খোলো|খুলে\s*দাও|open|fix|update|change|publish)|(?:যোগ|আপডেট|বদল|পরিবর্তন|ডিলিট|মুছ|বাতিল|ক্যানসেল|সেভ|পোস্ট|পাবলিশ|আপলোড|ডাউনলোড|শুরু|বন্ধ|চালু|লক|রিমাইন্ডার)\s*(?:করো|করুন|করে\s*দাও|দাও)?|মনে\s*(?:রাখো|রেখো|রাখবেন)|(?:kaj|task).*(?:koro|dao|daw|pathao|banao)|(?:kore|korey)\s*(?:dao|daw))/i

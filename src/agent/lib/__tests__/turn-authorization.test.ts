@@ -84,3 +84,23 @@ describe('owner turn authorization — model cannot widen owner intent', () => {
     expect(filterToolsForOwnerTurn([{ name: 'mark_salah' }], auth)).toHaveLength(1)
   })
 })
+
+describe('banglish -aw imperative spellings (live miss 2026-07-22)', () => {
+  it('"message pathaw" is an explicit action, not information-only', () => {
+    const auth = deriveOwnerTurnAuthorization('Eyafi ke send_whatsapp tool diye message pathaw: "test"')
+    expect(auth.allowMutations).toBe(true)
+    expect(auth.reason).toBe('explicit_action')
+  })
+
+  it('other -aw variants the owner types are actions too', () => {
+    for (const text of ['ekta post banaw', 'campaign chalaw', 'reminder lagaw', 'Mustahid ke sms pataw']) {
+      expect(deriveOwnerTurnAuthorization(text).allowMutations).toBe(true)
+    }
+  })
+
+  it('plain information asks stay information-only', () => {
+    const auth = deriveOwnerTurnAuthorization('ajker sales koto?')
+    expect(auth.allowMutations).toBe(false)
+    expect(auth.reason).toBe('information_only')
+  })
+})
