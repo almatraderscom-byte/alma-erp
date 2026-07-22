@@ -23,6 +23,7 @@ import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '
 import { executeTool, executePersonalTool, type ToolResult } from '@/agent/tools/registry'
 import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/agent/enforcement/enforced-tool-runner'
 import { runPreToolHooks, runPostToolHooks } from '@/agent/lib/turn-hooks'
+import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
 import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
 import { trimToolResultForHistory } from '@/agent/lib/context-trim'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
@@ -658,6 +659,9 @@ export async function* runAgentTurn(
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
   let currentOwnerInstructions = lastUserText
   const turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
+  // Harness round 2 — refresh the owner's kv-configured hook rules (block/notify)
+  // for this turn. Fail-open inside; a broken rules JSON registers nothing.
+  await applyOwnerHookRules()
   // Which call voice Boss asked for — resolved from his OWN words and handed to the
   // call tool through server context (server wins over model args). Scans the last 3
   // messages because the call flow is routinely split ("ElevenLabs ভয়েসে…" → number).
