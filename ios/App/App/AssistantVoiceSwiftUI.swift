@@ -184,6 +184,7 @@ final class AlmaVoiceEngine {
     private var liveConnectAttempt = 0
     private var connectionGeneration = 0
     private var hasEverConnected = false
+    private var liveToolTurnPending = false
 
     /// Never advertise realtime until the Gemini socket has actually completed its
     /// setup handshake. AI Call does not silently downgrade to normal STT/TTS: a
@@ -463,6 +464,7 @@ final class AlmaVoiceEngine {
         callStartedAt = nil
         isMuted = false
         speakerOn = true
+        liveToolTurnPending = false
         state = .idle
         Task { await chatVM?.loadMessages() }   // the voice turn lands in the thread
     }
@@ -1080,6 +1082,7 @@ final class AlmaVoiceEngine {
         connectionFailureText = ""
         errorToast = nil
         hasEverConnected = true
+        liveToolTurnPending = false
         liveConnectAttempt = 0
         if callStartedAt == nil { callStartedAt = Date() }
         live.setInputMuted(isMuted)
@@ -1110,12 +1113,13 @@ final class AlmaVoiceEngine {
     func livePlaybackChanged(active: Bool, level: Double) {
         ttsLevel = level
         if active { state = .speaking }
-        else if liveActive { state = .listening }
+        else if liveActive { state = liveToolTurnPending ? .thinking : .listening }
     }
 
     func liveWasInterrupted() {
         ttsLevel = 0
         nowLine = ""
+        liveToolTurnPending = false
         state = .listening
     }
 
@@ -1138,6 +1142,7 @@ final class AlmaVoiceEngine {
         lastUserText = clean
         replyText = ""
         cards.removeAll { $0.kind == .tool }
+        liveToolTurnPending = true
         state = .thinking
         let body = VoiceChatBody(conversationId: chatVM?.conversationId,
                                  message: clean,
@@ -1163,10 +1168,13 @@ final class AlmaVoiceEngine {
                     callId: callId,
                     result: result.isEmpty ? "Head agent কোনো কথ্য উত্তর দেয়নি। স্ক্রিনের approval বা প্রশ্নের card দেখুন।" : result
                 )
+                self.liveToolTurnPending = false
             } catch is CancellationError {
                 self.live.sendToolResponse(callId: callId, result: "আগের অনুরোধটি বাতিল হয়েছে।")
+                self.liveToolTurnPending = false
             } catch {
                 self.live.sendToolResponse(callId: callId, result: "Head agent-এর সাথে সাময়িক সংযোগ সমস্যা হয়েছে। Boss-কে আবার বলতে বলুন।")
+                self.liveToolTurnPending = false
             }
         }
     }
@@ -1368,6 +1376,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var estimatedPlaybackEnd = Date.distantPast
     private var playbackGeneration = 0
     private var modelAudioTurnOpen = false
+    private var modelGenerationCompleteReceived = false
     private var modelTurnCompleteReceived = false
     private var playbackStarted = false
 
@@ -1718,7 +1727,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             }
         }
         if content["generationComplete"] as? Bool == true {
-            forceStartBufferedPlayback()
+            completeModelGeneration()
         }
         if content["turnComplete"] as? Bool == true {
             outputTranscript = ""
@@ -1753,6 +1762,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         if !modelAudioTurnOpen {
             modelAudioTurnOpen = true
+            modelGenerationCompleteReceived = false
             modelTurnCompleteReceived = false
             playbackStarted = false
             bufferedPlaybackDuration = 0
@@ -1826,14 +1836,6 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         armPlaybackDrainFallback(generation: generation, deadline: deadline)
     }
 
-    private func forceStartBufferedPlayback() {
-        audioLock.lock()
-        let generation = playbackGeneration
-        let needsStart = modelAudioTurnOpen && !playbackStarted && !pendingPlaybackBuffers.isEmpty
-        audioLock.unlock()
-        if needsStart { startBufferedPlayback(generation: generation, force: true) }
-    }
-
     private func playbackBufferFinished(id: Int, generation: Int) {
         audioLock.lock()
         guard playbackGeneration == generation else {
@@ -1841,7 +1843,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             return
         }
         pendingPlaybackBuffers.remove(id)
-        let shouldFinish = modelAudioTurnOpen && modelTurnCompleteReceived
+        let shouldFinish = modelAudioTurnOpen
+            && (modelGenerationCompleteReceived || modelTurnCompleteReceived)
             && pendingPlaybackBuffers.isEmpty
         audioLock.unlock()
         if shouldFinish { finishModelPlayback(generation: generation) }
@@ -1862,10 +1865,22 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 return
             }
             self.pendingPlaybackBuffers.removeAll(keepingCapacity: true)
-            let shouldFinish = self.modelAudioTurnOpen && self.modelTurnCompleteReceived
+            let shouldFinish = self.modelAudioTurnOpen
+                && (self.modelGenerationCompleteReceived || self.modelTurnCompleteReceived)
             self.audioLock.unlock()
             if shouldFinish { self.finishModelPlayback(generation: generation) }
         }
+    }
+
+    private func completeModelGeneration() {
+        audioLock.lock()
+        modelGenerationCompleteReceived = true
+        let generation = playbackGeneration
+        let needsStart = modelAudioTurnOpen && !playbackStarted && !pendingPlaybackBuffers.isEmpty
+        let shouldFinish = modelAudioTurnOpen && pendingPlaybackBuffers.isEmpty
+        audioLock.unlock()
+        if needsStart { startBufferedPlayback(generation: generation, force: true) }
+        if shouldFinish { finishModelPlayback(generation: generation) }
     }
 
     private func completeModelTurn() {
@@ -1873,6 +1888,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         bargeInPending = false
         bargeSpeechFrames = 0
         micPreRoll.removeAll(keepingCapacity: true)
+        modelGenerationCompleteReceived = true
         modelTurnCompleteReceived = true
         let generation = playbackGeneration
         let needsStart = modelAudioTurnOpen && !playbackStarted && !pendingPlaybackBuffers.isEmpty
@@ -1885,11 +1901,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private func finishModelPlayback(generation: Int) {
         audioLock.lock()
         guard playbackGeneration == generation, modelAudioTurnOpen,
-              modelTurnCompleteReceived, pendingPlaybackBuffers.isEmpty else {
+              (modelGenerationCompleteReceived || modelTurnCompleteReceived),
+              pendingPlaybackBuffers.isEmpty else {
             audioLock.unlock()
             return
         }
         modelAudioTurnOpen = false
+        modelGenerationCompleteReceived = false
+        modelTurnCompleteReceived = false
         playbackStarted = false
         bufferedPlaybackDuration = 0
         estimatedPlaybackEnd = .distantPast
@@ -1918,6 +1937,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let wasActive = modelAudioTurnOpen || playbackStarted || !pendingPlaybackBuffers.isEmpty
         pendingPlaybackBuffers.removeAll(keepingCapacity: true)
         modelAudioTurnOpen = false
+        modelGenerationCompleteReceived = false
         modelTurnCompleteReceived = false
         playbackStarted = false
         bufferedPlaybackDuration = 0
@@ -2036,6 +2056,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         estimatedPlaybackEnd = .distantPast
         playbackGeneration += 1
         modelAudioTurnOpen = false
+        modelGenerationCompleteReceived = false
         modelTurnCompleteReceived = false
         playbackStarted = false
         bargeInPending = false
