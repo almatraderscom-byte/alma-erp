@@ -638,6 +638,26 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
 }
 
 export function buildVerificationReminder(violations: ClaimViolation[]): string {
+  const categories = new Set(violations.map((v) => v.category))
+
+  // Formatting/output-contract rewrites are not failed business actions. The
+  // generic reminder below tells the model to call a tool when an action is
+  // missing; weak heads followed that sentence and repeatedly tried ask_user or
+  // delegation for a copy-only request. Keep this correction path explicitly
+  // text-only so the rejected draft is replaced by one clean final answer.
+  if (categories.size === 1 && categories.has('instruction_mismatch')) {
+    const lines: string[] = ['[OUTPUT CONTRACT FAILED — TEXT-ONLY REWRITE]', '']
+    for (const v of violations) lines.push(`- ${v.matchedSnippet}`)
+    lines.push('')
+    lines.push(CATEGORY_GUIDANCE.instruction_mismatch)
+    lines.push('')
+    lines.push(
+      'এটি action failure নয়। কোনো tool call, ask_user, delegation, approval, option বা next-step প্রশ্ন করবেন না। ' +
+      'আগের draft সম্পূর্ণ replace করে এখন শুধু corrected final reply দিন।',
+    )
+    return lines.join('\n')
+  }
+
   const lines: string[] = ['[VERIFICATION FAILED — সিস্টেম চেক]', '']
   lines.push('আপনার শেষ উত্তরে নিম্নলিখিত দাবি ধরা পড়েছে যা corresponding tool ছাড়াই বলা হয়েছে:')
   for (const v of violations) {
@@ -655,7 +675,6 @@ export function buildVerificationReminder(violations: ClaimViolation[]): string 
   lines.push('   (খ) যদি action আগে থেকেই হয়ে আছে (button click/auto-mark) → relevant verify tool call করে confirm করুন এবং সততা সঙ্গে "ইতিমধ্যে হয়ে আছে" বলুন।')
   lines.push('   (গ) যদি action সম্ভব না বা ভুল ছিল → সততা সঙ্গে স্বীকার করুন: "করতে পারিনি/ভুল বলেছি"।')
   lines.push('')
-  const categories = new Set(violations.map((v) => v.category))
   for (const cat of categories) {
     lines.push(`[${cat}] ${CATEGORY_GUIDANCE[cat]}`)
   }

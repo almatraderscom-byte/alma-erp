@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   detectClaimViolations,
   detectExplicitInstructionViolations,
+  buildVerificationReminder,
   detectLedgerViolations,
   detectProseChoiceViolation,
   verifyClaimsAgainstLedger,
@@ -61,6 +62,20 @@ describe('detectExplicitInstructionViolations', () => {
       'Family matching carousel-এর জন্য detailed primary text এখানেই লিখে দাও; কোথাও paste বা post কোরো না।',
     )
     expect(violations.map((violation) => violation.ruleId)).toContain('copy_only_post_work_question')
+  })
+})
+
+describe('buildVerificationReminder — output contracts stay text-only', () => {
+  it('does not send a copy-only rewrite through the generic action/tool branch', () => {
+    const reminder = buildVerificationReminder([{
+      category: 'instruction_mismatch',
+      ruleId: 'copy_only_missing_deliverable',
+      matchedSnippet: '(ready-to-use copy block অনুপস্থিত)',
+      requiredTools: [],
+    }])
+    expect(reminder).toContain('OUTPUT CONTRACT FAILED — TEXT-ONLY REWRITE')
+    expect(reminder).toContain('কোনো tool call, ask_user, delegation, approval')
+    expect(reminder).not.toContain('যদি action আসলেই দরকার')
   })
 })
 
