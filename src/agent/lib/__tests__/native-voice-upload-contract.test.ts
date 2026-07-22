@@ -19,13 +19,34 @@ describe('native voice upload contract', () => {
     expect(route).not.toContain("formData.get('file')")
   })
 
-  it('never labels the native console LIVE before the realtime socket is connected', () => {
+  it('shows truthful AI Call connection states without silently downgrading', () => {
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
 
-    expect(voice).toContain('if liveActive { return "রিয়েলটাইম" }')
-    expect(voice).toContain('if sessionReady { return "সাধারণ ভয়েস" }')
-    expect(voice).toContain('return "সংযোগ হচ্ছে…"')
+    expect(voice).toContain('case .live: return "রিয়েলটাইম"')
+    expect(voice).toContain('case .reconnecting: return "পুনঃসংযোগ"')
+    expect(voice).toContain('case .failed: return "সংযোগ হয়নি"')
+    expect(voice).toContain('func retryLiveConnection()')
+    expect(voice).not.toContain('startLegacySession()')
+    expect(voice).not.toContain('সাধারণ ভয়েস চালু হয়েছে')
+    expect(voice).not.toContain('নিরাপদ voice mode চালু হয়েছে')
     expect(voice).not.toContain('Text("LIVE")')
+  })
+
+  it('presents the native voice surface as a persistent hands-free AI call', () => {
+    const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
+    const assistant = readFileSync(join(ROOT, 'ios/App/App/AssistantSwiftUI.swift'), 'utf8')
+
+    expect(voice).toContain('Text("ALMA AI Call")')
+    expect(voice).toContain('"mic.slash.fill"')
+    expect(voice).toContain('"speaker.wave.2.fill"')
+    expect(voice).toContain('"message.fill"')
+    expect(voice).toContain('"phone.down.fill"')
+    expect(voice).toContain('func setInputMuted(_ muted: Bool)')
+    expect(voice).toContain('func setSpeakerEnabled(_ enabled: Bool) throws')
+    expect(voice).toContain('struct AlmaVoiceCallMiniBar: View')
+    expect(assistant).toContain('let voiceEngine = AlmaVoiceEngine()')
+    expect(assistant).toContain('AlmaVoiceCallMiniBar(')
+    expect(voice).toContain('স্বাভাবিকভাবে বলুন—ট্যাপ করার প্রয়োজন নেই')
   })
 
   it('allows only the one-time same-resource Vercel preview redirect in debug builds', () => {
