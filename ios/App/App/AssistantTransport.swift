@@ -388,7 +388,11 @@ enum AssistantNet {
         req.httpBody = try JSONEncoder().encode(body)
         let (data, resp) = try await streamSession.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw AlmaAPIError.http(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: "tts")
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            #if DEBUG
+            NSLog("ALMA-NET JSON %@ failed status=%d", path, status)
+            #endif
+            throw AlmaAPIError.http(status: status, body: "json_request_failed")
         }
         return data
     }
@@ -522,6 +526,22 @@ final class AssistantRedirectBlocker: NSObject, URLSessionTaskDelegate {
                     willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {
+        #if DEBUG
+        // Vercel's temporary preview-access URL performs one same-resource 307
+        // solely to set its short-lived cookie and remove `_vercel_share`. Allow
+        // that exact debug-preview hop; auth redirects to /login and every
+        // cross-host/path redirect remain blocked below.
+        if response.statusCode == 307,
+           let original = task.originalRequest?.url,
+           let redirect = request.url,
+           original.host == redirect.host,
+           original.path == redirect.path,
+           URLComponents(url: original, resolvingAgainstBaseURL: false)?
+            .queryItems?.contains(where: { $0.name == "_vercel_share" }) == true {
+            completionHandler(request)
+            return
+        }
+        #endif
         completionHandler(nil)
     }
 }

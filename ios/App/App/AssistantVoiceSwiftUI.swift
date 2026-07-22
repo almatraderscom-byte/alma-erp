@@ -68,6 +68,14 @@ enum AlmaVoiceState: String {
     var tint: Color { Color(hue: hue / 360.0, saturation: 0.75, brightness: 0.95) }
 }
 
+/// The user-visible lifecycle of the in-app AI call. This is intentionally
+/// separate from `AlmaVoiceState`: a call can be connected while the model is
+/// listening, thinking, or speaking, and the UI must never confuse those two
+/// kinds of state.
+enum AlmaCallConnectionState: Equatable {
+    case idle, connecting, live, reconnecting, failed
+}
+
 // MARK: - Voice engine (recorder + VAD + TTS chunk player + turn runner)
 
 @available(iOS 17.0, *)
@@ -106,7 +114,8 @@ final class AlmaVoiceEngine {
     /// greeting / narration can never trip the wake recogniser. Any non-idle state (or
     /// live TTS) stops it, so it never fights the STT mic.
     private func refreshWake() {
-        let on = state == .idle && !ttsActive && !closed && !startingListen
+        let on = state == .idle && !ttsActive && !closed && !startingListen && !liveActive
+            && sessionReady && callConnection == .idle
         if on { wake.start() } else { wake.stop() }
         tr(on ? "wake→ON" : "wake→off")
     }
@@ -130,6 +139,11 @@ final class AlmaVoiceEngine {
     var micLevel: Double = 0         // 0…1 for the orb/ring
     var ttsLevel: Double = 0
     var errorToast: String?
+    var callConnection: AlmaCallConnectionState = .idle
+    var connectionFailureText = ""
+    var isMuted = false
+    var speakerOn = true
+    private(set) var callStartedAt: Date?
 
     struct Card: Identifiable, Equatable {
         enum Kind { case tool, approval, ask, modelSwitch }
@@ -165,6 +179,45 @@ final class AlmaVoiceEngine {
     private var sessionReady = false
     private var closed = false
     private var streamingActive = false      // a live-STT listen is in flight
+    private(set) var liveActive = false       // persistent Gemini Live full-duplex session
+    private var liveConnectTask: Task<Void, Never>?
+    private var liveConnectAttempt = 0
+    private var connectionGeneration = 0
+    private var hasEverConnected = false
+    private var liveToolTurnPending = false
+
+    /// Never advertise realtime until the Gemini socket has actually completed its
+    /// setup handshake. AI Call does not silently downgrade to normal STT/TTS: a
+    /// failure is shown honestly, retried, and then left recoverable via one button.
+    var transportBadgeText: String {
+        switch callConnection {
+        case .idle, .connecting: return "সংযোগ হচ্ছে"
+        case .live: return "রিয়েলটাইম"
+        case .reconnecting: return "পুনঃসংযোগ"
+        case .failed: return "সংযোগ হয়নি"
+        }
+    }
+
+    var transportReady: Bool { callConnection == .live }
+    var isCallRunning: Bool { callConnection != .idle }
+
+    var visibleStatusText: String {
+        switch callConnection {
+        case .idle, .connecting: return "নিরাপদ লাইভ সংযোগ তৈরি হচ্ছে…"
+        case .reconnecting: return "সংযোগ ফিরিয়ে আনা হচ্ছে…"
+        case .failed: return "কলটি সংযুক্ত হয়নি"
+        case .live:
+            if isMuted { return "মাইক্রোফোন বন্ধ" }
+            if state == .idle { return "শুনছি…" }
+            return state.statusText
+        }
+    }
+
+    func callElapsedText(at now: Date) -> String {
+        guard let callStartedAt else { return "00:00" }
+        let seconds = max(0, Int(now.timeIntervalSince(callStartedAt)))
+        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
     // MIC GATE (half-duplex): true from the moment ANY TTS chunk starts until the
     // queue goes fully silent. While true, NO mic opens — not the STT listen, not
     // auto-listen, not the wake word. This is the guard that stops the agent from
@@ -174,6 +227,7 @@ final class AlmaVoiceEngine {
 
     private let tts = AlmaTtsQueue()
     private let streamer = AlmaStreamingSTT()
+    private let live = AlmaGeminiLiveSession()
     let wake = AlmaWakeWord()
     // Dynamic Island / Lock Screen Live Activity (docs/alma-live-activity-PLAN.md)
     private let liveActivity = VoiceLiveActivityController()
@@ -217,7 +271,17 @@ final class AlmaVoiceEngine {
     /// Prewarm on console open: audio session active + mic permission + ack cache +
     /// time-of-day greeting. This is what kills the web's 2–5s first-tap latency.
     func begin() {
+        // Re-opening a minimized call must only reveal its existing engine. Starting
+        // a second socket here would duplicate audio and lose the live context.
+        guard callConnection == .idle else { return }
         closed = false
+        callConnection = .connecting
+        connectionFailureText = ""
+        liveConnectAttempt = 0
+        hasEverConnected = false
+        callStartedAt = nil
+        isMuted = false
+        speakerOn = true
         tts.engine = self
         // Island up for the whole session; the island's End button posts
         // almaVoiceEndRequested (AlmaVoiceEndIntent runs in this process).
@@ -251,40 +315,133 @@ final class AlmaVoiceEngine {
             DispatchQueue.main.async {
                 guard let self else { return }
                 guard granted else {
-                    self.errorToast = "মাইক্রোফোনের অনুমতি দিন — Settings থেকে Allow করুন।"
+                    self.connectionFailureText = "মাইক্রোফোনের অনুমতি নেই। Settings থেকে Microphone চালু করুন।"
+                    self.errorToast = self.connectionFailureText
+                    self.callConnection = .failed
                     self.state = .error
                     return
                 }
-                do {
-                    let s = AVAudioSession.sharedInstance()
-                    // .default mode (NOT .voiceChat): voiceChat routes TTS to the
-                    // quiet earpiece AND enables Voice-Processing I/O, which fights
-                    // the AVAudioEngine mic tap (owner hit both live on device: near-
-                    // silent replies + crashes). .default + defaultToSpeaker + a forced
-                    // speaker route = loud playback and a plain, stable input tap.
-                    try s.setCategory(.playAndRecord, mode: .default,
-                                      options: [.defaultToSpeaker, .allowBluetoothA2DP])
-                    try s.setActive(true)
-                    try? s.overrideOutputAudioPort(.speaker)
-                    self.sessionReady = true
-                } catch {
-                    self.errorToast = "অডিও চালু করা গেল না"
-                }
-                Task { await self.prefetchAcks() }
                 self.wake.engine = self
-                self.refreshWake()
-                // Greeting, exactly like the web (500ms after open).
-                Task {
-                    try? await Task.sleep(nanoseconds: 500_000_000)
-                    guard !self.closed else { return }
-                    self.tts.sayNow(self.greeting())
-                }
+                self.live.engine = self
+                self.startLiveConnection(resetAttempts: true)
             }
+        }
+    }
+
+    /// Three bounded attempts cover transient radio / preview hand-off failures.
+    /// Authentication errors stop immediately because retrying cannot repair them.
+    private func startLiveConnection(resetAttempts: Bool) {
+        guard !closed else { return }
+        if resetAttempts { liveConnectAttempt = 0 }
+        liveConnectTask?.cancel()
+        connectionGeneration += 1
+        let generation = connectionGeneration
+        live.stop()
+        liveActive = false
+        sessionReady = false
+        micLevel = 0
+        ttsLevel = 0
+        state = .idle
+        callConnection = hasEverConnected || liveConnectAttempt > 0 ? .reconnecting : .connecting
+        live.setInputMuted(isMuted)
+        try? live.setSpeakerEnabled(speakerOn)
+
+        liveConnectTask = Task { [weak self] in
+            guard let self else { return }
+            if self.liveConnectAttempt > 0 {
+                let delay = UInt64(self.liveConnectAttempt) * 1_000_000_000
+                try? await Task.sleep(nanoseconds: delay)
+                guard !Task.isCancelled else { return }
+            }
+            do {
+                try await self.live.start()
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.liveConnectionFailed(error: error, message: nil, generation: generation)
+                return
+            }
+
+            // `start()` mints the session and opens the socket; setup completion is
+            // delivered by delegate callback. Never spin forever on a half-open socket.
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard !Task.isCancelled, !self.closed, generation == self.connectionGeneration,
+                  !self.liveActive else { return }
+            self.live.stop()
+            self.liveConnectionFailed(
+                error: nil,
+                message: "লাইভ সংযোগের সময় শেষ হয়েছে।",
+                generation: generation
+            )
+        }
+    }
+
+    private func liveConnectionFailed(error: Error?, message: String?, generation: Int? = nil) {
+        guard !closed, generation == nil || generation == connectionGeneration else { return }
+        liveConnectTask?.cancel()
+        liveConnectTask = nil
+        liveActive = false
+        sessionReady = false
+        micLevel = 0
+        ttsLevel = 0
+
+        let isAuthenticationFailure: Bool = {
+            guard let apiError = error as? AlmaAPIError else { return false }
+            if case .notAuthenticated = apiError { return true }
+            if case .http(let status, _) = apiError, status == 401 || status == 403 { return true }
+            return false
+        }()
+        if isAuthenticationFailure {
+            connectionFailureText = "সেশন শেষ হয়েছে। অ্যাপে আবার লগইন করে কল চালু করুন।"
+            errorToast = connectionFailureText
+            callConnection = .failed
+            state = .error
+            return
+        }
+
+        if liveConnectAttempt < 2 {
+            liveConnectAttempt += 1
+            callConnection = .reconnecting
+            startLiveConnection(resetAttempts: false)
+            return
+        }
+
+        connectionFailureText = message ?? "লাইভ ভয়েস সংযোগ পাওয়া যাচ্ছে না। ইন্টারনেট দেখে আবার চেষ্টা করুন।"
+        errorToast = connectionFailureText
+        callConnection = .failed
+        state = .error
+    }
+
+    func retryLiveConnection() {
+        guard callConnection == .failed else { return }
+        connectionFailureText = ""
+        errorToast = nil
+        startLiveConnection(resetAttempts: true)
+    }
+
+    func toggleMute() {
+        guard callConnection == .live else { return }
+        isMuted.toggle()
+        live.setInputMuted(isMuted)
+        if isMuted { micLevel = 0 }
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    func toggleSpeaker() {
+        guard callConnection == .live else { return }
+        let requested = !speakerOn
+        do {
+            try live.setSpeakerEnabled(requested)
+            speakerOn = requested
+            UISelectionFeedbackGenerator().selectionChanged()
+        } catch {
+            errorToast = "অডিও আউটপুট বদলানো গেল না।"
         }
     }
 
     func end() {
         closed = true
+        liveConnectTask?.cancel(); liveConnectTask = nil
+        connectionGeneration += 1
         keepAliveStop()
         for ob in recoveryObservers { NotificationCenter.default.removeObserver(ob) }
         recoveryObservers = []
@@ -299,7 +456,15 @@ final class AlmaVoiceEngine {
         heartbeatTask?.cancel(); heartbeatTask = nil
         recorder?.stop(); recorder = nil
         streamer.cancel(); streamingActive = false
+        live.stop(); liveActive = false
         tts.stopAll()
+        sessionReady = false
+        callConnection = .idle
+        connectionFailureText = ""
+        callStartedAt = nil
+        isMuted = false
+        speakerOn = true
+        liveToolTurnPending = false
         state = .idle
         Task { await chatVM?.loadMessages() }   // the voice turn lands in the thread
     }
@@ -343,18 +508,14 @@ final class AlmaVoiceEngine {
     /// clear stuck half-state, so the console NEVER needs an app kill again.
     private func recoverAudio(_ why: String) {
         guard !closed else { return }
-        let s = AVAudioSession.sharedInstance()
-        try? s.setCategory(.playAndRecord, mode: .default,
-                           options: [.defaultToSpeaker, .allowBluetoothA2DP])
-        try? s.setActive(true)
-        try? s.overrideOutputAudioPort(.speaker)
-        sessionReady = true
-        startingListen = false
-        if ttsActive && !tts.isAudiblyPlaying { ttsActive = false; ttsLevel = 0 }
-        if state == .listening && recorder == nil && !streamingActive { state = .idle }
-        if state == .speaking && !tts.isAudiblyPlaying { state = .idle }
-        refreshWake()
-        tr("recoverAudio(\(why))")
+        if liveActive {
+            live.recoverAudio()
+            tr("recoverAudio live(\(why))")
+            return
+        }
+        // During connect/failure there is no legacy mode to revive. The bounded
+        // Live reconnect loop (or the Retry button) owns recovery truthfully.
+        tr("recoverAudio skipped(\(why))")
     }
 
     private func handleInterruption(_ note: Notification) {
@@ -373,6 +534,10 @@ final class AlmaVoiceEngine {
     /// bringing the app forward; the intent runs in this process in background.
     private func islandListen() {
         guard !closed else { return }
+        if liveActive {
+            if state == .speaking { live.interruptPlayback() }
+            return
+        }
         recoverAudio("islandListen")
         switch state {
         case .speaking: tts.stopAll(); startListening()
@@ -386,12 +551,12 @@ final class AlmaVoiceEngine {
         cal.timeZone = TimeZone(identifier: "Asia/Dhaka") ?? .current
         let h = cal.component(.hour, from: Date())
         let word = h >= 5 && h < 12 ? "সুপ্রভাত" : h < 17 ? "শুভ দুপুর" : h < 21 ? "শুভ সন্ধ্যা" : "শুভ রাত্রি"
-        return "\(word) বস — বলুন, কী করতে হবে।"
+        return "\(word) Boss — বলুন, কী করতে হবে।"
     }
 
     /// Pre-synthesize the rotating acknowledgements ("জি বস।"…) for instant playback.
     private func prefetchAcks() async {
-        let acks = ["জি বস।", "আচ্ছা বস, দেখছি।", "ঠিক আছে বস।", "জি, এক্ষুনি দেখছি।"]
+        let acks = ["জি Boss।", "আচ্ছা Boss, দেখছি।", "ঠিক আছে Boss।", "জি Boss, এক্ষুনি দেখছি।"]
         for a in acks.shuffled().prefix(2) {
             if let d = try? await AssistantNet.postJSONForData(path: "/api/assistant/tts", body: ["text": a]) {
                 ackData.append(d)
@@ -462,6 +627,10 @@ final class AlmaVoiceEngine {
     /// Suggestion chips (design dock): run a normal voice turn from a canned prompt.
     func runChip(_ text: String) {
         guard state == .idle || state == .error else { return }
+        if liveActive {
+            live.sendTextTurn(text)
+            return
+        }
         tts.stopAll()
         transcript = text
         runTurn(text)
@@ -471,6 +640,10 @@ final class AlmaVoiceEngine {
 
     func tapOrb() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        if liveActive {
+            if state == .speaking { live.interruptPlayback() }
+            return
+        }
         switch state {
         case .listening:
             if streamingActive { streamer.finishNow() }   // commit the utterance
@@ -590,7 +763,7 @@ final class AlmaVoiceEngine {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else {
             state = .idle
-            errorToast = "শুনতে পাইনি বস — আরেকবার বলুন।"
+            errorToast = "শুনতে পাইনি Boss — আরেকবার বলুন।"
             scheduleAutoListen()
             return
         }
@@ -604,7 +777,7 @@ final class AlmaVoiceEngine {
         // owner can't read a toast), then keep the conversation loop alive.
         state = .idle
         errorToast = msg
-        tts.sayNow("শুনতে পাইনি বস — আরেকবার বলুন।")
+        tts.sayNow("শুনতে পাইনি Boss — আরেকবার বলুন।")
         scheduleAutoListen()
     }
 
@@ -621,13 +794,13 @@ final class AlmaVoiceEngine {
             guard let self else { return }
             do {
                 let data = try await AssistantNet.uploadMultipart(
-                    path: "/api/assistant/transcribe", fileField: "file",
+                    path: "/api/assistant/transcribe", fileField: "audio",
                     filename: "voice.wav", mime: "audio/wav", data: wav)
                 let t = try JSONDecoder().decode(TranscribeResponse.self, from: data)
                 let text = (t.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else {
                     self.state = .idle
-                    self.errorToast = "শুনতে পাইনি বস — আরেকবার বলুন।"
+                    self.errorToast = "শুনতে পাইনি Boss — আরেকবার বলুন।"
                     self.scheduleAutoListen()
                     return
                 }
@@ -741,13 +914,13 @@ final class AlmaVoiceEngine {
             }
             do {
                 let data = try await AssistantNet.uploadMultipart(
-                    path: "/api/assistant/transcribe", fileField: "file",
+                    path: "/api/assistant/transcribe", fileField: "audio",
                     filename: "voice.m4a", mime: "audio/mp4", data: audio)
                 let t = try JSONDecoder().decode(TranscribeResponse.self, from: data)
                 let text = (t.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else {
                     self.state = .idle
-                    self.errorToast = "শুনতে পাইনি বস — আরেকবার বলুন।"
+                    self.errorToast = "শুনতে পাইনি Boss — আরেকবার বলুন।"
                     self.scheduleAutoListen()
                     return
                 }
@@ -758,8 +931,8 @@ final class AlmaVoiceEngine {
                 // error orb — recover to idle and (in convo mode) re-listen so the
                 // owner just speaks again. Speak the retry so a hands-free owner hears it.
                 self.state = .idle
-                self.errorToast = "একটু গোলমাল হলো বস — আরেকবার বলুন।"
-                self.tts.sayNow("শুনতে একটু সমস্যা হলো বস, আরেকবার বলুন।")
+                self.errorToast = "একটু গোলমাল হলো Boss — আরেকবার বলুন।"
+                self.tts.sayNow("শুনতে একটু সমস্যা হলো Boss, আরেকবার বলুন।")
                 self.scheduleAutoListen()
             }
         }
@@ -819,21 +992,21 @@ final class AlmaVoiceEngine {
                 self.tts.finishFeed()
             } catch is CancellationError {
             } catch {
-                self.tts.sayNow("দুঃখিত বস, একটা সমস্যা হয়েছে — একটু পরে আরেকবার বলুন।")
+                self.tts.sayNow("দুঃখিত Boss, একটা সমস্যা হয়েছে — একটু পরে আরেকবার বলুন।")
                 self.errorToast = "উত্তর পেতে ব্যর্থ"
                 self.tts.finishFeed()
             }
         }
     }
 
-    private func handle(_ ev: AgentSSEEvent) {
+    private func handle(_ ev: AgentSSEEvent, speak: Bool = true) {
         lastEventAt = Date()   // stall watchdog: any event keeps the turn alive
         switch ev.type {
         case "conversation_id":
             if let id = ev.id { chatVM?.conversationId = id }
         case "text_delta":
             replyText += ev.delta ?? ""
-            tts.feed(ev.delta ?? "")
+            if speak { tts.feed(ev.delta ?? "") }
         case "tool_start":
             // Humanise the raw tool id for the step chip (get_pending_approvals →
             // "Get Pending Approvals") — never show snake_case to the owner.
@@ -848,7 +1021,7 @@ final class AlmaVoiceEngine {
             if !narratedFirstTool {
                 narratedFirstTool = true
                 lastToolNarration = Date()
-                tts.sayNow("একটু দেখে নিচ্ছি, বস…")
+                if speak { tts.sayNow("একটু দেখে নিচ্ছি, Boss…") }
             }
         case "tool_end":
             if let i = cards.firstIndex(where: { $0.id == ev.id }) {
@@ -861,15 +1034,17 @@ final class AlmaVoiceEngine {
                 let opts = ev.options ?? []
                 cards.append(.init(id: aid, kind: .ask, icon: "❓", title: q, sub: "",
                                    status: "wait", options: opts, askCardId: aid))
-                tts.sayNow(q)
-                if !opts.isEmpty { tts.sayNow("\(opts.joined(separator: ", নাকি ")) — কোনটা, বস?") }
+                if speak {
+                    tts.sayNow(q)
+                    if !opts.isEmpty { tts.sayNow("\(opts.joined(separator: ", নাকি ")) — কোনটা, Boss?") }
+                }
             }
         case "confirm_card":
             if let pid = ev.pendingActionId {
                 cards.append(.init(id: pid, kind: .approval, icon: "🛡️",
                                    title: "আপনার অনুমোদন দরকার",
                                    sub: ev.summary ?? "", status: "wait", pendingActionId: pid))
-                tts.sayNow("বস, একটা অনুমোদন দরকার — \(String((ev.summary ?? "").prefix(120)))")
+                if speak { tts.sayNow("Boss, একটা অনুমোদন দরকার — \(String((ev.summary ?? "").prefix(120)))") }
             }
         case "verification_retry":
             // The head is self-correcting — in voice this reads as a hang unless
@@ -877,7 +1052,7 @@ final class AlmaVoiceEngine {
             if !verificationSaid {
                 verificationSaid = true
                 lastAudioAt = Date()
-                tts.sayNow("একটু যাচাই করে ঠিক করে নিচ্ছি, বস…")
+                if speak { tts.sayNow("একটু যাচাই করে ঠিক করে নিচ্ছি, Boss…") }
             }
         case "model_switch_required":
             // A premium head needs the owner's OK. Spoken + a tappable card;
@@ -886,13 +1061,121 @@ final class AlmaVoiceEngine {
                                icon: "🧠", title: "শক্তিশালী মডেলের অনুমতি দরকার",
                                sub: "", status: "wait"))
             lastAudioAt = Date()
-            tts.sayNow("এটার জন্য আরও শক্তিশালী মডেল দরকার, বস — অনুমতি দিলে এগিয়ে যাই।")
+            if speak { tts.sayNow("এটার জন্য আরও শক্তিশালী মডেল দরকার, Boss — অনুমতি দিলে এগিয়ে যাই।") }
         case "done":
             break
         case "error":
-            tts.sayNow("দুঃখিত বস, একটা সমস্যা হয়েছে — একটু পরে আরেকবার বলুন।")
+            if speak { tts.sayNow("দুঃখিত Boss, একটা সমস্যা হয়েছে — একটু পরে আরেকবার বলুন।") }
         default:
             break
+        }
+    }
+
+    // ── Persistent Gemini Live callbacks + existing head-agent bridge ─────
+
+    func liveDidConnect() {
+        liveConnectTask?.cancel()
+        liveConnectTask = nil
+        liveActive = true
+        sessionReady = true
+        callConnection = .live
+        connectionFailureText = ""
+        errorToast = nil
+        hasEverConnected = true
+        liveToolTurnPending = false
+        liveConnectAttempt = 0
+        if callStartedAt == nil { callStartedAt = Date() }
+        live.setInputMuted(isMuted)
+        try? live.setSpeakerEnabled(speakerOn)
+        wake.stop()
+        state = .listening
+        keepAliveStart()
+    }
+
+    func liveWillReconnect() {
+        guard !closed else { return }
+        liveActive = false
+        sessionReady = false
+        callConnection = .reconnecting
+        state = .idle
+    }
+
+    func liveInputTranscript(_ text: String) {
+        transcript = text
+        if state != .speaking { state = .listening }
+    }
+
+    func liveOutputTranscript(_ text: String) {
+        replyText = text
+        nowLine = text
+    }
+
+    func livePlaybackChanged(active: Bool, level: Double) {
+        ttsLevel = level
+        if active { state = .speaking }
+        else if liveActive { state = liveToolTurnPending ? .thinking : .listening }
+    }
+
+    func liveWasInterrupted() {
+        ttsLevel = 0
+        nowLine = ""
+        liveToolTurnPending = false
+        state = .listening
+    }
+
+    func liveDidFail(_ message: String) {
+        guard !closed else { return }
+        liveConnectionFailed(error: nil, message: message)
+    }
+
+    /// Gemini Live is the low-latency ears/voice only. Every meaningful owner turn
+    /// still crosses the existing head route, preserving memory, tools, approvals,
+    /// claim verification, and the durable call workflow.
+    func runLiveAgentTurn(request: String, callId: String) {
+        let clean = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else {
+            live.sendToolResponse(callId: callId, result: "Boss-এর বক্তব্য খালি ছিল; আবার বলতে অনুরোধ করুন।")
+            return
+        }
+        emptyListens = 0
+        transcript = clean
+        lastUserText = clean
+        replyText = ""
+        cards.removeAll { $0.kind == .tool }
+        liveToolTurnPending = true
+        state = .thinking
+        let body = VoiceChatBody(conversationId: chatVM?.conversationId,
+                                 message: clean,
+                                 modelId: chatVM?.modelId ?? "auto",
+                                 voice: true,
+                                 files: readyImageFiles,
+                                 resume: nil)
+        pendingImages.removeAll()
+        turnTask?.cancel()
+        turnTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                await AlmaAPI.shared.syncCookies()
+                var req = URLRequest(url: AssistantNet.base.appendingPathComponent("/api/assistant/chat"))
+                req.httpMethod = "POST"
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                req.httpBody = try JSONEncoder().encode(body)
+                try await AssistantNet.streamEvents(request: req) { [weak self] ev in
+                    self?.handle(ev, speak: false)
+                }
+                let result = self.replyText.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.live.sendToolResponse(
+                    callId: callId,
+                    result: result.isEmpty ? "Head agent কোনো কথ্য উত্তর দেয়নি। স্ক্রিনের approval বা প্রশ্নের card দেখুন।" : result
+                )
+                self.liveToolTurnPending = false
+            } catch is CancellationError {
+                self.live.sendToolResponse(callId: callId, result: "আগের অনুরোধটি বাতিল হয়েছে।")
+                self.liveToolTurnPending = false
+            } catch {
+                self.live.sendToolResponse(callId: callId, result: "Head agent-এর সাথে সাময়িক সংযোগ সমস্যা হয়েছে। Boss-কে আবার বলতে বলুন।")
+                self.liveToolTurnPending = false
+            }
         }
     }
 
@@ -911,14 +1194,14 @@ final class AlmaVoiceEngine {
                     self.turnTask?.cancel()
                     self.tts.stopAll()
                     self.state = .idle
-                    self.tts.sayNow("দুঃখিত বস, উত্তরটা আটকে গেল — আরেকবার বলুন।")
+                    self.tts.sayNow("দুঃখিত Boss, উত্তরটা আটকে গেল — আরেকবার বলুন।")
                     self.scheduleAutoListen()
                     continue
                 }
                 guard self.state == .thinking else { continue }
                 if Date().timeIntervalSince(self.lastAudioAt) > 14 {
                     self.lastAudioAt = Date()
-                    self.tts.sayNow("এখনো কাজ চলছে বস, একটু সময় দিন…")
+                    self.tts.sayNow("এখনো কাজ চলছে Boss, একটু সময় দিন…")
                 }
             }
         }
@@ -933,7 +1216,10 @@ final class AlmaVoiceEngine {
         }
         Task { [weak self] in
             await self?.chatVM?.approveAction(pid, approve: yes)
-            self?.tts.sayNow(yes ? "অনুমোদন করে দিয়েছি বস, কাজ এগোচ্ছে।" : "বাতিল করে দিয়েছি, বস।")
+            guard let self else { return }
+            let message = yes ? "অনুমোদন হয়েছে; কাজের আসল ফল এলে জানাব।" : "কাজটি বাতিল হয়েছে।"
+            if self.liveActive { self.live.sendTextTurn(message) }
+            else { self.tts.sayNow(yes ? "অনুমোদন করে দিয়েছি Boss, কাজ এগোচ্ছে।" : "বাতিল করে দিয়েছি Boss।") }
         }
     }
 
@@ -966,7 +1252,7 @@ final class AlmaVoiceEngine {
             tts.stopAll()
             runTurn(lastUserText, resume: true)
         } else {
-            tts.sayNow("আচ্ছা বস, তাহলে বাদ দিলাম।")
+            tts.sayNow("আচ্ছা Boss, তাহলে বাদ দিলাম।")
         }
     }
 
@@ -1039,6 +1325,770 @@ final class AlmaVoiceEngine {
     }
     private func playMicChime() { AudioServicesPlaySystemSound(1113) }   // begin-record
     private func playCloseChime() { AudioServicesPlaySystemSound(1114) } // end-record
+}
+
+// MARK: - Gemini Live full-duplex transport
+
+enum AlmaLiveVoiceError: Error { case badSession, badURL, noMic, noConverter, audioStart }
+
+/// One persistent websocket + one AVAudioEngine for BOTH capture and playback.
+/// VoiceProcessingIO is enabled on that single engine, so the owner can interrupt
+/// naturally without the old multi-engine crash/feedback-loop failure mode.
+@available(iOS 17.0, *)
+final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
+    weak var engine: AlmaVoiceEngine?
+
+    private struct SessionResponse: Decodable {
+        let token: String
+        let model: String
+        let voice: String
+        let expiresAt: String
+        let websocketUrl: String
+    }
+
+    private var session: URLSession?
+    private var ws: URLSessionWebSocketTask?
+    private let audioEngine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private var inputConverter: AVAudioConverter?
+    private var inputFormat: AVAudioFormat?
+    private var playbackFormat: AVAudioFormat?
+    private var tapInstalled = false
+    private var configured = false
+    private var stopped = false
+    private var socketReady = false
+    private var reconnecting = false
+    private var hasConnectedOnce = false
+    private var mintedSession: SessionResponse?
+    private var pendingResumptionHandle: String?
+    private var latestResumptionHandle: String?
+    private var outputTranscript = ""
+
+    // Gemini emits native audio as many tiny PCM frames. A player callback for one
+    // frame is NOT the end of the model's turn: treating it that way made the UI
+    // bounce speaking → listening between words and could expose speaker echo to
+    // server VAD. Keep one turn-level playback state instead. We prebuffer a small
+    // amount (Gemini generates faster than realtime), then finish only after BOTH
+    // server turnComplete and the local queue have drained.
+    private var nextPlaybackBufferID = 0
+    private var pendingPlaybackBuffers = Set<Int>()
+    private var bufferedPlaybackDuration = 0.0
+    private var estimatedPlaybackEnd = Date.distantPast
+    private var playbackGeneration = 0
+    private var modelAudioTurnOpen = false
+    private var modelGenerationCompleteReceived = false
+    private var modelTurnCompleteReceived = false
+    private var playbackStarted = false
+
+    // Natural barge-in without self-interruption. While model audio is active, the
+    // post-VoiceProcessingIO microphone is held locally. Only sustained speech well
+    // above the calibrated residual-echo floor opens the gate; the short pre-roll is
+    // then forwarded so Boss's first syllable is retained. Normal listening remains
+    // fully streaming and tap-free.
+    private var bargeInPending = false
+    private var bargeSpeechFrames = 0
+    private var echoCalibrationFrames = 0
+    private var echoFloorRMS = 0.008
+    private var micPreRoll: [Data] = []
+    private let playbackPrebufferSeconds = 0.16
+    private let bargeInMinimumRMS = 0.045
+    private let bargeInRequiredFrames = 12       // ≈240ms at the 20ms input tap
+    private let bargeInPreRollChunks = 14        // ≈280ms, including first syllable
+    private let audioLock = NSLock()
+    private var inputMuted = false
+    private var speakerEnabled = true
+
+    func start() async throws {
+        stopped = false
+        await AlmaAPI.shared.syncCookies()
+        let raw = try await AssistantNet.postJSONForData(path: "/api/assistant/live-session", body: [:])
+        guard let minted = try? JSONDecoder().decode(SessionResponse.self, from: raw),
+              !minted.token.isEmpty else { throw AlmaLiveVoiceError.badSession }
+        mintedSession = minted
+        try connect(minted, resumptionHandle: nil)
+    }
+
+    private func connect(_ minted: SessionResponse, resumptionHandle: String?) throws {
+        guard var parts = URLComponents(string: minted.websocketUrl) else { throw AlmaLiveVoiceError.badURL }
+        parts.queryItems = (parts.queryItems ?? []) + [URLQueryItem(name: "access_token", value: minted.token)]
+        guard let url = parts.url else { throw AlmaLiveVoiceError.badURL }
+
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 60
+        cfg.timeoutIntervalForResource = 60 * 60
+        let s = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
+        session = s
+        let socket = s.webSocketTask(with: url)
+        ws = socket
+        socketReady = false
+        pendingResumptionHandle = resumptionHandle
+        socket.resume()
+        receiveLoop(socket)
+    }
+
+    private func setupMessage(model: String, voice: String, resumptionHandle: String?) -> [String: Any] {
+        let instruction = """
+        তুমি ALMA-এর realtime voice transport এবং শুধু Boss-এর সাথে কথা বলছ। Opening greeting ছাড়া Boss-এর প্রতিটি বক্তব্যে run_agent_turn ঠিক একবার চালাবে। ব্যবসার তথ্য, স্মৃতি, হিসাব, action বা completion নিজে বানাবে না। টুলের result-ই সংক্ষিপ্ত স্বাভাবিক বাংলায় বলবে। Approval মানে asynchronous কাজ শেষ নয়; reportReady/completed না হলে কাজ চলছে বলবে। মালিককে শুধু Boss বলবে; অন্য কোনো সম্বোধন নয়; ভয়েসে emoji পড়বে না। Boss কথা শুরু করলে সঙ্গে সঙ্গে থেমে শুনবে।
+        """
+        let resumption: [String: Any] = resumptionHandle.map { ["handle": $0] } ?? [:]
+        return ["setup": [
+            "model": model.hasPrefix("models/") ? model : "models/\(model)",
+            "generationConfig": [
+                "responseModalities": ["AUDIO"],
+                "temperature": 0.4,
+                "speechConfig": [
+                    "languageCode": "bn-IN",
+                    "voiceConfig": ["prebuiltVoiceConfig": ["voiceName": voice]],
+                ],
+            ],
+            "systemInstruction": ["parts": [["text": instruction]]],
+            "inputAudioTranscription": [:],
+            "outputAudioTranscription": [:],
+            "sessionResumption": resumption,
+            "contextWindowCompression": ["slidingWindow": [:]],
+            "realtimeInputConfig": [
+                "automaticActivityDetection": [
+                    "disabled": false,
+                    "startOfSpeechSensitivity": "START_SENSITIVITY_LOW",
+                    "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
+                    "prefixPaddingMs": 250,
+                    "silenceDurationMs": 650,
+                ],
+                "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
+                "turnCoverage": "TURN_INCLUDES_ONLY_ACTIVITY",
+            ],
+            "tools": [["functionDeclarations": [[
+                "name": "run_agent_turn",
+                "description": "Boss-এর কথাটি ALMA head agent-এ পাঠায়।",
+                "parameters": [
+                    "type": "OBJECT",
+                    "properties": ["request": ["type": "STRING"]],
+                    "required": ["request"],
+                ],
+            ]]]],
+        ]]
+    }
+
+    private func configureAudio() throws {
+        guard !configured else { return }
+        let av = AVAudioSession.sharedInstance()
+        try av.setCategory(.playAndRecord, mode: .voiceChat,
+                           options: [.allowBluetoothHFP, .defaultToSpeaker])
+        try av.setPreferredIOBufferDuration(0.02)
+        try av.setActive(true)
+        audioLock.lock()
+        let useSpeaker = speakerEnabled
+        audioLock.unlock()
+        try av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
+
+        let input = audioEngine.inputNode
+        try input.setVoiceProcessingEnabled(true)
+        guard input.isVoiceProcessingEnabled,
+              audioEngine.outputNode.isVoiceProcessingEnabled else {
+            throw AlmaLiveVoiceError.audioStart
+        }
+        let native = input.inputFormat(forBus: 0)
+        guard native.sampleRate > 0, native.channelCount > 0 else { throw AlmaLiveVoiceError.noMic }
+        guard let pcm16 = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000,
+                                        channels: 1, interleaved: true),
+              let converter = AVAudioConverter(from: native, to: pcm16) else {
+            throw AlmaLiveVoiceError.noConverter
+        }
+        inputConverter = converter
+        inputFormat = pcm16
+
+        guard let playback = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1) else {
+            throw AlmaLiveVoiceError.audioStart
+        }
+        playbackFormat = playback
+        audioEngine.attach(player)
+        audioEngine.connect(player, to: audioEngine.mainMixerNode, format: playback)
+        input.installTap(onBus: 0, bufferSize: 960, format: native) { [weak self] buffer, _ in
+            self?.capture(buffer, nativeFormat: native)
+        }
+        tapInstalled = true
+        audioEngine.prepare()
+        do { try audioEngine.start() } catch { throw AlmaLiveVoiceError.audioStart }
+        configured = true
+    }
+
+    private func capture(_ buffer: AVAudioPCMBuffer, nativeFormat: AVAudioFormat) {
+        audioLock.lock()
+        let muted = inputMuted
+        audioLock.unlock()
+        guard !muted, !stopped, socketReady,
+              let converter = inputConverter, let outFormat = inputFormat else { return }
+        let frames = Int(buffer.frameLength)
+        guard frames > 0 else { return }
+        var rms = 0.0
+        if let samples = buffer.floatChannelData?[0] {
+            var sum = 0.0
+            for i in 0..<frames { let x = Double(samples[i]); sum += x * x }
+            rms = (sum / Double(frames)).squareRoot()
+        }
+        DispatchQueue.main.async { [weak self] in self?.engine?.micLevel = min(1, rms * 7) }
+
+        let capacity = AVAudioFrameCount(Double(frames) * outFormat.sampleRate / nativeFormat.sampleRate + 32)
+        guard let output = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else { return }
+        var supplied = false
+        var conversionError: NSError?
+        converter.convert(to: output, error: &conversionError) { _, status in
+            if supplied { status.pointee = .noDataNow; return nil }
+            supplied = true
+            status.pointee = .haveData
+            return buffer
+        }
+        guard conversionError == nil, output.frameLength > 0,
+              let samples = output.int16ChannelData?[0] else { return }
+        let bytes = Data(bytes: samples, count: Int(output.frameLength) * MemoryLayout<Int16>.size)
+
+        var sendNormally = false
+        var startBargeIn = false
+        var preRoll: [Data] = []
+        audioLock.lock()
+        if modelAudioTurnOpen && !bargeInPending {
+            micPreRoll.append(bytes)
+            if micPreRoll.count > bargeInPreRollChunks {
+                micPreRoll.removeFirst(micPreRoll.count - bargeInPreRollChunks)
+            }
+
+            // Give VPIO a short window to settle and learn this route's residual
+            // speaker echo. Afterwards only a sustained signal materially above
+            // that floor can be Boss speaking over the model.
+            if echoCalibrationFrames < 10 {
+                echoCalibrationFrames += 1
+                echoFloorRMS = max(echoFloorRMS, rms * 0.85)
+                bargeSpeechFrames = 0
+            } else {
+                let threshold = max(bargeInMinimumRMS, echoFloorRMS * 2.35 + 0.008)
+                if rms >= threshold {
+                    bargeSpeechFrames += 1
+                } else {
+                    bargeSpeechFrames = max(0, bargeSpeechFrames - 2)
+                    // Adapt slowly only to samples classified as echo/room noise;
+                    // never let actual speech immediately raise its own threshold.
+                    echoFloorRMS = echoFloorRMS * 0.96 + rms * 0.04
+                }
+                if bargeSpeechFrames >= bargeInRequiredFrames {
+                    bargeInPending = true
+                    preRoll = micPreRoll
+                    micPreRoll.removeAll(keepingCapacity: true)
+                    bargeSpeechFrames = 0
+                    startBargeIn = true
+                }
+            }
+        } else {
+            sendNormally = true
+            micPreRoll.removeAll(keepingCapacity: true)
+            bargeSpeechFrames = 0
+        }
+        audioLock.unlock()
+
+        if startBargeIn {
+            #if DEBUG
+            NSLog("ALMA-VOICE local barge-in opened after sustained speech")
+            #endif
+            beginLocalBargeIn()
+            for chunk in preRoll { sendRealtimeAudio(chunk) }
+        } else if sendNormally {
+            sendRealtimeAudio(bytes)
+        }
+    }
+
+    private func sendRealtimeAudio(_ bytes: Data) {
+        sendJSON(["realtimeInput": ["audio": [
+            "mimeType": "audio/pcm;rate=16000",
+            "data": bytes.base64EncodedString(),
+        ]]])
+    }
+
+    private func receiveLoop(_ socket: URLSessionWebSocketTask) {
+        socket.receive { [weak self, weak socket] result in
+            guard let self, let socket, !self.stopped, self.ws === socket else { return }
+            switch result {
+            case .failure(let error):
+                #if DEBUG
+                NSLog("ALMA-VOICE websocket receive failed: %@", String(describing: error))
+                #endif
+                if !self.reconnectUsingLatestHandle() {
+                    self.fail("লাইভ ভয়েস সংযোগ বিচ্ছিন্ন হয়েছে।")
+                }
+            case .success(let message):
+                switch message {
+                case .string(let text):
+                    self.onMessage(text)
+                case .data(let data):
+                    if let text = String(data: data, encoding: .utf8) { self.onMessage(text) }
+                @unknown default:
+                    break
+                }
+                if self.ws === socket { self.receiveLoop(socket) }
+            }
+        }
+    }
+
+    private func onMessage(_ text: String) {
+        guard let data = text.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        if let error = root["error"] as? [String: Any] {
+            #if DEBUG
+            let code = error["code"] ?? "unknown"
+            let status = error["status"] ?? "unknown"
+            NSLog("ALMA-VOICE server error code=%@ status=%@", String(describing: code), String(describing: status))
+            #endif
+            fail("রিয়েলটাইম ভয়েস সার্ভার সংযোগ নেয়নি।")
+            return
+        }
+        if root["setupComplete"] != nil {
+            do {
+                try configureAudio()
+                socketReady = true
+                reconnecting = false
+                DispatchQueue.main.async { [weak self] in self?.engine?.liveDidConnect() }
+                if !hasConnectedOnce {
+                    hasConnectedOnce = true
+                    sendTextTurn("OPENING_GREETING: Boss-কে সময় অনুযায়ী খুব সংক্ষিপ্ত বাংলায় অভিবাদন জানিয়ে বলুন, কী করতে হবে। কোনো tool চালাবেন না।")
+                }
+            } catch {
+                fail("লাইভ অডিও চালু করা যায়নি।")
+            }
+        }
+        if let update = root["sessionResumptionUpdate"] as? [String: Any],
+           update["resumable"] as? Bool == true,
+           let handle = update["newHandle"] as? String, !handle.isEmpty {
+            latestResumptionHandle = handle
+        }
+        if let content = root["serverContent"] as? [String: Any] { handleServerContent(content) }
+        if let tool = root["toolCall"] as? [String: Any],
+           let calls = tool["functionCalls"] as? [[String: Any]] {
+            for call in calls where call["name"] as? String == "run_agent_turn" {
+                let id = call["id"] as? String ?? UUID().uuidString
+                let args = call["args"] as? [String: Any]
+                let request = args?["request"] as? String ?? ""
+                DispatchQueue.main.async { [weak self] in
+                    self?.engine?.runLiveAgentTurn(request: request, callId: id)
+                }
+            }
+        }
+        if root["goAway"] != nil {
+            if !reconnectUsingLatestHandle() {
+                fail("লাইভ সেশন শেষ হয়ে গেছে।")
+            }
+        }
+    }
+
+    /// Google rotates the physical websocket roughly every ten minutes. Reuse the
+    /// latest resumable handle with the same ephemeral token, keeping the logical
+    /// conversation and audio engine alive without replaying a greeting.
+    @discardableResult
+    private func reconnectUsingLatestHandle() -> Bool {
+        guard !stopped, !reconnecting,
+              let handle = latestResumptionHandle,
+              let minted = mintedSession else { return false }
+        reconnecting = true
+        socketReady = false
+        DispatchQueue.main.async { [weak self] in self?.engine?.liveWillReconnect() }
+        let oldSocket = ws
+        let oldSession = session
+        ws = nil; session = nil
+        oldSocket?.cancel(with: .goingAway, reason: nil)
+        oldSession?.invalidateAndCancel()
+        do {
+            try connect(minted, resumptionHandle: handle)
+            return true
+        } catch {
+            reconnecting = false
+            return false
+        }
+    }
+
+    private func handleServerContent(_ content: [String: Any]) {
+        if content["interrupted"] as? Bool == true {
+            stopModelPlayback(interrupted: true)
+            DispatchQueue.main.async { [weak self] in self?.engine?.liveWasInterrupted() }
+        }
+        if let input = content["inputTranscription"] as? [String: Any],
+           let text = input["text"] as? String {
+            DispatchQueue.main.async { [weak self] in self?.engine?.liveInputTranscript(text) }
+        }
+        if let output = content["outputTranscription"] as? [String: Any],
+           let text = output["text"] as? String {
+            outputTranscript += text
+            let snapshot = outputTranscript
+            DispatchQueue.main.async { [weak self] in self?.engine?.liveOutputTranscript(snapshot) }
+        }
+        if let turn = content["modelTurn"] as? [String: Any],
+           let parts = turn["parts"] as? [[String: Any]] {
+            for part in parts {
+                guard let inline = part["inlineData"] as? [String: Any],
+                      let encoded = inline["data"] as? String,
+                      let pcm = Data(base64Encoded: encoded) else { continue }
+                playPCM(pcm)
+            }
+        }
+        if content["generationComplete"] as? Bool == true {
+            completeModelGeneration()
+        }
+        if content["turnComplete"] as? Bool == true {
+            outputTranscript = ""
+            completeModelTurn()
+        }
+    }
+
+    private func playPCM(_ pcm: Data) {
+        guard configured, let format = playbackFormat,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format,
+                                            frameCapacity: AVAudioFrameCount(pcm.count / 2)),
+              let destination = buffer.floatChannelData?[0] else { return }
+        buffer.frameLength = buffer.frameCapacity
+        pcm.withUnsafeBytes { raw in
+            for index in 0..<Int(buffer.frameLength) {
+                let sample = raw.loadUnaligned(fromByteOffset: index * 2, as: Int16.self)
+                destination[index] = Float(Int16(littleEndian: sample)) / 32_768
+            }
+        }
+        let duration = Double(buffer.frameLength) / format.sampleRate
+        let now = Date()
+        var bufferID = 0
+        var generation = 0
+        var newTurn = false
+        var shouldStart = false
+        var alreadyStarted = false
+        var fallbackDeadline = Date.distantPast
+        audioLock.lock()
+        if bargeInPending {
+            audioLock.unlock()
+            return
+        }
+        if !modelAudioTurnOpen {
+            modelAudioTurnOpen = true
+            modelGenerationCompleteReceived = false
+            modelTurnCompleteReceived = false
+            playbackStarted = false
+            bufferedPlaybackDuration = 0
+            estimatedPlaybackEnd = .distantPast
+            pendingPlaybackBuffers.removeAll(keepingCapacity: true)
+            playbackGeneration += 1
+            echoCalibrationFrames = 0
+            echoFloorRMS = 0.008
+            bargeSpeechFrames = 0
+            micPreRoll.removeAll(keepingCapacity: true)
+            newTurn = true
+        }
+        generation = playbackGeneration
+        nextPlaybackBufferID += 1
+        bufferID = nextPlaybackBufferID
+        pendingPlaybackBuffers.insert(bufferID)
+        bufferedPlaybackDuration += duration
+        alreadyStarted = playbackStarted
+        if alreadyStarted {
+            estimatedPlaybackEnd = max(now, estimatedPlaybackEnd).addingTimeInterval(duration)
+            fallbackDeadline = estimatedPlaybackEnd
+        } else {
+            shouldStart = bufferedPlaybackDuration >= playbackPrebufferSeconds
+        }
+        audioLock.unlock()
+        let scheduledBufferID = bufferID
+        let scheduledGeneration = generation
+
+        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            self?.playbackBufferFinished(id: scheduledBufferID, generation: scheduledGeneration)
+        }
+
+        if shouldStart {
+            startBufferedPlayback(generation: scheduledGeneration, force: false)
+        } else if newTurn {
+            // A short answer can be smaller than the target prebuffer. Never make it
+            // wait indefinitely for another frame.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
+                self?.startBufferedPlayback(generation: scheduledGeneration, force: true)
+            }
+        } else if alreadyStarted {
+            armPlaybackDrainFallback(generation: scheduledGeneration, deadline: fallbackDeadline)
+        }
+    }
+
+    private func startBufferedPlayback(generation: Int, force: Bool) {
+        audioLock.lock()
+        guard !stopped, modelAudioTurnOpen, playbackGeneration == generation,
+              !playbackStarted, !pendingPlaybackBuffers.isEmpty,
+              force || bufferedPlaybackDuration >= playbackPrebufferSeconds else {
+            audioLock.unlock()
+            return
+        }
+        playbackStarted = true
+        echoCalibrationFrames = 0
+        echoFloorRMS = 0.008
+        bargeSpeechFrames = 0
+        micPreRoll.removeAll(keepingCapacity: true)
+        estimatedPlaybackEnd = Date().addingTimeInterval(bufferedPlaybackDuration)
+        let deadline = estimatedPlaybackEnd
+        let prebufferDuration = bufferedPlaybackDuration
+        audioLock.unlock()
+
+        if !player.isPlaying { player.play() }
+        #if DEBUG
+        NSLog("ALMA-VOICE playback turn started prebuffer=%.3fs", prebufferDuration)
+        #endif
+        DispatchQueue.main.async { [weak self] in
+            self?.engine?.livePlaybackChanged(active: true, level: 0.65)
+        }
+        armPlaybackDrainFallback(generation: generation, deadline: deadline)
+    }
+
+    private func playbackBufferFinished(id: Int, generation: Int) {
+        audioLock.lock()
+        guard playbackGeneration == generation else {
+            audioLock.unlock()
+            return
+        }
+        pendingPlaybackBuffers.remove(id)
+        let shouldFinish = modelAudioTurnOpen
+            && (modelGenerationCompleteReceived || modelTurnCompleteReceived)
+            && pendingPlaybackBuffers.isEmpty
+        audioLock.unlock()
+        if shouldFinish { finishModelPlayback(generation: generation) }
+    }
+
+    /// VoiceProcessingIO occasionally omits per-buffer completion callbacks in the
+    /// simulator. One turn-level deadline is a fallback only; extending it for every
+    /// newly scheduled chunk prevents an older timer from ending speech mid-sentence.
+    private func armPlaybackDrainFallback(generation: Int, deadline: Date) {
+        let delay = max(0, deadline.timeIntervalSinceNow) + 0.12
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.stopped else { return }
+            self.audioLock.lock()
+            guard self.playbackGeneration == generation,
+                  self.playbackStarted,
+                  Date() >= self.estimatedPlaybackEnd.addingTimeInterval(0.08) else {
+                self.audioLock.unlock()
+                return
+            }
+            self.pendingPlaybackBuffers.removeAll(keepingCapacity: true)
+            let shouldFinish = self.modelAudioTurnOpen
+                && (self.modelGenerationCompleteReceived || self.modelTurnCompleteReceived)
+            self.audioLock.unlock()
+            if shouldFinish { self.finishModelPlayback(generation: generation) }
+        }
+    }
+
+    private func completeModelGeneration() {
+        audioLock.lock()
+        modelGenerationCompleteReceived = true
+        let generation = playbackGeneration
+        let needsStart = modelAudioTurnOpen && !playbackStarted && !pendingPlaybackBuffers.isEmpty
+        let shouldFinish = modelAudioTurnOpen && pendingPlaybackBuffers.isEmpty
+        audioLock.unlock()
+        if needsStart { startBufferedPlayback(generation: generation, force: true) }
+        if shouldFinish { finishModelPlayback(generation: generation) }
+    }
+
+    private func completeModelTurn() {
+        audioLock.lock()
+        bargeInPending = false
+        bargeSpeechFrames = 0
+        micPreRoll.removeAll(keepingCapacity: true)
+        modelGenerationCompleteReceived = true
+        modelTurnCompleteReceived = true
+        let generation = playbackGeneration
+        let needsStart = modelAudioTurnOpen && !playbackStarted && !pendingPlaybackBuffers.isEmpty
+        let shouldFinish = modelAudioTurnOpen && pendingPlaybackBuffers.isEmpty
+        audioLock.unlock()
+        if needsStart { startBufferedPlayback(generation: generation, force: true) }
+        if shouldFinish { finishModelPlayback(generation: generation) }
+    }
+
+    private func finishModelPlayback(generation: Int) {
+        audioLock.lock()
+        guard playbackGeneration == generation, modelAudioTurnOpen,
+              (modelGenerationCompleteReceived || modelTurnCompleteReceived),
+              pendingPlaybackBuffers.isEmpty else {
+            audioLock.unlock()
+            return
+        }
+        modelAudioTurnOpen = false
+        modelGenerationCompleteReceived = false
+        modelTurnCompleteReceived = false
+        playbackStarted = false
+        bufferedPlaybackDuration = 0
+        estimatedPlaybackEnd = .distantPast
+        playbackGeneration += 1
+        echoCalibrationFrames = 0
+        echoFloorRMS = 0.008
+        bargeSpeechFrames = 0
+        micPreRoll.removeAll(keepingCapacity: true)
+        audioLock.unlock()
+
+        player.stop()
+        #if DEBUG
+        NSLog("ALMA-VOICE playback turn finished")
+        #endif
+        DispatchQueue.main.async { [weak self] in
+            self?.engine?.livePlaybackChanged(active: false, level: 0)
+        }
+    }
+
+    private func beginLocalBargeIn() {
+        stopModelPlayback(interrupted: false)
+    }
+
+    private func stopModelPlayback(interrupted: Bool) {
+        audioLock.lock()
+        let wasActive = modelAudioTurnOpen || playbackStarted || !pendingPlaybackBuffers.isEmpty
+        pendingPlaybackBuffers.removeAll(keepingCapacity: true)
+        modelAudioTurnOpen = false
+        modelGenerationCompleteReceived = false
+        modelTurnCompleteReceived = false
+        playbackStarted = false
+        bufferedPlaybackDuration = 0
+        estimatedPlaybackEnd = .distantPast
+        playbackGeneration += 1
+        if interrupted { bargeInPending = false }
+        echoCalibrationFrames = 0
+        echoFloorRMS = 0.008
+        bargeSpeechFrames = 0
+        micPreRoll.removeAll(keepingCapacity: true)
+        audioLock.unlock()
+
+        player.stop()
+        #if DEBUG
+        if interrupted { NSLog("ALMA-VOICE server confirmed interruption") }
+        #endif
+        if wasActive {
+            DispatchQueue.main.async { [weak self] in
+                self?.engine?.livePlaybackChanged(active: false, level: 0)
+            }
+        }
+    }
+
+    func sendToolResponse(callId: String, result: String) {
+        sendJSON(["toolResponse": ["functionResponses": [[
+            "id": callId,
+            "name": "run_agent_turn",
+            "response": ["result": result],
+        ]]]])
+    }
+
+    func sendTextTurn(_ text: String) {
+        sendJSON(["clientContent": [
+            "turns": [["role": "user", "parts": [["text": text]]]],
+            "turnComplete": true,
+        ]])
+    }
+
+    private func sendJSON(_ object: [String: Any], requireReady: Bool = true) {
+        guard !stopped, (!requireReady || socketReady), JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object),
+              let text = String(data: data, encoding: .utf8) else { return }
+        ws?.send(.string(text)) { [weak self] error in
+            if let error {
+                #if DEBUG
+                NSLog("ALMA-VOICE websocket send failed: %@", String(describing: error))
+                #endif
+                if self?.configured == true || !requireReady {
+                    self?.fail("লাইভ ভয়েস পাঠানো যায়নি।")
+                }
+            }
+        }
+    }
+
+    func setInputMuted(_ muted: Bool) {
+        audioLock.lock()
+        inputMuted = muted
+        micPreRoll.removeAll(keepingCapacity: true)
+        bargeSpeechFrames = 0
+        echoCalibrationFrames = 0
+        echoFloorRMS = 0.008
+        audioLock.unlock()
+    }
+
+    func setSpeakerEnabled(_ enabled: Bool) throws {
+        audioLock.lock()
+        speakerEnabled = enabled
+        let isConfigured = configured
+        audioLock.unlock()
+        guard isConfigured else { return }
+        try AVAudioSession.sharedInstance().overrideOutputAudioPort(enabled ? .speaker : .none)
+    }
+
+    func interruptPlayback() {
+        audioLock.lock()
+        // A deliberate orb tap is an immediate barge-in: discard any remaining
+        // model frames and let subsequent microphone frames flow without waiting
+        // for the sustained-speech gate.
+        bargeInPending = true
+        audioLock.unlock()
+        stopModelPlayback(interrupted: false)
+    }
+
+    func recoverAudio() {
+        guard configured else { return }
+        try? AVAudioSession.sharedInstance().setActive(true)
+        if !audioEngine.isRunning { try? audioEngine.start() }
+        audioLock.lock()
+        let shouldPlay = playbackStarted
+        audioLock.unlock()
+        if shouldPlay, !player.isPlaying { player.play() }
+    }
+
+    func stop() {
+        stopped = true
+        if tapInstalled { audioEngine.inputNode.removeTap(onBus: 0); tapInstalled = false }
+        player.stop()
+        if audioEngine.isRunning { audioEngine.stop() }
+        if player.engine != nil { audioEngine.detach(player) }
+        ws?.cancel(with: .normalClosure, reason: nil); ws = nil
+        session?.invalidateAndCancel(); session = nil
+        configured = false
+        inputConverter = nil
+        inputFormat = nil
+        playbackFormat = nil
+        socketReady = false
+        reconnecting = false
+        mintedSession = nil
+        pendingResumptionHandle = nil
+        latestResumptionHandle = nil
+        hasConnectedOnce = false
+        outputTranscript = ""
+        audioLock.lock()
+        pendingPlaybackBuffers.removeAll(keepingCapacity: true)
+        bufferedPlaybackDuration = 0
+        estimatedPlaybackEnd = .distantPast
+        playbackGeneration += 1
+        modelAudioTurnOpen = false
+        modelGenerationCompleteReceived = false
+        modelTurnCompleteReceived = false
+        playbackStarted = false
+        bargeInPending = false
+        bargeSpeechFrames = 0
+        echoCalibrationFrames = 0
+        echoFloorRMS = 0.008
+        micPreRoll.removeAll(keepingCapacity: true)
+        audioLock.unlock()
+    }
+
+    private func fail(_ message: String) {
+        guard !stopped else { return }
+        stop()
+        DispatchQueue.main.async { [weak self] in self?.engine?.liveDidFail(message) }
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                    didOpenWithProtocol protocol: String?) {
+        #if DEBUG
+        NSLog("ALMA-VOICE websocket opened")
+        #endif
+        guard !stopped, ws === webSocketTask, let minted = mintedSession else { return }
+        sendJSON(setupMessage(model: minted.model, voice: minted.voice,
+                              resumptionHandle: pendingResumptionHandle), requireReady: false)
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                    didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        #if DEBUG
+        NSLog("ALMA-VOICE websocket closed code=%d", closeCode.rawValue)
+        #endif
+    }
 }
 
 // MARK: - TRUE streaming STT (OpenAI Realtime transcription over WebSocket)
@@ -1790,7 +2840,7 @@ final class AlmaTtsQueue: NSObject, AVAudioPlayerDelegate {
 // Pixel target: docs/voice-console-native/DESIGN-REFERENCE.html + the v2 preview
 // the owner confirmed 2026-07-06. Every component of that page exists here:
 // near-black #04070D canvas, state-hued aurora, twinkling STARFIELD with comets,
-// dot grid, top bar (ALMA. · এজেন্ট কনসোল · ঢাকা clock · ● LIVE), glass state
+// dot grid, top bar (ALMA. · এজেন্ট কনসোল · ঢাকা clock · verified transport), glass state
 // badge, the WebGL FLUID ORB ported 1:1 to Metal (runtime-compiled — no pbxproj
 // entry needed), 72-bar reactive waveform ring OUTSIDE the orb with a clear gap,
 // spinning conic accent ring, 5 orbiting energy motes, thinking satellites,
@@ -1855,10 +2905,17 @@ struct AlmaVoiceEdgeGlow: View {
 @available(iOS 17.0, *)
 struct AlmaVoiceConsoleView: View {
     let vm: AssistantVM
-    @State private var engine = AlmaVoiceEngine()
+    let engine: AlmaVoiceEngine
     @Environment(\.dismiss) private var dismiss
     @State private var liveBlink = false
     @State private var photoItem: PhotosPickerItem?
+    @State private var minimizing = false
+    @State private var endingCall = false
+
+    init(vm: AssistantVM) {
+        self.vm = vm
+        self.engine = vm.voiceEngine
+    }
 
     /// DEBUG launch values (sim self-test only — simctl passes them as launch
     /// arguments; production launches carry neither env nor these args).
@@ -1952,7 +3009,11 @@ struct AlmaVoiceConsoleView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { engine.startListening() }
             }
         }
-        .onDisappear { engine.end() }
+        .onDisappear {
+            // The chat button deliberately keeps the persistent Live session alive.
+            // Any other dismissal is treated as a real hang-up.
+            if !minimizing && !endingCall { engine.end() }
+        }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             Task {
@@ -1960,6 +3021,12 @@ struct AlmaVoiceConsoleView: View {
                    let img = UIImage(data: data) {
                     await MainActor.run { engine.attachImage(img); photoItem = nil }
                 }
+            }
+        }
+        .onChange(of: engine.callConnection) { oldState, newState in
+            if oldState != .idle && newState == .idle && !minimizing {
+                endingCall = true
+                dismiss()
             }
         }
         .overlay(alignment: .top) {
@@ -2019,40 +3086,55 @@ struct AlmaVoiceConsoleView: View {
         }
     }
 
-    // ── Top bar: ALMA. wordmark · এজেন্ট কনসোল | ঢাকা clock · ● LIVE · ✕ ──
+    private var connectionColor: Color {
+        switch engine.callConnection {
+        case .live: return good
+        case .connecting, .reconnecting: return gold
+        case .failed: return Color(red: 0.949, green: 0.494, blue: 0.494)
+        case .idle: return muted
+        }
+    }
+
+    // ── Top bar: minimize · call identity/timer · truthful connection ──
     private var topBar: some View {
-        HStack(spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                HStack(spacing: 0) {
-                    Text("ALMA").font(.system(size: 19, weight: .heavy)).kerning(4.2).foregroundStyle(ink)
-                    Text(".").font(.system(size: 19, weight: .heavy)).foregroundStyle(gold)
+        ZStack {
+            VStack(spacing: 2) {
+                Text("ALMA AI Call")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(ink)
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(engine.callElapsedText(at: context.date))
+                        .font(.system(size: 12, design: .monospaced))
+                        .monospacedDigit()
+                        .foregroundStyle(muted)
                 }
-                Text("এজেন্ট কনসোল").font(.system(size: 12.5)).foregroundStyle(muted)
             }
-            Spacer(minLength: 8)
-            TimelineView(.periodic(from: .now, by: 30)) { _ in
-                Text("ঢাকা " + Self.dhakaClock.string(from: Date()))
-                    .font(.system(size: 13)).monospacedDigit().foregroundStyle(muted)
-            }
-            HStack(spacing: 6) {
-                Circle().fill(good).frame(width: 7, height: 7)
-                    .shadow(color: good, radius: 5)
+            HStack(spacing: 10) {
+                Button { minimizeCall() } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(muted)
+                        .frame(width: 38, height: 38)
+                        .background(glass.opacity(0.06), in: Circle())
+                        .overlay(Circle().strokeBorder(line, lineWidth: 1))
+                }
+                .accessibilityLabel("কল ছোট করুন")
+                Spacer(minLength: 8)
+                HStack(spacing: 6) {
+                    Circle().fill(connectionColor).frame(width: 7, height: 7)
+                    .shadow(color: connectionColor, radius: 5)
                     .opacity(liveBlink ? 0.35 : 1)
                     .onAppear {
                         guard !UIAccessibility.isReduceMotionEnabled else { return }
                         withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { liveBlink = true }
                     }
-                Text("LIVE").font(.system(size: 10.5, weight: .semibold)).kerning(1.9).foregroundStyle(good)
-            }
-            Button {
-                engine.end(); dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(muted)
-                    .frame(width: 34, height: 34)
-                    .background(glass.opacity(0.06), in: Circle())
-                    .overlay(Circle().strokeBorder(line, lineWidth: 1))
+                    Text(engine.transportBadgeText)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(connectionColor)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(connectionColor.opacity(0.08), in: Capsule())
+                .overlay(Capsule().strokeBorder(connectionColor.opacity(0.25), lineWidth: 1))
             }
         }
         .padding(.horizontal, 16)
@@ -2066,9 +3148,10 @@ struct AlmaVoiceConsoleView: View {
                 .fill(almaHSL(hue, 0.85, 0.62))
                 .frame(width: 8, height: 8)
                 .shadow(color: almaHSL(hue, 0.85, 0.62), radius: 6)
-            Text(engine.state.statusText)
+            Text(engine.visibleStatusText)
                 .font(.system(size: 13))
-                .foregroundStyle(engine.state == .error ? Color(red: 0.949, green: 0.627, blue: 0.557) : muted)
+                .foregroundStyle(engine.callConnection == .failed
+                                 ? Color(red: 0.949, green: 0.627, blue: 0.557) : muted)
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
         .background(
@@ -2120,15 +3203,25 @@ struct AlmaVoiceConsoleView: View {
                         .multilineTextAlignment(.center)
                         .lineLimit(7)
                         .truncationMode(.head)
+                } else if engine.callConnection == .failed {
+                    Text(engine.connectionFailureText)
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color(red: 0.949, green: 0.627, blue: 0.557))
+                        .multilineTextAlignment(.center)
+                } else if engine.callConnection == .connecting || engine.callConnection == .reconnecting {
+                    Text("একটু অপেক্ষা করুন—লাইভ কল প্রস্তুত হচ্ছে।")
+                        .font(.system(size: 15))
+                        .foregroundStyle(muted)
+                        .multilineTextAlignment(.center)
                 } else if engine.state == .idle {
                     (Text("আসসালামু আলাইকুম, ").foregroundStyle(muted)
                      + Text("Boss").foregroundStyle(gold)
-                     + Text("। অর্বে ট্যাপ করে বলুন।").foregroundStyle(muted))
+                     + Text("। স্বাভাবিকভাবে বলুন—ট্যাপ করার প্রয়োজন নেই।").foregroundStyle(muted))
                         .font(.system(size: 15))
                         .multilineTextAlignment(.center)
                 } else if engine.state == .listening {
-                    Text("চুপ করলেই পাঠিয়ে দেব — তাড়া নেই, \(engine.listenSeconds / 60):\(String(format: "%02d", engine.listenSeconds % 60))")
-                        .font(.system(size: 12, design: .monospaced)).foregroundStyle(faint)
+                    Text(engine.isMuted ? "আপনার মাইক্রোফোন বন্ধ আছে" : "বলুন—আমি শুনছি, থামলে স্বাভাবিকভাবে উত্তর দেব।")
+                        .font(.system(size: 12.5)).foregroundStyle(faint)
                 }
             }
             .shadow(color: almaHSL(hue, 0.80, 0.60, 0.28), radius: 13)
@@ -2148,7 +3241,7 @@ struct AlmaVoiceConsoleView: View {
     private func goldBoss(_ text: String) -> Text {
         let safe = text
             .replacingOccurrences(of: "Sir", with: "Boss", options: .caseInsensitive)
-            .replacingOccurrences(of: "স্যার", with: "বস")
+            .replacingOccurrences(of: "স্যার", with: "Boss")
         var out = Text("")
         var rest = Substring(safe)
         while true {
@@ -2208,11 +3301,12 @@ struct AlmaVoiceConsoleView: View {
         }
     }
 
-    // ── Dock: suggestion chips + কথোপকথন + চ্যাটে ফিরুন (web dock) ──
+    // ── Call controls: mute · speaker · chat/minimize · hang up ──
     private var dock: some View {
         VStack(spacing: 10) {
             if engine.state == .speaking {
-                Text("ট্যাপ করে থামান ও কথা বলুন").font(.system(size: 12)).foregroundStyle(faint)
+                Text("কথা শুরু করলেই ALMA থেমে শুনবে")
+                    .font(.system(size: 12)).foregroundStyle(faint)
             }
             // attached-image thumbnails (chat composer parity)
             if !engine.pendingImages.isEmpty {
@@ -2244,41 +3338,101 @@ struct AlmaVoiceConsoleView: View {
                     .padding(.horizontal, 22)
                 }
             }
-            // (demo chips removed — owner 2026-07-07: dead taps, cleaner console)
-            HStack(spacing: 10) {
-                PhotosPicker(selection: $photoItem, matching: .images) {
-                    Image(systemName: "photo")
-                        .font(.system(size: 14, weight: .medium)).foregroundStyle(muted)
-                        .frame(width: 38, height: 38)
-                        .background(glass.opacity(0.06), in: Circle())
-                        .overlay(Circle().strokeBorder(line, lineWidth: 1))
-                }
-                Button {
-                    engine.convoMode.toggle()
-                    UISelectionFeedbackGenerator().selectionChanged()
-                } label: {
-                    HStack(spacing: 7) {
-                        Circle().fill(engine.convoMode ? good : faint)
-                            .frame(width: 7, height: 7)
-                            .shadow(color: engine.convoMode ? good : .clear, radius: 5)
-                        Text(engine.convoMode ? "কথোপকথন চালু" : "কথোপকথন বন্ধ")
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(engine.convoMode ? muted : faint)
+            if engine.callConnection == .failed {
+                HStack(spacing: 10) {
+                    Button { engine.retryLiveConnection() } label: {
+                        Label("আবার সংযোগ করুন", systemImage: "arrow.clockwise")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(bg0)
+                            .padding(.horizontal, 18).padding(.vertical, 11)
+                            .background(good, in: Capsule())
                     }
-                    .padding(.horizontal, 16).padding(.vertical, 9)
-                    .background(glass.opacity(0.06), in: Capsule())
-                    .overlay(Capsule().strokeBorder(engine.convoMode ? good.opacity(0.3) : line, lineWidth: 1))
+                    Button { endCall() } label: {
+                        Text("কল শেষ করুন")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(muted)
+                            .padding(.horizontal, 18).padding(.vertical, 11)
+                            .background(glass.opacity(0.06), in: Capsule())
+                            .overlay(Capsule().strokeBorder(line, lineWidth: 1))
+                    }
                 }
-                Button { engine.end(); dismiss() } label: {
-                    Text("চ্যাটে ফিরুন").font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(muted)
-                        .padding(.horizontal, 20).padding(.vertical, 9)
-                        .background(glass.opacity(0.06), in: Capsule())
-                        .overlay(Capsule().strokeBorder(line, lineWidth: 1))
+            } else {
+                HStack(spacing: 18) {
+                    callControl(
+                        icon: engine.isMuted ? "mic.slash.fill" : "mic.fill",
+                        label: engine.isMuted ? "মাইক চালু" : "মিউট",
+                        active: engine.isMuted,
+                        enabled: engine.callConnection == .live
+                    ) { engine.toggleMute() }
+
+                    callControl(
+                        icon: engine.speakerOn ? "speaker.wave.2.fill" : "speaker.fill",
+                        label: "স্পিকার",
+                        active: engine.speakerOn,
+                        enabled: engine.callConnection == .live
+                    ) { engine.toggleSpeaker() }
+
+                    callControl(
+                        icon: "message.fill",
+                        label: "চ্যাট",
+                        active: false,
+                        enabled: true
+                    ) { minimizeCall() }
+
+                    Button { endCall() } label: {
+                        VStack(spacing: 7) {
+                            Image(systemName: "phone.down.fill")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 58, height: 58)
+                                .background(Color(red: 0.91, green: 0.20, blue: 0.24), in: Circle())
+                                .shadow(color: Color.red.opacity(0.28), radius: 12, y: 5)
+                            Text("শেষ")
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(muted)
+                        }
+                    }
+                    .accessibilityLabel("কল শেষ করুন")
                 }
+            }
+
+            PhotosPicker(selection: $photoItem, matching: .images) {
+                Label("ছবি যোগ করুন", systemImage: "photo")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(faint)
             }
         }
         .padding(.bottom, 22)
+    }
+
+    private func callControl(icon: String, label: String, active: Bool,
+                             enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 7) {
+                Image(systemName: icon)
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(active ? bg0 : ink)
+                    .frame(width: 54, height: 54)
+                    .background(active ? ink : glass.opacity(0.09), in: Circle())
+                    .overlay(Circle().strokeBorder(active ? Color.clear : line, lineWidth: 1))
+                Text(label)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(muted)
+            }
+        }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.38)
+    }
+
+    private func minimizeCall() {
+        minimizing = true
+        dismiss()
+    }
+
+    private func endCall() {
+        endingCall = true
+        engine.end()
+        dismiss()
     }
 
     private func chip(_ label: String, _ utterance: String, enabled: Bool) -> some View {
@@ -2300,6 +3454,65 @@ struct AlmaVoiceConsoleView: View {
         .opacity(enabled ? 1 : 0.45)
     }
 
+}
+
+/// Compact, persistent call surface shown over chat after the full-screen call is
+/// minimized. The same `AlmaVoiceEngine` keeps the socket, audio, and context alive.
+@available(iOS 17.0, *)
+struct AlmaVoiceCallMiniBar: View {
+    let engine: AlmaVoiceEngine
+    let reopen: () -> Void
+    let end: () -> Void
+
+    private var statusColor: Color {
+        switch engine.callConnection {
+        case .live: return Color(red: 0.231, green: 0.878, blue: 0.561)
+        case .connecting, .reconnecting: return Color(red: 0.886, green: 0.702, blue: 0.400)
+        case .failed: return Color(red: 0.949, green: 0.494, blue: 0.494)
+        case .idle: return .secondary
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 11) {
+            Button(action: reopen) {
+                HStack(spacing: 11) {
+                    ZStack {
+                        Circle().fill(statusColor.opacity(0.15)).frame(width: 38, height: 38)
+                        Image(systemName: engine.state == .speaking ? "waveform" : "phone.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(statusColor)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("ALMA AI Call")
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(Color(red: 0.918, green: 0.949, blue: 0.984))
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text("\(engine.transportBadgeText)  ·  \(engine.callElapsedText(at: context.date))")
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .foregroundStyle(Color(red: 0.486, green: 0.573, blue: 0.663))
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            Button(action: end) {
+                Image(systemName: "phone.down.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(Color(red: 0.91, green: 0.20, blue: 0.24), in: Circle())
+            }
+            .accessibilityLabel("কল শেষ করুন")
+        }
+        .padding(.leading, 10).padding(.trailing, 8).padding(.vertical, 7)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
+        .shadow(color: .black.opacity(0.35), radius: 16, y: 8)
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+    }
 }
 
 // MARK: - Feed card (web .card): glass, icon box, status pill, big number +
@@ -3159,9 +4372,9 @@ private let almaTERM_MAP: [(String, String)] = [
     ("BTC", "বিটিসি"),
     ("ETH", "ইথেরিয়াম"),
     ("OK", "ওকে"),
-    ("Sir", "বস"),
-    ("স্যার", "বস"),
-    ("বস", "বস"),
+    ("Sir", "Boss"),
+    ("স্যার", "Boss"),
+    ("বস", "Boss"),
     ("AI", "এআই"),
     ("API", "এপিআই"),
     ("URL", "ইউআরএল"),
