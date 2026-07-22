@@ -29,6 +29,8 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   // ── core / registry ────────────────────────────────────────────────────────
   get_current_datetime: read('core'),
   list_agent_projects: read('core'),
+  // Harness gap 5 — registry-wide tool discovery (pure metadata read).
+  find_tool: read('core'),
 
   // ── memory (pgvector + graph) ──────────────────────────────────────────────
   save_memory: write('memory'),

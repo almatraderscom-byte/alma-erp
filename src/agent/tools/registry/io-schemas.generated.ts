@@ -66,6 +66,7 @@ export const IO_SCHEMAS: Readonly<Record<string, unknown>> = {
   "content.pause_content_engine.input": {"type":"object","properties":{},"additionalProperties":true},
   "content.resume_content_engine.input": {"type":"object","properties":{},"additionalProperties":true},
   "content.run_content_post.input": {"type":"object","properties":{},"additionalProperties":true},
+  "core.find_tool.input": {"type":"object","properties":{},"additionalProperties":true},
   "core.get_current_datetime.input": {"type":"object","properties":{},"additionalProperties":true},
   "core.list_agent_projects.input": {"type":"object","properties":{},"additionalProperties":true},
   "cost.add_subscription.input": {"type":"object","properties":{},"additionalProperties":true},

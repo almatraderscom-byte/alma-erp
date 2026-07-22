@@ -52,6 +52,7 @@ import { SIMULATE_TOOLS } from './simulate-tools'
 import { PERSONAL_SAFE_TOOLS } from './registry'
 import { place_agent_call } from './personal-tools'
 import { WA_TOOLS } from './wa-tools'
+import { find_tool } from './find-tool'
 import { BILLS_TOOLS } from './bills-tools'
 import { IMPORTANT_DATE_TOOLS } from './important-dates-tools'
 import { PERSONAL_BRIEFING_TOOLS } from './personal-briefing-tools'
@@ -82,6 +83,10 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
   base: [
     ...CORE_AGENT_TOOLS,
     ...ASK_TOOLS,
+    // Harness gap 5 — registry-wide tool discovery. In `base` so EVERY
+    // owner-business head (any model, slim router included) can find a tool
+    // missing from its per-turn shortlist instead of claiming it doesn't exist.
+    find_tool,
     ...REMINDER_TOOLS,
     // Two-way live call sibling of outbound_phone_call (one-way, in REMINDER_TOOLS).
     // Both must travel together so the owner-business head can pick the right one;

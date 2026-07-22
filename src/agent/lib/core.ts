@@ -22,7 +22,12 @@ import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearch
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool, type ToolResult } from '@/agent/tools/registry'
 import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/agent/enforcement/enforced-tool-runner'
+import { runPreToolHooks, runPostToolHooks } from '@/agent/lib/turn-hooks'
+import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
+import { trimToolResultForHistory } from '@/agent/lib/context-trim'
+import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
+import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
 import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -358,6 +363,16 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
           ? ` | Boss-এর নির্বাচিত উত্তর: "${ans.selectedOption}" — এটাই এই প্রশ্নের চূড়ান্ত উত্তর, অন্য কোনো বার্তাকে এই প্রশ্নের উত্তর ধরবে না`
           : ' | (এখনও উত্তর দেননি)'
         apiBlocks.push({ type: 'text', text: `[প্রশ্ন কার্ড দেখানো হয়েছিল: ${ac.question}${opts}${answered}]` })
+      } else if (block.type === 'tool_result') {
+        // Harness Gap 4 — old oversized tool results are trimmed deterministically
+        // (same block → same bytes, so the prompt-cache prefix stays stable). The
+        // current turn's fresh results are appended later and never pass here.
+        const tr = block as Extract<StoredContentBlock, { type: 'tool_result' }>
+        apiBlocks.push({
+          type: 'tool_result',
+          tool_use_id: tr.tool_use_id,
+          content: trimToolResultForHistory(String(tr.content ?? '')),
+        } as unknown as Anthropic.Messages.ContentBlockParam)
       } else {
         apiBlocks.push(block as unknown as Anthropic.Messages.ContentBlockParam)
       }
@@ -985,6 +1000,15 @@ export async function* runAgentTurn(
   if (authorizationNote) {
     volatileText = volatileText ? `${authorizationNote}\n\n${volatileText}` : authorizationNote
   }
+  // Harness Gap 3 — the server requirement contract (plan-first via make_plan,
+  // ground-before-answer, mandatory save_memory) previously reached only the
+  // multi-model path; the native Claude head never saw it. Same volatile zone
+  // as that path (per-turn context, cache-safe), same derivation.
+  const ownerRequirements = deriveOwnerTurnRequirements(lastUserText ?? '')
+  const requirementNote = buildOwnerRequirementNote(ownerRequirements)
+  if (requirementNote) {
+    volatileText = volatileText ? `${volatileText}\n\n${requirementNote}` : requirementNote
+  }
   // Phase 4 parity with the alternate-provider path: reconcile the conversation's
   // canonical WorkflowRuns against their cards' live status, then put the exact
   // in-flight state in front of the head — "হ্যাঁ/continue" resumes THE step.
@@ -1041,6 +1065,9 @@ export async function* runAgentTurn(
     (t): t is Anthropic.Messages.Tool => 'name' in t && t.name === 'delegate_to_specialist',
   )
   const headCanDelegate = delegateOnlyTools.length > 0
+  // Harness Gap 5 — schemas dynamically loaded by find_tool for the REST of this
+  // turn. Appended after the base tool list (post cached-prefix), cache-safe.
+  const dynamicTools: Anthropic.Messages.Tool[] = []
   let headToolRounds = 0
   let budgetNudgeSent = false
   let deadlineNudgeSent = false
@@ -1117,7 +1144,13 @@ export async function* runAgentTurn(
       // either answer now or hand off to the cheap worker.
       const overBudget = headCanDelegate && headToolRounds >= HEAD_TOOL_BUDGET
       const cardStaged = emittedConfirmCards.length > 0 || emittedAskCards.length > 0
-      const iterationTools = nearDeadline || cardStaged ? [] : overBudget ? delegateOnlyTools : toolsForModel
+      const iterationTools = nearDeadline || cardStaged
+        ? []
+        : overBudget
+        ? delegateOnlyTools
+        : dynamicTools.length > 0
+        ? [...toolsForModel, ...dynamicTools]
+        : toolsForModel
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [
@@ -1424,10 +1457,21 @@ export async function* runAgentTurn(
               ownerInstructions: currentOwnerInstructions,
               toolName: tb.name,
             })
+        // Harness Gap 2 — generic pre-tool hooks (deterministic, fail-open).
+        const preHookDecision = !ownerIntentViolation
+          ? runPreToolHooks({
+              toolName: tb.name,
+              input: tb.input as Record<string, unknown>,
+              model: chatModel.id,
+              personalMode,
+              businessId: String(businessId ?? ''),
+            })
+          : null
+        const hookBlocked = preHookDecision && preHookDecision.action === 'block' ? preHookDecision : null
         // AIOS mandatory enforcement (flag-gated, OFF in prod) — native Claude path.
         // Same door as the multi-model path: every tool call is forced through
         // policy + autonomy/approval before it can run.
-        const aiosGuard = !ownerIntentViolation && enforcementEnabled()
+        const aiosGuard = !ownerIntentViolation && !hookBlocked && enforcementEnabled()
           ? guardToolCall({
               identity: {
                 tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),
@@ -1444,6 +1488,8 @@ export async function* runAgentTurn(
           : null
         const result = ownerIntentViolation
           ? { success: false as const, error: ownerIntentViolation.message }
+          : hookBlocked
+          ? { success: false as const, error: hookBlocked.message }
           : aiosGuard && !aiosGuard.allow
           ? aiosGuard.status === 'NEEDS_APPROVAL'
             ? await stageEnforcedToolApproval({
@@ -1460,6 +1506,15 @@ export async function* runAgentTurn(
           : personalMode
           ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref })
           : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization, ownerVoicePref })
+        // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).
+        runPostToolHooks({
+          toolName: tb.name,
+          input: tb.input as Record<string, unknown>,
+          model: chatModel.id,
+          success: result.success,
+          error: result.error,
+          durationMs: Date.now() - started,
+        })
         return { tb, result, durationMs: Date.now() - started }
       }
 
@@ -1687,6 +1742,43 @@ export async function* runAgentTurn(
       }
 
       messages = [...messages, { role: 'user', content: toolResultContent }]
+
+      // Harness Gap 5 — after a find_tool round, expose the matched tools'
+      // schemas for the remaining rounds of THIS turn. Execution authority is
+      // unchanged: a loaded tool still passes owner-intent, controls, the AIOS
+      // door and its own approval contract when actually called.
+      for (const tb of toolUseBlocks) {
+        if (tb.name !== FIND_TOOL_NAME) continue
+        const found = resultMap.get(tb.id)?.result.data as { matches?: Array<{ name?: unknown }> } | undefined
+        const matchNames = (found?.matches ?? [])
+          .map((m) => String(m?.name ?? ''))
+          .filter(Boolean)
+        if (matchNames.length === 0) continue
+        const already = new Set<string>([
+          ...toolsForModel.map((t) => ('name' in t ? t.name : '')),
+          ...dynamicTools.map((t) => t.name),
+        ])
+        for (const tool of await resolveToolsByName(matchNames.filter((n) => !already.has(n)))) {
+          if (dynamicTools.length >= MAX_DYNAMIC_TOOLS_PER_TURN) break
+          dynamicTools.push({
+            name: tool.name,
+            description: tool.description,
+            input_schema: tool.input_schema,
+          })
+        }
+      }
+
+      // Harness Gap 1 — one compact recovery instruction after a round with
+      // failed tool calls, so the head reasons about the error instead of
+      // repeating the identical call or apologising vaguely.
+      const failedThisRound = toolUseBlocks
+        .map((tb) => resultMap.get(tb.id))
+        .filter((exec): exec is ToolExecResult => !!exec && !exec.result.success)
+        .map((exec) => ({ toolName: exec.tb.name, error: String(exec.result.error ?? '') }))
+      const selfCorrectionNudge = buildSelfCorrectionNudge(failedThisRound)
+      if (selfCorrectionNudge) {
+        messages = [...messages, { role: 'user', content: [{ type: 'text', text: selfCorrectionNudge }] }]
+      }
 
       // Head→specialist WAIT gate: a delegation confirm card is pending. Do not
       // loop back into the model for another (substantive) turn — that is exactly

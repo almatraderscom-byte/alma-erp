@@ -81,6 +81,7 @@ export const INVENTORY_ROWS: readonly InventoryRow[] = [
   {"name":"explain_staff_task_bangla","domain":"staff","mode":"write","risk":"low","groups":["staff","trading"],"pools":["lifestyle","trading"],"hasSchema":true},
   {"name":"extract_invoice","domain":"vision","mode":"read","risk":"low","groups":["vision"],"pools":["lifestyle"],"hasSchema":true},
   {"name":"fetch_website_page","domain":"website","mode":"read","risk":"low","groups":["website"],"pools":["lifestyle"],"hasSchema":true},
+  {"name":"find_tool","domain":"core","mode":"read","risk":"low","groups":["base"],"pools":["lifestyle"],"hasSchema":true},
   {"name":"forget_reference","domain":"reference","mode":"write","risk":"low","groups":["content","growth"],"pools":["lifestyle"],"hasSchema":true},
   {"name":"forget_rule","domain":"playbook","mode":"write","risk":"medium","groups":["base"],"pools":["lifestyle"],"hasSchema":true},
   {"name":"generate_image","domain":"creative","mode":"stage","risk":"medium","groups":["erp","trading"],"pools":["lifestyle","trading"],"hasSchema":true},
