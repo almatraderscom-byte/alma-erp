@@ -1399,6 +1399,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private let bargeInRequiredFrames = 12       // ≈240ms at the 20ms input tap
     private let bargeInPreRollChunks = 14        // ≈280ms, including first syllable
     private let audioLock = NSLock()
+    /// EVERY AVAudioEngine/AVAudioPlayerNode lifecycle call goes through this ONE
+    /// serial queue. Build 82 device crash reports (0x8BADF00D watchdog): main
+    /// thread deadlocked inside AVFAudio's recursive_mutex ([AVAudioPlayerNode
+    /// stop] / [AVAudioEngine inputNode]) because socket threads and UI buttons
+    /// hit the engine concurrently. Serializing removes the lock inversion.
+    private let audioQueue = DispatchQueue(label: "alma.voice.audio")
     private var inputMuted = false
     private var speakerEnabled = true
 
@@ -1475,6 +1481,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func configureAudio() throws {
+        try audioQueue.sync { try configureAudioOnQueue() }
+    }
+
+    private func configureAudioOnQueue() throws {
         guard !configured else { return }
         let av = AVAudioSession.sharedInstance()
         try av.setCategory(.playAndRecord, mode: .voiceChat,
@@ -1832,8 +1842,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let scheduledBufferID = bufferID
         let scheduledGeneration = generation
 
-        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            self?.playbackBufferFinished(id: scheduledBufferID, generation: scheduledGeneration)
+        audioQueue.async { [weak self] in
+            guard let self, !self.stopped else { return }
+            self.player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                self?.playbackBufferFinished(id: scheduledBufferID, generation: scheduledGeneration)
+            }
         }
 
         if shouldStart {
@@ -1867,7 +1880,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let prebufferDuration = bufferedPlaybackDuration
         audioLock.unlock()
 
-        if !player.isPlaying { player.play() }
+        audioQueue.async { [weak self] in
+            guard let self, !self.stopped else { return }
+            if !self.player.isPlaying { self.player.play() }
+        }
         #if DEBUG
         NSLog("ALMA-VOICE playback turn started prebuffer=%.3fs", prebufferDuration)
         #endif
@@ -1982,7 +1998,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         micPreRoll.removeAll(keepingCapacity: true)
         audioLock.unlock()
 
-        player.stop()
+        audioQueue.async { [weak self] in self?.player.stop() }
         #if DEBUG
         NSLog("ALMA-VOICE playback turn finished")
         #endif
@@ -2013,7 +2029,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         micPreRoll.removeAll(keepingCapacity: true)
         audioLock.unlock()
 
-        player.stop()
+        audioQueue.async { [weak self] in self?.player.stop() }
         #if DEBUG
         if interrupted { NSLog("ALMA-VOICE server confirmed interruption") }
         #endif
@@ -2092,18 +2108,26 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     func recoverAudio() {
         guard configured else { return }
         try? AVAudioSession.sharedInstance().setActive(true)
-        if !audioEngine.isRunning { try? audioEngine.start() }
         audioLock.lock()
         let shouldPlay = playbackStarted
         audioLock.unlock()
-        if shouldPlay, !player.isPlaying { player.play() }
+        audioQueue.async { [weak self] in
+            guard let self, !self.stopped else { return }
+            if !self.audioEngine.isRunning { try? self.audioEngine.start() }
+            if shouldPlay, !self.player.isPlaying { self.player.play() }
+        }
     }
 
     func stop() {
         stopped = true
-        if tapInstalled { audioEngine.inputNode.removeTap(onBus: 0); tapInstalled = false }
-        player.stop()
-        if audioEngine.isRunning { audioEngine.stop() }
+        let hadTap = tapInstalled
+        tapInstalled = false
+        audioQueue.async { [weak self] in
+            guard let self else { return }
+            if hadTap { self.audioEngine.inputNode.removeTap(onBus: 0) }
+            self.player.stop()
+            if self.audioEngine.isRunning { self.audioEngine.stop() }
+        }
         // Deliberately NOT detaching the player: detach with completion callbacks
         // in flight is a CoreAudio crash; the node stays attached for the next call.
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
