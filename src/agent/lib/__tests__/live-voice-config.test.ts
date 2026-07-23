@@ -24,13 +24,18 @@ describe('live voice configuration', () => {
     expect(buildLiveVoiceTokenConfig().tools).toBeUndefined()
   })
 
-  it('forces owner requests through the existing head agent boundary', () => {
+  it('keeps business truth behind the head boundary (2026-07-23 contract)', () => {
     const config = buildLiveVoiceConfig()
     const declarations = (config.tools?.[0] as { functionDeclarations?: Array<{ name?: string }> })
       ?.functionDeclarations ?? []
     expect(declarations.map((item) => item.name)).toContain('run_agent_turn')
-    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('প্রতিটি বক্তব্য বা অনুরোধে run_agent_turn')
-    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('completed/report-ready')
+    // Casual talk answers directly; business/action requests cross run_agent_turn,
+    // and business facts must never be fabricated by the transport model.
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('run_agent_turn ঠিক একবার চালাবে')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না')
+    // Read-only fast lane exists but is scoped to lookups only.
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('quick_erp_lookup')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('completed/reportReady')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).not.toContain('স্যার')
   })
 })
