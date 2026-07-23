@@ -13,6 +13,7 @@ import { join } from 'node:path'
 const mockPrisma = vi.hoisted(() => ({
   agentVoiceCall: { findUnique: vi.fn(), update: vi.fn().mockResolvedValue({}) },
   agentConversation: { findUnique: vi.fn(), create: vi.fn() },
+  agentPendingAction: { create: vi.fn().mockResolvedValue({ id: 'job-fallback' }) },
 }))
 vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
 
@@ -107,12 +108,33 @@ describe('submit-instruction route', () => {
     )
   })
 
-  it('reports queue-down honestly (503) instead of pretending', async () => {
+  it('A2 queue down → falls back to a DB-poll pending job (Upstash outage 2026-07-24)', async () => {
     mockPrisma.agentVoiceCall.findUnique.mockResolvedValue(ownerCall)
     mockPrisma.agentConversation.findUnique.mockResolvedValue({ id: 'conv-1' })
     mockTurnQueue.isTurnHandoffConfigured.mockReturnValue(false)
     const res = await POST(makeReq({ instruction: 'কাজ', callRecordId: 'call-1' }))
-    expect(res.status).toBe(503)
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.ok).toBe(true)
+    expect(mockPrisma.agentPendingAction.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          type: 'voice_instruction_turn',
+          status: 'approved',
+          payload: expect.objectContaining({ turnId: 'turn-1', conversationId: 'conv-1' }),
+        }),
+      }),
+    )
+  })
+
+  it('enqueue fails AND db fallback fails → honest 502', async () => {
+    mockPrisma.agentVoiceCall.findUnique.mockResolvedValue(ownerCall)
+    mockPrisma.agentConversation.findUnique.mockResolvedValue({ id: 'conv-1' })
+    mockTurnQueue.enqueueTurnJob.mockResolvedValue(null)
+    mockPrisma.agentPendingAction.create.mockRejectedValueOnce(new Error('db down'))
+    const res = await POST(makeReq({ instruction: 'কাজ', callRecordId: 'call-1' }))
+    expect(res.status).toBe(502)
+    expect(mockTurnStatus.finalizeTurnIfRunning).toHaveBeenCalledWith('turn-1', 'error')
   })
 })
 

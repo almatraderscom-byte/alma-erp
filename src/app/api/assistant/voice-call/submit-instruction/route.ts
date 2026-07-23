@@ -79,13 +79,6 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: false, error: 'call_too_old' }, { status: 403 })
   }
 
-  if (!isTurnHandoffConfigured()) {
-    return Response.json(
-      { ok: false, error: 'এই মুহূর্তে কাজের queue-টা পাওয়া যাচ্ছে না — একটু পরে আবার বলুন, নাহলে অ্যাপে লিখে দিন।' },
-      { status: 503 },
-    )
-  }
-
   // Conversation: reuse the conversation the call belongs to; otherwise open a
   // fresh one so the instruction (and the head's work) is visible in the app.
   let conversationId: string | null = call.conversationId ?? null
@@ -108,8 +101,34 @@ export async function POST(req: NextRequest) {
   const jobData = buildTurnJobData(turnId, conversationId, { message })
   if (!jobData) return Response.json({ ok: false, error: 'turn_build_failed' }, { status: 500 })
 
-  const jobId = await enqueueTurnJob(jobData)
-  if (!jobId) {
+  // Primary: the A2 Upstash turn queue. Fallback (live outage 2026-07-24: Upstash
+  // monthly request quota exhausted → every voice instruction died with "queue-তে
+  // দেওয়া যায়নি"): a DB-backed pending job the VPS worker polls every 30s —
+  // no metered Redis anywhere on that path. The worker then runs the SAME turn
+  // via the internal chat API (turnId reused), so app-chat visibility is identical.
+  let dispatched: 'a2_queue' | 'db_poll' | null = null
+  if (isTurnHandoffConfigured()) {
+    const jobId = await enqueueTurnJob(jobData)
+    if (jobId) dispatched = 'a2_queue'
+  }
+  if (!dispatched) {
+    try {
+      await db.agentPendingAction.create({
+        data: {
+          type: 'voice_instruction_turn',
+          status: 'approved',
+          resolvedAt: new Date(),
+          conversationId,
+          summary: `🎙️ ${instruction.slice(0, 80)}`,
+          payload: { turnId, conversationId, message, callRecordId: call.id },
+        },
+      })
+      dispatched = 'db_poll'
+    } catch (err) {
+      console.error('[submit-instruction] db fallback failed:', err instanceof Error ? err.message : String(err))
+    }
+  }
+  if (!dispatched) {
     const { finalizeTurnIfRunning } = await import('@/agent/lib/turn-status')
     await finalizeTurnIfRunning(turnId, 'error')
     return Response.json(
@@ -118,7 +137,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  console.log(`[submit-instruction] call=${call.id} → turn=${turnId} conv=${conversationId}`)
+  console.log(`[submit-instruction] call=${call.id} → turn=${turnId} conv=${conversationId} via=${dispatched}`)
   return Response.json({
     ok: true,
     turnId,
