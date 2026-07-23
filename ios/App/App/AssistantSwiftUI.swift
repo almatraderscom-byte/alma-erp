@@ -13958,6 +13958,11 @@ struct AssistantScreen: View {
             AgentSideDrawer(vm: vm, openWeb: openWeb)
                 .presentationBackground(.clear)
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("almaVoiceDebugOpen"))) { _ in
+            #if DEBUG
+            vm.showVoice = true
+            #endif
+        }
         .fullScreenCover(isPresented: $vm.showVoice) {
             AlmaVoiceConsoleView(vm: vm)
         }
