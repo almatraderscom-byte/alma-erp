@@ -1202,6 +1202,37 @@ final class AlmaVoiceEngine {
         liveConnectionFailed(error: nil, message: message)
     }
 
+    /// FAST LANE (owner spec 2026-07-23): simple read-only lookups skip the head
+    /// entirely — one whitelisted ERP tool over /api/assistant/voice-tool, answer
+    /// in seconds. Actions/memory/complex work still cross the head route.
+    func runQuickLookup(tool: String, callId: String) {
+        let started = Date()
+        feedStatus("তথ্য দেখা হচ্ছে…")
+        state = .thinking
+        Task { [weak self] in
+            guard let self else { return }
+            defer { if self.state == .thinking && !self.liveToolTurnPending { self.state = .listening } }
+            do {
+                await AlmaAPI.shared.syncCookies()
+                struct QuickResp: Decodable { let ok: Bool?; let ms: Int?; let result: String?; let error: String? }
+                let resp: QuickResp = try await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/voice-tool",
+                    body: ["tool": tool, "business_id": "ALMA_LIFESTYLE"])
+                #if DEBUG
+                NSLog("ALMA-VOICE quick lookup %@ done clientMs=%d serverMs=%d ok=%d",
+                      tool, Int(Date().timeIntervalSince(started) * 1000), resp.ms ?? -1, (resp.ok ?? false) ? 1 : 0)
+                #endif
+                if resp.ok == true, let payload = resp.result {
+                    self.live.sendToolResponse(callId: callId, result: "তথ্য (JSON): \(payload)। এখান থেকে Boss-এর প্রশ্নের উত্তরটুকু সংক্ষেপে স্বাভাবিক বাংলায় বলুন।")
+                } else {
+                    self.live.sendToolResponse(callId: callId, result: "তথ্যটা এখন আনা গেল না (\(resp.error ?? "unknown"))। Boss-কে ছোট করে জানান, দরকার হলে run_agent_turn দিয়ে চেষ্টা করুন।")
+                }
+            } catch {
+                self.live.sendToolResponse(callId: callId, result: "তথ্যটা এখন আনা গেল না। Boss-কে ছোট করে জানান।")
+            }
+        }
+    }
+
     /// Gemini Live is the low-latency ears/voice only. Every meaningful owner turn
     /// still crosses the existing head route, preserving memory, tools, approvals,
     /// claim verification, and the durable call workflow.
@@ -1571,7 +1602,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let instruction = """
         তুমি ALMA — Boss-এর ব্যক্তিগত AI সহকারী, এখন Boss-এর সাথে ফোন কলে। একজন স্বাভাবিক, উষ্ণ মানুষের মতো ঝরঝরে বাংলায় কথা বলবে।
         কখন নিজে উত্তর দেবে: সালাম, কুশল, হালকা গল্প, মতামত, সাধারণ জ্ঞান — সাথে সাথে নিজেই ছোট করে উত্তর দেবে; কোনো tool ডাকবে না, দেরি করবে না।
-        কখন run_agent_turn: ব্যবসার তথ্য, হিসাব, টাকা, staff, অর্ডার, রিপোর্ট, মেমরি, বা কোনো কাজ করার অনুরোধ — তখনই কেবল run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না — একমাত্র উৎস run_agent_turn-এর result।
+        কখন quick_erp_lookup: আজকের হাজিরা, বিক্রি, অর্ডার, স্টক, নামাজ, পেন্ডিং অনুমোদন — এমন সাধারণ তথ্য-প্রশ্নে সরাসরি quick_erp_lookup চালাবে (কয়েক সেকেন্ডে ফল আসে), আগে ছোট্ট ack বলবে। কখন run_agent_turn: ব্যবসার তথ্য, হিসাব, টাকা, staff, অর্ডার, রিপোর্ট, মেমরি, বা কোনো কাজ করার অনুরোধ — তখনই কেবল run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না — একমাত্র উৎস run_agent_turn-এর result।
         ভেতরের শব্দ মুখে আনবে না: tool, function, acknowledgement, STATUS_NOTE, system, agent — এগুলো কখনো উচ্চারণ করবে না।
         STATUS_NOTE লেখা বার্তা এলে সেটা Boss-এর কথা নয়; STATUS_NOTE-এর জবাবে run_agent_turn কখনোই ডাকবে না — শুধু তার ভাবটুকু নিজের ভাষায় এক ছোট স্বাভাবিক বাক্যে বলবে — প্রতিবার নতুনভাবে, একই বাক্য দুবার কখনো নয়।
         Boss-এর কথা সত্যিই অস্পষ্ট হলে কেবল তখনই ছোট প্রশ্নে পরিষ্কার করে নেবে; পরিষ্কার অনুরোধে পাল্টা নিশ্চিতকরণ প্রশ্ন করবে না — ছোট্ট এক কথা বলে সাথে সাথে run_agent_turn চালাবে। ack বলার পর tool চালানো কখনো ভুলবে না।
@@ -1607,6 +1638,17 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 "turnCoverage": "TURN_INCLUDES_ONLY_ACTIVITY",
             ],
             "tools": [["functionDeclarations": [[
+                "name": "quick_erp_lookup",
+                "description": "সাধারণ ব্যবসার তথ্য কয়েক সেকেন্ডে দেখার দ্রুত পথ — আজকের হাজিরা/উপস্থিতি (get_attendance), বিক্রির সারাংশ (get_sales_summary), অর্ডার তালিকা (get_orders), ব্যবসার সার্বিক চিত্র (get_dashboard_snapshot), স্টক (get_inventory_status), নামাজের অবস্থা (get_salah_status), পেন্ডিং অনুমোদন (get_pending_approvals), নামাজের সময় (get_prayer_times)। শুধু তথ্য পড়া — কোনো কাজ, পরিবর্তন, বার্তা পাঠানো বা মেমরি নয়।",
+                "parameters": [
+                    "type": "OBJECT",
+                    "properties": ["tool": [
+                        "type": "STRING",
+                        "enum": ["get_attendance", "get_sales_summary", "get_orders", "get_dashboard_snapshot", "get_inventory_status", "get_salah_status", "get_pending_approvals", "get_prayer_times"],
+                    ]],
+                    "required": ["tool"],
+                ],
+            ], [
                 "name": "run_agent_turn",
                 "description": "Boss-এর কথাটি ALMA head agent-এ পাঠায়।",
                 "parameters": [
@@ -1832,6 +1874,16 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         if let content = root["serverContent"] as? [String: Any] { handleServerContent(content) }
         if let tool = root["toolCall"] as? [String: Any],
            let calls = tool["functionCalls"] as? [[String: Any]] {
+            for call in calls where call["name"] as? String == "quick_erp_lookup" {
+                let id = call["id"] as? String ?? UUID().uuidString
+                let toolName = (call["args"] as? [String: Any])?["tool"] as? String ?? ""
+                #if DEBUG
+                NSLog("ALMA-VOICE quick_erp_lookup: %@", toolName)
+                #endif
+                DispatchQueue.main.async { [weak self] in
+                    self?.engine?.runQuickLookup(tool: toolName, callId: id)
+                }
+            }
             for call in calls where call["name"] as? String == "run_agent_turn" {
                 let id = call["id"] as? String ?? UUID().uuidString
                 let args = call["args"] as? [String: Any]
