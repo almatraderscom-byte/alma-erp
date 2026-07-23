@@ -182,6 +182,47 @@ describe('processCallEscalations — queued rows', () => {
   })
 })
 
+describe('processCallEscalations — awaiting_approval', () => {
+  const awaitingRow = {
+    id: 'esc3',
+    trigger: 'manual',
+    refId: 'x',
+    title: 'Test',
+    purpose: 'p',
+    status: 'awaiting_approval',
+    createdAt: new Date(),
+    nextCheckAt: new Date(Date.now() - 1000),
+    waCallId: null,
+    pstnCallId: null,
+    approvalActionId: 'card1',
+  }
+
+  it('card rejected/expired → ladder cancelled', async () => {
+    mockPrisma.agentCallEscalation.findMany.mockResolvedValue([awaitingRow])
+    mockPrisma.agentPendingAction.findUnique.mockResolvedValue({ status: 'expired' })
+    const res = await processCallEscalations()
+    expect(res).toEqual([{ id: 'esc3', outcome: 'cancelled_rejected' }])
+    expect(mockVoiceCall.placeOutboundCall).not.toHaveBeenCalled()
+  })
+
+  it('card approved but inline start crashed → cron recovers and dials', async () => {
+    mockPrisma.agentCallEscalation.findMany.mockResolvedValue([awaitingRow])
+    mockPrisma.agentPendingAction.findUnique.mockResolvedValue({ status: 'approved' })
+    mockPrisma.agentCallEscalation.findUnique.mockResolvedValue(awaitingRow)
+    mockPrisma.agentCallEscalation.updateMany.mockResolvedValue({ count: 1 })
+    mockVoiceCall.placeOutboundCall.mockResolvedValue({ ok: true, callRecordId: 'call1' })
+    const res = await processCallEscalations()
+    expect(res).toEqual([{ id: 'esc3', outcome: 'dialed_wa_calling' }])
+  })
+
+  it('card still pending → keeps waiting', async () => {
+    mockPrisma.agentCallEscalation.findMany.mockResolvedValue([awaitingRow])
+    mockPrisma.agentPendingAction.findUnique.mockResolvedValue({ status: 'pending' })
+    const res = await processCallEscalations()
+    expect(res).toEqual([{ id: 'esc3', outcome: 'still_awaiting_approval' }])
+  })
+})
+
 describe('processCallEscalations — call stages', () => {
   const waRow = {
     id: 'esc2',

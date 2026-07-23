@@ -402,11 +402,18 @@ async function stepEscalation(row: any, cfg: ProactiveCallConfig): Promise<strin
     const action = row.approvalActionId
       ? await db.agentPendingAction.findUnique({ where: { id: row.approvalActionId }, select: { status: true } })
       : null
-    if (!action || action.status === 'rejected' || action.status === 'cancelled') {
-      await resolve(row.id, 'cancelled', { note: 'permission card rejected/missing' })
+    // Approve handler normally starts the ladder inline — if it crashed after
+    // approving, recover here.
+    if (action && (action.status === 'approved' || action.status === 'executed')) {
+      const started = await startEscalationLadder(row.id, cfg)
+      return started.ok ? `dialed_${started.stage}` : `dial_failed: ${started.error}`
+    }
+    // Anything but a live pending card (rejected / cancelled / expired / missing) ends the ladder.
+    if (!action || action.status !== 'pending') {
+      await resolve(row.id, 'cancelled', { note: `permission card ${action?.status ?? 'missing'}` })
       return 'cancelled_rejected'
     }
-    // Approve handler starts the ladder inline; here only expire stale cards.
+    // Card still pending — only expire stale ones.
     if (Date.now() - new Date(row.createdAt).getTime() > 24 * 3600_000) {
       await resolve(row.id, 'cancelled', { note: 'permission card expired (24h)' })
       return 'cancelled_expired'
