@@ -582,7 +582,9 @@ extension AlmaTabBarController {
     /// AlmaNavBridge posts .almaOpenPath with the ERP route from a notification tap.
     @objc func onOpenPath(_ note: Notification) {
         guard let path = note.userInfo?["path"] as? String, path.hasPrefix("/") else { return }
-        routeNotificationTap(to: path)
+        routeNotificationTap(
+            to: path,
+            deliveryId: note.userInfo?["notificationDeliveryId"] as? String)
     }
 
     /// Land a notification tap on its exact page.
@@ -592,19 +594,21 @@ extension AlmaTabBarController {
     /// Paths carrying a query string open the WEB page — AlmaNativeRouter strips
     /// queries, and deep links like /orders?q=… or /attendance?review=… only work
     /// on the web page. Bare paths go through pushSmart (native when migrated).
-    func routeNotificationTap(to path: String) {
+    func routeNotificationTap(to path: String, deliveryId: String? = nil) {
         // The tap can arrive before the shell is attached to a window (cold start
         // races the webview boot) — retry once the hierarchy is up.
         guard view.window != nil else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-                self?.routeNotificationTap(to: path)
+                self?.routeNotificationTap(to: path, deliveryId: deliveryId)
             }
             return
         }
         // A presented sheet/full-screen cover (voice console, approval sheet…) would
         // swallow the navigation — dismiss it first, then route.
         if let presented = presentedViewController {
-            presented.dismiss(animated: false) { [weak self] in self?.routeNotificationTap(to: path) }
+            presented.dismiss(animated: false) { [weak self] in
+                self?.routeNotificationTap(to: path, deliveryId: deliveryId)
+            }
             return
         }
 
@@ -622,15 +626,22 @@ extension AlmaTabBarController {
         if !hasQuery, let index = tabRoots[clean] {
             AlmaPerfLog.event("route.tabRoot", clean)
             selectTabRootStably(index)
+            if let deliveryId { AlmaNotificationRouteStore.consume(id: deliveryId) }
             return
         }
 
-        guard let nav = selectedViewController as? UINavigationController else { return }
+        guard let nav = selectedViewController as? UINavigationController else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.routeNotificationTap(to: path, deliveryId: deliveryId)
+            }
+            return
+        }
         let title = Self.notificationTapTitle(for: clean)
         // IOSP-1: one decision point — pushSmart (AlmaNavCoordinator) classifies
         // query links, allowlisted web, and unknown routes with telemetry; a
         // notification tap can no longer silently embed an unknown web page.
         pushSmart(on: nav, path: path, title: title, icon: "bell.badge")
+        if let deliveryId { AlmaNotificationRouteStore.consume(id: deliveryId) }
     }
 
     /// Select a tab root and keep it selected against the cold-start reset race.

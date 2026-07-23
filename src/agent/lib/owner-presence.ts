@@ -1,26 +1,31 @@
 /**
- * Owner app-presence tracking — so agent push (ntfy) fires ONLY when the owner
- * is NOT actively in the agent app. The app pings markOwnerAppActive() while it
- * is foreground (visible); a notification path calls isOwnerAppActive() and
- * skips the push if the owner is currently looking at the app.
+ * Owner app-presence tracking. The client writes an explicit lifecycle state so
+ * backgrounding takes effect immediately instead of waiting for the old 50-second
+ * heartbeat window to expire.
  */
 import { prisma } from '@/lib/prisma'
 
 const KEY = 'owner.appActiveAt'
 /** Client pings ~every 20s while visible; 50s window tolerates a missed ping. */
 const ACTIVE_WINDOW_MS = 50_000
+export type OwnerAppPresenceState = 'active' | 'background'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-/** Record that the owner's agent app is foreground right now. */
-export async function markOwnerAppActive(): Promise<void> {
-  const value = JSON.stringify({ at: Date.now() })
+/** Record the owner's current app lifecycle state. */
+export async function markOwnerAppPresence(state: OwnerAppPresenceState): Promise<void> {
+  const value = JSON.stringify({ at: Date.now(), state })
   await db.agentKvSetting.upsert({
     where: { key: KEY },
     update: { value },
     create: { key: KEY, value },
   })
+}
+
+/** Backwards-compatible helper for older server callers. */
+export async function markOwnerAppActive(): Promise<void> {
+  await markOwnerAppPresence('active')
 }
 
 /**
@@ -32,8 +37,11 @@ export async function isOwnerAppActive(): Promise<boolean> {
   try {
     const row = await db.agentKvSetting.findUnique({ where: { key: KEY } })
     if (!row?.value) return false
-    const at = (JSON.parse(row.value) as { at?: number }).at ?? 0
-    return Date.now() - at < ACTIVE_WINDOW_MS
+    const parsed = JSON.parse(row.value) as { at?: number; state?: OwnerAppPresenceState }
+    const at = parsed.at ?? 0
+    // Legacy rows had no state and meant "active"; new background writes suppress
+    // that legacy interpretation immediately.
+    return parsed.state !== 'background' && Date.now() - at < ACTIVE_WINDOW_MS
   } catch {
     return false
   }

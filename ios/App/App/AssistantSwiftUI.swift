@@ -2329,6 +2329,7 @@ final class AssistantVM {
                 guard let self else { return }
                 self.backgroundedAt = Date()
                 self.isInBackground = true
+                await self.sendPresenceState("background")
                 // PR 5: stamp the replay cursor into the persisted descriptor —
                 // if iOS kills the process, relaunch recovers from here.
                 if var rt = self.recoverableTurn {
@@ -2345,6 +2346,7 @@ final class AssistantVM {
                 guard let self else { return }
                 self.isInBackground = false
                 self.lastForegroundAt = Date()
+                await self.sendPresenceState("active")
                 AlmaTurnLog.event("turn.foreground")
                 self.resumePendingAttachmentUploads()
                 await self.recoverTurnState(trigger: "foreground")
@@ -2360,6 +2362,7 @@ final class AssistantVM {
                 // would otherwise silently disable the poll loop + stall
                 // watchdog for the rest of the session.
                 self.isInBackground = false
+                await self.sendPresenceState("active")
                 self.resumePendingAttachmentUploads()
                 await self.recoverTurnState(trigger: "active")               // idempotent re-check
             }
@@ -2851,6 +2854,7 @@ final class AssistantVM {
     private func startPolling() {
         pollTask?.cancel()
         pollTask = Task { [weak self] in
+            await self?.sendPresenceState("active")
             var tick = 0
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 12_000_000_000)
@@ -2916,8 +2920,7 @@ final class AssistantVM {
                 // invalidation when the server state is unchanged.
                 await self.loadActiveBackgroundTurns()
                 if tick % 2 == 0 {
-                    let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/presence",
-                                                                        body: [String: String]())
+                    await self.sendPresenceState("active")
                 }
                 // Durable background work + today's tiny progress counter refresh
                 // together every ~24s. Neither request mutates business state.
@@ -2928,6 +2931,14 @@ final class AssistantVM {
                 }
             }
         }
+    }
+
+    private func sendPresenceState(_ state: String) async {
+        let _: OkResponse? = try? await AlmaAPI.shared.send(
+            "POST",
+            "/api/assistant/presence",
+            body: ["state": state]
+        )
     }
 
     /// Roadmap Phase 1.3 — immediate, idempotent turn recovery. Fetches turn-status
@@ -6615,10 +6626,43 @@ final class AssistantVM {
                 }
                 self.dictationStreamer.onNoSpeechSink = { [weak self] in
                     guard let self, self.usingStreamDictation else { return }
+                    NSLog("ALMA-DICTATE UI noSpeech (liveDictation was %d chars)", self.liveDictation.count)
                     self.usingStreamDictation = false
                     self.isRecording = false
                     self.liveDictation = ""
                     self.dictationFailure = "কথা বোঝা যায়নি"
+                }
+                // Socket died mid-take: the streamer hands back the buffered
+                // utterance as WAV — without this sink the take vanished silently
+                // (composer dictation has no AlmaVoiceEngine behind it).
+                self.dictationStreamer.onFallbackUploadSink = { [weak self] wav in
+                    guard let self, self.usingStreamDictation else { return }
+                    NSLog("ALMA-DICTATE UI WAV fallback %d bytes", wav.count)
+                    self.usingStreamDictation = false
+                    self.isRecording = false
+                    self.liveDictation = ""
+                    self.transcribing = true
+                    Task { [weak self] in
+                        guard let self else { return }
+                        defer { self.transcribing = false }
+                        do {
+                            let data = try await AssistantNet.uploadMultipart(
+                                path: "/api/assistant/transcribe", fileField: "audio",
+                                filename: "dictation.wav", mime: "audio/wav", data: wav)
+                            let t = try JSONDecoder().decode(TranscribeResponse.self, from: data)
+                            let text = (t.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !text.isEmpty else {
+                                self.dictationFailure = "কথা বোঝা যায়নি"
+                                return
+                            }
+                            self.composerDraft = self.composerDraft.isEmpty
+                                ? text : self.composerDraft + " " + text
+                            self.dictationFailure = nil
+                            AlmaAgentHaptics.commit()
+                        } catch {
+                            self.dictationFailure = "ভয়েস বোঝা যায়নি — আবার চেষ্টা করুন"
+                        }
+                    }
                 }
                 self.dictationStreamer.onErrorSink = { [weak self] _ in
                     guard let self, self.usingStreamDictation else { return }

@@ -1592,6 +1592,29 @@ await pollPendingJobs()
 const PENDING_JOBS_POLL_MS = Math.max(15_000, Number(process.env.WORKER_PENDING_JOBS_POLL_MS) || 30_000)
 const pollInterval = setInterval(pollPendingJobs, PENDING_JOBS_POLL_MS)
 
+async function sweepTurnCompletionNotifications() {
+  try {
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/turn-notifications`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${getInternalToken()}` },
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!res.ok) {
+      console.warn(`[turn-notifications] sweep returned ${res.status}`)
+      return
+    }
+    const result = await res.json()
+    if (result.processed > 0) {
+      console.log(`[turn-notifications] delivered/settled ${result.processed} queued notification(s)`)
+    }
+  } catch (err) {
+    console.warn('[turn-notifications] sweep failed:', err.message)
+  }
+}
+
+await sweepTurnCompletionNotifications()
+const turnNotificationInterval = setInterval(sweepTurnCompletionNotifications, 60_000)
+
 const { pollCsPendingReplies } = await import('./cs/reply.mjs')
 const csEnqueued = new Set()
 
@@ -1707,6 +1730,7 @@ async function shutdown(signal) {
   shuttingDown = true
   console.log(`[worker] ${signal} — draining...`)
   clearInterval(pollInterval)
+  clearInterval(turnNotificationInterval)
   clearInterval(csPollInterval)
   clearInterval(csMessengerPollInterval)
   clearInterval(heartbeatInterval)

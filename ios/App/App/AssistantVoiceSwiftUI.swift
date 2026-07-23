@@ -2419,6 +2419,9 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     var onErrorSink: ((String) -> Void)?
     var onLevelSink: ((Double) -> Void)?
     var onNoSpeechSink: (() -> Void)?
+    /// Composer dictation has no AlmaVoiceEngine — without this sink a degraded
+    /// socket's WAV fallback had NOWHERE to go and the take silently vanished.
+    var onFallbackUploadSink: ((Data) -> Void)?
     /// Composer dictation: the session is minted with server_vad (OpenAI commits
     /// at natural pauses → words stream LIVE), items accumulate across pauses,
     /// and the local VAD never auto-ends the utterance — only ✓/✕ do.
@@ -2467,6 +2470,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     private var socketOpen = false
     private var connectFailed = false
     private var wantCommit = false        // VAD ended before the socket was ready
+    private var fallbackUploaded = false  // WAV salvage fired (once per utterance)
 
     private struct TokenResp: Decodable { let key: String? }
 
@@ -2479,6 +2483,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         dictVoicedMs = 0; dictDipMs = 0
         pending = []; fullAudio = Data()
         socketOpen = false; connectFailed = false; wantCommit = false
+        fallbackUploaded = false
     }
 
     /// MIC FIRST: start capturing immediately (throws only on a mic failure —
@@ -2668,9 +2673,25 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     }
 
     /// End of speech: stop the mic (privacy), commit (or fall back), await text.
+    /// Quiet/garbled chunks make the STT echo its own prompt back as "speech".
+    /// These substrings only occur in that echo (comma-joined vocab runs from
+    /// stt-session's dictation prompt), never in the owner's real sentences —
+    /// sim-caught live 2026-07-24: the vocab list landed in the composer.
+    private static let promptEchoMarkers = [
+        "বাংলায় কথা বলা হচ্ছে", "Bangladeshi Bangla",
+        "ALMA Lifestyle, ALMA Trading", "almatraders.com, অর্ডার",
+        "ইনভেন্টরি, খরচ, বেতন", "কাস্টমার, স্টাফ, নামাজ",
+    ]
+    static func isPromptEcho(_ s: String) -> Bool {
+        Self.promptEchoMarkers.contains { s.contains($0) }
+    }
+
     private func dictJoinedText() -> String {
         dictItems.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+            // Keep prompt echoes out of the LIVE view too, not just the
+            // completed-event path.
+            .filter { !Self.isPromptEcho($0) }
             .joined(separator: " ")
     }
 
@@ -2678,6 +2699,10 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         if completedFired { return }
         completedFired = true
         stopMic(); closeSocket()
+        #if DEBUG
+        NSLog("ALMA-DICTATE finish textLen=%d items=%d done=%d", text.count,
+              dictItems.count, dictItems.filter(\.done).count)
+        #endif
         DispatchQueue.main.async { [weak self] in
             if text.isEmpty { self?.engine?.streamNoSpeech(); self?.onNoSpeechSink?() }
             else { self?.engine?.streamFinal(text); self?.onFinalSink?(text) }
@@ -2737,13 +2762,28 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
 
     /// Socket path failed after speech — upload the buffered utterance as WAV.
     private func uploadBufferedWav() {
-        lock.lock(); let pcm = fullAudio; lock.unlock()
+        // Once only: the salvage watchdog + degradeToLocal can both reach here
+        // for one utterance — a second upload doubled the text in the composer.
+        lock.lock()
+        if fallbackUploaded { lock.unlock(); return }
+        fallbackUploaded = true
+        let pcm = fullAudio
+        lock.unlock()
         guard pcm.count > 6_000 else {
             DispatchQueue.main.async { [weak self] in self?.engine?.streamNoSpeech(); self?.onNoSpeechSink?() }
             return
         }
         let wav = Self.wavData(pcm: pcm)
-        DispatchQueue.main.async { [weak self] in self?.engine?.streamFallbackUpload(wav) }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            #if DEBUG
+            NSLog("ALMA-DICTATE WAV fallback %d bytes (engine=%@ sink=%@)", wav.count,
+                  self.engine == nil ? "nil" : "set", self.onFallbackUploadSink == nil ? "nil" : "set")
+            #endif
+            if let engine = self.engine { engine.streamFallbackUpload(wav) }
+            else if let sink = self.onFallbackUploadSink { sink(wav) }
+            else { self.onNoSpeechSink?() }
+        }
     }
 
     /// Minimal WAV container: PCM16 mono 24k.
@@ -2781,6 +2821,9 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
                 if dictationMode {
                     let itemId = (obj["item_id"] as? String) ?? "item-\(dictItems.count)"
                     if let i = dictItems.firstIndex(where: { $0.id == itemId }) {
+                        // A straggler delta after the item's final transcript
+                        // would duplicate words the completed event already set.
+                        if dictItems[i].done { return }
                         dictItems[i].text += delta
                     } else {
                         dictItems.append((id: itemId, text: delta, done: false))
@@ -2795,10 +2838,15 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
             }
         case "conversation.item.input_audio_transcription.completed" where dictationMode:
             var piece = ((obj["transcript"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if piece.contains("বাংলায় কথা বলা হচ্ছে") || piece.contains("Bangladeshi Bangla") { piece = "" }
+            if Self.isPromptEcho(piece) { piece = "" }
             let itemId = (obj["item_id"] as? String) ?? ""
+            #if DEBUG
+            NSLog("ALMA-DICTATE completed item=%@ pieceLen=%d", itemId, piece.count)
+            #endif
             if let i = dictItems.firstIndex(where: { $0.id == itemId }) {
-                dictItems[i].text = piece
+                // An empty/filtered final transcript must never erase the words
+                // already accumulated from deltas — the owner watched them land.
+                if !piece.isEmpty { dictItems[i].text = piece }
                 dictItems[i].done = true
             } else if !piece.isEmpty {
                 dictItems.append((id: itemId, text: piece, done: true))

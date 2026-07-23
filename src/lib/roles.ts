@@ -75,7 +75,9 @@ export function isPathAllowedForRole(pathname: string, role: AlmaRole, businessI
   }
 
   if (pathname.startsWith('/settings/notifications')) {
-    return role === 'SUPER_ADMIN' || role === 'ADMIN'
+    // Every authenticated role owns its personal notification controls. Admin
+    // broadcast/stats APIs remain separately protected.
+    return true
   }
 
   if (pathname.startsWith('/trading/target-control')) {
@@ -166,7 +168,6 @@ const TRADING_STAFF_NAV_HIDE = new Set([
   '/attendance',
   '/settings/database',
   '/settings/users',
-  '/settings/notifications',
   '/settings/sms',
   '/audit',
   '/settings/branding',

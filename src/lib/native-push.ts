@@ -11,6 +11,9 @@ export type NativePushRegisterInput = {
 }
 
 let initializedAppId: string | null = null
+let nativeClickListenerRegistered = false
+const permissionListenerKeys = new Set<string>()
+const tokenListenerKeys = new Set<string>()
 
 async function getOneSignal() {
   const mod = await import('@onesignal/capacitor-plugin')
@@ -108,7 +111,9 @@ function reportTapDiag(stage: string, detail?: Record<string, unknown>): void {
   }
 }
 
-type AlmaNavBridgePlugin = { openPath: (options: { path: string }) => Promise<void> }
+type AlmaNavBridgePlugin = {
+  openPath: (options: { path: string; source?: string; deliveryId?: string }) => Promise<void>
+}
 
 /**
  * The iOS shell's runtime-registered deep-link plugin (AlmaNavBridge.swift), or
@@ -133,16 +138,26 @@ function getAlmaNavBridge(): AlmaNavBridgePlugin | undefined {
  *
  * Android: single-webview app — navigating the webview IS the right routing.
  */
-async function landNativeTap(url: URL): Promise<void> {
-  if (url.origin === window.location.origin) {
-    const bridge = getAlmaNavBridge()
-    if (bridge && Capacitor.getPlatform() === 'ios') {
-      try {
-        await bridge.openPath({ path: `${url.pathname}${url.search}` })
-        return
-      } catch {
-        // Bridge rejected (shouldn't happen) — fall back to webview navigation.
-      }
+async function landNativeTap(
+  url: URL,
+  metadata?: { source?: string; deliveryId?: string },
+): Promise<void> {
+  const bridge = getAlmaNavBridge()
+  if (bridge && Capacitor.getPlatform() === 'ios' && /^https?:$/.test(url.protocol)) {
+    try {
+      // Do not compare origins here. On a cold start the hidden Capacitor page can
+      // still be capacitor://localhost (or a preview host) while the signed push
+      // carries the production https:// URL. The old equality gate skipped the
+      // native bridge and navigated an invisible webview, which looked exactly like
+      // "every notification opens Dashboard".
+      await bridge.openPath({
+        path: `${url.pathname}${url.search}`,
+        source: metadata?.source,
+        deliveryId: metadata?.deliveryId,
+      })
+      return
+    } catch {
+      // Bridge rejected (old build / malformed path) — webview is the fallback.
     }
   }
   window.location.assign(url.href)
@@ -164,6 +179,7 @@ export async function listenForNativeNotificationClicks(): Promise<void> {
     reportTapDiag('skip_not_native')
     return
   }
+  if (nativeClickListenerRegistered) return
   try {
     const OneSignal = await getOneSignal()
     const notifications = OneSignal.Notifications as unknown as {
@@ -186,11 +202,18 @@ export async function listenForNativeNotificationClicks(): Promise<void> {
         platform: Capacitor.getPlatform(),
         origin: window.location.origin,
       })
-      const data = (event?.notification?.additionalData ?? {}) as { actionUrl?: string; source?: string }
+      const data = (event?.notification?.additionalData ?? {}) as {
+        actionUrl?: string
+        routePath?: string
+        source?: string
+        notificationId?: string
+        deliveryId?: string
+      }
       // Agent pushes sent before the server-side '/agent' default existed (or by a
       // not-yet-redeployed worker) carry no actionUrl — still land them on the
       // agent chat instead of silently dropping the tap on the dashboard.
-      const target = data.actionUrl
+      const target = data.routePath
+        || data.actionUrl
         || event?.notification?.launchURL
         || (data.source === 'agent' ? '/agent' : null)
       if (!target) {
@@ -203,11 +226,15 @@ export async function listenForNativeNotificationClicks(): Promise<void> {
         // then land the tap (full href keeps the production host in-shell even
         // during a cold start from the local bootstrap page).
         const url = new URL(target, window.location.origin)
-        void landNativeTap(url)
+        void landNativeTap(url, {
+          source: data.source,
+          deliveryId: data.notificationId || data.deliveryId,
+        })
       } catch {
         // Malformed URL — ignore rather than crash the tap.
       }
     })
+    nativeClickListenerRegistered = true
     // Proves the listener was actually attached. If this reports but 'click_fired'
     // never does, the OneSignal SDK isn't delivering taps to JS at all — which is
     // where the owner's symptom points.
@@ -226,6 +253,8 @@ export async function listenForNativeNotificationClicks(): Promise<void> {
  */
 export async function listenForPermissionChanges(input: NativePushRegisterInput): Promise<void> {
   if (!nativePushAvailable(input.appId)) return
+  const listenerKey = `${input.appId}:${input.userId}`
+  if (permissionListenerKeys.has(listenerKey)) return
   try {
     const OneSignal = await getOneSignal()
     const notifications = OneSignal.Notifications as unknown as {
@@ -234,6 +263,7 @@ export async function listenForPermissionChanges(input: NativePushRegisterInput)
     notifications?.addEventListener?.('permissionChange', granted => {
       if (granted) void registerNativePushSubscription(input).catch(() => {})
     })
+    permissionListenerKeys.add(listenerKey)
   } catch {
     // Non-critical — the focus re-register remains the fallback.
   }
@@ -242,6 +272,8 @@ export async function listenForPermissionChanges(input: NativePushRegisterInput)
 /** Re-register whenever OneSignal detects a push token change (FCM rotation). */
 export async function listenForTokenChanges(input: NativePushRegisterInput): Promise<void> {
   if (!nativePushAvailable(input.appId)) return
+  const listenerKey = `${input.appId}:${input.userId}`
+  if (tokenListenerKeys.has(listenerKey)) return
   try {
     const OneSignal = await getOneSignal()
     const sub = OneSignal.User?.pushSubscription as {
@@ -250,6 +282,7 @@ export async function listenForTokenChanges(input: NativePushRegisterInput): Pro
     sub?.addEventListener?.('change', () => {
       void registerNativePushSubscription(input).catch(() => {})
     })
+    tokenListenerKeys.add(listenerKey)
   } catch {
     // Non-critical — next focus event will re-register anyway
   }

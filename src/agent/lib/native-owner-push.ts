@@ -12,8 +12,8 @@
  *     against), so it lights up exactly the subscriptions the APK already created.
  *   • Does NOT write to the ERP `notifications` table (no schema coupling, no
  *     misleading NotificationType, no data pollution) — purely a transport.
- *   • KV-gated (`agent_native_push_enabled`, default OFF) so the owner opts in with
- *     no redeploy, and fail-OPEN so a glitch never breaks the ntfy/Telegram path.
+ *   • KV kill-switch (`agent_native_push_enabled`; only explicit false disables)
+ *     plus per-user preferences, with fail-open transport isolation.
  *
  * Platform note: Android and iOS are both wired — the Capacitor shells register
  * via `OneSignal.login(userId)` and taps are routed in-app by the click listener
@@ -21,22 +21,26 @@
  */
 import { prisma } from '@/lib/prisma'
 import { ANDROID_NOTIFICATION_CHANNEL_ID } from '@/lib/notification-sound'
+import { filterAgentPushUserIds } from '@/lib/notification-preferences'
 
-/** KV flag (owner-tunable, no redeploy). Default OFF — capability is opt-in. */
+/** KV kill switch (owner-tunable, no redeploy). Missing means ON; the user's
+ * per-account notification preference is the normal opt-out control. */
 export const AGENT_NATIVE_PUSH_ENABLED_KEY = 'agent_native_push_enabled'
 /** Optional KV override: explicit owner ERP user id(s), comma-separated. */
 export const AGENT_OWNER_USER_ID_KEY = 'agent_owner_user_id'
 
-/** Reads the native-push kill-switch (KV). Default OFF. */
+/** Reads the native-push kill-switch (KV). Only an explicit `false` disables. */
 export async function isAgentNativePushEnabled(): Promise<boolean> {
   try {
     const row = await prisma.agentKvSetting.findUnique({
       where: { key: AGENT_NATIVE_PUSH_ENABLED_KEY },
       select: { value: true },
     })
-    return row?.value === 'true'
+    return row?.value !== 'false'
   } catch {
-    return false
+    // Fail open to the user's stored preference. A KV read glitch must not make a
+    // completed background task silently disappear.
+    return true
   }
 }
 
@@ -133,6 +137,9 @@ export async function pushNativeToOwner(opts: {
   message: string
   category?: 'salah' | 'urgent' | 'task' | 'report'
   actionUrl?: string | null
+  notificationKind?: 'completion' | 'approval' | 'alert'
+  /** Stable id for native double-callback dedupe (e.g. the AgentTurn id). */
+  deliveryId?: string | null
 }): Promise<NativePushResult> {
   try {
     if (!(await isAgentNativePushEnabled())) {
@@ -143,7 +150,21 @@ export async function pushNativeToOwner(opts: {
     const apiKey = process.env.ONESIGNAL_REST_API_KEY
     if (!appId || !apiKey) return { attempted: false, ok: false, reason: 'onesignal_unconfigured' }
 
-    const userIds = await resolveOwnerUserIds()
+    const resolvedUserIds = await resolveOwnerUserIds()
+    const preferenceCategory = opts.notificationKind === 'completion'
+      ? 'agentCompletions'
+      : opts.notificationKind === 'approval'
+        ? 'approvals'
+        : 'announcements'
+    const preferencePriority = opts.tier >= 3 ? 'CRITICAL' : opts.tier >= 2 ? 'HIGH' : 'NORMAL'
+    const userIds = await filterAgentPushUserIds(
+      resolvedUserIds,
+      preferencePriority,
+      preferenceCategory,
+    )
+    if (resolvedUserIds.length && !userIds.length) {
+      return { attempted: false, ok: false, reason: 'disabled_by_user' }
+    }
     if (!userIds.length) return { attempted: false, ok: false, reason: 'no_owner_user_id' }
 
     const usesV2Key = apiKey.startsWith('os_v2_')
@@ -170,12 +191,16 @@ export async function pushNativeToOwner(opts: {
       ios_badgeType: 'Increase',
       ios_badgeCount: 1,
       small_icon: 'ic_stat_onesignal_default',
+      ...(opts.deliveryId ? { collapse_id: opts.deliveryId } : {}),
       data: {
         source: 'agent',
         tier: opts.tier,
         category: opts.category ?? null,
+        notificationKind: opts.notificationKind ?? 'alert',
+        deliveryId: opts.deliveryId ?? null,
         // Native tap routing reads data.actionUrl (see native-push.ts click listener).
         actionUrl: url ?? null,
+        routePath: opts.actionUrl?.startsWith('/') ? opts.actionUrl : '/agent',
       },
     }
 

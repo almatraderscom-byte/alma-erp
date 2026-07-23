@@ -1034,6 +1034,29 @@ model NotificationBroadcast {
   @@index([targetBusinessId])
 }
 
+/// Per-user notification policy shared by web, iOS and server-side delivery.
+/// Missing rows intentionally mean the safe defaults in
+/// src/lib/notification-preferences.ts (enabled, all categories on).
+model NotificationPreference {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  enabled          Boolean  @default(true)
+  highPriorityOnly Boolean  @default(false)
+  criticalAlways   Boolean  @default(true)
+  agentCompletions Boolean  @default(true)
+  approvals        Boolean  @default(true)
+  orders           Boolean  @default(true)
+  payrollWallet    Boolean  @default(true)
+  inventory        Boolean  @default(true)
+  finance          Boolean  @default(true)
+  announcements    Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([enabled])
+  @@map("notification_preferences")
+}
+
 model PushSubscription {
   id             String    @id @default(cuid())
   userId         String
@@ -2273,6 +2296,27 @@ model AgentTurn {
   @@index([clientMessageId])
   @@index([conversationId, startedAt(sort: Desc)])
   @@map("agent_turns")
+}
+
+/// Durable, exactly-once owner push for a completed agent turn. The chat route
+/// enqueues before delivery; the VPS sweeper retries transient failures.
+model AgentTurnNotificationDelivery {
+  id             String    @id @default(uuid())
+  turnId         String    @unique @map("turn_id")
+  conversationId String    @map("conversation_id")
+  preview        String?   @db.Text
+  /// pending | processing | retry | delivered | suppressed | dead
+  status         String    @default("pending")
+  attempts       Int       @default(0)
+  availableAt    DateTime  @default(now()) @map("available_at")
+  leaseUntil     DateTime? @map("lease_until")
+  deliveredAt    DateTime? @map("delivered_at")
+  lastError      String?   @map("last_error") @db.Text
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([status, availableAt])
+  @@map("agent_turn_notification_deliveries")
 }
 
 /// Append-only event log for a worker-executed (VPS) turn (Component A2). A turn

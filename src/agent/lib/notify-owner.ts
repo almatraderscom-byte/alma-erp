@@ -60,6 +60,8 @@ export async function notifyOwner(opts: {
    * '/agent' or '/agent/live-watch'. Native-push only; ntfy/Telegram unaffected.
    */
   actionUrl?: string | null
+  notificationKind?: 'completion' | 'approval' | 'alert'
+  deliveryId?: string | null
   /** Telegram routing policy. Default keeps legacy fallback behavior. Call-report
    * delivery uses `never` because Telegram has its own durable required outbox. */
   telegramMode?: 'fallback' | 'always' | 'never'
@@ -100,9 +102,8 @@ export async function notifyOwner(opts: {
     statuses.ntfy_general = `error: ${err instanceof Error ? err.message : String(err)}`
   }
 
-  // Phase C — native app push (Android). Additive + KV-gated (default OFF) + fail-open:
-  // when the owner has opted in, also light up his installed app via OneSignal (the
-  // same alias/channel the APK registered against). Never blocks ntfy/Telegram.
+  // Native app push (iOS + Android). The KV value is an emergency kill-switch;
+  // normal opt-out is the owner's per-user notification preference.
   try {
     const { pushNativeToOwner } = await import('@/agent/lib/native-owner-push')
     const native = await pushNativeToOwner({
@@ -111,6 +112,8 @@ export async function notifyOwner(opts: {
       message: opts.message,
       category: opts.category,
       actionUrl: opts.actionUrl ?? null,
+      notificationKind: opts.notificationKind,
+      deliveryId: opts.deliveryId,
     })
     if (native.attempted) {
       channels.push('native_push')
@@ -185,6 +188,8 @@ export async function notifyOwnerIfAway(opts: {
   category?: 'salah' | 'urgent' | 'task' | 'report'
   /** Where a tap on the native push lands the owner (defaults to /agent downstream). */
   actionUrl?: string | null
+  notificationKind?: 'completion' | 'approval' | 'alert'
+  deliveryId?: string | null
 }): Promise<{ skipped: boolean }> {
   try {
     if (await isOwnerAppActive()) return { skipped: true }
