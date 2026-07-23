@@ -4,6 +4,7 @@
 **Branch:** `agent-phase-69`
 **Safety tag:** `pre-agent-phase-69`
 **Implementation commit:** `7eb589c8`
+**Final env-verification build:** `b6dc3d52`
 **Preview:** `https://alma-erp-git-agent-phase-69-maruf-s-projects2.vercel.app`
 
 ## Outcome
@@ -48,33 +49,40 @@ balance. A provider with no public wallet or invoice API says so directly.
 
 ## Live preview evidence
 
-Chrome full refresh completed at **24 July 2026, 1:25 AM (Asia/Dhaka)**:
+Chrome full refresh on the fresh env-verification deployment completed at
+**24 July 2026, 2:19 AM (Asia/Dhaka)**:
 
-- Sync health: `3 attention` and `3 optional connections`
-- Verified prepaid USD cash: `$19.49`
-- Provider-confirmed month-to-date cost: `$30.23`
-- Due within 7 days: `0`
+- Sync health: `Healthy`, `0 attention`, and `3 optional connections`.
+- Verified prepaid USD cash: `$57.84`.
+- Provider-confirmed month-to-date cost: `$159.61`.
+- Due within 7 days: `0`; ElevenLabs reports the next `USD 23.10` invoice due
+  16 August 2026.
+- Twilio: `$18.35` provider-verified cash wallet.
+- OpenAI: official organization cost connected; provider report plus only the
+  post-boundary local delta.
 - OpenRouter: `$12.17` provider-verified cash wallet; provider activity plus only the
   post-boundary local delta.
-- fal.ai: `$7.32` provider-verified cash wallet.
+- Google Cloud Billing export: Gemini, Google TTS, and Veo are all `Connected`;
+  their data is correctly labelled `Provider delayed` because the export has not
+  yet published a current boundary.
+- ElevenLabs: `220,685` characters available, plan/usage/invoice all live, with the
+  next `USD 23.10` invoice exposed separately from cash.
+- fal.ai: `$7.32` provider-verified cash wallet; official Admin cost remains the
+  owner-deferred optional connection.
 - FASHN: `0 credits`, correctly presented as quota rather than USD cash.
-- Anthropic: official cost-report base plus the post-boundary local delta; the old
-  `$8.25` opening value remains visibly labelled a manual estimate, not a wallet.
-- Twilio: `Local only`; wallet is `Needs credential`.
-- OpenAI: local values remain visible; official cost is `Needs credential`.
-- Oxylabs: usage is `Needs credential`.
-- ElevenLabs: quota, plan, usage, and invoice are `Needs credential`; no false
-  provider-confirmed invoice state is shown.
-- xAI: wallet, cost, and invoice are `Needs credential`.
-- Vercel: cost is `Needs credential`; wallet is `Not exposed`.
-- Supabase: plan is `Needs credential`; wallet, cost, and invoice are `Not exposed`.
-- Gemini, Google TTS, and Veo: `Error`; provider cost is `Sync error`.
-- Google error is explicit:
-  `GOOGLE_BILLING_SERVICE_ACCOUNT_JSON contains a local file path; paste the JSON file contents into Vercel instead`.
+- xAI: `$20.00` provider-verified cash wallet, provider-delayed cost, and a live
+  `USD 10.62` current invoice preview whose due date is not published.
+- Vercel: FOCUS billing export connected; month-to-date card shows `$116.54`, with
+  provider delay labelled explicitly. Vercel exposes no wallet endpoint.
+- Oxylabs usage and Supabase plan remain the other two owner-deferred optional
+  connections.
 
-Web proof was captured from the owner's logged-in Chrome at
-`/tmp/alma-phase69-web-final.png` and
-`/tmp/alma-phase69-google-error-final.png`.
+Web proof was captured from the owner's logged-in Chrome at:
+
+- `/tmp/alma-phase69-web-live-final.png`
+- `/tmp/alma-phase69-web-live-google-final.png`
+- `/tmp/alma-phase69-web-live-providers-final.png`
+- `/tmp/alma-phase69-web-live-xai-vercel-final.png`
 
 Native iOS verification uses the isolated simulator **ALMA Phase69 Billing**:
 
