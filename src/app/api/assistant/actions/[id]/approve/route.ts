@@ -1340,6 +1340,7 @@ async function runApprove(
       firstMessage?: string
       voiceGender?: 'male' | 'female'
       callType?: 'owner' | 'staff' | 'contact'
+      channel?: 'phone' | 'whatsapp'
     }
     // Claim before dialing: a double tap/reconnect may hit two serverless instances,
     // but exactly one of them is allowed to create a paid external call.
@@ -1355,6 +1356,7 @@ async function runApprove(
       firstMessage: String(p.firstMessage ?? ''),
       voiceGender: p.voiceGender === 'male' ? 'male' : 'female',
       callType: p.callType === 'staff' ? 'staff' : p.callType === 'contact' ? 'contact' : 'owner',
+      channel: p.channel === 'whatsapp' ? 'whatsapp' : 'phone',
       conversationId: resolveConversationId(action),
       pendingActionId: actionId,
     })
