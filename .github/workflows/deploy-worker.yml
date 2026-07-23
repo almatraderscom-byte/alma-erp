@@ -62,6 +62,10 @@ jobs:
             echo "worker now at: \$(git rev-parse --short HEAD)"
             cd worker && npm ci --omit=dev
             pm2 restart alma-agent-worker --update-env
+            # Gemini Live bot is a separate pm2 app (scripts/gemini-live-bot.mjs :8766);
+            # restart it too when present so bot-side changes (e.g. the Twilio/WhatsApp
+            # transport adapter) actually take effect. `|| true` — not every VPS runs it.
+            pm2 restart gemini-live-bot --update-env || true
             pm2 save
             pm2 list --no-color | head -12
           EOF
