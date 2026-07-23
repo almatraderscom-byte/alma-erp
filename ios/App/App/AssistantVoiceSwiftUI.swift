@@ -1094,6 +1094,8 @@ final class AlmaVoiceEngine {
 
     func liveWillReconnect() {
         guard !closed else { return }
+        // A drop can orphan a pending tool turn — never leave "thinking" stuck.
+        liveToolTurnPending = false
         liveActive = false
         sessionReady = false
         callConnection = .reconnecting
@@ -1504,7 +1506,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             throw AlmaLiveVoiceError.audioStart
         }
         playbackFormat = playback
-        audioEngine.attach(player)
+        // Attach ONCE for the session object's lifetime. Repeated open/close
+        // cycles used to attach/detach the player each call — detaching a node
+        // with completion callbacks potentially in flight is a known CoreAudio
+        // crash (device finding, build 82: app crashed after voice call cycles).
+        if player.engine == nil { audioEngine.attach(player) }
         audioEngine.connect(player, to: audioEngine.mainMixerNode, format: playback)
         input.installTap(onBus: 0, bufferSize: 960, format: native) { [weak self] buffer, _ in
             self?.capture(buffer, nativeFormat: native)
@@ -1702,6 +1708,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         reconnectAttempts += 1
         reconnecting = true
         socketReady = false
+        // CRITICAL (device finding, build 82): a socket can drop mid model-turn,
+        // losing generationComplete/turnComplete forever. Without this reset the
+        // turn stays open, the UI sticks on "বলছি", and — because the mic is
+        // gated during a model turn — the call goes permanently DEAF. Close any
+        // orphaned turn before reconnecting so the resumed session starts
+        // cleanly in listening.
+        stopModelPlayback(interrupted: false)
+        outputTranscript = ""
         DispatchQueue.main.async { [weak self] in self?.engine?.liveWillReconnect() }
         let oldSocket = ws
         let oldSession = session
@@ -1897,6 +1911,28 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             self.audioLock.unlock()
             if shouldFinish { self.finishModelPlayback(generation: generation) }
         }
+        // HARD WATCHDOG (device finding, build 82): if generationComplete itself is
+        // lost (rotation, dropped frame), the guard above can never pass and the
+        // turn stays open — stuck "বলছি", mic gated, call deaf. 3s after the last
+        // scheduled audio should have drained, force-close the turn no matter what.
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay + 3.0) { [weak self] in
+            guard let self, !self.stopped else { return }
+            self.audioLock.lock()
+            let stuck = self.playbackGeneration == generation
+                && self.modelAudioTurnOpen
+                && Date() >= self.estimatedPlaybackEnd.addingTimeInterval(2.5)
+            if stuck {
+                self.modelGenerationCompleteReceived = true
+                self.pendingPlaybackBuffers.removeAll(keepingCapacity: true)
+            }
+            self.audioLock.unlock()
+            if stuck {
+                #if DEBUG
+                NSLog("ALMA-VOICE watchdog force-closed a stuck model turn")
+                #endif
+                self.finishModelPlayback(generation: generation)
+            }
+        }
     }
 
     private func completeModelGeneration() {
@@ -2068,7 +2104,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         if tapInstalled { audioEngine.inputNode.removeTap(onBus: 0); tapInstalled = false }
         player.stop()
         if audioEngine.isRunning { audioEngine.stop() }
-        if player.engine != nil { audioEngine.detach(player) }
+        // Deliberately NOT detaching the player: detach with completion callbacks
+        // in flight is a CoreAudio crash; the node stays attached for the next call.
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
         session?.invalidateAndCancel(); session = nil
         configured = false
