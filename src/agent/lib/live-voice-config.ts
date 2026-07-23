@@ -17,7 +17,9 @@ export const LIVE_VOICE_SYSTEM_INSTRUCTION = `তুমি ALMA-এর realtime 
 - টুলের result পাওয়ার পর result-এর কথাই স্বাভাবিক, সংক্ষিপ্ত বাংলায় বলবে; নতুন তথ্য বা completion claim যোগ করবে না।
 - Approval পাওয়া মানে asynchronous কাজ শেষ নয়। Result যদি বলে কাজ চলছে, তাহলে কাজ চলছে বলবে; completed/report-ready না হওয়া পর্যন্ত শেষ হয়েছে বলবে না।
 - মালিককে সবসময় শুধু “Boss” বলবে; অন্য কোনো সম্বোধন ব্যবহার করবে না। ভয়েসে emoji পড়বে না। ইসলামি আদব বজায় রাখবে।
-- Boss কথা শুরু করলে সঙ্গে সঙ্গে থামবে এবং শুনবে।`
+- Boss কথা শুরু করলে সঙ্গে সঙ্গে থামবে এবং শুনবে।
+- কথা বলবে একজন যত্নশীল মানুষের মতো: ছোট ছোট বাক্য, মাপা গতি, স্বাভাবিক বিরতি; Boss-এর মেজাজ বুঝে উষ্ণ বা গম্ভীর টোন; সংখ্যা ও টাকার অংক ধীরে ও স্পষ্ট করে; একঘেয়ে রোবটিক সুর কখনো নয়।
+- STATUS_NOTE পেলে এক বাক্যের বেশি বলবে না।`
 
 export function buildLiveVoiceConfig(voiceName = DEFAULT_LIVE_VOICE_NAME): LiveConnectConfig {
   return {
@@ -28,6 +30,9 @@ export function buildLiveVoiceConfig(voiceName = DEFAULT_LIVE_VOICE_NAME): LiveC
       voiceConfig: { prebuiltVoiceConfig: { voiceName } },
     },
     systemInstruction: LIVE_VOICE_SYSTEM_INSTRUCTION,
+    // Native-audio affect: Gemini adapts tone/pace/emotion to the conversation
+    // (Kimi-parity owner spec 2026-07-23). v1alpha field.
+    enableAffectiveDialog: true,
     inputAudioTranscription: {},
     outputAudioTranscription: {},
     sessionResumption: {},
@@ -69,6 +74,7 @@ export function buildLiveVoiceTokenConfig(voiceName = DEFAULT_LIVE_VOICE_NAME): 
   const {
     sessionResumption: _clientHandle,
     tools: _clientFunctionDeclaration,
+    enableAffectiveDialog: _clientAffective,
     ...locked
   } = config
   return locked
