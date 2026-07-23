@@ -207,6 +207,23 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // .almaOpenPath and let AlmaTabBarController.routeNotificationTap decide
         // (native / tab / allowlisted web / fail-loud) via AlmaNavCoordinator.
         if url.scheme == "almaerp" {
+            #if DEBUG
+            // Headless voice-conversation test hook (simulator only): inject a
+            // "spoken" user turn into a live AI call. simctl openurl
+            // almaerp://voice-say?text=<percent-encoded>. Never in Release.
+            if url.host == "voice-open" {
+                NotificationCenter.default.post(name: Notification.Name("almaVoiceDebugOpen"), object: nil)
+                return true
+            }
+            if url.host == "voice-say" {
+                let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                if let text = comps?.queryItems?.first(where: { $0.name == "text" })?.value, !text.isEmpty {
+                    NotificationCenter.default.post(name: Notification.Name("almaVoiceDebugSay"),
+                                                    object: nil, userInfo: ["text": text])
+                }
+                return true
+            }
+            #endif
             var path = "/" + (url.host ?? "") + url.path
             if path.count > 1, path.hasSuffix("/") { path = String(path.dropLast()) }
             if let q = url.query, !q.isEmpty { path += "?\(q)" }

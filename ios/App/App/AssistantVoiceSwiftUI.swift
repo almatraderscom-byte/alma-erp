@@ -341,6 +341,14 @@ final class AlmaVoiceEngine {
             recoveryObservers.append(nc.addObserver(
                 forName: .almaVoiceListenRequested, object: nil, queue: .main
             ) { [weak self] _ in Task { @MainActor in self?.islandListen() } })
+            #if DEBUG
+            recoveryObservers.append(nc.addObserver(
+                forName: Notification.Name("almaVoiceDebugSay"), object: nil, queue: .main
+            ) { [weak self] note in
+                guard let text = note.userInfo?["text"] as? String else { return }
+                Task { @MainActor in self?.debugInjectUserTurn(text) }
+            })
+            #endif
         }
         AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
             DispatchQueue.main.async {
@@ -1134,6 +1142,18 @@ final class AlmaVoiceEngine {
         state = .idle
     }
 
+    #if DEBUG
+    /// Simulator-only conversation harness: inject a typed sentence as if Boss
+    /// spoke it — exercises the full Gemini turn (direct answer vs run_agent_turn,
+    /// audio, transcripts, nudges) without a microphone.
+    func debugInjectUserTurn(_ text: String) {
+        guard liveActive else { return }
+        _ = feedUpsert(id: nil, kind: .user, text: text)
+        feedFinalizeUser()
+        live.sendTextTurn(text)
+    }
+    #endif
+
     func liveInputTranscript(_ text: String) {
         // Gemini sends input transcription as incremental fragments — build the
         // full sentence for the live feed line (and the legacy MIC strip).
@@ -1168,9 +1188,13 @@ final class AlmaVoiceEngine {
     func liveWasInterrupted() {
         ttsLevel = 0
         nowLine = ""
-        liveToolTurnPending = false
+        // NOTE: deliberately NOT clearing liveToolTurnPending — an interruption
+        // only stops the AUDIO, the head/tool turn keeps running. Clearing it here
+        // (old behavior) made our own STATUS_NOTE nudges kill the working state:
+        // Gemini reports "interrupted" for any new user-role content, so the first
+        // nudge silently erased the pending flag (sim finding 2026-07-23).
         feedFinalizeAgent()
-        state = .listening
+        state = liveToolTurnPending ? .thinking : .listening
     }
 
     func liveDidFail(_ message: String) {
@@ -1178,10 +1202,49 @@ final class AlmaVoiceEngine {
         liveConnectionFailed(error: nil, message: message)
     }
 
+    /// FAST LANE (owner spec 2026-07-23): simple read-only lookups skip the head
+    /// entirely — one whitelisted ERP tool over /api/assistant/voice-tool, answer
+    /// in seconds. Actions/memory/complex work still cross the head route.
+    func runQuickLookup(tool: String, callId: String) {
+        let started = Date()
+        feedStatus("তথ্য দেখা হচ্ছে…")
+        state = .thinking
+        Task { [weak self] in
+            guard let self else { return }
+            defer { if self.state == .thinking && !self.liveToolTurnPending { self.state = .listening } }
+            do {
+                await AlmaAPI.shared.syncCookies()
+                struct QuickResp: Decodable { let ok: Bool?; let ms: Int?; let result: String?; let error: String? }
+                let resp: QuickResp = try await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/voice-tool",
+                    body: ["tool": tool, "business_id": "ALMA_LIFESTYLE"])
+                #if DEBUG
+                NSLog("ALMA-VOICE quick lookup %@ done clientMs=%d serverMs=%d ok=%d",
+                      tool, Int(Date().timeIntervalSince(started) * 1000), resp.ms ?? -1, (resp.ok ?? false) ? 1 : 0)
+                #endif
+                if resp.ok == true, let payload = resp.result {
+                    self.live.sendToolResponse(callId: callId, result: "তথ্য (JSON): \(payload)। এখান থেকে Boss-এর প্রশ্নের উত্তরটুকু সংক্ষেপে স্বাভাবিক বাংলায় বলুন।")
+                } else {
+                    self.live.sendToolResponse(callId: callId, result: "তথ্যটা এখন আনা গেল না (\(resp.error ?? "unknown"))। Boss-কে ছোট করে জানান, দরকার হলে run_agent_turn দিয়ে চেষ্টা করুন।")
+                }
+            } catch {
+                self.live.sendToolResponse(callId: callId, result: "তথ্যটা এখন আনা গেল না। Boss-কে ছোট করে জানান।")
+            }
+        }
+    }
+
     /// Gemini Live is the low-latency ears/voice only. Every meaningful owner turn
     /// still crosses the existing head route, preserving memory, tools, approvals,
     /// claim verification, and the durable call workflow.
     func runLiveAgentTurn(request: String, callId: String) {
+        // Boss repeating himself while a head turn is ALREADY running must not
+        // cancel-and-restart it — the server refuses a second concurrent turn on
+        // the same conversation and 30s of tool work gets thrown away (owner
+        // finding 2026-07-23: this produced the "সংযোগে সমস্যা" dead-end).
+        if liveToolTurnPending {
+            live.sendToolResponse(callId: callId, result: "আগের কাজটাই এখনো চলছে — Boss-কে এক বাক্যে জানান যে কাজটা চলছে, শেষ হলেই ফল বলবেন। নতুন করে কিছু শুরু করবেন না।")
+            return
+        }
         let clean = request.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else {
             live.sendToolResponse(callId: callId, result: "Boss-এর বক্তব্য খালি ছিল; আবার বলতে অনুরোধ করুন।")
@@ -1195,21 +1258,32 @@ final class AlmaVoiceEngine {
         liveToolTurnPending = true
         state = .thinking
         // Feed: lock Boss's final sentence in place; Gemini's STT is authoritative.
-        if let id = feedUserLineId { _ = feedUpsert(id: id, kind: .user, text: clean) }
-        else { _ = feedUpsert(id: nil, kind: .user, text: clean) }
+        // The streaming line may ALREADY be finalized (ack playback started before
+        // the toolCall arrived) — update the last user line instead of adding a
+        // duplicate row.
+        if let id = feedUserLineId {
+            _ = feedUpsert(id: id, kind: .user, text: clean)
+        } else if let i = liveFeed.lastIndex(where: { $0.kind == .user }) {
+            liveFeed[i].text = clean
+        } else {
+            _ = feedUpsert(id: nil, kind: .user, text: clean)
+        }
         feedFinalizeUser()
         feedFinalizeAgent()
-        // Never a long dead-air while tools run (owner spec 2026-07-23): after
-        // 10s and again at 24s of a still-pending head turn, nudge Gemini to
-        // speak one short human status line (no tool call).
-        let nudgeCallId = callId
+        // Dead-air killer (owner spec): while the head/tool turn runs, feed
+        // Gemini CONTEXT (Boss's request, the running tool, elapsed time) and let
+        // it phrase a fresh, human one-liner each time — never a canned template.
         liveStatusNudgeTask?.cancel()
+        let started = Date()
         liveStatusNudgeTask = Task { [weak self] in
-            for delay in [10.0, 14.0] {
+            for delay in [12.0, 12.0, 15.0] {
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 guard let self, !Task.isCancelled, self.liveToolTurnPending else { return }
-                self.live.sendTextTurn("STATUS_NOTE: কাজটি এখনো চলছে। Boss-কে খুব ছোট, স্বাভাবিক এক বাক্যে জানান যে কাজ চলছে — নতুন তথ্য বানাবেন না, কোনো tool চালাবেন না।")
-                _ = nudgeCallId
+                let tool = self.cards.last(where: { $0.kind == .tool })?.title ?? ""
+                let secs = Int(Date().timeIntervalSince(started))
+                var context = "Boss-এর চলমান অনুরোধ: \"\(clean)\"। প্রায় \(secs) সেকেন্ড ধরে কাজ চলছে"
+                if !tool.isEmpty { context += "; এই মুহূর্তে চলছে: \(tool)" }
+                self.live.sendTextTurn("STATUS_NOTE: \(context)। Boss-কে এক ছোট বাক্যে স্বাভাবিক মানুষের মতো অগ্রগতি জানাও — নিজের ভাষায়, আগে যা বলেছ তার পুনরাবৃত্তি একদম নয়; নতুন তথ্য বানাবে না।")
             }
         }
         let body = VoiceChatBody(conversationId: chatVM?.conversationId,
@@ -1228,9 +1302,16 @@ final class AlmaVoiceEngine {
                 req.httpMethod = "POST"
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 req.httpBody = try JSONEncoder().encode(body)
-                try await AssistantNet.streamEvents(request: req) { [weak self] ev in
+                try await AssistantNet.streamEvents(request: req,
+                                                    stopOn: { $0.type == "done" || $0.type == "error" }) { [weak self] ev in
+                    #if DEBUG
+                    NSLog("ALMA-VOICE sse %@", ev.type)
+                    #endif
                     self?.handle(ev, speak: false)
                 }
+                #if DEBUG
+                NSLog("ALMA-VOICE head turn stream ended; reply chars=%d", self.replyText.count)
+                #endif
                 let result = self.replyText.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.live.sendToolResponse(
                     callId: callId,
@@ -1257,17 +1338,28 @@ final class AlmaVoiceEngine {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 4_000_000_000)
                 guard let self else { continue }
+                // Live AI call: the head legitimately streams sparse events during
+                // long tool phases — a 30s SSE gap is NORMAL there, and killing the
+                // turn silently was why business answers never arrived (sim finding
+                // 2026-07-23). Live gets 120s and a SPOKEN failure; legacy keeps 30s.
+                let stallLimit: TimeInterval = self.liveActive ? 120 : 30
                 if (self.state == .thinking || self.state == .speaking),
-                   Date().timeIntervalSince(self.lastEventAt) > 30 {
+                   Date().timeIntervalSince(self.lastEventAt) > stallLimit {
                     self.turnTask?.cancel()
-                    self.tts.stopAll()
-                    self.state = .idle
-                    self.tts.sayNow("দুঃখিত Boss, উত্তরটা আটকে গেল — আরেকবার বলুন।")
-                    self.scheduleAutoListen()
+                    if self.liveActive {
+                        self.liveToolTurnPending = false
+                        self.state = .listening
+                        self.live.sendTextTurn("STATUS_NOTE: কাজটির উত্তর আসতে সমস্যা হচ্ছে। Boss-কে ছোট করে দুঃখপ্রকাশ করে বলো একটু পরে আবার চেষ্টা করা যাবে।")
+                    } else {
+                        self.tts.stopAll()
+                        self.state = .idle
+                        self.tts.sayNow("দুঃখিত Boss, উত্তরটা আটকে গেল — আরেকবার বলুন।")
+                        self.scheduleAutoListen()
+                    }
                     continue
                 }
                 guard self.state == .thinking else { continue }
-                if Date().timeIntervalSince(self.lastAudioAt) > 14 {
+                if !self.liveActive, Date().timeIntervalSince(self.lastAudioAt) > 14 {
                     self.lastAudioAt = Date()
                     self.tts.sayNow("এখনো কাজ চলছে Boss, একটু সময় দিন…")
                 }
@@ -1508,7 +1600,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     private func setupMessage(model: String, voice: String, resumptionHandle: String?) -> [String: Any] {
         let instruction = """
-        তুমি ALMA-এর realtime voice transport এবং শুধু Boss-এর সাথে কথা বলছ। Opening greeting ছাড়া Boss-এর প্রতিটি বক্তব্যে run_agent_turn ঠিক একবার চালাবে। ব্যবসার তথ্য, স্মৃতি, হিসাব, action বা completion নিজে বানাবে না। টুলের result-ই সংক্ষিপ্ত স্বাভাবিক বাংলায় বলবে। Approval মানে asynchronous কাজ শেষ নয়; reportReady/completed না হলে কাজ চলছে বলবে। মালিককে শুধু Boss বলবে; অন্য কোনো সম্বোধন নয়; ভয়েসে emoji পড়বে না। Boss কথা শুরু করলে সঙ্গে সঙ্গে থেমে শুনবে। কথা বলবে একজন যত্নশীল মানুষের মতো: ছোট ছোট বাক্য, মাপা গতি, স্বাভাবিক বিরতি; Boss-এর মেজাজ বুঝে উষ্ণ বা গম্ভীর টোন; সংখ্যা ও টাকার অংক ধীরে ও স্পষ্ট করে; একঘেয়ে রোবটিক সুর কখনো নয়। STATUS_NOTE পেলে এক বাক্যের বেশি বলবে না।
+        তুমি ALMA — Boss-এর ব্যক্তিগত AI সহকারী, এখন Boss-এর সাথে ফোন কলে। একজন স্বাভাবিক, উষ্ণ মানুষের মতো ঝরঝরে বাংলায় কথা বলবে।
+        কখন নিজে উত্তর দেবে: সালাম, কুশল, হালকা গল্প, মতামত, সাধারণ জ্ঞান — সাথে সাথে নিজেই ছোট করে উত্তর দেবে; কোনো tool ডাকবে না, দেরি করবে না।
+        কখন quick_erp_lookup: আজকের হাজিরা, বিক্রি, অর্ডার, স্টক, নামাজ, পেন্ডিং অনুমোদন — এমন সাধারণ তথ্য-প্রশ্নে সরাসরি quick_erp_lookup চালাবে (কয়েক সেকেন্ডে ফল আসে), আগে ছোট্ট ack বলবে। কখন run_agent_turn: ব্যবসার তথ্য, হিসাব, টাকা, staff, অর্ডার, রিপোর্ট, মেমরি, বা কোনো কাজ করার অনুরোধ — তখনই কেবল run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না — একমাত্র উৎস run_agent_turn-এর result।
+        ভেতরের শব্দ মুখে আনবে না: tool, function, acknowledgement, STATUS_NOTE, system, agent — এগুলো কখনো উচ্চারণ করবে না।
+        STATUS_NOTE লেখা বার্তা এলে সেটা Boss-এর কথা নয়; STATUS_NOTE-এর জবাবে run_agent_turn কখনোই ডাকবে না — শুধু তার ভাবটুকু নিজের ভাষায় এক ছোট স্বাভাবিক বাক্যে বলবে — প্রতিবার নতুনভাবে, একই বাক্য দুবার কখনো নয়।
+        Boss-এর কথা সত্যিই অস্পষ্ট হলে কেবল তখনই ছোট প্রশ্নে পরিষ্কার করে নেবে; পরিষ্কার অনুরোধে পাল্টা নিশ্চিতকরণ প্রশ্ন করবে না — ছোট্ট এক কথা বলে সাথে সাথে run_agent_turn চালাবে। ack বলার পর tool চালানো কখনো ভুলবে না।
+        Approval মানে কাজ শেষ নয় — result-এ completed/reportReady না বললে বলবে কাজ চলছে।
+        মালিককে শুধু "Boss" বলবে; অন্য যেকোনো সম্বোধন নিষিদ্ধ। ভয়েসে emoji পড়বে না। ইসলামি আদব বজায় রাখবে।
+        বলবে ছোট ছোট বাক্যে, মাপা গতিতে, স্বাভাবিক বিরতিতে; Boss-এর মেজাজ বুঝে উষ্ণ বা গম্ভীর টোন; সংখ্যা ও টাকার অংক ধীরে-স্পষ্ট। Boss কথা শুরু করলেই সাথে সাথে থেমে শুনবে।
         """
         let resumption: [String: Any] = resumptionHandle.map { ["handle": $0] } ?? [:]
         var setup: [String: Any] = [
@@ -1538,6 +1638,17 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 "turnCoverage": "TURN_INCLUDES_ONLY_ACTIVITY",
             ],
             "tools": [["functionDeclarations": [[
+                "name": "quick_erp_lookup",
+                "description": "সাধারণ ব্যবসার তথ্য কয়েক সেকেন্ডে দেখার দ্রুত পথ — আজকের হাজিরা/উপস্থিতি (get_attendance), বিক্রির সারাংশ (get_sales_summary), অর্ডার তালিকা (get_orders), ব্যবসার সার্বিক চিত্র (get_dashboard_snapshot), স্টক (get_inventory_status), নামাজের অবস্থা (get_salah_status), পেন্ডিং অনুমোদন (get_pending_approvals), নামাজের সময় (get_prayer_times)। শুধু তথ্য পড়া — কোনো কাজ, পরিবর্তন, বার্তা পাঠানো বা মেমরি নয়।",
+                "parameters": [
+                    "type": "OBJECT",
+                    "properties": ["tool": [
+                        "type": "STRING",
+                        "enum": ["get_attendance", "get_sales_summary", "get_orders", "get_dashboard_snapshot", "get_inventory_status", "get_salah_status", "get_pending_approvals", "get_prayer_times"],
+                    ]],
+                    "required": ["tool"],
+                ],
+            ], [
                 "name": "run_agent_turn",
                 "description": "Boss-এর কথাটি ALMA head agent-এ পাঠায়।",
                 "parameters": [
@@ -1763,10 +1874,23 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         if let content = root["serverContent"] as? [String: Any] { handleServerContent(content) }
         if let tool = root["toolCall"] as? [String: Any],
            let calls = tool["functionCalls"] as? [[String: Any]] {
+            for call in calls where call["name"] as? String == "quick_erp_lookup" {
+                let id = call["id"] as? String ?? UUID().uuidString
+                let toolName = (call["args"] as? [String: Any])?["tool"] as? String ?? ""
+                #if DEBUG
+                NSLog("ALMA-VOICE quick_erp_lookup: %@", toolName)
+                #endif
+                DispatchQueue.main.async { [weak self] in
+                    self?.engine?.runQuickLookup(tool: toolName, callId: id)
+                }
+            }
             for call in calls where call["name"] as? String == "run_agent_turn" {
                 let id = call["id"] as? String ?? UUID().uuidString
                 let args = call["args"] as? [String: Any]
                 let request = args?["request"] as? String ?? ""
+                #if DEBUG
+                NSLog("ALMA-VOICE toolCall run_agent_turn: %@", String(request.prefix(80)))
+                #endif
                 DispatchQueue.main.async { [weak self] in
                     self?.engine?.runLiveAgentTurn(request: request, callId: id)
                 }
