@@ -13,7 +13,17 @@ export const maxDuration = 15
  * from the streaming commits, and punctuation — WITHOUT adding or dropping
  * content. Model owner-tunable via DICTATION_POLISH_MODEL.
  */
-const POLISH_MODEL = process.env.DICTATION_POLISH_MODEL?.trim() || 'gpt-5.6-mini'
+/** Owner env override first, then real model names newest-first — the first
+ * one the account accepts wins and is remembered for the process lifetime
+ * (ChatGPT suggested 'gpt-5.6-mini', which does not exist on the API). */
+const POLISH_LADDER = [
+  process.env.DICTATION_POLISH_MODEL?.trim() || '',
+  'gpt-5.1-mini',
+  'gpt-5-mini',
+  'gpt-4.1-mini',
+  'gpt-4o-mini',
+].filter(Boolean)
+let workingModel: string | null = null
 
 const SYSTEM = `তুমি একজন বাংলা লেখা-পরিষ্কারক। ভয়েস-ডিক্টেশনের কাঁচা transcript পাবে — Banglish, ভাঙা টুকরো, ভুল যতি থাকতে পারে।
 নিয়ম:
@@ -40,21 +50,33 @@ export async function POST(req: NextRequest) {
   const started = Date.now()
   try {
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-    const completion = await client.chat.completions.create({
-      model: POLISH_MODEL,
-      messages: [
-        { role: 'system', content: SYSTEM },
-        { role: 'user', content: raw },
-      ],
-      temperature: 0,
-      max_tokens: 1200,
-    })
-    const text = completion.choices[0]?.message?.content?.trim()
-    return Response.json({
-      text: text && text.length > 0 ? text : raw,
-      model: POLISH_MODEL,
-      ms: Date.now() - started,
-    })
+    const candidates = workingModel ? [workingModel] : POLISH_LADDER
+    let lastErr: unknown = null
+    for (const model of candidates) {
+      try {
+        const completion = await client.chat.completions.create({
+          model,
+          messages: [
+            { role: 'system', content: SYSTEM },
+            { role: 'user', content: raw },
+          ],
+          temperature: 0,
+          max_tokens: 1200,
+        })
+        const text = completion.choices[0]?.message?.content?.trim()
+        workingModel = model
+        return Response.json({
+          text: text && text.length > 0 ? text : raw,
+          model,
+          ms: Date.now() - started,
+        })
+      } catch (err) {
+        lastErr = err
+        const msg = err instanceof Error ? err.message : String(err)
+        if (!/does not exist|do not have access|model_not_found/i.test(msg)) throw err
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
   } catch (err) {
     // Polish is best-effort — the raw transcript is always usable.
     return Response.json({
