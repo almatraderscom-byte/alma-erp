@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   parseElevenLabsSubscription,
+  parseFalUsage,
   parseGoogleBillingRows,
+  parseOxylabsUsage,
   parseVercelFocusCharges,
+  parseXaiBilling,
   roundProviderUsd,
 } from '@/agent/lib/provider-billing'
 import {
@@ -75,6 +78,7 @@ describe('provider billing parsers', () => {
       next_character_count_reset_unix: 1_775_059_200,
       currency: 'usd',
       has_open_invoices: false,
+      current_overage: { amount: '3.25', currency: 'usd' },
       next_invoice: {
         amount_due_cents: 2_200,
         next_payment_attempt_unix: 1_775_059_200,
@@ -89,12 +93,74 @@ describe('provider billing parsers', () => {
       resetAt: '2026-04-01T16:00:00.000Z',
       subscription: null,
       onDemand: null,
+      overage: {
+        amount: 3.25,
+        currency: 'USD',
+      },
       invoice: {
         kind: 'next',
         amount: 22,
         currency: 'USD',
         dueAt: '2026-04-01T16:00:00.000Z',
         status: 'scheduled',
+      },
+    })
+  })
+
+  it('sums fal workspace usage in USD without losing sub-cent precision', () => {
+    expect(parseFalUsage({
+      time_series: [
+        {
+          bucket: '2026-07-23T00:00:00+06:00',
+          results: [
+            { cost: 0.0048, currency: 'USD' },
+            { cost: 1.25, currency: 'USD' },
+          ],
+        },
+      ],
+    }, '2026-07-23')).toEqual({
+      todayUsd: 1.2548,
+      monthUsd: 1.2548,
+      syncedThrough: '2026-07-23',
+    })
+  })
+
+  it('sums Oxylabs official monthly request counts across products', () => {
+    expect(parseOxylabsUsage({
+      data: { products: [{ all_count: 41 }, { all_count: 9 }] },
+    })).toEqual({
+      amount: 50,
+      unit: 'requests',
+      period: 'month',
+    })
+  })
+
+  it('parses xAI ledger balance, usage and current invoice preview', () => {
+    expect(parseXaiBilling(
+      { total: { val: '-1234' } },
+      {
+        timeSeries: [{
+          dataPoints: [
+            { timestamp: '2026-07-23T00:00:00Z', values: [0.25] },
+            { timestamp: '2026-07-24T00:00:00Z', values: [0.5] },
+          ],
+        }],
+      },
+      { coreInvoice: { totalWithCorr: { val: '225' } } },
+      '2026-07-24',
+    )).toEqual({
+      balanceUsd: 12.34,
+      cost: {
+        todayUsd: 0.5,
+        monthUsd: 0.75,
+        syncedThrough: '2026-07-24',
+      },
+      invoice: {
+        kind: 'preview',
+        amount: 2.25,
+        currency: 'USD',
+        dueAt: null,
+        status: 'current preview',
       },
     })
   })

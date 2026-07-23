@@ -84,9 +84,15 @@ type BalanceProviderRow = {
     resetAt: string | null
     subscription: number | null
     onDemand: number | null
+    overage: { amount: number; currency: string } | null
+  } | null
+  usage?: {
+    amount: number
+    unit: string
+    period: 'month'
   } | null
   invoice?: {
-    kind: 'open' | 'next'
+    kind: 'open' | 'next' | 'preview'
     amount: number
     currency: string
     dueAt: string | null
@@ -274,13 +280,62 @@ function fmtSpendCell(n: number | null, providerId?: string) {
 }
 
 const STATUS_STYLE: Record<BalanceProviderRow['status'], { label: string; cls: string }> = {
-  live: { label: 'Live', cls: 'tone-green border' },
-  partial: { label: 'Partial', cls: 'tone-blue border' },
-  manual: { label: 'Manual', cls: 'tone-amber border' },
+  live: { label: 'Connected', cls: 'tone-green border' },
+  partial: { label: 'Mixed (legacy)', cls: 'tone-blue border' },
+  manual: { label: 'Local only', cls: 'tone-amber border' },
   unconfigured: { label: 'Connect', cls: 'border border-border-subtle text-muted' },
   stale: { label: 'Stale', cls: 'tone-amber border' },
   error: { label: 'Error', cls: 'tone-red border' },
   free: { label: 'Free', cls: 'tone-green border' },
+}
+
+type FieldTruth = 'live' | 'delayed' | 'estimated' | 'not_exposed' | 'needs_credential'
+
+const FIELD_TRUTH: Record<FieldTruth, { label: string; cls: string }> = {
+  live: { label: 'Live', cls: 'tone-green border' },
+  delayed: { label: 'Provider delayed', cls: 'tone-blue border' },
+  estimated: { label: 'Local estimate', cls: 'tone-amber border' },
+  not_exposed: { label: 'Not exposed', cls: 'border border-border-subtle text-muted' },
+  needs_credential: { label: 'Needs credential', cls: 'tone-amber border' },
+}
+
+function providerFieldTruth(row: BalanceProviderRow) {
+  const needsCredential = row.status === 'unconfigured'
+  return {
+    balance: row.balanceAuthoritative
+      ? 'live'
+      : row.balanceKind === 'manual_estimate'
+        ? 'estimated'
+        : needsCredential && row.capabilities.includes('wallet')
+          ? 'needs_credential'
+          : 'not_exposed',
+    cost: row.costAuthoritative
+      ? (row.costSourceType === 'provider_export' || Boolean(row.syncedThrough) ? 'delayed' : 'live')
+      : row.monthUsd != null
+        ? 'estimated'
+        : needsCredential && row.capabilities.includes('cost')
+          ? 'needs_credential'
+          : 'not_exposed',
+    plan: row.planAuthoritative
+      ? 'live'
+      : needsCredential && row.capabilities.includes('plan')
+        ? 'needs_credential'
+        : 'not_exposed',
+    invoice: row.invoice
+      ? 'live'
+      : row.capabilities.includes('invoice')
+        ? (needsCredential ? 'needs_credential' : 'live')
+        : 'not_exposed',
+    usage: row.usage || row.quota
+      ? 'live'
+      : row.costAuthoritative && row.costSourceType === 'provider_export'
+        ? 'delayed'
+        : needsCredential && row.capabilities.includes('usage')
+          ? 'needs_credential'
+          : row.monthUsd != null
+            ? 'estimated'
+            : 'not_exposed',
+  } satisfies Record<string, FieldTruth>
 }
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -800,6 +855,7 @@ export default function AgentCostsDashboard() {
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {balances.providers.map((row) => {
               const state = STATUS_STYLE[row.status]
+              const fieldTruth = providerFieldTruth(row)
               const quotaPct = row.quota?.limit
                 ? Math.min(100, Math.max(0, (row.quota.used / row.quota.limit) * 100))
                 : 0
@@ -848,8 +904,14 @@ export default function AgentCostsDashboard() {
                           Used {Math.round(row.quota.used).toLocaleString()} / {Math.round(row.quota.limit).toLocaleString()}
                           {row.quota.subscription != null ? ` · plan ${row.quota.subscription}` : ''}
                           {row.quota.onDemand != null ? ` · on-demand ${row.quota.onDemand}` : ''}
+                          {row.quota.overage ? ` · overage ${row.quota.overage.currency} ${row.quota.overage.amount.toFixed(2)}` : ''}
                         </p>
                       </div>
+                    )}
+                    {row.usage && (
+                      <p className="mt-2 text-[9px] font-semibold text-cream">
+                        This month {Math.round(row.usage.amount).toLocaleString()} {row.usage.unit}
+                      </p>
                     )}
                   </div>
 
@@ -873,11 +935,26 @@ export default function AgentCostsDashboard() {
                     </div>
                   </div>
 
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {(Object.entries(fieldTruth) as Array<[keyof typeof fieldTruth, FieldTruth]>).map(([field, truth]) => (
+                      <span
+                        key={field}
+                        className={cn('rounded-full px-2 py-0.5 text-[8px] font-semibold', FIELD_TRUTH[truth].cls)}
+                      >
+                        {field} · {FIELD_TRUTH[truth].label}
+                      </span>
+                    ))}
+                  </div>
+
                   {row.invoice && (
                     <div className="mt-3 rounded-xl border border-[#D4A84B]/25 bg-[#D4A84B]/[0.06] px-3 py-2.5">
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-[9px] font-semibold uppercase tracking-wider text-[#D4A84B]">
-                          {row.invoice.kind === 'open' ? 'Open invoice' : 'Next invoice'}
+                          {row.invoice.kind === 'open'
+                            ? 'Open invoice'
+                            : row.invoice.kind === 'preview'
+                              ? 'Current invoice preview'
+                              : 'Next invoice'}
                         </p>
                         <p className="text-xs font-bold tabular-nums text-cream">
                           {row.invoice.currency} {row.invoice.amount.toFixed(2)}

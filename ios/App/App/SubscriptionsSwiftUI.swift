@@ -221,6 +221,18 @@ struct SubQuota: Decodable, Equatable {
     let resetAt: String?
     let subscription: Double?
     let onDemand: Double?
+    let overage: SubProviderOverage?
+}
+
+struct SubProviderOverage: Decodable, Equatable {
+    let amount: Double
+    let currency: String
+}
+
+struct SubProviderUsage: Decodable, Equatable {
+    let amount: Double
+    let unit: String
+    let period: String
 }
 
 struct SubProviderInvoice: Decodable, Equatable {
@@ -253,6 +265,7 @@ struct SubApiBalance: Decodable, Identifiable, Equatable {
     let balanceCurrency: String?
     let balanceUnit: String?
     let quota: SubQuota?
+    let usage: SubProviderUsage?
     let invoice: SubProviderInvoice?
     let todayUsd: Double?
     let monthUsd: Double?
@@ -270,11 +283,12 @@ struct SubApiBalance: Decodable, Identifiable, Equatable {
     let dashboardUrl: String?
     let plan: String?
     let syncedThrough: String?
+    let capabilities: [String]
     private enum K: String, CodingKey {
-        case id, label, balanceUsd, balanceKind, balanceAmount, balanceCurrency, balanceUnit, quota, invoice
+        case id, label, balanceUsd, balanceKind, balanceAmount, balanceCurrency, balanceUnit, quota, usage, invoice
         case todayUsd, monthUsd, providerMonthUsd, localDeltaUsd, sourceType, costSourceType, status, statusMessage
         case balanceAuthoritative, costAuthoritative, planAuthoritative, authoritative
-        case fetchedAt, dashboardUrl, plan, syncedThrough
+        case fetchedAt, dashboardUrl, plan, syncedThrough, capabilities
     }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
@@ -286,6 +300,7 @@ struct SubApiBalance: Decodable, Identifiable, Equatable {
         balanceCurrency = try? c.decodeIfPresent(String.self, forKey: .balanceCurrency)
         balanceUnit = try? c.decodeIfPresent(String.self, forKey: .balanceUnit)
         quota = try? c.decodeIfPresent(SubQuota.self, forKey: .quota)
+        usage = try? c.decodeIfPresent(SubProviderUsage.self, forKey: .usage)
         invoice = try? c.decodeIfPresent(SubProviderInvoice.self, forKey: .invoice)
         todayUsd = try? c.decodeIfPresent(Double.self, forKey: .todayUsd)
         monthUsd = try? c.decodeIfPresent(Double.self, forKey: .monthUsd)
@@ -306,6 +321,7 @@ struct SubApiBalance: Decodable, Identifiable, Equatable {
         fetchedAt = try? c.decodeIfPresent(String.self, forKey: .fetchedAt)
         dashboardUrl = try? c.decodeIfPresent(String.self, forKey: .dashboardUrl)
         syncedThrough = try? c.decodeIfPresent(String.self, forKey: .syncedThrough)
+        capabilities = (try? c.decodeIfPresent([String].self, forKey: .capabilities)) ?? []
     }
 }
 
@@ -418,8 +434,16 @@ struct SubscriptionsScreen: View {
                     if let quota = provider.quota, quota.limit > 0 {
                         ProgressView(value: min(max(quota.used / quota.limit, 0), 1))
                             .tint(quota.remaining <= quota.limit * 0.1 ? SubPalette.red : SubPalette.emerald)
-                        Text("\(compact(quota.remaining)) \(quota.unit) বাকি · \(compact(quota.used))/\(compact(quota.limit))")
+                        Text(
+                            "\(compact(quota.remaining)) \(quota.unit) বাকি · \(compact(quota.used))/\(compact(quota.limit))"
+                            + (quota.overage.map { " · overage \($0.currency) \(String(format: "%.2f", $0.amount))" } ?? "")
+                        )
                             .font(.system(size: 9.5).monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    if let usage = provider.usage {
+                        Text("এই মাসে \(compact(usage.amount)) \(usage.unit)")
+                            .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(.secondary)
                     }
                     HStack(spacing: 6) {
                         providerMetric("আজ", provider.todayUsd.map { fmt($0) } ?? "—")
@@ -429,10 +453,24 @@ struct SubscriptionsScreen: View {
                             sourceLabel(provider.costSourceType) + (provider.costAuthoritative ? " · base" : " · estimate")
                         )
                     }
+                    HStack(spacing: 5) {
+                        fieldBadge("Wallet", fieldTruth(provider, "balance"))
+                        fieldBadge("Cost", fieldTruth(provider, "cost"))
+                        fieldBadge("Usage", fieldTruth(provider, "usage"))
+                    }
+                    HStack(spacing: 5) {
+                        fieldBadge("Plan", fieldTruth(provider, "plan"))
+                        fieldBadge("Invoice", fieldTruth(provider, "invoice"))
+                        Spacer(minLength: 0)
+                    }
                     if let invoice = provider.invoice {
                         HStack(alignment: .top, spacing: 8) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(invoice.kind == "open" ? "OPEN INVOICE" : "NEXT INVOICE")
+                                Text(
+                                    invoice.kind == "open"
+                                        ? "OPEN INVOICE"
+                                        : invoice.kind == "preview" ? "CURRENT INVOICE PREVIEW" : "NEXT INVOICE"
+                                )
                                     .font(.system(size: 8.5, weight: .bold)).foregroundStyle(SubPalette.gold)
                                 Text(invoice.status + " · " + invoiceDate(invoice.dueAt))
                                     .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
@@ -447,7 +485,7 @@ struct SubscriptionsScreen: View {
                     HStack(spacing: 6) {
                         Circle().fill(statusColor(provider.status)).frame(width: 6, height: 6)
                         Text(statusLabel(provider.status)).font(.system(size: 9.5, weight: .bold))
-                        if !provider.balanceAuthoritative {
+                        if provider.balanceKind == "manual_estimate" {
                             Text("Estimate").font(.system(size: 8.5, weight: .bold)).foregroundStyle(SubPalette.amber)
                         }
                         Spacer()
@@ -539,11 +577,58 @@ struct SubscriptionsScreen: View {
         guard let date = iso.date(from: raw) else { return raw }
         return date.formatted(.dateTime.day().month(.abbreviated).year())
     }
+    private func fieldTruth(_ provider: SubApiBalance, _ field: String) -> String {
+        let needsCredential = provider.status == "unconfigured"
+        switch field {
+        case "balance":
+            if provider.balanceAuthoritative { return "Live" }
+            if provider.balanceKind == "manual_estimate" { return "Estimated" }
+            if needsCredential && provider.capabilities.contains("wallet") { return "Needs key" }
+            return "Not exposed"
+        case "cost":
+            if provider.costAuthoritative {
+                return provider.costSourceType == "provider_export" || provider.syncedThrough != nil
+                    ? "Delayed" : "Live"
+            }
+            if provider.monthUsd != nil { return "Estimated" }
+            if needsCredential && provider.capabilities.contains("cost") { return "Needs key" }
+            return "Not exposed"
+        case "plan":
+            if provider.planAuthoritative { return "Live" }
+            if needsCredential && provider.capabilities.contains("plan") { return "Needs key" }
+            return "Not exposed"
+        case "invoice":
+            if provider.invoice != nil { return "Live" }
+            if provider.capabilities.contains("invoice") {
+                return needsCredential ? "Needs key" : "Live"
+            }
+            return "Not exposed"
+        default:
+            if provider.usage != nil || provider.quota != nil { return "Live" }
+            if provider.costAuthoritative && provider.costSourceType == "provider_export" { return "Delayed" }
+            if needsCredential && provider.capabilities.contains("usage") { return "Needs key" }
+            if provider.monthUsd != nil { return "Estimated" }
+            return "Not exposed"
+        }
+    }
+    private func fieldBadge(_ field: String, _ truth: String) -> some View {
+        let color: Color = truth == "Live"
+            ? SubPalette.emerald
+            : truth == "Delayed"
+                ? SubPalette.violet
+                : (truth == "Estimated" || truth == "Needs key") ? SubPalette.amber : .secondary
+        return Text("\(field) · \(truth)")
+            .font(.system(size: 7.5, weight: .bold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 7).padding(.vertical, 4)
+            .background(color.opacity(0.08), in: Capsule())
+            .overlay(Capsule().strokeBorder(color.opacity(0.22), lineWidth: 1))
+    }
     private func statusLabel(_ status: String) -> String {
         switch status {
-        case "live", "fresh": return "Live"
-        case "partial": return "Partial"
-        case "manual": return "Manual"
+        case "live", "fresh": return "Connected"
+        case "partial": return "Mixed (legacy)"
+        case "manual": return "Local only"
         case "unconfigured": return "Connect"
         case "free": return "Free"
         case "error": return "Sync failed"

@@ -31,11 +31,21 @@ export type ProviderQuotaSnapshot = {
   resetAt: string | null
   subscription: number | null
   onDemand: number | null
+  overage: {
+    amount: number
+    currency: string
+  } | null
   invoice: ProviderInvoiceSnapshot | null
 }
 
+export type ProviderUsageSnapshot = {
+  amount: number
+  unit: string
+  period: 'month'
+}
+
 export type ProviderInvoiceSnapshot = {
-  kind: 'open' | 'next'
+  kind: 'open' | 'next' | 'preview'
   amount: number
   currency: string
   dueAt: string | null
@@ -68,6 +78,10 @@ type ElevenLabsSubscriptionResponse = {
   has_open_invoices?: boolean
   open_invoices?: ElevenLabsInvoice[]
   next_invoice?: ElevenLabsInvoice | null
+  current_overage?: {
+    amount?: number | string
+    currency?: string
+  } | null
 }
 
 type VercelFocusCharge = {
@@ -79,6 +93,12 @@ type VercelFocusCharge = {
 
 type BigQueryField = { name?: string }
 type BigQueryRow = { f?: Array<{ v?: unknown }> }
+
+export type XaiBillingSnapshot = {
+  balanceUsd: number
+  cost: ProviderCostSnapshot
+  invoice: ProviderInvoiceSnapshot | null
+}
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -209,6 +229,13 @@ export function parseElevenLabsSubscription(data: ElevenLabsSubscriptionResponse
         status: rawInvoice.payment_intent_status ?? invoiceKind,
       }
     : null
+  const overageAmount = Number(data.current_overage?.amount ?? 0)
+  const overage = data.current_overage && Number.isFinite(overageAmount)
+    ? {
+        amount: roundProviderUsd(overageAmount),
+        currency: (data.current_overage.currency ?? data.currency ?? 'usd').toUpperCase(),
+      }
+    : null
   return {
     used: Number.isFinite(used) ? used : 0,
     limit: Number.isFinite(limit) ? limit : 0,
@@ -220,6 +247,7 @@ export function parseElevenLabsSubscription(data: ElevenLabsSubscriptionResponse
       : null,
     subscription: null,
     onDemand: null,
+    overage,
     invoice,
   }
 }
@@ -264,10 +292,259 @@ export async function fetchFashnQuota(): Promise<ProviderFetchResult<ProviderQuo
       resetAt: null,
       subscription: subscription != null && Number.isFinite(subscription) ? subscription : null,
       onDemand: onDemand != null && Number.isFinite(onDemand) ? onDemand : null,
+      overage: null,
       invoice: null,
     })
   } catch (error) {
     return failed(error instanceof Error ? error.message : 'FASHN credits request failed')
+  }
+}
+
+type FalUsageResponse = {
+  time_series?: Array<{
+    bucket?: string
+    results?: Array<{
+      cost?: number
+      currency?: string
+    }>
+  }>
+  next_cursor?: string | null
+  has_more?: boolean
+}
+
+export function parseFalUsage(
+  data: FalUsageResponse,
+  todayYmd: string,
+): ProviderCostSnapshot {
+  let todayUsd = 0
+  let monthUsd = 0
+  let syncedThrough: string | null = null
+
+  for (const bucket of data.time_series ?? []) {
+    const day = bucket.bucket?.slice(0, 10) ?? null
+    for (const item of bucket.results ?? []) {
+      const currency = (item.currency ?? 'USD').toUpperCase()
+      if (currency !== 'USD') throw new Error(`fal.ai usage currency ${currency} is not supported as USD`)
+      const cost = Number(item.cost ?? 0)
+      if (!Number.isFinite(cost)) continue
+      monthUsd += cost
+      if (day === todayYmd) todayUsd += cost
+    }
+    if (day && (syncedThrough == null || day > syncedThrough)) syncedThrough = day
+  }
+
+  return {
+    todayUsd: roundProviderUsd(todayUsd),
+    monthUsd: roundProviderUsd(monthUsd),
+    syncedThrough,
+  }
+}
+
+export async function fetchFalUsageCosts(
+  monthStart: Date,
+  now: Date,
+  todayYmd: string,
+): Promise<ProviderFetchResult<ProviderCostSnapshot>> {
+  const adminKey = process.env.FAL_ADMIN_KEY?.trim()
+  if (!adminKey) return unconfigured()
+
+  try {
+    let cursor: string | null = null
+    let combined: ProviderCostSnapshot = { todayUsd: 0, monthUsd: 0, syncedThrough: null }
+    for (let page = 0; page < 20; page++) {
+      const url = new URL('https://api.fal.ai/v1/models/usage')
+      url.searchParams.set('start', monthStart.toISOString())
+      url.searchParams.set('end', new Date(now.getTime() + 1_000).toISOString())
+      url.searchParams.set('timezone', 'Asia/Dhaka')
+      url.searchParams.set('timeframe', 'day')
+      url.searchParams.set('bound_to_timeframe', 'false')
+      url.searchParams.set('expand', 'time_series')
+      url.searchParams.set('limit', '1000')
+      if (cursor) url.searchParams.set('cursor', cursor)
+
+      const response = await fetch(url, {
+        headers: { Authorization: `Key ${adminKey}` },
+        signal: AbortSignal.timeout(20_000),
+      })
+      if (!response.ok) return failed(`fal.ai usage HTTP ${response.status}`)
+      const data = await response.json() as FalUsageResponse
+      const parsed = parseFalUsage(data, todayYmd)
+      combined = {
+        todayUsd: roundProviderUsd(combined.todayUsd + parsed.todayUsd),
+        monthUsd: roundProviderUsd(combined.monthUsd + parsed.monthUsd),
+        syncedThrough: parsed.syncedThrough && (
+          combined.syncedThrough == null || parsed.syncedThrough > combined.syncedThrough
+        )
+          ? parsed.syncedThrough
+          : combined.syncedThrough,
+      }
+      if (!data.has_more || !data.next_cursor) break
+      cursor = data.next_cursor
+    }
+    return succeeded(combined)
+  } catch (error) {
+    return failed(error instanceof Error ? error.message : 'fal.ai usage request failed')
+  }
+}
+
+export function parseOxylabsUsage(data: {
+  data?: { products?: Array<{ all_count?: number }> }
+}): ProviderUsageSnapshot {
+  const amount = (data.data?.products ?? []).reduce((sum, product) => {
+    const count = Number(product.all_count ?? 0)
+    return Number.isFinite(count) ? sum + count : sum
+  }, 0)
+  return { amount, unit: 'requests', period: 'month' }
+}
+
+export async function fetchOxylabsUsage(
+  monthStartYmd: string,
+  todayYmd: string,
+): Promise<ProviderFetchResult<ProviderUsageSnapshot>> {
+  const username = process.env.OXYLABS_USERNAME?.trim()
+  const password = process.env.OXYLABS_PASSWORD?.trim()
+  if (!username || !password) return unconfigured()
+
+  try {
+    const url = new URL('https://data.oxylabs.io/v2/stats')
+    url.searchParams.set('date_from', monthStartYmd)
+    url.searchParams.set('date_to', todayYmd)
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
+      },
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!response.ok) return failed(`Oxylabs stats HTTP ${response.status}`)
+    return succeeded(parseOxylabsUsage(await response.json() as {
+      data?: { products?: Array<{ all_count?: number }> }
+    }))
+  } catch (error) {
+    return failed(error instanceof Error ? error.message : 'Oxylabs stats request failed')
+  }
+}
+
+export function parseXaiBilling(
+  balance: { total?: { val?: number | string } },
+  usage: {
+    timeSeries?: Array<{
+      dataPoints?: Array<{ timestamp?: string; values?: number[] }>
+    }>
+  },
+  invoicePreview: {
+    coreInvoice?: {
+      totalWithCorr?: { val?: number | string }
+      amountAfterVat?: number | string
+    }
+  },
+  todayYmd: string,
+): XaiBillingSnapshot {
+  const rawBalanceCents = Number(balance.total?.val ?? 0)
+  if (!Number.isFinite(rawBalanceCents)) throw new Error('xAI prepaid balance response was invalid')
+
+  let todayUsd = 0
+  let monthUsd = 0
+  let syncedThrough: string | null = null
+  for (const series of usage.timeSeries ?? []) {
+    for (const point of series.dataPoints ?? []) {
+      const amount = Number(point.values?.[0] ?? 0)
+      if (!Number.isFinite(amount)) continue
+      const day = point.timestamp?.slice(0, 10) ?? null
+      monthUsd += amount
+      if (day === todayYmd) todayUsd += amount
+      if (day && (syncedThrough == null || day > syncedThrough)) syncedThrough = day
+    }
+  }
+
+  const rawInvoiceCents = Number(
+    invoicePreview.coreInvoice?.totalWithCorr?.val
+      ?? invoicePreview.coreInvoice?.amountAfterVat
+      ?? 0,
+  )
+  const invoiceAmount = Number.isFinite(rawInvoiceCents)
+    ? roundProviderUsd(Math.max(0, rawInvoiceCents) / 100)
+    : 0
+
+  return {
+    // xAI's ledger represents an available prepaid credit as a negative USD-cent
+    // liability (the official example returns -1000 for $10 remaining).
+    balanceUsd: roundProviderUsd(Math.max(0, -rawBalanceCents) / 100),
+    cost: {
+      todayUsd: roundProviderUsd(todayUsd),
+      monthUsd: roundProviderUsd(monthUsd),
+      syncedThrough,
+    },
+    invoice: invoiceAmount > 0
+      ? {
+          kind: 'preview',
+          amount: invoiceAmount,
+          currency: 'USD',
+          dueAt: null,
+          status: 'current preview',
+        }
+      : null,
+  }
+}
+
+export async function fetchXaiBilling(
+  monthStart: Date,
+  now: Date,
+  todayYmd: string,
+): Promise<ProviderFetchResult<XaiBillingSnapshot>> {
+  const managementKey = process.env.XAI_MANAGEMENT_API_KEY?.trim()
+  const teamId = process.env.XAI_TEAM_ID?.trim()
+  if (!managementKey || !teamId) return unconfigured()
+
+  const base = `https://management-api.x.ai/v1/billing/teams/${encodeURIComponent(teamId)}`
+  const headers = {
+    Authorization: `Bearer ${managementKey}`,
+    'Content-Type': 'application/json',
+  }
+  const timestamp = (date: Date) => date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '')
+
+  try {
+    const [balanceResponse, usageResponse, invoiceResponse] = await Promise.all([
+      fetch(`${base}/prepaid/balance`, { headers, signal: AbortSignal.timeout(20_000) }),
+      fetch(`${base}/usage`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          analyticsRequest: {
+            timeRange: {
+              startTime: timestamp(monthStart),
+              endTime: timestamp(now),
+              timezone: 'Asia/Dhaka',
+            },
+            timeUnit: 'TIME_UNIT_DAY',
+            values: [{ name: 'usd', aggregation: 'AGGREGATION_SUM' }],
+            groupBy: [],
+            filters: [],
+          },
+        }),
+        signal: AbortSignal.timeout(25_000),
+      }),
+      fetch(`${base}/postpaid/invoice/preview`, { headers, signal: AbortSignal.timeout(20_000) }),
+    ])
+    if (!balanceResponse.ok) return failed(`xAI prepaid balance HTTP ${balanceResponse.status}`)
+    if (!usageResponse.ok) return failed(`xAI usage HTTP ${usageResponse.status}`)
+    if (!invoiceResponse.ok) return failed(`xAI invoice preview HTTP ${invoiceResponse.status}`)
+    return succeeded(parseXaiBilling(
+      await balanceResponse.json() as { total?: { val?: number | string } },
+      await usageResponse.json() as {
+        timeSeries?: Array<{
+          dataPoints?: Array<{ timestamp?: string; values?: number[] }>
+        }>
+      },
+      await invoiceResponse.json() as {
+        coreInvoice?: {
+          totalWithCorr?: { val?: number | string }
+          amountAfterVat?: number | string
+        }
+      },
+      todayYmd,
+    ))
+  } catch (error) {
+    return failed(error instanceof Error ? error.message : 'xAI Management API request failed')
   }
 }
 

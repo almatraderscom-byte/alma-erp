@@ -6,14 +6,18 @@ import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import {
   fetchElevenLabsQuota,
+  fetchFalUsageCosts,
   fetchFashnQuota,
   fetchGoogleCloudBillingCosts,
+  fetchOxylabsUsage,
   fetchSupabaseOrganizationPlan,
   fetchVercelBillingCosts,
+  fetchXaiBilling,
   type ProviderInvoiceSnapshot,
   type ProviderQuotaSnapshot,
   type ProviderSourceType,
   type ProviderSyncStatus,
+  type ProviderUsageSnapshot,
 } from '@/agent/lib/provider-billing'
 
 export const API_BALANCE_CACHE_KEY = 'api_balance_cache'
@@ -62,6 +66,7 @@ export type BalanceProviderRow = {
   balanceCurrency: string | null
   balanceUnit: string | null
   quota?: ProviderQuotaSnapshot | null
+  usage?: ProviderUsageSnapshot | null
   invoice?: ProviderInvoiceSnapshot | null
   todayUsd: number | null
   monthUsd: number | null
@@ -199,15 +204,15 @@ const PROVIDER_META: Record<BalanceProviderId, {
   },
   oxylabs: {
     label: 'Oxylabs',
-    source: 'Manual credit + local usage',
+    source: 'Provider usage API',
     dashboardUrl: 'https://dashboard.oxylabs.io/',
-    capabilities: ['quota', 'usage'],
+    capabilities: ['usage'],
   },
   elevenlabs: {
     label: 'ElevenLabs',
     source: 'Provider quota API',
     dashboardUrl: 'https://elevenlabs.io/app/subscription',
-    capabilities: ['quota', 'plan', 'usage'],
+    capabilities: ['quota', 'plan', 'usage', 'invoice'],
   },
   veo: {
     label: 'Veo',
@@ -225,13 +230,13 @@ const PROVIDER_META: Record<BalanceProviderId, {
     label: 'fal.ai',
     source: 'Provider API',
     dashboardUrl: 'https://fal.ai/dashboard/billing',
-    capabilities: ['wallet', 'cost', 'pricing'],
+    capabilities: ['wallet', 'cost', 'usage', 'pricing'],
   },
   xai: {
     label: 'xAI',
-    source: 'Local measured',
+    source: 'Management billing API',
     dashboardUrl: 'https://console.x.ai/',
-    capabilities: ['cost', 'usage'],
+    capabilities: ['wallet', 'cost', 'usage', 'invoice'],
   },
   vercel: {
     label: 'Vercel',
@@ -480,9 +485,9 @@ async function fetchOpenAIMonthSpendUsd(
   monthStart: Date,
   monthEnd: Date,
 ): Promise<{ usd: number; syncedThrough: string | null } | null> {
-  const orgId = process.env.OPENAI_ORG_ID
-  const adminKey = process.env.OPENAI_ADMIN_API_KEY
-  if (!orgId || !adminKey) return null
+  const orgId = process.env.OPENAI_ORG_ID?.trim()
+  const adminKey = process.env.OPENAI_ADMIN_API_KEY?.trim()
+  if (!adminKey) return null
   try {
     const start = Math.floor(monthStart.getTime() / 1000)
     const end = Math.floor(Math.min(monthEnd.getTime(), Date.now() + 1_000) / 1000)
@@ -498,8 +503,10 @@ async function fetchOpenAIMonthSpendUsd(
       url.searchParams.set('limit', '31')
       if (page) url.searchParams.set('page', page)
 
+      const headers: Record<string, string> = { Authorization: `Bearer ${adminKey}` }
+      if (orgId) headers['OpenAI-Organization'] = orgId
       const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${adminKey}`, 'OpenAI-Organization': orgId },
+        headers,
         signal: AbortSignal.timeout(15_000),
       })
       if (!response.ok) {
@@ -534,7 +541,7 @@ async function fetchOpenAIMonthSpendUsd(
  * so we use it directly as the OpenRouter balance (no KV-credit fallback needed).
  */
 async function fetchOpenRouterCreditsUsd(): Promise<number | null> {
-  const apiKey = process.env.OPENROUTER_API_KEY
+  const apiKey = process.env.OPENROUTER_MANAGEMENT_KEY?.trim()
   if (!apiKey) return null
   try {
     const res = await fetch('https://openrouter.ai/api/v1/credits', {
@@ -724,6 +731,7 @@ function normalizeCachedProvider(
     balanceCurrency: row.balanceCurrency ?? (balanceAmount != null && row.id !== 'oxylabs' ? 'USD' : null),
     balanceUnit: row.balanceUnit ?? (balanceAmount != null ? (row.id === 'oxylabs' ? 'credits' : 'USD') : null),
     quota: row.quota ?? null,
+    usage: row.usage ?? null,
     invoice: row.invoice ?? row.quota?.invoice ?? null,
     todayUsd: row.todayUsd ?? null,
     monthUsd: row.monthUsd ?? null,
@@ -1004,7 +1012,10 @@ export async function refreshApiBalanceCache(): Promise<{
     openRouterActivityMonth,
     elevenLabsQuota,
     falLive,
+    falUsage,
     fashnQuota,
+    oxylabsUsage,
+    xaiBilling,
     vercelBilling,
     supabasePlan,
     googleBilling,
@@ -1020,7 +1031,10 @@ export async function refreshApiBalanceCache(): Promise<{
     fetchOpenRouterActivityMonthUsd(todayStr),
     fetchElevenLabsQuota(),
     fetchFalBalanceUsd(),
+    fetchFalUsageCosts(monthStart, new Date(), todayStr),
     fetchFashnQuota(),
+    fetchOxylabsUsage(`${todayStr.slice(0, 7)}-01`, todayStr),
+    fetchXaiBilling(monthStart, new Date(), todayStr),
     fetchVercelBillingCosts(monthStart, new Date(), todayStr),
     fetchSupabaseOrganizationPlan(),
     fetchGoogleCloudBillingCosts(monthStart, todayStr),
@@ -1052,14 +1066,15 @@ export async function refreshApiBalanceCache(): Promise<{
     let balanceCurrency: string | null = null
     let balanceUnit: string | null = null
     let quota: ProviderQuotaSnapshot | null = null
+    let usage: ProviderUsageSnapshot | null = null
     let invoice: ProviderInvoiceSnapshot | null = null
     let syncedThrough: string | null = null
     let plan: string | null = null
     let sourceType: ProviderSourceType = 'local_measured'
     let costSourceType: ProviderSourceType = 'local_measured'
-    let status: ProviderSyncStatus = monthUsd > 0 ? 'partial' : 'unconfigured'
+    let status: ProviderSyncStatus = monthUsd > 0 ? 'manual' : 'unconfigured'
     let statusMessage: string | null = monthUsd > 0
-      ? 'খরচ local request events থেকে মাপা; provider wallet API পাওয়া যায়নি।'
+      ? 'শুধু local request events পাওয়া গেছে; provider billing credential এখনো connected নয়।'
       : 'এই provider-এর billing connection configure করা হয়নি।'
     let balanceAuthoritative = false
     let costAuthoritative = false
@@ -1105,7 +1120,7 @@ export async function refreshApiBalanceCache(): Promise<{
         statusMessage = 'Purchased credit minus lifetime usage; provider API value।'
         balanceAuthoritative = true
         staleAt = staleAfter(fetchedAt, 20)
-      } else if (process.env.OPENROUTER_API_KEY && previous?.balanceKind === 'wallet') {
+      } else if (process.env.OPENROUTER_MANAGEMENT_KEY && previous?.balanceKind === 'wallet') {
         balanceKind = 'wallet'
         balanceAmount = balanceUsd = previous.balanceAmount
         balanceCurrency = previous.balanceCurrency
@@ -1116,7 +1131,7 @@ export async function refreshApiBalanceCache(): Promise<{
         balanceAuthoritative = previous.balanceAuthoritative
         fetchedAt = previous.fetchedAt
         staleAt = previous.staleAfter
-      } else if (process.env.OPENROUTER_API_KEY) {
+      } else if (process.env.OPENROUTER_MANAGEMENT_KEY) {
         status = 'error'
         statusMessage = 'OpenRouter credits API refresh ব্যর্থ।'
       }
@@ -1205,6 +1220,53 @@ export async function refreshApiBalanceCache(): Promise<{
         status = 'error'
         statusMessage = fashnQuota.error
       }
+    } else if (id === 'oxylabs') {
+      if (oxylabsUsage.ok && oxylabsUsage.value) {
+        usage = oxylabsUsage.value
+        sourceType = 'provider_api'
+        status = 'live'
+        statusMessage = 'Monthly request usage সরাসরি Oxylabs stats API থেকে পাওয়া; cash balance endpoint নেই।'
+        fetchedAt = oxylabsUsage.fetchedAt
+        staleAt = staleAfter(fetchedAt, 180)
+      } else if (oxylabsUsage.configured && previous?.usage) {
+        usage = previous.usage
+        sourceType = 'provider_api'
+        status = 'stale'
+        statusMessage = oxylabsUsage.error ?? 'Oxylabs stats refresh ব্যর্থ; শেষ সফল usage রাখা হয়েছে।'
+        fetchedAt = previous.fetchedAt
+        staleAt = previous.staleAfter
+      } else if (oxylabsUsage.configured) {
+        status = 'error'
+        statusMessage = oxylabsUsage.error
+      }
+    } else if (id === 'xai') {
+      if (xaiBilling.ok && xaiBilling.value) {
+        balanceKind = 'wallet'
+        balanceAmount = balanceUsd = roundUsd(xaiBilling.value.balanceUsd)
+        balanceCurrency = balanceUnit = 'USD'
+        invoice = xaiBilling.value.invoice
+        sourceType = 'provider_api'
+        status = 'live'
+        statusMessage = 'Prepaid balance, usage ও current invoice preview সরাসরি xAI Management API থেকে পাওয়া।'
+        balanceAuthoritative = true
+        fetchedAt = xaiBilling.fetchedAt
+        staleAt = staleAfter(fetchedAt, 20)
+      } else if (xaiBilling.configured && previous?.balanceKind === 'wallet') {
+        balanceKind = 'wallet'
+        balanceAmount = balanceUsd = previous.balanceAmount
+        balanceCurrency = previous.balanceCurrency
+        balanceUnit = previous.balanceUnit
+        invoice = previous.invoice ?? null
+        sourceType = 'provider_api'
+        status = 'stale'
+        statusMessage = xaiBilling.error ?? 'xAI refresh ব্যর্থ; শেষ সফল billing snapshot রাখা হয়েছে।'
+        balanceAuthoritative = previous.balanceAuthoritative
+        fetchedAt = previous.fetchedAt
+        staleAt = previous.staleAfter
+      } else if (xaiBilling.configured) {
+        status = 'error'
+        statusMessage = xaiBilling.error
+      }
     }
 
     // ---- Provider-reported cost + non-overlapping local delta ----
@@ -1216,8 +1278,8 @@ export async function refreshApiBalanceCache(): Promise<{
       localDeltaUsd = reconciled.localDeltaUsd
       costSourceType = 'provider_api'
       sourceType = 'provider_api'
-      status = 'partial'
-      statusMessage = 'Official cost report + report boundary-এর পরের local usage; wallet API নেই।'
+      status = 'live'
+      statusMessage = 'Official Anthropic cost connected; report boundary-এর পরের request local delta হিসেবে আলাদা। Wallet endpoint provider দেয় না।'
       costAuthoritative = true
       staleAt = staleAfter(fetchedAt, 180)
     } else if (id === 'openai' && openaiAdminMonth != null) {
@@ -1227,8 +1289,8 @@ export async function refreshApiBalanceCache(): Promise<{
       monthUsd = reconciled.monthUsd
       localDeltaUsd = reconciled.localDeltaUsd
       costSourceType = 'provider_api'
-      status = 'partial'
-      statusMessage = 'Official organization cost + report boundary-এর পরের local usage; wallet API নেই।'
+      status = 'live'
+      statusMessage = 'Official OpenAI organization cost connected; report boundary-এর পরের request local delta হিসেবে আলাদা। Wallet endpoint provider দেয় না।'
       costAuthoritative = true
       staleAt = staleAfter(fetchedAt, 180)
     } else if (id === 'openrouter' && openRouterActivityMonth != null) {
@@ -1239,8 +1301,34 @@ export async function refreshApiBalanceCache(): Promise<{
       localDeltaUsd = reconciled.localDeltaUsd
       costSourceType = 'provider_api'
       costAuthoritative = true
-      status = 'partial'
-      statusMessage = 'Wallet live; official activity report + report boundary-এর পরের local usage।'
+      status = 'live'
+      statusMessage = 'Wallet ও official activity report connected; report boundary-এর পরের request local delta হিসেবে আলাদা।'
+      staleAt = staleAfter(fetchedAt, 180)
+    } else if (id === 'fal' && falUsage.ok && falUsage.value) {
+      providerMonthUsd = falUsage.value.monthUsd
+      syncedThrough = falUsage.value.syncedThrough
+      const reconciled = await reconcileProviderMonth(id, providerMonthUsd, syncedThrough)
+      monthUsd = reconciled.monthUsd
+      localDeltaUsd = reconciled.localDeltaUsd
+      todayUsd = syncedThrough === todayStr ? falUsage.value.todayUsd : todayUsd
+      costSourceType = 'provider_api'
+      costAuthoritative = true
+      status = 'live'
+      statusMessage = balanceAuthoritative
+        ? 'Prepaid wallet ও workspace usage দুইটিই fal.ai provider API থেকে connected।'
+        : 'Workspace usage fal.ai Admin API থেকে connected; wallet field-এর API key আলাদা।'
+      fetchedAt = falUsage.fetchedAt
+      staleAt = staleAfter(fetchedAt, 180)
+    } else if (id === 'xai' && xaiBilling.ok && xaiBilling.value) {
+      providerMonthUsd = xaiBilling.value.cost.monthUsd
+      syncedThrough = xaiBilling.value.cost.syncedThrough
+      const reconciled = await reconcileProviderMonth(id, providerMonthUsd, syncedThrough)
+      monthUsd = reconciled.monthUsd
+      localDeltaUsd = reconciled.localDeltaUsd
+      todayUsd = syncedThrough === todayStr ? xaiBilling.value.cost.todayUsd : todayUsd
+      costSourceType = 'provider_api'
+      costAuthoritative = true
+      status = 'live'
       staleAt = staleAfter(fetchedAt, 180)
     } else if ((id === 'gemini' || id === 'google_tts' || id === 'veo') && googleBilling.ok && googleBilling.value) {
       const google = googleBilling.value[id]
@@ -1251,8 +1339,9 @@ export async function refreshApiBalanceCache(): Promise<{
       localDeltaUsd = reconciled.localDeltaUsd
       todayUsd = syncedThrough === todayStr ? google.todayUsd : todayUsd
       costSourceType = 'provider_export'
-      status = 'partial'
-      statusMessage = 'Google Cloud Billing export + export boundary-এর পরের local usage; wallet value নয়।'
+      sourceType = 'provider_export'
+      status = 'live'
+      statusMessage = 'Google Cloud Billing export connected; export boundary-এর পরের request local delta হিসেবে আলাদা। Google Cloud wallet endpoint নেই।'
       costAuthoritative = true
       fetchedAt = googleBilling.fetchedAt
       staleAt = staleAfter(fetchedAt, 180)
@@ -1262,8 +1351,8 @@ export async function refreshApiBalanceCache(): Promise<{
       todayUsd = vercelBilling.value.todayUsd
       syncedThrough = vercelBilling.value.syncedThrough
       sourceType = costSourceType = 'provider_export'
-      status = 'partial'
-      statusMessage = 'FOCUS billed charges live; invoice due/payment status public API-তে নেই।'
+      status = 'live'
+      statusMessage = 'FOCUS billed charges connected; upcoming invoice/due field Vercel public API-তে exposed নয়।'
       costAuthoritative = true
       fetchedAt = vercelBilling.fetchedAt
       staleAt = staleAfter(fetchedAt, 180)
@@ -1273,8 +1362,8 @@ export async function refreshApiBalanceCache(): Promise<{
       plan = supabasePlan.value.plan
       sourceType = 'provider_api'
       costSourceType = 'manual'
-      status = 'partial'
-      statusMessage = 'Organization plan live; upcoming invoice/due public Management API-তে নেই।'
+      status = 'live'
+      statusMessage = 'Organization plan connected; cost ও upcoming invoice/due Supabase public Management API-তে exposed নয়।'
       planAuthoritative = true
       fetchedAt = supabasePlan.fetchedAt
       staleAt = staleAfter(fetchedAt, 1_440)
@@ -1284,10 +1373,23 @@ export async function refreshApiBalanceCache(): Promise<{
     // then add only local events after its recorded boundary.
     const externalCostFailed =
       (id === 'anthropic' && Boolean(process.env.ANTHROPIC_ADMIN_API_KEY) && anthropicAdminMonth == null)
-      || (id === 'openai' && Boolean(process.env.OPENAI_ORG_ID && process.env.OPENAI_ADMIN_API_KEY) && openaiAdminMonth == null)
+      || (id === 'openai' && Boolean(process.env.OPENAI_ADMIN_API_KEY) && openaiAdminMonth == null)
+      || (id === 'fal' && falUsage.configured && !falUsage.ok)
+      || (id === 'xai' && xaiBilling.configured && !xaiBilling.ok)
       || ((id === 'gemini' || id === 'google_tts' || id === 'veo') && googleBilling.configured && !googleBilling.ok)
       || (id === 'vercel' && vercelBilling.configured && !vercelBilling.ok)
       || (id === 'supabase' && supabasePlan.configured && !supabasePlan.ok)
+    const providerFailure = id === 'fal'
+      ? falUsage.error
+      : id === 'xai'
+        ? xaiBilling.error
+        : (id === 'gemini' || id === 'google_tts' || id === 'veo')
+          ? googleBilling.error
+          : id === 'vercel'
+            ? vercelBilling.error
+            : id === 'supabase'
+              ? supabasePlan.error
+              : null
     if (externalCostFailed && id === 'supabase' && previous?.plan) {
       plan = previous.plan
       sourceType = previous.sourceType
@@ -1306,13 +1408,13 @@ export async function refreshApiBalanceCache(): Promise<{
       costSourceType = previous.costSourceType
       if (id === 'supabase') plan = previous.plan ?? null
       status = 'stale'
-      statusMessage = 'Provider refresh ব্যর্থ; শেষ authoritative snapshot + নতুন local delta দেখানো হচ্ছে।'
+      statusMessage = `Provider refresh ব্যর্থ${providerFailure ? ` (${providerFailure})` : ''}; শেষ authoritative snapshot + নতুন local delta দেখানো হচ্ছে।`
       fetchedAt = previous.fetchedAt
       staleAt = previous.staleAfter
       costAuthoritative = previous.costAuthoritative
     } else if (externalCostFailed && status !== 'stale') {
       status = 'error'
-      statusMessage = 'Provider billing refresh ব্যর্থ; local measured data থাকলে শুধু সেটিই দেখানো হচ্ছে।'
+      statusMessage = `Provider billing refresh ব্যর্থ${providerFailure ? `: ${providerFailure}` : ''}; local measured data থাকলে শুধু সেটিই দেখানো হচ্ছে।`
     }
 
     // Providers without a wallet API may retain a user-entered opening credit,
@@ -1334,11 +1436,16 @@ export async function refreshApiBalanceCache(): Promise<{
       }
     }
 
-    if (id === 'xai') {
-      status = (monthUsd ?? 0) > 0 || process.env.XAI_API_KEY ? 'partial' : 'unconfigured'
-      statusMessage = status === 'partial'
-        ? 'xAI cost local request events থেকে মাপা; verified wallet API নেই।'
-        : 'xAI billing connection/usage পাওয়া যায়নি।'
+    if (id === 'xai' && !xaiBilling.configured) {
+      status = (monthUsd ?? 0) > 0 ? 'manual' : 'unconfigured'
+      statusMessage = status === 'manual'
+        ? 'শুধু local xAI request events আছে; live billing-এর জন্য XAI_MANAGEMENT_API_KEY + XAI_TEAM_ID দরকার।'
+        : 'Live billing-এর জন্য XAI_MANAGEMENT_API_KEY + XAI_TEAM_ID দরকার।'
+    } else if (id === 'oxylabs' && !oxylabsUsage.configured && !credit) {
+      status = (monthUsd ?? 0) > 0 ? 'manual' : 'unconfigured'
+      statusMessage = status === 'manual'
+        ? 'শুধু local usage আছে; live monthly request stats-এর জন্য OXYLABS_USERNAME + OXYLABS_PASSWORD দরকার।'
+        : 'Live monthly request stats-এর জন্য OXYLABS_USERNAME + OXYLABS_PASSWORD দরকার।'
     } else if (id === 'supabase' && !supabasePlan.configured) {
       todayUsd = null
       monthUsd = null
@@ -1352,17 +1459,6 @@ export async function refreshApiBalanceCache(): Promise<{
     }
 
     authoritative = balanceAuthoritative || costAuthoritative || planAuthoritative
-    // A live wallet/quota does not make locally estimated cost live. Surface the
-    // mixed field state as partial so the card never over-promises.
-    if (
-      status === 'live'
-      && balanceAuthoritative
-      && !costAuthoritative
-      && monthUsd != null
-    ) {
-      status = 'partial'
-      statusMessage = `${statusMessage ?? 'Provider wallet/quota live।'} মাসের cost local measured।`
-    }
 
     providers.push({
       id,
@@ -1373,6 +1469,7 @@ export async function refreshApiBalanceCache(): Promise<{
       balanceCurrency,
       balanceUnit,
       quota,
+      usage,
       invoice,
       todayUsd,
       monthUsd,
@@ -1453,13 +1550,13 @@ export async function refreshApiBalanceCache(): Promise<{
   }
   creditFlags.elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY)
   // OpenRouter low-balance alerting keys off the live credits API being available.
-  creditFlags.openrouter = Boolean(process.env.OPENROUTER_API_KEY || creditByProvider.get('openrouter'))
+  creditFlags.openrouter = Boolean(process.env.OPENROUTER_MANAGEMENT_KEY || creditByProvider.get('openrouter'))
   creditFlags.fal = Boolean(process.env.FAL_KEY || creditByProvider.get('fal'))
   creditFlags.fashn = Boolean(process.env.FASHN_API_KEY)
 
   const alerts = computeLowBalanceAlerts(providers, {
     anthropicAdmin: Boolean(process.env.ANTHROPIC_ADMIN_API_KEY),
-    openaiAdmin: Boolean(process.env.OPENAI_ORG_ID && process.env.OPENAI_ADMIN_API_KEY),
+    openaiAdmin: Boolean(process.env.OPENAI_ADMIN_API_KEY),
     twilioConfigured: Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN),
     creditSet: creditFlags,
   })
@@ -1581,10 +1678,10 @@ async function overlayLiveLocalSpend(cache: ApiBalanceCache): Promise<ApiBalance
         balanceUsd = balanceAmount = roundUsd(freshOpenRouterBalance)
         fetchedAt = new Date().toISOString()
         staleAt = staleAfter(fetchedAt, 20)
-        status = row.costAuthoritative || (monthUsd ?? 0) > 0 ? 'partial' : 'live'
+        status = 'live'
         statusMessage = row.costAuthoritative
-          ? 'Wallet live; official activity report-এর পরের local usage আলাদা করে যোগ করা হয়েছে।'
-          : 'Wallet live; মাসের cost local measured।'
+          ? 'Wallet ও official activity report connected; report boundary-এর পরের local usage আলাদা।'
+          : 'Wallet connected; মাসের cost local request events থেকে estimated।'
       } else if (
         staleAt
         && Date.parse(staleAt) < Date.now()
