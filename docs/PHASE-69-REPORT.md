@@ -123,18 +123,15 @@ builds pass; Phase 69 did not touch that route.
 The feature is complete, but every provider cannot become authoritative until its
 read-only billing credential/export exists in the target environment:
 
-- Replace the Vercel value of `GOOGLE_BILLING_SERVICE_ACCOUNT_JSON`: it currently
-  contains a Mac file path, but Vercel needs the complete JSON document as the value.
-  `GOOGLE_BILLING_QUERY_PROJECT_ID` and `GOOGLE_BILLING_EXPORT_TABLE` are already
-  configured.
-- `VERCEL_BILLING_TOKEN` plus team ID/slug
-- `SUPABASE_MANAGEMENT_TOKEN` plus organization slug
-- `OPENAI_ADMIN_API_KEY` (`OPENAI_ORG_ID` is optional)
-- `FAL_ADMIN_KEY`
-- `XAI_MANAGEMENT_API_KEY` plus `XAI_TEAM_ID`
-- `OXYLABS_USERNAME` plus `OXYLABS_PASSWORD`
-- Preview credentials for Twilio and ElevenLabs if those providers must be live on
-  Preview as well as Production
+- Google Billing JSON/project/table, Twilio, ElevenLabs, OpenRouter, xAI Management,
+  OpenAI Admin, and Vercel Billing are configured for both Production and Preview as
+  of the final environment audit.
+- `FAL_ADMIN_KEY` is intentionally deferred by the owner; fal.ai wallet stays live
+  through `FAL_KEY`, while official Admin usage/cost remains unavailable.
+- `OXYLABS_USERNAME` plus `OXYLABS_PASSWORD` are intentionally deferred by the owner;
+  the existing `OXYLABS_API_KEY` continues to power scraping, while official monthly
+  usage statistics remain unavailable.
+- Supabase billing remains manual by owner decision.
 
 These are server-side secrets and were not copied, invented, or committed.
 
