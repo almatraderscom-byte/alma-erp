@@ -61,8 +61,8 @@ export async function POST(req: NextRequest) {
             { role: 'system', content: SYSTEM },
             { role: 'user', content: raw },
           ],
-          temperature: 0,
-          max_tokens: 1200,
+          // Newer models (gpt-5.6-luna) reject max_tokens and pinned temperature.
+          max_completion_tokens: 1200,
         })
         const text = completion.choices[0]?.message?.content?.trim()
         workingModel = model
