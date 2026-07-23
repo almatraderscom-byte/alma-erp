@@ -1518,8 +1518,9 @@ function StudioWorkspace({
                 // instead of claiming the whole job is Gemini.
                 // CS6: single Try-On names the exact engine the owner picked.
                 // CS13: any Grok Imagine pick (or generate) is named truthfully.
-                <>Run — {mode === 'generate' || provider === 'xai_imagine'
-                  || ((mode === 'product_to_model' || mode === 'try_on') && vtonEngine === 'xai_imagine')
+                // full_family merge always runs the Gemini compositor — never claim xAI there.
+                <>Run — {!isFamilyMerge && (mode === 'generate'
+                  || ((mode === 'product_to_model' || mode === 'try_on') ? vtonEngine === 'xai_imagine' : provider === 'xai_imagine'))
                   ? ENGINE_LABELS_BN.xai_imagine
                   : isMultiPersonFamily
                   ? FAMILY_CHAIN_LABEL_BN
