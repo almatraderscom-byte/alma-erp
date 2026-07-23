@@ -32,7 +32,8 @@ const mockTurnQueue = vi.hoisted(() => ({
 }))
 vi.mock('@/agent/lib/turn-queue', () => mockTurnQueue)
 
-import { POST, VOICE_INSTRUCTION_PREFIX } from '../submit-instruction/route'
+import { POST } from '../submit-instruction/route'
+import { VOICE_INSTRUCTION_PREFIX } from '@/agent/lib/voice-instruction'
 
 function makeReq(body: unknown, token = 'test-token') {
   return new Request('http://local/api/assistant/voice-call/submit-instruction', {
