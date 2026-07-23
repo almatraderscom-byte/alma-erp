@@ -1360,6 +1360,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var reconnecting = false
     private var hasConnectedOnce = false
     private var mintedSession: SessionResponse?
+    private var mintedAt = Date.distantPast
+    private var reconnectAttempts = 0
     private var pendingResumptionHandle: String?
     private var latestResumptionHandle: String?
     private var outputTranscript = ""
@@ -1405,6 +1407,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         guard let minted = try? JSONDecoder().decode(SessionResponse.self, from: raw),
               !minted.token.isEmpty else { throw AlmaLiveVoiceError.badSession }
         mintedSession = minted
+        mintedAt = Date()
         try connect(minted, resumptionHandle: nil)
     }
 
@@ -1610,9 +1613,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 #if DEBUG
                 NSLog("ALMA-VOICE websocket receive failed: %@", String(describing: error))
                 #endif
-                if !self.reconnectUsingLatestHandle() {
-                    self.fail("লাইভ ভয়েস সংযোগ বিচ্ছিন্ন হয়েছে।")
-                }
+                self.recoverConnection()
             case .success(let message):
                 switch message {
                 case .string(let text):
@@ -1636,7 +1637,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             let status = error["status"] ?? "unknown"
             NSLog("ALMA-VOICE server error code=%@ status=%@", String(describing: code), String(describing: status))
             #endif
-            fail("রিয়েলটাইম ভয়েস সার্ভার সংযোগ নেয়নি।")
+            if reconnecting {
+                reconnecting = false
+                recoverConnection(forceFreshToken: true)
+                return
+            }
+            fail("রিয়েলটাইম ভয়েস সার্ভার সংযোগ নেয়নি।")
             return
         }
         if root["setupComplete"] != nil {
@@ -1644,6 +1650,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 try configureAudio()
                 socketReady = true
                 reconnecting = false
+                reconnectAttempts = 0
                 DispatchQueue.main.async { [weak self] in self?.engine?.liveDidConnect() }
                 if !hasConnectedOnce {
                     hasConnectedOnce = true
@@ -1671,20 +1678,28 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             }
         }
         if root["goAway"] != nil {
-            if !reconnectUsingLatestHandle() {
-                fail("লাইভ সেশন শেষ হয়ে গেছে।")
-            }
+            recoverConnection()
         }
     }
 
-    /// Google rotates the physical websocket roughly every ten minutes. Reuse the
-    /// latest resumable handle with the same ephemeral token, keeping the logical
-    /// conversation and audio engine alive without replaying a greeting.
-    @discardableResult
-    private func reconnectUsingLatestHandle() -> Bool {
-        guard !stopped, !reconnecting,
-              let handle = latestResumptionHandle,
-              let minted = mintedSession else { return false }
+    /// Google rotates the physical websocket roughly every ten minutes. Resume with
+    /// the latest handle, keeping the logical conversation and audio engine alive
+    /// without replaying a greeting. The single-use ephemeral token stays valid for
+    /// resumed connections until its 30-minute expireTime — past ~25 minutes (or if
+    /// a resumed connect is rejected) mint a fresh token instead of dying, so a long
+    /// AI call survives every rotation. Attempts are capped so a hard outage still
+    /// fails loud instead of looping.
+    private func recoverConnection(forceFreshToken: Bool = false) {
+        guard !stopped, !reconnecting else { return }
+        guard hasConnectedOnce, mintedSession != nil else {
+            fail("লাইভ ভয়েস সংযোগ বিচ্ছিন্ন হয়েছে।")
+            return
+        }
+        guard reconnectAttempts < 3 else {
+            fail("লাইভ ভয়েস সংযোগ বিচ্ছিন্ন হয়েছে।")
+            return
+        }
+        reconnectAttempts += 1
         reconnecting = true
         socketReady = false
         DispatchQueue.main.async { [weak self] in self?.engine?.liveWillReconnect() }
@@ -1693,12 +1708,24 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         ws = nil; session = nil
         oldSocket?.cancel(with: .goingAway, reason: nil)
         oldSession?.invalidateAndCancel()
-        do {
-            try connect(minted, resumptionHandle: handle)
-            return true
-        } catch {
-            reconnecting = false
-            return false
+
+        let tokenNearExpiry = Date().timeIntervalSince(mintedAt) > 25 * 60
+        if !forceFreshToken, !tokenNearExpiry, let minted = mintedSession {
+            if (try? connect(minted, resumptionHandle: latestResumptionHandle)) != nil { return }
+        }
+        Task { [weak self] in
+            guard let self, !self.stopped else { return }
+            do {
+                let raw = try await AssistantNet.postJSONForData(path: "/api/assistant/live-session", body: [:])
+                guard let minted = try? JSONDecoder().decode(SessionResponse.self, from: raw),
+                      !minted.token.isEmpty else { throw AlmaLiveVoiceError.badSession }
+                self.mintedSession = minted
+                self.mintedAt = Date()
+                try self.connect(minted, resumptionHandle: self.latestResumptionHandle)
+            } catch {
+                self.reconnecting = false
+                self.fail("লাইভ ভয়েস সংযোগ বিচ্ছিন্ন হয়েছে।")
+            }
         }
     }
 
@@ -1980,14 +2007,19 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         guard !stopped, (!requireReady || socketReady), JSONSerialization.isValidJSONObject(object),
               let data = try? JSONSerialization.data(withJSONObject: object),
               let text = String(data: data, encoding: .utf8) else { return }
-        ws?.send(.string(text)) { [weak self] error in
+        let socket = ws
+        socket?.send(.string(text)) { [weak self, weak socket] error in
             if let error {
                 #if DEBUG
                 NSLog("ALMA-VOICE websocket send failed: %@", String(describing: error))
                 #endif
-                if self?.configured == true || !requireReady {
-                    self?.fail("লাইভ ভয়েস পাঠানো যায়নি।")
-                }
+                // A stale socket's late failure must not tear down a healthy
+                // replacement connection. For the CURRENT socket, a failed send
+                // (mic audio streams continuously, so a rotating socket usually
+                // hits a send first) recovers exactly like a failed receive --
+                // never an instant call kill.
+                guard let self, let socket, self.ws === socket else { return }
+                self.recoverConnection()
             }
         }
     }

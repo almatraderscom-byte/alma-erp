@@ -1636,7 +1636,7 @@ function WalletRequestCard({
         body: JSON.stringify({ type, amount: amt, reason: r, business_id: businessId }),
       })
       if (!result.ok) return
-      toast.success(`${type === 'WITHDRAWAL' ? 'Withdrawal' : 'Advance'} requested — awaiting approval`)
+      toast.success(type === 'WITHDRAWAL' ? 'উত্তোলনের অনুরোধ গেছে — অনুমোদনের অপেক্ষায়' : 'অগ্রিমের অনুরোধ গেছে — অনুমোদনের অপেক্ষায়')
       setAmount('')
       setReason('')
       onSubmitted()
@@ -1657,10 +1657,15 @@ function WalletRequestCard({
               onClick={() => setType(t)}
               className={`rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${type === t ? 'border-gold-dim/50 bg-gold/15 text-gold-lt' : 'border-white/[0.08] bg-card/85 text-muted hover:text-cream'}`}
             >
-              {t === 'WITHDRAWAL' ? 'Request withdrawal' : 'Request advance'}
+              {t === 'WITHDRAWAL' ? 'টাকা তুলব (উত্তোলন)' : 'অগ্রিম চাইব (ধার)'}
             </button>
           ))}
         </div>
+        <p className="rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2 text-[10px] leading-relaxed text-muted">
+          {type === 'WITHDRAWAL'
+            ? 'উত্তোলন: আপনার ওয়ালেটে জমা টাকা হাতে/বিকাশে নেবেন। ওয়ালেটে যত আছে তার বেশি তোলা যাবে না।'
+            : 'অগ্রিম: বেতনের আগে ধার — অনুমোদন হলে টাকা ওয়ালেটে জমা হবে, পরের বেতন থেকে অটো কাটা যাবে।'}
+        </p>
         <label className="block space-y-1">
           <span className="text-muted">Amount (৳)</span>
           <Input value={amount} onChange={e => setAmount(e.target.value)} type="number" min={1} step="1" className="font-mono" disabled={!empLinked} />
@@ -1686,7 +1691,7 @@ function RequestList({ requests }: { requests: WalletRequestDto[] }) {
       {requests.slice(0, 20).map(r => (
         <li key={r.id} className="flex justify-between gap-2 border-b border-white/[0.04] pb-1.5">
           <span className="text-muted font-mono">{r.createdAt.slice(0, 10)}</span>
-          <span className="text-cream flex-1">{r.type.replace(/_/g, ' ')} · {money(r.requestedAmount)}</span>
+          <span className="text-cream flex-1">{r.type === 'ADVANCE' ? 'অগ্রিম (ধার)' : 'উত্তোলন'} · {money(r.requestedAmount)}</span>
           <span className={r.status === 'PENDING' ? 'text-amber-400' : r.status.includes('APPROVED') ? 'text-green-400' : 'text-red-400'}>{r.status.replace(/_/g, ' ')}</span>
         </li>
       ))}
