@@ -30,6 +30,9 @@ function isPublicApiOrShare(pathname: string) {
   // Mid-call ERP read-tool bridge from the Gemini Live bot — self-protects via
   // AGENT_INTERNAL_TOKEN Bearer + requireAgentEnabled in the route handler.
   if (pathname === '/api/assistant/voice-call/erp-tool') return true
+  // PA-3 mid-call boss-instruction hand-off from the Gemini Live bot — self-protects
+  // via AGENT_INTERNAL_TOKEN Bearer + owner-call record check in the route handler.
+  if (pathname === '/api/assistant/voice-call/submit-instruction') return true
   // Inbound-call answer URL fetched by NextGenSwitch (no session) — self-protects via
   // the ?k=NGS_INBOUND_SECRET shared secret + requireAgentEnabled in the route handler.
   if (pathname === '/api/assistant/voice-call/ngs-inbound') return true

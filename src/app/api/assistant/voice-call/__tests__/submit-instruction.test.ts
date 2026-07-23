@@ -135,4 +135,9 @@ describe('bot ↔ route source contract', () => {
     const handler = bot.slice(bot.indexOf("fc.name === 'submit_boss_instruction'"))
     expect(handler.slice(0, 400)).toContain('isOwnerCall()')
   })
+
+  it('middleware allowlists the bridge path (live bug 2026-07-23: session wall 401ed the bot)', () => {
+    const mw = readFileSync(join(process.cwd(), 'src/middleware.ts'), 'utf8')
+    expect(mw).toContain("pathname === '/api/assistant/voice-call/submit-instruction'")
+  })
 })
