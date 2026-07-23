@@ -2,14 +2,20 @@ import UIKit
 import UserNotifications
 import Capacitor
 import CapawesomeCapacitorAppShortcuts
+import OneSignalFramework
 
 @UIApplicationMain
-class AppDelegate: UIResponder, UIApplicationDelegate {
+class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListener {
 
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         AlmaPerfLog.event("launch.didFinishLaunching")
+        // Register at the earliest native lifecycle point, per OneSignal's iOS
+        // contract. The previous JS-only listener attached after the hidden
+        // Capacitor page/auth boot, so a cold-start click could arrive too early
+        // and silently leave the visible native shell on Dashboard.
+        OneSignal.Notifications.addClickListener(self)
         #if DEBUG
         runNavSelfTestIfRequested()
         if #available(iOS 17.0, *) { runOverlaySelfTestIfRequested() }
@@ -119,6 +125,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             }
         }
 
+        #if DEBUG
+        // Exact cold-start notification harness: persist/post BEFORE the native tab
+        // shell is constructed below. viewDidAppear must replay it from the durable
+        // store. DEBUG-only; used by simctl proof, never a TestFlight behavior.
+        let coldTap = ProcessInfo.processInfo.environment["ALMA_NOTIF_COLD_TAP"]
+            ?? ProcessInfo.processInfo.arguments.first { $0.hasPrefix("ALMA_NOTIF_COLD_TAP=") }?
+                .split(separator: "=", maxSplits: 1).last.map(String.init)
+        if let coldTap, coldTap.hasPrefix("/") {
+            _ = AlmaNotificationRouteStore.receive(
+                routePath: coldTap, actionUrl: nil, source: "debug",
+                deliveryId: "debug-cold-\(coldTap)")
+        }
+        #endif
+
         // PHASE S1: wrap the app in a native tab bar. The storyboard already created
         // the Capacitor bridge VC as the window root; we REUSE that same instance as
         // tab 0 so Capacitor keeps running (push / Live Pulse / reminders / on-device
@@ -157,6 +177,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         }
 
         return true
+    }
+
+    /// OneSignal native click callback — covers foreground/background/cold launch
+    /// without waiting for React/Capacitor. The route store owns dedupe + replay.
+    func onClick(event: OSNotificationClickEvent) {
+        let data = event.notification.additionalData
+        _ = AlmaNotificationRouteStore.receive(
+            routePath: data?["routePath"] as? String,
+            actionUrl: data?["actionUrl"] as? String,
+            source: data?["source"] as? String,
+            deliveryId: (data?["notificationId"] as? String)
+                ?? (data?["deliveryId"] as? String))
     }
 
     // Home-screen quick action while the app is RUNNING/backgrounded.

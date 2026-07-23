@@ -452,20 +452,32 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     return () => document.removeEventListener('visibilitychange', onVisChange)
   }, [resyncActiveConversation, flashReconnecting])
 
-  // App-presence heartbeat: while the agent app is foreground, ping the server so
-  // it knows the owner is here and suppresses agent push (ntfy). When he leaves
-  // (backgrounded/closed) the pings stop, presence goes stale, and agent replies/
-  // approvals are delivered as ntfy notifications instead.
+  // Explicit lifecycle presence: background is written immediately so a turn
+  // finishing one second after the owner leaves is not swallowed by the old
+  // 50-second heartbeat grace window.
   useEffect(() => {
-    const ping = () => {
-      if (document.visibilityState !== 'visible') return
-      void fetch('/api/assistant/presence', { method: 'POST' }).catch(() => {})
+    const writePresence = (state: 'active' | 'background') => {
+      void fetch('/api/assistant/presence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state }),
+        keepalive: state === 'background',
+      }).catch(() => {})
     }
+    const ping = () => {
+      if (document.visibilityState === 'visible') writePresence('active')
+    }
+    const onVis = () => writePresence(
+      document.visibilityState === 'visible' ? 'active' : 'background',
+    )
     ping()
     const iv = setInterval(ping, 20_000)
-    const onVis = () => { if (document.visibilityState === 'visible') ping() }
     document.addEventListener('visibilitychange', onVis)
-    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVis) }
+    return () => {
+      clearInterval(iv)
+      document.removeEventListener('visibilitychange', onVis)
+      writePresence('background')
+    }
   }, [])
 
   useEffect(() => { setSidebarOpen(!isMobile) }, [isMobile])

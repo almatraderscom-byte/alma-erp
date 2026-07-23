@@ -52,9 +52,11 @@ export async function POST(req: NextRequest) {
     update: {
       userId: ctx.userId,
       endpoint: body.endpoint || null,
-      externalUserId: body.externalUserId || ctx.userId,
+      externalUserId: ctx.userId,
       businessId,
-      role: body.role || ctx.role,
+      // Identity/role come from the authenticated session, never client JSON.
+      // A staff device must not be able to tag/register itself as an admin.
+      role: ctx.role,
       employeeIdGas,
       platform: body.platform || null,
       userAgent: body.userAgent ? body.userAgent.slice(0, 500) : null,
@@ -66,9 +68,9 @@ export async function POST(req: NextRequest) {
       provider,
       playerId: body.playerId || body.endpoint || ctx.userId,
       endpoint: body.endpoint || null,
-      externalUserId: body.externalUserId || ctx.userId,
+      externalUserId: ctx.userId,
       businessId,
-      role: body.role || ctx.role,
+      role: ctx.role,
       employeeIdGas,
       platform: body.platform || null,
       userAgent: body.userAgent ? body.userAgent.slice(0, 500) : null,

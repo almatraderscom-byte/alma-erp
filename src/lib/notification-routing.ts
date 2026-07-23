@@ -40,4 +40,7 @@ export const DEFAULT_ACTION_URL: Partial<Record<NotificationType, string>> = {
   LOW_STOCK: '/inventory',
   PAYROLL_ALERT: '/payroll',
   EXPENSE_ADDED: '/finance',
+  // Generic announcements should still open a real notification/activity page,
+  // never the dashboard root. Specific call sites continue to override this.
+  ADMIN_ANNOUNCEMENT: '/activity',
 }

@@ -9,6 +9,7 @@ import {
   ensureNativeOneSignalInitialized,
   listenForNativeNotificationClicks,
   listenForPermissionChanges,
+  listenForTokenChanges,
   nativePushAvailable,
   nativePushHasPermission,
   registerNativePushSubscription,
@@ -344,6 +345,7 @@ export function OneSignalPushManager() {
       try {
         await ensureNativeOneSignalInitialized(appId)
         void listenForPermissionChanges(input)
+        void listenForTokenChanges(input)
         const registerSilently = async () => {
           const ok = await registerNativePushSubscription(input)
           if (ok && !cancelled) markRegistered()

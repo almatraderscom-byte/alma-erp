@@ -52,13 +52,10 @@ export async function GET(req: NextRequest) {
         { OR: [{ businessId: { in: allowedBusinessIds } }, { businessId: null }] },
         priority !== 'all' ? { priority: priority as never } : {},
         q ? { OR: [{ title: { contains: q, mode: 'insensitive' } }, { message: { contains: q, mode: 'insensitive' } }] } : {},
-        {
-          OR: [
-            { userId: ctx.userId },
-            { roleTarget: ctx.role },
-            { id: { in: recipientIds } },
-          ],
-        },
+        // Every targeted notification is materialized into recipient rows. That
+        // row is now the single read scope so direct-user and role notifications
+        // cannot bypass the user's category/master preference.
+        { id: { in: recipientIds } },
       ],
     },
     orderBy: [{ pinned: 'desc' }, { createdAt: 'desc' }],

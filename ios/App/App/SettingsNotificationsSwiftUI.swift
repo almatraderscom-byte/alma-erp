@@ -12,9 +12,9 @@
 //  composer (title, message, priority, target ALL/ROLE/BUSINESS/USER with the web's
 //  role/business option lists, action URL, native "Pin this notification" Toggle) ·
 //  the Delivery dashboard (broadcast rows re-set as cards for phone).
-//  NOTE: the web page today has NO channel-preference (push/telegram/ntfy) toggles —
-//  there is no per-toggle preference endpoint, so nothing is invented here; the only
-//  native Toggle is the form's "Pin this notification".
+//  Every authenticated role also gets native per-category notification controls
+//  backed by /api/notifications/preferences. Admin-only broadcast analytics remain
+//  hidden from staff and protected by their existing server authorization.
 //  Carried lessons: ONE spinner per action, never a global overlay.
 //
 
@@ -170,6 +170,24 @@ struct SettingsNotifBroadcastResponse: Decodable {
     }
 }
 
+struct SettingsNotifPreference: Decodable {
+    let enabled: Bool
+    let highPriorityOnly: Bool
+    let criticalAlways: Bool
+    let agentCompletions: Bool
+    let approvals: Bool
+    let orders: Bool
+    let payrollWallet: Bool
+    let inventory: Bool
+    let finance: Bool
+    let announcements: Bool
+}
+
+struct SettingsNotifPreferenceResponse: Decodable {
+    let role: String
+    let preference: SettingsNotifPreference
+}
+
 // MARK: - Static option lists (web src/lib/roles.ts + src/lib/businesses.ts parity)
 
 struct SettingsNotifOption: Identifiable, Equatable {
@@ -202,6 +220,13 @@ enum SettingsNotifOptions {
 @Observable
 @MainActor
 final class SettingsNotifVM {
+    // Personal controls (available to every authenticated role).
+    var role = ""
+    var preference: SettingsNotifPreference? = nil
+    var preferenceLoading = false
+    var preferenceSavingKey: String? = nil
+    var isAdmin: Bool { role == "SUPER_ADMIN" || role == "ADMIN" }
+
     // Stats + dashboard
     var totals: SettingsNotifTotals? = nil
     var broadcasts: [SettingsNotifBroadcast] = []
@@ -282,8 +307,9 @@ final class SettingsNotifVM {
                 users = (try? c.decodeIfPresent([PushHealthUser].self, forKey: .users)) ?? []
             }
         }
+        let query = isAdmin ? ["scope": "all"] : [:]
         if let r: Resp = try? await AlmaAPI.shared.get("/api/notifications/push-health",
-                                                       query: ["scope": "all"]) {
+                                                       query: query) {
             pushHealth = r.users
         }
     }
@@ -293,7 +319,19 @@ final class SettingsNotifVM {
         error = nil
         defer { loading = false }
         do {
-            // Web load(): stats + users fetched in parallel.
+            let pref: SettingsNotifPreferenceResponse =
+                try await AlmaAPI.shared.get("/api/notifications/preferences")
+            role = pref.role
+            preference = pref.preference
+            authExpired = false
+
+            // Broadcast analytics and user targeting remain admin-only.
+            guard isAdmin else {
+                totals = nil
+                broadcasts = []
+                users = []
+                return
+            }
             async let statsTask: SettingsNotifStatsResponse =
                 AlmaAPI.shared.get("/api/notifications/stats")
             async let usersTask: SettingsNotifUsersResponse =
@@ -303,12 +341,33 @@ final class SettingsNotifVM {
             broadcasts = stats.broadcasts
             // Users are only needed for the USER target picker — load leniently.
             if let u = try? await usersTask { users = u.users }
-            authExpired = false
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
         } catch {
             if Self.isCancellation(error) { return }   // pull-to-refresh let go early
             self.error = error.localizedDescription
+        }
+    }
+
+    func savePreference(_ key: String, value: Bool) async {
+        guard preferenceSavingKey == nil else { return }
+        preferenceSavingKey = key
+        error = nil
+        defer { preferenceSavingKey = nil }
+        do {
+            let response: SettingsNotifPreferenceResponse = try await AlmaAPI.shared.send(
+                "PATCH",
+                "/api/notifications/preferences",
+                body: [key: AnyEncodable(value)]
+            )
+            role = response.role
+            preference = response.preference
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = "Notification preference save হয়নি"
         }
     }
 
@@ -377,11 +436,14 @@ struct SettingsNotifScreen: View {
                 if vm.authExpired { authCard }
                 if let err = vm.error { noticeCard(err, tone: .error) }
                 if let ok = vm.notice { noticeCard(ok, tone: .success) }
-                if vm.loading && vm.totals == nil { loadingRows } else { kpiStrip }
+                if vm.loading && vm.preference == nil { loadingRows } else { preferenceCard }
                 appLockRow
-                composerCard
                 pushHealthCard
-                dashboardCard
+                if vm.isAdmin {
+                    kpiStrip
+                    composerCard
+                    dashboardCard
+                }
                 webEscape
                 Color.clear.frame(height: 8)
             }
@@ -390,7 +452,10 @@ struct SettingsNotifScreen: View {
         }
         .background(SettingsNotifAurora())
         .claudeTopFade()
-        .refreshable { await vm.load() }
+        .refreshable {
+            await vm.load()
+            await vm.loadHealth()
+        }
         .task {
             await vm.load()
             await vm.loadHealth()
@@ -403,13 +468,16 @@ struct SettingsNotifScreen: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Notifications").font(.headline)
-                Text("Broadcasts, push delivery, acknowledgments, and open-rate monitoring.")
+                Text("Role ও কাজ অনুযায়ী কোন notification পাবেন তা নিয়ন্ত্রণ করুন।")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             Button {
                 UISelectionFeedbackGenerator().selectionChanged()
-                Task { await vm.load() }
+                Task {
+                    await vm.load()
+                    await vm.loadHealth()
+                }
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
@@ -420,6 +488,104 @@ struct SettingsNotifScreen: View {
             .disabled(vm.loading)
         }
         .padding(.top, 4)
+    }
+
+    // ── Personal preferences (all authenticated roles) ──
+
+    @ViewBuilder private var preferenceCard: some View {
+        if let pref = vm.preference {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("My notification controls").font(.footnote.weight(.semibold))
+                        Text("\(vm.role.replacingOccurrences(of: "_", with: " ")) · Critical alert-এর আলাদা safety control আছে।")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
+                    } label: {
+                        Label("iOS Settings", systemImage: "gear")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(SettingsNotifPalette.accentText(colorScheme))
+                }
+
+                preferenceRow(
+                    key: "enabled",
+                    title: "সব notification",
+                    detail: "Off করলে critical safety rule ছাড়া সব বন্ধ থাকবে।",
+                    value: pref.enabled
+                )
+                preferenceRow(
+                    key: "highPriorityOnly",
+                    title: "শুধু high priority",
+                    detail: "Normal ও low update বাদ দিয়ে শুধু High/Critical রাখুন।",
+                    value: pref.highPriorityOnly,
+                    categoryDisabled: !pref.enabled
+                )
+                preferenceRow(
+                    key: "criticalAlways",
+                    title: "Critical সবসময়",
+                    detail: "Master off থাকলেও জরুরি safety alert আসবে।",
+                    value: pref.criticalAlways
+                )
+
+                Divider().opacity(0.25)
+                preferenceRow(key: "agentCompletions", title: "Agent কাজ শেষ",
+                              detail: "Background-এ agent-এর কাজ শেষ হলে জানাবে।",
+                              value: pref.agentCompletions, categoryDisabled: !pref.enabled)
+                preferenceRow(key: "approvals", title: "Approval দরকার",
+                              detail: "আপনার অনুমোদন অপেক্ষায় থাকলে জানাবে।",
+                              value: pref.approvals, categoryDisabled: !pref.enabled)
+                preferenceRow(key: "orders", title: "Orders",
+                              detail: "Assigned order এবং order status update।",
+                              value: pref.orders, categoryDisabled: !pref.enabled)
+                preferenceRow(key: "payrollWallet", title: "Payroll ও Wallet",
+                              detail: "Salary, payroll alert এবং wallet request।",
+                              value: pref.payrollWallet, categoryDisabled: !pref.enabled)
+                preferenceRow(key: "inventory", title: "Inventory",
+                              detail: "Low-stock ও জরুরি inventory alert।",
+                              value: pref.inventory, categoryDisabled: !pref.enabled)
+                preferenceRow(key: "finance", title: "Finance",
+                              detail: "Expense ও invoice-related update।",
+                              value: pref.finance, categoryDisabled: !pref.enabled)
+                preferenceRow(key: "announcements", title: "Announcements",
+                              detail: "Admin announcement ও সাধারণ update।",
+                              value: pref.announcements, categoryDisabled: !pref.enabled)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        }
+    }
+
+    private func preferenceRow(
+        key: String,
+        title: String,
+        detail: String,
+        value: Bool,
+        categoryDisabled: Bool = false
+    ) -> some View {
+        Toggle(isOn: Binding(
+            get: { value },
+            set: { next in Task { await vm.savePreference(key, value: next) } }
+        )) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.caption.weight(.semibold))
+                Text(detail).font(.system(size: 10)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .tint(SettingsNotifPalette.emerald600)
+        .disabled(vm.preferenceSavingKey != nil || categoryDisabled)
+        .opacity(categoryDisabled ? 0.5 : 1)
+        .overlay(alignment: .trailing) {
+            if vm.preferenceSavingKey == key {
+                ProgressView().controlSize(.mini).offset(x: -42)
+            }
+        }
     }
 
     // ── KPI strip (web's 4 KpiCards, labels verbatim) ──
@@ -671,22 +837,26 @@ struct SettingsNotifScreen: View {
     }
 
     /// NP-5 (AD-08): device push-health board (web verdict pills + device lines).
-    @ViewBuilder private var pushHealthCard: some View {
-        if !vm.pushHealth.isEmpty || vm.healthLoading {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("📲 Push health")
-                        .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
-                    Spacer()
-                    if vm.healthLoading { ProgressView().controlSize(.mini) }
-                    Button {
-                        UISelectionFeedbackGenerator().selectionChanged()
-                        Task { await vm.loadHealth() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise").font(.caption2).foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
+    private var pushHealthCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(vm.isAdmin ? "📲 Team push health" : "📲 My push health")
+                    .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                Spacer()
+                if vm.healthLoading { ProgressView().controlSize(.mini) }
+                Button {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    Task { await vm.loadHealth() }
+                } label: {
+                    Image(systemName: "arrow.clockwise").font(.caption2).foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
+            }
+            if vm.pushHealth.isEmpty && !vm.healthLoading {
+                Text("এই ডিভাইসের push subscription পাওয়া যায়নি। iOS Settings থেকে Notifications Allow করুন।")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
                 ForEach(vm.pushHealth) { u in
                     let (label, color): (String, Color) = {
                         switch u.verdict {
@@ -716,10 +886,10 @@ struct SettingsNotifScreen: View {
                     if u.id != vm.pushHealth.last?.id { Divider().opacity(0.3) }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-            .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var webEscape: some View {

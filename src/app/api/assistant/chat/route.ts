@@ -32,6 +32,10 @@ import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
+import {
+  deliverTurnCompletionNotification,
+  enqueueTurnCompletionNotification,
+} from '@/agent/lib/turn-completion-notify'
 import { ensurePersonalProject, isPersonalProject } from '@/lib/personal-space'
 import { isPersonalSnoozeMessage, setPersonalSnoozeToday } from '@/lib/personal-snooze'
 import { PERSONAL_MODE_SENTINEL } from '@/agent/lib/personal-prompt'
@@ -750,6 +754,21 @@ export async function POST(req: NextRequest) {
     }
     await finalizeTurnIfRunning(turnId, errorMsg ? 'error' : 'done', { continuationNeeded })
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
+    if (turnId && conversationId && convSource === 'web' && !continuationNeeded) {
+      try {
+        const deliveryId = await enqueueTurnCompletionNotification({
+          turnId,
+          conversationId,
+          preview: finalText,
+        })
+        await deliverTurnCompletionNotification(deliveryId)
+      } catch (err) {
+        console.error(
+          '[assistant/chat] completion notification enqueue failed:',
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
     const turnMs = Date.now() - turnStarted
     if (telegramFastPath && turnMs > 30_000) {
       console.warn(`[assistant/chat] slow telegram turn ${turnMs}ms conv=${conversationId}`)
@@ -833,15 +852,17 @@ export async function POST(req: NextRequest) {
           // already push via Telegram, so skip them here.
           if (event.type === 'text_delta' && replyPreview.length < 140) {
             replyPreview += (event as { delta?: string }).delta ?? ''
-          } else if (event.type === 'confirm_card' && !isInternalCall) {
+          } else if (event.type === 'confirm_card' && convSource === 'web') {
             const summary = (event as { summary?: string }).summary
-            void notifyOwnerIfAway({
+            await notifyOwnerIfAway({
               tier: 2,
               title: 'অনুমোদন দরকার — ALMA Agent',
               message: (summary && summary.slice(0, 200)) || 'একটি অনুমোদন আপনার অপেক্ষায় আছে Boss।',
               category: 'urgent',
               actionUrl: '/agent',
-            }).catch(() => {})
+              notificationKind: 'approval',
+              deliveryId: (event as { pendingActionId?: string }).pendingActionId,
+            }).catch(() => ({ skipped: false }))
           }
           if (event.type === 'done') {
             doneTurnMs = Date.now() - turnStartedAt
@@ -850,6 +871,21 @@ export async function POST(req: NextRequest) {
             const doneMessageId = (event as { messageId?: string }).messageId
             if (doneMessageId && turnId) await linkTurnAssistantMessage(turnId, doneMessageId)
             await finalizeTurnIfRunning(turnId, 'done', { continuationNeeded: event.needContinue === true })
+            if (turnId && conversationId && convSource === 'web' && event.needContinue !== true) {
+              try {
+                const deliveryId = await enqueueTurnCompletionNotification({
+                  turnId,
+                  conversationId,
+                  preview: replyPreview,
+                })
+                await deliverTurnCompletionNotification(deliveryId)
+              } catch (err) {
+                console.error(
+                  '[assistant/chat] completion notification enqueue failed:',
+                  err instanceof Error ? err.message : String(err),
+                )
+              }
+            }
             // Close the tiny race where Boss's steer persisted after the model's
             // final in-loop poll but before this terminal transition. The steer
             // endpoint now rejects this finished turn, so anything claimed here
@@ -923,17 +959,6 @@ export async function POST(req: NextRequest) {
         // disconnected) so quick foreground turns never spam.
         if (doneTurnMs > 30_000 && !clientConnected) {
           void sendOwnerText('✅ আপনার আগের প্রশ্নের উত্তরটা তৈরি হয়ে গেছে Boss — অ্যাপ খুললেই দেখতে পাবেন।').catch(() => {})
-        }
-        // App-style ntfy push when a reply lands while the owner is away (app
-        // backgrounded/closed → stream dropped). notifyOwnerIfAway double-checks
-        // app-presence so it never fires while he's actually in the app.
-        if (doneTurnMs >= 0 && !clientConnected && !isInternalCall) {
-          void notifyOwnerIfAway({
-            tier: 2,
-            title: 'ALMA Agent — উত্তর তৈরি',
-            message: replyPreview.trim() || 'আপনার প্রশ্নের উত্তর তৈরি হয়েছে Boss।',
-            actionUrl: '/agent',
-          }).catch(() => {})
         }
         try { controller.close() } catch { /* already canceled by the client — fine */ }
       }

@@ -2,14 +2,13 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { isSystemOwner } from '@/lib/roles'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { markOwnerAppActive } from '@/agent/lib/owner-presence'
+import { markOwnerAppPresence, type OwnerAppPresenceState } from '@/agent/lib/owner-presence'
 
 export const runtime = 'nodejs'
 
 /**
- * Owner app heartbeat. The agent app POSTs here every ~20s while it is in the
- * foreground; we stamp the last-active time so agent push (ntfy) is suppressed
- * while the owner is actually looking at the app, and only fires when away.
+ * Owner app lifecycle + heartbeat. Foreground clients refresh `active` every
+ * ~20s; background clients write `background` immediately.
  */
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -20,11 +19,22 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: false }, { status: 401 })
   }
 
+  let state: OwnerAppPresenceState = 'active'
   try {
-    await markOwnerAppActive()
+    const body = await req.json() as { state?: unknown }
+    if (body.state === 'background') state = 'background'
+    else if (body.state != null && body.state !== 'active') {
+      return Response.json({ error: 'invalid_state' }, { status: 400 })
+    }
+  } catch {
+    // Older clients sent an empty body. Treat that as the legacy active ping.
+  }
+
+  try {
+    await markOwnerAppPresence(state)
   } catch {
     // Presence is best-effort — a write glitch just means a push may fire while
     // in-app; never error the heartbeat.
   }
-  return Response.json({ ok: true })
+  return Response.json({ ok: true, state })
 }
