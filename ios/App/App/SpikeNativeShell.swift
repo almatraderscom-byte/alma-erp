@@ -1256,6 +1256,13 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         // The window doesn't exist during init-time applyTheme — re-assert here so the
         // window-level trait (sheet presentations) matches from the first frame on.
         view.window?.overrideUserInterfaceStyle = AlmaTheme.interfaceStyle
+        // A OneSignal click may have arrived before this controller/observer
+        // existed (cold launch, biometric unlock, slow web bootstrap). Replay the
+        // persisted intent now and consume it only after routeNotificationTap
+        // reaches a real navigation decision.
+        if let pending = AlmaNotificationRouteStore.pending() {
+            routeNotificationTap(to: pending.path, deliveryId: pending.id)
+        }
         // DEBUG self-test hook: ALMA_DASH_APPEARANCE=light|dark flips the app theme via the
         // REAL theme API (same as the More toggle) so a headless sim proof can capture both
         // modes without GUI clicks. Never set on a real launch.

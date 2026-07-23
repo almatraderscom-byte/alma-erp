@@ -8,6 +8,10 @@ import {
   notificationSoundUrl,
 } from '@/lib/notification-sound'
 import { DEFAULT_ACTION_URL } from '@/lib/notification-routing'
+import {
+  categoryForNotificationType,
+  filterUsersByNotificationPreference,
+} from '@/lib/notification-preferences'
 
 type NotifyInput = {
   userId?: string | null
@@ -57,6 +61,19 @@ function absoluteActionUrl(actionUrl?: string | null, type?: NotificationType) {
   if (!effective) return normalizedBase
   if (/^https?:\/\//i.test(effective)) return effective
   return `${normalizedBase.replace(/\/$/, '')}/${effective.replace(/^\//, '')}`
+}
+
+function internalActionPath(actionUrl?: string | null, type?: NotificationType): string {
+  const effective = actionUrl || (type ? DEFAULT_ACTION_URL[type] : null) || '/activity'
+  if (!/^https?:\/\//i.test(effective)) {
+    return effective.startsWith('/') ? effective : `/${effective}`
+  }
+  try {
+    const url = new URL(effective)
+    return `${url.pathname}${url.search}`
+  } catch {
+    return '/activity'
+  }
 }
 
 function oneSignalResponseHasErrors(errors: unknown) {
@@ -141,6 +158,11 @@ async function sendOneSignal(
       businessId: meta.businessId || null,
       type: meta.type,
       actionUrl: url,
+      // Native shells consume the relative route directly. This avoids the old
+      // cold-start mismatch where the hidden Capacitor page had a capacitor://
+      // origin but actionUrl used the production https:// origin, so the iOS
+      // bridge was skipped and the invisible webview navigated instead.
+      routePath: internalActionPath(actionUrl, meta.type),
       soundUrl: notificationSoundUrl(),
       androidSoundRaw: ANDROID_NOTIFICATION_SOUND_RAW,
     },
@@ -191,14 +213,19 @@ async function sendOneSignal(
 }
 
 export async function createNotification(input: NotifyInput) {
-  const recipients = await resolveRecipients(input)
+  const priority = input.priority || 'NORMAL'
+  const recipients = await filterUsersByNotificationPreference(
+    await resolveRecipients(input),
+    priority,
+    categoryForNotificationType(input.type),
+  )
   const notification = await prisma.notification.create({
     data: {
       userId: input.userId || null,
       roleTarget: input.role || null,
       businessId: input.businessId || null,
       type: input.type,
-      priority: input.priority || 'NORMAL',
+      priority,
       title: input.title,
       message: input.message,
       actionUrl: input.actionUrl || null,
@@ -226,7 +253,7 @@ export async function createNotification(input: NotifyInput) {
     recipients.map(r => r.id),
     input.title,
     input.message,
-    input.priority || 'NORMAL',
+    priority,
     input.actionUrl,
     { notificationId: notification.id, businessId: input.businessId, type: input.type },
   )
