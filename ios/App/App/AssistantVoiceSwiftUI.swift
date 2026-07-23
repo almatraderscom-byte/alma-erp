@@ -2423,7 +2423,12 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     /// at natural pauses → words stream LIVE), items accumulate across pauses,
     /// and the local VAD never auto-ends the utterance — only ✓/✕ do.
     var dictationMode = false
-    private var committedText = ""
+    /// Item-keyed transcript ledger: OpenAI pipelines SEVERAL committed chunks
+    /// concurrently — deltas/completions interleave across items. One shared
+    /// buffer garbled text and dropped chunks on ✓ (owner hit both). Each item
+    /// keeps its own text, display joins them in arrival order, and finish waits
+    /// for EVERY item to complete.
+    private var dictItems: [(id: String, text: String, done: Bool)] = []
     private var finishRequested = false
 
     private var session: URLSession?
@@ -2470,7 +2475,8 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         speechThresh = 0.022; sustainedMs = 0; spoke = false
         speechStartMs = 0; silenceMs = 0; lastSecond = -1
         committed = false; completedFired = false; failed = false; partial = ""
-        committedText = ""; finishRequested = false
+        dictItems = []; finishRequested = false; lastCommitAt = Date()
+        dictVoicedMs = 0; dictDipMs = 0
         pending = []; fullAudio = Data()
         socketOpen = false; connectFailed = false; wantCommit = false
     }
@@ -2584,6 +2590,24 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         }
         DispatchQueue.main.async { [weak self] in self?.engine?.streamLevel(min(1, rms * 6)); self?.onLevelSink?(min(1, rms * 6)) }
 
+        // Dictation live-latency: commit at WORD GAPS, never mid-word (blind 3s
+        // commits garbled the text + tiny chunks hallucinated the prompt). A
+        // chunk goes out when ≥1.4s of voiced audio has accumulated AND the
+        // level dips for ≥140ms (breath/word gap); 5s hard cap as safety.
+        if dictationMode {
+            let dt = Double(frames) / inFmt.sampleRate * 1000.0
+            if rms > speechThresh { dictVoicedMs += dt; dictDipMs = 0 }
+            else if rms < silenceThresh { dictDipMs += dt }
+            let since = Date().timeIntervalSince(lastCommitAt)
+            let wordGapReady = dictVoicedMs >= 1_400 && dictDipMs >= 140 && since > 1.2
+            let hardCap = dictVoicedMs >= 800 && since > 5.0
+            if wordGapReady || hardCap {
+                lastCommitAt = Date()
+                dictVoicedMs = 0; dictDipMs = 0
+                ws?.send(.string(#"{"type":"input_audio_buffer.commit"}"#)) { _ in }
+            }
+        }
+
         // Adaptive VAD — mirrors the recorder path exactly.
         let dtMs = Double(frames) / inFmt.sampleRate * 1000.0
         if elapsedMs < 400 {
@@ -2644,6 +2668,22 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     }
 
     /// End of speech: stop the mic (privacy), commit (or fall back), await text.
+    private func dictJoinedText() -> String {
+        dictItems.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private func finishDictation(with text: String) {
+        if completedFired { return }
+        completedFired = true
+        stopMic(); closeSocket()
+        DispatchQueue.main.async { [weak self] in
+            if text.isEmpty { self?.engine?.streamNoSpeech(); self?.onNoSpeechSink?() }
+            else { self?.engine?.streamFinal(text); self?.onFinalSink?(text) }
+        }
+    }
+
     private func endUtterance(noSpeech: Bool) {
         // Dictation: only the ✓/✕ buttons end the take — the local VAD's silence
         // endpointing must never cut the owner off mid-thought.
@@ -2738,24 +2778,34 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         switch type {
         case "conversation.item.input_audio_transcription.delta":
             if let delta = obj["delta"] as? String {
-                partial += delta
-                let snap = dictationMode
-                    ? (committedText.isEmpty ? partial : committedText + " " + partial)
-                    : partial
-                DispatchQueue.main.async { [weak self] in self?.engine?.streamPartial(snap); self?.onPartialSink?(snap) }
+                if dictationMode {
+                    let itemId = (obj["item_id"] as? String) ?? "item-\(dictItems.count)"
+                    if let i = dictItems.firstIndex(where: { $0.id == itemId }) {
+                        dictItems[i].text += delta
+                    } else {
+                        dictItems.append((id: itemId, text: delta, done: false))
+                    }
+                    let snap = dictJoinedText()
+                    DispatchQueue.main.async { [weak self] in self?.engine?.streamPartial(snap); self?.onPartialSink?(snap) }
+                } else {
+                    partial += delta
+                    let snap = partial
+                    DispatchQueue.main.async { [weak self] in self?.engine?.streamPartial(snap); self?.onPartialSink?(snap) }
+                }
             }
         case "conversation.item.input_audio_transcription.completed" where dictationMode:
-            let piece = ((obj["transcript"] as? String) ?? partial).trimmingCharacters(in: .whitespacesAndNewlines)
-            partial = ""
-            if !piece.isEmpty { committedText = committedText.isEmpty ? piece : committedText + " " + piece }
-            let snap = committedText
-            if finishRequested {
-                completedFired = true
-                stopMic(); closeSocket()
-                DispatchQueue.main.async { [weak self] in
-                    if snap.isEmpty { self?.engine?.streamNoSpeech(); self?.onNoSpeechSink?() }
-                    else { self?.engine?.streamFinal(snap); self?.onFinalSink?(snap) }
-                }
+            var piece = ((obj["transcript"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if piece.contains("বাংলায় কথা বলা হচ্ছে") || piece.contains("Bangladeshi Bangla") { piece = "" }
+            let itemId = (obj["item_id"] as? String) ?? ""
+            if let i = dictItems.firstIndex(where: { $0.id == itemId }) {
+                dictItems[i].text = piece
+                dictItems[i].done = true
+            } else if !piece.isEmpty {
+                dictItems.append((id: itemId, text: piece, done: true))
+            }
+            let snap = dictJoinedText()
+            if finishRequested && dictItems.allSatisfy({ $0.done }) {
+                finishDictation(with: snap)
             } else {
                 DispatchQueue.main.async { [weak self] in self?.engine?.streamPartial(snap); self?.onPartialSink?(snap) }
             }
@@ -2775,16 +2825,20 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
             DispatchQueue.main.async { [weak self] in self?.engine?.streamFinal(text); self?.onFinalSink?(text) }
         case "input_audio_buffer.committed":
             spokeSinceCommit = false
+            lastCommitAt = Date()
         case "error":
+            if dictationMode && !finishRequested {
+                // Forced-commit racing server_vad can hit an empty buffer — harmless,
+                // never degrade a working live take over it.
+                #if DEBUG
+                NSLog("ALMA-DICTATE mid-take server notice (ignored)")
+                #endif
+                return
+            }
             if dictationMode && finishRequested {
-                // Trailing flush on an empty buffer — finish with the folded text.
-                let snap = committedText
-                completedFired = true
-                stopMic(); closeSocket()
-                DispatchQueue.main.async { [weak self] in
-                    if snap.isEmpty { self?.engine?.streamNoSpeech(); self?.onNoSpeechSink?() }
-                    else { self?.engine?.streamFinal(snap); self?.onFinalSink?(snap) }
-                }
+                // Trailing flush hit an empty buffer — everything is already in
+                // the ledger; deliver it.
+                finishDictation(with: dictJoinedText())
                 return
             }
             degradeToLocal()
@@ -2808,30 +2862,35 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
             finishRequested = true
             lock.lock(); let open = socketOpen; lock.unlock()
             if !open {
-                // Socket never came up — the streamer's WAV fallback resolves it.
-                endUtterance(noSpeech: !spoke)
+                endUtterance(noSpeech: !spoke)   // WAV fallback path resolves it
                 return
             }
-            // Flush any trailing speech; if the buffer is empty (server_vad already
-            // committed everything) OpenAI errors harmlessly and the last completed
-            // item has already been folded — finish with what we have.
-            if partial.isEmpty && !spokeSinceCommit {
-                let snap = committedText
-                completedFired = true
-                stopMic(); closeSocket()
-                DispatchQueue.main.async { [weak self] in
-                    if snap.isEmpty { self?.engine?.streamNoSpeech(); self?.onNoSpeechSink?() }
-                    else { self?.engine?.streamFinal(snap); self?.onFinalSink?(snap) }
-                }
-            } else {
+            if spokeSinceCommit {
                 ws?.send(.string(#"{"type":"input_audio_buffer.commit"}"#)) { _ in }
+            }
+            if dictItems.allSatisfy({ $0.done }) && !spokeSinceCommit {
+                finishDictation(with: dictJoinedText())
+            } else {
+                // Never hang on a lost completion: 2.5s after ✓, deliver whatever
+                // has arrived (items are individually complete sentences).
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                    guard let self, !self.completedFired else { return }
+                    self.finishDictation(with: self.dictJoinedText())
+                }
             }
             return
         }
         endUtterance(noSpeech: !spoke)
     }
+
     /// Audio appended since the last server-side commit (dictation trailing flush).
     private var spokeSinceCommit = false
+    /// Continuous-speech cap (owner: words must appear in 2-3s, not at the first
+    /// long pause): force a commit every ~2.8s of uninterrupted speech so OpenAI
+    /// transcribes the chunk NOW; server_vad still commits sooner at real pauses.
+    private var lastCommitAt = Date()
+    private var dictVoicedMs = 0.0
+    private var dictDipMs = 0.0
 
     /// Hard stop with no callbacks (console closed / barge / teardown).
     func cancel() {

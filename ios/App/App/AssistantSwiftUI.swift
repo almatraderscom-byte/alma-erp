@@ -6577,13 +6577,40 @@ final class AssistantVM {
                     self.isRecording = false
                     self.liveDictation = ""
                     let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !clean.isEmpty {
+                    guard !clean.isEmpty else {
+                        self.dictationFailure = "কথা বোঝা যায়নি"
+                        return
+                    }
+                    // Owner pipeline (2026-07-23): raw realtime STT → mini-LLM polish
+                    // into clean Bangla. Best-effort with a hard cap — the raw text
+                    // always lands if the polish is slow or fails.
+                    self.transcribing = true
+                    Task { [weak self] in
+                        guard let self else { return }
+                        defer { self.transcribing = false }
+                        var finalText = clean
+                        struct PolishResp: Decodable { let text: String? }
+                        do {
+                            let resp: PolishResp = try await withThrowingTaskGroup(of: PolishResp.self) { group in
+                                group.addTask {
+                                    try await AlmaAPI.shared.send("POST", "/api/assistant/dictation-polish",
+                                                                  body: ["text": clean])
+                                }
+                                group.addTask {
+                                    try await Task.sleep(nanoseconds: 4_000_000_000)
+                                    throw CancellationError()
+                                }
+                                let first = try await group.next()!
+                                group.cancelAll()
+                                return first
+                            }
+                            if let polished = resp.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                               !polished.isEmpty { finalText = polished }
+                        } catch { /* keep raw */ }
                         self.composerDraft = self.composerDraft.isEmpty
-                            ? clean : self.composerDraft + " " + clean
+                            ? finalText : self.composerDraft + " " + finalText
                         self.dictationFailure = nil
                         AlmaAgentHaptics.commit()
-                    } else {
-                        self.dictationFailure = "কথা বোঝা যায়নি"
                     }
                 }
                 self.dictationStreamer.onNoSpeechSink = { [weak self] in
