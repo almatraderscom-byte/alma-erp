@@ -18,6 +18,7 @@ export const maxDuration = 15
  * (ChatGPT suggested 'gpt-5.6-mini', which does not exist on the API). */
 const POLISH_LADDER = [
   process.env.DICTATION_POLISH_MODEL?.trim() || '',
+  'gpt-5.6-luna',
   'gpt-5.1-mini',
   'gpt-5-mini',
   'gpt-4.1-mini',
