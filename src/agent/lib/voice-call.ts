@@ -54,6 +54,23 @@ function twilioStatusCallbackUrl(callRecordId: string, internalToken: string): s
   return `${base}/api/assistant/voice-call/twilio-status?id=${encodeURIComponent(callRecordId)}&t=${t}`
 }
 
+/**
+ * Is this the owner's own number? (OWNER_PHONE_NUMBERS env, comma-separated.)
+ * A call TO the owner runs the bot's OWNER persona — companion tone + mid-call
+ * ERP read tools (staff/office checks) — instead of the tool-less contact
+ * persona. Matched on the last 10 digits so +880/0 prefixes don't matter.
+ */
+export function isOwnerNumber(toNumber: string): boolean {
+  const tail = (n: string) => n.replace(/\D/g, '').slice(-10)
+  const target = tail(toNumber)
+  if (!target) return false
+  return (process.env.OWNER_PHONE_NUMBERS ?? '')
+    .split(',')
+    .map((n) => tail(n))
+    .filter(Boolean)
+    .some((n) => n === target)
+}
+
 /** Mark the pre-created call row failed and return the error result. */
 async function failCallRecord(callRecordId: string, error: string): Promise<PlaceCallResult> {
   await db.agentVoiceCall.update({
@@ -290,8 +307,11 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
     }
     // Default: the owner-locked two-way engine — Gemini Live (ears+brain+mouth,
     // native barge-in), the SAME experience as direct NGS calls, over the Twilio
-    // WhatsApp leg via the relay server's /glive TLS proxy.
-    return placeGliveMediaCall(config, record.id, toNumber, purpose, input.recipientName, 'whatsapp')
+    // WhatsApp leg via the relay server's /glive TLS proxy. A call to the
+    // owner's own number runs the OWNER persona (mid-call ERP read tools);
+    // everyone else stays on the tool-less contact/staff persona.
+    const gliveCallType = isOwnerNumber(toNumber) ? 'owner' : (input.callType ?? 'contact')
+    return placeGliveMediaCall(config, record.id, toNumber, purpose, input.recipientName, gliveCallType, 'whatsapp')
   }
 
   if (config.provider === 'ngs') {
@@ -639,6 +659,7 @@ async function placeGliveMediaCall(
   toNumber: string,
   purpose: string,
   recipientName: string | undefined,
+  callType: 'owner' | 'staff' | 'contact' = 'contact',
   channel: 'phone' | 'whatsapp' = 'whatsapp',
 ): Promise<PlaceCallResult> {
   try {
@@ -658,7 +679,7 @@ async function placeGliveMediaCall(
       `<Parameter name="t" value="${t}"/>` +
       `<Parameter name="purpose" value="${escapeXmlAttr(purpose)}"/>` +
       `<Parameter name="recipientName" value="${escapeXmlAttr(recipientName ?? '')}"/>` +
-      `<Parameter name="callType" value="contact"/>` +
+      `<Parameter name="callType" value="${escapeXmlAttr(callType)}"/>` +
       `</Stream></Connect></Response>`
 
     const addr = dialAddresses(channel, toNumber, config.twilioFromNumber)
