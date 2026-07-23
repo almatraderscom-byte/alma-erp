@@ -332,3 +332,73 @@ describe('detectProseChoiceViolation', () => {
     expect(v).toHaveLength(0)
   })
 })
+
+// ── Live-hit 2026-07-24: "✅ Todo-তে লিখে রাখা হয়েছে" with ZERO tool calls ──
+// (Grok head, conversation 1fb470a8, turn e5b69cb1 — nothing written to
+// agent_owner_todos, verifier stayed silent.)
+describe('todo write-down claims (todo_written rule + lexicon extension)', () => {
+  const LIVE_REPLY = '✅ Todo-তে লিখে রাখা হয়েছে'
+
+  it('the exact live failure with an empty ledger → violation', () => {
+    const v = verifyClaimsAgainstLedger(LIVE_REPLY, [])
+    expect(v.length).toBeGreaterThan(0)
+    expect(v[0].category).toBe('todo_write')
+    expect(v[0].requiredTools).toContain('add_owner_todo')
+  })
+
+  it('same claim WITH a successful add_owner_todo → no violation', () => {
+    const ledger: ToolLedgerEntry[] = [{ toolName: 'add_owner_todo', success: true }]
+    expect(verifyClaimsAgainstLedger(LIVE_REPLY, ledger)).toHaveLength(0)
+  })
+
+  it('same claim with a FAILED add_owner_todo → still a violation (Layer 2)', () => {
+    const ledger: ToolLedgerEntry[] = [
+      { toolName: 'add_owner_todo', success: false, error: 'db timeout' },
+    ]
+    const v = verifyClaimsAgainstLedger(LIVE_REPLY, ledger)
+    expect(v.length).toBeGreaterThan(0)
+  })
+
+  it('courtesy-question tail does not let the claim escape', () => {
+    const v = verifyClaimsAgainstLedger('Todo-তে লিখে রেখেছি Boss। আর কিছু লাগবে?', [])
+    expect(v.length).toBeGreaterThan(0)
+    expect(v[0].category).toBe('todo_write')
+  })
+
+  it('"টুডু লিস্টে যোগ করে দিয়েছি" → violation with no tool', () => {
+    const v = verifyClaimsAgainstLedger('টুডু লিস্টে যোগ করে দিয়েছি Boss, কাল ব্যাংকে যাওয়ার কথা।', [])
+    expect(v.length).toBeGreaterThan(0)
+  })
+
+  it('future intent "Todo-তে লিখে রাখব" → no violation', () => {
+    expect(verifyClaimsAgainstLedger('Boss, চাইলে Todo-তে লিখে রাখব — বলুন।', [])).toHaveLength(0)
+  })
+
+  it('generic "লিখে রেখেছি" without a todo noun, empty ledger → Layer 2 violation', () => {
+    const v = detectLedgerViolations('Boss, লিখে রেখেছি — কাল ব্যাংকে যেতে হবে।', [])
+    expect(v.length).toBeGreaterThan(0)
+    expect(v[0].category).toBe('general_write')
+  })
+
+  it('"নোট করে রাখলাম" with only read tools → Layer 2 violation', () => {
+    const ledger: ToolLedgerEntry[] = [{ toolName: 'get_daily_digest', success: true }]
+    const v = detectLedgerViolations('নোট করে রাখলাম Boss, কাল ব্যাংকে যেতে হবে।', ledger)
+    expect(v.length).toBeGreaterThan(0)
+  })
+})
+
+describe('checkmark completion claim with zero successful tools', () => {
+  it('✅ + done-verb, empty ledger → checkmark_claim_no_tools violation', () => {
+    const v = detectLedgerViolations('✅ ব্যাংকের কাজটা লিস্টে তোলা হয়ে গেছে Boss।', [])
+    expect(v.map((x) => x.ruleId)).toContain('checkmark_claim_no_tools')
+  })
+
+  it('✅ data report AFTER a successful read tool → no violation', () => {
+    const ledger: ToolLedgerEntry[] = [{ toolName: 'get_orders', success: true }]
+    expect(detectLedgerViolations('✅ আজ ৩টা অর্ডার ডেলিভারি হয়ে গেছে।', ledger)).toHaveLength(0)
+  })
+
+  it('plain state report without checkmark and no lexicon verb → no violation', () => {
+    expect(detectLedgerViolations('চালানটা ৬ দিন পুরোনো হয়ে গেছে, তাই দেরি হচ্ছে।', [])).toHaveLength(0)
+  })
+})
