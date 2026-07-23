@@ -657,7 +657,7 @@ struct StaffMonitorSystemTab: View {
     private let emerald = Color(red: 0.020, green: 0.588, blue: 0.412)
     private let red500 = Color(red: 0.937, green: 0.267, blue: 0.267)
     private let amber600 = Color(red: 0.851, green: 0.467, blue: 0.024)
-    private let coral = Color(red: 0.878, green: 0.478, blue: 0.373)
+    private let coral = AlmaSwiftTheme.coral
     private let gold = Color(red: 0.831, green: 0.659, blue: 0.294)
 
     /// Owner feedback 2026-07-17: the stacked System cards read like the web's

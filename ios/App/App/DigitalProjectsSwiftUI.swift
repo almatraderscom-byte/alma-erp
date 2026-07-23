@@ -21,8 +21,8 @@ private enum DigitalProjectsPalette {
     /// CDIT accent — the digital section's hero blue.
     static let accentBlue = Color(red: 0.42, green: 0.56, blue: 0.88)
     static let gold = AlmaSwiftTheme.coral                                   // web --c-accent #E07A5F
-    static let goldLt = Color(red: 0.957, green: 0.635, blue: 0.549)         // #F4A28C
-    static let goldDim = Color(red: 0.769, green: 0.353, blue: 0.235)        // #C45A3C
+    static var goldLt: Color { AlmaSwiftTheme.accentLt }
+    static var goldDim: Color { AlmaSwiftTheme.accentDim }
     static let zinc600 = Color(red: 0.322, green: 0.322, blue: 0.357)        // #52525B (Unpaid bar)
     static let amber600 = Color(red: 0.851, green: 0.467, blue: 0.024)       // #D97706
     static let amber500 = Color(red: 0.961, green: 0.620, blue: 0.043)       // #F59E0B (Partial bar)

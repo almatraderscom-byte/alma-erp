@@ -713,7 +713,7 @@ struct StaffMonitorAgentsTab: View {
     private let emerald = Color(red: 0.020, green: 0.588, blue: 0.412)
     private let red500 = Color(red: 0.937, green: 0.267, blue: 0.267)
     private let amber600 = Color(red: 0.851, green: 0.467, blue: 0.024)
-    private let coral = Color(red: 0.878, green: 0.478, blue: 0.373)
+    private let coral = AlmaSwiftTheme.coral
 
     /// Owner feedback 2026-07-17: the six stacked cards read like the cluttered web
     /// page. iOS composition instead — a COMPACT control-room list (icon + live

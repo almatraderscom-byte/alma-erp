@@ -35,7 +35,7 @@ struct AgentHubScreen: View {
 
     private static let items: [HubItem] = [
         .init(title: "Agent চ্যাট", subtitle: "কথা বলুন, কাজ দিন", icon: "bubble.left.and.text.bubble.right",
-              tint: Color(red: 0.878, green: 0.478, blue: 0.373), path: "/agent"),
+              tint: AlmaSwiftTheme.coral, path: "/agent"),
         .init(title: "LIVE Business", subtitle: "মনিটর · কন্ট্রোল রুম", icon: "chart.bar.xaxis",
               tint: Color(red: 0.357, green: 0.549, blue: 1.000), path: "/agent/staff-monitor"),
         .init(title: "Live Watch", subtitle: "লাইভ ব্রাউজার ফিড", icon: "eye",

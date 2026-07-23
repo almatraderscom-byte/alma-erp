@@ -78,7 +78,7 @@ struct AgentPalette {
     let dark: Bool
     init(_ scheme: ColorScheme) { dark = scheme == .dark }
 
-    static let coral    = Color(red: 0.878, green: 0.478, blue: 0.373) // #E07A5F
+    static var coral: Color { AlmaSwiftTheme.coral }
     static let coralDim = Color(red: 0.769, green: 0.353, blue: 0.235) // #C45A3C
     static let coralLt  = Color(red: 0.957, green: 0.635, blue: 0.549) // #F4A28C
     static let teal     = Color(red: 0.506, green: 0.698, blue: 0.604) // #81B29A

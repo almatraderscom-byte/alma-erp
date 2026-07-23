@@ -39,7 +39,7 @@ import WebKit
 @available(iOS 17.0, *)
 private enum CompanionTheme {
     /// #E07A5F — ALMA coral accent.
-    static let coral = Color(red: 0.878, green: 0.478, blue: 0.373)
+    static var coral: Color { AlmaSwiftTheme.coral }
     /// #a78bfa — ALMA violet accent.
     static let violet = Color(red: 0.655, green: 0.545, blue: 0.980)
     /// #F2F0F8 — light root background.

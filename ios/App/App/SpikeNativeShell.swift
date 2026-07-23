@@ -49,7 +49,8 @@ enum AlmaTheme {
     static func loadInitial() { isDark = (UserDefaults.standard.string(forKey: defaultsKey) == "dark") }
 
     // ── Palette (light ⇄ dark) ─────────────────────────────────────────────
-    static let coral = UIColor(red: 0.878, green: 0.478, blue: 0.373, alpha: 1) // #E07A5F accent
+    /// LIVE accent — follows the owner's Accent Color pick (Settings), coral default.
+    static var coral: UIColor { AlmaAccent.current.uiColor }
     static let violet = UIColor(red: 0.655, green: 0.545, blue: 0.980, alpha: 1) // #a78bfa
     static var rootBg: UIColor {
         isDark ? UIColor(red: 0.043, green: 0.039, blue: 0.070, alpha: 1)   // #0b0a12
@@ -574,7 +575,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     /// button, exactly like Claude's orange compose bubble on the top-right of the header.
     static func coralBarButton(icon: String, label: String, target: Any, action: Selector) -> UIBarButtonItem {
         let size: CGFloat = 36
-        let coral = UIColor(red: 0.878, green: 0.478, blue: 0.373, alpha: 1) // #E07A5F (ALMA accent)
+        let coral = AlmaTheme.coral // #E07A5F (ALMA accent)
         let container = UIButton(type: .custom)
         container.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -1860,7 +1861,7 @@ final class AlmaPremiumLoader: UIView {
     }
 
     // Brand palette (mobile/www tokens): coral #E07A5F, light coral #F4A28C, gold #F2C48D.
-    private static let coral = UIColor(red: 0.878, green: 0.478, blue: 0.373, alpha: 1)
+    private static var coral: UIColor { AlmaTheme.coral }
     private static let coralLt = UIColor(red: 0.957, green: 0.635, blue: 0.549, alpha: 1)
     private static let gold = UIColor(red: 0.949, green: 0.769, blue: 0.553, alpha: 1)
 

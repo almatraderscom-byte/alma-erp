@@ -104,7 +104,10 @@ final class WeakRef<T: AnyObject> {
 /// never stock system greys). Values must stay equal to AlmaTheme (UIKit) and the web
 /// tokens; resolved via colorScheme so theme flips animate correctly.
 enum AlmaSwiftTheme {
-    static let coral = Color(red: 0.878, green: 0.478, blue: 0.373)   // #E07A5F
+    /// LIVE accent — follows the owner's Accent Color pick (Settings), coral default.
+    static var coral: Color { AlmaAccent.current.color }
+    static var accentLt: Color { AlmaAccent.current.lt }
+    static var accentDim: Color { AlmaAccent.current.dim }
     static let violet = Color(red: 0.655, green: 0.545, blue: 0.980)  // #a78bfa
     static let sage = Color(red: 0.506, green: 0.698, blue: 0.604)    // #81B29A
 
