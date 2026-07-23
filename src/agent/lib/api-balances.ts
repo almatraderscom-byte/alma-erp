@@ -1446,7 +1446,12 @@ export async function refreshApiBalanceCache(): Promise<{
       balanceCurrency = id === 'oxylabs' ? null : 'USD'
       balanceUsd = id === 'oxylabs' ? null : balanceAmount
       sourceType = 'manual'
-      if (!costAuthoritative && !planAuthoritative) {
+      if (
+        !costAuthoritative
+        && !planAuthoritative
+        && status !== 'error'
+        && status !== 'stale'
+      ) {
         status = 'manual'
         statusMessage = balanceAmount < 0
           ? 'Manual opening estimate শেষ হয়েছে; এটি provider wallet balance নয়।'
