@@ -46,6 +46,9 @@ const NON_TOOL_ALLOWLIST = new Set([
   'live_browser', // generic tool-family prefix in prose ("live_browser tools")
   'client_seo', // skill-pack key (start_skill_pack), not a tool
   'staff_task', // workflow-template kind (Phase 5), not a tool
+  // PA-2 proactive-call KV keys + pending-action type (documented for update_setting)
+  'proactive_calls_enabled', 'proactive_call_stage_wait_min', 'proactive_call_daily_cap',
+  'proactive_call_approval_stuck_min', 'proactive_call_urgent_stuck_min', 'urgent_notify',
 ])
 
 function snakeTokens(text: string): string[] {

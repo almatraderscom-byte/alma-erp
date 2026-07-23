@@ -1328,6 +1328,32 @@ async function runApprove(
     })
   }
 
+  // PA-2 proactive-call permission card ("কল দেব?", autonomy OFF mode). Approving
+  // starts the escalation ladder inline: WhatsApp live call now, PSTN fallback via
+  // the call-escalations cron.
+  if (action.type === 'proactive_call') {
+    const { escalationId } = payload as { escalationId?: string }
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count !== 1) return Response.json({ error: 'already_resolved' }, { status: 409 })
+    const { startEscalationLadder } = await import('@/agent/lib/proactive-call')
+    const started = await startEscalationLadder(String(escalationId ?? ''))
+    if (!started.ok) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: started.error } },
+      })
+      return Response.json({ error: started.error ?? 'কল দেওয়া যায়নি' }, { status: 502 })
+    }
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', result: { stage: started.stage } },
+    })
+    return Response.json({ success: true, message: 'কল দিচ্ছি — না ধরলে কিছুক্ষণ পরে সরাসরি নম্বরে কল যাবে।' })
+  }
+
   // Two-way Bangla phone call via ElevenLabs Conversational AI. Placed inline on
   // approval (synchronous API call ~ a few seconds) so the owner gets the
   // conversation_id immediately; the transcript + summary land later via webhook.
