@@ -19,6 +19,13 @@ import {
   type CampaignPlanSpec,
 } from '@/agent/lib/marketing/meta-campaign-graph'
 import { getApprovedBrief } from '@/agent/lib/marketing/growth-brief'
+import {
+  getAdsWebhookStatus,
+  subscribeAppToAdsWebhooks,
+  connectAdAccountToApp,
+  adsWebhookCallbackUrl,
+  ADS_WEBHOOK_FIELDS,
+} from '@/agent/lib/marketing/ads-webhooks'
 import { capiHealth } from '@/agent/lib/marketing/meta-capi'
 import type { AgentTool } from './registry'
 
@@ -574,6 +581,57 @@ const ads_campaign_plan: AgentTool = {
   },
 }
 
+const manage_ads_webhooks: AgentTool = {
+  name: 'manage_ads_webhooks',
+  description:
+    'Meta Ads real-time webhooks (ad rejected/paused, creative fatigue, new recommendations → instant owner push). ' +
+    "action 'status' = READ-ONLY check (subscribed fields + account connected). " +
+    "action 'enable' = subscribe the app + connect the ad account — call ONLY when Boss explicitly asks to turn ads " +
+    'webhooks on. No money is spent; it only turns on notifications. Requires META_APP_ID/SECRET, ' +
+    'META_WEBHOOK_VERIFY_TOKEN, META_ADS_TOKEN, META_AD_ACCOUNT_ID.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      action: { type: 'string', description: "'status' (default) or 'enable'" },
+    },
+  },
+  handler: async (input) => {
+    const action = String(input.action ?? 'status').trim().toLowerCase()
+
+    if (action === 'enable') {
+      const sub = await subscribeAppToAdsWebhooks()
+      if (!sub.ok) return { success: false, error: `App subscription ব্যর্থ: ${sub.error}` }
+      const conn = await connectAdAccountToApp()
+      if (!conn.ok) return { success: false, error: `Ad account connect ব্যর্থ: ${conn.error}` }
+      const status = await getAdsWebhookStatus()
+      return {
+        success: true,
+        data: {
+          status,
+          message:
+            'Ads webhooks চালু হয়েছে — এখন অ্যাড রিজেক্ট/পজ, ক্রিয়েটিভ ক্লান্তি বা নতুন সুপারিশ এলে ' +
+            'Boss সাথে সাথে নোটিফিকেশন পাবেন (কোনো টাকা খরচ হয় না)।',
+        },
+      }
+    }
+
+    const status = await getAdsWebhookStatus()
+    return {
+      success: true,
+      data: {
+        status,
+        expectedCallbackUrl: adsWebhookCallbackUrl(),
+        expectedFields: [...ADS_WEBHOOK_FIELDS],
+        message: status.appSubscribed
+          ? status.accountConnected
+            ? 'Ads webhooks সক্রিয় — app subscribed + ad account connected।'
+            : 'App subscribed কিন্তু ad account এখনো connected নয় — enable চালালে ঠিক হবে।'
+          : 'Ads webhooks এখনো চালু হয়নি।',
+      },
+    }
+  },
+}
+
 export const ADS_TOOLS: AgentTool[] = [
   pause_campaign,
   update_campaign_budget,
@@ -584,6 +642,7 @@ export const ADS_TOOLS: AgentTool[] = [
   create_retargeting_audience,
   create_lookalike_audience,
   ads_campaign_plan,
+  manage_ads_webhooks,
 ]
 
 export const ADS_ROLE_PROMPT = `
@@ -593,6 +652,7 @@ Write (confirm card ONLY): pause_campaign, update_campaign_budget (+20-30% max s
 Creative fatigue → refresh_creative → make_ad_creatives (File 10) with angleHint.
 Scaling a proven winner → duplicate_campaign (copy existing). Net-new offer/angle with no existing campaign → ads_campaign_plan (validate vs brief cap + UTM + tracking QA, get diff + idempotency) THEN launch_campaign.
 Low spend/impressions → hold. ROAS is directional for COD/Messenger — cross-check orders over time.
+Real-time alerts: manage_ads_webhooks — 'status' (read) any time; 'enable' ONLY on Boss's explicit ask ("ads webhook chalu koro"). Once on, Meta pushes ad reject/pause, creative fatigue + new recommendations straight to Boss — no polling.
 
 ## RETARGETING + LOOKALIKE (audiences)
 Read: list_audiences — existing custom/lookalike audiences with sizes (run first to avoid duplicates + to get a source id).
