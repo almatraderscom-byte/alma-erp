@@ -19,15 +19,36 @@ describe('classifyTool (model-agnostic action classes)', () => {
     expect(classifyTool('meta_ads_get_ad_accounts').klass).toBe('routine');
   });
 
-  it('fails open for an unknown name so the extra door cannot break a turn', () => {
-    expect(classifyTool('future_internal_context_tool').klass).toBe('routine');
-    expect(g('future_internal_context_tool').allow).toBe(true);
+  it('fails CLOSED for an unknown name — held for owner approval (audit P0-4)', () => {
+    expect(classifyTool('future_internal_context_tool').klass).toBe('unknown');
+    const d = g('future_internal_context_tool');
+    expect(d.allow).toBe(false);
+    if (!d.allow) {
+      expect(d.status).toBe('NEEDS_APPROVAL');
+      expect(d.reasonCodes).toContain('UNKNOWN_TOOL');
+    }
+  });
+
+  it('derives the class of a high-risk direct write from the capability manifest', () => {
+    // wa domain, high-risk write, not in the static allowlist by accident? It
+    // is — but whatsapp_call proves the allowlist; live_browser_act proves the
+    // documented exemption; set_autonomy_policy proves unmapped-high-risk hold.
+    expect(classifyTool('live_browser_act').klass).toBe('routine'); // documented exemption
+    expect(classifyTool('set_autonomy_policy').klass).toBe('unknown'); // master switch ⇒ hold
+    const d = g('set_autonomy_policy', { enabled: false });
+    expect(d.allow).toBe(false);
+    if (!d.allow) expect(d.status).toBe('NEEDS_APPROVAL');
+  });
+
+  it('manifest read/stage tools stay routine (no double approval for staged cards)', () => {
+    expect(classifyTool('get_expense_summary').klass).toBe('routine'); // read
+    expect(classifyTool('save_memory').klass).toBe('routine'); // low-risk write
   });
 });
 
 describe('guardToolCall — every model forced through the same guardrails', () => {
   it('a routine read runs autonomously', () => {
-    const d = g('order_lookup');
+    const d = g('get_expense_summary');
     expect(d.allow).toBe(true);
   });
   it('a public publish NEEDS_APPROVAL', () => {
@@ -51,8 +72,17 @@ describe('enforcedExecuteTool — flag gates production behaviour', () => {
   const OLD = process.env.AIOS_ENFORCE;
   afterEach(() => { process.env.AIOS_ENFORCE = OLD; });
 
-  it('OFF (default) → runs the real tool unchanged', async () => {
+  it('ON by default (audit P0-4: production enforcement defaults to ON)', async () => {
     process.env.AIOS_ENFORCE = '';
+    expect(enforcementEnabled()).toBe(true);
+    let ran = false;
+    const r = await enforcedExecuteTool({ identity, model: 'gemini-3.1-pro', toolName: 'send_whatsapp' }, async () => { ran = true; return { success: true }; });
+    expect(ran).toBe(false);
+    expect((r as { errorCode: string }).errorCode).toBe('needs_approval');
+  });
+
+  it('explicit opt-out (AIOS_ENFORCE=off) → runs the real tool unchanged', async () => {
+    process.env.AIOS_ENFORCE = 'off';
     expect(enforcementEnabled()).toBe(false);
     const r = await enforcedExecuteTool({ identity, model: 'gemini-3.1-pro', toolName: 'send_whatsapp' }, async () => ({ success: true, ran: true }));
     expect(r).toEqual({ success: true, ran: true });

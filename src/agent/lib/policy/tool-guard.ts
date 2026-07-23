@@ -404,6 +404,16 @@ export async function guardToolCall(
     }
   } catch (err) {
     // Fail CLOSED for effects, open for reads (constitution rule 8).
+    // Signing itself may be the failure (e.g. AGENT_INTERNAL_TOKEN missing in
+    // production — capability-token fails closed). A read must still proceed,
+    // so fall back to an unsigned envelope rather than re-throwing here.
+    const safeSign = (env: Parameters<typeof signEnvelope>[0]): SignedEnvelope => {
+      try {
+        return signEnvelope(env)
+      } catch {
+        return { envelope: env, signature: '' }
+      }
+    }
     const fallbackDecision: PolicyDecision = {
       decision: classification.mode === 'read' ? 'allow' : 'deny',
       reasonClass: classification.mode === 'read' ? 'read_ok' : 'capability_revoked',
@@ -416,7 +426,7 @@ export async function guardToolCall(
         decision: fallbackDecision,
         enforced: false,
         dataClass,
-        envelope: signEnvelope(
+        envelope: safeSign(
           buildActionEnvelope({
             actor: ctx.surface ?? 'owner',
             surface: (ctx.surface ?? 'owner') as GuardSurface,
@@ -434,7 +444,7 @@ export async function guardToolCall(
       decision: fallbackDecision,
       enforced: true,
       dataClass,
-      envelope: signEnvelope(
+      envelope: safeSign(
         buildActionEnvelope({
           actor: ctx.surface ?? 'owner',
           surface: (ctx.surface ?? 'owner') as GuardSurface,

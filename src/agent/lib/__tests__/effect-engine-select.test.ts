@@ -14,9 +14,11 @@ describe('effectEngineSelection — master switch + per-class canary', () => {
     expect(effectEngineSelection({ toolMode: 'stage', flag: 'on' }).use).toBe(false)
   })
 
-  it('is OFF by default (unset / off / false) — unchanged production behaviour', () => {
-    expect(effectEngineSelection({ toolMode: 'write' }).use).toBe(false)
+  it('is ON by default (audit P0-4: mandatory for mutations); off/false is the explicit opt-out', () => {
+    expect(effectEngineSelection({ toolMode: 'write' }).use).toBe(true)
+    expect(effectEngineSelection({ toolMode: 'write' }).reason).toBe('master_on')
     expect(effectEngineSelection({ toolMode: 'write', flag: 'off' }).use).toBe(false)
+    expect(effectEngineSelection({ toolMode: 'write', flag: '0' }).use).toBe(false)
     expect(effectEngineSelection({ toolMode: 'write', flag: 'false' }).use).toBe(false)
   })
 
@@ -53,6 +55,10 @@ describe('effectEngineSelectionFromEnv', () => {
     expect(effectEngineSelectionFromEnv('write', 'internal-reminders').use).toBe(true)
     expect(effectEngineSelectionFromEnv('write', 'ads-budget').use).toBe(false)
     delete process.env.AGENT_EFFECT_ENGINE
+    // Unset env under vitest ⇒ OFF (no DB in unit tests); production unset ⇒ ON
+    // (P0-4 mandatory default, asserted on the pure function above).
     expect(effectEngineSelectionFromEnv('write', 'internal-reminders').use).toBe(false)
+    process.env.AGENT_EFFECT_ENGINE = 'on'
+    expect(effectEngineSelectionFromEnv('write', 'internal-reminders').use).toBe(true)
   })
 })

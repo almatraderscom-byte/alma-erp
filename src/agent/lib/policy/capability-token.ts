@@ -65,9 +65,19 @@ export function hashInput(input: Record<string, unknown>): string {
 }
 
 function signingKey(): string {
-  // Fail closed on missing key only when signing is actually used in prod;
-  // tests/dev fall back to a fixed key so envelopes stay deterministic.
-  return process.env.AGENT_INTERNAL_TOKEN || 'dev-envelope-key'
+  const token = process.env.AGENT_INTERNAL_TOKEN?.trim()
+  if (token) return token
+  // Audit P0-5: production must NEVER fall back to a development signing key —
+  // an attacker knowing the fixed key could forge approval envelopes. Throwing
+  // here is fail-closed by construction: the universal tool guard catches it
+  // and blocks writes (reads proceed), so a missing secret degrades safely
+  // instead of silently signing with a public constant.
+  const env = process.env.VERCEL_ENV ?? (process.env.NODE_ENV === 'production' ? 'production' : '')
+  if (env === 'production') {
+    throw new Error('AGENT_INTERNAL_TOKEN missing in production — envelope signing unavailable (fail closed)')
+  }
+  // Tests / local dev / preview keep a fixed key so envelopes stay deterministic.
+  return 'dev-envelope-key'
 }
 
 export function envelopeDigest(env: ActionEnvelope): string {
