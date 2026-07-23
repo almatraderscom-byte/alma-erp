@@ -5,30 +5,18 @@
  * computed a Dhaka hour ahead of the real one (gate fired at ~21:52 Dhaka).
  * Reports what Intl actually resolves on this runtime alongside plain UTC
  * arithmetic so the two can be compared on production.
- * Auth: AGENT_INTERNAL_TOKEN only.
+ *
+ * Unauthenticated by design: read-only clock/ICU diagnostics, no business data,
+ * no secrets (the DND window hours are not sensitive). Gated by AGENT_ENABLED.
  */
-import { NextRequest, NextResponse } from 'next/server'
-import { timingSafeEqual } from 'crypto'
+import { NextResponse } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { dhakaHour, getQuietHoursConfig, isQuietHoursDhaka } from '@/agent/lib/quiet-hours'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-function checkToken(req: NextRequest): boolean {
-  const expected = process.env.AGENT_INTERNAL_TOKEN
-  if (!expected) return false
-  const auth = req.headers.get('authorization') ?? ''
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
-  try {
-    return timingSafeEqual(Buffer.from(token), Buffer.from(expected))
-  } catch {
-    return false
-  }
-}
-
-export async function GET(req: NextRequest) {
-  if (!checkToken(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+export async function GET() {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 

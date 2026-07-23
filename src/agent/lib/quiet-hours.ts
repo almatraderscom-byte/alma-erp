@@ -61,14 +61,21 @@ export async function getQuietHoursConfig(): Promise<QuietHoursConfig> {
   return { enabled, startHour, endHour }
 }
 
-/** Current hour (0–23) in Asia/Dhaka. */
+/**
+ * Current hour (0–23) in Asia/Dhaka. Plain UTC arithmetic — Dhaka is a fixed
+ * UTC+6 with no DST, so this cannot drift with the runtime's ICU/locale/TZ
+ * state. (The previous Intl.DateTimeFormat version produced a server-local
+ * hour on the deployed hnd1 runtime, firing the quiet gate hours early.)
+ */
 export function dhakaHour(now: Date = new Date()): number {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Dhaka',
-    hour: '2-digit',
-    hour12: false,
-  }).formatToParts(now)
-  return Number(parts.find((p) => p.type === 'hour')?.value ?? 0) % 24
+  return (now.getUTCHours() + 6) % 24
+}
+
+/** 'HH:MM' Dhaka wall-clock for display, same Intl-free arithmetic. */
+export function dhakaTimeHHMM(now: Date): string {
+  const h = String((now.getUTCHours() + 6) % 24).padStart(2, '0')
+  const m = String(now.getUTCMinutes()).padStart(2, '0')
+  return `${h}:${m}`
 }
 
 /**
@@ -174,7 +181,7 @@ export async function flushQuietHoursQueue(): Promise<{ flushed: number }> {
 
   const lines = queue
     .map((h) => {
-      const t = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(h.heldAt))
+      const t = dhakaTimeHHMM(new Date(h.heldAt))
       return `• (${t}) ${h.title} — ${h.message}`
     })
     .join('\n')
