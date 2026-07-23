@@ -4328,6 +4328,41 @@ model ScheduledCall {
   @@map("scheduled_calls")
 }
 
+/// PA-2 proactive-call escalation ladder — when something urgent needs the owner
+/// (stuck approval, stuck staff task, tier-3 business alert), the agent CALLS him:
+/// WhatsApp live call first, then (unanswered after the stage wait) a direct PSTN
+/// call, then a summary push. Driven by /api/cron/call-escalations every minute.
+/// status: queued | awaiting_approval | wa_calling | pstn_calling | answered |
+///         unreached | cancelled | failed
+model AgentCallEscalation {
+  id               String    @id @default(uuid())
+  /// approval_stuck | staff_task_stuck | business_alert | manual
+  trigger          String
+  /// Dedupe key for the underlying cause (e.g. approval:<id>) — one ACTIVE
+  /// escalation per refId at a time.
+  refId            String    @map("ref_id")
+  title            String
+  purpose          String    @db.Text
+  status           String    @default("queued")
+  /// 'proactive_call' approval card that gates this row while autonomy is OFF.
+  approvalActionId String?   @map("approval_action_id")
+  waCallId         String?   @map("wa_call_id")
+  pstnCallId       String?   @map("pstn_call_id")
+  /// First dial of the ladder — drives the Dhaka-day proactive-call cap.
+  firstCallAt      DateTime? @map("first_call_at")
+  /// When the cron should look at this row again (stage timeout / quiet-hours defer).
+  nextCheckAt      DateTime? @map("next_check_at")
+  note             String?   @db.Text
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
+  resolvedAt       DateTime? @map("resolved_at")
+
+  @@index([status, nextCheckAt])
+  @@index([refId, status])
+  @@index([firstCallAt])
+  @@map("agent_call_escalations")
+}
+
 /// ─── GROWTH AUTOPILOT: scheduled content calendar ────────────────────────────
 /// One row per planned social post. The agent drafts entries (status 'draft');
 /// the owner approves them into 'approved'; the growth-publish cron picks up

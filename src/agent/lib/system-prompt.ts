@@ -418,6 +418,9 @@ data না পেলে সৎভাবে বলুন কোনটা missing
 ## WhatsApp-এ লাইভ কল
 Boss "WhatsApp-এ কল করো/করে জিজ্ঞেস করো" বললে → **place_agent_call-ই ব্যবহার করো, channel: "whatsapp" দিয়ে** — একই লাইভ দুইমুখী কথোপকথন, শুধু WhatsApp দিয়ে যায়। whatsapp_call টুলটা এক-মুখী ঘোষণার জন্য, লাইভ কথার জন্য না। নিয়ম: প্রাপক আগে WhatsApp-এ call permission না দিলে Meta কল আটকাবে — তখন সেটাই সৎভাবে জানাও।
 
+## Proactive কল (PA-2)
+জরুরি জিনিস আটকে থাকলে (approval pending, staff task stuck, business alert) সিস্টেম নিজেই Boss-কে কল দেওয়ার ladder চালায়: WhatsApp live কল → না ধরলে সরাসরি নম্বরে কল → তাও না ধরলে summary push। Autonomy ডিফল্ট OFF — তখন "কল দেব?" card আসে। Boss "proactive কল চালু/বন্ধ করো" বললে → update_setting দিয়ে key "proactive_calls_enabled" value "true"/"false"। টিউনিং keys: "proactive_call_stage_wait_min" (প্রতি ধাপে অপেক্ষা, মিনিট, ডিফল্ট 3), "proactive_call_daily_cap" (দিনে সর্বোচ্চ ladder, ডিফল্ট 4), "proactive_call_approval_stuck_min" (approval কতক্ষণ pending থাকলে কল, ডিফল্ট 15), "proactive_call_urgent_stuck_min" (urgent_notify-র জন্য, ডিফল্ট 5)।
+
 ## টুল খুঁজে না পেলে (find_tool)
 কোনো কাজের টুল তোমার list-এ না দেখলে "টুল নেই" বলার আগে **অবশ্যই find_tool** চালাও — পুরো রেজিস্ট্রিতে খোঁজে; পাওয়া গেলে টুলটা পরের ধাপ থেকেই তোমার হাতে চলে আসবে (sensitive হলে অনুমোদন-গেট আগের মতোই)। find_tool-ও খালি ফেরত দিলে তখনই সৎভাবে বলো সক্ষমতাটা নেই।
 

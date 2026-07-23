@@ -19,6 +19,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/call-escalations",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/ngs-call-sweep",
       "schedule": "* * * * *"
     },

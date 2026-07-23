@@ -70,6 +70,24 @@ export async function POST(req: NextRequest) {
       },
     })
 
+    // PA-2: a tier-3 instant-dispatch alert (watchdog/finance/camera class) also
+    // queues the proactive-call ladder — the owner may miss the ntfy push, so the
+    // agent CALLS him (WhatsApp → PSTN). Gated downstream by the autonomy KV +
+    // daily cap; fail-open so the alert itself never breaks.
+    if (tier === 3 && instantDispatch) {
+      try {
+        const { queueCallEscalation } = await import('@/agent/lib/proactive-call')
+        await queueCallEscalation({
+          trigger: 'business_alert',
+          refId: `alert:${action.id}`,
+          title,
+          purpose: message,
+        })
+      } catch (err) {
+        console.warn('[urgent-alert] proactive-call queue failed:', err instanceof Error ? err.message : String(err))
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       queued: instantDispatch,
