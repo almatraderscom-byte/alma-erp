@@ -2412,6 +2412,19 @@ enum AlmaVoiceSTTError: Error { case noToken, badURL, socket, noMic, noConverter
 @available(iOS 17.0, *)
 final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     weak var engine: AlmaVoiceEngine?    // @MainActor — UI hops through it
+    // Closure sinks (chat-composer live dictation reuses this streamer without
+    // an AlmaVoiceEngine): fired on the main thread alongside the engine hops.
+    var onPartialSink: ((String) -> Void)?
+    var onFinalSink: ((String) -> Void)?
+    var onErrorSink: ((String) -> Void)?
+    var onLevelSink: ((Double) -> Void)?
+    var onNoSpeechSink: (() -> Void)?
+    /// Composer dictation: the session is minted with server_vad (OpenAI commits
+    /// at natural pauses → words stream LIVE), items accumulate across pauses,
+    /// and the local VAD never auto-ends the utterance — only ✓/✕ do.
+    var dictationMode = false
+    private var committedText = ""
+    private var finishRequested = false
 
     private var session: URLSession?
     private var ws: URLSessionWebSocketTask?
@@ -2457,6 +2470,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         speechThresh = 0.022; sustainedMs = 0; spoke = false
         speechStartMs = 0; silenceMs = 0; lastSecond = -1
         committed = false; completedFired = false; failed = false; partial = ""
+        committedText = ""; finishRequested = false
         pending = []; fullAudio = Data()
         socketOpen = false; connectFailed = false; wantCommit = false
     }
@@ -2474,8 +2488,13 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     /// Token mint → socket handshake → force OUR endpointing → flush the buffer.
     private func connect() async {
         do {
-            let data = try await AssistantNet.postJSONForData(path: "/api/assistant/stt-session", body: [:])
+            let data = try await AssistantNet.postJSONForData(
+                path: "/api/assistant/stt-session",
+                body: dictationMode ? ["mode": "dictation"] : [:])
             guard let key = (try? JSONDecoder().decode(TokenResp.self, from: data))?.key, !key.isEmpty else {
+                #if DEBUG
+                NSLog("ALMA-DICTATE stt-session mint returned no key: %@", String(data: data, encoding: .utf8) ?? "?")
+                #endif
                 throw AlmaVoiceSTTError.noToken
             }
             guard let url = URL(string: "wss://api.openai.com/v1/realtime") else { throw AlmaVoiceSTTError.badURL }
@@ -2563,7 +2582,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
             for i in 0..<frames { let v = Double(ch[i]); sum += v * v }
             rms = (sum / Double(frames)).squareRoot()
         }
-        DispatchQueue.main.async { [weak self] in self?.engine?.streamLevel(min(1, rms * 6)) }
+        DispatchQueue.main.async { [weak self] in self?.engine?.streamLevel(min(1, rms * 6)); self?.onLevelSink?(min(1, rms * 6)) }
 
         // Adaptive VAD — mirrors the recorder path exactly.
         let dtMs = Double(frames) / inFmt.sampleRate * 1000.0
@@ -2619,19 +2638,23 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func sendChunk(_ bytes: Data) {
+        spokeSinceCommit = true
         let b64 = bytes.base64EncodedString()
         ws?.send(.string("{\"type\":\"input_audio_buffer.append\",\"audio\":\"\(b64)\"}")) { _ in }
     }
 
     /// End of speech: stop the mic (privacy), commit (or fall back), await text.
     private func endUtterance(noSpeech: Bool) {
+        // Dictation: only the ✓/✕ buttons end the take — the local VAD's silence
+        // endpointing must never cut the owner off mid-thought.
+        if dictationMode && !finishRequested { return }
         if committed { return }
         committed = true
         stopMic()
         if noSpeech {
             connectTask?.cancel()
             closeSocket()
-            DispatchQueue.main.async { [weak self] in self?.engine?.streamNoSpeech() }
+            DispatchQueue.main.async { [weak self] in self?.engine?.streamNoSpeech(); self?.onNoSpeechSink?() }
             return
         }
         lock.lock()
@@ -2660,6 +2683,9 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     /// mic keeps running, and the utterance completes via the WAV upload path.
     /// The owner never sees a raw API error for a transport hiccup.
     private func degradeToLocal() {
+        #if DEBUG
+        NSLog("ALMA-DICTATE realtime socket degraded to local upload")
+        #endif
         lock.lock()
         let mustUpload = committed && wantCommit && !completedFired && !failed
         socketOpen = false
@@ -2673,7 +2699,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     private func uploadBufferedWav() {
         lock.lock(); let pcm = fullAudio; lock.unlock()
         guard pcm.count > 6_000 else {
-            DispatchQueue.main.async { [weak self] in self?.engine?.streamNoSpeech() }
+            DispatchQueue.main.async { [weak self] in self?.engine?.streamNoSpeech(); self?.onNoSpeechSink?() }
             return
         }
         let wav = Self.wavData(pcm: pcm)
@@ -2713,8 +2739,25 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         case "conversation.item.input_audio_transcription.delta":
             if let delta = obj["delta"] as? String {
                 partial += delta
-                let snap = partial
-                DispatchQueue.main.async { [weak self] in self?.engine?.streamPartial(snap) }
+                let snap = dictationMode
+                    ? (committedText.isEmpty ? partial : committedText + " " + partial)
+                    : partial
+                DispatchQueue.main.async { [weak self] in self?.engine?.streamPartial(snap); self?.onPartialSink?(snap) }
+            }
+        case "conversation.item.input_audio_transcription.completed" where dictationMode:
+            let piece = ((obj["transcript"] as? String) ?? partial).trimmingCharacters(in: .whitespacesAndNewlines)
+            partial = ""
+            if !piece.isEmpty { committedText = committedText.isEmpty ? piece : committedText + " " + piece }
+            let snap = committedText
+            if finishRequested {
+                completedFired = true
+                stopMic(); closeSocket()
+                DispatchQueue.main.async { [weak self] in
+                    if snap.isEmpty { self?.engine?.streamNoSpeech(); self?.onNoSpeechSink?() }
+                    else { self?.engine?.streamFinal(snap); self?.onFinalSink?(snap) }
+                }
+            } else {
+                DispatchQueue.main.async { [weak self] in self?.engine?.streamPartial(snap); self?.onPartialSink?(snap) }
             }
         case "conversation.item.input_audio_transcription.completed":
             // Guard for "nije nije kaj kore": a completed transcript only ends
@@ -2729,8 +2772,21 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
             completedFired = true
             let text = (obj["transcript"] as? String) ?? partial
             closeSocket()
-            DispatchQueue.main.async { [weak self] in self?.engine?.streamFinal(text) }
+            DispatchQueue.main.async { [weak self] in self?.engine?.streamFinal(text); self?.onFinalSink?(text) }
+        case "input_audio_buffer.committed":
+            spokeSinceCommit = false
         case "error":
+            if dictationMode && finishRequested {
+                // Trailing flush on an empty buffer — finish with the folded text.
+                let snap = committedText
+                completedFired = true
+                stopMic(); closeSocket()
+                DispatchQueue.main.async { [weak self] in
+                    if snap.isEmpty { self?.engine?.streamNoSpeech(); self?.onNoSpeechSink?() }
+                    else { self?.engine?.streamFinal(snap); self?.onFinalSink?(snap) }
+                }
+                return
+            }
             degradeToLocal()
         default:
             break
@@ -2741,13 +2797,41 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         if failed || completedFired { return }
         failed = true
         stopMic(); closeSocket()
-        DispatchQueue.main.async { [weak self] in self?.engine?.streamError(msg) }
+        DispatchQueue.main.async { [weak self] in self?.engine?.streamError(msg); self?.onErrorSink?(msg) }
     }
 
     /// Force-send now (owner tapped the orb while listening). If the VAD never
     /// armed — nothing was said — the tap CANCELS instead of committing ambient
     /// noise into a bogus turn.
-    func finishNow() { endUtterance(noSpeech: !spoke) }
+    func finishNow() {
+        if dictationMode {
+            finishRequested = true
+            lock.lock(); let open = socketOpen; lock.unlock()
+            if !open {
+                // Socket never came up — the streamer's WAV fallback resolves it.
+                endUtterance(noSpeech: !spoke)
+                return
+            }
+            // Flush any trailing speech; if the buffer is empty (server_vad already
+            // committed everything) OpenAI errors harmlessly and the last completed
+            // item has already been folded — finish with what we have.
+            if partial.isEmpty && !spokeSinceCommit {
+                let snap = committedText
+                completedFired = true
+                stopMic(); closeSocket()
+                DispatchQueue.main.async { [weak self] in
+                    if snap.isEmpty { self?.engine?.streamNoSpeech(); self?.onNoSpeechSink?() }
+                    else { self?.engine?.streamFinal(snap); self?.onFinalSink?(snap) }
+                }
+            } else {
+                ws?.send(.string(#"{"type":"input_audio_buffer.commit"}"#)) { _ in }
+            }
+            return
+        }
+        endUtterance(noSpeech: !spoke)
+    }
+    /// Audio appended since the last server-side commit (dictation trailing flush).
+    private var spokeSinceCommit = false
 
     /// Hard stop with no callbacks (console closed / barge / teardown).
     func cancel() {

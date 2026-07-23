@@ -2065,6 +2065,12 @@ final class AssistantVM {
 
     // Mic (recording bar: waveform + timer, web VoiceWaveform parity)
     var isRecording = false
+    /// Claude-style LIVE dictation: words appear as spoken (gpt-4o-transcribe
+    /// realtime over the shared AlmaStreamingSTT; falls back to the recorder +
+    /// upload path if the streaming mic fails to start).
+    var liveDictation = ""
+    private var usingStreamDictation = false
+    private let dictationStreamer = AlmaStreamingSTT()
     var transcribing = false
     var micLevel: Double = 0.06         // 0.06…1, mirrors the web's clamped RMS level
     var recordingSeconds: Int = 0
@@ -6554,6 +6560,90 @@ final class AssistantVM {
         session.requestRecordPermission { [weak self] granted in
             DispatchQueue.main.async {
                 guard granted, let self else { return }
+                // LIVE dictation first (Claude-app parity): realtime words while
+                // speaking. Any start failure falls through to the recorder path.
+                self.dictationStreamer.dictationMode = true
+                self.dictationStreamer.onPartialSink = { [weak self] text in
+                    NSLog("ALMA-DICTATE partial %d chars", text.count)
+                    self?.liveDictation = text
+                }
+                self.dictationStreamer.onLevelSink = { [weak self] level in
+                    guard let self, self.isRecording else { return }
+                    self.micLevel = max(0.06, level)
+                }
+                self.dictationStreamer.onFinalSink = { [weak self] text in
+                    guard let self, self.usingStreamDictation else { return }
+                    self.usingStreamDictation = false
+                    self.isRecording = false
+                    self.liveDictation = ""
+                    let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !clean.isEmpty {
+                        self.composerDraft = self.composerDraft.isEmpty
+                            ? clean : self.composerDraft + " " + clean
+                        self.dictationFailure = nil
+                        AlmaAgentHaptics.commit()
+                    } else {
+                        self.dictationFailure = "কথা বোঝা যায়নি"
+                    }
+                }
+                self.dictationStreamer.onNoSpeechSink = { [weak self] in
+                    guard let self, self.usingStreamDictation else { return }
+                    self.usingStreamDictation = false
+                    self.isRecording = false
+                    self.liveDictation = ""
+                    self.dictationFailure = "কথা বোঝা যায়নি"
+                }
+                self.dictationStreamer.onErrorSink = { [weak self] _ in
+                    guard let self, self.usingStreamDictation else { return }
+                    self.usingStreamDictation = false
+                    self.isRecording = false
+                    self.liveDictation = ""
+                    self.dictationFailure = "ভয়েস বোঝা যায়নি — আবার চেষ্টা করুন"
+                }
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        // The streamer reads the input node's format — without an
+                        // active playAndRecord session the sim/device reports 0 Hz
+                        // and start() throws noMic (owner hit: no live words).
+                        try? session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+                        try? session.setActive(true)
+                        try await self.dictationStreamer.start()
+                        await MainActor.run {
+                            NSLog("ALMA-DICTATE streaming started")
+                            self.usingStreamDictation = true
+                            self.isRecording = true
+                            self.dictationFailure = nil
+                            self.liveDictation = ""
+                            self.recordingSeconds = 0
+                            self.micLevel = 0.06
+                            AlmaAgentHaptics.commit()
+                            self.meterTask?.cancel()
+                            self.meterTask = Task { [weak self] in
+                                var secs = 0
+                                while let self, self.isRecording, !Task.isCancelled {
+                                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                                    secs += 1
+                                    self.recordingSeconds = secs
+                                }
+                            }
+                        }
+                    } catch {
+                        NSLog("ALMA-DICTATE streamer failed to start (%@) — recorder fallback", String(describing: error))
+                        await MainActor.run { self.startRecorderFallback() }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Legacy path: AVAudioRecorder + upload-after-stop. Used only when the
+    /// realtime streamer cannot start (mic contention etc.).
+    private func startRecorderFallback() {
+        let session = AVAudioSession.sharedInstance()
+        session.requestRecordPermission { [weak self] granted in
+            DispatchQueue.main.async {
+                guard granted, let self else { return }
                 do {
                     try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
                     try session.setActive(true)
@@ -6596,6 +6686,15 @@ final class AssistantVM {
     /// ✕ on the recording bar — discard the take, no transcription.
     func cancelRecording() {
         meterTask?.cancel()
+        if usingStreamDictation {
+            usingStreamDictation = false
+            dictationStreamer.cancel()
+            isRecording = false
+            liveDictation = ""
+            dictationFailure = nil
+            AlmaAgentHaptics.light()
+            return
+        }
         recorder?.stop()
         recorder = nil
         isRecording = false
@@ -6606,6 +6705,13 @@ final class AssistantVM {
 
     private func finishRecording() {
         meterTask?.cancel()
+        if usingStreamDictation {
+            // Realtime path: commit the utterance; onFinalSink fills the composer
+            // (or the streamer's built-in WAV fallback upload resolves it).
+            AlmaAgentHaptics.light()
+            dictationStreamer.finishNow()
+            return
+        }
         recorder?.stop()
         recorder = nil
         isRecording = false
@@ -9944,6 +10050,25 @@ struct AgentComposerView: View {
     }
 
     @ViewBuilder private func recordingBar(_ pal: AgentPalette) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Claude-app parity: the words appear LIVE while speaking, right
+            // above the waveform (gpt-4o-transcribe realtime stream).
+            if !vm.liveDictation.isEmpty {
+                Text(vm.liveDictation)
+                    .font(.system(size: 15))
+                    .foregroundStyle(pal.ink)
+                    .lineLimit(3)
+                    .truncationMode(.head)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+                    .animation(.easeOut(duration: 0.12), value: vm.liveDictation)
+            }
+            recordingControlsRow(pal)
+        }
+        .padding(.vertical, 3)
+    }
+
+    @ViewBuilder private func recordingControlsRow(_ pal: AgentPalette) -> some View {
         HStack(spacing: 8) {
             Button {
                 vm.cancelRecording()
@@ -9969,7 +10094,6 @@ struct AgentComposerView: View {
                     .background(AgentPalette.coral, in: Circle())
             }
         }
-        .padding(.vertical, 3)
     }
 
     @ViewBuilder private func attachmentsRow(_ pal: AgentPalette) -> some View {
@@ -13961,6 +14085,11 @@ struct AssistantScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("almaVoiceDebugOpen"))) { _ in
             #if DEBUG
             vm.showVoice = true
+            #endif
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("almaDictateToggle"))) { _ in
+            #if DEBUG
+            vm.toggleRecording()
             #endif
         }
         .fullScreenCover(isPresented: $vm.showVoice) {

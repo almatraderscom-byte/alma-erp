@@ -211,6 +211,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             // Headless voice-conversation test hook (simulator only): inject a
             // "spoken" user turn into a live AI call. simctl openurl
             // almaerp://voice-say?text=<percent-encoded>. Never in Release.
+            if url.host == "dictate-toggle" {
+                NotificationCenter.default.post(name: Notification.Name("almaDictateToggle"), object: nil)
+                return true
+            }
             if url.host == "voice-open" {
                 NotificationCenter.default.post(name: Notification.Name("almaVoiceDebugOpen"), object: nil)
                 return true
