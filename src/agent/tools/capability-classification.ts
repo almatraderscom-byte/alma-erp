@@ -205,6 +205,9 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   list_audiences: read('ads'),
   create_retargeting_audience: stage('ads'),
   create_lookalike_audience: stage('ads'),
+  // status = read, enable = direct Meta webhook subscribe (no spend, notifications
+  // only, owner-explicit ask) — direct effect ⇒ write, not stage
+  manage_ads_webhooks: write('ads', 'medium'),
 
   // ── marketing analysis ─────────────────────────────────────────────────────
   plan_marketing: read('marketing'),
