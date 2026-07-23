@@ -36,6 +36,7 @@ interface GeminiResponse {
 }
 
 export async function geminiVisionJson<T>(opts: GeminiVisionOpts): Promise<T> {
+  await (await import('@/agent/lib/models/cost-gate')).assertPaidCallAllowed('vision_json')
   const key = process.env.GEMINI_API_KEY
   if (!key) throw new Error('GEMINI_API_KEY not configured')
 

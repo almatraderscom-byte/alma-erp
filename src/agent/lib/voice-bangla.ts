@@ -50,6 +50,7 @@ export async function transcribeVoiceBangla(
   // (e.g. the camera wake word). Defaults to the generic Bangla steer.
   promptOverride?: string,
 ): Promise<{ text: string; model: string }> {
+  await (await import('@/agent/lib/models/cost-gate')).assertPaidCallAllowed('whisper_transcribe')
   const base = {
     file,
     response_format: 'json' as const,

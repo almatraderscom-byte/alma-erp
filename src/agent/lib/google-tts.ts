@@ -69,6 +69,7 @@ async function getAccessToken(creds: GoogleCreds): Promise<string> {
  * costPurpose labels the spend in cost logs (e.g. 'web_voice', 'camera_speak').
  */
 export async function synthesizeBanglaMp3(text: string, costPurpose: string): Promise<Buffer> {
+  await (await import('@/agent/lib/models/cost-gate')).assertPaidCallAllowed(`tts:${costPurpose}`)
   const creds = getGoogleCredentials()
   if (!creds) throw new Error('GOOGLE_TTS_CREDENTIALS not configured')
 

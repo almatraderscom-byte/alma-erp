@@ -193,6 +193,8 @@ export async function identifyPeopleInFrame(frame: {
   base64: string
   mimeType: string
 }): Promise<FaceMatchResult> {
+  // 'security': camera auth must not break on a budget stop (kill switch still absolute).
+  await (await import('@/agent/lib/models/cost-gate')).assertPaidCallAllowed('face_match', 'security')
   const refs = await loadKnownPeopleWithImages()
   if (refs.length === 0) {
     return {

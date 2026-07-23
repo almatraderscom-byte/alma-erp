@@ -155,7 +155,8 @@ async function runCsLoopViaAdapter(
   input: CsTurnInput,
   state: CsLoopState,
 ): Promise<{ finalText: string; tokensIn: number; tokensOut: number; cacheRead: number; hadToolUse: boolean }> {
-  const adapter = adapterFor(model.provider)
+  // 'cs' surface: exempt from budget stops (live customers), kill switch still absolute.
+  const adapter = adapterFor(model.provider, { surface: 'cs' })
   const tools = anthropicToolsToNeutral(CUSTOMER_TOOL_DEFINITIONS)
   let messages: NeutralMsg[] = [...history, { role: 'user', content: userText }]
   let tokensIn = 0

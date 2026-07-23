@@ -79,9 +79,18 @@ async function readSnapshot(now: Date): Promise<GateSnapshot> {
   }
 }
 
+/**
+ * Which surface is making this model call. Customer service is revenue-facing:
+ * a daily/monthly budget stop must not silently cut off live customers, so the
+ * BUDGET stops exempt 'cs' — the KILL SWITCH still stops everything (it is the
+ * owner's explicit emergency brake, absolute by design).
+ */
+export type CostGateSurface = 'owner' | 'cs' | 'office' | 'worker' | 'other'
+
 /** Pure decision core — deterministic and unit-tested. */
-export function decideCostGate(s: Omit<GateSnapshot, 'at'>): CostGateDecision {
+export function decideCostGate(s: Omit<GateSnapshot, 'at'>, surface: CostGateSurface = 'other'): CostGateDecision {
   if (s.killSwitch) return { allow: false, reason: 'kill_switch' }
+  if (surface === 'cs') return { allow: true }
   if (s.dailyUsd !== null && s.dailyUsd > 0 && s.todaySpendUsd >= s.dailyUsd) {
     return { allow: false, reason: 'daily_budget', spentUsd: s.todaySpendUsd, capUsd: s.dailyUsd }
   }
@@ -91,17 +100,35 @@ export function decideCostGate(s: Omit<GateSnapshot, 'at'>): CostGateDecision {
   return { allow: true }
 }
 
-/** The live gate used by the adapter seam. */
-export async function costGatePreAuth(now: Date = new Date()): Promise<CostGateDecision> {
+/** The live gate used by the adapter seam and non-chat paid-call sites. */
+export async function costGatePreAuth(now: Date = new Date(), surface: CostGateSurface = 'other'): Promise<CostGateDecision> {
   try {
     if (!cached || now.getTime() - cached.at > CACHE_MS) {
       cached = await readSnapshot(now)
     }
-    return decideCostGate(cached)
+    return decideCostGate(cached, surface)
   } catch (err) {
     // Store unreachable — fail open (never brick the live agent on a DB blip).
     console.warn('[cost-gate] read failed open:', err instanceof Error ? err.message : err)
     return { allow: true }
+  }
+}
+
+/**
+ * Guard for NON-chat paid calls (transcription, TTS, embeddings, vision,
+ * image generation). Throws a typed error when blocked so the call site's
+ * existing failure handling reports it; the provider request never fires.
+ * Surface 'cs' and 'security' (camera auth / face match) are exempt from
+ * budget stops — never from the kill switch.
+ */
+export async function assertPaidCallAllowed(
+  kind: string,
+  surface: CostGateSurface | 'security' = 'other',
+): Promise<void> {
+  const effective: CostGateSurface = surface === 'security' ? 'cs' : surface
+  const d = await costGatePreAuth(new Date(), effective)
+  if (!d.allow) {
+    throw new Error(`cost_gate_blocked:${d.reason ?? 'unknown'} (${kind})`)
   }
 }
 
