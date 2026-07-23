@@ -19,7 +19,9 @@ const GATE_STEPS = [
   { id: 'contracts-typecheck', cmd: 'npx tsc --noEmit -p src/agent/contracts/tsconfig.json' },
   { id: 'contracts-tests', cmd: 'npx vitest run src/agent/contracts' },
   { id: 'forbidden-imports', cmd: 'node scripts/architecture/check-forbidden-imports.mjs' },
-  { id: 'ownership', cmd: 'node scripts/architecture/check-ownership.mjs --owner G01' },
+  // CI-wide ownership invariant: the frozen legacy agent API is untouched.
+  // (--owner G01 is the per-spec-session strictness; wrong for general PRs.)
+  { id: 'ownership', cmd: 'node scripts/architecture/check-ownership.mjs --frozen' },
   { id: 'adr-lint', cmd: 'node scripts/architecture/check-adr.mjs' },
   { id: 'proof-complete', cmd: 'node scripts/architecture/check-proof.mjs --require-pass' },
   // Bypass gates — the executable "no bypass" exit criteria (P0-1/P0-3/P0-4).

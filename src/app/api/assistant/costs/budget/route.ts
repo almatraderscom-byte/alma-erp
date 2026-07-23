@@ -3,7 +3,14 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { BUDGET_KEYS, getBudgetSettings } from '@/agent/lib/cost-events'
+import { COST_KILL_SWITCH_KEY, clearCostGateCache } from '@/agent/lib/models/cost-gate'
 import { prisma } from '@/lib/prisma'
+
+async function readKillSwitch(): Promise<boolean> {
+  const row = await prisma.agentKvSetting.findUnique({ where: { key: COST_KILL_SWITCH_KEY } })
+  const v = (row?.value ?? '').trim().toLowerCase()
+  return v === 'on' || v === '1' || v === 'true'
+}
 
 export const runtime = 'nodejs'
 
@@ -15,7 +22,7 @@ export async function GET(req: NextRequest) {
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
-  return Response.json(await getBudgetSettings())
+  return Response.json({ ...(await getBudgetSettings()), killSwitch: await readKillSwitch() })
 }
 
 export async function PUT(req: NextRequest) {
@@ -26,7 +33,7 @@ export async function PUT(req: NextRequest) {
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
-  let body: { dailyUsd?: number | null; monthlyUsd?: number | null }
+  let body: { dailyUsd?: number | null; monthlyUsd?: number | null; killSwitch?: boolean }
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -56,6 +63,16 @@ export async function PUT(req: NextRequest) {
     }
   }
 
+  // Audit P0-2: runtime kill switch for ALL paid model calls (no redeploy).
+  if (body.killSwitch !== undefined) {
+    upserts.push(db.agentKvSetting.upsert({
+      where: { key: COST_KILL_SWITCH_KEY },
+      create: { key: COST_KILL_SWITCH_KEY, value: body.killSwitch ? 'on' : 'off' },
+      update: { value: body.killSwitch ? 'on' : 'off' },
+    }))
+  }
+
   await Promise.all(upserts)
-  return Response.json(await getBudgetSettings())
+  clearCostGateCache() // this instance sees the change immediately; others within ~30s
+  return Response.json({ ...(await getBudgetSettings()), killSwitch: await readKillSwitch() })
 }
