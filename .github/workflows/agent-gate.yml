@@ -15,6 +15,11 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/agent-gate.yml'
+      # Certification inputs — proof artifacts and gate scripts are evidence;
+      # any change to them must re-run the SPEC-200 certification.
+      - 'artifacts/**'
+      - 'scripts/architecture/**'
+      - 'docs/architecture/**'
 
 jobs:
   gate:
@@ -32,3 +37,11 @@ jobs:
         run: npx tsc --noEmit
       - name: Agent test suite (behavior gates)
         run: npm run test:agent
+      # SPEC-200 — the official architecture certification is release-blocking:
+      # freeze-baseline steps (contracts, forbidden-imports, ownership, ADR,
+      # proof-complete for SPEC-001..200) + admission/gateway/authorization
+      # bypass gates. Certification derives ONLY from executable proof; a FAIL
+      # here means the architecture claim is not truthful — fix the evidence,
+      # never bypass the gate.
+      - name: Architecture certification (SPEC-200)
+        run: node scripts/architecture/certify-architecture.mjs
