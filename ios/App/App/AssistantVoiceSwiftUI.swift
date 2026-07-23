@@ -162,6 +162,36 @@ final class AlmaVoiceEngine {
     }
     var cards: [Card] = []
 
+    // ── Kimi-style rolling call transcript (owner spec 2026-07-23) ──
+    // One line per turn: Boss's words dim, ALMA's words bright, tool progress
+    // as status rows. The last user/agent line updates LIVE as words stream.
+    struct LiveFeedLine: Identifiable, Equatable {
+        enum Kind { case user, agent, status }
+        let id: String
+        let kind: Kind
+        var text: String
+    }
+    var liveFeed: [LiveFeedLine] = []
+    private var liveStatusNudgeTask: Task<Void, Never>? = nil
+    private var feedUserLineId: String? = nil
+    private var feedAgentLineId: String? = nil
+
+    private func feedUpsert(id: String?, kind: LiveFeedLine.Kind, text: String) -> String {
+        if let id, let i = liveFeed.firstIndex(where: { $0.id == id }) {
+            liveFeed[i].text = text
+            return id
+        }
+        let newId = UUID().uuidString
+        liveFeed.append(.init(id: newId, kind: kind, text: text))
+        if liveFeed.count > 80 { liveFeed.removeFirst(liveFeed.count - 80) }
+        return newId
+    }
+    private func feedFinalizeUser() { feedUserLineId = nil }
+    private func feedFinalizeAgent() { feedAgentLineId = nil }
+    func feedStatus(_ text: String) {
+        _ = feedUpsert(id: nil, kind: .status, text: text)
+    }
+
     // internals
     private var recorder: AVAudioRecorder?
     private var vadTask: Task<Void, Never>?
@@ -209,6 +239,7 @@ final class AlmaVoiceEngine {
         case .live:
             if isMuted { return "মাইক্রোফোন বন্ধ" }
             if state == .idle { return "শুনছি…" }
+            if state == .thinking && liveToolTurnPending { return "কাজ করছি…" }
             return state.statusText
         }
     }
@@ -1076,6 +1107,7 @@ final class AlmaVoiceEngine {
     func liveDidConnect() {
         liveConnectTask?.cancel()
         liveConnectTask = nil
+        if !liveActive && liveFeed.isEmpty { feedUserLineId = nil; feedAgentLineId = nil }
         liveActive = true
         sessionReady = true
         callConnection = .live
@@ -1103,25 +1135,41 @@ final class AlmaVoiceEngine {
     }
 
     func liveInputTranscript(_ text: String) {
-        transcript = text
+        // Gemini sends input transcription as incremental fragments — build the
+        // full sentence for the live feed line (and the legacy MIC strip).
+        if let id = feedUserLineId, let i = liveFeed.firstIndex(where: { $0.id == id }) {
+            let joined = (liveFeed[i].text + text)
+            transcript = joined
+            feedUserLineId = feedUpsert(id: id, kind: .user, text: joined)
+        } else {
+            transcript = text
+            feedUserLineId = feedUpsert(id: nil, kind: .user, text: text)
+        }
         if state != .speaking { state = .listening }
     }
 
     func liveOutputTranscript(_ text: String) {
         replyText = text
         nowLine = text
+        feedAgentLineId = feedUpsert(id: feedAgentLineId, kind: .agent, text: text)
     }
 
     func livePlaybackChanged(active: Bool, level: Double) {
         ttsLevel = level
-        if active { state = .speaking }
-        else if liveActive { state = liveToolTurnPending ? .thinking : .listening }
+        if active {
+            state = .speaking
+            feedFinalizeUser()          // Boss's sentence is done once ALMA starts answering
+        } else {
+            feedFinalizeAgent()         // agent turn ended — next reply is a new line
+            if liveActive { state = liveToolTurnPending ? .thinking : .listening }
+        }
     }
 
     func liveWasInterrupted() {
         ttsLevel = 0
         nowLine = ""
         liveToolTurnPending = false
+        feedFinalizeAgent()
         state = .listening
     }
 
@@ -1146,6 +1194,24 @@ final class AlmaVoiceEngine {
         cards.removeAll { $0.kind == .tool }
         liveToolTurnPending = true
         state = .thinking
+        // Feed: lock Boss's final sentence in place; Gemini's STT is authoritative.
+        if let id = feedUserLineId { _ = feedUpsert(id: id, kind: .user, text: clean) }
+        else { _ = feedUpsert(id: nil, kind: .user, text: clean) }
+        feedFinalizeUser()
+        feedFinalizeAgent()
+        // Never a long dead-air while tools run (owner spec 2026-07-23): after
+        // 10s and again at 24s of a still-pending head turn, nudge Gemini to
+        // speak one short human status line (no tool call).
+        let nudgeCallId = callId
+        liveStatusNudgeTask?.cancel()
+        liveStatusNudgeTask = Task { [weak self] in
+            for delay in [10.0, 14.0] {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard let self, !Task.isCancelled, self.liveToolTurnPending else { return }
+                self.live.sendTextTurn("STATUS_NOTE: কাজটি এখনো চলছে। Boss-কে খুব ছোট, স্বাভাবিক এক বাক্যে জানান যে কাজ চলছে — নতুন তথ্য বানাবেন না, কোনো tool চালাবেন না।")
+                _ = nudgeCallId
+            }
+        }
         let body = VoiceChatBody(conversationId: chatVM?.conversationId,
                                  message: clean,
                                  modelId: chatVM?.modelId ?? "auto",
@@ -1364,6 +1430,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var mintedSession: SessionResponse?
     private var mintedAt = Date.distantPast
     private var reconnectAttempts = 0
+    /// Kimi-parity prosody: request Gemini's affective dialog; if the server
+    /// (older token constraints) rejects the setup, retry once without it.
+    private var allowAffective = true
     private var pendingResumptionHandle: String?
     private var latestResumptionHandle: String?
     private var outputTranscript = ""
@@ -1439,10 +1508,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     private func setupMessage(model: String, voice: String, resumptionHandle: String?) -> [String: Any] {
         let instruction = """
-        তুমি ALMA-এর realtime voice transport এবং শুধু Boss-এর সাথে কথা বলছ। Opening greeting ছাড়া Boss-এর প্রতিটি বক্তব্যে run_agent_turn ঠিক একবার চালাবে। ব্যবসার তথ্য, স্মৃতি, হিসাব, action বা completion নিজে বানাবে না। টুলের result-ই সংক্ষিপ্ত স্বাভাবিক বাংলায় বলবে। Approval মানে asynchronous কাজ শেষ নয়; reportReady/completed না হলে কাজ চলছে বলবে। মালিককে শুধু Boss বলবে; অন্য কোনো সম্বোধন নয়; ভয়েসে emoji পড়বে না। Boss কথা শুরু করলে সঙ্গে সঙ্গে থেমে শুনবে।
+        তুমি ALMA-এর realtime voice transport এবং শুধু Boss-এর সাথে কথা বলছ। Opening greeting ছাড়া Boss-এর প্রতিটি বক্তব্যে run_agent_turn ঠিক একবার চালাবে। ব্যবসার তথ্য, স্মৃতি, হিসাব, action বা completion নিজে বানাবে না। টুলের result-ই সংক্ষিপ্ত স্বাভাবিক বাংলায় বলবে। Approval মানে asynchronous কাজ শেষ নয়; reportReady/completed না হলে কাজ চলছে বলবে। মালিককে শুধু Boss বলবে; অন্য কোনো সম্বোধন নয়; ভয়েসে emoji পড়বে না। Boss কথা শুরু করলে সঙ্গে সঙ্গে থেমে শুনবে। কথা বলবে একজন যত্নশীল মানুষের মতো: ছোট ছোট বাক্য, মাপা গতি, স্বাভাবিক বিরতি; Boss-এর মেজাজ বুঝে উষ্ণ বা গম্ভীর টোন; সংখ্যা ও টাকার অংক ধীরে ও স্পষ্ট করে; একঘেয়ে রোবটিক সুর কখনো নয়। STATUS_NOTE পেলে এক বাক্যের বেশি বলবে না।
         """
         let resumption: [String: Any] = resumptionHandle.map { ["handle": $0] } ?? [:]
-        return ["setup": [
+        var setup: [String: Any] = [
             "model": model.hasPrefix("models/") ? model : "models/\(model)",
             "generationConfig": [
                 "responseModalities": ["AUDIO"],
@@ -1477,7 +1546,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     "required": ["request"],
                 ],
             ]]]],
-        ]]
+        ]
+        if allowAffective { setup["enableAffectiveDialog"] = true }
+        return ["setup": setup]
     }
 
     private func configureAudio() throws {
@@ -1653,9 +1724,17 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             let status = error["status"] ?? "unknown"
             NSLog("ALMA-VOICE server error code=%@ status=%@", String(describing: code), String(describing: status))
             #endif
+            if allowAffective {
+                // Setup rejected (older token constraints don't know the affective
+                // field) — drop it and retry the same call transparently.
+                allowAffective = false
+                reconnecting = false
+                recoverConnection(allowInitial: true)
+                return
+            }
             if reconnecting {
                 reconnecting = false
-                recoverConnection(forceFreshToken: true)
+                recoverConnection(forceFreshToken: true, allowInitial: true)
                 return
             }
             fail("রিয়েলটাইম ভয়েস সার্ভার সংযোগ নেয়নি।")
@@ -1705,11 +1784,21 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// a resumed connect is rejected) mint a fresh token instead of dying, so a long
     /// AI call survives every rotation. Attempts are capped so a hard outage still
     /// fails loud instead of looping.
-    private func recoverConnection(forceFreshToken: Bool = false) {
+    private func recoverConnection(forceFreshToken: Bool = false, allowInitial: Bool = false) {
         guard !stopped, !reconnecting else { return }
-        guard hasConnectedOnce, mintedSession != nil else {
+        // Rejected INITIAL setups may arrive as a socket close (no error JSON).
+        // If we asked for affective dialog, retry the very first connect once
+        // without it before declaring the call dead.
+        let affectiveDowngradeRetry = !hasConnectedOnce && allowAffective
+        guard hasConnectedOnce || allowInitial || affectiveDowngradeRetry, mintedSession != nil else {
             fail("লাইভ ভয়েস সংযোগ বিচ্ছিন্ন হয়েছে।")
             return
+        }
+        if affectiveDowngradeRetry {
+            #if DEBUG
+            NSLog("ALMA-VOICE initial setup failed — retrying without affective dialog")
+            #endif
+            allowAffective = false
         }
         guard reconnectAttempts < 3 else {
             fail("লাইভ ভয়েস সংযোগ বিচ্ছিন্ন হয়েছে।")
@@ -3255,6 +3344,54 @@ struct AlmaVoiceConsoleView: View {
         .animation(.easeInOut(duration: 0.4), value: hue)
     }
 
+    // ── Kimi-style rolling call feed: Boss dim, ALMA bright, tools as steps ──
+    @ViewBuilder private var liveFeedView: some View {
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 9) {
+                    ForEach(engine.liveFeed) { lineItem in
+                        switch lineItem.kind {
+                        case .user:
+                            Text(lineItem.text)
+                                .font(.system(size: 14.5))
+                                .foregroundStyle(faint)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        case .agent:
+                            goldBoss(lineItem.text)
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(ink)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        case .status:
+                            Text(lineItem.text)
+                                .font(.system(size: 12))
+                                .foregroundStyle(muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    if !toolSteps.isEmpty && engine.state == .thinking {
+                        VStack(alignment: .leading, spacing: 5) {
+                            ForEach(toolSteps) { s in stepRow(s) }
+                        }
+                    }
+                    Color.clear.frame(height: 1).id("feed-bottom")
+                }
+                .padding(.horizontal, 26)
+            }
+            .frame(maxHeight: 240)
+            .mask(
+                LinearGradient(stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black, location: 0.12),
+                    .init(color: .black, location: 1),
+                ], startPoint: .top, endPoint: .bottom)
+            )
+            .onChange(of: engine.liveFeed) { _, _ in
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("feed-bottom", anchor: .bottom) }
+            }
+            .onAppear { proxy.scrollTo("feed-bottom", anchor: .bottom) }
+        }
+    }
+
     // ── Transcript pill + glowing caption + checkmark steps (web voicezone) ──
     @ViewBuilder private var voiceZone: some View {
         VStack(spacing: 10) {
@@ -3269,7 +3406,9 @@ struct AlmaVoiceConsoleView: View {
                 }
                 .padding(.horizontal, 26)
             }
-            if !engine.transcript.isEmpty && engine.state != .idle {
+            if engine.liveActive && !engine.liveFeed.isEmpty {
+                liveFeedView
+            } else if !engine.transcript.isEmpty && engine.state != .idle {
                 HStack(spacing: 8) {
                     Text("MIC").font(.system(size: 10.5, weight: .bold)).foregroundStyle(good)
                     Text(engine.transcript).font(.system(size: 13.5)).foregroundStyle(muted).lineLimit(1)
@@ -3281,7 +3420,14 @@ struct AlmaVoiceConsoleView: View {
             }
             // caption: glowing current line + dim said; else greeting/reply; idle hint
             Group {
-                if engine.state == .speaking && !engine.nowLine.isEmpty {
+                if engine.liveActive && !engine.liveFeed.isEmpty {
+                    // Kimi-parity: the feed above carries all words; here only the
+                    // interrupt hint while ALMA is speaking (same glass language).
+                    if engine.state == .speaking {
+                        Text("কথা বলা শুরু করুন বা অর্বে ছুঁয়ে থামান")
+                            .font(.system(size: 12)).foregroundStyle(faint)
+                    }
+                } else if engine.state == .speaking && !engine.nowLine.isEmpty {
                     (Text(engine.saidLines.suffix(2).joined(separator: " ") + (engine.saidLines.isEmpty ? "" : " "))
                         .foregroundStyle(faint)
                      + Text(engine.nowLine).foregroundStyle(ink))
@@ -3320,7 +3466,7 @@ struct AlmaVoiceConsoleView: View {
             .shadow(color: almaHSL(hue, 0.80, 0.60, 0.28), radius: 13)
             .padding(.horizontal, 26)
             // checkmark steps (web .steps) — tool progress for the current turn
-            if !toolSteps.isEmpty {
+            if !toolSteps.isEmpty && !(engine.liveActive && !engine.liveFeed.isEmpty) {
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(toolSteps) { s in stepRow(s) }
                 }
