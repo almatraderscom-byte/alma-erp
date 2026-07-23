@@ -557,12 +557,25 @@ function base64Url(value: string): string {
 }
 
 async function getGoogleServiceAccountToken(): Promise<string> {
-  const raw = process.env.GOOGLE_BILLING_SERVICE_ACCOUNT_JSON
+  const raw = process.env.GOOGLE_BILLING_SERVICE_ACCOUNT_JSON?.trim()
   if (!raw) throw new Error('Google billing service account is not configured')
-  const credentials = JSON.parse(raw) as {
+  if (!raw.startsWith('{')) {
+    const isLocalPath = raw.startsWith('/') || /^[A-Za-z]:[\\/]/.test(raw)
+    throw new Error(
+      isLocalPath
+        ? 'GOOGLE_BILLING_SERVICE_ACCOUNT_JSON contains a local file path; paste the JSON file contents into Vercel instead'
+        : 'GOOGLE_BILLING_SERVICE_ACCOUNT_JSON must contain the complete JSON object',
+    )
+  }
+  let credentials: {
     client_email?: string
     private_key?: string
     token_uri?: string
+  }
+  try {
+    credentials = JSON.parse(raw) as typeof credentials
+  } catch {
+    throw new Error('GOOGLE_BILLING_SERVICE_ACCOUNT_JSON is not valid JSON')
   }
   if (!credentials.client_email || !credentials.private_key) {
     throw new Error('Google billing service account JSON is incomplete')
