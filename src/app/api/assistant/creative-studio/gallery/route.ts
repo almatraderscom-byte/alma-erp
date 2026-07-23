@@ -160,7 +160,8 @@ export async function GET(req: NextRequest) {
       familyPreset: payload.familyPreset ?? null,
       // CS6 — engine lineage metadata (fal VTON): engine id, request id, seed,
       // latency and actual cost, straight from the worker's result.
-      engine: (result.falEngine as string | undefined) ?? (payload.falEngine as string | undefined) ?? null,
+      engine: (result.falEngine as string | undefined) ?? (payload.falEngine as string | undefined)
+        ?? (result.xaiEngine as string | undefined) ?? (payload.xaiEngine as string | undefined) ?? null,
       endpointId: (result.falEndpointId as string | undefined) ?? null,
       requestId: (result.requestId as string | undefined) ?? null,
       seed: (result.seed as number | undefined) ?? null,

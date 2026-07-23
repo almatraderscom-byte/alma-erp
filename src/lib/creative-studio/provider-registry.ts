@@ -19,28 +19,31 @@ export type StudioEngineId =
   | 'fal_fashn_v16' // fal-ai/fashn/tryon/v1.6 — commercial Fal try-on
   | 'fal_idm_vton' // fal-ai/cat-vton — IDM-VTON-style, research-only
   | 'fal_flux_fill' // fal-ai/flux-pro/v1/fill — masked precision edit
+  | 'xai_imagine' // xAI Grok Imagine (grok-imagine-image-quality) — generation + natural-language edit, up to 3 references
 
 export type EngineCommercialStatus = 'production' | 'commercial' | 'research_only'
 
-export type EngineEnvKey = 'FASHN_API_KEY' | 'GEMINI_API_KEY' | 'FAL_KEY'
+export type EngineEnvKey = 'FASHN_API_KEY' | 'GEMINI_API_KEY' | 'FAL_KEY' | 'XAI_API_KEY'
 
 /** Owner-tunable kv flags (agent_kv_settings) that gate the Fal engines. */
 export const CS_FAL_ENABLED_KEY = 'cs_fal_enabled'
 export const CS_IDM_VTON_ENABLED_KEY = 'cs_idm_vton_enabled'
 export const CS_FLUX_FILL_ENABLED_KEY = 'cs_flux_fill_enabled'
 export const CS_SINGLE_VTON_DEFAULT_KEY = 'cs_single_vton_default'
+export const CS_XAI_ENABLED_KEY = 'cs_xai_enabled'
 
 export type EngineSettingsFlag =
   | typeof CS_FAL_ENABLED_KEY
   | typeof CS_IDM_VTON_ENABLED_KEY
   | typeof CS_FLUX_FILL_ENABLED_KEY
+  | typeof CS_XAI_ENABLED_KEY
 
 export type StudioEngine = {
   id: StudioEngineId
   label: string
   labelBn: string
-  /** upstream vendor bucket for cost attribution ('fashn' | 'google' | 'fal') */
-  vendor: 'fashn' | 'google' | 'fal'
+  /** upstream vendor bucket for cost attribution ('fashn' | 'google' | 'fal' | 'xai') */
+  vendor: 'fashn' | 'google' | 'fal' | 'xai'
   /** exact Fal queue endpoint id — only for Fal-backed engines */
   falEndpointId?: string
   status: EngineCommercialStatus
@@ -123,6 +126,22 @@ export const STUDIO_ENGINES: StudioEngine[] = [
     settingsFlag: CS_FLUX_FILL_ENABLED_KEY,
     runnable: true, // CS7: wired end to end (masked precision edit via worker)
     approxCost: '~$0.05/MP (রাউন্ড-আপ)',
+  },
+  {
+    // CS13 — xAI Grok Imagine: one engine that serves EVERY image mode.
+    // generate = pure text-to-image; the rest ride the natural-language edits
+    // endpoint (up to 3 reference images, multi-person allowed).
+    id: 'xai_imagine',
+    label: 'Grok Imagine (xAI)',
+    labelBn: 'Grok Imagine (xAI)',
+    vendor: 'xai',
+    status: 'commercial',
+    modes: ['generate', 'product_to_model', 'try_on', 'model_swap', 'face_to_model', 'edit'],
+    singlePersonOnly: false,
+    requiresEnv: 'XAI_API_KEY',
+    settingsFlag: CS_XAI_ENABLED_KEY,
+    runnable: true,
+    approxCost: '~$0.05 (1K) / $0.07 (2K) প্রতি ছবি',
   },
 ]
 
@@ -247,6 +266,8 @@ export function describeEngineAvailability(input: {
   fashnConfigured: boolean
   geminiConfigured: boolean
   falConfigured: boolean
+  /** CS13 — XAI_API_KEY present (optional so older callers stay valid) */
+  xaiConfigured?: boolean
   flags: Partial<Record<EngineSettingsFlag, boolean>>
   /** CS12 — per-engine kill switches (killed ⇒ enabled:false regardless of flags) */
   kills?: Partial<Record<StudioEngineId, boolean>>
@@ -255,6 +276,7 @@ export function describeEngineAvailability(input: {
     FASHN_API_KEY: input.fashnConfigured,
     GEMINI_API_KEY: input.geminiConfigured,
     FAL_KEY: input.falConfigured,
+    XAI_API_KEY: Boolean(input.xaiConfigured),
   }
   return STUDIO_ENGINES.map((e) => {
     const killed = Boolean(input.kills?.[e.id])

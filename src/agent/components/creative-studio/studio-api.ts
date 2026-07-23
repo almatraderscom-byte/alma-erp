@@ -9,6 +9,8 @@ export type StudioConfig = {
   veoConfigured: boolean
   /** CS5 — FAL_KEY present on the server (foundation; engines runnable from CS6/CS7) */
   falConfigured: boolean
+  /** CS13 — XAI_API_KEY present on the server (Grok Imagine engine) */
+  xaiConfigured: boolean
   /** CS5 — registry availability snapshot (identity/status/flags, truthful when key missing) */
   engines: EngineAvailability[]
   /** CS5 — owner default for single-person Try-On (used from CS6) */
@@ -555,6 +557,8 @@ export type StudioSettings = {
   falEnabled: boolean
   idmVtonEnabled: boolean
   fluxFillEnabled: boolean
+  /** CS13 — xAI Grok Imagine master switch */
+  xaiEnabled: boolean
   singleVtonDefault: StudioEngineId
   /** CS8 — Preview (১টি সাশ্রয়ী রান) vs Production (কড়া QC + bounded repair) */
   pipelineMode: 'preview' | 'production'
@@ -573,6 +577,7 @@ export async function saveStudioSettings(patch: {
   falEnabled?: boolean
   idmVtonEnabled?: boolean
   fluxFillEnabled?: boolean
+  xaiEnabled?: boolean
   singleVtonDefault?: StudioEngineId
   pipelineMode?: 'preview' | 'production'
 }) {

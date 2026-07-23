@@ -2,6 +2,7 @@ import type { ChatTryOnVariant } from '@/lib/tryon/tryon-batch'
 import type { FashnModelName, FashnResolution, FashnGenerationMode } from '@/lib/fashn/types'
 
 export type StudioModeId =
+  | 'generate'
   | 'product_to_model'
   | 'try_on'
   | 'model_swap'
@@ -23,6 +24,8 @@ export const STUDIO_MODES: Array<{
   needsSource?: boolean
   isVideo?: boolean
 }> = [
+  // CS13 — pure text-to-image (xAI Grok Imagine); no input photos needed
+  { id: 'generate', label: 'Generate', short: 'Generate', needsProduct: false, needsModel: false },
   { id: 'product_to_model', label: 'Product to Model', short: 'Product→Model', fashnModel: 'product-to-model', needsProduct: true, needsModel: false },
   { id: 'try_on', label: 'Try-On', short: 'Try-On', fashnModel: 'tryon-max', needsProduct: true, needsModel: true },
   { id: 'model_swap', label: 'Model Swap', short: 'Swap', fashnModel: 'model-swap', needsProduct: false, needsModel: true, needsSource: true },

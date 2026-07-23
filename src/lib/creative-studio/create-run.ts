@@ -21,12 +21,20 @@ import {
   CS_FAL_ENABLED_KEY,
   CS_FLUX_FILL_ENABLED_KEY,
   CS_IDM_VTON_ENABLED_KEY,
+  CS_XAI_ENABLED_KEY,
   getEngine,
   isFalVtonEngine,
   isVtonClothType,
   type StudioEngineId,
   type VtonClothType,
 } from '@/lib/creative-studio/provider-registry'
+import {
+  XAI_IMAGE_MODEL_QUALITY,
+  buildXaiRunBrief,
+  estimateXaiImageCostUsd,
+  toXaiAspectRatio,
+  toXaiResolution,
+} from '@/lib/creative-studio/xai-imagine'
 import { buildFillPrompt, estimateFluxFillCostUsd, type MaskPresetId } from '@/lib/creative-studio/mask-contract'
 import {
   buildRunPlan,
@@ -212,6 +220,58 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     })
     jobs.push({ pendingActionId: id, label: 'Family Merge', type: 'image_gen' })
     return { jobs, provider: 'gemini', fashnReady: isFashnConfigured() }
+  }
+
+  // ── CS13: xAI Grok Imagine — one engine for every image mode ───────────────
+  // `generate` is text-to-image (xAI is its only server); every other mode is
+  // a natural-language edit with 1–3 ordered references. Family presets ride
+  // the same edit call via the deterministic family prompt. The masked-edit
+  // flow (maskPath) stays on FLUX Fill — xAI edits are maskless by design.
+  if (
+    (input.vtonEngine === 'xai_imagine' || input.mode === 'generate')
+    && !input.maskPath
+    && input.mode !== 'image_to_video'
+  ) {
+    if (!process.env.XAI_API_KEY?.trim()) throw new Error('xai_not_configured')
+    if ((await readKv(CS_XAI_ENABLED_KEY)) !== '1') throw new Error('xai_engine_disabled')
+
+    const brief = buildXaiRunBrief({
+      mode: input.mode,
+      prompt: input.prompt,
+      backgroundPrompt: input.backgroundPrompt,
+      familyPrompt: input.familyPreset && input.familyPreset !== 'single' ? familyPrompt(input.familyPreset) : undefined,
+      productImagePath: input.productImagePath,
+      modelImagePath: input.modelImagePath,
+      sourceImagePath: input.sourceImagePath,
+      faceReferencePath: input.faceReferencePath,
+    })
+    const engine = getEngine('xai_imagine')
+    const xaiResolution = toXaiResolution(input.resolution)
+    const count = Math.min(Math.max(input.numImages ?? 1, 1), 4)
+    for (let i = 0; i < count; i++) {
+      const id = await createApprovedAction({
+        type: 'image_gen',
+        payload: {
+          provider: 'xai',
+          xaiEngine: 'xai_imagine',
+          xaiModel: XAI_IMAGE_MODEL_QUALITY,
+          xaiOp: brief.op,
+          referenceImagePaths: brief.referenceImagePaths,
+          prompt: brief.prompt,
+          aspectRatio: toXaiAspectRatio(input.aspectRatio ?? '4:5'),
+          resolution: xaiResolution,
+          creativeStudio: true,
+          studioMode: input.mode,
+          familyPreset: input.familyPreset ?? 'single',
+          productImagePath: input.productImagePath,
+          modelImagePath: input.modelImagePath,
+        },
+        summary: `🎨 Studio ${modeDef.label}${count > 1 ? ` #${i + 1}` : ''} (${engine.label})`,
+        costEstimate: estimateXaiImageCostUsd(xaiResolution),
+      })
+      jobs.push({ pendingActionId: id, label: `${modeDef.label} · ${engine.label}`, type: 'image_gen' })
+    }
+    return { jobs, provider: 'xai_imagine', fashnReady }
   }
 
   // FAMILY ACCURACY CHAIN — the assembly line (adult FASHN shot → child garment →
