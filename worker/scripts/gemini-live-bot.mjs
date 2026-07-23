@@ -539,11 +539,16 @@ class Call {
         // Twilio Media Streams transport (WhatsApp live calls ride Twilio, not NGS):
         // same μ-law 8k media frames, but the ack key is `streamSid`, the call id is
         // `callSid`, and hangup = close the <Connect><Stream> ws (no NGS DELETE).
-        if (m.start?.streamSid) {
+        // Dialect rule PROVEN in sarvam-media.mjs: NGS puts streamId at the TOP level
+        // and has no nested `start` object; Twilio nests everything under `start`.
+        // (Guard on !m.streamId too so an NGS frame can never be misread as Twilio —
+        // that misread would ack media with the wrong key = silent call.)
+        if (m.start && !m.streamId) {
           this.transport = 'twilio'
           this.streamKey = 'streamSid'
           this.callId = this.callId ?? m.start?.callSid ?? null
         }
+        console.log(`[glive] ${this.id} transport=${this.transport ?? 'ngs'} streamKey=${this.streamKey} stream=${this.streamSid}`)
         const fail = authFailReason(this.params)
         if (fail) {
           console.log(`[glive] ${this.id} AUTH FAIL (${fail}) — rejecting call=${this.callId}`)
