@@ -66,21 +66,24 @@ export async function GET(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
-  const rows = await db.agentPendingAction.findMany({
-    where: {
-      type: { in: ['image_gen', 'video_gen', 'video_edit', 'audio_gen'] },
-    },
-    orderBy: { createdAt: 'desc' },
-    take: limit + 50,
-    skip: 0,
-  })
-
-  const filtered = rows.filter((r: { payload: unknown }) => {
-    const p = r.payload as Record<string, unknown> | null
-    return p?.creativeStudio === true
-  })
-
-  const slice = filtered.slice(skip, skip + limit)
+  // Filter creativeStudio IN SQL (JSONB path), not in memory. The old version
+  // fetched only the newest `limit + 50` rows of these types and then filtered —
+  // chat/marketing image_gen rows pushed older studio assets out of that window,
+  // so the gallery silently lost them (live bug 2026-07-23: 69 assets in DB,
+  // at most 43 reachable) and `total`/pagination were wrong.
+  const where = {
+    type: { in: ['image_gen', 'video_gen', 'video_edit', 'audio_gen'] },
+    payload: { path: ['creativeStudio'], equals: true },
+  }
+  const [total, slice] = await Promise.all([
+    db.agentPendingAction.count({ where }),
+    db.agentPendingAction.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      skip,
+    }),
+  ])
 
   type Row = {
     id: string
@@ -198,7 +201,7 @@ export async function GET(req: NextRequest) {
   return Response.json({
     items,
     page,
-    total: filtered.length,
-    hasMore: skip + limit < filtered.length,
+    total,
+    hasMore: skip + limit < total,
   })
 }
