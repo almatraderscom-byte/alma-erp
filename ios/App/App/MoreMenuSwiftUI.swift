@@ -106,7 +106,7 @@ struct MorePulseAlert: Decodable, Identifiable, Equatable {
     }
     var tint: Color {
         switch kind {
-        case "fine": return Color(red: 0.878, green: 0.478, blue: 0.373)       // coral
+        case "fine": return AlmaSwiftTheme.coral       // coral
         case "missed_call": return Color(red: 0.94, green: 0.62, blue: 0.25)   // amber
         case "agent": return Color(red: 0.655, green: 0.545, blue: 0.980)      // violet
         default: return Color(red: 0.35, green: 0.62, blue: 0.95)              // sky
@@ -248,15 +248,30 @@ enum AlmaAccent: String, CaseIterable {
         case .amber: return "Amber"
         }
     }
-    /// Swatch colour — same hex the web maps to --c-accent (theme.ts).
-    var color: Color {
+    /// Base RGB — same hex the web maps to --c-accent (theme.ts).
+    private var rgb: (Double, Double, Double) {
         switch self {
-        case .coral: return Color(red: 224/255, green: 122/255, blue: 95/255)   // #E07A5F
-        case .blue: return Color(red: 59/255, green: 130/255, blue: 246/255)    // #3B82F6
-        case .green: return Color(red: 34/255, green: 167/255, blue: 122/255)   // #22A77A
-        case .violet: return Color(red: 139/255, green: 92/255, blue: 246/255)  // #8B5CF6
-        case .amber: return Color(red: 217/255, green: 152/255, blue: 49/255)   // #D99831
+        case .coral: return (224/255, 122/255, 95/255)   // #E07A5F
+        case .blue: return (59/255, 130/255, 246/255)    // #3B82F6
+        case .green: return (34/255, 167/255, 122/255)   // #22A77A
+        case .violet: return (139/255, 92/255, 246/255)  // #8B5CF6
+        case .amber: return (217/255, 152/255, 49/255)   // #D99831
         }
+    }
+    private func mixed(toward target: Double, by t: Double) -> Color {
+        let (r, g, b) = rgb
+        return Color(red: r + (target - r) * t,
+                     green: g + (target - g) * t,
+                     blue: b + (target - b) * t)
+    }
+    var color: Color { let (r, g, b) = rgb; return Color(red: r, green: g, blue: b) }
+    /// Light tint of the accent (coral -> #F4A28C class) — palettes' old goldLt.
+    var lt: Color { mixed(toward: 1, by: 0.42) }
+    /// Darker press/dim shade (coral -> #C45A3C class) — palettes' old goldDim.
+    var dim: Color { mixed(toward: 0, by: 0.16) }
+    var uiColor: UIColor {
+        let (r, g, b) = rgb
+        return UIColor(red: r, green: g, blue: b, alpha: 1)
     }
 
     static var current: AlmaAccent {
@@ -775,7 +790,7 @@ private struct AlertsHeroCard: View {
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 7).padding(.vertical, 3)
-                                .background(Color(red: 0.878, green: 0.478, blue: 0.373), in: Capsule())
+                                .background(AlmaSwiftTheme.coral, in: Capsule())
                         }
                     }
                     if vm.alerts.isEmpty {
@@ -836,7 +851,7 @@ private struct AlertsHeroCard: View {
             if let amount = alert.amount, amount != 0 {
                 Text("৳\(amount.formatted())")
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
+                    .foregroundStyle(AlmaSwiftTheme.coral)
             }
         }
     }
@@ -900,7 +915,7 @@ private struct ProgressHeroCard: View {
     private func barColor(_ pct: Int) -> Color {
         if pct >= 75 { return Color(red: 0.506, green: 0.698, blue: 0.604) }  // sage
         if pct >= 45 { return Color(red: 0.94, green: 0.62, blue: 0.25) }     // amber
-        return Color(red: 0.878, green: 0.478, blue: 0.373)                   // coral
+        return AlmaSwiftTheme.coral                   // coral
     }
 
     @ViewBuilder
@@ -1011,7 +1026,7 @@ private struct MoreProfileSheet: View {
     @State private var signingOut = false
 
     private var violet: Color { Color(red: 0.655, green: 0.545, blue: 0.980) }
-    private var coral: Color { Color(red: 0.878, green: 0.478, blue: 0.373) }
+    private var coral: Color { AlmaSwiftTheme.coral }
 
     var body: some View {
         ScrollView {
@@ -1206,7 +1221,7 @@ private struct MoreProfileSheet: View {
                     Spacer()
                 }
                 .padding(.leading, 44)
-                Text("ওয়েব পেজগুলোতে পরের লোড থেকে নতুন রং কার্যকর হবে")
+                Text("নেটিভ স্ক্রিনে পরের স্ক্রিন খোলা থেকে, ওয়েব পেজে পরের লোড থেকে নতুন রং কার্যকর হবে")
                     .font(.caption2).foregroundStyle(.secondary)
                     .padding(.leading, 44)
             }
@@ -1465,11 +1480,11 @@ private struct MoreChangePasswordSheet: View {
                 }
                 if !confirm.isEmpty && confirm != newPassword {
                     Text("দুইবার লেখা password মিলছে না")
-                        .font(.caption).foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
+                        .font(.caption).foregroundStyle(AlmaSwiftTheme.coral)
                 }
                 if let errorText {
                     Text(errorText).font(.caption)
-                        .foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
+                        .foregroundStyle(AlmaSwiftTheme.coral)
                 }
                 Button {
                     Task { await submit() }
@@ -1559,7 +1574,7 @@ private struct MoreEditContactSheet: View {
                 .ordersGlass(scheme, corner: AlmaSwiftTheme.rCard)
                 if let errorText {
                     Text(errorText).font(.caption)
-                        .foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
+                        .foregroundStyle(AlmaSwiftTheme.coral)
                 }
                 Button {
                     Task { await submit() }

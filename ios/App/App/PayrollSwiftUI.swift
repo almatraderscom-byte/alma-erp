@@ -38,9 +38,9 @@ import SwiftUI
 // MARK: - Web palette (exact hexes from globals.css / tailwind tokens)
 
 private enum PayrollPalette {
-    static let coral = AlmaSwiftTheme.coral                                  // web --c-accent  #E07A5F
-    static let goldLt = Color(red: 0.957, green: 0.635, blue: 0.549)         // #F4A28C
-    static let goldDim = Color(red: 0.769, green: 0.353, blue: 0.235)        // #C45A3C
+    static var coral: Color { AlmaSwiftTheme.coral }
+    static var goldLt: Color { AlmaSwiftTheme.accentLt }
+    static var goldDim: Color { AlmaSwiftTheme.accentDim }
     static let red500 = Color(red: 0.937, green: 0.267, blue: 0.267)         // #EF4444
     static let red400 = Color(red: 0.973, green: 0.443, blue: 0.443)         // #F87171
     static let amber600 = Color(red: 0.851, green: 0.467, blue: 0.024)       // #D97706
@@ -1761,7 +1761,14 @@ private struct PayrollPendingRequestCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline) {
-                Text("\(request.type.replacingOccurrences(of: "_", with: " ")) · \(employeeName)")
+                // Advance vs withdrawal must be unmistakable — the owner approved an
+                // advance thinking it was a payout (2026-07-23). Bangla + color chip.
+                Text(request.type == "ADVANCE" ? "অগ্রিম (ধার)" : request.type == "WITHDRAWAL" ? "উত্তোলন (টাকা পাঠাতে হবে)" : request.type.replacingOccurrences(of: "_", with: " "))
+                    .font(.caption2.weight(.heavy))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background((request.type == "ADVANCE" ? PayrollPalette.amber500 : Color.blue).opacity(0.15), in: Capsule())
+                    .foregroundStyle(request.type == "ADVANCE" ? PayrollPalette.amber600 : Color.blue)
+                Text(employeeName)
                     .font(.footnote.weight(.bold))
                     .lineLimit(1)
                 Spacer()
@@ -1874,9 +1881,16 @@ private struct PayrollReviewSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Approve wallet request").font(.headline)
-                Text("\(employeeName) · \(request.type.replacingOccurrences(of: "_", with: " ")) · চাওয়া হয়েছে ৳ \(request.requestedAmount.formatted())")
+                Text(request.type == "ADVANCE" ? "অগ্রিম (Advance) অনুমোদন" : "উত্তোলন (টাকা পাঠানো) অনুমোদন").font(.headline)
+                Text("\(employeeName) · চাওয়া হয়েছে ৳ \(request.requestedAmount.formatted())")
                     .font(.caption).foregroundStyle(.secondary)
+                Text(request.type == "ADVANCE"
+                     ? "অগ্রিম = বেতনের আগে ধার। অনুমোদনে টাকা staff-এর ওয়ালেটে জমা হবে — এখন টাকা পাঠানোর কিছু নেই, বিকাশও খুলবে না। হাতে নগদ দিলে নিচে চ্যানেল সিলেক্ট করুন; পরের বেতন থেকে অটো কাটা যাবে।"
+                     : "উত্তোলন = staff ওয়ালেটের জমা টাকা তুলছে — এখনই টাকা পাঠাতে হবে। বিকাশ সিলেক্ট করলে নম্বর কপি হয়ে বিকাশ খুলবে।")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 6) {
                     Text("APPROVED AMOUNT").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
                     TextField("Amount", text: $amountText)

@@ -261,9 +261,9 @@ private struct ShortcutEditorView: View {
 // MARK: - Web palette (exact hexes from globals.css / tailwind tokens)
 
 private enum DashPalette {
-    static let coral = AlmaSwiftTheme.coral                                   // gold / --c-accent #E07A5F
-    static let goldLt = Color(red: 0.957, green: 0.635, blue: 0.549)          // #F4A28C
-    static let goldDim = Color(red: 0.769, green: 0.353, blue: 0.235)         // #C45A3C
+    static var coral: Color { AlmaSwiftTheme.coral }
+    static var goldLt: Color { AlmaSwiftTheme.accentLt }
+    static var goldDim: Color { AlmaSwiftTheme.accentDim }
     static let tan = Color(red: 0.831, green: 0.584, blue: 0.416)             // #D4956A
     static let sage = AlmaSwiftTheme.sage                                     // #81B29A
     static let violet = AlmaSwiftTheme.violet                                 // #a78bfa (Delivered)

@@ -18,7 +18,7 @@ import SwiftUI
 // MARK: - Palette (web tokens + AlmaSwiftTheme)
 
 private enum PLPalette {
-    static let coral = AlmaSwiftTheme.coral
+    static var coral: Color { AlmaSwiftTheme.coral }
     static let coralLt = Color(red: 0.957, green: 0.635, blue: 0.549) // #F4A28C
     static let coralDim = Color(red: 0.769, green: 0.353, blue: 0.235) // #C45A3C
 

@@ -78,7 +78,7 @@ struct AgentPalette {
     let dark: Bool
     init(_ scheme: ColorScheme) { dark = scheme == .dark }
 
-    static let coral    = Color(red: 0.878, green: 0.478, blue: 0.373) // #E07A5F
+    static var coral: Color { AlmaSwiftTheme.coral }
     static let coralDim = Color(red: 0.769, green: 0.353, blue: 0.235) // #C45A3C
     static let coralLt  = Color(red: 0.957, green: 0.635, blue: 0.549) // #F4A28C
     static let teal     = Color(red: 0.506, green: 0.698, blue: 0.604) // #81B29A
@@ -1783,7 +1783,10 @@ final class AssistantVM {
 
     // Sidebar / conversations (web AgentSidebar parity)
     var showSidebar = false
-    // Native voice-to-voice console
+    // One engine survives the full-screen Call UI being minimized to chat. A
+    // view-owned engine would tear down the WebSocket on dismiss and make the
+    // "চ্যাট" control silently end the call.
+    let voiceEngine = AlmaVoiceEngine()
     var showVoice = false
     var conversations: [AgentConversation] = []
     private var pinnedOverrides: [String: Bool] = [:]
@@ -6641,7 +6644,7 @@ final class AssistantVM {
             }
             do {
                 let data = try await AssistantNet.uploadMultipart(
-                    path: "/api/assistant/transcribe", fileField: "file",
+                    path: "/api/assistant/transcribe", fileField: "audio",
                     filename: "dictation.m4a", mime: "audio/mp4", data: audio)
                 let t = try JSONDecoder().decode(TranscribeResponse.self, from: data)
                 if let text = t.text, !text.isEmpty {
@@ -8833,6 +8836,10 @@ struct AgentConfirmCardView: View {
         }
     }
     private var statusLabel: String {
+        if card.actionType == "agent_voice_call" {
+            if card.status == "approved" { return "কল চলছে — রিপোর্টের অপেক্ষা" }
+            if card.status == "executed" { return "কল শেষ — রিপোর্ট পাওয়া গেছে" }
+        }
         switch card.status {
         case "approved": return "অনুমোদিত"
         case "executed": return "সম্পন্ন হয়েছে"
@@ -13953,6 +13960,17 @@ struct AssistantScreen: View {
         }
         .fullScreenCover(isPresented: $vm.showVoice) {
             AlmaVoiceConsoleView(vm: vm)
+        }
+        .overlay(alignment: .top) {
+            if !vm.showVoice && vm.voiceEngine.isCallRunning {
+                AlmaVoiceCallMiniBar(
+                    engine: vm.voiceEngine,
+                    reopen: { vm.showVoice = true },
+                    end: { vm.voiceEngine.end() }
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(50)
+            }
         }
         .fullScreenCover(item: $debugViewer) { PortalImageViewer(preview: $0, showsSave: true) }
         .sheet(item: $toolSheet) { tool in

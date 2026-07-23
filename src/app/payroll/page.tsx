@@ -1071,7 +1071,7 @@ export default function PayrollPage() {
           <div className="space-y-4">
             <Card className="border-amber-100 p-5">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm font-bold text-cream">উত্তোলন অনুরোধ</p>
+                <p className="text-sm font-bold text-cream">ওয়ালেট অনুরোধ — অগ্রিম ও উত্তোলন</p>
                 <Button size="xs" variant="secondary" type="button" onClick={() => void loadWallets()}>রিফ্রেশ</Button>
               </div>
               {walletLoading ? (
@@ -1083,7 +1083,12 @@ export default function PayrollPage() {
                   {walletData!.pendingRequests.map(req => (
                     <div key={req.id} className="flex flex-col gap-3 rounded-2xl border border-white/[0.06] p-4 text-[11px] transition-colors hover:bg-white/[0.04]/50 sm:flex-row sm:items-center">
                       <div className="min-w-0 flex-1">
-                        <p className="font-semibold text-cream">{WALLET_TYPE_LABEL_BN[req.type] ?? req.type.replace(/_/g, ' ')} · {req.employeeId}</p>
+                        <p className="font-semibold text-cream">
+                          <span className={`mr-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${req.type === 'ADVANCE' ? 'bg-amber-500/15 text-amber-500' : 'bg-sky-500/15 text-sky-400'}`}>
+                            {req.type === 'ADVANCE' ? 'অগ্রিম (ধার)' : 'উত্তোলন (টাকা পাঠাতে হবে)'}
+                          </span>
+                          {req.employeeId}
+                        </p>
                         <p className="mt-1 text-muted">{req.reason.slice(0, 160)}{req.reason.length > 160 ? '…' : ''}</p>
                         <p className="mt-1 text-[10px] text-muted">{req.businessId.replace(/_/g, ' ')} · {req.createdAt.slice(0, 10)}</p>
                       </div>
@@ -1438,11 +1443,20 @@ export default function PayrollPage() {
           <Card className="mobile-modal-shell w-full max-w-md border-gold/20 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <p className="text-sm font-bold text-cream">
-                {review.action === 'APPROVE' ? 'উত্তোলন অনুরোধ অনুমোদন' : 'উত্তোলন অনুরোধ প্রত্যাখ্যান'}
+                {review.type === 'ADVANCE'
+                  ? (review.action === 'APPROVE' ? 'অগ্রিম (Advance) অনুরোধ অনুমোদন' : 'অগ্রিম অনুরোধ প্রত্যাখ্যান')
+                  : (review.action === 'APPROVE' ? 'উত্তোলন (টাকা পাঠানো) অনুমোদন' : 'উত্তোলন অনুরোধ প্রত্যাখ্যান')}
               </p>
               <p className="mt-1 text-xs text-muted">
                 অনুরোধকৃত পরিমাণ: <span className="font-mono font-bold text-gold">৳ {review.requestedAmount.toLocaleString('en-BD')}</span>
               </p>
+              {review.action === 'APPROVE' && (
+                <p className="mt-2 rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[11px] leading-relaxed text-muted">
+                  {review.type === 'ADVANCE'
+                    ? 'অগ্রিম = বেতনের আগে ধার। অনুমোদন করলে টাকা staff-এর ওয়ালেটে জমা হবে — আপনার এখন টাকা পাঠানোর কিছু নেই, বিকাশও খুলবে না। হাতে/বিকাশে নগদ দিয়ে থাকলে নিচে চ্যানেল সিলেক্ট করুন। পরের বেতন থেকে অটো কাটা যাবে।'
+                    : 'উত্তোলন = staff তার ওয়ালেটের জমা টাকা তুলছে — আপনাকে এখনই টাকা পাঠাতে হবে। বিকাশ সিলেক্ট করলে নম্বর কপি হয়ে বিকাশ অ্যাপ খুলবে।'}
+                </p>
+              )}
             </div>
             <div className="mobile-modal-body px-5">
               {review.action === 'APPROVE' && (

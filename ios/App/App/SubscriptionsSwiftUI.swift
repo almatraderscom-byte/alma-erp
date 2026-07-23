@@ -24,7 +24,7 @@ import SwiftUI
 // MARK: - Palette
 
 private enum SubPalette {
-    static let coral = Color(red: 0.878, green: 0.478, blue: 0.373)
+    static var coral: Color { AlmaSwiftTheme.coral }
     static let violet = Color(red: 0.655, green: 0.545, blue: 0.980)
     static let gold = Color(red: 0.831, green: 0.659, blue: 0.294)
     static let goldLt = Color(red: 0.933, green: 0.706, blue: 0.561)

@@ -249,7 +249,7 @@ struct ClaudeTopFadeDemo: View {
 
     private func rowColor(_ i: Int) -> Color {
         let palette: [Color] = [
-            Color(red: 0.878, green: 0.478, blue: 0.373), // coral
+            AlmaSwiftTheme.coral, // coral
             Color(red: 0.655, green: 0.545, blue: 0.980), // violet
             Color(red: 0.506, green: 0.698, blue: 0.604), // sage
         ]

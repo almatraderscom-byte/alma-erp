@@ -777,7 +777,7 @@ private struct OrderCard: View {
             HStack {
                 Text(order.id)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
+                    .foregroundStyle(AlmaSwiftTheme.coral)
                 if let d = order.date, !d.isEmpty {
                     Text(d).font(.caption).foregroundStyle(.secondary)
                 }
@@ -1805,7 +1805,7 @@ private struct OrdBentoHeroCard: View {
     let profit: Int
     let orders: Int
 
-    private static let goldLt = Color(red: 0.957, green: 0.635, blue: 0.549)  // #F4A28C
+    private static var goldLt: Color { AlmaSwiftTheme.accentLt }
     private static let green400 = Color(red: 0.290, green: 0.871, blue: 0.502) // #4ADE80
     private static let red500 = Color(red: 0.937, green: 0.267, blue: 0.267)   // #EF4444
 

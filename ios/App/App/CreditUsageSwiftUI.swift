@@ -35,7 +35,7 @@ import SwiftUI
 // MARK: - Palette (exact web PROVIDER_COLORS)
 
 private enum CUPalette {
-    static let coral = Color(red: 0.878, green: 0.478, blue: 0.373)   // #E07A5F
+    static var coral: Color { AlmaSwiftTheme.coral }
     static let violet = Color(red: 0.655, green: 0.545, blue: 0.980)  // #A78BFA
     static let sage = Color(red: 0.506, green: 0.698, blue: 0.604)    // #81B29A
     static let gold = Color(red: 0.831, green: 0.659, blue: 0.294)    // #D4A84B

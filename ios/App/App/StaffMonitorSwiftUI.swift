@@ -33,9 +33,9 @@ import SwiftUI
 // MARK: - Web palette (exact hexes from globals.css / tailwind tokens)
 
 private enum StaffMonitorPalette {
-    static let coral = AlmaSwiftTheme.coral                                  // web --c-accent  #E07A5F
-    static let goldLt = Color(red: 0.957, green: 0.635, blue: 0.549)         // #F4A28C
-    static let goldDim = Color(red: 0.769, green: 0.353, blue: 0.235)        // #C45A3C
+    static var coral: Color { AlmaSwiftTheme.coral }
+    static var goldLt: Color { AlmaSwiftTheme.accentLt }
+    static var goldDim: Color { AlmaSwiftTheme.accentDim }
     static let red500 = Color(red: 0.937, green: 0.267, blue: 0.267)         // #EF4444
     static let amber600 = Color(red: 0.851, green: 0.467, blue: 0.024)       // #D97706
     static let amber500 = Color(red: 0.961, green: 0.620, blue: 0.043)       // #F59E0B
@@ -485,7 +485,7 @@ enum StaffMonitorTab: String, CaseIterable {
         case .agents: return Color(red: 0.659, green: 0.333, blue: 0.969)
         case .staff: return Color(red: 0.925, green: 0.282, blue: 0.600)
         case .feed: return Color(red: 0.133, green: 0.827, blue: 0.647)
-        case .system: return Color(red: 0.878, green: 0.478, blue: 0.373)
+        case .system: return AlmaSwiftTheme.coral
         }
     }
 }

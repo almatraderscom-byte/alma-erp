@@ -24,9 +24,9 @@ import SwiftUI
 // ── palette / format (file-local, same convention as PortalSwiftUI) ─────────
 
 private enum WSPalette {
-    static let coral = AlmaSwiftTheme.coral
-    static let goldLt = Color(red: 0.957, green: 0.635, blue: 0.549)   // #F4A28C
-    static let goldDim = Color(red: 0.769, green: 0.353, blue: 0.235)  // #C45A3C
+    static var coral: Color { AlmaSwiftTheme.coral }
+    static var goldLt: Color { AlmaSwiftTheme.accentLt }
+    static var goldDim: Color { AlmaSwiftTheme.accentDim }
     static let red500 = Color(red: 0.937, green: 0.267, blue: 0.267)   // #EF4444
     static let amber600 = Color(red: 0.851, green: 0.467, blue: 0.024) // #D97706
     static let emerald600 = Color(red: 0.020, green: 0.588, blue: 0.412)

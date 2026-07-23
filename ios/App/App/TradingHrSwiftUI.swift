@@ -23,11 +23,11 @@ import SwiftUI
 // MARK: - Web palette (exact hexes from globals.css / tailwind tokens)
 
 private enum TradingHrPalette {
-    static let coral = AlmaSwiftTheme.coral                                  // #E07A5F
+    static var coral: Color { AlmaSwiftTheme.coral }
     /// Trading accent — the ALMA sage green (#81B29A) the trading pages lead with.
     static let sage = Color(red: 0.51, green: 0.70, blue: 0.60)
-    static let goldLt = Color(red: 0.957, green: 0.635, blue: 0.549)         // #F4A28C
-    static let goldDim = Color(red: 0.769, green: 0.353, blue: 0.235)        // #C45A3C
+    static var goldLt: Color { AlmaSwiftTheme.accentLt }
+    static var goldDim: Color { AlmaSwiftTheme.accentDim }
     static let red500 = Color(red: 0.937, green: 0.267, blue: 0.267)         // #EF4444
     static let red400 = Color(red: 0.973, green: 0.443, blue: 0.443)         // #F87171
     static let amber600 = Color(red: 0.851, green: 0.467, blue: 0.024)       // #D97706
