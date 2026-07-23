@@ -1,7 +1,19 @@
 {
   "generatedFrom": "aios/G01-architecture-freeze",
-  "count": 101,
+  "count": 103,
   "violations": [
+    {
+      "file": "src/app/api/cron/call-escalations/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/guards",
+      "toZone": "agent"
+    },
+    {
+      "file": "src/app/api/cron/call-escalations/route.ts",
+      "fromZone": "erp-api",
+      "importSpec": "@/agent/lib/proactive-call",
+      "toZone": "agent"
+    },
     {
       "file": "src/app/api/cron/growth-digest/route.ts",
       "fromZone": "erp-api",

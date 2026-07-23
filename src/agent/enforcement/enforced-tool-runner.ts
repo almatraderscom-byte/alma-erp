@@ -12,11 +12,17 @@
  * read action runs. The model is only the brain that asks; this door decides.
  *
  * Model-agnostic by construction: `model` is a label used for audit only — the
- * decision is identical for every model. Deterministic (INV-01). This additional
- * door deliberately fails OPEN only for unknown tool identities so a stale list
- * cannot break ordinary turns; the canonical registry/policy guards remain in
- * force. Gated by `AIOS_ENFORCE` so it is OFF in production until the owner turns
- * it on (preview first).
+ * decision is identical for every model. Deterministic (INV-01).
+ *
+ * AIOS conformance cutover (audit P0-4, 2026-07-23):
+ *  - `AIOS_ENFORCE` now defaults ON — production enforcement is the default;
+ *    the flag remains as an explicit opt-out kill switch ('off'/'0'/'false').
+ *  - Unknown tools FAIL CLOSED: a name absent from the authored capability
+ *    manifest (the single source of truth every registered tool must appear in
+ *    — CI-enforced) is held for owner approval, never silently run.
+ *  - High-risk direct writes derive their action class from the manifest
+ *    (domain/mode/risk), so a new sensitive tool cannot slip through as
+ *    routine merely because this door's static list lagged.
  */
 import { decidePolicy, rbacLayer, type PolicyDecision } from '@/agent/policy';
 import { agentPrincipal } from '@/agent/identity/principals';
@@ -28,14 +34,19 @@ import { exportApprovalRule } from '@/agent/approvals/export-rule';
 import { isSuccess, type ExecutionIdentity } from '@/agent/contracts';
 import { prisma } from '@/lib/prisma';
 import { hashInput } from '@/agent/lib/policy/capability-token';
+import { TOOL_CLASSIFICATION } from '@/agent/tools/capability-classification';
 
-/** Is the mandatory door switched on? OFF by default (production-safe). */
+/**
+ * Is the mandatory door switched on? ON by default (audit P0-4: production
+ * enforcement defaults to ON). `AIOS_ENFORCE=off|0|false` is the explicit,
+ * owner-controlled opt-out; any other value (including unset) enforces.
+ */
 export function enforcementEnabled(): boolean {
   const v = (process.env.AIOS_ENFORCE ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'on';
+  return !(v === '0' || v === 'false' || v === 'off');
 }
 
-export type ActionClass = 'financial' | 'publishing' | 'hr' | 'export' | 'routine';
+export type ActionClass = 'financial' | 'publishing' | 'hr' | 'export' | 'routine' | 'unknown';
 
 /**
  * Exact pre-execution approval list. Every name exists in tools/registry.ts and
@@ -43,10 +54,7 @@ export type ActionClass = 'financial' | 'publishing' | 'hr' | 'export' | 'routin
  * registry are deliberately absent: their handler only creates its established
  * approval card, so blocking before that handler would prevent the real flow.
  *
- * Deliberate robustness rule approved by the owner: an unknown/new tool is
- * routine here (fail-open at this additional door). The canonical registry,
- * schema validation, authorization guard and the tool's own approval contract
- * still apply; AIOS may never break a normal turn merely because its list lags.
+ * These exact-name overrides take precedence over the manifest-derived class.
  */
 export const SENSITIVE_TOOL_ALLOWLIST: Readonly<Record<string, ActionClass>> = Object.freeze({
   send_whatsapp: 'publishing',
@@ -55,14 +63,56 @@ export const SENSITIVE_TOOL_ALLOWLIST: Readonly<Record<string, ActionClass>> = O
   camera_speak: 'publishing',
 });
 
-/** Classify a tool using exact identity only — never substring guessing. */
+/**
+ * High-risk writes this door deliberately does NOT hold (exact names, each with
+ * a reason — never substring guessing):
+ *  - approve_pending_dispatch / approve_pending_staff_message: they EXECUTE an
+ *    already-visible canonical approval; a second AIOS card would be a
+ *    duplicate approval for the same effect.
+ *  - live_browser_act: per-step browser action inside an authorized flow —
+ *    governed by the browser-runtime hard-stops, workflow guards and the
+ *    canonical tool guard; holding every step would break autonomous browsing.
+ */
+const HIGH_RISK_WRITE_EXEMPT: ReadonlySet<string> = new Set([
+  'approve_pending_dispatch',
+  'approve_pending_staff_message',
+  'live_browser_act',
+]);
+
+/** Manifest domain → action class for HIGH-risk direct writes. */
+const HIGH_RISK_DOMAIN_CLASS: Readonly<Record<string, ActionClass>> = Object.freeze({
+  wa: 'publishing',
+  alerts: 'publishing',
+  camera: 'publishing',
+  social: 'publishing',
+  content: 'publishing',
+  finance: 'financial',
+  bills: 'financial',
+  staff: 'hr',
+});
+
+/**
+ * Classify a tool using exact identity only — never substring guessing.
+ * Precedence: static allowlist → authored capability manifest → fail closed.
+ * A name absent from the manifest is 'unknown' (held for approval); a HIGH-risk
+ * direct write maps through its manifest domain, and an unmapped high-risk
+ * write is also 'unknown' — a sensitive tool can never default to routine.
+ */
 export function classifyTool(toolName: string): { action: string; resourceType: string; klass: ActionClass } {
   const n = toolName.trim().toLowerCase();
-  const klass = SENSITIVE_TOOL_ALLOWLIST[n] ?? 'routine';
+  let klass: ActionClass | undefined = SENSITIVE_TOOL_ALLOWLIST[n];
+  if (klass === undefined) {
+    const authored = TOOL_CLASSIFICATION[n];
+    if (!authored) klass = 'unknown'; // not in the manifest ⇒ fail closed
+    else if (authored.mode === 'write' && authored.risk === 'high' && !HIGH_RISK_WRITE_EXEMPT.has(n)) {
+      klass = HIGH_RISK_DOMAIN_CLASS[authored.domain] ?? 'unknown';
+    } else klass = 'routine';
+  }
   if (klass === 'financial') return { action: `wallet.${n}`, resourceType: 'wallet', klass };
   if (klass === 'publishing') return { action: `publish.${n}`, resourceType: 'post', klass };
   if (klass === 'hr') return { action: `hr.${n}`, resourceType: 'staff', klass };
   if (klass === 'export') return { action: `export.${n}`, resourceType: 'export', klass };
+  if (klass === 'unknown') return { action: `unknown.${n}`, resourceType: 'tool', klass };
   return { action: `tool.${n}`, resourceType: 'tool', klass: 'routine' };
 }
 
@@ -159,6 +209,15 @@ export function guardToolCall(input: {
       && Number(input.attributes?.tier) === 3) {
     return { allow: true, klass };
   }
+  // Fail closed (audit P0-4): a tool absent from the capability manifest, or a
+  // high-risk write with no mapped class, is NEVER run autonomously.
+  if (klass === 'unknown') {
+    return {
+      allow: false, status: 'NEEDS_APPROVAL', klass,
+      reasonCodes: ['UNKNOWN_TOOL'],
+      message: approvalMessage(klass),
+    };
+  }
   const principal = agentPrincipal(input.identity, ['agent']); // the model acts on the owner's behalf
 
   // 1) Policy (G11): the agent principal is allowed to REQUEST agent actions;
@@ -195,6 +254,7 @@ function approvalMessage(klass: ActionClass): string {
     case 'publishing': return 'Boss, এটা পাবলিকে যাবে — আপনার অনুমতি পেলে পোস্ট/পাঠাব।';
     case 'hr': return 'Boss, স্টাফ-সংক্রান্ত এই কাজটা আপনার অনুমতি ছাড়া করা যাবে না।';
     case 'export': return 'Boss, এই ডেটা এক্সপোর্টটা আপনার অনুমতি পেলে করব।';
+    case 'unknown': return 'Boss, এই কাজটা আমার নিরাপত্তা-তালিকায় নেই — আপনার অনুমতি ছাড়া চালাব না। অনুমতি দিলে করে ফেলব।';
     default: return 'Boss, এই কাজটা করার আগে আপনার অনুমতি দরকার।';
   }
 }

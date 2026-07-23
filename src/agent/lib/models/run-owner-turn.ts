@@ -1632,7 +1632,7 @@ async function* runAlternateProviderTurn(
               ownerInstructions: currentOwnerInstructions,
               toolName: call.name,
             })
-        // AIOS mandatory enforcement (flag-gated, OFF in prod): force EVERY model's
+        // AIOS mandatory enforcement (ON by default; AIOS_ENFORCE=off opts out): force EVERY model's
         // tool call through policy + autonomy/approval before it can run. A
         // sensitive action (money/publish/HR/export) is held for owner approval;
         // routine/read tools run. Identical decision for every model.

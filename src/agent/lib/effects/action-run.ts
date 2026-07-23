@@ -51,7 +51,11 @@ export function effectEngineSelection(opts: {
 }): EffectEngineSelection {
   if (opts.toolMode !== 'write') return { use: false, reason: 'not_a_write' }
   const flag = (opts.flag ?? '').trim().toLowerCase()
-  if (flag === 'on' || flag === 'true') return { use: true, reason: 'master_on' }
+  // Audit P0-4: the exactly-once effect engine is MANDATORY for mutations by
+  // default. Unset/empty ⇒ ON; 'off'/'0'/'false' is the explicit owner opt-out;
+  // 'canary' keeps the per-task-class pilot mode.
+  if (flag === 'off' || flag === '0' || flag === 'false') return { use: false, reason: 'master_off' }
+  if (flag === '' || flag === 'on' || flag === 'true') return { use: true, reason: 'master_on' }
   if (flag !== 'canary') return { use: false, reason: 'master_off' }
   const allowed = new Set(
     (opts.canaryClasses ?? '')
@@ -67,10 +71,13 @@ export function effectEngineSelection(opts: {
 
 /** Reads the live env into an effect-engine selection for a write tool. */
 export function effectEngineSelectionFromEnv(toolMode: 'read' | 'stage' | 'write', taskClass?: string): EffectEngineSelection {
+  // Unit tests have no database: an unset flag stays OFF under vitest so pure
+  // executor tests do not require a ledger. Production/dev unset ⇒ ON (P0-4).
+  const testDefault = process.env.VITEST || process.env.NODE_ENV === 'test' ? 'off' : undefined
   return effectEngineSelection({
     toolMode,
     taskClass,
-    flag: process.env.AGENT_EFFECT_ENGINE,
+    flag: process.env.AGENT_EFFECT_ENGINE ?? testDefault,
     canaryClasses: process.env.AGENT_EFFECT_ENGINE_CLASSES,
   })
 }

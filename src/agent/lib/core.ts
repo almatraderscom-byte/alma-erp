@@ -1472,7 +1472,7 @@ export async function* runAgentTurn(
             })
           : null
         const hookBlocked = preHookDecision && preHookDecision.action === 'block' ? preHookDecision : null
-        // AIOS mandatory enforcement (flag-gated, OFF in prod) — native Claude path.
+        // AIOS mandatory enforcement (ON by default; AIOS_ENFORCE=off opts out) — native Claude path.
         // Same door as the multi-model path: every tool call is forced through
         // policy + autonomy/approval before it can run.
         const aiosGuard = !ownerIntentViolation && !hookBlocked && enforcementEnabled()

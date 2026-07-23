@@ -1,0 +1,30 @@
+{
+  "certified": true,
+  "auditedCommit": "583baa327d8ed1d9ef54354d5a4a8ad9a5024f11",
+  "specCount": 200,
+  "reasonCodes": [],
+  "checklist": [
+    {
+      "id": "freeze-gate",
+      "satisfied": true
+    },
+    {
+      "id": "spec-evidence-readable",
+      "satisfied": true
+    },
+    {
+      "id": "no-admission-bypass",
+      "satisfied": true
+    },
+    {
+      "id": "no-gateway-bypass",
+      "satisfied": true
+    },
+    {
+      "id": "no-authorization-bypass",
+      "satisfied": true
+    }
+  ],
+  "digest": "3b345b814eab38484b3d09ceb756e9e5d1529b900e19952c25669b3a40705cc2",
+  "contract": "certification@1.0.0"
+}

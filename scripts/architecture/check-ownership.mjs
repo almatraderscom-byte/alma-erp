@@ -70,9 +70,37 @@ function checkOwner(owner, files) {
   process.exit(1);
 }
 
+/**
+ * CI-wide mode (SPEC-200 certification): the ONLY hard ownership invariant a
+ * general PR must satisfy is that the frozen legacy agent API
+ * (src/app/api/agent — CLAUDE.md Hard Rule 2, Hermes bot depends on it) is
+ * untouched. `--owner <G>` remains the strict per-spec-session check.
+ */
+function checkFrozen(files) {
+  if (files.length === 0) {
+    try {
+      const base = execSync('git merge-base HEAD origin/main', { encoding: 'utf8' }).trim();
+      files = execSync(`git diff --name-only ${base} HEAD`, { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+    } catch {
+      files = [];
+    }
+  }
+  const violations = files.filter((f) => resolveOwner(f)?.owner === 'frozen-legacy');
+  console.log(`frozen-zone check: ${files.length} changed file(s)`);
+  if (violations.length === 0) {
+    console.log('PASS — the frozen legacy agent API (src/app/api/agent) is untouched');
+    process.exit(0);
+  }
+  console.log(`FAIL — ${violations.length} change(s) inside the frozen legacy zone:`);
+  for (const f of violations) console.log(`  ${f}`);
+  process.exit(1);
+}
+
 const args = process.argv.slice(2);
 if (args.includes('--emit-codeowners')) {
   emitCodeowners();
+} else if (args.includes('--frozen')) {
+  checkFrozen(args.filter((a) => !a.startsWith('--')));
 } else {
   const oi = args.indexOf('--owner');
   const owner = oi >= 0 ? args[oi + 1] : 'G01';
