@@ -1650,7 +1650,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 ],
             ], [
                 "name": "run_agent_turn",
-                "description": "Boss-এর কথাটি ALMA head agent-এ পাঠায়।",
+                "description": "Boss-এর অনুরোধ ALMA head agent-এ পাঠায় — শুধু কাজ করা, কিছু পাঠানো/পরিবর্তন, অনুমোদন, মেমরি বা জটিল বিশ্লেষণের জন্য। সাধারণ তথ্য দেখার জন্য এটা নয় — সেগুলোতে quick_erp_lookup ব্যবহার করবে (অনেক দ্রুত)।",
                 "parameters": [
                     "type": "OBJECT",
                     "properties": ["request": ["type": "STRING"]],
