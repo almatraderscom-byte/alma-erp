@@ -26,6 +26,7 @@ export type TasteAttrs = {
 }
 
 export async function describeCreativeTaste(imageBase64: string, mimeType: string): Promise<TasteAttrs> {
+  await (await import('@/agent/lib/models/cost-gate')).assertPaidCallAllowed('creative_vision')
   const key = process.env.GEMINI_API_KEY
   if (!key) throw new Error('GEMINI_API_KEY not configured')
 

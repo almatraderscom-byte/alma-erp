@@ -24,6 +24,7 @@ export async function embed(text: string): Promise<EmbedResult> {
     return { success: false, error: 'OPENAI_API_KEY not configured' }
   }
   try {
+    await (await import('@/agent/lib/models/cost-gate')).assertPaidCallAllowed('embeddings')
     const client = getClient()
     const inputText = text.slice(0, 8000)
     const res = await client.embeddings.create({

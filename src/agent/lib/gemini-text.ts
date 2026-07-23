@@ -26,6 +26,7 @@ interface GeminiTextResponse {
 }
 
 export async function geminiGenerateText(opts: GeminiTextOpts): Promise<string> {
+  await (await import('@/agent/lib/models/cost-gate')).assertPaidCallAllowed('gemini_text')
   const key = process.env.GEMINI_API_KEY
   if (!key) throw new Error('GEMINI_API_KEY not configured')
 

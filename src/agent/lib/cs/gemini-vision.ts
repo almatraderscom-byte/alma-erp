@@ -36,6 +36,7 @@ export type VisionResult = {
 }
 
 export async function describeProductImage(imageBase64: string, mimeType: string): Promise<VisionResult> {
+  await (await import('@/agent/lib/models/cost-gate')).assertPaidCallAllowed('cs_vision', 'cs')
   const key = process.env.GEMINI_API_KEY
   if (!key) throw new Error('GEMINI_API_KEY not configured')
 

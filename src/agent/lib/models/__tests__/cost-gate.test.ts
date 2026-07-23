@@ -27,6 +27,14 @@ describe('cost gate pre-authorization (P0-2)', () => {
     expect(d.reason).toBe('monthly_budget')
   })
 
+  it('cs surface is exempt from budget stops but NOT from the kill switch', () => {
+    expect(decideCostGate({ ...base, dailyUsd: 5, todaySpendUsd: 10 }, 'cs').allow).toBe(true)
+    expect(decideCostGate({ ...base, monthlyUsd: 50, monthSpendUsd: 60 }, 'cs').allow).toBe(true)
+    const d = decideCostGate({ ...base, killSwitch: true }, 'cs')
+    expect(d.allow).toBe(false)
+    expect(d.reason).toBe('kill_switch')
+  })
+
   it('a zero/negative cap means "not configured", never block-everything', () => {
     expect(decideCostGate({ ...base, dailyUsd: 0, todaySpendUsd: 100 }).allow).toBe(true)
     expect(decideCostGate({ ...base, monthlyUsd: -1, monthSpendUsd: 100 }).allow).toBe(true)
