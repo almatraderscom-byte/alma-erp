@@ -1,9 +1,9 @@
 # Phase 69 — Accurate Subscription & Provider Billing Hub
 
-**Status:** Preview-ready; not merged or deployed to production  
-**Branch:** `agent-phase-69`  
-**Safety tag:** `pre-agent-phase-69`  
-**Implementation commit:** `aeba1196`  
+**Status:** Preview-ready; not merged or deployed to production
+**Branch:** `agent-phase-69`
+**Safety tag:** `pre-agent-phase-69`
+**Implementation commit:** `aeba1196`
 **Preview:** `https://alma-erp-git-agent-phase-69-maruf-s-projects2.vercel.app`
 
 ## Outcome
@@ -137,4 +137,3 @@ These are server-side secrets and were not copied, invented, or committed.
   `https://vercel.com/docs/rest-api/reference/endpoints/billing/retrieve-billing-charges`
 - Supabase Management API:
   `https://api.supabase.com/api/v1`
-
