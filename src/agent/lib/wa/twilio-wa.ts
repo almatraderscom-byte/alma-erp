@@ -378,3 +378,70 @@ export function validateTwilioSignature(
     return false
   }
 }
+
+// ── WhatsApp Business Calling: call-permission request ─────────────────────
+// Meta rule: a business may place a WhatsApp voice call only after the person
+// taps Allow on a call-permission request (valid 7 days / permanent; max 1
+// request per 24h, 2 per 7 days). The request is a `twilio/call-to-action`
+// content template whose ONLY button is VOICE_CALL_REQUEST, sent like any
+// template message. We create the template once via the Content API and cache
+// the ContentSid in agent_kv_settings (env TWILIO_WA_CALL_PERM_CONTENT_SID
+// overrides).
+
+const CALL_PERM_KV_KEY = 'wa_call_perm_content_sid'
+
+async function ensureCallPermissionContentSid(): Promise<{ sid?: string; error?: string }> {
+  const fromEnv = (process.env.TWILIO_WA_CALL_PERM_CONTENT_SID ?? '').trim()
+  if (fromEnv) return { sid: fromEnv }
+  const { prisma } = await import('@/lib/prisma')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const kv = prisma as any
+  try {
+    const row = await kv.agentKvSetting.findUnique({ where: { key: CALL_PERM_KV_KEY }, select: { value: true } })
+    const cached = typeof row?.value === 'string' ? row.value : String(row?.value ?? '')
+    if (cached.startsWith('H')) return { sid: cached }
+  } catch { /* fall through to create */ }
+
+  const sid = process.env.TWILIO_ACCOUNT_SID ?? ''
+  const token = process.env.TWILIO_AUTH_TOKEN ?? ''
+  const auth = Buffer.from(`${sid}:${token}`).toString('base64')
+  try {
+    const res = await fetch('https://content.twilio.com/v1/Content', {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        friendly_name: 'alma_wa_call_permission_request',
+        language: 'bn',
+        types: {
+          'twilio/call-to-action': {
+            body: 'আসসালামু আলাইকুম — ALMA থেকে মাঝে মাঝে জরুরি বিষয়ে WhatsApp-এ কল করার অনুমতি চাইছি। Allow চাপলে কল আসতে পারবে।',
+            actions: [{ type: 'VOICE_CALL_REQUEST', title: 'কল অনুমতি' }],
+          },
+        },
+      }),
+      signal: AbortSignal.timeout(20_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as { sid?: string; message?: string }
+    if (!res.ok || !data.sid) return { error: data.message ?? `Content API HTTP ${res.status}` }
+    await kv.agentKvSetting.upsert({
+      where: { key: CALL_PERM_KV_KEY },
+      create: { key: CALL_PERM_KV_KEY, value: data.sid },
+      update: { value: data.sid },
+    }).catch(() => {})
+    return { sid: data.sid }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** Send the WhatsApp call-permission request to a number. Best-effort, honest errors. */
+export async function requestWaCallPermission(to: string): Promise<{ sid?: string; error?: string }> {
+  if (!twilioWaConfigured()) return { error: 'Twilio WhatsApp not configured (set TWILIO_WHATSAPP_FROM).' }
+  const content = await ensureCallPermissionContentSid()
+  if (!content.sid) return { error: `permission template তৈরি হয়নি: ${content.error}` }
+  return twilioSendMessage({
+    From: toWhatsAppAddress(process.env.TWILIO_WHATSAPP_FROM ?? ''),
+    To: toWhatsAppAddress(to),
+    ContentSid: content.sid,
+  })
+}

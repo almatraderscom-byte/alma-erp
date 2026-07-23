@@ -43,6 +43,17 @@ export function dialAddresses(
   return { to: toNumber, from: twilioFromNumber }
 }
 
+/** Signed per-call token for the Twilio status callback (verified in the route). */
+export function signCallStatusToken(callRecordId: string, internalToken: string): string {
+  return createHmac('sha256', internalToken).update(`callstatus:${callRecordId}`).digest('hex')
+}
+
+function twilioStatusCallbackUrl(callRecordId: string, internalToken: string): string {
+  const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://alma-erp-six.vercel.app').replace(/\/$/, '')
+  const t = signCallStatusToken(callRecordId, internalToken)
+  return `${base}/api/assistant/voice-call/twilio-status?id=${encodeURIComponent(callRecordId)}&t=${t}`
+}
+
 /** Mark the pre-created call row failed and return the error result. */
 async function failCallRecord(callRecordId: string, error: string): Promise<PlaceCallResult> {
   await db.agentVoiceCall.update({
@@ -470,6 +481,11 @@ async function placeRelayCall(
       From: addr.from,
       Twiml: twiml,
       Timeout: '45',
+      // Terminal-status callback: a call that never connects (busy/no-answer/
+      // failed/permission-missing) must REPORT, not sit at 'ringing' forever —
+      // the owner saw exactly that silence on 2026-07-23. Signed per-call token.
+      StatusCallback: twilioStatusCallbackUrl(callRecordId, config.internalToken),
+      StatusCallbackMethod: 'POST',
     })
     const auth = Buffer.from(`${config.twilioAccountSid}:${config.twilioAuthToken}`).toString('base64')
     const res = await fetch(
@@ -566,6 +582,11 @@ async function placeSarvamMediaCall(
       From: addr.from,
       Twiml: twiml,
       Timeout: '45',
+      // Terminal-status callback: a call that never connects (busy/no-answer/
+      // failed/permission-missing) must REPORT, not sit at 'ringing' forever —
+      // the owner saw exactly that silence on 2026-07-23. Signed per-call token.
+      StatusCallback: twilioStatusCallbackUrl(callRecordId, config.internalToken),
+      StatusCallbackMethod: 'POST',
     })
     const auth = Buffer.from(`${config.twilioAccountSid}:${config.twilioAuthToken}`).toString('base64')
     const res = await fetch(
