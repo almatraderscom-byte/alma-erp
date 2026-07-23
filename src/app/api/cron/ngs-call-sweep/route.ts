@@ -10,7 +10,9 @@
 import { type NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { reportNgsCallOutcome } from '@/agent/lib/ngs-call-outcome'
-import { requireAgentEnabled } from '@/agent/lib/guards'
+// AGENT_ENABLED kill switch via the ERP-safe shared flag — this ERP-side cron
+// route must not import from src/agent/lib/guards (one-way boundary gate).
+import { isAgentEnabled } from '@/lib/agent-runtime-flag'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -20,8 +22,7 @@ export const maxDuration = 120
 const db = prisma as any
 
 export async function GET(req: NextRequest) {
-  const disabled = requireAgentEnabled()
-  if (disabled) return disabled
+  if (!isAgentEnabled()) return Response.json({ error: 'agent_disabled' }, { status: 503 })
   const secret = process.env.CRON_SECRET?.trim()
   if (!secret) return Response.json({ error: 'cron_unconfigured' }, { status: 503 })
   if (req.headers.get('authorization') !== `Bearer ${secret}`) {
