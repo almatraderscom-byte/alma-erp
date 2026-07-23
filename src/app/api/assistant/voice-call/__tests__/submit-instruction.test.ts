@@ -32,7 +32,8 @@ const mockTurnQueue = vi.hoisted(() => ({
 }))
 vi.mock('@/agent/lib/turn-queue', () => mockTurnQueue)
 
-import { POST, VOICE_INSTRUCTION_PREFIX } from '../submit-instruction/route'
+import { POST } from '../submit-instruction/route'
+import { VOICE_INSTRUCTION_PREFIX } from '@/agent/lib/voice-instruction'
 
 function makeReq(body: unknown, token = 'test-token') {
   return new Request('http://local/api/assistant/voice-call/submit-instruction', {
@@ -134,5 +135,10 @@ describe('bot ↔ route source contract', () => {
   it('bot handler double-checks owner call before bridging', () => {
     const handler = bot.slice(bot.indexOf("fc.name === 'submit_boss_instruction'"))
     expect(handler.slice(0, 400)).toContain('isOwnerCall()')
+  })
+
+  it('middleware allowlists the bridge path (live bug 2026-07-23: session wall 401ed the bot)', () => {
+    const mw = readFileSync(join(process.cwd(), 'src/middleware.ts'), 'utf8')
+    expect(mw).toContain("pathname === '/api/assistant/voice-call/submit-instruction'")
   })
 })

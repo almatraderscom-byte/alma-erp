@@ -22,15 +22,13 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isOwnerNumber } from '@/agent/lib/voice-call'
 import { createTurn } from '@/agent/lib/turn-status'
 import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
+import { VOICE_INSTRUCTION_PREFIX } from '@/agent/lib/voice-instruction'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
-
-/** Marker prefix the head prompt documents — makes the origin visible in chat (PA-4). */
-export const VOICE_INSTRUCTION_PREFIX = '🎙️ [ভয়েস কল থেকে নির্দেশ]'
 
 /** A call record older than this cannot submit instructions (stale id replay). */
 const MAX_CALL_AGE_MIN = 90
