@@ -238,6 +238,8 @@ class Call {
     this.reported = false        // post-call report fires exactly once
     this.forwarding = false      // forward_call queued — transfer after the hand-off line plays
     this.forwardReason = ''
+    this.transferred = false     // <Dial> bridge accepted — bot is OFF the audio path
+    this._xferIdle = null
   }
 
   // Merge streaming transcription fragments into speaker-segmented turns. Called with
@@ -436,7 +438,7 @@ class Call {
       return
     }
     const durationSecs = this.startedAt ? Math.max(0, Math.round((Date.now() - this.startedAt) / 1000)) : null
-    const status = this.callerSpoke ? 'completed' : 'no_answer'
+    const status = this.transferred ? 'completed' : this.callerSpoke ? 'completed' : 'no_answer'
     // Estimated ৳ cost so the owner can manage spend, rounded up to the minute the
     // way carriers bill. Rates differ by leg (both env-tunable):
     //   NGS PSTN trunk + Gemini Live ≈ ৳2.5–4.5/min (GLIVE_COST_PER_MIN_BDT, default 3.5)
@@ -446,7 +448,12 @@ class Call {
       ? Number(process.env.GLIVE_WA_COST_PER_MIN_BDT || 1.5)
       : Number(process.env.GLIVE_COST_PER_MIN_BDT || 3.5)
     const costBdt = durationSecs != null ? Math.round(Math.ceil(durationSecs / 60) * perMin) : null
-    const summary = this.turns.length > 0 ? await this.summarize(this.turns) : null
+    let summary = this.turns.length > 0 ? await this.summarize(this.turns) : null
+    if (this.transferred) {
+      summary = summary
+        ? `কলটি টিমের নম্বরে যুক্ত করে দেওয়া হয়েছে। ${summary}`
+        : 'কলটি টিমের নম্বরে যুক্ত করে দেওয়া হয়েছে।'
+    }
     const payload = { callRecordId, callSid: this.callId, transcript: this.turns, summary, durationSecs, status, costBdt, provider: this.transport === 'twilio' ? 'glive-wa' : 'ngs' }
     if (!APP_URL || !AUTH_TOKEN) {
       await persistCallReport(payload).catch((e) => console.log(`[glive] ${this.id} report persistence failed: ${e?.message || e}`))
@@ -512,11 +519,32 @@ class Call {
         const text = await res.text()
         console.log(`[glive] ${this.id} forward_call -> ${NGS_FORWARD_NUMBER} PUT ${res.status} ${text.slice(0, 120)}`)
         if (!res.ok) { this.forwarding = false; this._fwdTimer = null } // transfer refused — stay on the line
+        else this.quiesceAfterTransfer() // NGS accepted the bridge — get OFF the audio path
       } catch (e) {
         console.log(`[glive] ${this.id} forward PUT err ${e?.message || e}`)
         this.forwarding = false; this._fwdTimer = null
       }
     }, 500)
+  }
+
+  // Owner bug 2026-07-23: after a successful transfer both humans heard each other
+  // badly/not at all. Root cause: the bot NEVER stepped aside — the Gemini Live
+  // session kept listening and talking, and stale TTS frames kept flowing into the
+  // (now bridged) caller leg — a three-party audio mess. On a successful <Dial>
+  // PUT the bot must go fully silent: close the Gemini session, drop queued audio,
+  // ignore further inbound frames. The ws stays open only to catch 'stop' (closing
+  // it does NOT end the NGS call), with an idle timer as backstop; if the forward
+  // is unanswered NGS opens a FRESH ws session via the fallback <Connect><Stream>.
+  quiesceAfterTransfer() {
+    if (this.transferred) return
+    this.transferred = true
+    this.forwarding = false
+    this.out = Buffer.alloc(0)
+    this.playing = false
+    try { this.live?.close() } catch { /* */ }
+    this.live = null
+    console.log(`[glive] ${this.id} TRANSFERRED — bot off the audio path (ws idles for stop)`)
+    this._xferIdle = setTimeout(() => this.close(), 90_000)
   }
 
   // Bridge Gemini Live function calls. forward_call is handled LOCALLY (NGS transfer); the
@@ -624,7 +652,7 @@ class Call {
     this.closed = true
     // The asynchronous sender persists to disk before its first network request.
     void this.sendReport()
-    for (const t of [this.drainer, this.diag, this.maxTimer, this._hangTimer]) if (t) clearInterval(t)
+    for (const t of [this.drainer, this.diag, this.maxTimer, this._hangTimer, this._xferIdle]) if (t) clearInterval(t)
     try { this.live?.close() } catch { /* */ }
     try { this.ws?.close() } catch { /* */ }
     console.log(`[glive] ${this.id} CLOSED (in=${this.inChunks} chunks, out=${this.outMsgs} msgs)`)
