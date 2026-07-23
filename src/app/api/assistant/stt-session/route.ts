@@ -21,6 +21,12 @@ export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
+  // Composer dictation wants LIVE words: with turn_detection null the GA
+  // realtime API only transcribes after a commit (verified 2026-07-23 — deltas
+  // arrive post-commit, never during speech). server_vad makes OpenAI commit at
+  // each natural pause, so the words stream in while the owner is speaking.
+  const mode = ((await req.json().catch(() => ({}))) as { mode?: string }).mode
+
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
 
@@ -48,7 +54,9 @@ export async function POST(req: NextRequest) {
                 language: 'bn',
                 prompt: WHISPER_BANGLA_PROMPT,
               },
-              turn_detection: null,
+              turn_detection: mode === 'dictation'
+                ? { type: 'server_vad', threshold: 0.5, prefix_padding_ms: 200, silence_duration_ms: 350 }
+                : null,
             },
           },
         },
