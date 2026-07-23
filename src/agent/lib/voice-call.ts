@@ -22,6 +22,36 @@ import { sarvamVoiceFor } from '@/agent/lib/voice-provider-intent'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+/** Twilio WhatsApp addressing: `whatsapp:` + E164 (idempotent). */
+export function waDialAddress(number: string): string {
+  const n = number.trim()
+  return n.startsWith('whatsapp:') ? n : `whatsapp:${n}`
+}
+
+/** Resolve the Twilio To/From pair for a call leg on the given channel. */
+export function dialAddresses(
+  channel: 'phone' | 'whatsapp',
+  toNumber: string,
+  twilioFromNumber: string,
+): { to: string; from: string } {
+  if (channel === 'whatsapp') {
+    return {
+      to: waDialAddress(toNumber),
+      from: waDialAddress((process.env.TWILIO_WHATSAPP_FROM ?? '').trim()),
+    }
+  }
+  return { to: toNumber, from: twilioFromNumber }
+}
+
+/** Mark the pre-created call row failed and return the error result. */
+async function failCallRecord(callRecordId: string, error: string): Promise<PlaceCallResult> {
+  await db.agentVoiceCall.update({
+    where: { id: callRecordId },
+    data: { status: 'failed', providerStatus: 'failed', summary: error, endedAt: new Date() },
+  }).catch(() => {})
+  return { ok: false, error, callRecordId }
+}
+
 const ELEVEN_OUTBOUND_URL = 'https://api.elevenlabs.io/v1/convai/twilio/outbound-call'
 const DEFAULT_DAILY_CAP = 10
 /** The exact one-way voice the owner loves — now on two-way calls via ConversationRelay. */
@@ -172,6 +202,14 @@ export interface PlaceCallInput {
    * owner's behalf), or 'contact' (calling a saved family/friend contact). Only the
    * ngs (Gemini Live) provider uses this today. */
   callType?: 'owner' | 'staff' | 'contact'
+  /**
+   * Call leg: ordinary PSTN phone (default) or a WhatsApp voice call. WhatsApp
+   * rides the SAME live two-way pipeline (Twilio TwiML → relay/sarvam realtime
+   * bot) — only the Twilio addressing changes (whatsapp:+E164 both sides).
+   * Requires WHATSAPP_CALL_ENABLED=true + TWILIO_WHATSAPP_FROM, and per Meta's
+   * anti-spam rules the recipient must have granted call permission.
+   */
+  channel?: 'phone' | 'whatsapp'
 }
 
 export interface PlaceCallResult {
@@ -217,6 +255,27 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
       providerStatus: 'dispatching',
     },
   })
+
+  // WhatsApp leg: the SAME live realtime pipeline (Gemini brain + the owner's
+  // approved voice), only the transport changes — Twilio dials whatsapp:+E164
+  // instead of PSTN. NGS/ElevenLabs cannot carry WhatsApp, so the channel is
+  // pinned to a Twilio TwiML provider (sarvam default, relay via
+  // WHATSAPP_CALL_PROVIDER=relay) regardless of the phone-call provider.
+  if (input.channel === 'whatsapp') {
+    if (process.env.WHATSAPP_CALL_ENABLED !== 'true') {
+      return failCallRecord(record.id, 'WhatsApp calling বন্ধ (WHATSAPP_CALL_ENABLED kill switch)। চালু করে আবার চেষ্টা করুন।')
+    }
+    if (!(process.env.TWILIO_WHATSAPP_FROM ?? '').trim()) {
+      return failCallRecord(record.id, 'TWILIO_WHATSAPP_FROM সেট নেই — business WhatsApp নম্বরটা লাগবে।')
+    }
+    if (!config.relayWssUrl || !config.twilioAccountSid || !config.twilioAuthToken) {
+      return failCallRecord(record.id, 'WhatsApp live call-এর জন্য Twilio relay pipeline config (VOICE_RELAY_WSS_URL + Twilio creds) লাগে।')
+    }
+    if (process.env.WHATSAPP_CALL_PROVIDER === 'relay') {
+      return placeRelayCall(config, record.id, toNumber, firstMessage, purpose, input.recipientName, 'whatsapp')
+    }
+    return placeSarvamMediaCall(config, record.id, toNumber, firstMessage, purpose, input.recipientName, input.voiceGender, 'whatsapp')
+  }
 
   if (config.provider === 'ngs') {
     return placeNgsLiveCall(config, record.id, toNumber, purpose, input.recipientName, input.voiceGender, input.callType)
@@ -352,6 +411,7 @@ async function placeRelayCall(
   firstMessage: string,
   purpose: string,
   recipientName?: string,
+  channel: 'phone' | 'whatsapp' = 'phone',
 ): Promise<PlaceCallResult> {
   try {
     // Signature scheme mirrors worker/src/voice-relay/server.mjs signRelayToken().
@@ -404,9 +464,10 @@ async function placeRelayCall(
       `<Parameter name="recipientName" value="${escapeXmlAttr(recipientName ?? '')}"/>` +
       `</ConversationRelay></Connect></Response>`
 
+    const addr = dialAddresses(channel, toNumber, config.twilioFromNumber)
     const body = new URLSearchParams({
-      To: toNumber,
-      From: config.twilioFromNumber,
+      To: addr.to,
+      From: addr.from,
       Twiml: twiml,
       Timeout: '45',
     })
@@ -473,6 +534,7 @@ async function placeSarvamMediaCall(
   purpose: string,
   recipientName: string | undefined,
   voiceGender: 'male' | 'female' | undefined,
+  channel: 'phone' | 'whatsapp' = 'phone',
 ): Promise<PlaceCallResult> {
   try {
     const exp = Date.now() + 15 * 60_000
@@ -498,9 +560,10 @@ async function placeSarvamMediaCall(
       `<Parameter name="ttsModel" value="${escapeXmlAttr(voice.model)}"/>` +
       `</Stream></Connect></Response>`
 
+    const addr = dialAddresses(channel, toNumber, config.twilioFromNumber)
     const body = new URLSearchParams({
-      To: toNumber,
-      From: config.twilioFromNumber,
+      To: addr.to,
+      From: addr.from,
       Twiml: twiml,
       Timeout: '45',
     })

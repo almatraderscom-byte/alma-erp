@@ -184,6 +184,11 @@ export const place_agent_call: AgentTool = {
     properties: {
       relationOrName: { type: 'string', description: 'Saved contact name/relation (e.g. "মা", "ভাই"). Optional if phone given.' },
       phone: { type: 'string', description: 'Raw number (01XXXXXXXXX or +880…). Optional if relationOrName resolves.' },
+      channel: {
+        type: 'string',
+        enum: ['phone', 'whatsapp'],
+        description: 'Where to place the live call: "phone" (default, ordinary call) or "whatsapp" (WhatsApp voice call to the same number — use when the owner says WhatsApp-e call koro). Same live two-way conversation either way.',
+      },
       purpose: { type: 'string', description: 'Why we are calling, in Bangla — steers the conversation (e.g. "কালকের ডেলিভারি কনফার্ম করো").' },
       firstMessage: { type: 'string', description: 'First Bangla line the agent speaks when picked up. Optional — sensible default used.' },
       conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
@@ -236,12 +241,13 @@ export const place_agent_call: AgentTool = {
       const pref = input.ownerVoicePref as { gender?: 'male' | 'female' } | undefined
       const voiceGender: 'male' | 'female' = pref?.gender === 'male' ? 'male' : 'female'
       const who = recipientName ?? phone
+      const channel = input.channel === 'whatsapp' ? 'whatsapp' : 'phone'
       const action = await db.agentPendingAction.create({
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'agent_voice_call',
-          payload: { phone, toNumber: phone, recipientName, purpose, firstMessage, voiceGender, callType: 'contact' },
-          summary: `📞 ${who} কে লাইভ কল — "${purpose.slice(0, 60)}"`,
+          payload: { phone, toNumber: phone, recipientName, purpose, firstMessage, voiceGender, callType: 'contact', channel },
+          summary: `${channel === 'whatsapp' ? '💬📞' : '📞'} ${who} কে ${channel === 'whatsapp' ? 'WhatsApp-এ ' : ''}লাইভ কল — "${purpose.slice(0, 60)}"`,
           costEstimate: 0.5,
           status: 'pending',
         },
