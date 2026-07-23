@@ -428,7 +428,7 @@ struct SubscriptionsScreen: View {
                             Text(balanceText(provider))
                                 .font(.system(size: 15, weight: .bold, design: .rounded).monospacedDigit())
                                 .foregroundStyle(balanceColor(provider))
-                            Text(balanceKindLabel(provider.balanceKind))
+                            Text(balanceKindLabel(provider))
                                 .font(.system(size: 8.5, weight: .bold))
                                 .foregroundStyle(.secondary)
                         }
@@ -556,12 +556,18 @@ struct SubscriptionsScreen: View {
         }
         return "\(provider.balanceCurrency ?? "") \(String(format: "%.2f", amount))"
     }
-    private func balanceKindLabel(_ kind: String) -> String {
-        switch kind {
+    private func balanceKindLabel(_ provider: SubApiBalance) -> String {
+        switch provider.balanceKind {
         case "wallet": return "CASH WALLET"
         case "quota": return "USAGE QUOTA"
         case "manual_estimate": return "MANUAL ESTIMATE"
-        default: return "NO BALANCE API"
+        default:
+            let supportsBalance = provider.capabilities.contains("wallet") || provider.capabilities.contains("quota")
+            let configuredBalance = provider.configuredCapabilities.contains("wallet")
+                || provider.configuredCapabilities.contains("quota")
+            if supportsBalance && !configuredBalance { return "NEEDS CREDENTIAL" }
+            if supportsBalance && configuredBalance { return "NO CURRENT VALUE" }
+            return "NOT EXPOSED"
         }
     }
     private func sourceLabel(_ source: String) -> String {

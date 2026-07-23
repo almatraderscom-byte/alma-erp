@@ -286,6 +286,17 @@ function fmtBalanceCell(row: BalanceProviderRow) {
   return 'Wallet API নেই'
 }
 
+function balanceSourceLabel(row: BalanceProviderRow) {
+  if (row.free) return 'Free'
+  if (row.balanceKind !== 'none') return SOURCE_LABEL[row.sourceType] ?? row.sourceType
+  const balanceCapabilities = row.capabilities.filter((field) => field === 'wallet' || field === 'quota')
+  if (!balanceCapabilities.length) return 'Not exposed by provider'
+  const configured = new Set(row.configuredCapabilities ?? [])
+  return balanceCapabilities.some((field) => configured.has(field))
+    ? 'Provider returned no current value'
+    : 'Credential required'
+}
+
 function fmtSpendCell(n: number | null, providerId?: string) {
   if (n == null) return '—'
   if (providerId === 'oxylabs') return `${Math.round(n)} ক্রেডিট`
@@ -930,9 +941,7 @@ export default function AgentCostsDashboard() {
                       {fmtBalanceCell(row)}
                     </p>
                     <p className="mt-1 text-[9px] text-muted">
-                      {row.balanceKind === 'none'
-                        ? 'No wallet endpoint'
-                        : (SOURCE_LABEL[row.sourceType] ?? row.sourceType)}
+                      {balanceSourceLabel(row)}
                       {' · '}{row.balanceAuthoritative ? 'provider verified' : 'not provider verified'}
                     </p>
                     {row.quota && row.quota.limit > 0 && (
