@@ -124,13 +124,16 @@ export interface QueueEscalationInput {
 }
 
 /**
- * Queue a call escalation. Dedupes on an ACTIVE row with the same refId.
+ * Queue a call escalation. Dedupes on ANY prior row with the same refId — active
+ * OR resolved (live lesson 2026-07-23: a cancelled row must not resurrect next
+ * tick while its cause persists; one refId = one ladder, ever. refIds that may
+ * legitimately re-fire are day-scoped by their producer, e.g. staff_task:<id>:<date>).
  * Returns the row id, or null when deduped / feature entirely unconfigured.
  */
 export async function queueCallEscalation(input: QueueEscalationInput): Promise<string | null> {
   if (!ownerPrimaryNumber()) return null
   const existing = await db.agentCallEscalation.findFirst({
-    where: { refId: input.refId, status: { in: [...ACTIVE_STATUSES] } },
+    where: { refId: input.refId },
     select: { id: true },
   })
   if (existing) return null
@@ -191,12 +194,17 @@ async function scanStuckApprovals(cfg: ProactiveCallConfig): Promise<number> {
 /** Trigger scan 2 — staff tasks the supervisor escalated / flagged for the owner. */
 async function scanStuckStaffTasks(): Promise<number> {
   const cutoff = new Date(Date.now() - 30 * 60_000)
+  // Recency floor (live bug 2026-07-23): without it the scan dredged up month-old
+  // done tasks whose needs-owner flag was never cleared and queued calls for them.
+  // Only a flag raised within the last 24h — and ≥30 min ago — is call-worthy.
+  const recent = new Date(Date.now() - 24 * 3600_000)
   const tasks = await db.agentStaffTask.findMany({
     where: {
-      status: { notIn: ['completed', 'cancelled'] },
+      // Statuses that are actually in-flight ('done'/'carried'/'cancelled' etc. are not).
+      status: { in: ['proposed', 'sent', 'awaiting_proof'] },
       OR: [
-        { escalatedAt: { lte: cutoff } },
-        { supervisorNeedsOwner: true, supervisorLastTickAt: { lte: cutoff } },
+        { escalatedAt: { lte: cutoff, gte: recent } },
+        { supervisorNeedsOwner: true, supervisorLastTickAt: { lte: cutoff, gte: recent } },
       ],
     },
     orderBy: { createdAt: 'asc' },
