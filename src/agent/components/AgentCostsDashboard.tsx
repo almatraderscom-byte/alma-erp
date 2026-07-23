@@ -116,6 +116,7 @@ type BalanceProviderRow = {
   dashboardUrl?: string | null
   plan?: string | null
   capabilities: string[]
+  configuredCapabilities?: string[]
   free?: boolean
   syncedThrough?: string | null
 }
@@ -270,6 +271,18 @@ function fmtBalanceCell(row: BalanceProviderRow) {
       : `${Math.round(row.balanceAmount).toLocaleString()} ${row.balanceUnit ?? ''}`.trim()
     return row.balanceAmount < 0 ? `${amount} · estimate শেষ` : `${amount} · estimate`
   }
+  if (
+    row.capabilities.includes('wallet')
+    && !(row.configuredCapabilities ?? []).includes('wallet')
+  ) {
+    return 'Credential দরকার'
+  }
+  if (
+    row.capabilities.includes('quota')
+    && !(row.configuredCapabilities ?? []).includes('quota')
+  ) {
+    return 'Credential দরকার'
+  }
   return 'Wallet API নেই'
 }
 
@@ -289,7 +302,14 @@ const STATUS_STYLE: Record<BalanceProviderRow['status'], { label: string; cls: s
   free: { label: 'Free', cls: 'tone-green border' },
 }
 
-type FieldTruth = 'live' | 'delayed' | 'estimated' | 'not_exposed' | 'needs_credential'
+type FieldTruth =
+  | 'live'
+  | 'delayed'
+  | 'estimated'
+  | 'not_exposed'
+  | 'needs_credential'
+  | 'sync_error'
+  | 'no_current_value'
 
 const FIELD_TRUTH: Record<FieldTruth, { label: string; cls: string }> = {
   live: { label: 'Live', cls: 'tone-green border' },
@@ -297,44 +317,67 @@ const FIELD_TRUTH: Record<FieldTruth, { label: string; cls: string }> = {
   estimated: { label: 'Local estimate', cls: 'tone-amber border' },
   not_exposed: { label: 'Not exposed', cls: 'border border-border-subtle text-muted' },
   needs_credential: { label: 'Needs credential', cls: 'tone-amber border' },
+  sync_error: { label: 'Sync error', cls: 'tone-red border' },
+  no_current_value: { label: 'None reported', cls: 'border border-border-subtle text-muted' },
 }
 
 function providerFieldTruth(row: BalanceProviderRow) {
-  const needsCredential = row.status === 'unconfigured'
+  const configured = new Set(row.configuredCapabilities ?? [])
+  const hasCapability = (field: string) => row.capabilities.includes(field)
+  const needsCredential = (field: string) => hasCapability(field) && !configured.has(field)
+  const syncFailed = (field: string) => hasCapability(field) && configured.has(field) && row.status === 'error'
   return {
     balance: row.balanceAuthoritative
       ? 'live'
       : row.balanceKind === 'manual_estimate'
         ? 'estimated'
-        : needsCredential && row.capabilities.includes('wallet')
+        : needsCredential('wallet') || needsCredential('quota')
           ? 'needs_credential'
+          : syncFailed('wallet') || syncFailed('quota')
+            ? 'sync_error'
           : 'not_exposed',
     cost: row.costAuthoritative
       ? (row.costSourceType === 'provider_export' || Boolean(row.syncedThrough) ? 'delayed' : 'live')
-      : row.monthUsd != null
-        ? 'estimated'
-        : needsCredential && row.capabilities.includes('cost')
+      : needsCredential('cost')
           ? 'needs_credential'
-          : 'not_exposed',
+          : syncFailed('cost')
+            ? 'sync_error'
+            : row.monthUsd != null
+              ? 'estimated'
+              : hasCapability('cost') && configured.has('cost')
+                ? 'no_current_value'
+                : 'not_exposed',
     plan: row.planAuthoritative
       ? 'live'
-      : needsCredential && row.capabilities.includes('plan')
+      : needsCredential('plan')
         ? 'needs_credential'
-        : 'not_exposed',
+        : syncFailed('plan')
+          ? 'sync_error'
+          : hasCapability('plan') && configured.has('plan')
+            ? 'no_current_value'
+            : 'not_exposed',
     invoice: row.invoice
       ? 'live'
-      : row.capabilities.includes('invoice')
-        ? (needsCredential ? 'needs_credential' : 'live')
+      : needsCredential('invoice')
+        ? 'needs_credential'
+        : syncFailed('invoice')
+          ? 'sync_error'
+          : hasCapability('invoice') && configured.has('invoice')
+            ? 'no_current_value'
         : 'not_exposed',
     usage: row.usage || row.quota
       ? 'live'
       : row.costAuthoritative && row.costSourceType === 'provider_export'
         ? 'delayed'
-        : needsCredential && row.capabilities.includes('usage')
+        : needsCredential('usage')
           ? 'needs_credential'
-          : row.monthUsd != null
-            ? 'estimated'
-            : 'not_exposed',
+          : syncFailed('usage')
+            ? 'sync_error'
+            : row.monthUsd != null
+              ? 'estimated'
+              : hasCapability('usage') && configured.has('usage')
+                ? 'no_current_value'
+                : 'not_exposed',
   } satisfies Record<string, FieldTruth>
 }
 

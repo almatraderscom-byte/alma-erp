@@ -284,11 +284,12 @@ struct SubApiBalance: Decodable, Identifiable, Equatable {
     let plan: String?
     let syncedThrough: String?
     let capabilities: [String]
+    let configuredCapabilities: [String]
     private enum K: String, CodingKey {
         case id, label, balanceUsd, balanceKind, balanceAmount, balanceCurrency, balanceUnit, quota, usage, invoice
         case todayUsd, monthUsd, providerMonthUsd, localDeltaUsd, sourceType, costSourceType, status, statusMessage
         case balanceAuthoritative, costAuthoritative, planAuthoritative, authoritative
-        case fetchedAt, dashboardUrl, plan, syncedThrough, capabilities
+        case fetchedAt, dashboardUrl, plan, syncedThrough, capabilities, configuredCapabilities
     }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
@@ -322,6 +323,7 @@ struct SubApiBalance: Decodable, Identifiable, Equatable {
         dashboardUrl = try? c.decodeIfPresent(String.self, forKey: .dashboardUrl)
         syncedThrough = try? c.decodeIfPresent(String.self, forKey: .syncedThrough)
         capabilities = (try? c.decodeIfPresent([String].self, forKey: .capabilities)) ?? []
+        configuredCapabilities = (try? c.decodeIfPresent([String].self, forKey: .configuredCapabilities)) ?? []
     }
 }
 
@@ -540,7 +542,12 @@ struct SubscriptionsScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
     private func balanceText(_ provider: SubApiBalance) -> String {
-        guard let amount = provider.balanceAmount else { return "API নেই" }
+        guard let amount = provider.balanceAmount else {
+            let supportsBalance = provider.capabilities.contains("wallet") || provider.capabilities.contains("quota")
+            let configuredBalance = provider.configuredCapabilities.contains("wallet")
+                || provider.configuredCapabilities.contains("quota")
+            return supportsBalance && !configuredBalance ? "Credential দরকার" : "API নেই"
+        }
         if provider.balanceKind == "quota" {
             return "\(compact(amount)) \(provider.balanceUnit ?? "")"
         }
@@ -578,36 +585,48 @@ struct SubscriptionsScreen: View {
         return date.formatted(.dateTime.day().month(.abbreviated).year())
     }
     private func fieldTruth(_ provider: SubApiBalance, _ field: String) -> String {
-        let needsCredential = provider.status == "unconfigured"
+        func supports(_ value: String) -> Bool { provider.capabilities.contains(value) }
+        func configured(_ value: String) -> Bool { provider.configuredCapabilities.contains(value) }
+        func needsCredential(_ value: String) -> Bool { supports(value) && !configured(value) }
+        func syncFailed(_ value: String) -> Bool {
+            supports(value) && configured(value) && provider.status == "error"
+        }
         switch field {
         case "balance":
             if provider.balanceAuthoritative { return "Live" }
             if provider.balanceKind == "manual_estimate" { return "Estimated" }
-            if needsCredential && provider.capabilities.contains("wallet") { return "Needs key" }
+            if needsCredential("wallet") || needsCredential("quota") { return "Needs key" }
+            if syncFailed("wallet") || syncFailed("quota") { return "Sync error" }
             return "Not exposed"
         case "cost":
             if provider.costAuthoritative {
                 return provider.costSourceType == "provider_export" || provider.syncedThrough != nil
                     ? "Delayed" : "Live"
             }
+            if needsCredential("cost") { return "Needs key" }
+            if syncFailed("cost") { return "Sync error" }
             if provider.monthUsd != nil { return "Estimated" }
-            if needsCredential && provider.capabilities.contains("cost") { return "Needs key" }
+            if supports("cost") && configured("cost") { return "None reported" }
             return "Not exposed"
         case "plan":
             if provider.planAuthoritative { return "Live" }
-            if needsCredential && provider.capabilities.contains("plan") { return "Needs key" }
+            if needsCredential("plan") { return "Needs key" }
+            if syncFailed("plan") { return "Sync error" }
+            if supports("plan") && configured("plan") { return "None reported" }
             return "Not exposed"
         case "invoice":
             if provider.invoice != nil { return "Live" }
-            if provider.capabilities.contains("invoice") {
-                return needsCredential ? "Needs key" : "Live"
-            }
+            if needsCredential("invoice") { return "Needs key" }
+            if syncFailed("invoice") { return "Sync error" }
+            if supports("invoice") && configured("invoice") { return "None reported" }
             return "Not exposed"
         default:
             if provider.usage != nil || provider.quota != nil { return "Live" }
             if provider.costAuthoritative && provider.costSourceType == "provider_export" { return "Delayed" }
-            if needsCredential && provider.capabilities.contains("usage") { return "Needs key" }
+            if needsCredential("usage") { return "Needs key" }
+            if syncFailed("usage") { return "Sync error" }
             if provider.monthUsd != nil { return "Estimated" }
+            if supports("usage") && configured("usage") { return "None reported" }
             return "Not exposed"
         }
     }
@@ -616,6 +635,8 @@ struct SubscriptionsScreen: View {
             ? SubPalette.emerald
             : truth == "Delayed"
                 ? SubPalette.violet
+            : truth == "Sync error"
+                ? SubPalette.red
                 : (truth == "Estimated" || truth == "Needs key") ? SubPalette.amber : .secondary
         return Text("\(field) · \(truth)")
             .font(.system(size: 7.5, weight: .bold))

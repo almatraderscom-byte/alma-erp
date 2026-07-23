@@ -89,6 +89,7 @@ export type BalanceProviderRow = {
   dashboardUrl?: string | null
   plan?: string | null
   capabilities: string[]
+  configuredCapabilities?: string[]
   free?: boolean
   // Latest day the provider's billing API has published data for (YYYY-MM-DD,
   // Anthropic only). The Admin cost API lags ~1–2 days, so monthUsd is accurate
@@ -163,37 +164,37 @@ const PROVIDER_META: Record<BalanceProviderId, {
     label: 'Anthropic',
     source: 'Provider cost + local delta',
     dashboardUrl: 'https://platform.claude.com/workspaces/default/cost',
-    capabilities: ['cost', 'usage'],
+    capabilities: ['cost'],
   },
   twilio: {
     label: 'Twilio',
     source: 'Provider API',
     dashboardUrl: 'https://console.twilio.com/us1/billing/manage-billing/billing-overview',
-    capabilities: ['wallet', 'cost', 'usage'],
+    capabilities: ['wallet'],
   },
   openai: {
     label: 'OpenAI',
     source: 'Provider cost + local delta',
     dashboardUrl: 'https://platform.openai.com/settings/organization/usage',
-    capabilities: ['cost', 'usage'],
+    capabilities: ['cost'],
   },
   openrouter: {
     label: 'OpenRouter',
     source: 'Provider API',
     dashboardUrl: 'https://openrouter.ai/activity',
-    capabilities: ['wallet', 'cost', 'usage'],
+    capabilities: ['wallet', 'cost'],
   },
   gemini: {
     label: 'Gemini',
     source: 'Cloud Billing + local delta',
     dashboardUrl: 'https://aistudio.google.com/usage',
-    capabilities: ['cost', 'usage'],
+    capabilities: ['cost'],
   },
   google_tts: {
     label: 'Google TTS',
     source: 'Cloud Billing + local delta',
     dashboardUrl: 'https://console.cloud.google.com/billing',
-    capabilities: ['cost', 'usage'],
+    capabilities: ['cost'],
   },
   meta_free: {
     label: 'Meta/ntfy',
@@ -218,7 +219,7 @@ const PROVIDER_META: Record<BalanceProviderId, {
     label: 'Veo',
     source: 'Cloud Billing + local delta',
     dashboardUrl: 'https://console.cloud.google.com/billing',
-    capabilities: ['cost', 'usage'],
+    capabilities: ['cost'],
   },
   fashn: {
     label: 'FASHN',
@@ -230,25 +231,25 @@ const PROVIDER_META: Record<BalanceProviderId, {
     label: 'fal.ai',
     source: 'Provider API',
     dashboardUrl: 'https://fal.ai/dashboard/billing',
-    capabilities: ['wallet', 'cost', 'usage', 'pricing'],
+    capabilities: ['wallet', 'cost', 'pricing'],
   },
   xai: {
     label: 'xAI',
     source: 'Management billing API',
     dashboardUrl: 'https://console.x.ai/',
-    capabilities: ['wallet', 'cost', 'usage', 'invoice'],
+    capabilities: ['wallet', 'cost', 'invoice'],
   },
   vercel: {
     label: 'Vercel',
     source: 'FOCUS billing charges',
     dashboardUrl: 'https://vercel.com/dashboard/~/usage',
-    capabilities: ['cost', 'usage'],
+    capabilities: ['cost'],
   },
   supabase: {
     label: 'Supabase',
     source: 'Management API',
     dashboardUrl: 'https://supabase.com/dashboard/organizations',
-    capabilities: ['plan', 'usage'],
+    capabilities: ['plan'],
   },
 }
 
@@ -754,6 +755,7 @@ function normalizeCachedProvider(
     dashboardUrl: row.dashboardUrl ?? meta.dashboardUrl,
     plan: row.plan ?? null,
     capabilities: row.capabilities ?? meta.capabilities,
+    configuredCapabilities: row.configuredCapabilities ?? [],
     free: row.free,
     syncedThrough: row.syncedThrough ?? null,
   }
@@ -1082,6 +1084,22 @@ export async function refreshApiBalanceCache(): Promise<{
     let authoritative = false
     let fetchedAt = startedAt.toISOString()
     let staleAt: string | null = null
+    const configuredCapabilities: string[] = []
+    if (id === 'anthropic' && process.env.ANTHROPIC_ADMIN_API_KEY) configuredCapabilities.push('cost')
+    if (id === 'twilio' && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) configuredCapabilities.push('wallet')
+    if (id === 'openai' && process.env.OPENAI_ADMIN_API_KEY) configuredCapabilities.push('cost')
+    if (id === 'openrouter' && process.env.OPENROUTER_MANAGEMENT_KEY) configuredCapabilities.push('wallet', 'cost')
+    if ((id === 'gemini' || id === 'google_tts' || id === 'veo') && googleBilling.configured) configuredCapabilities.push('cost')
+    if (id === 'oxylabs' && oxylabsUsage.configured) configuredCapabilities.push('usage')
+    if (id === 'elevenlabs' && elevenLabsQuota.configured) configuredCapabilities.push('quota', 'plan', 'usage', 'invoice')
+    if (id === 'fal') {
+      if (process.env.FAL_KEY) configuredCapabilities.push('wallet')
+      if (falUsage.configured) configuredCapabilities.push('cost')
+    }
+    if (id === 'fashn' && fashnQuota.configured) configuredCapabilities.push('quota', 'plan')
+    if (id === 'xai' && xaiBilling.configured) configuredCapabilities.push('wallet', 'cost', 'invoice')
+    if (id === 'vercel' && vercelBilling.configured) configuredCapabilities.push('cost')
+    if (id === 'supabase' && supabasePlan.configured) configuredCapabilities.push('plan')
 
     // ---- Authoritative wallet/quota fields ----
     if (id === 'twilio') {
@@ -1489,6 +1507,7 @@ export async function refreshApiBalanceCache(): Promise<{
       dashboardUrl: meta.dashboardUrl,
       plan,
       capabilities: meta.capabilities,
+      configuredCapabilities,
       syncedThrough,
     })
   }
@@ -1522,6 +1541,7 @@ export async function refreshApiBalanceCache(): Promise<{
     dashboardUrl: metaFree.dashboardUrl,
     plan: 'Free',
     capabilities: metaFree.capabilities,
+    configuredCapabilities: metaFree.capabilities,
     free: true,
   })
 
