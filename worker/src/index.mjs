@@ -306,6 +306,14 @@ async function pollPendingJobs() {
         await agentGraphQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
         console.log(`[worker] enqueued agent-graph-run for action ${job.id}`)
         handled = true
+      } else if (job.type === 'voice_instruction_turn') {
+        // PA-3 fallback path (Upstash quota outage 2026-07-24): a boss voice
+        // instruction whose A2 enqueue failed. Run the pre-created turn via the
+        // internal chat API — same as a Telegram turn, no metered Redis. Fired
+        // without await: a head turn can take minutes and must not block the
+        // poll loop; enqueuedIds dedupes re-delivery while it runs.
+        void runVoiceInstructionTurn(job)
+        handled = true
       }
 
       if (!handled) {
@@ -318,6 +326,45 @@ async function pollPendingJobs() {
   } catch (err) {
     console.error('[worker] poll error:', err.message)
     captureWorkerError(err, 'worker.poll_pending_jobs')
+  }
+}
+
+// ── PA-3 voice-instruction fallback turn ───────────────────────────────────
+// Runs a boss voice instruction (submit_boss_instruction) whose A2 Upstash
+// enqueue failed: the SAME pre-created turn is executed through the internal
+// chat API (like a Telegram turn), so the head runs with every gate and the
+// work streams into the app conversation. No metered Redis on this path.
+async function runVoiceInstructionTurn(job) {
+  const { message, conversationId, turnId } = job.payload ?? {}
+  if (!message || !conversationId) {
+    await callJobResult(job.id, 'failed', undefined, 'voice_instruction_missing_payload')
+    return
+  }
+  try {
+    const res = await fetch(`${getAppUrl()}/api/assistant/chat?stream=false`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${getInternalToken()}`,
+        'X-Agent-Source': 'voice-call',
+      },
+      body: JSON.stringify({
+        message,
+        conversationId,
+        turnId: turnId || undefined,
+        source: 'voice_call',
+      }),
+      signal: AbortSignal.timeout(310_000),
+    })
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '')
+      throw new Error(`chat API ${res.status}: ${errText.slice(0, 160)}`)
+    }
+    await callJobResult(job.id, 'success', { ok: true })
+    console.log(`[worker] voice-instruction turn done for action ${job.id}`)
+  } catch (err) {
+    await callJobResult(job.id, 'failed', undefined, err.message)
+    console.error(`[worker] voice-instruction turn failed for action ${job.id}:`, err.message)
   }
 }
 
