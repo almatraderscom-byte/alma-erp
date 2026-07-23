@@ -25,7 +25,7 @@
 
 import http from 'http'
 import { createHmac, timingSafeEqual } from 'crypto'
-import { WebSocketServer } from 'ws'
+import { WebSocketServer, WebSocket } from 'ws'
 import { GoogleGenAI } from '@google/genai'
 import { logCost } from '../cost-log.mjs'
 import { isUnintelligibleTranscript, endSignalFromCaller, isHangupConfirmation } from './transcript-guard.mjs'
@@ -516,10 +516,14 @@ export function startVoiceRelayServer() {
     // /ngs-media = NextGenSwitch (infosoftbd) <stream> — same Sarvam pipeline as Twilio
     // /media, different frame dialect (streamId vs streamSid), auto-detected in SarvamCall.
     const isNgsMedia = url.pathname === '/ngs-media'
+    // /glive = TLS front door for the Gemini Live bot (scripts/gemini-live-bot.mjs :8766).
+    // Twilio Media Streams requires wss://; the glive bot listens on plain ws localhost,
+    // so this path pipes frames both ways. Auth stays with the bot (start-frame token).
+    const isGlive = url.pathname === '/glive'
     // Media Streams does NOT forward the URL query string to <Stream>, so the token can't
     // ride the URL there — /media & /ngs-media carry it in <Parameter> and verify on the
     // 'start' frame instead (see sarvam-media.mjs). /relay keeps URL-token auth.
-    const bad = (!isRelay && !isMedia && !isNgsMedia) ? `bad path ${url.pathname}` : (isRelay && !verifyRelayToken(id, exp, t)) ? 'token verify failed' : null
+    const bad = (!isRelay && !isMedia && !isNgsMedia && !isGlive) ? `bad path ${url.pathname}` : (isRelay && !verifyRelayToken(id, exp, t)) ? 'token verify failed' : null
     if (bad) {
       noteUpgrade({ ok: false, reason: bad, id: id ?? null, from })
       console.warn(`[voice-relay] upgrade rejected (${bad}) from ${from}`)
@@ -528,6 +532,26 @@ export function startVoiceRelayServer() {
       return
     }
     noteUpgrade({ ok: true, id, from, path: url.pathname })
+    if (isGlive) {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        const target = process.env.GLIVE_LOCAL_WS || 'ws://127.0.0.1:8766/ws'
+        const up = new WebSocket(target)
+        const buffered = []
+        ws.on('message', (raw) => {
+          if (up.readyState === WebSocket.OPEN) up.send(raw)
+          else buffered.push(raw)
+        })
+        up.on('open', () => { for (const raw of buffered.splice(0)) up.send(raw) })
+        up.on('message', (raw) => { if (ws.readyState === ws.OPEN) ws.send(raw.toString()) })
+        const closeBoth = () => { try { ws.close() } catch { /* */ } try { up.close() } catch { /* */ } }
+        ws.on('close', closeBoth)
+        up.on('close', closeBoth)
+        ws.on('error', closeBoth)
+        up.on('error', (err) => { console.warn('[voice-relay] glive upstream error:', err.message); closeBoth() })
+        console.log('[voice-relay] glive proxy open → ' + target)
+      })
+      return
+    }
     if (isMedia || isNgsMedia) {
       handleSarvamMediaUpgrade({ req, socket, head, wss, verifyRelayToken })
       return

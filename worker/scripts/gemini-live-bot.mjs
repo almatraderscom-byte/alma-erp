@@ -351,6 +351,9 @@ class Call {
   }
 
   async hangupNgs() {
+    // Twilio leg: ending the <Connect><Stream> websocket ends the call — there is
+    // no NGS-side call to DELETE, and calling NGS with a Twilio CallSid would 404.
+    if (this.transport === 'twilio') { console.log(`[glive] ${this.id} twilio hangup = ws close`); return }
     if (!this.callId || !NGS_KEY) { console.log(`[glive] ${this.id} hangupNgs skipped (callId=${this.callId} key=${NGS_KEY ? 'y' : 'n'})`); return }
     try {
       // DELETE /api/v1/call/{id} is how NGS ends an active call (probe-verified: DELETE
@@ -504,6 +507,14 @@ class Call {
         this.streamSid = m.streamId ?? m.start?.streamSid ?? m.streamSid
         this.callId = m.call_id ?? m.callId ?? m.start?.call_id ?? null
         this.params = m.params ?? m.start?.customParameters ?? {}
+        // Twilio Media Streams transport (WhatsApp live calls ride Twilio, not NGS):
+        // same μ-law 8k media frames, but the ack key is `streamSid`, the call id is
+        // `callSid`, and hangup = close the <Connect><Stream> ws (no NGS DELETE).
+        if (m.start?.streamSid) {
+          this.transport = 'twilio'
+          this.streamKey = 'streamSid'
+          this.callId = this.callId ?? m.start?.callSid ?? null
+        }
         const fail = authFailReason(this.params)
         if (fail) {
           console.log(`[glive] ${this.id} AUTH FAIL (${fail}) — rejecting call=${this.callId}`)

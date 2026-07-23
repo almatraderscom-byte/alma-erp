@@ -285,7 +285,13 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
     if (process.env.WHATSAPP_CALL_PROVIDER === 'relay') {
       return placeRelayCall(config, record.id, toNumber, firstMessage, purpose, input.recipientName, 'whatsapp')
     }
-    return placeSarvamMediaCall(config, record.id, toNumber, firstMessage, purpose, input.recipientName, input.voiceGender, 'whatsapp')
+    if (process.env.WHATSAPP_CALL_PROVIDER === 'sarvam') {
+      return placeSarvamMediaCall(config, record.id, toNumber, firstMessage, purpose, input.recipientName, input.voiceGender, 'whatsapp')
+    }
+    // Default: the owner-locked two-way engine — Gemini Live (ears+brain+mouth,
+    // native barge-in), the SAME experience as direct NGS calls, over the Twilio
+    // WhatsApp leg via the relay server's /glive TLS proxy.
+    return placeGliveMediaCall(config, record.id, toNumber, purpose, input.recipientName, 'whatsapp')
   }
 
   if (config.provider === 'ngs') {
@@ -607,6 +613,82 @@ async function placeSarvamMediaCall(
     await db.agentVoiceCall.update({
       where: { id: callRecordId },
       data: { status: 'ringing', providerStatus: 'ringing', dialedAt: new Date(), callSid: data.sid, summary: `sarvam media: ${voice.speaker}/${voice.model}` },
+    })
+    return { ok: true, callRecordId, callSid: data.sid }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'failed', providerStatus: 'failed', summary: `কল দেওয়া যায়নি: ${msg}`, endedAt: new Date() },
+    }).catch(() => {})
+    return { ok: false, error: `কল দেওয়া যায়নি: ${msg}`, callRecordId }
+  }
+}
+
+/**
+ * WhatsApp two-way call on the OWNER-LOCKED Gemini Live engine — the exact same
+ * bot as direct NGS calls (worker/scripts/gemini-live-bot.mjs: realtime
+ * speech-to-speech, native barge-in, Charon voice), reached over the Twilio
+ * WhatsApp leg. Twilio Media Streams requires wss://, so the TwiML points at the
+ * relay server's /glive TLS proxy which pipes to the bot; the bot auto-detects
+ * the Twilio frame dialect (streamSid) and skips the NGS hang-up API.
+ */
+async function placeGliveMediaCall(
+  config: VoiceCallConfig,
+  callRecordId: string,
+  toNumber: string,
+  purpose: string,
+  recipientName: string | undefined,
+  channel: 'phone' | 'whatsapp' = 'whatsapp',
+): Promise<PlaceCallResult> {
+  try {
+    const exp = Date.now() + 15 * 60_000
+    const t = createHmac('sha256', config.internalToken)
+      .update(`relay:${callRecordId}:${exp}`)
+      .digest('hex')
+    const base = config.relayWssUrl.replace(/\/(relay|media|glive)$/, '')
+    const wssUrl = `${base}/glive`
+
+    const twiml =
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<Response><Connect>` +
+      `<Stream url="${escapeXmlAttr(wssUrl)}">` +
+      `<Parameter name="id" value="${escapeXmlAttr(callRecordId)}"/>` +
+      `<Parameter name="exp" value="${exp}"/>` +
+      `<Parameter name="t" value="${t}"/>` +
+      `<Parameter name="purpose" value="${escapeXmlAttr(purpose)}"/>` +
+      `<Parameter name="recipientName" value="${escapeXmlAttr(recipientName ?? '')}"/>` +
+      `<Parameter name="callType" value="contact"/>` +
+      `</Stream></Connect></Response>`
+
+    const addr = dialAddresses(channel, toNumber, config.twilioFromNumber)
+    const body = new URLSearchParams({
+      To: addr.to,
+      From: addr.from,
+      Twiml: twiml,
+      Timeout: '45',
+      StatusCallback: twilioStatusCallbackUrl(callRecordId, config.internalToken),
+      StatusCallbackMethod: 'POST',
+    })
+    const auth = Buffer.from(`${config.twilioAccountSid}:${config.twilioAuthToken}`).toString('base64')
+    const res = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${config.twilioAccountSid}/Calls.json`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${auth}` },
+        body,
+        signal: AbortSignal.timeout(30_000),
+      },
+    )
+    const data = (await res.json().catch(() => ({}))) as { sid?: string; message?: string }
+    if (!res.ok || !data.sid) {
+      const err = `Twilio ${res.status}: ${data.message ?? 'call create failed'}`
+      await db.agentVoiceCall.update({ where: { id: callRecordId }, data: { status: 'failed', providerStatus: 'failed', summary: err, endedAt: new Date() } })
+      return { ok: false, error: err, callRecordId }
+    }
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'ringing', providerStatus: 'ringing', dialedAt: new Date(), callSid: data.sid, summary: `glive over ${channel}: ${wssUrl}` },
     })
     return { ok: true, callRecordId, callSid: data.sid }
   } catch (err) {
