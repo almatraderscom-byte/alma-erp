@@ -6615,10 +6615,43 @@ final class AssistantVM {
                 }
                 self.dictationStreamer.onNoSpeechSink = { [weak self] in
                     guard let self, self.usingStreamDictation else { return }
+                    NSLog("ALMA-DICTATE UI noSpeech (liveDictation was %d chars)", self.liveDictation.count)
                     self.usingStreamDictation = false
                     self.isRecording = false
                     self.liveDictation = ""
                     self.dictationFailure = "কথা বোঝা যায়নি"
+                }
+                // Socket died mid-take: the streamer hands back the buffered
+                // utterance as WAV — without this sink the take vanished silently
+                // (composer dictation has no AlmaVoiceEngine behind it).
+                self.dictationStreamer.onFallbackUploadSink = { [weak self] wav in
+                    guard let self, self.usingStreamDictation else { return }
+                    NSLog("ALMA-DICTATE UI WAV fallback %d bytes", wav.count)
+                    self.usingStreamDictation = false
+                    self.isRecording = false
+                    self.liveDictation = ""
+                    self.transcribing = true
+                    Task { [weak self] in
+                        guard let self else { return }
+                        defer { self.transcribing = false }
+                        do {
+                            let data = try await AssistantNet.uploadMultipart(
+                                path: "/api/assistant/transcribe", fileField: "audio",
+                                filename: "dictation.wav", mime: "audio/wav", data: wav)
+                            let t = try JSONDecoder().decode(TranscribeResponse.self, from: data)
+                            let text = (t.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !text.isEmpty else {
+                                self.dictationFailure = "কথা বোঝা যায়নি"
+                                return
+                            }
+                            self.composerDraft = self.composerDraft.isEmpty
+                                ? text : self.composerDraft + " " + text
+                            self.dictationFailure = nil
+                            AlmaAgentHaptics.commit()
+                        } catch {
+                            self.dictationFailure = "ভয়েস বোঝা যায়নি — আবার চেষ্টা করুন"
+                        }
+                    }
                 }
                 self.dictationStreamer.onErrorSink = { [weak self] _ in
                     guard let self, self.usingStreamDictation else { return }
