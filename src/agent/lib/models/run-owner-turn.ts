@@ -856,6 +856,39 @@ async function* runAlternateProviderTurn(
   const agentControls = await getAgentControls()
   const controlsNote = controlsPromptNote(agentControls)
   const systemText = systemBlocksToText(stable) + (controlsNote ? `\n\n${controlsNote}` : '')
+  // P1-1 context-compiler SHADOW: run the SPEC-041 compiler over the exact
+  // segments this turn uses and record provenance + token-budget verdicts into
+  // the per-turn span spine (route.context_compile). Observe-only — the model
+  // input above is untouched. Fire-and-forget; a shadow failure never blocks.
+  void (async () => {
+    const { contextCompilerMode, shadowCompileOwnerContext } = await import('@/agent/lib/context-compile-shadow')
+    if (contextCompilerMode() === 'off') return
+    const shadow = shadowCompileOwnerContext({
+      stableBlocks: stable.map((b) => b.text),
+      volatileText: systemBlocksToText(volatile),
+      requestText: lastUserText ?? '',
+    })
+    const { logToolEvent } = await import('@/agent/lib/tool-telemetry')
+    await logToolEvent({
+      surface: 'owner',
+      toolName: 'context_compile',
+      success: shadow.stableWithinBudget && shadow.initialWithinBudget,
+      latencyMs: 0,
+      conversationId,
+      turnId: turnId ?? undefined,
+      phase: 'route',
+      detail: {
+        mode: 'shadow',
+        contractVersion: shadow.compiled.contractVersion,
+        stableTokens: shadow.stableTokens,
+        initialRequestTokens: shadow.initialRequestTokens,
+        stableWithinBudget: shadow.stableWithinBudget,
+        initialWithinBudget: shadow.initialWithinBudget,
+        cacheablePrefixTokens: shadow.compiled.cacheablePrefixTokens,
+        bundles: shadow.compiled.provenance.map((p) => ({ id: p.id, kind: p.kind, tokens: p.tokens })),
+      },
+    })
+  })().catch((err) => console.warn('[context-compile-shadow] failed:', err instanceof Error ? err.message : err))
   // Phase 7 kill switch: AGENT_OWNER_INTENT_GATE=false disables the owner-intent
   // mutation filter (and its note) without a deploy.
   const intentGateOn = process.env.AGENT_OWNER_INTENT_GATE !== 'false'
