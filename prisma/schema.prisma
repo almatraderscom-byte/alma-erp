@@ -3164,12 +3164,69 @@ model AgentSubscription {
   // the plan tier name (e.g. "Google AI Pro") and a payment-method label.
   plan          String?
   paymentMethod String?  @map("payment_method")
+  // Phase 69: provider/invoice provenance. These stay nullable because several
+  // providers do not expose subscription or invoice data through a public API.
+  providerId             String?   @map("provider_id")
+  sourceType             String    @default("manual") @map("source_type")
+  externalSubscriptionId String?   @map("external_subscription_id")
+  billingPeriodStart     DateTime? @map("billing_period_start") @db.Date
+  billingPeriodEnd       DateTime? @map("billing_period_end") @db.Date
+  invoiceAmount          Decimal?  @map("invoice_amount") @db.Decimal(12, 2)
+  invoiceCurrency        String?   @map("invoice_currency")
+  invoiceDueAt           DateTime? @map("invoice_due_at") @db.Date
+  invoiceStatus          String?   @map("invoice_status")
+  sourceUrl              String?   @map("source_url")
+  lastSyncedAt           DateTime? @map("last_synced_at")
+  syncStatus             String    @default("manual") @map("sync_status")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
   @@index([nextRenewalAt])
   @@index([active])
+  @@index([providerId])
+  @@index([invoiceDueAt])
+  @@index([syncStatus])
   @@map("agent_subscriptions")
+}
+
+model AgentProviderBillingSnapshot {
+  id            String    @id @default(uuid())
+  provider      String
+  metric        String
+  status        String
+  sourceType    String    @map("source_type")
+  authoritative Boolean   @default(false)
+  amount        Decimal?  @db.Decimal(18, 6)
+  currency      String?
+  unit          String?
+  textValue     String?   @map("text_value") @db.Text
+  providerAsOf  DateTime? @map("provider_as_of")
+  fetchedAt     DateTime  @default(now()) @map("fetched_at")
+  staleAfter    DateTime? @map("stale_after")
+  metadata      Json      @default("{}")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@unique([provider, metric])
+  @@index([status, staleAfter])
+  @@index([provider, fetchedAt(sort: Desc)])
+  @@map("agent_provider_billing_snapshots")
+}
+
+model AgentProviderSyncRun {
+  id            String    @id @default(uuid())
+  provider      String
+  status        String
+  startedAt     DateTime  @default(now()) @map("started_at")
+  finishedAt    DateTime? @map("finished_at")
+  fieldsUpdated Int       @default(0) @map("fields_updated")
+  error         String?   @db.Text
+  metadata      Json      @default("{}")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([provider, startedAt(sort: Desc)])
+  @@index([status, startedAt(sort: Desc)])
+  @@map("agent_provider_sync_runs")
 }
 
 // ─── PERSONAL LIFE TIER 1: bills tracker + important dates ───────────────────

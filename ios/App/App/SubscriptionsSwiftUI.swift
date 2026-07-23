@@ -1,11 +1,9 @@
 //
 //  SubscriptionsSwiftUI.swift
-//  ALMA ERP — the owner's personal subscription tracker as a native SwiftUI screen (v4).
+//  ALMA ERP — provider billing + subscription hub (v5).
 //
-//  A MANUAL ledger (not a live API): the owner records his own recurring services —
-//  Gemini, ChatGPT, Claude, Vercel, Supabase, OpenRouter, GitHub, Cloudflare, anything
-//  added later — one card each, fully editable from the phone. The agent can also mutate
-//  it in words ("Vercel-এর খরচ $20 করো") through the same endpoints/table.
+//  Provider wallets, quotas, usage costs, sync health and manual renewals are
+//  intentionally separate. A quota/manual estimate is never labelled cash balance.
 //
 //  v4 (owner design 2026-07, market-researched · iOS 26 Liquid-Glass + spatial HIG):
 //    • SOLID opaque surfaces for the data (subscription cards, status tiles, hero).
@@ -73,9 +71,20 @@ struct Subscription: Decodable, Identifiable, Equatable {
     let active: Bool
     let plan: String?
     let paymentMethod: String?
+    let providerId: String?
+    let sourceType: String
+    let invoiceAmount: Double?
+    let invoiceCurrency: String?
+    let invoiceDueAt: Date?
+    let invoiceStatus: String?
+    let sourceUrl: String?
+    let lastSyncedAt: Date?
+    let syncStatus: String
 
     private enum K: String, CodingKey {
         case id, name, amount, currency, billingCycle, nextRenewalAt, category, notes, active, plan, paymentMethod
+        case providerId, sourceType, invoiceAmount, invoiceCurrency, invoiceDueAt, invoiceStatus
+        case sourceUrl, lastSyncedAt, syncStatus
     }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
@@ -92,6 +101,17 @@ struct Subscription: Decodable, Identifiable, Equatable {
         active = (try? c.decodeIfPresent(Bool.self, forKey: .active)) ?? true
         plan = try? c.decodeIfPresent(String.self, forKey: .plan)
         paymentMethod = try? c.decodeIfPresent(String.self, forKey: .paymentMethod)
+        providerId = try? c.decodeIfPresent(String.self, forKey: .providerId)
+        sourceType = (try? c.decodeIfPresent(String.self, forKey: .sourceType)) ?? "manual"
+        if let dbl = try? c.decode(Double.self, forKey: .invoiceAmount) { invoiceAmount = dbl }
+        else if let raw = try? c.decode(String.self, forKey: .invoiceAmount) { invoiceAmount = Double(raw) }
+        else { invoiceAmount = nil }
+        invoiceCurrency = try? c.decodeIfPresent(String.self, forKey: .invoiceCurrency)
+        invoiceDueAt = try? c.decodeIfPresent(Date.self, forKey: .invoiceDueAt)
+        invoiceStatus = try? c.decodeIfPresent(String.self, forKey: .invoiceStatus)
+        sourceUrl = try? c.decodeIfPresent(String.self, forKey: .sourceUrl)
+        lastSyncedAt = try? c.decodeIfPresent(Date.self, forKey: .lastSyncedAt)
+        syncStatus = (try? c.decodeIfPresent(String.self, forKey: .syncStatus)) ?? "manual"
     }
     var status: SubStatus {
         if amount <= 0 { return .free }
@@ -106,6 +126,12 @@ struct Subscription: Decodable, Identifiable, Equatable {
     var priceLabel: String { symbol + String(format: "%.2f", amount) }
     var cycleLabel: String { billingCycle == "yearly" ? "বার্ষিক" : "মাসিক" }
     var planLine: String { plan ?? category ?? billingCycle.capitalized }
+    var dueAt: Date? { invoiceDueAt ?? nextRenewalAt }
+    var duePriceLabel: String {
+        let value = invoiceAmount ?? amount
+        let code = invoiceCurrency ?? currency
+        return (code == "USD" ? "$" : code + " ") + String(format: "%.2f", value)
+    }
 }
 
 private struct SubPayload: Encodable {
@@ -119,10 +145,10 @@ private struct SubPayload: Encodable {
 @Observable
 final class SubscriptionsVM {
     var subs: [Subscription] = []
-    /// Live API credit balances (owner 2026-07-12: fal.ai balance must be visible
-    /// here too, not only on Credit Usage). Same cache the costs page reads.
     var apiBalances: [SubApiBalance] = []
+    var dueSummary = SubDueSummary()
     var loading = false
+    var refreshingProviders = false
     var saving = false
     var error: String? = nil
     var authExpired = false
@@ -135,7 +161,8 @@ final class SubscriptionsVM {
             subs = all.filter { $0.active }
             authExpired = false
             if let b: SubBalancesResponse = try? await AlmaAPI.shared.get("/api/assistant/costs/balances") {
-                apiBalances = b.rows.filter { $0.balanceUsd != nil }
+                apiBalances = b.rows
+                dueSummary = b.dueSummary
             }
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
@@ -161,6 +188,18 @@ final class SubscriptionsVM {
         _ = try? await AlmaAPI.shared.send("DELETE", "/api/assistant/costs/subscriptions/\(id)") as Ack
         await load(); changeTick += 1
     }
+    func refreshProviders() async {
+        refreshingProviders = true; defer { refreshingProviders = false }
+        do {
+            let response: SubBalancesResponse = try await AlmaAPI.shared.send("POST", "/api/assistant/costs/balances")
+            apiBalances = response.rows
+            dueSummary = response.dueSummary
+            changeTick += 1
+        } catch {
+            if Self.isCancellation(error) { return }
+            self.error = error.localizedDescription
+        }
+    }
 
     var activeSubs: [Subscription] { subs.filter { $0.status != .expired && $0.status != .free } }
     var monthlyTotal: Double { activeSubs.reduce(0) { $0 + $1.monthlyEquiv } }
@@ -173,32 +212,119 @@ final class SubscriptionsVM {
     func count(_ s: SubStatus) -> Int { subs.filter { $0.status == s }.count }
 }
 
-/// One provider row from the balance cache (lenient decode, flat or {cache:{…}}).
+struct SubQuota: Decodable, Equatable {
+    let used: Double
+    let limit: Double
+    let remaining: Double
+    let unit: String
+    let plan: String?
+    let resetAt: String?
+    let subscription: Double?
+    let onDemand: Double?
+}
+
+struct SubProviderInvoice: Decodable, Equatable {
+    let kind: String
+    let amount: Double
+    let currency: String
+    let dueAt: String?
+    let status: String
+}
+
+struct SubDueSummary: Decodable, Equatable {
+    var dueNow = 0
+    var dueWithin7Days = 0
+    var dueWithin30Days = 0
+    var amountsWithin30Days: [SubDueAmount] = []
+}
+
+struct SubDueAmount: Decodable, Equatable {
+    let currency: String
+    let amount: Double
+}
+
+/// Canonical provider row: wallet, quota and manual estimates remain distinct.
 struct SubApiBalance: Decodable, Identifiable, Equatable {
     let id: String
     let label: String
     let balanceUsd: Double?
-    private enum K: String, CodingKey { case id, label, balanceUsd }
+    let balanceKind: String
+    let balanceAmount: Double?
+    let balanceCurrency: String?
+    let balanceUnit: String?
+    let quota: SubQuota?
+    let invoice: SubProviderInvoice?
+    let todayUsd: Double?
+    let monthUsd: Double?
+    let providerMonthUsd: Double?
+    let localDeltaUsd: Double?
+    let sourceType: String
+    let costSourceType: String
+    let status: String
+    let statusMessage: String?
+    let balanceAuthoritative: Bool
+    let costAuthoritative: Bool
+    let planAuthoritative: Bool
+    let authoritative: Bool
+    let fetchedAt: String?
+    let dashboardUrl: String?
+    let plan: String?
+    let syncedThrough: String?
+    private enum K: String, CodingKey {
+        case id, label, balanceUsd, balanceKind, balanceAmount, balanceCurrency, balanceUnit, quota, invoice
+        case todayUsd, monthUsd, providerMonthUsd, localDeltaUsd, sourceType, costSourceType, status, statusMessage
+        case balanceAuthoritative, costAuthoritative, planAuthoritative, authoritative
+        case fetchedAt, dashboardUrl, plan, syncedThrough
+    }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
         label = (try? c.decode(String.self, forKey: .label)) ?? id
         balanceUsd = try? c.decodeIfPresent(Double.self, forKey: .balanceUsd)
+        balanceKind = (try? c.decodeIfPresent(String.self, forKey: .balanceKind)) ?? (balanceUsd == nil ? "none" : "manual_estimate")
+        balanceAmount = (try? c.decodeIfPresent(Double.self, forKey: .balanceAmount)) ?? balanceUsd
+        balanceCurrency = try? c.decodeIfPresent(String.self, forKey: .balanceCurrency)
+        balanceUnit = try? c.decodeIfPresent(String.self, forKey: .balanceUnit)
+        quota = try? c.decodeIfPresent(SubQuota.self, forKey: .quota)
+        invoice = try? c.decodeIfPresent(SubProviderInvoice.self, forKey: .invoice)
+        todayUsd = try? c.decodeIfPresent(Double.self, forKey: .todayUsd)
+        monthUsd = try? c.decodeIfPresent(Double.self, forKey: .monthUsd)
+        providerMonthUsd = try? c.decodeIfPresent(Double.self, forKey: .providerMonthUsd)
+        localDeltaUsd = try? c.decodeIfPresent(Double.self, forKey: .localDeltaUsd)
+        sourceType = (try? c.decodeIfPresent(String.self, forKey: .sourceType)) ?? "manual"
+        costSourceType = (try? c.decodeIfPresent(String.self, forKey: .costSourceType)) ?? "local_measured"
+        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "stale"
+        statusMessage = try? c.decodeIfPresent(String.self, forKey: .statusMessage)
+        authoritative = (try? c.decodeIfPresent(Bool.self, forKey: .authoritative)) ?? false
+        plan = try? c.decodeIfPresent(String.self, forKey: .plan)
+        balanceAuthoritative = (try? c.decodeIfPresent(Bool.self, forKey: .balanceAuthoritative))
+            ?? (authoritative && ["wallet", "quota"].contains(balanceKind))
+        costAuthoritative = (try? c.decodeIfPresent(Bool.self, forKey: .costAuthoritative))
+            ?? (authoritative && providerMonthUsd != nil)
+        planAuthoritative = (try? c.decodeIfPresent(Bool.self, forKey: .planAuthoritative))
+            ?? (authoritative && plan != nil)
+        fetchedAt = try? c.decodeIfPresent(String.self, forKey: .fetchedAt)
+        dashboardUrl = try? c.decodeIfPresent(String.self, forKey: .dashboardUrl)
+        syncedThrough = try? c.decodeIfPresent(String.self, forKey: .syncedThrough)
     }
 }
 
 struct SubBalancesResponse: Decodable {
     let rows: [SubApiBalance]
-    private enum K: String, CodingKey { case providers, cache }
+    let dueSummary: SubDueSummary
+    private enum K: String, CodingKey { case providers, cache, dueSummary }
     init(from d: Decoder) throws {
         let root = try d.container(keyedBy: K.self)
         if let direct = try? root.decode([SubApiBalance].self, forKey: .providers) {
             rows = direct
+            dueSummary = (try? root.decodeIfPresent(SubDueSummary.self, forKey: .dueSummary)) ?? SubDueSummary()
         } else if let nested = try? root.nestedContainer(keyedBy: K.self, forKey: .cache),
                   let inner = try? nested.decode([SubApiBalance].self, forKey: .providers) {
             rows = inner
+            dueSummary = (try? nested.decodeIfPresent(SubDueSummary.self, forKey: .dueSummary)) ?? SubDueSummary()
         } else {
             rows = []
+            dueSummary = SubDueSummary()
         }
     }
 }
@@ -221,10 +347,11 @@ struct SubscriptionsScreen: View {
                 if vm.loading && vm.subs.isEmpty { loadingRows }
                 if !vm.subs.isEmpty || (!vm.loading && !vm.authExpired) {
                     heroGrid.subAppear(0)
-                    if !vm.apiBalances.isEmpty { apiBalanceStrip.subAppear(1) }
-                    if !vm.upcoming.isEmpty { upcomingStrip.subAppear(1) }
-                    assistantHint.subAppear(2)
-                    statTrio.subAppear(3)
+                    billingOverview.subAppear(1)
+                    if !vm.apiBalances.isEmpty { apiBalanceStrip.subAppear(2) }
+                    if !vm.upcoming.isEmpty { upcomingStrip.subAppear(3) }
+                    assistantHint.subAppear(4)
+                    statTrio.subAppear(5)
                     sectionHeader
                     ForEach(Array(vm.subs.enumerated()), id: \.element.id) { i, s in subCard(s).subAppear(min(i + 4, 8)) }
                     addButton
@@ -245,38 +372,204 @@ struct SubscriptionsScreen: View {
         .sensoryFeedback(.impact(weight: .light), trigger: showEditor)
     }
 
-    /// Live API credit balances (fal.ai highlighted) — horizontal chips, synced
-    /// from the same cache the Credit Usage page shows.
+    /// Provider truth stays explicit: a wallet is cash, quota is usage capacity,
+    /// manual estimate is a declared estimate, and unavailable means no live API.
     private var apiBalanceStrip: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("API ব্যালেন্স (লাইভ)").font(.system(size: 10, weight: .bold))
-                .textCase(.uppercase).kerning(0.5).foregroundStyle(.secondary)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(vm.apiBalances) { b in
-                        HStack(spacing: 6) {
-                            Text(b.label).font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                            Text(String(format: "$%.2f", b.balanceUsd ?? 0))
-                                .font(.system(size: 12.5, weight: .bold, design: .rounded).monospacedDigit())
-                                .foregroundStyle((b.balanceUsd ?? 0) < 3
-                                                 ? Color(red: 0.94, green: 0.35, blue: 0.35)
-                                                 : SubPalette.accentText(scheme))
-                        }
-                        .padding(.horizontal, 11).padding(.vertical, 8)
-                        .background(Color.primary.opacity(0.05),
-                                    in: Capsule())
-                        .overlay(Capsule().strokeBorder(
-                            b.id == "fal" ? SubPalette.accentText(scheme).opacity(0.45) : Color.primary.opacity(0.08),
-                            lineWidth: 1))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("PROVIDER BILLING").font(.system(size: 10, weight: .bold))
+                        .kerning(0.5).foregroundStyle(.secondary)
+                    Text("Wallet · quota · usage · sync status").font(.system(size: 10)).foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Button {
+                    Task { await vm.refreshProviders() }
+                } label: {
+                    if vm.refreshingProviders {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .bold))
                     }
                 }
+                .disabled(vm.refreshingProviders)
+                .accessibilityLabel("Provider data refresh")
+                .frame(width: 32, height: 32)
+                .subGlass(scheme, corner: 10)
+            }
+            ForEach(vm.apiBalances) { provider in
+                VStack(alignment: .leading, spacing: 9) {
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(provider.label).font(.system(size: 13.5, weight: .bold))
+                            Text(provider.plan ?? sourceLabel(provider.sourceType))
+                                .font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(balanceText(provider))
+                                .font(.system(size: 15, weight: .bold, design: .rounded).monospacedDigit())
+                                .foregroundStyle(balanceColor(provider))
+                            Text(balanceKindLabel(provider.balanceKind))
+                                .font(.system(size: 8.5, weight: .bold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if let quota = provider.quota, quota.limit > 0 {
+                        ProgressView(value: min(max(quota.used / quota.limit, 0), 1))
+                            .tint(quota.remaining <= quota.limit * 0.1 ? SubPalette.red : SubPalette.emerald)
+                        Text("\(compact(quota.remaining)) \(quota.unit) বাকি · \(compact(quota.used))/\(compact(quota.limit))")
+                            .font(.system(size: 9.5).monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 6) {
+                        providerMetric("আজ", provider.todayUsd.map { fmt($0) } ?? "—")
+                        providerMetric("মাস", provider.monthUsd.map { fmt($0) } ?? "—")
+                        providerMetric(
+                            "খরচের উৎস",
+                            sourceLabel(provider.costSourceType) + (provider.costAuthoritative ? " · base" : " · estimate")
+                        )
+                    }
+                    if let invoice = provider.invoice {
+                        HStack(alignment: .top, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(invoice.kind == "open" ? "OPEN INVOICE" : "NEXT INVOICE")
+                                    .font(.system(size: 8.5, weight: .bold)).foregroundStyle(SubPalette.gold)
+                                Text(invoice.status + " · " + invoiceDate(invoice.dueAt))
+                                    .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer()
+                            Text(invoiceAmount(invoice))
+                                .font(.system(size: 11.5, weight: .bold, design: .rounded).monospacedDigit())
+                        }
+                        .padding(.horizontal, 9).padding(.vertical, 8)
+                        .background(SubPalette.gold.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    HStack(spacing: 6) {
+                        Circle().fill(statusColor(provider.status)).frame(width: 6, height: 6)
+                        Text(statusLabel(provider.status)).font(.system(size: 9.5, weight: .bold))
+                        if !provider.balanceAuthoritative {
+                            Text("Estimate").font(.system(size: 8.5, weight: .bold)).foregroundStyle(SubPalette.amber)
+                        }
+                        Spacer()
+                        if let raw = provider.dashboardUrl, let url = URL(string: raw) {
+                            Link(destination: url) {
+                                Label("Dashboard", systemImage: "arrow.up.right.square")
+                                    .font(.system(size: 9.5, weight: .semibold))
+                            }
+                        }
+                    }
+                    if let message = provider.statusMessage, !message.isEmpty {
+                        Text(message).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+                .padding(13)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(statusColor(provider.status).opacity(0.25), lineWidth: 1))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(13)
         .background(Color.primary.opacity(0.03),
                     in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var billingOverview: some View {
+        let wallet = vm.apiBalances.filter { $0.balanceKind == "wallet" }.compactMap(\.balanceUsd).reduce(0, +)
+        let confirmed = vm.apiBalances.filter { $0.costAuthoritative }.compactMap(\.providerMonthUsd).reduce(0, +)
+        let attention = vm.apiBalances.filter { ["error", "stale"].contains($0.status) }.count
+        return HStack(spacing: 7) {
+            billingStat(fmt(wallet), "Prepaid cash", SubPalette.emerald)
+            billingStat(fmt(confirmed), "Provider MTD", SubPalette.violet)
+            billingStat("\(vm.dueSummary.dueWithin7Days)", "Due ≤7d", SubPalette.amber)
+            billingStat("\(attention)", "Attention", attention > 0 ? SubPalette.red : SubPalette.sage)
+        }
+    }
+    private func billingStat(_ value: String, _ label: String, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(value).font(.system(size: 12.5, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.62)
+            Text(label).font(.system(size: 7.5, weight: .semibold)).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.vertical, 10)
+        .subSolid(scheme, corner: 11)
+    }
+    private func providerMetric(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.system(size: 8)).foregroundStyle(.tertiary)
+            Text(value).font(.system(size: 9.5, weight: .semibold).monospacedDigit())
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private func balanceText(_ provider: SubApiBalance) -> String {
+        guard let amount = provider.balanceAmount else { return "API নেই" }
+        if provider.balanceKind == "quota" {
+            return "\(compact(amount)) \(provider.balanceUnit ?? "")"
+        }
+        if provider.balanceCurrency == "USD" || provider.balanceUsd != nil {
+            return fmt(amount)
+        }
+        return "\(provider.balanceCurrency ?? "") \(String(format: "%.2f", amount))"
+    }
+    private func balanceKindLabel(_ kind: String) -> String {
+        switch kind {
+        case "wallet": return "CASH WALLET"
+        case "quota": return "USAGE QUOTA"
+        case "manual_estimate": return "MANUAL ESTIMATE"
+        default: return "NO BALANCE API"
+        }
+    }
+    private func sourceLabel(_ source: String) -> String {
+        switch source {
+        case "provider_api": return "Provider API"
+        case "provider_export", "billing_export": return "Billing export"
+        case "local_measured": return "Local logs"
+        case "hybrid": return "Hybrid"
+        case "free": return "Free"
+        default: return "Manual"
+        }
+    }
+    private func invoiceAmount(_ invoice: SubProviderInvoice) -> String {
+        let prefix = invoice.currency == "USD" ? "$" : invoice.currency + " "
+        return prefix + String(format: "%.2f", invoice.amount)
+    }
+    private func invoiceDate(_ raw: String?) -> String {
+        guard let raw, !raw.isEmpty else { return "Due date নেই" }
+        let iso = ISO8601DateFormatter()
+        guard let date = iso.date(from: raw) else { return raw }
+        return date.formatted(.dateTime.day().month(.abbreviated).year())
+    }
+    private func statusLabel(_ status: String) -> String {
+        switch status {
+        case "live", "fresh": return "Live"
+        case "partial": return "Partial"
+        case "manual": return "Manual"
+        case "unconfigured": return "Connect"
+        case "free": return "Free"
+        case "error": return "Sync failed"
+        case "unavailable": return "API unavailable"
+        default: return "Stale"
+        }
+    }
+    private func statusColor(_ status: String) -> Color {
+        switch status {
+        case "live", "fresh", "free": return SubPalette.emerald
+        case "partial": return SubPalette.violet
+        case "manual", "unconfigured": return SubPalette.amber
+        case "error": return SubPalette.red
+        case "unavailable": return .secondary
+        default: return SubPalette.amber
+        }
+    }
+    private func balanceColor(_ provider: SubApiBalance) -> Color {
+        if provider.balanceKind == "wallet", let value = provider.balanceUsd, value < 3 { return SubPalette.red }
+        if provider.balanceKind == "manual_estimate" { return SubPalette.amber }
+        return SubPalette.accentText(scheme)
+    }
+    private func compact(_ n: Double) -> String {
+        if n >= 1_000_000 { return String(format: "%.1fM", n / 1_000_000) }
+        if n >= 1_000 { return String(format: "%.1fK", n / 1_000) }
+        return String(format: n.rounded() == n ? "%.0f" : "%.1f", n)
     }
 
     private var heroGrid: some View {
@@ -332,7 +625,7 @@ struct SubscriptionsScreen: View {
         HStack(spacing: 12) {
             Image(systemName: "mic.fill").font(.system(size: 15)).foregroundStyle(.white).frame(width: 34, height: 34)
                 .background(LinearGradient(colors: [SubPalette.coral, SubPalette.violet], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 10))
-            Text("Assistant-কে বলুন — **\"Vercel-এর খরচ $20 করো\"** বা **\"Gemini Pro Plan-এ আপডেট করো\"**। সরাসরি এই হিসাব আপডেট হবে।")
+            Text("Provider API বা billing export থাকলে খরচ নিজে sync হবে। API না থাকলে **Manual** হিসেবে স্পষ্ট দেখাবে—কোনো quota বা estimate-কে cash balance বলা হবে না।")
                 .font(.system(size: 11.5)).foregroundStyle(.primary)
         }
         .padding(14).frame(maxWidth: .infinity, alignment: .leading).subGlass(scheme, corner: AlmaSwiftTheme.rCard)
@@ -353,9 +646,10 @@ struct SubscriptionsScreen: View {
     }
 
     private var sectionHeader: some View {
-        HStack {
+        let synced = vm.subs.filter { $0.sourceType != "manual" }.count
+        return HStack {
             Text("সব সাবস্ক্রিপশন").font(.system(size: 13, weight: .bold)); Spacer()
-            Text("ম্যানুয়াল · \(vm.subs.count)টি").font(.system(size: 10.5)).foregroundStyle(.secondary)
+            Text("\(synced) synced · \(vm.subs.count - synced) manual").font(.system(size: 10.5)).foregroundStyle(.secondary)
         }.padding(.horizontal, 3).padding(.top, 2)
     }
 
@@ -396,11 +690,18 @@ struct SubscriptionsScreen: View {
         let cols = [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)]
         return LazyVGrid(columns: cols, alignment: .leading, spacing: 9) {
             meta("Billing", s.cycleLabel)
-            meta("Next Renewal", s.nextRenewalAt == nil ? "—" : renewShort(s))
+            meta("Due / Renewal", s.dueAt == nil ? "—" : dueShort(s))
             meta("Payment", s.paymentMethod ?? "—")
-            meta("Cycle Cost", s.priceLabel)
+            meta("Due Amount", s.duePriceLabel)
+            meta("Source", sourceLabel(s.sourceType))
+            meta("Sync", statusLabel(s.syncStatus))
         }
         .padding(.top, 13).overlay(alignment: .top) { Divider().opacity(0.5) }
+    }
+    private func dueShort(_ s: Subscription) -> String {
+        guard let date = s.dueAt else { return "—" }
+        let days = Calendar.current.dateComponents([.day], from: Date(), to: date).day ?? 0
+        return "\(SubFormat.dayMonth(date)) · \(days <= 0 ? "এখন" : "\(days) দিন")"
     }
     private func meta(_ k: String, _ v: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {

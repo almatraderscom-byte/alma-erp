@@ -4,6 +4,17 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds, addDaysYmd } from '@/lib/agent-api/dhaka-date'
+import {
+  fetchElevenLabsQuota,
+  fetchFashnQuota,
+  fetchGoogleCloudBillingCosts,
+  fetchSupabaseOrganizationPlan,
+  fetchVercelBillingCosts,
+  type ProviderInvoiceSnapshot,
+  type ProviderQuotaSnapshot,
+  type ProviderSourceType,
+  type ProviderSyncStatus,
+} from '@/agent/lib/provider-billing'
 
 export const API_BALANCE_CACHE_KEY = 'api_balance_cache'
 
@@ -28,6 +39,11 @@ export type BalanceProviderId =
   | 'veo'
   | 'fal'
   | 'fashn'
+  | 'xai'
+  | 'vercel'
+  | 'supabase'
+
+export type BalanceKind = 'wallet' | 'manual_estimate' | 'quota' | 'none'
 
 export type ApiBalanceCredit = {
   initialCredit: number
@@ -38,10 +54,36 @@ export type ApiBalanceCredit = {
 export type BalanceProviderRow = {
   id: BalanceProviderId
   label: string
+  // Legacy compatibility field. Only real USD wallets/manual USD estimates
+  // populate it; quota providers intentionally leave it null.
   balanceUsd: number | null
+  balanceKind: BalanceKind
+  balanceAmount: number | null
+  balanceCurrency: string | null
+  balanceUnit: string | null
+  quota?: ProviderQuotaSnapshot | null
+  invoice?: ProviderInvoiceSnapshot | null
   todayUsd: number | null
   monthUsd: number | null
+  providerMonthUsd?: number | null
+  localDeltaUsd?: number | null
   source: string
+  sourceType: ProviderSourceType
+  costSourceType: ProviderSourceType
+  status: ProviderSyncStatus
+  statusMessage?: string | null
+  // Authority is field-specific: a provider can expose a real wallet/quota but
+  // still have only locally measured cost (Twilio/fal), or expose a plan but no
+  // invoice/cost API (Supabase).
+  balanceAuthoritative: boolean
+  costAuthoritative: boolean
+  planAuthoritative: boolean
+  authoritative: boolean
+  fetchedAt: string
+  staleAfter: string | null
+  dashboardUrl?: string | null
+  plan?: string | null
+  capabilities: string[]
   free?: boolean
   // Latest day the provider's billing API has published data for (YYYY-MM-DD,
   // Anthropic only). The Admin cost API lags ~1–2 days, so monthUsd is accurate
@@ -54,6 +96,12 @@ export type ApiBalanceCache = {
   checkedAt: string
   providers: BalanceProviderRow[]
   summaryLine: string
+  dueSummary?: {
+    dueNow: number
+    dueWithin7Days: number
+    dueWithin30Days: number
+    amountsWithin30Days: Array<{ currency: string; amount: number }>
+  }
 }
 
 export type LowBalanceAlert = {
@@ -93,25 +141,115 @@ export const PROVIDER_ALIASES: Record<string, BalanceProviderId> = {
   'fal.ai': 'fal',
   falai: 'fal',
   seedream: 'fal',
+  xai: 'xai',
+  grok: 'xai',
+  vercel: 'vercel',
+  supabase: 'supabase',
 }
 
-const PROVIDER_META: Record<BalanceProviderId, { label: string; source: string; free?: boolean }> = {
-  anthropic: { label: 'Anthropic', source: 'Auto+Input' },
-  twilio: { label: 'Twilio', source: 'Live API' },
-  openai: { label: 'OpenAI', source: 'Auto+Input' },
-  openrouter: { label: 'OpenRouter', source: 'Live API' },
-  gemini: { label: 'Gemini', source: 'Input+Track' },
-  google_tts: { label: 'Google TTS', source: 'Input+Track' },
-  meta_free: { label: 'Meta/ntfy', source: '—', free: true },
-  oxylabs: { label: 'Oxylabs', source: 'Credit track' },
-  elevenlabs: { label: 'ElevenLabs', source: 'Live API' },
-  veo: { label: 'VEO 3', source: 'Input+Track' },
-  fashn: { label: 'FASHN (direct)', source: 'Live credits' },
-  fal: { label: 'fal.ai (Seedream)', source: 'Live API' },
+const PROVIDER_META: Record<BalanceProviderId, {
+  label: string
+  source: string
+  dashboardUrl: string | null
+  capabilities: string[]
+  free?: boolean
+}> = {
+  anthropic: {
+    label: 'Anthropic',
+    source: 'Provider cost + local delta',
+    dashboardUrl: 'https://platform.claude.com/workspaces/default/cost',
+    capabilities: ['cost', 'usage'],
+  },
+  twilio: {
+    label: 'Twilio',
+    source: 'Provider API',
+    dashboardUrl: 'https://console.twilio.com/us1/billing/manage-billing/billing-overview',
+    capabilities: ['wallet', 'cost', 'usage'],
+  },
+  openai: {
+    label: 'OpenAI',
+    source: 'Provider cost + local delta',
+    dashboardUrl: 'https://platform.openai.com/settings/organization/usage',
+    capabilities: ['cost', 'usage'],
+  },
+  openrouter: {
+    label: 'OpenRouter',
+    source: 'Provider API',
+    dashboardUrl: 'https://openrouter.ai/activity',
+    capabilities: ['wallet', 'cost', 'usage'],
+  },
+  gemini: {
+    label: 'Gemini',
+    source: 'Cloud Billing + local delta',
+    dashboardUrl: 'https://aistudio.google.com/usage',
+    capabilities: ['cost', 'usage'],
+  },
+  google_tts: {
+    label: 'Google TTS',
+    source: 'Cloud Billing + local delta',
+    dashboardUrl: 'https://console.cloud.google.com/billing',
+    capabilities: ['cost', 'usage'],
+  },
+  meta_free: {
+    label: 'Meta/ntfy',
+    source: 'Free',
+    dashboardUrl: null,
+    capabilities: ['free'],
+    free: true,
+  },
+  oxylabs: {
+    label: 'Oxylabs',
+    source: 'Manual credit + local usage',
+    dashboardUrl: 'https://dashboard.oxylabs.io/',
+    capabilities: ['quota', 'usage'],
+  },
+  elevenlabs: {
+    label: 'ElevenLabs',
+    source: 'Provider quota API',
+    dashboardUrl: 'https://elevenlabs.io/app/subscription',
+    capabilities: ['quota', 'plan', 'usage'],
+  },
+  veo: {
+    label: 'Veo',
+    source: 'Cloud Billing + local delta',
+    dashboardUrl: 'https://console.cloud.google.com/billing',
+    capabilities: ['cost', 'usage'],
+  },
+  fashn: {
+    label: 'FASHN',
+    source: 'Provider credits API',
+    dashboardUrl: 'https://app.fashn.ai/',
+    capabilities: ['quota', 'plan'],
+  },
+  fal: {
+    label: 'fal.ai',
+    source: 'Provider API',
+    dashboardUrl: 'https://fal.ai/dashboard/billing',
+    capabilities: ['wallet', 'cost', 'pricing'],
+  },
+  xai: {
+    label: 'xAI',
+    source: 'Local measured',
+    dashboardUrl: 'https://console.x.ai/',
+    capabilities: ['cost', 'usage'],
+  },
+  vercel: {
+    label: 'Vercel',
+    source: 'FOCUS billing charges',
+    dashboardUrl: 'https://vercel.com/dashboard/~/usage',
+    capabilities: ['cost', 'usage'],
+  },
+  supabase: {
+    label: 'Supabase',
+    source: 'Management API',
+    dashboardUrl: 'https://supabase.com/dashboard/organizations',
+    capabilities: ['plan', 'usage'],
+  },
 }
 
 const TRACKED_COST_PROVIDERS: BalanceProviderId[] = [
-  'anthropic', 'twilio', 'openai', 'openrouter', 'gemini', 'google_tts', 'oxylabs', 'elevenlabs', 'veo', 'fal', 'fashn',
+  'anthropic', 'twilio', 'openai', 'openrouter', 'gemini', 'google_tts',
+  'oxylabs', 'elevenlabs', 'veo', 'fal', 'fashn', 'xai', 'vercel', 'supabase',
 ]
 
 function creditKey(provider: BalanceProviderId): string {
@@ -250,7 +388,6 @@ async function fetchAnthropicMonthSpendUsd(
     const endingAt = `${addDaysYmd(todayStr, 1)}T00:00:00Z`        // tomorrow, exclusive
     let page: string | null = null
     let cents = 0
-    let bucketCount = 0
     let syncedThrough: string | null = null   // latest UTC day the API has data for
 
     for (let i = 0; i < 12; i++) {
@@ -273,12 +410,15 @@ async function fetchAnthropicMonthSpendUsd(
         next_page?: string | null
       }
       for (const bucket of data.data ?? []) {
-        bucketCount++
-        // The API returns a contiguous daily range up to its processing horizon,
-        // so the max bucket date IS the latest day with published data.
-        const day = bucket.starting_at?.slice(0, 10) ?? null
-        if (day && (syncedThrough == null || day > syncedThrough)) syncedThrough = day
-        for (const row of bucket.results ?? []) {
+        const results = bucket.results ?? []
+        // A requested trailing bucket may exist before the provider has published
+        // its cost rows. Only a bucket with results advances the reconciliation
+        // boundary; otherwise today's local events could disappear from the total.
+        if (results.length > 0) {
+          const day = bucket.starting_at?.slice(0, 10) ?? null
+          if (day && (syncedThrough == null || day > syncedThrough)) syncedThrough = day
+        }
+        for (const row of results) {
           const amt = typeof row.amount === 'number' ? row.amount : parseFloat(row.amount ?? '0')
           cents += Number.isFinite(amt) ? amt : 0
         }
@@ -287,9 +427,9 @@ async function fetchAnthropicMonthSpendUsd(
       break
     }
 
-    // Empty response (e.g. individual account / misalignment) → "unavailable",
-    // so the caller falls back to tracked spend rather than showing $0.00.
-    if (bucketCount === 0) return null
+    // A successful empty report is valid (for example, no billed usage yet).
+    // syncedThrough stays null, so reconciliation adds the whole local month
+    // instead of mistaking an unpublished trailing bucket for provider truth.
     return { usd: cents / 100, syncedThrough }
   } catch (err) {
     console.warn('[api-balances] fetchAnthropicMonthSpend failed:', err instanceof Error ? err.message : err)
@@ -297,20 +437,90 @@ async function fetchAnthropicMonthSpendUsd(
   }
 }
 
-async function fetchOpenAIMonthSpendUsd(monthStart: Date, monthEnd: Date): Promise<number | null> {
+export function parseOpenAICostPage(data: {
+  data?: Array<{
+    start_time?: number
+    results?: Array<{ amount?: { value?: number; currency?: string } }>
+  }>
+  has_more?: boolean
+  next_page?: string | null
+}): {
+  usd: number
+  bucketCount: number
+  syncedThrough: string | null
+  hasMore: boolean
+  nextPage: string | null
+} {
+  let usd = 0
+  let bucketCount = 0
+  let syncedThrough: string | null = null
+  for (const bucket of data.data ?? []) {
+    const results = bucket.results ?? []
+    if (results.length > 0) bucketCount++
+    if (results.length > 0 && typeof bucket.start_time === 'number') {
+      const day = new Date(bucket.start_time * 1_000).toISOString().slice(0, 10)
+      if (syncedThrough == null || day > syncedThrough) syncedThrough = day
+    }
+    for (const result of results) {
+      if ((result.amount?.currency ?? 'usd').toLowerCase() !== 'usd') continue
+      const amount = Number(result.amount?.value ?? 0)
+      if (Number.isFinite(amount)) usd += amount
+    }
+  }
+  return {
+    usd,
+    bucketCount,
+    syncedThrough,
+    hasMore: Boolean(data.has_more),
+    nextPage: data.next_page ?? null,
+  }
+}
+
+async function fetchOpenAIMonthSpendUsd(
+  monthStart: Date,
+  monthEnd: Date,
+): Promise<{ usd: number; syncedThrough: string | null } | null> {
   const orgId = process.env.OPENAI_ORG_ID
-  const adminKey = process.env.OPENAI_ADMIN_API_KEY ?? process.env.OPENAI_API_KEY
+  const adminKey = process.env.OPENAI_ADMIN_API_KEY
   if (!orgId || !adminKey) return null
   try {
     const start = Math.floor(monthStart.getTime() / 1000)
-    const end = Math.floor(monthEnd.getTime() / 1000)
-    const res = await fetch(
-      `https://api.openai.com/v1/organization/costs?start_time=${start}&end_time=${end}`,
-      { headers: { Authorization: `Bearer ${adminKey}`, 'OpenAI-Organization': orgId }, signal: AbortSignal.timeout(15_000) },
-    )
-    if (!res.ok) return null
-    const data = await res.json() as { data?: Array<{ amount?: { value?: number } }> }
-    return (data.data ?? []).reduce((s, b) => s + (b.amount?.value ?? 0), 0) / 100
+    const end = Math.floor(Math.min(monthEnd.getTime(), Date.now() + 1_000) / 1000)
+    let page: string | null = null
+    let usd = 0
+    let syncedThrough: string | null = null
+
+    for (let index = 0; index < 12; index++) {
+      const url = new URL('https://api.openai.com/v1/organization/costs')
+      url.searchParams.set('start_time', String(start))
+      url.searchParams.set('end_time', String(end))
+      url.searchParams.set('bucket_width', '1d')
+      url.searchParams.set('limit', '31')
+      if (page) url.searchParams.set('page', page)
+
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${adminKey}`, 'OpenAI-Organization': orgId },
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (!response.ok) {
+        console.warn(`[api-balances] openai organization costs HTTP ${response.status}`)
+        return null
+      }
+      const parsed = parseOpenAICostPage(await response.json())
+      usd += parsed.usd
+      if (parsed.syncedThrough && (
+        syncedThrough == null || parsed.syncedThrough > syncedThrough
+      )) {
+        syncedThrough = parsed.syncedThrough
+      }
+      if (!parsed.hasMore || !parsed.nextPage) break
+      page = parsed.nextPage
+    }
+
+    // Preserve a successful zero-cost response. A null boundary deliberately
+    // causes reconciliation to add the whole local month.
+    // OpenAI's amount.value is already the numeric currency value (USD), not cents.
+    return { usd: roundUsd(usd), syncedThrough }
   } catch (err) {
     console.warn('[api-balances] fetchOpenAIMonthSpend failed:', err instanceof Error ? err.message : err)
     return null
@@ -451,46 +661,6 @@ async function fetchFalBalanceUsd(): Promise<number | null> {
   }
 }
 
-/** CS12 — FASHN direct-API credits (the OutOfCredits source). ~\$0.075/credit. */
-async function fetchFashnBalanceUsd(): Promise<number | null> {
-  const apiKey = process.env.FASHN_API_KEY?.trim()
-  if (!apiKey) return null
-  try {
-    const res = await fetch('https://api.fashn.ai/v1/credits', {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(15_000),
-    })
-    if (!res.ok) return null
-    const data = await res.json() as { credits?: { total?: number } | number }
-    const credits = typeof data.credits === 'number' ? data.credits : data.credits?.total
-    return typeof credits === 'number' && Number.isFinite(credits) ? roundUsd(credits * 0.075) : null
-  } catch (err) {
-    console.warn('[api-balances] fetchFashnBalance failed:', err instanceof Error ? err.message : err)
-    return null
-  }
-}
-
-/** ElevenLabs subscription — character quota remaining (Starter plan). */
-async function fetchElevenLabsBalanceUsd(): Promise<number | null> {
-  const apiKey = process.env.ELEVENLABS_API_KEY
-  if (!apiKey) return null
-  try {
-    const res = await fetch('https://api.elevenlabs.io/v1/user/subscription', {
-      headers: { 'xi-api-key': apiKey },
-      signal: AbortSignal.timeout(15_000),
-    })
-    if (!res.ok) return null
-    const data = await res.json() as { character_count?: number; character_limit?: number }
-    const limit = data.character_limit ?? 0
-    const used = data.character_count ?? 0
-    const remainingChars = Math.max(0, limit - used)
-    return roundUsd((remainingChars / 1000) * 0.30)
-  } catch (err) {
-    console.warn('[api-balances] fetchElevenLabsBalance failed:', err instanceof Error ? err.message : err)
-    return null
-  }
-}
-
 function roundUsd(n: number): number {
   return Math.round(n * 100) / 100
 }
@@ -503,7 +673,7 @@ function formatSummaryUsd(n: number): string {
 
 export function buildBalanceSummaryLine(rows: BalanceProviderRow[]): string {
   const parts = rows
-    .filter((r) => !r.free && r.balanceUsd != null && r.balanceUsd >= 0)
+    .filter((r) => !r.free && r.balanceKind === 'wallet' && r.balanceUsd != null && r.balanceUsd >= 0)
     .map((r) => `${r.label}: ${formatSummaryUsd(r.balanceUsd!)}`)
   return parts.length ? `💳 ${parts.join(' | ')}` : ''
 }
@@ -527,27 +697,339 @@ async function storeBalanceCache(cache: ApiBalanceCache): Promise<void> {
   })
 }
 
+function normalizeCachedProvider(
+  row: Partial<BalanceProviderRow> & Pick<BalanceProviderRow, 'id' | 'label'>,
+  cacheCheckedAt: string,
+): BalanceProviderRow {
+  const meta = PROVIDER_META[row.id]
+  const oldWallet = row.id === 'twilio' || row.id === 'openrouter' || row.id === 'fal'
+  const oldQuota = row.id === 'elevenlabs' || row.id === 'fashn'
+  const balanceKind = row.balanceKind
+    ?? (oldWallet && row.balanceUsd != null
+      ? 'wallet'
+      : oldQuota
+        ? 'none'
+        : row.balanceUsd != null
+          ? 'manual_estimate'
+          : 'none')
+  const balanceAmount = oldQuota ? null : (row.balanceAmount ?? row.balanceUsd ?? null)
+  const sourceType = row.sourceType
+    ?? (oldWallet ? 'provider_api' : row.free ? 'free' : row.balanceUsd != null ? 'manual' : 'local_measured')
+  return {
+    id: row.id,
+    label: row.label,
+    balanceUsd: oldQuota ? null : (row.balanceUsd ?? null),
+    balanceKind,
+    balanceAmount,
+    balanceCurrency: row.balanceCurrency ?? (balanceAmount != null && row.id !== 'oxylabs' ? 'USD' : null),
+    balanceUnit: row.balanceUnit ?? (balanceAmount != null ? (row.id === 'oxylabs' ? 'credits' : 'USD') : null),
+    quota: row.quota ?? null,
+    invoice: row.invoice ?? row.quota?.invoice ?? null,
+    todayUsd: row.todayUsd ?? null,
+    monthUsd: row.monthUsd ?? null,
+    providerMonthUsd: row.providerMonthUsd ?? null,
+    localDeltaUsd: row.localDeltaUsd ?? null,
+    source: row.source ?? meta.source,
+    sourceType,
+    costSourceType: row.costSourceType ?? 'local_measured',
+    status: row.status ?? (row.free ? 'free' : 'stale'),
+    statusMessage: row.statusMessage ?? null,
+    balanceAuthoritative: row.balanceAuthoritative
+      ?? Boolean(row.authoritative && (balanceKind === 'wallet' || balanceKind === 'quota')),
+    costAuthoritative: row.costAuthoritative
+      ?? Boolean(row.authoritative && row.providerMonthUsd != null),
+    planAuthoritative: row.planAuthoritative
+      ?? Boolean(row.authoritative && row.plan && sourceType === 'provider_api'),
+    authoritative: row.authoritative ?? oldWallet,
+    fetchedAt: row.fetchedAt ?? cacheCheckedAt,
+    staleAfter: row.staleAfter ?? null,
+    dashboardUrl: row.dashboardUrl ?? meta.dashboardUrl,
+    plan: row.plan ?? null,
+    capabilities: row.capabilities ?? meta.capabilities,
+    free: row.free,
+    syncedThrough: row.syncedThrough ?? null,
+  }
+}
+
+function previousProvider(cache: ApiBalanceCache | null, id: BalanceProviderId): BalanceProviderRow | null {
+  const row = cache?.providers?.find((candidate) => candidate.id === id)
+  if (!row) return null
+  return normalizeCachedProvider(row, cache?.checkedAt ?? new Date(0).toISOString())
+}
+
+function staleAfter(fetchedAt: string, minutes: number): string {
+  return new Date(Date.parse(fetchedAt) + minutes * 60_000).toISOString()
+}
+
+export function providerLocalDeltaStart(
+  provider: BalanceProviderId,
+  syncedThrough: string | null,
+): Date | null {
+  if (!syncedThrough) return null
+  const nextDay = addDaysYmd(syncedThrough, 1)
+  return provider === 'gemini' || provider === 'google_tts' || provider === 'veo'
+    ? dhakaDayBounds(nextDay).start
+    : new Date(`${nextDay}T00:00:00Z`)
+}
+
+async function reconcileProviderMonth(
+  provider: BalanceProviderId,
+  providerMonthUsd: number,
+  syncedThrough: string | null,
+): Promise<{ monthUsd: number; localDeltaUsd: number }> {
+  if (!syncedThrough) {
+    const monthStart = dhakaMonthBounds(todayYmdDhaka()).start
+    const localDeltaUsd = roundUsd(await querySpendSince(provider, monthStart))
+    return {
+      monthUsd: roundUsd(providerMonthUsd + localDeltaUsd),
+      localDeltaUsd,
+    }
+  }
+  // Google billing rows are grouped in Asia/Dhaka. Admin/API daily buckets from
+  // Anthropic, OpenAI and OpenRouter are UTC. The boundary must match the source
+  // or six hours of local usage can be dropped/duplicated.
+  const localStart = providerLocalDeltaStart(provider, syncedThrough)
+  if (!localStart) return { monthUsd: roundUsd(providerMonthUsd), localDeltaUsd: 0 }
+  const localDeltaUsd = roundUsd(await querySpendSince(provider, localStart))
+  return {
+    monthUsd: roundUsd(providerMonthUsd + localDeltaUsd),
+    localDeltaUsd,
+  }
+}
+
+async function getSubscriptionDueSummary(
+  todayStr: string,
+  excludeProviderIds = new Set<string>(),
+): Promise<NonNullable<ApiBalanceCache['dueSummary']>> {
+  const end30 = addDaysYmd(todayStr, 30)
+  const end30At = new Date(`${end30}T23:59:59+06:00`)
+  const rows = await prisma.agentSubscription.findMany({
+    where: {
+      active: true,
+      OR: [
+        { invoiceDueAt: { lte: end30At } },
+        { nextRenewalAt: { lte: end30At } },
+      ],
+    },
+    select: {
+      providerId: true,
+      name: true,
+      nextRenewalAt: true,
+      amount: true,
+      currency: true,
+      invoiceDueAt: true,
+      invoiceAmount: true,
+      invoiceCurrency: true,
+      invoiceStatus: true,
+    },
+  })
+  return summarizeSubscriptionDues(rows, todayStr, excludeProviderIds)
+}
+
+export function summarizeSubscriptionDues(
+  rows: Array<{
+    providerId?: string | null
+    name?: string | null
+    nextRenewalAt: Date
+    amount: unknown
+    currency: string
+    invoiceDueAt: Date | null
+    invoiceAmount: unknown | null
+    invoiceCurrency: string | null
+    invoiceStatus: string | null
+  }>,
+  todayStr: string,
+  excludeProviderIds = new Set<string>(),
+): NonNullable<ApiBalanceCache['dueSummary']> {
+  const end30 = addDaysYmd(todayStr, 30)
+  let dueNow = 0
+  let dueWithin7Days = 0
+  let dueWithin30Days = 0
+  const amounts = new Map<string, number>()
+  const in7 = addDaysYmd(todayStr, 7)
+
+  for (const row of rows) {
+    const linkedProvider = row.providerId?.toLowerCase()
+      ?? (row.name ? normalizeBalanceProvider(row.name) : null)
+    if (linkedProvider && excludeProviderIds.has(linkedProvider)) continue
+    const invoiceSettled = ['paid', 'void', 'cancelled', 'canceled'].includes(
+      (row.invoiceStatus ?? '').trim().toLowerCase(),
+    )
+    const useInvoice = Boolean(row.invoiceDueAt && !invoiceSettled)
+    const dueDate = useInvoice && row.invoiceDueAt ? row.invoiceDueAt : row.nextRenewalAt
+    const due = todayYmdDhaka(dueDate)
+    if (due > end30) continue
+    const currency = useInvoice
+      ? (row.invoiceCurrency?.trim().toUpperCase() || row.currency)
+      : row.currency
+    const amount = useInvoice && row.invoiceAmount != null
+      ? Number(row.invoiceAmount)
+      : Number(row.amount)
+    if (due <= todayStr) dueNow++
+    if (due <= in7) dueWithin7Days++
+    dueWithin30Days++
+    amounts.set(currency, (amounts.get(currency) ?? 0) + amount)
+  }
+  return {
+    dueNow,
+    dueWithin7Days,
+    dueWithin30Days,
+    amountsWithin30Days: Array.from(amounts, ([currency, amount]) => ({
+      currency,
+      amount: Math.round(amount * 100) / 100,
+    })),
+  }
+}
+
+export function mergeProviderInvoiceDues(
+  summary: NonNullable<ApiBalanceCache['dueSummary']>,
+  invoices: ProviderInvoiceSnapshot[],
+  todayStr: string,
+): NonNullable<ApiBalanceCache['dueSummary']> {
+  const amounts = new Map(summary.amountsWithin30Days.map((item) => [item.currency, item.amount]))
+  let dueNow = summary.dueNow
+  let dueWithin7Days = summary.dueWithin7Days
+  let dueWithin30Days = summary.dueWithin30Days
+  const in7 = addDaysYmd(todayStr, 7)
+  const in30 = addDaysYmd(todayStr, 30)
+
+  for (const invoice of invoices) {
+    if (!invoice.dueAt || ['paid', 'void', 'cancelled', 'canceled'].includes(invoice.status.toLowerCase())) continue
+    const due = todayYmdDhaka(new Date(invoice.dueAt))
+    if (due > in30) continue
+    if (due <= todayStr) dueNow++
+    if (due <= in7) dueWithin7Days++
+    dueWithin30Days++
+    amounts.set(invoice.currency, (amounts.get(invoice.currency) ?? 0) + invoice.amount)
+  }
+  return {
+    dueNow,
+    dueWithin7Days,
+    dueWithin30Days,
+    amountsWithin30Days: Array.from(amounts, ([currency, amount]) => ({
+      currency,
+      amount: Math.round(amount * 100) / 100,
+    })),
+  }
+}
+
+async function persistProviderBillingSnapshots(
+  providers: BalanceProviderRow[],
+  startedAt: Date,
+): Promise<void> {
+  try {
+    // Keep the read path on the existing KV cache for compatibility, while the
+    // normalized snapshot table supplies durable per-provider audit/provenance.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = prisma as any
+    const writes = providers.map((row) => {
+      const nextUnreportedAt = providerLocalDeltaStart(row.id, row.syncedThrough ?? null)
+      const providerAsOf = nextUnreportedAt
+        ? new Date(nextUnreportedAt.getTime() - 1)
+        : null
+      const metadata = JSON.parse(JSON.stringify(row))
+      return db.agentProviderBillingSnapshot.upsert({
+        where: { provider_metric: { provider: row.id, metric: 'summary' } },
+        update: {
+          status: row.status,
+          sourceType: row.sourceType,
+          authoritative: row.authoritative,
+          amount: row.monthUsd,
+          currency: row.monthUsd != null ? 'USD' : row.balanceCurrency,
+          unit: row.balanceUnit,
+          textValue: row.plan,
+          providerAsOf,
+          fetchedAt: new Date(row.fetchedAt),
+          staleAfter: row.staleAfter ? new Date(row.staleAfter) : null,
+          metadata,
+        },
+        create: {
+          provider: row.id,
+          metric: 'summary',
+          status: row.status,
+          sourceType: row.sourceType,
+          authoritative: row.authoritative,
+          amount: row.monthUsd,
+          currency: row.monthUsd != null ? 'USD' : row.balanceCurrency,
+          unit: row.balanceUnit,
+          textValue: row.plan,
+          providerAsOf,
+          fetchedAt: new Date(row.fetchedAt),
+          staleAfter: row.staleAfter ? new Date(row.staleAfter) : null,
+          metadata,
+        },
+      })
+    })
+    await db.$transaction(writes)
+    const errors = providers.filter((row) => row.status === 'error' || row.status === 'stale')
+    await db.agentProviderSyncRun.create({
+      data: {
+        provider: 'all',
+        status: errors.length ? 'partial' : 'success',
+        startedAt,
+        finishedAt: new Date(),
+        fieldsUpdated: providers.length,
+        error: errors.length
+          ? errors.map((row) => `${row.id}: ${row.statusMessage ?? row.status}`).join('; ')
+          : null,
+        metadata: {
+          live: providers.filter((row) => row.status === 'live').length,
+          partial: providers.filter((row) => row.status === 'partial').length,
+          manual: providers.filter((row) => row.status === 'manual').length,
+          unconfigured: providers.filter((row) => row.status === 'unconfigured').length,
+        },
+      },
+    })
+  } catch (error) {
+    // The KV cache remains the compatibility source during migration rollout.
+    console.warn('[api-balances] provider snapshot persistence failed:', error instanceof Error ? error.message : error)
+  }
+}
+
 export async function refreshApiBalanceCache(): Promise<{
   cache: ApiBalanceCache
   twilioRaw?: { balance: string; currency: string } | null
   alerts: LowBalanceAlert[]
 }> {
+  const startedAt = new Date()
   const { todayStr, dayStart, dayEnd, monthStart, monthEnd } = dhakaSpendBounds()
-  const [todayByProvider, monthByProvider] = await Promise.all([
+  const [
+    previousCache,
+    todayByProvider,
+    monthByProvider,
+    twilioLive,
+    anthropicAdminMonth,
+    openaiAdminMonth,
+    openRouterLive,
+    openRouterActivityMonth,
+    elevenLabsQuota,
+    falLive,
+    fashnQuota,
+    vercelBilling,
+    supabasePlan,
+    googleBilling,
+    credits,
+  ] = await Promise.all([
+    readBalanceCache(),
     querySpendByProviderBetween(dayStart, dayEnd),
     querySpendByProviderBetween(monthStart, monthEnd),
-  ])
-
-  const [twilioLive, anthropicAdminMonth, openaiAdminMonth, openRouterLive, openRouterActivityMonth, elevenLabsLive, falLive, fashnLive] = await Promise.all([
     fetchTwilioBalance(),
     fetchAnthropicMonthSpendUsd(todayStr),
     fetchOpenAIMonthSpendUsd(monthStart, monthEnd),
     fetchOpenRouterCreditsUsd(),
     fetchOpenRouterActivityMonthUsd(todayStr),
-    fetchElevenLabsBalanceUsd(),
+    fetchElevenLabsQuota(),
     fetchFalBalanceUsd(),
-    fetchFashnBalanceUsd(),
+    fetchFashnQuota(),
+    fetchVercelBillingCosts(monthStart, new Date(), todayStr),
+    fetchSupabaseOrganizationPlan(),
+    fetchGoogleCloudBillingCosts(monthStart, todayStr),
+    Promise.all(TRACKED_COST_PROVIDERS.map(async (provider) => ({
+      provider,
+      credit: await getApiBalanceCredit(provider),
+    }))),
   ])
+  const creditByProvider = new Map(credits.map((item) => [item.provider, item.credit]))
 
   let twilioRaw: { balance: string; currency: string } | null = null
   if (twilioLive != null) {
@@ -558,92 +1040,426 @@ export async function refreshApiBalanceCache(): Promise<{
 
   for (const id of TRACKED_COST_PROVIDERS) {
     const meta = PROVIDER_META[id]
-    const credit = await getApiBalanceCredit(id)
-    const todayUsd = roundUsd(todayByProvider[id] ?? 0)
-    let monthUsd = roundUsd(monthByProvider[id] ?? 0)
+    const previous = previousProvider(previousCache, id)
+    const credit = creditByProvider.get(id) ?? null
+    let todayUsd: number | null = roundUsd(todayByProvider[id] ?? 0)
+    let monthUsd: number | null = roundUsd(monthByProvider[id] ?? 0)
+    let providerMonthUsd: number | null = null
+    let localDeltaUsd: number | null = null
     let balanceUsd: number | null = null
+    let balanceKind: BalanceKind = 'none'
+    let balanceAmount: number | null = null
+    let balanceCurrency: string | null = null
+    let balanceUnit: string | null = null
+    let quota: ProviderQuotaSnapshot | null = null
+    let invoice: ProviderInvoiceSnapshot | null = null
     let syncedThrough: string | null = null
+    let plan: string | null = null
+    let sourceType: ProviderSourceType = 'local_measured'
+    let costSourceType: ProviderSourceType = 'local_measured'
+    let status: ProviderSyncStatus = monthUsd > 0 ? 'partial' : 'unconfigured'
+    let statusMessage: string | null = monthUsd > 0
+      ? 'খরচ local request events থেকে মাপা; provider wallet API পাওয়া যায়নি।'
+      : 'এই provider-এর billing connection configure করা হয়নি।'
+    let balanceAuthoritative = false
+    let costAuthoritative = false
+    let planAuthoritative = false
+    let authoritative = false
+    let fetchedAt = startedAt.toISOString()
+    let staleAt: string | null = null
 
-    // ---- Live balance (account credit / quota remaining) ----
+    // ---- Authoritative wallet/quota fields ----
     if (id === 'twilio') {
-      balanceUsd = twilioLive != null ? roundUsd(twilioLive) : null
-    } else if (id === 'elevenlabs' && elevenLabsLive != null) {
-      balanceUsd = elevenLabsLive
-    } else if (id === 'openrouter' && openRouterLive != null) {
-      balanceUsd = openRouterLive
-    } else if (id === 'fal' && falLive != null) {
-      balanceUsd = falLive
-    } else if (id === 'fashn' && fashnLive != null) {
-      balanceUsd = fashnLive
+      const configured = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
+      if (twilioLive != null) {
+        balanceKind = 'wallet'
+        balanceAmount = balanceUsd = roundUsd(twilioLive)
+        balanceCurrency = balanceUnit = 'USD'
+        sourceType = 'provider_api'
+        status = 'live'
+        statusMessage = 'Twilio account wallet থেকে সরাসরি পাওয়া।'
+        balanceAuthoritative = true
+        staleAt = staleAfter(fetchedAt, 20)
+      } else if (configured && previous?.balanceKind === 'wallet') {
+        balanceKind = 'wallet'
+        balanceAmount = balanceUsd = previous.balanceAmount
+        balanceCurrency = previous.balanceCurrency
+        balanceUnit = previous.balanceUnit
+        sourceType = 'provider_api'
+        status = 'stale'
+        statusMessage = 'Twilio refresh ব্যর্থ; শেষ সফল wallet value রাখা হয়েছে।'
+        balanceAuthoritative = previous.balanceAuthoritative
+        fetchedAt = previous.fetchedAt
+        staleAt = previous.staleAfter
+      } else if (configured) {
+        status = 'error'
+        statusMessage = 'Twilio balance API refresh ব্যর্থ।'
+      }
+    } else if (id === 'openrouter') {
+      if (openRouterLive != null) {
+        balanceKind = 'wallet'
+        balanceAmount = balanceUsd = roundUsd(openRouterLive)
+        balanceCurrency = balanceUnit = 'USD'
+        sourceType = 'provider_api'
+        status = 'live'
+        statusMessage = 'Purchased credit minus lifetime usage; provider API value।'
+        balanceAuthoritative = true
+        staleAt = staleAfter(fetchedAt, 20)
+      } else if (process.env.OPENROUTER_API_KEY && previous?.balanceKind === 'wallet') {
+        balanceKind = 'wallet'
+        balanceAmount = balanceUsd = previous.balanceAmount
+        balanceCurrency = previous.balanceCurrency
+        balanceUnit = previous.balanceUnit
+        sourceType = 'provider_api'
+        status = 'stale'
+        statusMessage = 'OpenRouter refresh ব্যর্থ; শেষ সফল wallet value রাখা হয়েছে।'
+        balanceAuthoritative = previous.balanceAuthoritative
+        fetchedAt = previous.fetchedAt
+        staleAt = previous.staleAfter
+      } else if (process.env.OPENROUTER_API_KEY) {
+        status = 'error'
+        statusMessage = 'OpenRouter credits API refresh ব্যর্থ।'
+      }
+    } else if (id === 'fal') {
+      if (falLive != null) {
+        balanceKind = 'wallet'
+        balanceAmount = balanceUsd = roundUsd(falLive)
+        balanceCurrency = balanceUnit = 'USD'
+        sourceType = 'provider_api'
+        status = 'live'
+        statusMessage = 'fal.ai prepaid credit balance।'
+        balanceAuthoritative = true
+        staleAt = staleAfter(fetchedAt, 20)
+      } else if (process.env.FAL_KEY && previous?.balanceKind === 'wallet') {
+        balanceKind = 'wallet'
+        balanceAmount = balanceUsd = previous.balanceAmount
+        balanceCurrency = previous.balanceCurrency
+        balanceUnit = previous.balanceUnit
+        sourceType = 'provider_api'
+        status = 'stale'
+        statusMessage = 'fal.ai refresh ব্যর্থ; শেষ সফল wallet value রাখা হয়েছে।'
+        balanceAuthoritative = previous.balanceAuthoritative
+        fetchedAt = previous.fetchedAt
+        staleAt = previous.staleAfter
+      } else if (process.env.FAL_KEY) {
+        status = 'error'
+        statusMessage = 'fal.ai billing API refresh ব্যর্থ।'
+      }
+    } else if (id === 'elevenlabs') {
+      if (elevenLabsQuota.ok && elevenLabsQuota.value) {
+        quota = elevenLabsQuota.value
+        invoice = quota.invoice
+        plan = quota.plan
+        balanceKind = 'quota'
+        balanceAmount = quota.remaining
+        balanceUnit = quota.unit
+        sourceType = 'provider_api'
+        status = 'live'
+        statusMessage = 'এটি character quota; cash balance নয়।'
+        balanceAuthoritative = true
+        planAuthoritative = Boolean(plan)
+        fetchedAt = elevenLabsQuota.fetchedAt
+        staleAt = staleAfter(fetchedAt, 20)
+      } else if (elevenLabsQuota.configured && previous?.quota) {
+        quota = previous.quota
+        invoice = previous.invoice ?? quota.invoice
+        plan = previous.plan ?? null
+        balanceKind = 'quota'
+        balanceAmount = quota.remaining
+        balanceUnit = quota.unit
+        sourceType = 'provider_api'
+        status = 'stale'
+        statusMessage = elevenLabsQuota.error ?? 'ElevenLabs quota refresh ব্যর্থ; শেষ সফল value রাখা হয়েছে।'
+        balanceAuthoritative = previous.balanceAuthoritative
+        planAuthoritative = previous.planAuthoritative
+        fetchedAt = previous.fetchedAt
+        staleAt = previous.staleAfter
+      } else if (elevenLabsQuota.configured) {
+        status = 'error'
+        statusMessage = elevenLabsQuota.error
+      }
+    } else if (id === 'fashn') {
+      if (fashnQuota.ok && fashnQuota.value) {
+        quota = fashnQuota.value
+        balanceKind = 'quota'
+        balanceAmount = quota.remaining
+        balanceUnit = quota.unit
+        sourceType = 'provider_api'
+        status = 'live'
+        statusMessage = 'Subscription + on-demand credits; USD cash নয়।'
+        balanceAuthoritative = true
+        fetchedAt = fashnQuota.fetchedAt
+        staleAt = staleAfter(fetchedAt, 20)
+      } else if (fashnQuota.configured && previous?.quota) {
+        quota = previous.quota
+        balanceKind = 'quota'
+        balanceAmount = quota.remaining
+        balanceUnit = quota.unit
+        sourceType = 'provider_api'
+        status = 'stale'
+        statusMessage = fashnQuota.error ?? 'FASHN refresh ব্যর্থ; শেষ সফল credits রাখা হয়েছে।'
+        balanceAuthoritative = previous.balanceAuthoritative
+        fetchedAt = previous.fetchedAt
+        staleAt = previous.staleAfter
+      } else if (fashnQuota.configured) {
+        status = 'error'
+        statusMessage = fashnQuota.error
+      }
     }
 
-    // ---- Authoritative month-to-date from each provider's billing API ----
-    // These APIs lag ~1–2 days; syncedThrough tells the UI which day the figure is
-    // current to. Floor at locally tracked spend so a stale/partial report can never
-    // display LESS than what we already know we spent.
+    // ---- Provider-reported cost + non-overlapping local delta ----
     if (id === 'anthropic' && anthropicAdminMonth != null) {
-      monthUsd = roundUsd(Math.max(anthropicAdminMonth.usd, monthUsd))
+      providerMonthUsd = roundUsd(anthropicAdminMonth.usd)
       syncedThrough = anthropicAdminMonth.syncedThrough
+      const reconciled = await reconcileProviderMonth(id, providerMonthUsd, syncedThrough)
+      monthUsd = reconciled.monthUsd
+      localDeltaUsd = reconciled.localDeltaUsd
+      costSourceType = 'provider_api'
+      sourceType = 'provider_api'
+      status = 'partial'
+      statusMessage = 'Official cost report + report boundary-এর পরের local usage; wallet API নেই।'
+      costAuthoritative = true
+      staleAt = staleAfter(fetchedAt, 180)
     } else if (id === 'openai' && openaiAdminMonth != null) {
-      monthUsd = roundUsd(Math.max(openaiAdminMonth, monthUsd))
+      providerMonthUsd = roundUsd(openaiAdminMonth.usd)
+      syncedThrough = openaiAdminMonth.syncedThrough
+      const reconciled = await reconcileProviderMonth(id, providerMonthUsd, syncedThrough)
+      monthUsd = reconciled.monthUsd
+      localDeltaUsd = reconciled.localDeltaUsd
+      costSourceType = 'provider_api'
+      status = 'partial'
+      statusMessage = 'Official organization cost + report boundary-এর পরের local usage; wallet API নেই।'
+      costAuthoritative = true
+      staleAt = staleAfter(fetchedAt, 180)
     } else if (id === 'openrouter' && openRouterActivityMonth != null) {
-      monthUsd = roundUsd(Math.max(openRouterActivityMonth.usd, monthUsd))
+      providerMonthUsd = roundUsd(openRouterActivityMonth.usd)
       syncedThrough = openRouterActivityMonth.syncedThrough
+      const reconciled = await reconcileProviderMonth(id, providerMonthUsd, syncedThrough)
+      monthUsd = reconciled.monthUsd
+      localDeltaUsd = reconciled.localDeltaUsd
+      costSourceType = 'provider_api'
+      costAuthoritative = true
+      status = 'partial'
+      statusMessage = 'Wallet live; official activity report + report boundary-এর পরের local usage।'
+      staleAt = staleAfter(fetchedAt, 180)
+    } else if ((id === 'gemini' || id === 'google_tts' || id === 'veo') && googleBilling.ok && googleBilling.value) {
+      const google = googleBilling.value[id]
+      providerMonthUsd = google.monthUsd
+      syncedThrough = google.syncedThrough
+      const reconciled = await reconcileProviderMonth(id, providerMonthUsd, syncedThrough)
+      monthUsd = reconciled.monthUsd
+      localDeltaUsd = reconciled.localDeltaUsd
+      todayUsd = syncedThrough === todayStr ? google.todayUsd : todayUsd
+      costSourceType = 'provider_export'
+      status = 'partial'
+      statusMessage = 'Google Cloud Billing export + export boundary-এর পরের local usage; wallet value নয়।'
+      costAuthoritative = true
+      fetchedAt = googleBilling.fetchedAt
+      staleAt = staleAfter(fetchedAt, 180)
+    } else if (id === 'vercel' && vercelBilling.ok && vercelBilling.value) {
+      providerMonthUsd = vercelBilling.value.monthUsd
+      monthUsd = providerMonthUsd
+      todayUsd = vercelBilling.value.todayUsd
+      syncedThrough = vercelBilling.value.syncedThrough
+      sourceType = costSourceType = 'provider_export'
+      status = 'partial'
+      statusMessage = 'FOCUS billed charges live; invoice due/payment status public API-তে নেই।'
+      costAuthoritative = true
+      fetchedAt = vercelBilling.fetchedAt
+      staleAt = staleAfter(fetchedAt, 180)
+    } else if (id === 'supabase' && supabasePlan.ok && supabasePlan.value) {
+      todayUsd = null
+      monthUsd = null
+      plan = supabasePlan.value.plan
+      sourceType = 'provider_api'
+      costSourceType = 'manual'
+      status = 'partial'
+      statusMessage = 'Organization plan live; upcoming invoice/due public Management API-তে নেই।'
+      planAuthoritative = true
+      fetchedAt = supabasePlan.fetchedAt
+      staleAt = staleAfter(fetchedAt, 1_440)
     }
 
-    // OpenRouter balance is live from the credits API; fall back to KV-credit
-    // tracking only if the live call returned null (key unset / API down).
-    const openRouterLiveResolved = id === 'openrouter' && openRouterLive != null
-    const falLiveResolved = id === 'fal' && falLive != null
-    const fashnLiveResolved = id === 'fashn' && fashnLive != null
-    if (id !== 'twilio' && id !== 'elevenlabs' && !openRouterLiveResolved && !falLiveResolved && !fashnLiveResolved && credit) {
+    // Configured provider call failed: preserve the last authoritative cost base,
+    // then add only local events after its recorded boundary.
+    const externalCostFailed =
+      (id === 'anthropic' && Boolean(process.env.ANTHROPIC_ADMIN_API_KEY) && anthropicAdminMonth == null)
+      || (id === 'openai' && Boolean(process.env.OPENAI_ORG_ID && process.env.OPENAI_ADMIN_API_KEY) && openaiAdminMonth == null)
+      || ((id === 'gemini' || id === 'google_tts' || id === 'veo') && googleBilling.configured && !googleBilling.ok)
+      || (id === 'vercel' && vercelBilling.configured && !vercelBilling.ok)
+      || (id === 'supabase' && supabasePlan.configured && !supabasePlan.ok)
+    if (externalCostFailed && id === 'supabase' && previous?.plan) {
+      plan = previous.plan
+      sourceType = previous.sourceType
+      costSourceType = previous.costSourceType
+      status = 'stale'
+      statusMessage = 'Supabase refresh ব্যর্থ; শেষ সফল plan রাখা হয়েছে।'
+      fetchedAt = previous.fetchedAt
+      staleAt = previous.staleAfter
+      planAuthoritative = previous.planAuthoritative
+    } else if (externalCostFailed && previous?.providerMonthUsd != null) {
+      providerMonthUsd = previous.providerMonthUsd
+      syncedThrough = previous.syncedThrough ?? null
+      const reconciled = await reconcileProviderMonth(id, providerMonthUsd, syncedThrough)
+      monthUsd = reconciled.monthUsd
+      localDeltaUsd = reconciled.localDeltaUsd
+      costSourceType = previous.costSourceType
+      if (id === 'supabase') plan = previous.plan ?? null
+      status = 'stale'
+      statusMessage = 'Provider refresh ব্যর্থ; শেষ authoritative snapshot + নতুন local delta দেখানো হচ্ছে।'
+      fetchedAt = previous.fetchedAt
+      staleAt = previous.staleAfter
+      costAuthoritative = previous.costAuthoritative
+    } else if (externalCostFailed && status !== 'stale') {
+      status = 'error'
+      statusMessage = 'Provider billing refresh ব্যর্থ; local measured data থাকলে শুধু সেটিই দেখানো হচ্ছে।'
+    }
+
+    // Providers without a wallet API may retain a user-entered opening credit,
+    // but it is labelled as a manual estimate and never treated as authoritative.
+    if (balanceKind === 'none' && credit && id !== 'twilio' && id !== 'elevenlabs' && id !== 'fashn') {
       const since = new Date(credit.lastTopup)
       const spent = await querySpendSince(id, since)
-      balanceUsd = roundUsd(credit.initialCredit - spent)
+      balanceAmount = roundUsd(credit.initialCredit - spent)
+      balanceKind = 'manual_estimate'
+      balanceUnit = id === 'oxylabs' ? 'credits' : 'USD'
+      balanceCurrency = id === 'oxylabs' ? null : 'USD'
+      balanceUsd = id === 'oxylabs' ? null : balanceAmount
+      sourceType = 'manual'
+      if (!costAuthoritative && !planAuthoritative) {
+        status = 'manual'
+        statusMessage = balanceAmount < 0
+          ? 'Manual opening estimate শেষ হয়েছে; এটি provider wallet balance নয়।'
+          : 'Manual opening amount minus locally measured usage; provider wallet balance নয়।'
+      }
+    }
+
+    if (id === 'xai') {
+      status = (monthUsd ?? 0) > 0 || process.env.XAI_API_KEY ? 'partial' : 'unconfigured'
+      statusMessage = status === 'partial'
+        ? 'xAI cost local request events থেকে মাপা; verified wallet API নেই।'
+        : 'xAI billing connection/usage পাওয়া যায়নি।'
+    } else if (id === 'supabase' && !supabasePlan.configured) {
+      todayUsd = null
+      monthUsd = null
+      status = 'unconfigured'
+      statusMessage = 'Supabase Management token ও organization slug configure করা হয়নি।'
+    } else if (id === 'vercel' && !vercelBilling.configured) {
+      todayUsd = null
+      monthUsd = null
+      status = 'unconfigured'
+      statusMessage = 'Vercel billing token ও team ID/slug configure করা হয়নি।'
+    }
+
+    authoritative = balanceAuthoritative || costAuthoritative || planAuthoritative
+    // A live wallet/quota does not make locally estimated cost live. Surface the
+    // mixed field state as partial so the card never over-promises.
+    if (
+      status === 'live'
+      && balanceAuthoritative
+      && !costAuthoritative
+      && monthUsd != null
+    ) {
+      status = 'partial'
+      statusMessage = `${statusMessage ?? 'Provider wallet/quota live।'} মাসের cost local measured।`
     }
 
     providers.push({
       id,
       label: meta.label,
       balanceUsd,
+      balanceKind,
+      balanceAmount,
+      balanceCurrency,
+      balanceUnit,
+      quota,
+      invoice,
       todayUsd,
       monthUsd,
+      providerMonthUsd,
+      localDeltaUsd,
       source: meta.source,
+      sourceType,
+      costSourceType,
+      status,
+      statusMessage,
+      balanceAuthoritative,
+      costAuthoritative,
+      planAuthoritative,
+      authoritative,
+      fetchedAt,
+      staleAfter: staleAt,
+      dashboardUrl: meta.dashboardUrl,
+      plan,
+      capabilities: meta.capabilities,
       syncedThrough,
     })
   }
 
+  const metaFree = PROVIDER_META.meta_free
   providers.push({
     id: 'meta_free',
-    label: PROVIDER_META.meta_free.label,
+    label: metaFree.label,
     balanceUsd: null,
+    balanceKind: 'none',
+    balanceAmount: null,
+    balanceCurrency: null,
+    balanceUnit: null,
+    quota: null,
+    invoice: null,
     todayUsd: null,
     monthUsd: null,
-    source: PROVIDER_META.meta_free.source,
+    providerMonthUsd: null,
+    localDeltaUsd: null,
+    source: metaFree.source,
+    sourceType: 'free',
+    costSourceType: 'free',
+    status: 'free',
+    statusMessage: 'বর্তমান integration-এ paid provider charge নেই।',
+    balanceAuthoritative: true,
+    costAuthoritative: true,
+    planAuthoritative: true,
+    authoritative: true,
+    fetchedAt: startedAt.toISOString(),
+    staleAfter: null,
+    dashboardUrl: metaFree.dashboardUrl,
+    plan: 'Free',
+    capabilities: metaFree.capabilities,
     free: true,
   })
 
+  const providerInvoices = providers
+    .filter((row) => row.invoice != null)
+    .map((row) => row.invoice as ProviderInvoiceSnapshot)
+  const invoiceProviderIds = new Set(
+    providers.filter((row) => row.invoice != null).map((row) => row.id),
+  )
+  const subscriptionDueSummary = await getSubscriptionDueSummary(todayStr, invoiceProviderIds)
+  const dueSummary = mergeProviderInvoiceDues(subscriptionDueSummary, providerInvoices, todayStr)
+
   const cache: ApiBalanceCache = {
-    checkedAt: new Date().toISOString(),
+    checkedAt: startedAt.toISOString(),
     providers,
     summaryLine: buildBalanceSummaryLine(providers),
+    dueSummary,
   }
 
   await storeBalanceCache(cache)
+  await persistProviderBillingSnapshots(providers, startedAt)
 
   const creditFlags: Partial<Record<BalanceProviderId, boolean>> = {}
   for (const id of ['anthropic', 'openai', 'gemini', 'google_tts', 'oxylabs', 'veo'] as BalanceProviderId[]) {
-    creditFlags[id] = Boolean(await getApiBalanceCredit(id))
+    creditFlags[id] = Boolean(creditByProvider.get(id))
   }
-  creditFlags.elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY || (await getApiBalanceCredit('elevenlabs')))
+  creditFlags.elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY)
   // OpenRouter low-balance alerting keys off the live credits API being available.
-  creditFlags.openrouter = Boolean(process.env.OPENROUTER_API_KEY || (await getApiBalanceCredit('openrouter')))
-  creditFlags.fal = Boolean(process.env.FAL_KEY || (await getApiBalanceCredit('fal')))
-  creditFlags.fashn = Boolean(process.env.FASHN_API_KEY || (await getApiBalanceCredit('fashn')))
+  creditFlags.openrouter = Boolean(process.env.OPENROUTER_API_KEY || creditByProvider.get('openrouter'))
+  creditFlags.fal = Boolean(process.env.FAL_KEY || creditByProvider.get('fal'))
+  creditFlags.fashn = Boolean(process.env.FASHN_API_KEY)
 
   const alerts = computeLowBalanceAlerts(providers, {
     anthropicAdmin: Boolean(process.env.ANTHROPIC_ADMIN_API_KEY),
-    openaiAdmin: Boolean(process.env.OPENAI_ORG_ID && (process.env.OPENAI_ADMIN_API_KEY ?? process.env.OPENAI_API_KEY)),
+    openaiAdmin: Boolean(process.env.OPENAI_ORG_ID && process.env.OPENAI_ADMIN_API_KEY),
     twilioConfigured: Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN),
     creditSet: creditFlags,
   })
@@ -665,7 +1481,9 @@ export function computeLowBalanceAlerts(
   const twilioThreshold = 5
 
   for (const row of providers) {
-    if (row.free || row.balanceUsd == null) continue
+    // Alerts are only valid for authoritative cash wallets. Manual estimates and
+    // quota units must never trigger a "recharge $X" cash warning.
+    if (row.free || row.balanceKind !== 'wallet' || row.balanceUsd == null) continue
 
     if (row.id === 'twilio') {
       if (!opts.twilioConfigured || row.balanceUsd >= twilioThreshold) continue
@@ -721,7 +1539,7 @@ export async function getApiBalances(opts?: { refresh?: boolean }): Promise<ApiB
  */
 async function overlayLiveLocalSpend(cache: ApiBalanceCache): Promise<ApiBalanceCache> {
   try {
-    const { dayStart, dayEnd, monthStart, monthEnd } = dhakaSpendBounds()
+    const { todayStr, dayStart, dayEnd, monthStart, monthEnd } = dhakaSpendBounds()
     // Refresh the OpenRouter live balance too (throttled) — the cached snapshot's
     // balance could be up to 6h stale behind its "Live API" label.
     const [todayByProvider, monthByProvider, freshOpenRouterBalance] = await Promise.all([
@@ -729,19 +1547,74 @@ async function overlayLiveLocalSpend(cache: ApiBalanceCache): Promise<ApiBalance
       querySpendByProviderBetween(monthStart, monthEnd),
       getFreshOpenRouterBalanceUsd(),
     ])
-    const providers = cache.providers.map((row) => {
+    const normalized = cache.providers.map((row) => normalizeCachedProvider(row, cache.checkedAt))
+    const providers = await Promise.all(normalized.map(async (row) => {
       if (row.free) return row
       const liveToday = roundUsd(todayByProvider[row.id] ?? 0)
       const liveMonth = roundUsd(monthByProvider[row.id] ?? 0)
-      // Preserve any admin-API floor already baked into the cached month figure
-      // (e.g. Anthropic's authoritative month-to-date), but let local spend grow it.
-      const monthUsd = row.monthUsd != null ? roundUsd(Math.max(row.monthUsd, liveMonth)) : liveMonth
-      const balanceUsd = row.id === 'openrouter' && freshOpenRouterBalance != null
-        ? roundUsd(freshOpenRouterBalance)
-        : row.balanceUsd
-      return { ...row, todayUsd: liveToday, monthUsd, balanceUsd }
-    })
-    return { ...cache, providers }
+      let monthUsd = row.monthUsd
+      let localDeltaUsd = row.localDeltaUsd ?? null
+      if (row.providerMonthUsd != null) {
+        const reconciled = await reconcileProviderMonth(row.id, row.providerMonthUsd, row.syncedThrough ?? null)
+        monthUsd = reconciled.monthUsd
+        localDeltaUsd = reconciled.localDeltaUsd
+      } else if (row.id !== 'supabase' && row.id !== 'vercel') {
+        monthUsd = liveMonth
+      }
+
+      let todayUsd: number | null = liveToday
+      if (row.id === 'supabase') todayUsd = null
+      if (
+        row.id === 'vercel'
+        || ((row.id === 'gemini' || row.id === 'google_tts' || row.id === 'veo') && row.syncedThrough === todayStr)
+      ) {
+        todayUsd = row.todayUsd ?? liveToday
+      }
+
+      let balanceUsd = row.balanceUsd
+      let balanceAmount = row.balanceAmount
+      let fetchedAt = row.fetchedAt
+      let staleAt = row.staleAfter
+      let status = row.status
+      let statusMessage = row.statusMessage
+      if (row.id === 'openrouter' && freshOpenRouterBalance != null) {
+        balanceUsd = balanceAmount = roundUsd(freshOpenRouterBalance)
+        fetchedAt = new Date().toISOString()
+        staleAt = staleAfter(fetchedAt, 20)
+        status = row.costAuthoritative || (monthUsd ?? 0) > 0 ? 'partial' : 'live'
+        statusMessage = row.costAuthoritative
+          ? 'Wallet live; official activity report-এর পরের local usage আলাদা করে যোগ করা হয়েছে।'
+          : 'Wallet live; মাসের cost local measured।'
+      } else if (
+        staleAt
+        && Date.parse(staleAt) < Date.now()
+        && (status === 'live' || status === 'partial')
+      ) {
+        status = 'stale'
+        statusMessage = `${statusMessage ?? 'Provider snapshot'} শেষ freshness window পার করেছে।`
+      }
+      return {
+        ...row,
+        todayUsd,
+        monthUsd,
+        localDeltaUsd,
+        balanceUsd,
+        balanceAmount,
+        fetchedAt,
+        staleAfter: staleAt,
+        status,
+        statusMessage,
+      }
+    }))
+    const providerInvoices = providers
+      .filter((row) => row.invoice != null)
+      .map((row) => row.invoice as ProviderInvoiceSnapshot)
+    const invoiceProviderIds = new Set(
+      providers.filter((row) => row.invoice != null).map((row) => row.id),
+    )
+    const subscriptionDueSummary = await getSubscriptionDueSummary(todayStr, invoiceProviderIds)
+    const dueSummary = mergeProviderInvoiceDues(subscriptionDueSummary, providerInvoices, todayStr)
+    return { ...cache, providers, dueSummary, summaryLine: buildBalanceSummaryLine(providers) }
   } catch (err) {
     console.warn('[api-balances] overlayLiveLocalSpend failed:', err instanceof Error ? err.message : err)
     return cache
