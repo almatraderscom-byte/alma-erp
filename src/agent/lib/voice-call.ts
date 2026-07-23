@@ -268,6 +268,13 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
 
   const firstMessage = input.firstMessage.trim() || 'আসসালামু আলাইকুম।'
   const purpose = input.purpose.trim()
+  // Role/identity context (owner complaint 2026-07-23): a call placed to the
+  // OWNER'S OWN NUMBER must run the owner persona — companion tone, mid-call
+  // ERP tools, and never "আমি বসের এজেন্ট বলছি, বস জানতে চাচ্ছেন…" said AT the
+  // boss. Server-derived from OWNER_PHONE_NUMBERS for every provider, so a head
+  // that staged the card as 'contact' cannot misidentify the callee.
+  const effectiveCallType: 'owner' | 'staff' | 'contact' =
+    isOwnerNumber(toNumber) ? 'owner' : (input.callType ?? 'contact')
 
   // Pre-record the row so a webhook that races the response still has a target.
   const record = await db.agentVoiceCall.create({
@@ -310,12 +317,11 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
     // WhatsApp leg via the relay server's /glive TLS proxy. A call to the
     // owner's own number runs the OWNER persona (mid-call ERP read tools);
     // everyone else stays on the tool-less contact/staff persona.
-    const gliveCallType = isOwnerNumber(toNumber) ? 'owner' : (input.callType ?? 'contact')
-    return placeGliveMediaCall(config, record.id, toNumber, purpose, input.recipientName, gliveCallType, 'whatsapp')
+    return placeGliveMediaCall(config, record.id, toNumber, purpose, input.recipientName, effectiveCallType, 'whatsapp')
   }
 
   if (config.provider === 'ngs') {
-    return placeNgsLiveCall(config, record.id, toNumber, purpose, input.recipientName, input.voiceGender, input.callType)
+    return placeNgsLiveCall(config, record.id, toNumber, purpose, input.recipientName, input.voiceGender, effectiveCallType)
   }
 
   if (config.provider === 'sarvam') {
