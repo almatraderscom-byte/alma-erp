@@ -26,3 +26,29 @@ describe('WhatsApp live-call channel addressing', () => {
     expect(a.from).toBe('whatsapp:+15005550006')
   })
 })
+
+describe('owner-number role detection (identity-aware calls)', () => {
+  afterEach(() => { delete process.env.OWNER_PHONE_NUMBERS })
+
+  it('matches the owner number in any spelling (+880 / 0 prefix)', async () => {
+    const { isOwnerNumber } = await import('../voice-call')
+    process.env.OWNER_PHONE_NUMBERS = '+8801779640373'
+    expect(isOwnerNumber('+8801779640373')).toBe(true)
+    expect(isOwnerNumber('01779640373')).toBe(true)
+    expect(isOwnerNumber('8801779640373')).toBe(true)
+  })
+
+  it('does not match other numbers, and empty env matches nothing', async () => {
+    const { isOwnerNumber } = await import('../voice-call')
+    process.env.OWNER_PHONE_NUMBERS = '+8801779640373'
+    expect(isOwnerNumber('+8801884308343')).toBe(false)
+    delete process.env.OWNER_PHONE_NUMBERS
+    expect(isOwnerNumber('+8801779640373')).toBe(false)
+  })
+
+  it('supports a comma list', async () => {
+    const { isOwnerNumber } = await import('../voice-call')
+    process.env.OWNER_PHONE_NUMBERS = '+8801779640373, 01311111111'
+    expect(isOwnerNumber('+8801311111111')).toBe(true)
+  })
+})
