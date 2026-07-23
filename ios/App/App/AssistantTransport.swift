@@ -481,6 +481,7 @@ enum AssistantNet {
     /// per-event delivery (each text_delta feeds TTS immediately; batching would
     /// add spoken latency). Chat uses the buffered variant above.
     static func streamEvents(request: URLRequest,
+                             stopOn: (@Sendable (AgentSSEEvent) -> Bool)? = nil,
                              onEvent: @MainActor @escaping (AgentSSEEvent) -> Void) async throws {
         let (bytes, resp) = try await streamSession.bytes(for: request)
         guard let http = resp as? HTTPURLResponse else { throw AlmaAPIError.transport(URLError(.badServerResponse)) }
@@ -492,13 +493,14 @@ enum AssistantNet {
         }
         var parser = AlmaSSEParser()
         let decoder = JSONDecoder()
-        func dispatch(_ payload: String) async {
+        func dispatch(_ payload: String) async -> Bool {
             guard let d = payload.data(using: .utf8),
                   let ev = try? decoder.decode(AgentSSEEvent.self, from: d) else {
                 AlmaTurnLog.event("stream.malformedEvent", String(payload.prefix(80)))
-                return
+                return false
             }
             await onEvent(ev)
+            return stopOn?(ev) ?? false
         }
         var lineBuf: [UInt8] = []
         lineBuf.reserveCapacity(1024)
@@ -507,15 +509,20 @@ enum AssistantNet {
                 let line = String(decoding: lineBuf, as: UTF8.self)
                 lineBuf.removeAll(keepingCapacity: true)
                 try Task.checkCancellation()
-                if let payload = parser.consume(line: line) { await dispatch(payload) }
+                // A caller-supplied terminal event (e.g. "done") ends the await
+                // immediately — some deployments keep the SSE socket open with
+                // keepalives after the turn, which left voice turns hanging
+                // until the stall watchdog killed them (sim finding 2026-07-23:
+                // the head answered in 24s but the reply was never spoken).
+                if let payload = parser.consume(line: line), await dispatch(payload) { return }
             } else {
                 lineBuf.append(byte)
             }
         }
         if !lineBuf.isEmpty, let p = parser.consume(line: String(decoding: lineBuf, as: UTF8.self)) {
-            await dispatch(p)
+            _ = await dispatch(p)
         }
-        if let p = parser.flushTrailing() { await dispatch(p) }
+        if let p = parser.flushTrailing() { _ = await dispatch(p) }
     }
 }
 

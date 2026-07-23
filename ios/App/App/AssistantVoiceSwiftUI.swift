@@ -1245,7 +1245,7 @@ final class AlmaVoiceEngine {
         liveStatusNudgeTask?.cancel()
         let started = Date()
         liveStatusNudgeTask = Task { [weak self] in
-            for delay in [6.0, 9.0, 12.0] {
+            for delay in [12.0, 12.0, 15.0] {
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 guard let self, !Task.isCancelled, self.liveToolTurnPending else { return }
                 let tool = self.cards.last(where: { $0.kind == .tool })?.title ?? ""
@@ -1271,9 +1271,16 @@ final class AlmaVoiceEngine {
                 req.httpMethod = "POST"
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 req.httpBody = try JSONEncoder().encode(body)
-                try await AssistantNet.streamEvents(request: req) { [weak self] ev in
+                try await AssistantNet.streamEvents(request: req,
+                                                    stopOn: { $0.type == "done" || $0.type == "error" }) { [weak self] ev in
+                    #if DEBUG
+                    NSLog("ALMA-VOICE sse %@", ev.type)
+                    #endif
                     self?.handle(ev, speak: false)
                 }
+                #if DEBUG
+                NSLog("ALMA-VOICE head turn stream ended; reply chars=%d", self.replyText.count)
+                #endif
                 let result = self.replyText.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.live.sendToolResponse(
                     callId: callId,
@@ -1566,8 +1573,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         কখন নিজে উত্তর দেবে: সালাম, কুশল, হালকা গল্প, মতামত, সাধারণ জ্ঞান — সাথে সাথে নিজেই ছোট করে উত্তর দেবে; কোনো tool ডাকবে না, দেরি করবে না।
         কখন run_agent_turn: ব্যবসার তথ্য, হিসাব, টাকা, staff, অর্ডার, রিপোর্ট, মেমরি, বা কোনো কাজ করার অনুরোধ — তখনই কেবল run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না — একমাত্র উৎস run_agent_turn-এর result।
         ভেতরের শব্দ মুখে আনবে না: tool, function, acknowledgement, STATUS_NOTE, system, agent — এগুলো কখনো উচ্চারণ করবে না।
-        STATUS_NOTE লেখা বার্তা এলে সেটা Boss-এর কথা নয় — শুধু তার ভাবটুকু নিজের ভাষায় এক ছোট স্বাভাবিক বাক্যে বলবে — প্রতিবার নতুনভাবে, একই বাক্য দুবার কখনো নয়।
-        Boss-এর কথা অস্পষ্ট হলে সাথে সাথে ছোট প্রশ্নে পরিষ্কার করে নেবে; চুপ করে থাকবে না।
+        STATUS_NOTE লেখা বার্তা এলে সেটা Boss-এর কথা নয়; STATUS_NOTE-এর জবাবে run_agent_turn কখনোই ডাকবে না — শুধু তার ভাবটুকু নিজের ভাষায় এক ছোট স্বাভাবিক বাক্যে বলবে — প্রতিবার নতুনভাবে, একই বাক্য দুবার কখনো নয়।
+        Boss-এর কথা সত্যিই অস্পষ্ট হলে কেবল তখনই ছোট প্রশ্নে পরিষ্কার করে নেবে; পরিষ্কার অনুরোধে পাল্টা নিশ্চিতকরণ প্রশ্ন করবে না — ছোট্ট এক কথা বলে সাথে সাথে run_agent_turn চালাবে। ack বলার পর tool চালানো কখনো ভুলবে না।
         Approval মানে কাজ শেষ নয় — result-এ completed/reportReady না বললে বলবে কাজ চলছে।
         মালিককে শুধু "Boss" বলবে; "Sir"/"স্যার" নিষিদ্ধ। ভয়েসে emoji পড়বে না। ইসলামি আদব বজায় রাখবে।
         বলবে ছোট ছোট বাক্যে, মাপা গতিতে, স্বাভাবিক বিরতিতে; Boss-এর মেজাজ বুঝে উষ্ণ বা গম্ভীর টোন; সংখ্যা ও টাকার অংক ধীরে-স্পষ্ট। Boss কথা শুরু করলেই সাথে সাথে থেমে শুনবে।
@@ -1829,6 +1836,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 let id = call["id"] as? String ?? UUID().uuidString
                 let args = call["args"] as? [String: Any]
                 let request = args?["request"] as? String ?? ""
+                #if DEBUG
+                NSLog("ALMA-VOICE toolCall run_agent_turn: %@", String(request.prefix(80)))
+                #endif
                 DispatchQueue.main.async { [weak self] in
                     self?.engine?.runLiveAgentTurn(request: request, callId: id)
                 }
