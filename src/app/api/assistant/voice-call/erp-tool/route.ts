@@ -28,6 +28,13 @@ const ERP_CALL_TOOLS = new Set<string>([
   'get_customer_summary',
   'get_dashboard_snapshot',
   'get_current_datetime',
+  // Staff/office visibility (owner ask 2026-07-23: the call agent guessed a
+  // staff name because it had NO attendance tool — never again). Reads only.
+  'get_attendance',
+  'get_all_staff',
+  'get_staff_tasks',
+  'get_lunch_status',
+  'get_pending_approvals',
 ])
 
 function verifyToken(provided: string): boolean {
