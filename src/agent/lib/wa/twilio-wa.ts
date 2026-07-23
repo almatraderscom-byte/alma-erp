@@ -428,20 +428,88 @@ async function ensureCallPermissionContentSid(): Promise<{ sid?: string; error?:
       create: { key: CALL_PERM_KV_KEY, value: data.sid },
       update: { value: data.sid },
     }).catch(() => {})
+    // Submit for WhatsApp/Meta approval immediately: WITHOUT approval a template
+    // only delivers inside an open 24h session, so a BRAND-NEW number gets
+    // nothing at all (live miss 2026-07-23). Approval is async (Meta reviews).
+    await submitCallPermissionApproval(data.sid)
     return { sid: data.sid }
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) }
   }
 }
 
-/** Send the WhatsApp call-permission request to a number. Best-effort, honest errors. */
-export async function requestWaCallPermission(to: string): Promise<{ sid?: string; error?: string }> {
+/** Ask Meta (via Twilio Content API) to approve the permission template for
+ * business-initiated delivery. Safe to call repeatedly — 409/duplicate ignored. */
+async function submitCallPermissionApproval(contentSid: string): Promise<void> {
+  const sid = process.env.TWILIO_ACCOUNT_SID ?? ''
+  const token = process.env.TWILIO_AUTH_TOKEN ?? ''
+  const auth = Buffer.from(`${sid}:${token}`).toString('base64')
+  try {
+    const res = await fetch(`https://content.twilio.com/v1/Content/${contentSid}/ApprovalRequests/whatsapp`, {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'alma_wa_call_permission_request', category: 'UTILITY' }),
+      signal: AbortSignal.timeout(20_000),
+    })
+    console.log(`[twilio-wa] permission template approval submit HTTP ${res.status}`)
+  } catch (err) {
+    console.warn('[twilio-wa] approval submit failed:', err instanceof Error ? err.message : err)
+  }
+}
+
+/**
+ * SMS fallback when the WhatsApp permission request cannot be delivered (new
+ * number, no open session, template not yet Meta-approved): a plain SMS from the
+ * business's Twilio number telling the person how to enable WhatsApp calls.
+ */
+async function sendPermissionSms(to: string): Promise<{ sid?: string; error?: string }> {
+  const from = (process.env.TWILIO_FROM_NUMBER ?? '').trim()
+  if (!from) return { error: 'TWILIO_FROM_NUMBER unset — SMS fallback unavailable' }
+  const waNumber = (process.env.TWILIO_WHATSAPP_FROM ?? '').replace(/^whatsapp:/, '')
+  const sid = process.env.TWILIO_ACCOUNT_SID ?? ''
+  const token = process.env.TWILIO_AUTH_TOKEN ?? ''
+  const auth = Buffer.from(`${sid}:${token}`).toString('base64')
+  const body =
+    `ALMA-র AI সহকারী আপনাকে WhatsApp-এ কল করতে চেয়েছিল। WhatsApp-এর নিয়মে আগে আপনার অনুমতি লাগে। ` +
+    `অনুগ্রহ করে WhatsApp-এ ${waNumber} নম্বরে যেকোনো একটা message পাঠান — তারপর "কল অনুমতি" request পাবেন, Allow চাপলেই কল আসতে পারবে।`
+  try {
+    const res = await fetch(`${TWILIO_API}/Accounts/${sid}/Messages.json`, {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ From: from, To: to.startsWith('+') ? to : `+${to.replace(/\D/g, '')}`, Body: body }).toString(),
+      signal: AbortSignal.timeout(20_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as { sid?: string; message?: string }
+    if (!res.ok) return { error: data.message ?? `Twilio SMS HTTP ${res.status}` }
+    return { sid: data.sid }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * Send the WhatsApp call-permission request to a number. Delivery reality
+ * (Meta rules): an UNAPPROVED template only lands inside an open 24h session,
+ * so for a brand-new number the WA send silently can't deliver — we then
+ * (a) (re)submit the template for Meta approval and (b) fall back to a plain
+ * SMS explaining how to enable WhatsApp calls. Returns which channel worked.
+ */
+export async function requestWaCallPermission(
+  to: string,
+): Promise<{ sid?: string; channel?: 'whatsapp' | 'sms'; error?: string }> {
   if (!twilioWaConfigured()) return { error: 'Twilio WhatsApp not configured (set TWILIO_WHATSAPP_FROM).' }
   const content = await ensureCallPermissionContentSid()
   if (!content.sid) return { error: `permission template তৈরি হয়নি: ${content.error}` }
-  return twilioSendMessage({
+  const wa = await twilioSendMessage({
     From: toWhatsAppAddress(process.env.TWILIO_WHATSAPP_FROM ?? ''),
     To: toWhatsAppAddress(to),
     ContentSid: content.sid,
   })
+  if (wa.sid && !wa.error) return { sid: wa.sid, channel: 'whatsapp' }
+  // WA leg failed (typically 63016: outside session + template not approved yet).
+  // Make sure approval is in flight for next time, then try the SMS fallback now.
+  await submitCallPermissionApproval(content.sid)
+  const sms = await sendPermissionSms(to)
+  if (sms.sid && !sms.error) return { sid: sms.sid, channel: 'sms' }
+  return { error: `WhatsApp: ${wa.error ?? 'not delivered'}; SMS: ${sms.error ?? 'not delivered'}` }
 }

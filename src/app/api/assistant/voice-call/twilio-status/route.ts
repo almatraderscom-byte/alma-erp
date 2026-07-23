@@ -76,7 +76,12 @@ export async function POST(req: NextRequest) {
     try {
       const { requestWaCallPermission } = await import('@/agent/lib/wa/twilio-wa')
       const perm = await requestWaCallPermission(String(row.toNumber))
-      if (perm.error) {
+      if (perm.channel === 'sms') {
+        summary =
+          'WhatsApp কলটা যায়নি — উনি এখনো WhatsApp-এ কল করার অনুমতি দেননি, আর নতুন নম্বর বলে ' +
+          'WhatsApp-এ অনুমতির request-ও এখনই পৌঁছানো যায়নি (Meta-র session নিয়ম)। তাই ওঁকে SMS পাঠিয়েছি — ' +
+          'উনি আমাদের WhatsApp নম্বরে একটা message দিলেই অনুমতির request পাবেন, Allow চাপলে কল যাবে।'
+      } else if (perm.error) {
         summary =
           'WhatsApp কলটা যায়নি — কল করার অনুমতি নেই, আর অনুমতি-request পাঠাতেও সমস্যা হলো: ' +
           `${perm.error}`
