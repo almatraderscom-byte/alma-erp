@@ -395,12 +395,17 @@ class Call {
     }
     const durationSecs = this.startedAt ? Math.max(0, Math.round((Date.now() - this.startedAt) / 1000)) : null
     const status = this.callerSpoke ? 'completed' : 'no_answer'
-    // Estimated ৳ cost so the owner can manage spend (Gemini Live in/out + BD trunk ≈
-    // ৳2.5–4.5/min; env-tunable). Rounded up to the minute the way carriers bill.
-    const perMin = Number(process.env.GLIVE_COST_PER_MIN_BDT || 3.5)
+    // Estimated ৳ cost so the owner can manage spend, rounded up to the minute the
+    // way carriers bill. Rates differ by leg (both env-tunable):
+    //   NGS PSTN trunk + Gemini Live ≈ ৳2.5–4.5/min (GLIVE_COST_PER_MIN_BDT, default 3.5)
+    //   Twilio WhatsApp leg + Gemini Live ≈ much cheaper — no BD trunk
+    //   (GLIVE_WA_COST_PER_MIN_BDT, default 1.5)
+    const perMin = this.transport === 'twilio'
+      ? Number(process.env.GLIVE_WA_COST_PER_MIN_BDT || 1.5)
+      : Number(process.env.GLIVE_COST_PER_MIN_BDT || 3.5)
     const costBdt = durationSecs != null ? Math.round(Math.ceil(durationSecs / 60) * perMin) : null
     const summary = this.turns.length > 0 ? await this.summarize(this.turns) : null
-    const payload = { callRecordId, callSid: this.callId, transcript: this.turns, summary, durationSecs, status, costBdt, provider: 'ngs' }
+    const payload = { callRecordId, callSid: this.callId, transcript: this.turns, summary, durationSecs, status, costBdt, provider: this.transport === 'twilio' ? 'glive-wa' : 'ngs' }
     if (!APP_URL || !AUTH_TOKEN) {
       await persistCallReport(payload).catch((e) => console.log(`[glive] ${this.id} report persistence failed: ${e?.message || e}`))
       console.log(`[glive] ${this.id} report retained; APP_URL/AGENT_INTERNAL_TOKEN is missing`)
