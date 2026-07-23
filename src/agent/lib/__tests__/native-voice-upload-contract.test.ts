@@ -13,8 +13,12 @@ describe('native voice upload contract', () => {
     const nativeTranscribeCalls = [...chat.matchAll(/path:\s*"\/api\/assistant\/transcribe",\s*fileField:\s*"([^"]+)"/g),
       ...voice.matchAll(/path:\s*"\/api\/assistant\/transcribe",\s*fileField:\s*"([^"]+)"/g)]
 
-    expect(nativeTranscribeCalls).toHaveLength(3)
-    expect(nativeTranscribeCalls.map((match) => match[1])).toEqual(['audio', 'audio', 'audio'])
+    // Count-agnostic: the contract is the FIELD NAME, not how many call sites
+    // exist (PR #529 added a 4th and broke the old hard-coded count).
+    expect(nativeTranscribeCalls.length).toBeGreaterThanOrEqual(3)
+    expect(nativeTranscribeCalls.map((match) => match[1])).toEqual(
+      nativeTranscribeCalls.map(() => 'audio'),
+    )
     expect(route).toContain("formData.get('audio')")
     expect(route).not.toContain("formData.get('file')")
   })

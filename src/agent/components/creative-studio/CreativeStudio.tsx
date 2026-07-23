@@ -19,6 +19,7 @@ import {
   type FamilyPresetId,
 } from '@/lib/creative-studio/constants'
 import { FAMILY_CHAIN_LABEL_BN, type StudioEngineId } from '@/lib/creative-studio/provider-registry'
+import { XAI_TEMPLATES, type XaiTemplate } from '@/lib/creative-studio/xai-imagine'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 import {
   VIDEO_RECIPES,
@@ -600,6 +601,7 @@ const ENGINE_LABELS_BN: Record<string, string> = {
   fal_fashn_v16: 'Fal FASHN v1.6',
   fal_idm_vton: 'IDM-VTON ⚠',
   gemini: 'Gemini',
+  xai_imagine: 'Grok Imagine (xAI)',
 }
 
 export default function CreativeStudio() {
@@ -744,7 +746,8 @@ function StudioWorkspace({
   onOpenGallery: () => void
 }) {
   const [mode, setMode] = useState<StudioModeId>('product_to_model')
-  const [provider, setProvider] = useState<StudioProvider>('fashn')
+  // CS13 — 'xai_imagine' joins the legacy provider choice for swap/face/edit
+  const [provider, setProvider] = useState<StudioProvider | 'xai_imagine'>('fashn')
   // CS6 — single Try-On engine choice + garment placement override
   const [vtonEngine, setVtonEngine] = useState<StudioEngineId>('fashn')
   const [clothType, setClothType] = useState<'auto' | 'overall' | 'upper' | 'lower' | 'outer'>('auto')
@@ -809,7 +812,7 @@ function StudioWorkspace({
   // label is honest instead of saying "FASHN Pro" while Gemini actually runs.
   const isMultiPersonFamily =
     familyPreset !== 'single' && (mode === 'product_to_model' || mode === 'try_on')
-  const effectiveProvider: StudioProvider = isMultiPersonFamily ? 'gemini' : provider
+  const effectiveProvider: StudioProvider | 'xai_imagine' = isMultiPersonFamily && provider !== 'xai_imagine' ? 'gemini' : provider
 
   // CS6 — engine picker applies ONLY to single-person Try-On. IDM/Fal engines
   // are hidden everywhere else (family, swap, face, edit, video) by design.
@@ -893,13 +896,19 @@ function StudioWorkspace({
   }
 
   const fashnOnly = FASHN_ONLY_MODES.includes(mode)
+  // CS13 — Grok Imagine usable ⇒ generate mode works and fashn-only modes unlock
+  const xaiUsable = engineSelectable('xai_imagine')
 
   useEffect(() => {
-    if (mode === 'image_to_video') setProvider('gemini')
-    else if (fashnOnly) setProvider('fashn') // these modes have no Gemini path
-    else if (config?.fashnConfigured) setProvider('fashn')
-    else setProvider('gemini')
-  }, [config, mode, fashnOnly])
+    if (mode === 'image_to_video') { setProvider('gemini'); return }
+    if (mode === 'generate') { setProvider('xai_imagine'); return } // xAI is the only generate engine
+    setProvider((prev) => {
+      // an explicit Grok Imagine choice (picker or template) survives mode hops
+      if (prev === 'xai_imagine' && xaiUsable) return prev
+      if (fashnOnly) return config?.fashnConfigured ? 'fashn' : xaiUsable ? 'xai_imagine' : 'fashn'
+      return config?.fashnConfigured ? 'fashn' : 'gemini'
+    })
+  }, [config, mode, fashnOnly, xaiUsable])
 
   // Switching mode invalidates the previously uploaded images (e.g. a Try-On
   // product makes no sense as a Model-Swap source). Clear previews + paths so a
@@ -918,15 +927,43 @@ function StudioWorkspace({
   const selectMode = useCallback(
     (next: StudioModeId) => {
       if (next === mode) return
-      if (FASHN_ONLY_MODES.includes(next) && !config?.fashnConfigured) {
-        toast.error('এই mode-এর জন্য FASHN Pro দরকার — এখন configure করা নেই।')
+      if (FASHN_ONLY_MODES.includes(next) && !config?.fashnConfigured && !xaiUsable) {
+        toast.error('এই mode-এর জন্য FASHN Pro বা Grok Imagine দরকার — এখন configure করা নেই।')
+        return
+      }
+      if (next === 'generate' && !xaiUsable) {
+        toast.error('Generate mode-এর জন্য Grok Imagine (xAI) দরকার — সেটিংস থেকে চালু করুন।')
         return
       }
       clearUploads()
       setMode(next)
     },
-    [mode, config, clearUploads],
+    [mode, config, clearUploads, xaiUsable],
   )
+
+  // CS13 — template presets (x.ai-console style): deterministic prefills only,
+  // never auto-run. The owner still uploads references + taps Run.
+  const applyTemplate = useCallback((t: XaiTemplate) => {
+    if (!xaiUsable) {
+      toast.error('Grok Imagine চালু নেই — লাইব্রেরি → স্টুডিও সেটিংস থেকে চালু করুন।')
+      return
+    }
+    if (t.mode !== mode) {
+      clearUploads()
+      setMode(t.mode)
+    }
+    if (t.mode === 'product_to_model' || t.mode === 'try_on') {
+      setVtonEngine('xai_imagine')
+      setFamilyPreset('single')
+    }
+    setProvider('xai_imagine')
+    setPrompt(t.prompt)
+    setAspectRatio(t.aspectRatio)
+    setResolution(t.resolution as FashnResolution)
+    setNumImages(1)
+    setPanelOpen(true)
+    toast.success(`টেমপ্লেট: ${t.labelBn} — ছবি দিয়ে Run চাপুন`)
+  }, [xaiUsable, mode, clearUploads])
 
   const upload = async (file: File, kind: 'product' | 'model' | 'source' | 'source2') => {
     const path = await uploadStudioFile(file, `studio-${kind}`)
@@ -951,6 +988,8 @@ function StudioWorkspace({
   }
 
   const canRun = useMemo(() => {
+    // CS13 — generate is text-to-image: a prompt is the only requirement
+    if (mode === 'generate') return prompt.trim().length > 0
     if (mode === 'image_to_video') return Boolean(sourcePath || productPath || modelPath)
     // Family merge needs BOTH uploaded images (1st = baba+chele, 2nd = ma+meye).
     if (isFamilyMerge) return Boolean((sourcePath ?? productPath) && secondSourcePath)
@@ -965,7 +1004,7 @@ function StudioWorkspace({
     if (modeDef.needsModel && !modelPath && !modelId) return false
     if (modeDef.needsSource && !sourcePath) return false
     return true
-  }, [mode, modeDef, productPath, modelPath, modelId, sourcePath, isFamilyMerge, secondSourcePath, familyActive, familyPreset, models])
+  }, [mode, modeDef, productPath, modelPath, modelId, sourcePath, isFamilyMerge, secondSourcePath, familyActive, familyPreset, models, prompt])
 
   // CS7 — mask editor confirmed: upload the mask (server validates dims +
   // coverage + gives the real cost estimate), then queue the FLUX Fill job.
@@ -1001,12 +1040,20 @@ function StudioWorkspace({
     setRunning(true)
     try {
       const isVtonMode = mode === 'product_to_model' || mode === 'try_on'
+      // CS13 — Grok Imagine rides the vtonEngine field for EVERY mode: the
+      // backend xai branch triggers on vtonEngine === 'xai_imagine' (and on
+      // mode === 'generate') before any legacy provider resolution.
+      const xaiPicked = mode === 'generate' || (isVtonMode ? vtonEngine === 'xai_imagine' : provider === 'xai_imagine')
       const result = await runStudioJob({
         mode,
         // the engine picker is authoritative for every VTON mode (single +
         // family); the legacy provider field drives swap/face/edit only
-        provider: isVtonMode ? (vtonEngine === 'gemini' ? 'gemini' : 'fashn') : provider,
-        vtonEngine: isVtonMode && vtonEngine !== 'gemini'
+        provider: xaiPicked
+          ? 'fashn' // ignored — the xai branch returns before provider resolution
+          : isVtonMode ? (vtonEngine === 'gemini' ? 'gemini' : 'fashn') : (provider as StudioProvider),
+        vtonEngine: xaiPicked
+          ? 'xai_imagine'
+          : isVtonMode && vtonEngine !== 'gemini'
           ? (isMultiPersonFamily && vtonEngine === 'fal_idm_vton' ? 'fal_fashn_v16' : vtonEngine)
           : undefined,
         clothType: isSingleTryOn && clothType !== 'auto' ? clothType : undefined,
@@ -1078,16 +1125,26 @@ function StudioWorkspace({
       {/* Canvas / drop zone */}
       <div className={cn('min-h-0 flex-1 overflow-y-auto px-3 pt-3', panelOpen ? 'pb-[min(58vh,480px)] md:pb-[min(52vh,420px)]' : 'pb-28 md:pb-20')}>
         <div className="mx-auto flex max-w-2xl flex-col gap-3">
+          {/* CS13 — generate is text-to-image: no reference uploads at all */}
+          {mode !== 'generate' && (
           <UploadTile
             label={
               isFamilyMerge
                 ? 'বাবা + ছেলে ছবি (১ম)'
-                : modeDef.needsProduct ? 'Product / mannequin' : 'Product (optional)'
+                : modeDef.needsProduct ? 'Product / mannequin'
+                : mode === 'edit' ? 'Extra reference (optional — কম্বাইন্ড লিস্টিং)'
+                : 'Product (optional)'
             }
             preview={productPreview}
             onFile={(f) => void upload(f, 'product').catch((e) => toast.error(String(e)))}
             required={modeDef.needsProduct}
           />
+          )}
+          {mode === 'generate' && (
+            <div className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-6 text-center text-[12.5px] text-muted">
+              ✨ টেক্সট থেকে ছবি — নিচে প্রম্পট লিখে Run চাপুন (Grok Imagine · xAI)
+            </div>
+          )}
           {isFamilyMerge && (
             <UploadTile
               label="মা + মেয়ে ছবি (২য়)"
@@ -1184,17 +1241,35 @@ function StudioWorkspace({
 
         {panelOpen && (
           <div className="max-h-[min(50vh,400px)] overflow-y-auto px-3 pb-3">
+            {/* CS13 — Grok Imagine templates (x.ai-console style prefills) */}
+            {xaiUsable && (
+              <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {XAI_TEMPLATES.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => applyTemplate(t)}
+                    title={t.hintBn}
+                    className="shrink-0 rounded-full border border-[#E07A5F]/30 bg-[#E07A5F]/10 px-2.5 py-1 text-[10px] font-semibold text-cream"
+                  >
+                    ⚡ {t.labelBn}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Mode chips */}
             <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {STUDIO_MODES.map((m) => {
-                const locked = FASHN_ONLY_MODES.includes(m.id) && !config?.fashnConfigured
+                const locked = (FASHN_ONLY_MODES.includes(m.id) && !config?.fashnConfigured && !xaiUsable)
+                  || (m.id === 'generate' && !xaiUsable)
                 return (
                 <button
                   key={m.id}
                   type="button"
                   onClick={() => selectMode(m.id)}
                   disabled={locked}
-                  title={locked ? 'FASHN Pro দরকার' : undefined}
+                  title={locked ? (m.id === 'generate' ? 'Grok Imagine (xAI) দরকার' : 'FASHN Pro বা Grok Imagine দরকার') : undefined}
                   className={cn(
                     'shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all',
                     mode === m.id ? 'bg-gold/20 border border-gold/30 text-cream shadow-sm' : 'bg-white/[0.05] text-muted',
@@ -1229,7 +1304,9 @@ function StudioWorkspace({
             <input
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Optional: Blonde hair, studio photoshoot, festive mood…"
+              placeholder={mode === 'generate'
+                ? 'কী বানাতে চান লিখুন (আবশ্যক) — e.g. Eid campaign visual, coral palette…'
+                : 'Optional: Blonde hair, studio photoshoot, festive mood…'}
               className="mb-2 w-full rounded-xl border border-border bg-bg-1 text-cream px-3 py-2 text-[13px] outline-none focus:border-[#E07A5F]/40"
             />
 
@@ -1252,6 +1329,9 @@ function StudioWorkspace({
                       <option value="fal_idm_vton" disabled={!engineSelectable('fal_idm_vton')}>
                         IDM-VTON ⚠ পরীক্ষামূলক{engineSelectable('fal_idm_vton') ? '' : ' — বন্ধ'}
                       </option>
+                      <option value="xai_imagine" disabled={!xaiUsable}>
+                        Grok Imagine (xAI){xaiUsable ? '' : ' — বন্ধ'}
+                      </option>
                       <option value="gemini">Draft (Gemini)</option>
                     </select>
                   ) : mode === 'product_to_model' || mode === 'try_on' ? (
@@ -1269,18 +1349,29 @@ function StudioWorkspace({
                       <option value="fashn" disabled={!config?.fashnConfigured}>
                         FASHN Pro (direct)
                       </option>
+                      <option value="xai_imagine" disabled={!xaiUsable}>
+                        Grok Imagine (xAI){xaiUsable ? '' : ' — বন্ধ'}
+                      </option>
                       {!isMultiPersonFamily && (
                         <option value="gemini">Draft (Gemini)</option>
                       )}
                     </select>
+                  ) : mode === 'generate' ? (
+                    // CS13 — generate has exactly one server: Grok Imagine
+                    <span className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px] text-muted">
+                      ইঞ্জিন: Grok Imagine (xAI)
+                    </span>
                   ) : (
                     <select
                       value={provider}
-                      onChange={(e) => setProvider(e.target.value as StudioProvider)}
+                      onChange={(e) => setProvider(e.target.value as StudioProvider | 'xai_imagine')}
                       className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
                     >
                       <option value="fashn" disabled={!config?.fashnConfigured}>
                         Pro (FASHN)
+                      </option>
+                      <option value="xai_imagine" disabled={!xaiUsable}>
+                        Grok Imagine (xAI){xaiUsable ? '' : ' — বন্ধ'}
                       </option>
                       <option value="gemini" disabled={fashnOnly}>
                         Draft (Gemini){fashnOnly ? ' — N/A' : ''}
@@ -1426,7 +1517,12 @@ function StudioWorkspace({
                 // (per-person FASHN try-on → Gemini merge) — label it honestly
                 // instead of claiming the whole job is Gemini.
                 // CS6: single Try-On names the exact engine the owner picked.
-                <>Run — {isMultiPersonFamily
+                // CS13: any Grok Imagine pick (or generate) is named truthfully.
+                // full_family merge always runs the Gemini compositor — never claim xAI there.
+                <>Run — {!isFamilyMerge && (mode === 'generate'
+                  || ((mode === 'product_to_model' || mode === 'try_on') ? vtonEngine === 'xai_imagine' : provider === 'xai_imagine'))
+                  ? ENGINE_LABELS_BN.xai_imagine
+                  : isMultiPersonFamily
                   ? FAMILY_CHAIN_LABEL_BN
                   : isSingleTryOn
                     ? VTON_ENGINE_LABELS[vtonEngine] ?? vtonEngine
@@ -2902,7 +2998,7 @@ function StudioSettingsCard() {
   }, [])
   if (!settings) return null
 
-  const saveFalFlag = (patch: Partial<Pick<StudioSettings, 'falEnabled' | 'idmVtonEnabled' | 'fluxFillEnabled'>> & { singleVtonDefault?: StudioEngineId }) => {
+  const saveFalFlag = (patch: Partial<Pick<StudioSettings, 'falEnabled' | 'idmVtonEnabled' | 'fluxFillEnabled' | 'xaiEnabled'>> & { singleVtonDefault?: StudioEngineId }) => {
     setSettings({ ...settings, ...patch })
     void saveStudioSettings(patch).then(() => toast.success('সেভ হয়েছে')).catch(() => toast.error('হয়নি'))
   }
@@ -3017,6 +3113,21 @@ function StudioSettingsCard() {
             type="checkbox"
             checked={settings.fluxFillEnabled}
             onChange={(e) => saveFalFlag({ fluxFillEnabled: e.target.checked })}
+            className="h-4 w-4 accent-[#E07A5F]"
+          />
+        </label>
+        {/* CS13 — xAI Grok Imagine: generation + এডিট + মাল্টি-রেফারেন্স (সর্বোচ্চ ৩ ছবি) */}
+        <label className="flex items-center justify-between gap-2 py-1">
+          <span className="text-[11px] text-muted">
+            Grok Imagine (xAI) — Generate + সব মোড
+            {config && !config.xaiConfigured && (
+              <span className="ml-1 rounded bg-amber-100 px-1 py-px text-[9px] font-bold text-amber-800">XAI_API_KEY নেই</span>
+            )}
+          </span>
+          <input
+            type="checkbox"
+            checked={settings.xaiEnabled}
+            onChange={(e) => saveFalFlag({ xaiEnabled: e.target.checked })}
             className="h-4 w-4 accent-[#E07A5F]"
           />
         </label>

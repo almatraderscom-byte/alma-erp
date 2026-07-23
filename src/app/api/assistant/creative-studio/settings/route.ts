@@ -14,6 +14,7 @@ import {
   CS_FLUX_FILL_ENABLED_KEY,
   CS_IDM_VTON_ENABLED_KEY,
   CS_SINGLE_VTON_DEFAULT_KEY,
+  CS_XAI_ENABLED_KEY,
   SINGLE_VTON_ENGINE_IDS,
   STUDIO_ENGINES,
   engineKillKey,
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
   const denied = await auth(req)
   if (denied) return denied
 
-  const [qcLevel, notify, weights, garmentRows, imageModels, falEnabled, idmEnabled, fillEnabled, vtonDefault] = await Promise.all([
+  const [qcLevel, notify, weights, garmentRows, imageModels, falEnabled, idmEnabled, fillEnabled, xaiEnabled, vtonDefault] = await Promise.all([
     readKv(QC_LEVEL_KEY),
     readKv(NOTIFY_KEY),
     readSceneWeights(),
@@ -53,6 +54,7 @@ export async function GET(req: NextRequest) {
     readKv(CS_FAL_ENABLED_KEY),
     readKv(CS_IDM_VTON_ENABLED_KEY),
     readKv(CS_FLUX_FILL_ENABLED_KEY),
+    readKv(CS_XAI_ENABLED_KEY),
     readKv(CS_SINGLE_VTON_DEFAULT_KEY),
   ])
   const pipelineMode = normalizePipelineMode(await readKv(CS_PIPELINE_MODE_KEY))
@@ -85,6 +87,8 @@ export async function GET(req: NextRequest) {
     falEnabled: falEnabled === '1',
     idmVtonEnabled: idmEnabled === '1',
     fluxFillEnabled: fillEnabled === '1',
+    // CS13 — xAI Grok Imagine master switch
+    xaiEnabled: xaiEnabled === '1',
     singleVtonDefault: normalizeSingleVtonDefault(vtonDefault),
     // CS8 — Preview (economical) vs Production (strict QC, bounded repair)
     pipelineMode,
@@ -101,6 +105,7 @@ export async function POST(req: NextRequest) {
     falEnabled?: boolean
     idmVtonEnabled?: boolean
     fluxFillEnabled?: boolean
+    xaiEnabled?: boolean
     singleVtonDefault?: string
     pipelineMode?: string
     /** CS12 — kill switch per engine + Auto-canary percentage */
@@ -138,6 +143,10 @@ export async function POST(req: NextRequest) {
   }
   if (typeof body.fluxFillEnabled === 'boolean') {
     await writeKv(CS_FLUX_FILL_ENABLED_KEY, body.fluxFillEnabled ? '1' : '0')
+  }
+  // CS13 — xAI Grok Imagine master switch (owner-tunable, no redeploy)
+  if (typeof body.xaiEnabled === 'boolean') {
+    await writeKv(CS_XAI_ENABLED_KEY, body.xaiEnabled ? '1' : '0')
   }
   if (typeof body.singleVtonDefault === 'string') {
     // Reject anything outside the single-person VTON allowlist (no injection).

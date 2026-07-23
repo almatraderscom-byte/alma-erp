@@ -42,6 +42,9 @@ function engineOfRow(payload: Record<string, unknown>, result: Record<string, un
   return (
     (result.falEngine as string | undefined)
     ?? (payload.falEngine as string | undefined)
+    // CS13 — xai rows carry xaiEngine ('xai_imagine'); provider is just 'xai'
+    ?? (result.xaiEngine as string | undefined)
+    ?? (payload.xaiEngine as string | undefined)
     ?? (result.provider as string | undefined)
     ?? (payload.provider as string | undefined)
     ?? 'gemini'
@@ -99,6 +102,7 @@ export async function GET(req: NextRequest) {
     fal_fashn_v16: 'Fal FASHN v1.6',
     fal_idm_vton: 'IDM-VTON',
     fal_flux_fill: 'FLUX Fill',
+    xai_imagine: 'Grok Imagine (xAI)',
     gemini: 'Gemini',
     family_composite: '🛡 কম্পোজিট',
     veo: 'Veo রিল',

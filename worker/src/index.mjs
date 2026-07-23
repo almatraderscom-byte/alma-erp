@@ -730,6 +730,42 @@ async function processImageGen(job) {
     return
   }
 
+  // CS13 — xAI Grok Imagine (generation + natural-language edit, up to 3 refs).
+  // Synchronous API — no durable queue state; adapter retries transients only.
+  if (payload.provider === 'xai') {
+    try {
+      const { isEngineKilled } = await import('./fal/client.mjs')
+      if (await isEngineKilled(supabase, 'xai_imagine')) {
+        await callJobResult(pendingActionId, 'failed', undefined, 'Grok Imagine ইঞ্জিনটি kill switch দিয়ে বন্ধ করা আছে — সেটিংস থেকে চালু করে আবার চালান।')
+        return
+      }
+      const { processXaiImagine } = await import('./xai/adapter.mjs')
+      const { logCost } = await import('./cost-log.mjs')
+      const result = await processXaiImagine({ supabase, pendingActionId, payload, logCost })
+      const { postProcessImage } = await import('./cs/branding.mjs')
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath)
+      await callJobResult(pendingActionId, 'success', {
+        storagePath: result.storagePath,
+        allPaths: result.allPaths,
+        provider: 'xai',
+        xaiEngine: result.xaiEngine,
+        xaiModel: result.xaiModel,
+        xaiOp: result.xaiOp,
+        latencyMs: result.latencyMs,
+        costUsd: result.costUsd,
+        creativeStudio: true,
+        studioMode: payload.studioMode,
+        qc: result.qc ?? undefined,
+        ...finishing,
+      })
+      console.log(`[worker] xai:${result.xaiModel} ${pendingActionId} — done → ${result.storagePath}`)
+    } catch (err) {
+      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      console.error(`[worker] xai ${pendingActionId} — failed:`, err.message)
+    }
+    return
+  }
+
   if (payload.provider === 'fashn') {
     try {
       const { isEngineKilled } = await import('./fal/client.mjs')
