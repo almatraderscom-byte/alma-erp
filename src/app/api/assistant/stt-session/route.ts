@@ -52,10 +52,14 @@ export async function POST(req: NextRequest) {
               transcription: {
                 model: BANGLA_STT_MODEL,
                 language: 'bn',
-                prompt: WHISPER_BANGLA_PROMPT,
+                // Dictation chunks are short — a declarative prompt sentence gets
+                // echoed as hallucinated text on quiet chunks. Vocabulary only.
+                prompt: mode === 'dictation'
+                  ? 'ALMA Lifestyle, ALMA Trading, CDIT, almatraders.com, অর্ডার, ডেলিভারি, স্টক, ইনভেন্টরি, খরচ, বেতন, ওয়ালেট, কাস্টমার, স্টাফ, নামাজ, টাকা, Telegram, WhatsApp'
+                  : WHISPER_BANGLA_PROMPT,
               },
               turn_detection: mode === 'dictation'
-                ? { type: 'server_vad', threshold: 0.5, prefix_padding_ms: 200, silence_duration_ms: 350 }
+                ? { type: 'server_vad', threshold: 0.5, prefix_padding_ms: 200, silence_duration_ms: 250 }
                 : null,
             },
           },
