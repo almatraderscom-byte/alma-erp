@@ -1,6 +1,13 @@
 import { createSign } from 'crypto'
 
-export type ProviderSyncStatus = 'live' | 'partial' | 'manual' | 'unconfigured' | 'stale' | 'error' | 'free'
+export type ProviderSyncStatus =
+  | 'live'
+  | 'partial'
+  | 'manual'
+  | 'unconfigured'
+  | 'stale'
+  | 'error'
+  | 'free'
 export type ProviderSourceType =
   | 'provider_api'
   | 'provider_export'
