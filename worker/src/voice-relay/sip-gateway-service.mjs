@@ -164,6 +164,9 @@ function outcomeFromCause(answered, cause) {
 const MAX_CONCURRENT = Number(process.env.SIP_MAX_CONCURRENT_CALLS || 4)
 // Where one-way message audio is staged for Asterisk to play (must be readable by Asterisk).
 const PLAY_DIR = process.env.SIP_PLAY_DIR || tmpdir()
+// One 20 ms slin frame of silence, used to keep the AudioSocket stream continuous while
+// the model is not speaking (see startPlayout).
+const SILENCE_FRAME = Buffer.alloc(320)
 /**
  * How long to let the callee's phone ring, in seconds. ARI's default is 30, which is too
  * short in practice — live 2026-07-25: the owner reached his phone at ~30s, by which time we
@@ -235,7 +238,10 @@ class Call {
       this.enqueueAudio(muLawToPcm16(mu)) // μ-law -> slin8k -> 20ms playout queue -> AudioSocket
     } else if (m.event === 'clear') {
       // Native barge-in flush: drop everything queued for Asterisk so the model's new
-      // turn starts clean (mirrors the bot's own out-buffer flush).
+      // turn starts clean (mirrors the bot's own out-buffer flush). Counted, because a
+      // spurious barge-in is indistinguishable from a bug when the caller reports the
+      // voice cutting out mid-word.
+      this.barges = (this.barges || 0) + 1
       this.playQueue.length = 0
       this.slinResidual = Buffer.alloc(0)
     }
@@ -247,17 +253,37 @@ class Call {
     this.startPlayout()
   }
 
-  // 20ms-paced playout: the bot drains its own buffer in catch-up BURSTS (up to ~1.2s of
-  // frames in one tick). Writing those straight to AudioSocket = discontinuity = crackle.
-  // Queue them and emit exactly one 320-byte slin frame every 20ms so Asterisk gets a
-  // steady stream. Bounded so a runaway never grows without limit.
+  /**
+   * Continuous 20 ms playout with SILENCE FILL.
+   *
+   * AudioSocket is a real-time stream: Asterisk expects a frame every 20 ms for as long as
+   * the channel is up. The bot, however, only produces audio while the model is speaking and
+   * goes quiet between turns (its jitter buffer even re-buffers ~120 ms before resuming). So
+   * simply forwarding what the bot sends leaves holes in the stream at the END of every
+   * utterance — which the owner heard exactly that way: "প্রতিটা বাক্যের শেষে একটু হ্যাং হয়ে
+   * যায়, শেষ শব্দটা শেষ হয় না, একটা শব্দ হয়" (2026-07-25, live).
+   *
+   * Filling the gaps with silence keeps the stream unbroken, so the channel never underruns
+   * and the tail of each sentence lands intact. Pacing is CLOCK-scheduled (a target
+   * timestamp, not one frame per timer tick) because setInterval fires late and
+   * one-frame-per-tick would drift slower than real time, building a backlog all call.
+   */
   startPlayout() {
     if (this.playTimer) return
+    this.nextFrameAt = Date.now()
     this.playTimer = setInterval(() => {
-      if (this.closed) return
-      const frame = this.playQueue.shift()
-      if (frame) this.rawWriteAudio(frame)
-    }, 20)
+      if (this.closed || !this.asSocket || this.asSocket.destroyed) return
+      const now = Date.now()
+      // Catch up if we fell behind (event-loop stall), but never run away.
+      let guard = 0
+      while (now >= this.nextFrameAt && guard < 50) {
+        const frame = this.playQueue.shift()
+        if (frame) this.rawWriteAudio(frame)
+        else { this.rawWriteAudio(SILENCE_FRAME); this.silenceFrames = (this.silenceFrames || 0) + 1 }
+        this.nextFrameAt += 20
+        guard++
+      }
+    }, 10)
   }
 
   // Asterisk -> gateway: slin8k audio -> μ-law -> bot media frame.
@@ -272,10 +298,21 @@ class Call {
     const buf = Buffer.concat([this.slinResidual, slin])
     const FRAME = 320 // 20ms slin @ 8k
     let off = 0
-    for (; off + FRAME <= buf.length; off += FRAME) this.playQueue.push(buf.subarray(off, off + FRAME))
+    for (; off + FRAME <= buf.length; off += FRAME) {
+      this.framesOut = (this.framesOut || 0) + 1
+      this.playQueue.push(buf.subarray(off, off + FRAME))
+    }
     this.slinResidual = buf.subarray(off)
-    // Safety: never let a runaway buffer grow unbounded (~10s cap); drop oldest.
-    if (this.playQueue.length > 500) this.playQueue.splice(0, this.playQueue.length - 500)
+    // Safety net only: with clock-scheduled playout the queue should never build up, so if
+    // this ever fires it means we are falling behind real time — log it instead of silently
+    // deleting the caller's audio, because dropped frames are exactly what "the voice keeps
+    // sticking" sounds like.
+    if (this.playQueue.length > 500) {
+      const dropped = this.playQueue.length - 500
+      this.playQueue.splice(0, dropped)
+      this.dropped = (this.dropped || 0) + dropped
+      log(this.channelId, `playout OVERRUN — dropped ${dropped} frames (${this.dropped} total)`)
+    }
   }
   rawWriteAudio(payload) {
     if (!this.asSocket || this.asSocket.destroyed) return
@@ -338,7 +375,8 @@ class Call {
   async hangup(reason) {
     if (this.closed) return
     this.closed = true
-    log(this.channelId, 'hangup', reason ? `(${reason})` : '')
+    log(this.channelId, 'hangup', reason ? `(${reason})` : '',
+      `| audio frames=${this.framesOut || 0} silence=${this.silenceFrames || 0} barge-ins=${this.barges || 0} dropped=${this.dropped || 0}`)
     if (this.playTimer) { clearInterval(this.playTimer); this.playTimer = null }
     if (this.digitTimer) { clearTimeout(this.digitTimer); this.digitTimer = null }
     try { this.bot?.close() } catch { /* */ }

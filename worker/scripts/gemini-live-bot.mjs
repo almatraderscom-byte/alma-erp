@@ -18,6 +18,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { GoogleGenAI, Modality, Type } from '@google/genai'
 import { muLawToPcm16, pcm16ToMuLaw } from '../src/voice-relay/sarvam-media.mjs'
+import { createDecimator, createInterpolator } from '../src/voice-relay/resample.mjs'
 import { drainCallReportOutbox, persistCallReport, queueAndDeliverCallReport } from '../src/voice-call-report-outbox.mjs'
 
 const PORT = Number(process.env.GLIVE_PORT || 8766)
@@ -61,25 +62,24 @@ function authFailReason(params) {
 }
 
 // ── resampling ───────────────────────────────────────────────────────────────
-function up8to16(pcm8) { // PCM16 8k -> 16k (2x linear interp)
-  const n = pcm8.length >> 1
-  const out = Buffer.allocUnsafe(n * 4)
-  let prev = n ? pcm8.readInt16LE(0) : 0
-  for (let i = 0; i < n; i++) {
-    const s = pcm8.readInt16LE(i * 2)
-    out.writeInt16LE((prev + s) >> 1, i * 4); out.writeInt16LE(s, i * 4 + 2); prev = s
-  }
-  return out
-}
-function down24to8(pcm24) { // PCM16 24k -> 8k (÷3 averaging)
-  const n = Math.floor((pcm24.length >> 1) / 3)
-  const out = Buffer.allocUnsafe(n * 2)
-  for (let i = 0; i < n; i++) {
-    const a = pcm24.readInt16LE(i * 6), b = pcm24.readInt16LE(i * 6 + 2), c = pcm24.readInt16LE(i * 6 + 4)
-    out.writeInt16LE(((a + b + c) / 3) | 0, i * 2)
-  }
-  return out
-}
+// Gemini Live always speaks at 24 kHz and the phone line carries 8 kHz, so every reply is
+// resampled. This used to be a 3-sample average, which is not a low-pass filter: measured,
+// a 5 kHz tone survived at HALF amplitude and folded back to 3 kHz — right into the middle
+// of the voice band. That was the owner's "jhirjhir" crackle, and it also cut 3 kHz speech
+// by ~2 dB. Now a proper 241-tap linear-phase FIR (see voice-relay/resample.mjs) keeps the
+// voice band flat to -0.2 dB and pushes everything that would alias below -70 dB.
+// Each call gets its OWN resampler: the filter carries state between the ~20 ms chunks, and
+// sharing it across calls would splice one caller's audio tail into another's.
+const INPUT_RATE = Number(process.env.GLIVE_INPUT_RATE || 8000)
+// BCP-47 hint for both transcription directions (comma-separated, owner-tunable — e.g.
+// bn-BD if it transcribes Bangladeshi speech better than the bn-IN model in practice).
+// Transcription language hint. MUST default to empty: the field exists in the SDK types but
+// the Developer API rejects it outright — "languageCodes parameter is only supported in
+// Gemini Enterprise Agent Platform mode" — and a rejected config kills the whole Live
+// session, so every call went silent (live 2026-07-25, caught in one test). Only set this
+// if we ever move the bot to Vertex/Enterprise mode.
+const STT_LANGS = (process.env.GLIVE_STT_LANGS || '').split(',').map((x) => x.trim()).filter(Boolean)
+const sttCfg = () => (STT_LANGS.length ? { languageCodes: STT_LANGS } : {})
 
 // Shared rules every call-type inherits (turn-taking, hang-up, adab).
 const SYS_COMMON = `- সহজ, কথ্য, স্বাভাবিক বাংলায় ছোট বাক্যে দ্রুত কথা বলো — ফোনালাপের মতো।
@@ -243,6 +243,11 @@ class Call {
     this.id = 'g' + (++seq)
     this.streamSid = null
     this.streamKey = 'streamId'
+    // Gemini 24 kHz -> 8 kHz for the phone line (stateful across chunks; see resample.mjs).
+    this.down24to8 = createDecimator({ rateIn: 24000, factor: 3 })
+    // Only needed when we deliberately send 16 kHz upstream; 8 kHz is the default because
+    // it is the audio we actually have (see the media handler).
+    this.up8to16 = INPUT_RATE === 16000 ? createInterpolator({ rateOut: 16000, factor: 2 }) : null
     this.out = Buffer.alloc(0)   // μ-law queue -> NGS
     this.inBuf = Buffer.alloc(0) // pcm16 8k accumulator from caller
     this.playing = false         // jitter-buffer playout state
@@ -295,8 +300,14 @@ class Call {
           ...(NATIVE ? { enableAffectiveDialog: true } : {}),
           // 3.1-flash-live accepts an explicit bn-IN; native-audio rejects it (auto-detects).
           speechConfig: { ...(NATIVE ? {} : { languageCode: 'bn-IN' }), voiceConfig: { prebuiltVoiceConfig: { voiceName: this.params?.voice || VOICE } } },
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
+          // Pin the transcription language. Left empty, the server auto-detects per
+          // utterance and drifted badly on telephony-band Bangla — live calls came back
+          // transcribed as Hindi and even Italian while the model itself understood the
+          // Bangla fine and answered correctly. That corrupted the stored transcript and
+          // the post-call summary the owner actually reads. languageCodes is documented as
+          // a hint, so this steers detection without hard-failing on a stray English word.
+          inputAudioTranscription: sttCfg(),
+          outputAudioTranscription: sttCfg(),
           contextWindowCompression: { slidingWindow: {} }, // keep long calls cheap
           // Tools by call type: owner → ERP read tools; inbound → forward_call (transfer
           // to the boss/team) when a forward number is configured. Never expose ERP data
@@ -360,7 +371,7 @@ class Call {
       const d = p.inlineData?.data
       if (!d) continue
       if (!this._loggedRate) { this._loggedRate = true; console.log(`[glive] ${this.id} out mime=${p.inlineData.mimeType}`) }
-      this.out = Buffer.concat([this.out, pcm16ToMuLaw(down24to8(Buffer.from(d, 'base64')))])
+      this.out = Buffer.concat([this.out, pcm16ToMuLaw(this.down24to8(Buffer.from(d, 'base64')))])
     }
     if (sc?.outputTranscription?.text) {
       const t = sc.outputTranscription.text
@@ -731,8 +742,16 @@ class Call {
         if (p && this.live) {
           this.inBuf = Buffer.concat([this.inBuf, muLawToPcm16(Buffer.from(p, 'base64'))])
           if (this.inBuf.length >= 1600) {
-            const pcm16k = up8to16(this.inBuf); this.inBuf = Buffer.alloc(0)
-            try { this.live.sendRealtimeInput({ audio: { data: pcm16k.toString('base64'), mimeType: 'audio/pcm;rate=16000' } }); this.inChunks++ } catch { /* */ }
+            const pcm8k = this.inBuf; this.inBuf = Buffer.alloc(0)
+            // Send the caller's audio at its TRUE rate. The Live API accepts any rate as
+            // long as the MIME type declares it, and resamples internally — so handing it
+            // real 8 kHz beats stretching to 16 kHz ourselves, which only invented data and
+            // left spectral images that muddied the transcription (live: Bangla speech
+            // transcribed as Hindi/Italian while the model still understood it fine).
+            // GLIVE_INPUT_RATE=16000 switches back, now via a proper FIR interpolator.
+            const payload = this.up8to16 ? this.up8to16(pcm8k) : pcm8k
+            const mimeType = `audio/pcm;rate=${this.up8to16 ? 16000 : 8000}`
+            try { this.live.sendRealtimeInput({ audio: { data: payload.toString('base64'), mimeType } }); this.inChunks++ } catch { /* */ }
           }
         }
         break
