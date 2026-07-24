@@ -50,11 +50,14 @@ export function estimateXaiImageCostUsd(resolution: '1k' | '2k', n = 1): number 
  * order they are sent; scaffolds refer to them explicitly so multi-image
  * edits stay unambiguous. Owner prompt + background prompt append after.
  */
+const GARMENT_EXACTNESS =
+  'The garment is the PRODUCT being sold — copy it EXACTLY: same fabric texture, exact colors, embroidery pattern, neckline, collar, buttons, sleeve style and length. Do NOT redesign, simplify, recolor or substitute the garment in any way.'
+
 const MODE_SCAFFOLDS: Record<Exclude<StudioModeId, 'generate' | 'image_to_video'>, string> = {
   product_to_model:
-    'Reference image 1 is a clothing product photo. Create a professional fashion photoshoot of a Bangladeshi model wearing EXACTLY this product — preserve the garment\'s color, pattern, embroidery and cut faithfully. Natural pose, modest styling, clean commercial lighting.',
+    `Reference image 1 is a clothing product photo. Create a professional fashion photoshoot of a Bangladeshi model wearing EXACTLY this product. ${GARMENT_EXACTNESS} Natural pose, modest styling, clean commercial lighting.`,
   try_on:
-    'Reference image 1 shows a person; reference image 2 is a clothing product photo. Dress the person from image 1 in EXACTLY the outfit from image 2 — keep the person\'s face, body, pose and identity unchanged, and preserve the garment\'s color, pattern and cut faithfully. Photorealistic virtual try-on.',
+    `Reference image 1 shows a person; reference image 2 is the clothing product photo. Dress the person from image 1 in EXACTLY the outfit from image 2 — keep the person's face, body and identity unchanged. ${GARMENT_EXACTNESS} Photorealistic virtual try-on.`,
   model_swap:
     'Reference image 1 is a fashion photo; reference image 2 shows a different person. Recreate image 1 with the person from image 2 as the model — keep the outfit, pose, background and lighting of image 1 exactly, only the model changes.',
   face_to_model:
@@ -63,11 +66,58 @@ const MODE_SCAFFOLDS: Record<Exclude<StudioModeId, 'generate' | 'image_to_video'
     'Edit reference image 1 as instructed below. Change ONLY what the instruction asks for; keep everything else — faces, garments, composition, lighting — exactly as in the original.',
 }
 
+/** What each ordered reference IS — the worker preps person refs (plate
+ * cleanup) and garment refs (white-flattened cutout) differently. */
+export type XaiReferenceRole = 'person' | 'garment' | 'source'
+
 export type XaiRunBrief = {
   op: XaiImagineOp
   /** agent-files storage paths, in scaffold order (max 3) */
   referenceImagePaths: string[]
+  /** parallel to referenceImagePaths */
+  referenceRoles: XaiReferenceRole[]
   prompt: string
+}
+
+/** 2-person family presets that fit xAI's 3-reference cap (person+person+garment).
+ * full_family (4 জন) exceeds it and stays on the FASHN accuracy chain. */
+export const XAI_FAMILY_PAIR_ROLES: Record<string, [string, string]> = {
+  father_son: ['father', 'son'],
+  mother_son: ['mother', 'son'],
+  mother_daughter: ['mother', 'daughter'],
+  father_daughter: ['father', 'daughter'],
+  couple: ['father', 'mother'],
+}
+
+/**
+ * Multi-person brief: two saved role-model photos + the supplier product photo
+ * (raw — it shows every family member's piece for different-dress sets).
+ */
+export function buildXaiFamilyPairBrief(input: {
+  preset: string
+  personPaths: [string, string]
+  personLabels: [string, string]
+  productImagePath: string
+  prompt?: string
+  backgroundPrompt?: string
+}): XaiRunBrief {
+  const ownerText = [input.prompt, input.backgroundPrompt]
+    .map((s) => s?.trim())
+    .filter(Boolean)
+    .join(' ')
+  const scaffold =
+    `Reference image 1 shows the ${input.personLabels[0]}; reference image 2 shows the ${input.personLabels[1]}; ` +
+    'reference image 3 is the clothing product photo. Create ONE cohesive professional Bangladeshi family photoshoot ' +
+    'with BOTH people together in a single natural scene, wearing the matching outfits from image 3 — each person wears ' +
+    `their own correct piece (adult piece for the adult, child piece for the child, as shown in image 3). ${GARMENT_EXACTNESS} ` +
+    "Preserve each person's face, age, skin tone, hair and identity EXACTLY as in their reference image — no face changes. " +
+    'One consistent lighting, background and photographic style.'
+  return {
+    op: 'edit',
+    referenceImagePaths: [input.personPaths[0], input.personPaths[1], input.productImagePath],
+    referenceRoles: ['person', 'person', 'garment'],
+    prompt: [scaffold, ownerText].filter(Boolean).join(' '),
+  }
 }
 
 /**
@@ -91,54 +141,56 @@ export function buildXaiRunBrief(input: {
 
   if (input.mode === 'generate') {
     if (!ownerText) throw new Error('prompt_required')
-    return { op: 'generate', referenceImagePaths: [], prompt: ownerText }
+    return { op: 'generate', referenceImagePaths: [], referenceRoles: [], prompt: ownerText }
   }
   if (input.mode === 'image_to_video') throw new Error('invalid_mode')
 
   const refs: string[] = []
+  const roles: XaiReferenceRole[] = []
   switch (input.mode) {
     case 'product_to_model': {
       if (!input.productImagePath) throw new Error('product_image_required')
-      refs.push(input.productImagePath)
+      refs.push(input.productImagePath); roles.push('garment')
       // optional model reference: scaffold stays valid — extra image only helps
-      if (input.modelImagePath) refs.push(input.modelImagePath)
+      if (input.modelImagePath) { refs.push(input.modelImagePath); roles.push('person') }
       break
     }
     case 'try_on': {
       const person = input.modelImagePath ?? input.sourceImagePath
       if (!person) throw new Error('model_image_required')
       if (!input.productImagePath) throw new Error('product_image_required')
-      refs.push(person, input.productImagePath)
+      refs.push(person, input.productImagePath); roles.push('person', 'garment')
       break
     }
     case 'model_swap': {
       if (!input.sourceImagePath) throw new Error('source_image_required')
       const person = input.modelImagePath ?? input.faceReferencePath
       if (!person) throw new Error('model_image_required')
-      refs.push(input.sourceImagePath, person)
+      refs.push(input.sourceImagePath, person); roles.push('source', 'person')
       break
     }
     case 'face_to_model': {
       const face = input.faceReferencePath ?? input.modelImagePath
       if (!face) throw new Error('model_image_required')
-      refs.push(face)
+      refs.push(face); roles.push('person')
       break
     }
     case 'edit': {
       if (!input.sourceImagePath) throw new Error('source_image_required')
       if (!ownerText) throw new Error('prompt_required')
-      refs.push(input.sourceImagePath)
+      refs.push(input.sourceImagePath); roles.push('source')
       // optional extra references (combined listings): product photo rides as image 2
-      if (input.productImagePath) refs.push(input.productImagePath)
+      if (input.productImagePath) { refs.push(input.productImagePath); roles.push('source') }
       break
     }
   }
-  if (refs.length > XAI_MAX_EDIT_REFERENCES) refs.length = XAI_MAX_EDIT_REFERENCES
+  if (refs.length > XAI_MAX_EDIT_REFERENCES) { refs.length = XAI_MAX_EDIT_REFERENCES; roles.length = XAI_MAX_EDIT_REFERENCES }
 
   const scaffold = MODE_SCAFFOLDS[input.mode]
   return {
     op: 'edit',
     referenceImagePaths: refs,
+    referenceRoles: roles,
     prompt: [scaffold, ownerText].filter(Boolean).join(' '),
   }
 }

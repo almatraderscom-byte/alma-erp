@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  XAI_FAMILY_PAIR_ROLES,
   XAI_TEMPLATES,
+  buildXaiFamilyPairBrief,
   buildXaiRunBrief,
   estimateXaiImageCostUsd,
   toXaiAspectRatio,
@@ -38,7 +40,7 @@ describe('CS13 — run brief per mode', () => {
     expect(() => buildXaiRunBrief({ mode: 'generate' })).toThrow('prompt_required')
   })
 
-  it('try_on: person then garment, in that order', () => {
+  it('try_on: person then garment, in that order, with roles for the worker prep', () => {
     const brief = buildXaiRunBrief({
       mode: 'try_on',
       modelImagePath: 'p/model.jpg',
@@ -46,9 +48,31 @@ describe('CS13 — run brief per mode', () => {
     })
     expect(brief.op).toBe('edit')
     expect(brief.referenceImagePaths).toEqual(['p/model.jpg', 'p/garment.jpg'])
+    expect(brief.referenceRoles).toEqual(['person', 'garment'])
     expect(brief.prompt).toContain('image 1')
     expect(brief.prompt).toContain('image 2')
+    // CS13.2 — garment exactness is spelled out (owner live test: garments drifted)
+    expect(brief.prompt).toContain('Do NOT redesign')
     expect(() => buildXaiRunBrief({ mode: 'try_on', productImagePath: 'p/g.jpg' })).toThrow('model_image_required')
+  })
+
+  it('family pair: both role models + raw product, 3 refs with person/person/garment roles', () => {
+    const brief = buildXaiFamilyPairBrief({
+      preset: 'father_son',
+      personPaths: ['m/father.jpg', 'm/son.jpg'],
+      personLabels: ['father', 'son'],
+      productImagePath: 'p/set.jpg',
+    })
+    expect(brief.referenceImagePaths).toEqual(['m/father.jpg', 'm/son.jpg', 'p/set.jpg'])
+    expect(brief.referenceRoles).toEqual(['person', 'person', 'garment'])
+    expect(brief.prompt).toContain('father')
+    expect(brief.prompt).toContain('son')
+    expect(brief.prompt).toContain('identity EXACTLY')
+    // full_family exceeds the 3-reference cap and must not be a pair preset
+    expect(XAI_FAMILY_PAIR_ROLES.full_family).toBeUndefined()
+    expect(Object.keys(XAI_FAMILY_PAIR_ROLES).sort()).toEqual(
+      ['couple', 'father_daughter', 'father_son', 'mother_daughter', 'mother_son'],
+    )
   })
 
   it('product_to_model: product first, optional model second', () => {

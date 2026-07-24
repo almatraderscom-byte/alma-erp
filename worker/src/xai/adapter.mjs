@@ -103,15 +103,53 @@ async function saveXaiImage(supabase, image, pendingActionId, suffix = '') {
   return storagePath
 }
 
+/**
+ * Reference preparation per role (CS13.2 — garment-fidelity fix, owner live
+ * test 2026-07-24: raw supplier photos made Grok invent garments):
+ *  - 'garment' + SINGLE-person job → white-flattened garment cutout from the
+ *    supplier photo (same free, kv-cached prep the FASHN chains use). Family
+ *    pair jobs keep the RAW supplier photo — different-dress sets (মা+মেয়ে)
+ *    need every piece visible.
+ *  - 'person' → dark-plate cleanup (reseller model photos carry text plates).
+ * Both fail OPEN to the raw image — prep must never block a paid run.
+ */
+async function prepareReferencePath({ supabase, path, role, isFamilyPair, pendingActionId, logCost }) {
+  try {
+    if (role === 'garment' && !isFamilyPair) {
+      const { prepSupplierPhoto } = await import('../garment-prep.mjs')
+      const prep = await prepSupplierPhoto({ supabase, imagePath: path, pendingActionId, logCost })
+      if (prep?.adultGarmentPath) return prep.adultGarmentPath
+      return path
+    }
+    if (role === 'person') {
+      const { cleanModelPhoto } = await import('../photo-cleanup.mjs')
+      return await cleanModelPhoto({ supabase, imagePath: path })
+    }
+  } catch (err) {
+    console.warn(`[worker] xai ref prep failed open (${role} ${path}): ${err.message}`)
+  }
+  return path
+}
+
 export async function processXaiImagine({ supabase, pendingActionId, payload, logCost }) {
   const model = XAI_ALLOWED_MODELS.includes(payload.xaiModel) ? payload.xaiModel : 'grok-imagine-image-quality'
   const op = payload.xaiOp === 'generate' ? 'generate' : 'edit'
   const refPaths = Array.isArray(payload.referenceImagePaths) ? payload.referenceImagePaths.slice(0, 3) : []
   if (op === 'edit' && refPaths.length === 0) throw new Error('xai edit job has no reference images')
+  const refRoles = Array.isArray(payload.referenceRoles) ? payload.referenceRoles : []
+  const isFamilyPair = refRoles.filter((r) => r === 'person').length >= 2
 
   const referenceDataUris = []
-  for (const p of refPaths) {
-    referenceDataUris.push(await storagePathToNormalizedDataUri(supabase, p))
+  for (let i = 0; i < refPaths.length; i++) {
+    const prepared = await prepareReferencePath({
+      supabase,
+      path: refPaths[i],
+      role: refRoles[i] ?? 'source',
+      isFamilyPair,
+      pendingActionId,
+      logCost,
+    })
+    referenceDataUris.push(await storagePathToNormalizedDataUri(supabase, prepared))
   }
 
   const resolution = payload.resolution === '1k' ? '1k' : '2k'
