@@ -207,11 +207,14 @@ struct CUSummary: Decodable {
     let dailyBudgetPct: Double?, monthlyBudgetPct: Double?
     let spendByCategoryToday: CUSpendBreakdown?
     let spendByCategoryMonth: CUSpendBreakdown?
+    let chatConversationsToday: [CUChatConversation]
+    let chatConversationsMonth: [CUChatConversation]
 
     private enum K: String, CodingKey {
         case todayDhakaDate, todayUsd, monthUsd, forecastUsd, subscriptionAmortMonthUsd
         case dailyLast30, byProvider, byModel, budgets, dailyBudgetPct, monthlyBudgetPct
         case spendByCategoryToday, spendByCategoryMonth
+        case chatConversationsToday, chatConversationsMonth
     }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
@@ -228,12 +231,34 @@ struct CUSummary: Decodable {
         monthlyBudgetPct = CUFlex.double(c, .monthlyBudgetPct)
         spendByCategoryToday = try? c.decodeIfPresent(CUSpendBreakdown.self, forKey: .spendByCategoryToday)
         spendByCategoryMonth = try? c.decodeIfPresent(CUSpendBreakdown.self, forKey: .spendByCategoryMonth)
+        chatConversationsToday = (try? c.decodeIfPresent([CUChatConversation].self, forKey: .chatConversationsToday)) ?? []
+        chatConversationsMonth = (try? c.decodeIfPresent([CUChatConversation].self, forKey: .chatConversationsMonth)) ?? []
     }
 }
 
 // ── Spend by activity category (কোন খাতে কত খরচ) — mirrors billing/spend-categories.ts ──
 
 enum CUCatRange: Hashable { case today, month }
+
+/// One owner chat behind the চ্যাট (Boss) total — drill-down row. Mirrors
+/// cost-dashboard.ts ChatConversationCost.
+struct CUChatConversation: Decodable, Identifiable, Equatable {
+    let conversationId: String
+    let title: String?
+    let source: String?
+    let totalUsd: Double
+    let count: Int
+    var id: String { conversationId }
+    private enum K: String, CodingKey { case conversationId, title, source, totalUsd, count }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: K.self)
+        conversationId = (try? c.decode(String.self, forKey: .conversationId)) ?? ""
+        title = try? c.decodeIfPresent(String.self, forKey: .title)
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
+        totalUsd = CUFlex.double(c, .totalUsd) ?? 0
+        count = CUFlex.int(c, .count) ?? 0
+    }
+}
 
 struct CUSpendCategory: Decodable, Identifiable, Equatable {
     let id: String
@@ -658,6 +683,7 @@ struct CreditUsageScreen: View {
     @State private var budgetMonthlyDraft = ""
     @State private var csvExporting = false   // NP-4 (AG-11) native CSV export
     @State private var categoryRange: CUCatRange = .today
+    @State private var chatExpanded = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     /// Live mode: ~10s auto-refresh of the first log page while ON (green dot pulses).
@@ -753,7 +779,23 @@ struct CreditUsageScreen: View {
                     .frame(maxWidth: .infinity).padding(.vertical, 14)
             } else {
                 ForEach(Array(cats.enumerated()), id: \.element.id) { idx, c in
-                    categoryRow(c, fraction: c.usd / maxUsd, coral: coral)
+                    if c.id == "owner_chat" {
+                        Button {
+                            withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) { chatExpanded.toggle() }
+                        } label: {
+                            categoryRow(c, fraction: c.usd / maxUsd, coral: coral, expandable: true, expanded: chatExpanded)
+                        }
+                        .buttonStyle(CUPress())
+                        if chatExpanded {
+                            chatConversationList(
+                                categoryRange == .today ? s.chatConversationsToday : s.chatConversationsMonth,
+                                coral: coral,
+                            )
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                    } else {
+                        categoryRow(c, fraction: c.usd / maxUsd, coral: coral)
+                    }
                     if idx < cats.count - 1 { Divider().opacity(0.35) }
                 }
             }
@@ -765,16 +807,24 @@ struct CreditUsageScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading).padding(16).cuSolid(scheme, corner: 18)
     }
 
-    private func categoryRow(_ c: CUSpendCategory, fraction: Double, coral: Color) -> some View {
+    private func categoryRow(_ c: CUSpendCategory, fraction: Double, coral: Color,
+                             expandable: Bool = false, expanded: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 7) {
+                if expandable {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold)).foregroundStyle(coral)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
                 Text(c.icon).font(.system(size: 13))
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 3) {
                         Text(c.label).font(.system(size: 12.5, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
                         if c.headline { Text("★").font(.system(size: 8)).foregroundStyle(coral) }
                     }
-                    Text(c.hint).font(.system(size: 8.5)).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+                    Text(expandable ? (expanded ? "লুকান" : "কোন কোন চ্যাট? — ট্যাপ করুন") : c.hint)
+                        .font(.system(size: 8.5)).foregroundStyle(expandable ? coral.opacity(0.9) : .secondary)
+                        .lineLimit(1).minimumScaleFactor(0.7)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 1) {
@@ -791,6 +841,51 @@ struct CreditUsageScreen: View {
             }.frame(height: 6)
         }
         .padding(.vertical, 3)
+        .contentShape(Rectangle())
+    }
+
+    /// The owner chats behind চ্যাট (Boss), tap to open each in the agent.
+    private func chatConversationList(_ convs: [CUChatConversation], coral: Color) -> some View {
+        VStack(spacing: 6) {
+            if convs.isEmpty {
+                Text("এই সময়ে আলাদা চ্যাট পাওয়া যায়নি")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ForEach(convs) { cv in
+                    Button {
+                        openWeb("/agent?conversation=\(cv.conversationId)", "চ্যাট")
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("💬").font(.system(size: 11))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text((cv.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+                                     ? cv.title! : "শিরোনামহীন চ্যাট")
+                                    .font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                                    .foregroundStyle(.primary)
+                                if let src = cv.source, src != "web", !src.isEmpty {
+                                    Text(src.uppercased()).font(.system(size: 7, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer(minLength: 6)
+                            Text(CUFormat.usd(cv.totalUsd))
+                                .font(.system(size: 11.5, weight: .bold, design: .rounded).monospacedDigit())
+                            Image(systemName: "arrow.up.forward.circle.fill")
+                                .font(.system(size: 13)).foregroundStyle(coral)
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.04)))
+                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(coral.opacity(0.14), lineWidth: 1))
+                    }
+                    .buttonStyle(CUPress())
+                }
+            }
+        }
+        .padding(.leading, 10).padding(.top, 3).padding(.bottom, 2)
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 1).fill(coral.opacity(0.3)).frame(width: 2).padding(.vertical, 4)
+        }
     }
 
     private func spendHero(_ s: CUSummary) -> some View {
