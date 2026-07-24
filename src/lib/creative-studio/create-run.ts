@@ -192,7 +192,43 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
 
   // FAMILY MERGE: combine two already-generated images (e.g. father+son and mother+daughter)
   // into ONE four-person family photoshoot. Worker composites both reference images via Gemini.
+  // CS13.3 — the owner's engine pick WINS: Grok selected ⇒ the merge runs as a
+  // 2-reference xAI edit (owner hit a silent Gemini override here live 2026-07-24).
   if (input.familyPreset === 'full_family' && input.sourceImagePath && input.secondSourceImagePath) {
+    if (input.vtonEngine === 'xai_imagine') {
+      if (!process.env.XAI_API_KEY?.trim()) throw new Error('xai_not_configured')
+      if ((await readKv(CS_XAI_ENABLED_KEY)) !== '1') throw new Error('xai_engine_disabled')
+      const { buildXaiFamilyMergeBrief } = await import('@/lib/creative-studio/xai-imagine')
+      const brief = buildXaiFamilyMergeBrief({
+        sourceImagePath: input.sourceImagePath,
+        secondSourceImagePath: input.secondSourceImagePath,
+        prompt: input.prompt,
+        backgroundPrompt: input.backgroundPrompt,
+      })
+      const xaiResolution = toXaiResolution(input.resolution)
+      const id = await createApprovedAction({
+        type: 'image_gen',
+        payload: {
+          provider: 'xai',
+          xaiEngine: 'xai_imagine',
+          xaiModel: XAI_IMAGE_MODEL_QUALITY,
+          xaiOp: brief.op,
+          referenceImagePaths: brief.referenceImagePaths,
+          referenceRoles: brief.referenceRoles,
+          prompt: brief.prompt,
+          aspectRatio: toXaiAspectRatio(input.aspectRatio ?? '4:5'),
+          resolution: xaiResolution,
+          creativeStudio: true,
+          studioMode: input.mode,
+          familyPreset: 'full_family',
+          familyMerge: true,
+        },
+        summary: '🎨 Studio Family Merge (Grok Imagine · xAI)',
+        costEstimate: estimateXaiImageCostUsd(xaiResolution),
+      })
+      jobs.push({ pendingActionId: id, label: 'Family Merge · Grok Imagine (xAI)', type: 'image_gen' })
+      return { jobs, provider: 'xai_imagine', fashnReady }
+    }
     const mergePrompt = [
       'Combine the people from BOTH reference images into ONE cohesive Bangladeshi family photoshoot.',
       'Reference image 1 shows some family members; reference image 2 shows the others.',
@@ -273,6 +309,18 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
         sourceImagePath: input.sourceImagePath,
         faceReferencePath: input.faceReferencePath,
       })
+      // CS13.3 — same free readiness gate as the FASHN/Fal single try-on:
+      // stop unusable inputs BEFORE any paid xAI call.
+      if (input.mode === 'try_on' && (!input.familyPreset || input.familyPreset === 'single')) {
+        const person = input.modelImagePath ?? input.sourceImagePath
+        if (person && input.productImagePath) {
+          const readiness = await checkSingleInputReadiness({
+            modelImagePath: person,
+            productImagePath: input.productImagePath,
+          })
+          if (!readiness.ok) throw new Error(`input_not_ready:${readiness.errors.join(',')}`)
+        }
+      }
     }
 
     // Zero-prompt accuracy parity with the FASHN path: garment placement hint
@@ -784,7 +832,26 @@ export async function runAutoStudio(input: {
     if (mother && son) pairs.push('mother_son')
     if (mother && daughter) pairs.push('mother_daughter')
 
-    if (useFashn) {
+    if (xaiAutoReady) {
+      // CS13.3 — default engine is Grok: family pairs run the 3-reference
+      // multi-image brief (both role models + product) instead of the chain.
+      for (const v of pairs) {
+        try {
+          const pair = await runCreativeStudio({
+            mode: 'try_on',
+            vtonEngine: 'xai_imagine',
+            familyPreset: v as FamilyPresetId,
+            productImagePath,
+            resolution: '2k',
+          })
+          for (const j of pair.jobs) jobs.push(j)
+          chainedVariants.push(v as ChatTryOnVariant)
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : ''
+          if (!msg.startsWith('missing_models:')) throw err
+        }
+      }
+    } else if (useFashn) {
       // Accuracy chain per pair — saved child models keep the same face every run.
       for (const v of pairs) {
         try {

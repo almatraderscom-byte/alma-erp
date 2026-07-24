@@ -202,6 +202,35 @@ export function buildXaiRunBrief(input: {
   }
 }
 
+/**
+ * full_family MERGE brief (owner flow: two already-generated pair images →
+ * one 4-person shot). Two references only — inside xAI's cap — and every
+ * face/outfit must survive untouched.
+ */
+export function buildXaiFamilyMergeBrief(input: {
+  sourceImagePath: string
+  secondSourceImagePath: string
+  prompt?: string
+  backgroundPrompt?: string
+}): XaiRunBrief {
+  const ownerText = [input.prompt, input.backgroundPrompt]
+    .map((s) => s?.trim())
+    .filter(Boolean)
+    .join(' ')
+  const scaffold =
+    'Reference image 1 shows some family members; reference image 2 shows the others. ' +
+    'Combine ALL the people from BOTH reference images into ONE cohesive professional Bangladeshi family photoshoot — ' +
+    'everyone together in a single natural scene. Preserve EVERY person\'s face, age, outfit, garment colors and identity ' +
+    'EXACTLY as shown in their source image — do not change, recolor or redesign any garment or face. ' +
+    'One consistent lighting, background and photographic style.'
+  return {
+    op: 'edit',
+    referenceImagePaths: [input.sourceImagePath, input.secondSourceImagePath],
+    referenceRoles: ['source', 'source'],
+    prompt: [scaffold, ownerText].filter(Boolean).join(' '),
+  }
+}
+
 // ── Templates (x.ai-console style "start from a template") ───────────────────
 
 export type XaiTemplate = {
