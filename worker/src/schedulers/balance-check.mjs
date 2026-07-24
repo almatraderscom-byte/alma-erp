@@ -1,5 +1,5 @@
 /**
- * Every 6 hours — refresh API provider balances + low-balance Tier 1 alerts.
+ * Every 15 minutes — refresh provider billing snapshots + low wallet Tier 1 alerts.
  */
 import { getAppUrl, getInternalToken } from '../env.mjs'
 import { notify } from '../notify/index.mjs'
@@ -33,7 +33,7 @@ export async function runBalanceCheck() {
     const res = await fetch(`${getAppUrl()}/api/assistant/internal/balance-refresh`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${getInternalToken()}` },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(60_000),
     })
     if (!res.ok) {
       console.warn(`[balance-check] HTTP ${res.status}`)
