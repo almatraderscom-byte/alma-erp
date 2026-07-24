@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   XAI_FAMILY_PAIR_ROLES,
   XAI_TEMPLATES,
+  buildXaiFamilyMergeBrief,
   buildXaiFamilyPairBrief,
   buildXaiRunBrief,
   estimateXaiImageCostUsd,
@@ -105,6 +106,35 @@ describe('CS13 — run brief per mode', () => {
       familyPrompt: 'Bangladeshi father and son wearing matching outfits',
     })
     expect(brief.prompt).toContain('father and son')
+  })
+
+  it('family MERGE (owner 2-image flow): 2 source refs, faces/outfits locked', () => {
+    const brief = buildXaiFamilyMergeBrief({
+      sourceImagePath: 'g/father-son.png',
+      secondSourceImagePath: 'g/mother-daughter.png',
+    })
+    expect(brief.op).toBe('edit')
+    expect(brief.referenceImagePaths).toEqual(['g/father-son.png', 'g/mother-daughter.png'])
+    expect(brief.referenceRoles).toEqual(['source', 'source'])
+    expect(brief.prompt).toContain('BOTH reference images')
+    expect(brief.prompt).toContain('do not change, recolor or redesign')
+  })
+
+  it('same-design pairs (father_son/couple) forbid a second color; different-dress sets keep per-piece wording', () => {
+    const fs = buildXaiFamilyPairBrief({
+      preset: 'father_son',
+      personPaths: ['a.jpg', 'b.jpg'],
+      personLabels: ['father', 'son'],
+      productImagePath: 'p.jpg',
+    })
+    expect(fs.prompt).toContain('SAME garment design')
+    const md = buildXaiFamilyPairBrief({
+      preset: 'mother_daughter',
+      personPaths: ['a.jpg', 'b.jpg'],
+      personLabels: ['mother', 'daughter'],
+      productImagePath: 'p.jpg',
+    })
+    expect(md.prompt).toContain('own correct piece')
   })
 
   it('never exceeds 3 references and rejects video mode', () => {

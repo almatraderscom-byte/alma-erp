@@ -817,6 +817,13 @@ function StudioWorkspace({
   // CS6 — engine picker applies ONLY to single-person Try-On. IDM/Fal engines
   // are hidden everywhere else (family, swap, face, edit, video) by design.
   const isSingleTryOn = mode === 'try_on' && familyPreset === 'single'
+  // CS13.3 — TRUE exactly when the backend will run Grok Imagine: single,
+  // generate, 2-person pairs and the 2-image family merge. Role-based
+  // full_family (4 জন > xAI's 3-reference cap) stays on the chain.
+  const xaiWillRun =
+    (mode === 'generate'
+      || ((mode === 'product_to_model' || mode === 'try_on') ? vtonEngine === 'xai_imagine' : provider === 'xai_imagine'))
+    && !(familyPreset === 'full_family' && !isFamilyMerge && (mode === 'product_to_model' || mode === 'try_on'))
   const engineAvail = useMemo(() => {
     const m = new Map<string, StudioConfig['engines'][number]>()
     for (const e of config?.engines ?? []) m.set(e.id, e)
@@ -1476,7 +1483,8 @@ function StudioWorkspace({
             </div>
 
             {/* CS9 — protected composite opt-in for multi-person family runs */}
-            {isMultiPersonFamily && (
+            {/* CS13.3 — composite is chain machinery; hidden when Grok runs the family shot */}
+            {isMultiPersonFamily && !xaiWillRun && (
               <label className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-border bg-card/60 px-3 py-2">
                 <span className="text-[11px] leading-snug text-muted">
                   🛡 প্রোটেক্টেড কম্পোজিট <span className="rounded bg-[#81B29A]/15 px-1 py-px text-[9px] font-bold text-[#2d6a4f]">নতুন</span>
@@ -1517,10 +1525,8 @@ function StudioWorkspace({
                 // (per-person FASHN try-on → Gemini merge) — label it honestly
                 // instead of claiming the whole job is Gemini.
                 // CS6: single Try-On names the exact engine the owner picked.
-                // CS13: any Grok Imagine pick (or generate) is named truthfully.
-                // full_family merge always runs the Gemini compositor — never claim xAI there.
-                <>Run — {!isFamilyMerge && (mode === 'generate'
-                  || ((mode === 'product_to_model' || mode === 'try_on') ? vtonEngine === 'xai_imagine' : provider === 'xai_imagine'))
+                // CS13.3: the engine pick WINS everywhere xAI actually runs.
+                <>Run — {xaiWillRun
                   ? ENGINE_LABELS_BN.xai_imagine
                   : isMultiPersonFamily
                   ? FAMILY_CHAIN_LABEL_BN
@@ -1530,7 +1536,13 @@ function StudioWorkspace({
               )}
             </motion.button>
             <p className="mt-1.5 text-center text-[10px] text-muted">
-              {isMultiPersonFamily
+              {xaiWillRun
+                ? isFamilyMerge
+                  ? 'Grok Imagine: দুই ছবির সবাইকে এক ফ্রেমে — মুখ/পোশাক হুবহু রেখে'
+                  : isMultiPersonFamily
+                    ? 'Grok Imagine multi-reference: দুজনের মডেল ছবি + প্রোডাক্ট এক কলে'
+                    : 'Grok Imagine — reference থেকে মুখ/পোশাক হুবহু'
+                : isMultiPersonFamily
                 ? 'ফ্যামিলি ছবি: প্রতি জনের FASHN try-on, তারপর Gemini দিয়ে এক ফ্রেমে merge'
                 : isSingleTryOn
                   ? pipelineMode === 'production'
