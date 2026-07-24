@@ -22,6 +22,7 @@ import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
 import { prisma } from '@/lib/prisma'
 import { isOutboundCallIntent } from '@/agent/lib/outbound-call-intent'
+import { stripVoiceInstructionPrefix } from '@/agent/lib/voice-instruction'
 import { isModelEnabled } from '@/agent/lib/models/model-enabled'
 import { getDefaultHeadModelId } from '@/agent/lib/models/routing-config'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -356,7 +357,9 @@ export type HeadFastPathKind =
   | null
 
 export function classifyHeadFastPath(text: string): HeadFastPathKind {
-  const t = (text ?? '').trim()
+  // The voice-instruction display marker contains "কল" — routing must judge the
+  // owner's actual words, never the marker (it forced every voice turn heavy).
+  const t = stripVoiceInstructionPrefix((text ?? '').trim())
   if (!t) return null
   if (HEAVY_DENY_RE.test(t)) return 'deny_kw'
   if (isOutboundCallIntent(t)) return 'call_intent'
@@ -532,7 +535,10 @@ export async function resolveHeadModelId(opts: {
   if (opts.personalMode) return heavy('personal')
   if (opts.businessId === 'ALMA_TRADING') return heavy('trading')
 
-  const text = (opts.lastUserText ?? '').trim()
+  // Judge the owner's ACTUAL words: the voice-instruction marker contains "কল",
+  // which (next to any say-verb in the task) tripped the outbound-call intent and
+  // forced every voice instruction onto the heavy head (owner 2026-07-24).
+  const text = stripVoiceInstructionPrefix((opts.lastUserText ?? '').trim())
   if (!text) return heavy('empty')
   if (HEAVY_DENY_RE.test(text)) return heavy('deny_kw')
   // Placing a real phone call to a person on the owner's behalf is high-stakes (trust /

@@ -496,6 +496,34 @@ final class AlmaVoiceEngine {
             AlmaCallBarBridge.shared.engine = nil
             AlmaCallBarBridge.shared.consoleVisible = false
         }
+        // Cost visibility + cost-gated compaction (owner 2026-07-24): report the
+        // call's duration so voice spend shows on the cost dashboard, then let
+        // the server fold this conversation ONLY if it crossed the compaction
+        // cost threshold (AGENT_COMPACT_THRESHOLD_USD) — cheap no-op otherwise.
+        if let startedAt = callStartedAt {
+            let secs = Int(Date().timeIntervalSince(startedAt))
+            let convId = chatVM?.conversationId
+            if secs >= 5 {
+                Task {
+                    struct UsageBody: Encodable { let seconds: Int; let conversationId: String? }
+                    struct UsageResp: Decodable { let ok: Bool? }
+                    let _: UsageResp? = try? await AlmaAPI.shared.send(
+                        "POST", "/api/assistant/live-session/usage",
+                        body: UsageBody(seconds: secs, conversationId: convId))
+                    if let convId, !convId.isEmpty {
+                        struct CompactBody: Encodable { let conversationId: String; let ifNeeded: Bool }
+                        struct CompactResp: Decodable { let compacted: Bool? }
+                        let resp: CompactResp? = try? await AlmaAPI.shared.send(
+                            "POST", "/api/assistant/internal/compact-conversation",
+                            body: CompactBody(conversationId: convId, ifNeeded: true))
+                        #if DEBUG
+                        NSLog("ALMA-VOICE call end: usage %ds logged, compacted=%@",
+                              secs, (resp?.compacted ?? false) ? "yes" : "no")
+                        #endif
+                    }
+                }
+            }
+        }
         closed = true
         liveConnectTask?.cancel(); liveConnectTask = nil
         connectionGeneration += 1
@@ -1937,7 +1965,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let instruction = """
         তুমি ALMA — Boss-এর ব্যক্তিগত AI সহকারী, এখন Boss-এর সাথে ফোন কলে। একজন স্বাভাবিক, উষ্ণ মানুষের মতো ঝরঝরে বাংলায় কথা বলবে।
         কখন নিজে উত্তর দেবে: সালাম, কুশল, হালকা গল্প, মতামত, সাধারণ জ্ঞান — সাথে সাথে নিজেই ছোট করে উত্তর দেবে; কোনো tool ডাকবে না, দেরি করবে না।
-        কখন quick_erp_lookup: আজকের হাজিরা, বিক্রি, অর্ডার, স্টক, নামাজ, পেন্ডিং অনুমোদন — এমন সাধারণ তথ্য-প্রশ্নে সরাসরি quick_erp_lookup চালাবে (কয়েক সেকেন্ডে ফল আসে), আগে ছোট্ট ack বলবে। কখন run_agent_turn: ব্যবসার তথ্য, হিসাব, টাকা, staff, অর্ডার, রিপোর্ট, মেমরি, বা কোনো কাজ করার অনুরোধ — তখনই কেবল run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না — একমাত্র উৎস run_agent_turn-এর result।
+        কখন quick_erp_lookup: আজকের হাজিরা, বিক্রি, অর্ডার, স্টক, নামাজ, পেন্ডিং অনুমোদন — এমন সাধারণ তথ্য-প্রশ্নে সরাসরি quick_erp_lookup চালাবে (কয়েক সেকেন্ডে ফল আসে), আগে ছোট্ট ack বলবে। কখন run_agent_turn: ব্যবসার তথ্য, হিসাব, টাকা, staff, অর্ডার, রিপোর্ট, মেমরি, বা কোনো কাজ করার অনুরোধ — তখনই কেবল run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না — একমাত্র উৎস run_agent_turn-এর result। run_agent_turn-এর request সবসময় Boss-এর নিজের ভাষায় (বাংলা/বাংলিশ) হুবহু দেবে — ইংরেজিতে অনুবাদ করলে ভেতরের রাউটিং ভুল মডেলে যায়।
         ভেতরের শব্দ মুখে আনবে না: tool, function, acknowledgement, STATUS_NOTE, system, agent — এগুলো কখনো উচ্চারণ করবে না।
         STATUS_NOTE লেখা বার্তা এলে সেটা Boss-এর কথা নয়; STATUS_NOTE-এর জবাবে run_agent_turn কখনোই ডাকবে না — শুধু তার ভাবটুকু নিজের ভাষায় এক ছোট স্বাভাবিক বাক্যে বলবে — প্রতিবার নতুনভাবে, একই বাক্য দুবার কখনো নয়।
         Boss-এর কথা সত্যিই অস্পষ্ট হলে কেবল তখনই ছোট প্রশ্নে পরিষ্কার করে নেবে; পরিষ্কার অনুরোধে পাল্টা নিশ্চিতকরণ প্রশ্ন করবে না — ছোট্ট এক কথা বলে সাথে সাথে run_agent_turn চালাবে। ack বলার পর tool চালানো কখনো ভুলবে না।
@@ -1985,7 +2013,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 ],
             ], [
                 "name": "run_agent_turn",
-                "description": "Boss-এর অনুরোধ ALMA head agent-এ পাঠায় — শুধু কাজ করা, কিছু পাঠানো/পরিবর্তন, অনুমোদন, মেমরি বা জটিল বিশ্লেষণের জন্য। সাধারণ তথ্য দেখার জন্য এটা নয় — সেগুলোতে quick_erp_lookup ব্যবহার করবে (অনেক দ্রুত)।",
+                "description": "Boss-এর অনুরোধ ALMA head agent-এ পাঠায় — শুধু কাজ করা, কিছু পাঠানো/পরিবর্তন, অনুমোদন, মেমরি বা জটিল বিশ্লেষণের জন্য। সাধারণ তথ্য দেখার জন্য এটা নয় — সেগুলোতে quick_erp_lookup ব্যবহার করবে (অনেক দ্রুত)। request-টি Boss-এর কথার হুবহু বাংলা/বাংলিশ রূপে দেবে — ইংরেজিতে অনুবাদ একদম নয়।",
                 "parameters": [
                     "type": "OBJECT",
                     "properties": ["request": ["type": "STRING"]],
