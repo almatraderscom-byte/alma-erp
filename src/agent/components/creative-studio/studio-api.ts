@@ -4,6 +4,12 @@ import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 import type { LifestyleLayoutOverrides } from '@/lib/content-engine/lifestyle-layout'
 import type { GalleryMediaFilter, GalleryQcFilter, GalleryStateFilter } from '@/lib/creative-studio/gallery-query'
 import type { StudioAssetState } from '@/lib/creative-studio/studio-policy'
+import type {
+  StudioBrandRecipe,
+  StudioProductOption,
+  StudioProjectAsset,
+  StudioProjectSummary,
+} from '@/lib/creative-studio/project-contract'
 import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
 
 export const STUDIO_NAV_DEFINITIONS = [
@@ -60,6 +66,200 @@ export async function studioRequest<T>(input: RequestInfo | URL, init: RequestIn
     if (error instanceof StudioClientError) throw error
     throw normalizeStudioApiError(error, 0, fallback)
   }
+}
+
+// ── CSE3: active Content OS context ─────────────────────────────────────────
+
+export type StudioContentContext = {
+  projectId: string
+  recipeId: string | null
+  folder: string
+  tags?: string[]
+}
+
+let activeContentContext: StudioContentContext | null = null
+
+export function setActiveStudioContentContext(context: StudioContentContext | null) {
+  activeContentContext = context
+}
+
+export function getActiveStudioContentContext(): StudioContentContext | null {
+  return activeContentContext
+}
+
+async function linkQueuedStudioJobs(
+  jobs: Array<{ pendingActionId: string }>,
+  sourcePendingActionIds: string[] = [],
+): Promise<void> {
+  const context = activeContentContext
+  if (!context || context.projectId === 'legacy' || jobs.length === 0) return
+  const uniqueSources = [...new Set(sourcePendingActionIds.filter(Boolean))]
+  const results = await Promise.allSettled(
+    jobs.map((job) => studioRequest<unknown>(
+      `/api/assistant/creative-studio/projects/${encodeURIComponent(context.projectId)}/assets`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pendingActionId: job.pendingActionId,
+          recipeId: context.recipeId,
+          folder: context.folder,
+          tags: context.tags ?? [],
+          sourcePendingActionIds: uniqueSources,
+        }),
+      },
+      'project_asset_link_failed',
+    )),
+  )
+  // Generation has already been queued at this point; never report it as failed
+  // because a secondary catalog write was unavailable. The job remains visible
+  // in Legacy and can be attached from the project library without data loss.
+  if (results.some((result) => result.status === 'rejected')) {
+    console.warn('[creative-content-os] one or more queued jobs stayed in Legacy')
+  }
+}
+
+export async function fetchStudioProjects(): Promise<StudioProjectSummary[]> {
+  const data = await studioRequest<{ projects: StudioProjectSummary[] }>(
+    '/api/assistant/creative-studio/projects',
+    undefined,
+    'projects_failed',
+  )
+  return data.projects
+}
+
+export async function createStudioProject(input: {
+  name: string
+  description?: string
+  brandName?: string
+  defaultFolder?: string
+}): Promise<StudioProjectSummary> {
+  const data = await studioRequest<{ project: StudioProjectSummary }>(
+    '/api/assistant/creative-studio/projects',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+    'project_create_failed',
+  )
+  return data.project
+}
+
+export async function updateStudioProject(
+  projectId: string,
+  patch: Record<string, unknown>,
+): Promise<StudioProjectSummary> {
+  const data = await studioRequest<{ project: StudioProjectSummary }>(
+    `/api/assistant/creative-studio/projects/${encodeURIComponent(projectId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    },
+    'project_update_failed',
+  )
+  return data.project
+}
+
+export async function fetchErpProducts(query = ''): Promise<StudioProductOption[]> {
+  const params = new URLSearchParams()
+  if (query.trim()) params.set('q', query.trim())
+  const data = await studioRequest<{ products: StudioProductOption[] }>(
+    `/api/assistant/creative-studio/products?${params.toString()}`,
+    undefined,
+    'products_failed',
+  )
+  return data.products
+}
+
+export async function fetchBrandRecipes(brandProfileId?: string | null): Promise<StudioBrandRecipe[]> {
+  const params = new URLSearchParams()
+  if (brandProfileId) params.set('brandProfileId', brandProfileId)
+  const data = await studioRequest<{ recipes: StudioBrandRecipe[] }>(
+    `/api/assistant/creative-studio/recipes?${params.toString()}`,
+    undefined,
+    'recipes_failed',
+  )
+  return data.recipes
+}
+
+export async function createStudioBrandRecipe(input: Record<string, unknown>): Promise<StudioBrandRecipe> {
+  const data = await studioRequest<{ recipe: StudioBrandRecipe }>(
+    '/api/assistant/creative-studio/recipes',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+    'recipe_create_failed',
+  )
+  return data.recipe
+}
+
+export async function updateStudioBrandRecipe(
+  recipeId: string,
+  patch: Record<string, unknown>,
+): Promise<StudioBrandRecipe> {
+  const data = await studioRequest<{ recipe: StudioBrandRecipe }>(
+    `/api/assistant/creative-studio/recipes/${encodeURIComponent(recipeId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    },
+    'recipe_update_failed',
+  )
+  return data.recipe
+}
+
+export async function fetchProjectAssets(projectId: string): Promise<StudioProjectAsset[]> {
+  const data = await studioRequest<{ assets: StudioProjectAsset[] }>(
+    `/api/assistant/creative-studio/projects/${encodeURIComponent(projectId)}/assets`,
+    undefined,
+    'project_assets_failed',
+  )
+  return data.assets
+}
+
+export async function attachProjectAsset(
+  projectId: string,
+  input: {
+    pendingActionId: string
+    title?: string
+    folder?: string
+    tags?: string[]
+    recipeId?: string | null
+    sourceAssetIds?: string[]
+    sourcePendingActionIds?: string[]
+  },
+): Promise<StudioProjectAsset> {
+  const data = await studioRequest<{ asset: StudioProjectAsset }>(
+    `/api/assistant/creative-studio/projects/${encodeURIComponent(projectId)}/assets`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+    'project_asset_link_failed',
+  )
+  return data.asset
+}
+
+export async function updateProjectAsset(
+  projectId: string,
+  input: { assetId: string; title?: string; folder?: string; tags?: string[] },
+): Promise<StudioProjectAsset> {
+  const data = await studioRequest<{ asset: StudioProjectAsset }>(
+    `/api/assistant/creative-studio/projects/${encodeURIComponent(projectId)}/assets`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+    'project_asset_update_failed',
+  )
+  return data.asset
 }
 
 export type StudioConfig = {
@@ -305,7 +505,7 @@ export async function uploadFillMask(
 }
 
 export async function runStudioJob(payload: RunPayload) {
-  return studioRequest<{
+  const result = await studioRequest<{
     jobs: Array<{ pendingActionId: string; label: string }>
     provider: string
     message: string
@@ -318,10 +518,12 @@ export async function runStudioJob(payload: RunPayload) {
     },
     'run_failed',
   )
+  await linkQueuedStudioJobs(result.jobs, payload.sourcePendingActionId ? [payload.sourcePendingActionId] : [])
+  return result
 }
 
 export async function runAutoStudioJob(input: { productImagePath: string; includeFamily?: boolean; includeReel?: boolean }) {
-  return studioRequest<{
+  const result = await studioRequest<{
     jobs: Array<{ pendingActionId: string; label: string }>
     provider: string
     message: string
@@ -334,6 +536,8 @@ export async function runAutoStudioJob(input: { productImagePath: string; includ
     },
     'run_failed',
   )
+  await linkQueuedStudioJobs(result.jobs)
+  return result
 }
 
 export type GalleryQuery = {
@@ -638,7 +842,7 @@ export async function finishVideo(
   pendingActionId: string,
   templates: VideoFinishTemplates,
 ): Promise<{ pendingActionId: string; message: string }> {
-  return studioRequest<{ pendingActionId: string; message: string }>(
+  const result = await studioRequest<{ pendingActionId: string; message: string }>(
     '/api/assistant/creative-studio/video/finish',
     {
       method: 'POST',
@@ -647,6 +851,8 @@ export async function finishVideo(
     },
     'finish_failed',
   )
+  await linkQueuedStudioJobs([result], [pendingActionId])
+  return result
 }
 
 // ── E1 Audio Lab helpers ─────────────────────────────────────────────────────
@@ -682,7 +888,7 @@ export async function estimateAudioJob(body: Record<string, unknown>): Promise<A
 }
 
 export async function queueAudioJob(body: Record<string, unknown>, confirmation: { confirmedCostBdt: number; costCapBdt: number }) {
-  return studioRequest<{
+  const result = await studioRequest<{
     pendingActionId: string
     costBdt: number
     maxCostBdt: number
@@ -695,6 +901,8 @@ export async function queueAudioJob(body: Record<string, unknown>, confirmation:
     },
     'audio_failed',
   )
+  await linkQueuedStudioJobs([result])
+  return result
 }
 
 export async function uploadAudioFile(file: File, onProgress?: (pct: number) => void): Promise<string> {
@@ -740,11 +948,13 @@ export async function sendItemFeedback(pendingActionId: string, verdict: 'good' 
 }
 
 export async function retryStudioJob(pendingActionId: string) {
-  return studioRequest<{ pendingActionId: string }>(
+  const result = await studioRequest<{ pendingActionId: string }>(
     `/api/assistant/creative-studio/jobs/${pendingActionId}/retry`,
     { method: 'POST' },
     'retry_failed',
   )
+  await linkQueuedStudioJobs([result], [pendingActionId])
+  return result
 }
 
 export type StudioSettings = {
@@ -931,7 +1141,7 @@ export async function runVideoRecipe(body: {
   jobs: Array<{ pendingActionId: string; label: string; targetSec: number }>
   message: string
 }> {
-  return studioRequest<{
+  const result = await studioRequest<{
     jobs: Array<{ pendingActionId: string; label: string; targetSec: number }>
     message: string
   }>(
@@ -943,6 +1153,8 @@ export async function runVideoRecipe(body: {
     },
     'run_failed',
   )
+  await linkQueuedStudioJobs(result.jobs)
+  return result
 }
 
 export async function fetchVideoJob(id: string): Promise<VideoJobStatus> {

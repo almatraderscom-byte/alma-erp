@@ -2579,6 +2579,169 @@ model BrandAsset {
   @@map("brand_asset")
 }
 
+// ─── Creative Studio Enterprise CSE3: Content OS ────────────────────────────
+// Owner-scoped project/recipe records intentionally do not point back into ERP
+// product tables. Product data is copied as a read-only snapshot when selected,
+// so Studio can never mutate a live ERP product through these relationships.
+
+model CreativeBrandProfile {
+  id           String                @id @default(uuid())
+  ownerId      String                @map("owner_id")
+  name         String
+  organization String?
+  notes        String?               @db.Text
+  createdAt    DateTime              @default(now()) @map("created_at")
+  updatedAt    DateTime              @updatedAt @map("updated_at")
+  recipes      CreativeBrandRecipe[]
+  projects     CreativeProject[]
+
+  @@unique([ownerId, name])
+  @@index([ownerId, updatedAt(sort: Desc)])
+  @@map("creative_brand_profiles")
+}
+
+model CreativeBrandRecipe {
+  id              String                 @id @default(uuid())
+  ownerId         String                 @map("owner_id")
+  brandProfileId  String                 @map("brand_profile_id")
+  brandProfile    CreativeBrandProfile   @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
+  recipeKey       String                 @map("recipe_key")
+  version         Int                    @default(1)
+  name            String
+  sceneSubset     Json                   @default("[]") @map("scene_subset")
+  modelRoles      Json                   @default("[]") @map("model_roles")
+  finishTheme     String                 @default("default") @map("finish_theme")
+  captionTone     String                 @default("premium") @map("caption_tone")
+  aspectPack      Json                   @default("[\"4:5\"]") @map("aspect_pack")
+  musicVibe       String                 @default("premium") @map("music_vibe")
+  qcLevel         String                 @default("strict") @map("qc_level")
+  spendCeilingBdt Int                    @default(0) @map("spend_ceiling_bdt")
+  lockedAt        DateTime?              @map("locked_at")
+  lockedById      String?                @map("locked_by_id")
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+  projects        CreativeProject[]      @relation("CreativeProjectRecipe")
+  assetVersions   CreativeAssetVersion[]
+
+  @@unique([brandProfileId, recipeKey, version])
+  @@index([ownerId, updatedAt(sort: Desc)])
+  @@index([brandProfileId, recipeKey, version(sort: Desc)])
+  @@map("creative_brand_recipes")
+}
+
+model CreativeProject {
+  id                 String                 @id @default(uuid())
+  ownerId            String                 @map("owner_id")
+  name               String
+  description        String?                @db.Text
+  brandProfileId     String?                @map("brand_profile_id")
+  brandProfile       CreativeBrandProfile?  @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
+  currentRecipeId    String?                @map("current_recipe_id")
+  currentRecipe      CreativeBrandRecipe?   @relation("CreativeProjectRecipe", fields: [currentRecipeId], references: [id], onDelete: SetNull)
+  productCode        String?                @map("product_code")
+  productName        String?                @map("product_name")
+  productPriceBdt    Int?                   @map("product_price_bdt")
+  productSourceImage String?                @map("product_source_image") @db.Text
+  defaultFolder      String                 @default("Unsorted") @map("default_folder")
+  archivedAt         DateTime?              @map("archived_at")
+  createdAt          DateTime               @default(now()) @map("created_at")
+  updatedAt          DateTime               @updatedAt @map("updated_at")
+  assets             CreativeProjectAsset[]
+
+  @@index([ownerId, archivedAt, updatedAt(sort: Desc)])
+  @@index([brandProfileId])
+  @@index([currentRecipeId])
+  @@map("creative_projects")
+}
+
+model CreativeProjectAsset {
+  id                String                    @id @default(uuid())
+  projectId         String                    @map("project_id")
+  project           CreativeProject           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  pendingActionId   String?                   @map("pending_action_id")
+  assetType         String                    @default("image") @map("asset_type")
+  title             String?
+  folder            String                    @default("Unsorted")
+  latestStoragePath String?                   @map("latest_storage_path") @db.Text
+  createdById       String                    @map("created_by_id")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  updatedAt         DateTime                  @updatedAt @map("updated_at")
+  versions          CreativeAssetVersion[]
+  lineageSources    CreativeAssetLineage[]    @relation("CreativeLineageSource")
+  tagAssignments    CreativeProjectAssetTag[]
+
+  @@unique([projectId, pendingActionId])
+  @@index([projectId, folder, updatedAt(sort: Desc)])
+  @@index([pendingActionId])
+  @@index([createdById])
+  @@map("creative_project_assets")
+}
+
+model CreativeAssetVersion {
+  id            String                 @id @default(uuid())
+  assetId       String                 @map("asset_id")
+  asset         CreativeProjectAsset   @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  version       Int
+  storagePath   String?                @map("storage_path") @db.Text
+  recipeId      String?                @map("recipe_id")
+  recipe        CreativeBrandRecipe?   @relation(fields: [recipeId], references: [id], onDelete: SetNull)
+  recipeVersion Int?                   @map("recipe_version")
+  provider      String?
+  engine        String?
+  jobId         String?                @map("job_id")
+  costBdt       Int                    @default(0) @map("cost_bdt")
+  costUsd       Decimal?               @map("cost_usd") @db.Decimal(12, 6)
+  qc            Json?
+  metadata      Json                   @default("{}")
+  createdById   String                 @map("created_by_id")
+  createdAt     DateTime               @default(now()) @map("created_at")
+  lineage       CreativeAssetLineage[]
+
+  @@unique([assetId, version])
+  @@index([recipeId])
+  @@index([jobId])
+  @@map("creative_asset_versions")
+}
+
+model CreativeAssetLineage {
+  id            String               @id @default(uuid())
+  versionId     String               @map("version_id")
+  version       CreativeAssetVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  sourceAssetId String               @map("source_asset_id")
+  sourceAsset   CreativeProjectAsset @relation("CreativeLineageSource", fields: [sourceAssetId], references: [id], onDelete: Restrict)
+  relationKind  String               @default("derived_from") @map("relation_kind")
+  createdAt     DateTime             @default(now()) @map("created_at")
+
+  @@unique([versionId, sourceAssetId, relationKind])
+  @@index([sourceAssetId])
+  @@map("creative_asset_lineage")
+}
+
+model CreativeAssetTag {
+  id          String                    @id @default(uuid())
+  ownerId     String                    @map("owner_id")
+  name        String
+  slug        String
+  color       String                    @default("clay")
+  createdAt   DateTime                  @default(now()) @map("created_at")
+  assignments CreativeProjectAssetTag[]
+
+  @@unique([ownerId, slug])
+  @@index([ownerId, name])
+  @@map("creative_asset_tags")
+}
+
+model CreativeProjectAssetTag {
+  assetId String               @map("asset_id")
+  asset   CreativeProjectAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  tagId   String               @map("tag_id")
+  tag     CreativeAssetTag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([assetId, tagId])
+  @@index([tagId])
+  @@map("creative_project_asset_tags")
+}
+
 model AgentBrandModel {
   id        String   @id
   name      String

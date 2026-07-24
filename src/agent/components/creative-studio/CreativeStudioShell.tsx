@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Toaster } from 'react-hot-toast'
@@ -8,6 +8,8 @@ import { cn } from '@/lib/utils'
 import { AudioLabView } from '@/agent/components/creative-studio/AudioLabView'
 import { GalleryView } from '@/agent/components/creative-studio/GalleryView'
 import { ModelLibraryView } from '@/agent/components/creative-studio/ModelLibraryView'
+import { ProjectBar } from '@/agent/components/creative-studio/ProjectBar'
+import { ProjectLibraryView } from '@/agent/components/creative-studio/ProjectLibraryView'
 import { StudioWorkspaceView, ENGINE_LABELS_BN } from '@/agent/components/creative-studio/StudioWorkspaceView'
 import { VideoStudioView } from '@/agent/components/creative-studio/VideoStudioView'
 import { AudioSvg, GallerySvg, StudioSvg, UserSvg, VideoSvg } from '@/agent/components/creative-studio/StudioUi'
@@ -17,6 +19,7 @@ import {
   type StudioConfig,
   type StudioView,
 } from '@/agent/components/creative-studio/studio-api'
+import type { StudioProjectSummary } from '@/lib/creative-studio/project-contract'
 
 const STUDIO_NAV_ICONS = {
   studio: StudioSvg,
@@ -34,6 +37,17 @@ export const STUDIO_NAV_ITEMS = STUDIO_NAV_DEFINITIONS.map((item) => ({
 export function CreativeStudioShell() {
   const [view, setView] = useState<StudioView>('studio')
   const [config, setConfig] = useState<StudioConfig | null>(null)
+  const [activeProject, setActiveProject] = useState<StudioProjectSummary | null>(null)
+  const [libraryProject, setLibraryProject] = useState<StudioProjectSummary | null>(null)
+
+  const handleProjectChange = useCallback((project: StudioProjectSummary | null) => {
+    setActiveProject(project)
+    setLibraryProject((current) => current && current.id !== project?.id ? null : current)
+  }, [])
+
+  const handleOpenLibrary = useCallback((project: StudioProjectSummary) => {
+    setLibraryProject(project)
+  }, [])
 
   useEffect(() => {
     void fetchStudioConfig()
@@ -96,6 +110,8 @@ export function CreativeStudioShell() {
           </div>
         </header>
 
+        <ProjectBar onProjectChange={handleProjectChange} onOpenLibrary={handleOpenLibrary} />
+
         <main className="relative min-h-0 flex-1 overflow-hidden">
           <AnimatePresence mode="wait">
             {view === 'studio' && (
@@ -142,6 +158,13 @@ export function CreativeStudioShell() {
               </motion.div>
             )}
           </AnimatePresence>
+          {libraryProject && (
+            <ProjectLibraryView
+              key={libraryProject.id}
+              project={activeProject?.id === libraryProject.id ? activeProject : libraryProject}
+              onClose={() => setLibraryProject(null)}
+            />
+          )}
         </main>
 
         <nav
@@ -155,7 +178,10 @@ export function CreativeStudioShell() {
                 key={id}
                 type="button"
                 aria-pressed={view === id}
-                onClick={() => setView(id)}
+                onClick={() => {
+                  setLibraryProject(null)
+                  setView(id)
+                }}
                 className={cn(
                   'st-tab flex flex-col items-center gap-0.5 px-3.5 py-1.5 text-[10px] font-semibold',
                   view === id && 'st-tab-on',

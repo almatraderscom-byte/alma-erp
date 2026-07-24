@@ -1,0 +1,59 @@
+import { type NextRequest } from 'next/server'
+import { getToken } from 'next-auth/jwt'
+import { requireAgentEnabled } from '@/agent/lib/guards'
+import { agentStorageSignedUrls } from '@/agent/lib/storage'
+import { isSystemOwner } from '@/lib/roles'
+import {
+  ContentOsServiceError,
+  searchErpProducts,
+} from '@/lib/creative-studio/project-service'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+async function ownerAllowed(req: NextRequest): Promise<Response | null> {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
+  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  return null
+}
+
+function isRemoteOrAppPath(value: string) {
+  return /^https?:\/\//i.test(value) || value.startsWith('/')
+}
+
+export async function GET(req: NextRequest) {
+  const denied = await ownerAllowed(req)
+  if (denied) return denied
+  try {
+    const products = await searchErpProducts(req.nextUrl.searchParams.get('q') ?? '')
+    const storagePaths = products
+      .map((product) => product.sourceImage)
+      .filter((path): path is string => Boolean(path) && !isRemoteOrAppPath(path!))
+    let signed: Record<string, string> = {}
+    if (storagePaths.length) {
+      try {
+        signed = await agentStorageSignedUrls([...new Set(storagePaths)], 3600)
+      } catch {
+        signed = {}
+      }
+    }
+    return Response.json({
+      products: products.map((product) => ({
+        ...product,
+        previewImage: product.sourceImage && !isRemoteOrAppPath(product.sourceImage)
+          ? signed[product.sourceImage] ?? null
+          : product.sourceImage,
+      })),
+      readOnly: true,
+    })
+  } catch (error) {
+    if (error instanceof ContentOsServiceError) {
+      return Response.json({ error: error.code }, { status: error.status })
+    }
+    console.error('[creative-products] read failed', error)
+    return Response.json({ error: 'products_failed' }, { status: 500 })
+  }
+}
