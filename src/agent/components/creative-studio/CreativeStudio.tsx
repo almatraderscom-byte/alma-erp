@@ -1995,7 +1995,7 @@ function GalleryView() {
   }, [pendingCount, loadFirstPage])
 
   return (
-    <div className="px-3 py-3 pb-20 md:pb-4">
+    <div className="px-3 py-3 pb-28">
       <div className="mb-3 flex items-center justify-between">
         <div>
           <h2 className="text-sm font-bold">Gallery</h2>
