@@ -287,6 +287,7 @@ export const call_boss_with_report: AgentTool = {
     properties: {
       title: { type: 'string', description: 'কাজের এক-লাইনের শিরোনাম (বাংলা), যেমন "ইয়াফিকে মেসেজ পাঠানো"।' },
       report: { type: 'string', description: 'কলে যা বলা হবে — ২-৪ বাক্যের বাংলা রিপোর্ট (কী করলে, ফলাফল, পরের ধাপ)।' },
+      delayMinutes: { type: 'number', description: 'Boss নির্দিষ্ট সময় পরে কল চাইলে (যেমন "৫ মিনিট পরে জানাবে") — তত মিনিট delay (০-১২০)। না দিলে এখনই কল যায়।' },
       conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['title', 'report'],
@@ -298,12 +299,15 @@ export const call_boss_with_report: AgentTool = {
       if (!title || !report) return { success: false, error: 'title এবং report দুটোই লাগবে' }
       const { queueCallEscalation } = await import('@/agent/lib/proactive-call')
       const conv = input.conversationId ? String(input.conversationId) : 'chat'
+      const rawDelay = Number(input.delayMinutes)
+      const delayMinutes = Number.isFinite(rawDelay) ? Math.min(120, Math.max(0, Math.round(rawDelay))) : 0
       const id = await queueCallEscalation({
         trigger: 'boss_callback',
         refId: `callback:${conv}:${Date.now()}`,
         title,
         purpose:
           `Boss চেয়েছিলেন কাজ শেষে কল করে জানাতে। কাজ: ${title}। রিপোর্টটা Boss-কে পরিষ্কারভাবে শোনাও: ${report}`,
+        notBeforeMs: delayMinutes > 0 ? delayMinutes * 60_000 : undefined,
       })
       if (!id) return { success: false, error: 'callback queue করা যায়নি (owner number config দেখুন)' }
       return {
@@ -311,7 +315,9 @@ export const call_boss_with_report: AgentTool = {
         data: {
           status: 'callback_queued',
           escalationId: id,
-          message: 'Boss-কে কল যাচ্ছে (WhatsApp আগে, না ধরলে সরাসরি নম্বরে; তাও না ধরলে report push)।',
+          message: delayMinutes > 0
+            ? `${delayMinutes} মিনিট পরে Boss-কে কল যাবে (WhatsApp আগে, না ধরলে সরাসরি নম্বরে; তাও না ধরলে report push)।`
+            : 'Boss-কে কল যাচ্ছে (WhatsApp আগে, না ধরলে সরাসরি নম্বরে; তাও না ধরলে report push)।',
         },
       }
     } catch (err) {
