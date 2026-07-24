@@ -6588,41 +6588,12 @@ final class AssistantVM {
                     self.isRecording = false
                     self.liveDictation = ""
                     let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !clean.isEmpty else {
+                    let wav = self.dictationStreamer.fullUtteranceWav()
+                    guard !clean.isEmpty || wav != nil else {
                         self.dictationFailure = "কথা বোঝা যায়নি"
                         return
                     }
-                    // Owner pipeline (2026-07-23): raw realtime STT → mini-LLM polish
-                    // into clean Bangla. Best-effort with a hard cap — the raw text
-                    // always lands if the polish is slow or fails.
-                    self.transcribing = true
-                    Task { [weak self] in
-                        guard let self else { return }
-                        defer { self.transcribing = false }
-                        var finalText = clean
-                        struct PolishResp: Decodable { let text: String? }
-                        do {
-                            let resp: PolishResp = try await withThrowingTaskGroup(of: PolishResp.self) { group in
-                                group.addTask {
-                                    try await AlmaAPI.shared.send("POST", "/api/assistant/dictation-polish",
-                                                                  body: ["text": clean])
-                                }
-                                group.addTask {
-                                    try await Task.sleep(nanoseconds: 4_000_000_000)
-                                    throw CancellationError()
-                                }
-                                let first = try await group.next()!
-                                group.cancelAll()
-                                return first
-                            }
-                            if let polished = resp.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-                               !polished.isEmpty { finalText = polished }
-                        } catch { /* keep raw */ }
-                        self.composerDraft = self.composerDraft.isEmpty
-                            ? finalText : self.composerDraft + " " + finalText
-                        self.dictationFailure = nil
-                        AlmaAgentHaptics.commit()
-                    }
+                    self.finishDictationPipeline(stitched: clean, wav: wav)
                 }
                 self.dictationStreamer.onNoSpeechSink = { [weak self] in
                     guard let self, self.usingStreamDictation else { return }
@@ -6630,7 +6601,14 @@ final class AssistantVM {
                     self.usingStreamDictation = false
                     self.isRecording = false
                     self.liveDictation = ""
-                    self.dictationFailure = "কথা বোঝা যায়নি"
+                    // Streaming transcripts came back empty but the mic DID hear
+                    // speech — rescue via the full-utterance accuracy pass.
+                    if let wav = self.dictationStreamer.fullUtteranceWav() {
+                        NSLog("ALMA-DICTATE noSpeech rescue via full-utterance WAV (%d bytes)", wav.count)
+                        self.finishDictationPipeline(stitched: "", wav: wav)
+                    } else {
+                        self.dictationFailure = "কথা বোঝা যায়নি"
+                    }
                 }
                 // Socket died mid-take: the streamer hands back the buffered
                 // utterance as WAV — without this sink the take vanished silently
@@ -6641,28 +6619,7 @@ final class AssistantVM {
                     self.usingStreamDictation = false
                     self.isRecording = false
                     self.liveDictation = ""
-                    self.transcribing = true
-                    Task { [weak self] in
-                        guard let self else { return }
-                        defer { self.transcribing = false }
-                        do {
-                            let data = try await AssistantNet.uploadMultipart(
-                                path: "/api/assistant/transcribe", fileField: "audio",
-                                filename: "dictation.wav", mime: "audio/wav", data: wav)
-                            let t = try JSONDecoder().decode(TranscribeResponse.self, from: data)
-                            let text = (t.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !text.isEmpty else {
-                                self.dictationFailure = "কথা বোঝা যায়নি"
-                                return
-                            }
-                            self.composerDraft = self.composerDraft.isEmpty
-                                ? text : self.composerDraft + " " + text
-                            self.dictationFailure = nil
-                            AlmaAgentHaptics.commit()
-                        } catch {
-                            self.dictationFailure = "ভয়েস বোঝা যায়নি — আবার চেষ্টা করুন"
-                        }
-                    }
+                    self.finishDictationPipeline(stitched: "", wav: wav)
                 }
                 self.dictationStreamer.onErrorSink = { [weak self] _ in
                     guard let self, self.usingStreamDictation else { return }
@@ -6751,6 +6708,72 @@ final class AssistantVM {
                     self.errorToast = "মাইক্রোফোন চালু করা গেল না"
                 }
             }
+        }
+    }
+
+    /// Dictation accuracy pipeline (owner 2026-07-24): the live chunk transcripts
+    /// are context-free and garble Bangla — re-transcribe the WHOLE utterance in
+    /// one /transcribe call (8s cap), fall back to the stitched live text, then
+    /// polish. The composer always gets the best text available.
+    private func finishDictationPipeline(stitched: String, wav: Data?) {
+        transcribing = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.transcribing = false }
+            var best = stitched
+            if let wav {
+                do {
+                    let data = try await withThrowingTaskGroup(of: Data.self) { group in
+                        group.addTask {
+                            try await AssistantNet.uploadMultipart(
+                                path: "/api/assistant/transcribe", fileField: "audio",
+                                filename: "dictation.wav", mime: "audio/wav", data: wav)
+                        }
+                        group.addTask {
+                            try await Task.sleep(nanoseconds: 8_000_000_000)
+                            throw CancellationError()
+                        }
+                        let first = try await group.next()!
+                        group.cancelAll()
+                        return first
+                    }
+                    let t = try JSONDecoder().decode(TranscribeResponse.self, from: data)
+                    if let full = t.text?.trimmingCharacters(in: .whitespacesAndNewlines), !full.isEmpty {
+                        best = full
+                        NSLog("ALMA-DICTATE accuracy pass used full transcript (%d chars, stitched %d)",
+                              full.count, stitched.count)
+                    }
+                } catch {
+                    NSLog("ALMA-DICTATE accuracy pass failed (%@) — using stitched", String(describing: error))
+                }
+            }
+            guard !best.isEmpty else {
+                self.dictationFailure = "কথা বোঝা যায়নি"
+                return
+            }
+            var finalText = best
+            struct PolishResp: Decodable { let text: String? }
+            do {
+                let resp: PolishResp = try await withThrowingTaskGroup(of: PolishResp.self) { group in
+                    group.addTask {
+                        try await AlmaAPI.shared.send("POST", "/api/assistant/dictation-polish",
+                                                      body: ["text": best])
+                    }
+                    group.addTask {
+                        try await Task.sleep(nanoseconds: 4_000_000_000)
+                        throw CancellationError()
+                    }
+                    let first = try await group.next()!
+                    group.cancelAll()
+                    return first
+                }
+                if let polished = resp.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !polished.isEmpty { finalText = polished }
+            } catch { /* keep unpolished */ }
+            self.composerDraft = self.composerDraft.isEmpty
+                ? finalText : self.composerDraft + " " + finalText
+            self.dictationFailure = nil
+            AlmaAgentHaptics.commit()
         }
     }
 
