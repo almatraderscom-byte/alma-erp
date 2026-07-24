@@ -18,25 +18,38 @@ import {
 } from '@/agent/lib/api-balances'
 
 describe('provider billing parsers', () => {
-  it('parses Vercel JSONL and uses billed cost in USD', () => {
+  it('uses only the current Vercel billing period and billed cost in USD', () => {
     const raw = [
       JSON.stringify({
         BilledCost: '1.25',
         EffectiveCost: '1.10',
         BillingCurrency: 'USD',
+        BillingPeriodStart: '2026-07-18T00:00:00Z',
+        BillingPeriodEnd: '2026-08-18T00:00:00Z',
         ChargePeriodStart: '2026-07-23T00:00:00Z',
       }),
       JSON.stringify({
         BilledCost: '2.50',
         BillingCurrency: 'USD',
+        BillingPeriodStart: '2026-07-18T00:00:00Z',
+        BillingPeriodEnd: '2026-08-18T00:00:00Z',
         ChargePeriodStart: '2026-07-22T00:00:00Z',
+      }),
+      JSON.stringify({
+        BilledCost: '99.00',
+        BillingCurrency: 'USD',
+        BillingPeriodStart: '2026-06-18T00:00:00Z',
+        BillingPeriodEnd: '2026-07-18T00:00:00Z',
+        ChargePeriodStart: '2026-07-17T00:00:00Z',
       }),
     ].join('\n')
 
-    expect(parseVercelFocusCharges(raw, '2026-07-23')).toEqual({
+    expect(parseVercelFocusCharges(raw, '2026-07-23', new Date('2026-07-24T00:00:00Z'))).toEqual({
       todayUsd: 1.25,
       monthUsd: 3.75,
       syncedThrough: '2026-07-23',
+      billingPeriodStart: '2026-07-18T00:00:00Z',
+      billingPeriodEnd: '2026-08-18T00:00:00Z',
     })
   })
 
@@ -44,8 +57,21 @@ describe('provider billing parsers', () => {
     expect(() => parseVercelFocusCharges(JSON.stringify({
       BilledCost: '100',
       BillingCurrency: 'EUR',
+      BillingPeriodStart: '2026-07-18T00:00:00Z',
+      BillingPeriodEnd: '2026-08-18T00:00:00Z',
       ChargePeriodStart: '2026-07-23T00:00:00Z',
-    }), '2026-07-23')).toThrow('billing currency EUR')
+    }), '2026-07-23', new Date('2026-07-24T00:00:00Z'))).toThrow('billing currency EUR')
+  })
+
+  it('refuses to mix Vercel rows when the current billing period is absent', () => {
+    expect(() => parseVercelFocusCharges(JSON.stringify({
+      BilledCost: '100',
+      BillingCurrency: 'USD',
+      BillingPeriodStart: '2026-06-18T00:00:00Z',
+      BillingPeriodEnd: '2026-07-18T00:00:00Z',
+      ChargePeriodStart: '2026-07-17T00:00:00Z',
+    }), '2026-07-24', new Date('2026-07-24T00:00:00Z')))
+      .toThrow('current billing period')
   })
 
   it('classifies Google billing export rows without mixing TTS and Veo into Gemini', () => {
@@ -137,9 +163,9 @@ describe('provider billing parsers', () => {
     })
   })
 
-  it('parses xAI ledger balance, usage and current invoice preview', () => {
+  it('subtracts xAI prepaid usage from funded credit and does not call covered usage due', () => {
     expect(parseXaiBilling(
-      { total: { val: '-1234' } },
+      { total: { val: '-2000' } },
       {
         timeSeries: [{
           dataPoints: [
@@ -148,20 +174,43 @@ describe('provider billing parsers', () => {
           ],
         }],
       },
-      { coreInvoice: { totalWithCorr: { val: '225' } } },
+      {
+        coreInvoice: {
+          totalWithCorr: { val: '1445' },
+          prepaidCredits: { val: '-2000' },
+          prepaidCreditsUsed: { val: '1445' },
+        },
+      },
       '2026-07-24',
     )).toEqual({
-      balanceUsd: 12.34,
+      balanceUsd: 5.55,
       cost: {
         todayUsd: 0.5,
         monthUsd: 0.75,
         syncedThrough: '2026-07-24',
       },
+      invoice: null,
+    })
+  })
+
+  it('shows only the uncovered xAI postpaid remainder as invoice preview', () => {
+    expect(parseXaiBilling(
+      { total: { val: '-2000' } },
+      { timeSeries: [] },
+      {
+        coreInvoice: {
+          totalWithCorr: { val: '2250' },
+          prepaidCredits: { val: '-2000' },
+          prepaidCreditsUsed: { val: '2000' },
+        },
+      },
+      '2026-07-24',
+    )).toMatchObject({
+      balanceUsd: 0,
       invoice: {
         kind: 'preview',
-        amount: 2.25,
+        amount: 2.5,
         currency: 'USD',
-        dueAt: null,
         status: 'current preview',
       },
     })
