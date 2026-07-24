@@ -139,6 +139,14 @@ function outcomeFromCause(answered, cause) {
 const MAX_CONCURRENT = Number(process.env.SIP_MAX_CONCURRENT_CALLS || 4)
 // Where one-way message audio is staged for Asterisk to play (must be readable by Asterisk).
 const PLAY_DIR = process.env.SIP_PLAY_DIR || tmpdir()
+/**
+ * How long to let the callee's phone ring, in seconds. ARI's default is 30, which is too
+ * short in practice — live 2026-07-25: the owner reached his phone at ~30s, by which time we
+ * had already cancelled, so the CARRIER answered him with "the number you're calling is busy"
+ * and cut. Both failed calls ended at exactly 30.000s with hangup cause 0 (our own cancel),
+ * which is what identified it. 45s matches the Twilio path's Timeout.
+ */
+const RING_TIMEOUT = Number(process.env.SIP_RING_TIMEOUT || 45)
 
 class Call {
   constructor(channelId, params) {
@@ -604,6 +612,7 @@ const ctrlServer = http.createServer(async (req, res) => {
           app: ARI_APP,
           appArgs: 'outbound',
           channelId,
+          timeout: RING_TIMEOUT,
           ...(CALLER_ID || body.from ? { callerId: String(body.from || CALLER_ID) } : {}),
         })
       } catch (err) {
@@ -663,6 +672,9 @@ async function transferCall(call, forwardTo) {
     endpoint: `PJSIP/${forwardTo}@${TRUNK_ENDPOINT}`,
     app: ARI_APP,
     channelId: fwdId,
+    // Shorter than a normal call: the caller is on hold listening to ringback, so a long
+    // unanswered transfer is worse than falling back to the AI quickly.
+    timeout: Number(process.env.SIP_TRANSFER_RING_TIMEOUT || 30),
     ...(CALLER_ID ? { callerId: CALLER_ID } : {}),
   })
   // register a minimal Call so its StasisStart bridges into the SAME bridge
