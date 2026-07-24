@@ -24,6 +24,19 @@ extension Notification.Name {
     /// Posted by AlmaNavBridgePlugin. userInfo: ["path": String] — an ERP route
     /// path starting with "/", optionally carrying a query string.
     static let almaOpenPath = Notification.Name("almaOpenPath")
+
+    /// "Open this exact chat in the native agent." userInfo: ["conversationId": String].
+    /// Posted alongside `.almaOpenPath /agent` (which switches to the Assistant tab).
+    /// The already-mounted AssistantScreen observes this; a first-mount is covered by
+    /// `AlmaAgentNav.pendingConversationId`, drained in its bootstrap.
+    static let almaOpenAgentConversation = Notification.Name("almaOpenAgentConversation")
+}
+
+/// One-shot handoff for "open this chat natively" when the Assistant tab is not yet
+/// mounted: the notification would be missed, so the id is parked here and the
+/// AssistantScreen drains it on first bootstrap. Main-actor only.
+enum AlmaAgentNav {
+    @MainActor static var pendingConversationId: String?
 }
 
 /// Durable handoff between OneSignal's earliest cold-start click callback and the

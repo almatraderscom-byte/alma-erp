@@ -2172,6 +2172,13 @@ final class AssistantVM {
         }
         restoreCurrentComposerDraft()
         await recoverFromPersistedDescriptor()
+        // Cost drill-down asked to open a specific chat before this tab was mounted.
+        // Drain it AFTER recovery so it wins over both the last-active pointer and a
+        // restored persisted turn (explicit → bypasses the mid-turn guard).
+        if let pendingConv = AlmaAgentNav.pendingConversationId {
+            AlmaAgentNav.pendingConversationId = nil
+            await openConversation(pendingConv, explicit: true)
+        }
         async let drive: Void = loadPlanDrive()
         async let todos: Void = loadDailyAgentTodos()
         async let turns: Void = loadActiveBackgroundTurns()
@@ -2378,6 +2385,16 @@ final class AssistantVM {
                 await self.sendPresenceState("active")
                 self.resumePendingAttachmentUploads()
                 await self.recoverTurnState(trigger: "active")               // idempotent re-check
+            }
+        })
+        // "Open this chat" from the Credit Usage cost drill-down. The tab is already
+        // switched (via .almaOpenPath /agent); open the conversation in place.
+        lifecycleTokens.tokens.append(nc.addObserver(forName: .almaOpenAgentConversation,
+                                              object: nil, queue: .main) { [weak self] note in
+            guard let id = note.userInfo?["conversationId"] as? String, !id.isEmpty else { return }
+            Task { @MainActor in
+                AlmaAgentNav.pendingConversationId = nil
+                await self?.openConversation(id, explicit: true)
             }
         })
     }
@@ -3475,12 +3492,16 @@ final class AssistantVM {
         }
     }
 
-    func openConversation(_ id: String, recoveringPersistedTurn: Bool = false) async {
+    func openConversation(_ id: String, recoveringPersistedTurn: Bool = false, explicit: Bool = false) async {
         guard id != conversationId else { return }
-        if !recoveringPersistedTurn, isStreaming || recoverableTurn != nil {
+        if !recoveringPersistedTurn, !explicit, isStreaming || recoverableTurn != nil {
             errorToast = "চলতি উত্তর শেষ হলে অন্য কথোপকথন খুলুন — বর্তমান কাজটি সুরক্ষিত আছে"
             return
         }
+        // Explicit navigation (opening a chat from the cost drill-down) wins over a
+        // background turn: the server work is durable and keeps running; only the
+        // on-screen resume of the PRIOR chat is dropped so the tap always lands.
+        if explicit { recoverableTurn = nil }
         persistCurrentComposerDraft()
         restoreTick += 1     // screen replays the session-opening awakening
         stopStreaming(cancelServer: false)

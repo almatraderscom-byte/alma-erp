@@ -732,7 +732,7 @@ struct CreditUsageScreen: View {
     @ViewBuilder private var usagePane: some View {
         if let s = vm.summary {
             spendHero(s).cuAppear(0)
-            if let b = vm.balances, !b.providers.isEmpty { walletRow(b).cuAppear(1) }
+            todayInsight(s).cuAppear(1)
             statTrio(s).cuAppear(2)
             if s.spendByCategoryToday != nil || s.spendByCategoryMonth != nil { spendByCategory(s).cuAppear(3) }
             if !s.byModel.isEmpty { modelBreakdown(s).cuAppear(4) }
@@ -854,7 +854,14 @@ struct CreditUsageScreen: View {
             } else {
                 ForEach(convs) { cv in
                     Button {
-                        openWeb("/agent?conversation=\(cv.conversationId)", "চ্যাট")
+                        // Open the chat in the NATIVE agent (not web): park the id for a
+                        // first-mount, switch to the Assistant tab, and nudge an
+                        // already-mounted screen to open it in place.
+                        AlmaAgentNav.pendingConversationId = cv.conversationId
+                        NotificationCenter.default.post(name: .almaOpenPath, object: nil,
+                                                        userInfo: ["path": "/agent"])
+                        NotificationCenter.default.post(name: .almaOpenAgentConversation, object: nil,
+                                                        userInfo: ["conversationId": cv.conversationId])
                     } label: {
                         HStack(spacing: 8) {
                             Text("💬").font(.system(size: 11))
@@ -1090,6 +1097,71 @@ struct CreditUsageScreen: View {
             statPill("এই মাস", CUFormat.usd(s.monthUsd))
             statPill("পূর্বাভাস", CUFormat.usd(s.forecastUsd))
         }
+    }
+
+    // ── আজকের হিসাব — the one insight that replaces the provider-credit carousel
+    // (live balances already live on the Subscriptions page). Answers "am I spending
+    // more than usual, and on what" — trend vs yesterday, biggest driver, 7-day pace.
+    private func todayInsight(_ s: CUSummary) -> some View {
+        let coral = CUPalette.coral
+        let days = s.dailyLast30
+        let yesterday: Double? = days.count >= 2 ? days[days.count - 2].total : nil
+        let last7 = Array(days.suffix(7))
+        let avg7 = last7.isEmpty ? 0 : last7.map(\.total).reduce(0, +) / Double(last7.count)
+        let driver = s.spendByCategoryToday?.categories.first
+        let pct: Double? = (yesterday ?? 0) > 0 ? (s.todayUsd - yesterday!) / yesterday! * 100 : nil
+        let up = s.todayUsd > (yesterday ?? s.todayUsd)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("আজকের হিসাব").font(.system(size: 13, weight: .bold))
+                Spacer()
+                Text("LIVE").font(.system(size: 8, weight: .heavy)).kerning(0.5).foregroundStyle(coral)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Capsule().fill(coral.opacity(0.14)))
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(CUFormat.usd(s.todayUsd))
+                    .font(.system(size: 30, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(CUPalette.accentText(scheme)).lineLimit(1).minimumScaleFactor(0.6)
+                if let pct {
+                    HStack(spacing: 2) {
+                        Image(systemName: up ? "arrow.up.right" : "arrow.down.right").font(.system(size: 10, weight: .bold))
+                        Text(String(format: "%.0f%%", abs(pct))).font(.system(size: 11, weight: .bold))
+                    }
+                    .foregroundStyle(up ? Color.red : Color.green)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(Capsule().fill((up ? Color.red : Color.green).opacity(0.12)))
+                }
+                Spacer()
+            }
+            if let yesterday {
+                Text("গতকাল \(CUFormat.usd(yesterday)) — আজ \(up ? "বেশি" : "কম") খরচ হচ্ছে")
+                    .font(.system(size: 9.5)).foregroundStyle(.secondary)
+            }
+            Divider().opacity(0.3)
+            HStack(spacing: 10) {
+                if let driver {
+                    insightMini(icon: driver.icon, label: "সবচেয়ে বেশি খাত", value: driver.label,
+                                sub: CUFormat.usd(driver.usd), coral: coral)
+                }
+                insightMini(icon: "📊", label: "৭-দিনের গড়", value: CUFormat.usd(avg7),
+                            sub: "প্রতিদিন", coral: coral)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding(16).cuSolid(scheme, corner: 18)
+    }
+
+    private func insightMini(icon: String, label: String, value: String, sub: String, coral: Color) -> some View {
+        HStack(spacing: 7) {
+            Text(icon).font(.system(size: 15))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label).font(.system(size: 8)).foregroundStyle(.secondary)
+                Text(value).font(.system(size: 12, weight: .bold)).lineLimit(1).minimumScaleFactor(0.7)
+                Text(sub).font(.system(size: 8)).foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding(10).cuSolid(scheme, corner: 13)
     }
     private func statPill(_ k: String, _ v: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
