@@ -125,7 +125,9 @@ describe('campaign-pack restart and retry planning', () => {
     expect(first.idempotent).toBe(false)
     expect(replay.idempotent).toBe(true)
     expect(serviceHarness.rows.filter((row) => row.type === 'campaign_pack')).toHaveLength(1)
-    expect(serviceHarness.rows.filter((row) => String(row.dedupeKey).startsWith('campaign-pack-stage:'))).toHaveLength(2)
+    const stages = serviceHarness.rows.filter((row) => String(row.dedupeKey).startsWith('campaign-pack-stage:'))
+    expect(stages).toHaveLength(2)
+    expect(stages.every((row) => row.type === 'campaign_pack_local')).toBe(true)
   })
 
   it('uses stable pack/stage idempotency keys', () => {

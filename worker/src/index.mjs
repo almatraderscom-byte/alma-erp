@@ -244,9 +244,9 @@ async function pollPendingJobs() {
         if (!reconciled) continue
       }
       let handled = false
-      if (job.type === 'image_gen') {
+      if (job.type === 'campaign_pack_local' || job.type === 'image_gen') {
         await imageGenQueue.add('generate', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
-        console.log(`[worker] enqueued image-gen job for action ${job.id}`)
+        console.log(`[worker] enqueued ${job.type} job for action ${job.id}`)
         handled = true
       } else if (job.type === 'video_gen') {
         await videoGenQueue.add('generate', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })

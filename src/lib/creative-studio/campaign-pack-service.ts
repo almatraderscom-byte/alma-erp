@@ -283,6 +283,10 @@ function stageActionData(input: {
         + `Premium ${manifest.recipe.finishTheme} finish, no text or logo.`,
     }
   } else {
+    // Keep deterministic/local campaign work on its own action type. An older
+    // production worker must never mistake a preview-branch Sharp job for a
+    // generic image-generation request and accidentally reach a paid provider.
+    type = 'campaign_pack_local'
     payload = {
       ...common,
       provider: 'campaign_pack_local',
