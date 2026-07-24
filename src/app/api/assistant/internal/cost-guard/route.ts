@@ -1,7 +1,11 @@
 /**
- * GET /api/cron/cost-guard — AI-spend budget guard (cost audit Phase 4).
+ * GET /api/assistant/internal/cost-guard — AI-spend budget guard (cost audit Phase 4).
  *
- * Every 30 minutes (vercel.json): compares today's + this month's tracked AI
+ * Agent-layer cron (imports agent libs, so it lives under /api/assistant/* per
+ * the architecture rule — /api/cron/* is the ERP layer and may not import
+ * @/agent/*). Wired as a Vercel cron in vercel.json.
+ *
+ * Every 30 minutes: compares today's + this month's tracked AI
  * spend (agent_cost_events, Dhaka calendar) against the owner's budgets
  * (cost.budget.dailyUsd / cost.budget.monthlyUsd — the same values the cost
  * dashboard edits). Crossing 80% or 100% of either budget sends the owner ONE
@@ -14,6 +18,7 @@
  * ?dry=1 computes and returns the verdict without sending or recording.
  */
 import { type NextRequest } from 'next/server'
+import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
 import { getBudgetSettings } from '@/agent/lib/cost-events'
 import { querySpendByProviderBetween } from '@/agent/lib/api-balances'
@@ -55,6 +60,8 @@ function topSpenders(byProvider: Record<string, number>, limit = 3): string {
 }
 
 export async function GET(req: NextRequest) {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
   const secret = process.env.CRON_SECRET?.trim()
   if (!secret) return Response.json({ error: 'cron_secret_unset' }, { status: 503 })
   if (req.headers.get('authorization') !== `Bearer ${secret}`) {
