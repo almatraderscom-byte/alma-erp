@@ -780,6 +780,19 @@ struct AgentChatMessage: Identifiable, Equatable {
         role == .user && text.trimmingCharacters(in: .whitespaces).hasPrefix("[স্বয়ংক্রিয় হার্টবিট")
     }
 
+    /// PA-4 — a boss instruction relayed from a live phone call (submit_boss_instruction).
+    /// Mirrors web VOICE_INSTRUCTION_PREFIX in src/agent/lib/voice-instruction.ts.
+    static let voiceInstructionPrefix = "🎙️ [ভয়েস কল থেকে নির্দেশ]"
+    var isVoiceInstruction: Bool {
+        role == .user && text.trimmingCharacters(in: .whitespaces).hasPrefix(Self.voiceInstructionPrefix)
+    }
+    /// The spoken words without the marker.
+    var voiceInstructionBody: String {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        guard t.hasPrefix(Self.voiceInstructionPrefix) else { return text }
+        return String(t.dropFirst(Self.voiceInstructionPrefix.count)).trimmingCharacters(in: .whitespaces)
+    }
+
     static func from(_ wire: AgentMessageWire) -> AgentChatMessage {
         var m = AgentChatMessage(id: wire.id, role: wire.role == "user" ? .user : .assistant)
         m.serverId = wire.id
@@ -7491,6 +7504,17 @@ struct AgentMessageRow: View {
     @Environment(\.colorScheme) private var scheme
     @State private var expandedLong = false
 
+    /// PA-4 — the voice-instruction chip state, derived from the turn that follows
+    /// this message: no assistant yet → গৃহীত; streaming → চলছে; settled → শেষ.
+    private enum VoiceTurnStatus { case received, working, done }
+    private var voiceTurnStatus: VoiceTurnStatus {
+        guard let idx = vm.messages.firstIndex(where: { $0.id == message.id }),
+              idx + 1 < vm.messages.count else { return .received }
+        let next = vm.messages[idx + 1]
+        guard next.role == .assistant else { return .received }
+        return next.isStreaming ? .working : .done
+    }
+
     var body: some View {
         let pal = AgentPalette(scheme)
         if message.isHeartbeatWake {
@@ -7510,6 +7534,52 @@ struct AgentMessageRow: View {
                 Rectangle().fill(pal.borderSubtle).frame(height: 1)
             }
             .padding(.vertical, 6)
+            .padding(.bottom, 12)
+        } else if message.role == .user, message.isVoiceInstruction {
+            // PA-4 — voice instruction from a live call: badge + status chip over the
+            // coral pill, marker stripped (web parity: VoiceInstructionBubble).
+            VStack(alignment: .trailing, spacing: 6) {
+                HStack(spacing: 6) {
+                    HStack(spacing: 4) {
+                        Text("🎙️").font(.system(size: 9))
+                        Text("ভয়েস নির্দেশ")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(AgentPalette.coral)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(AgentPalette.coral.opacity(0.15), in: Capsule())
+                    let status = voiceTurnStatus
+                    HStack(spacing: 4) {
+                        if status == .working {
+                            Circle().fill(Color.orange).frame(width: 5, height: 5)
+                        }
+                        Text(status == .working ? "চলছে…" : status == .done ? "শেষ ✓" : "গৃহীত — এজেন্ট নিচ্ছে…")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(status == .done ? Color.green
+                                             : status == .working ? Color.orange : pal.muted)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background((status == .done ? Color.green.opacity(0.12)
+                                 : status == .working ? Color.orange.opacity(0.12)
+                                 : pal.borderSubtle.opacity(0.4)), in: Capsule())
+                }
+                if !message.voiceInstructionBody.isEmpty {
+                    AlmaSelectableRichText(plain: message.voiceInstructionBody,
+                                           font: UIFontMetrics(forTextStyle: .body)
+                                            .scaledFont(for: .systemFont(ofSize: 15)),
+                                           color: .white, lineSpacing: 3.5)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(
+                            LinearGradient(colors: [AgentPalette.coral, AgentPalette.coralDim],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing),
+                            in: UnevenRoundedRectangle(topLeadingRadius: 20, bottomLeadingRadius: 20,
+                                                       bottomTrailingRadius: 6, topTrailingRadius: 20,
+                                                       style: .continuous))
+                        .shadow(color: AgentPalette.coral.opacity(0.20), radius: 4, y: 1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.bottom, 12)
         } else if message.role == .user {
             VStack(alignment: .trailing, spacing: 6) {
