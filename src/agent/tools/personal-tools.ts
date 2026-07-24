@@ -205,10 +205,11 @@ export const place_agent_call: AgentTool = {
 
       let recipientName: string | undefined
       let phone: string | null = null
+      let contactRole: string = ''
 
       if (needle) {
         const contacts = await db.familyContact.findMany({
-          select: { id: true, name: true, relation: true, phone: true },
+          select: { id: true, name: true, relation: true, phone: true, notes: true },
         })
         const contact = contacts.find(
           (c: { name: string; relation: string }) =>
@@ -220,6 +221,7 @@ export const place_agent_call: AgentTool = {
         if (contact) {
           recipientName = contact.name
           phone = normalizeOutboundPhone(contact.phone)
+          contactRole = `${contact.relation ?? ''} ${(contact as { notes?: string }).notes ?? ''}`
         } else if (!rawPhone) {
           return {
             success: true,
@@ -242,6 +244,10 @@ export const place_agent_call: AgentTool = {
       const voiceGender: 'male' | 'female' = pref?.gender === 'male' ? 'male' : 'female'
       const who = recipientName ?? phone
       const channel = input.channel === 'whatsapp' ? 'whatsapp' : 'phone'
+      // Role-aware persona (owner ask 2026-07-24: the agent must KNOW who it is
+      // talking to): a contact marked staff gets the staff persona; the owner's
+      // own numbers are force-overridden to 'owner' inside placeOutboundCall.
+      const callType: 'staff' | 'contact' = /স্টাফ|staff/i.test(contactRole) ? 'staff' : 'contact'
 
       // PA-5R — the boss ordered this call VERBALLY on a live owner-verified call
       // (server-injected flag, model can't spoof it: serverContext wins the merge).
@@ -252,7 +258,7 @@ export const place_agent_call: AgentTool = {
           data: {
             conversationId: input.conversationId ? String(input.conversationId) : null,
             type: 'agent_voice_call',
-            payload: { phone, toNumber: phone, recipientName, purpose, firstMessage, voiceGender, callType: 'contact', channel, voiceApproved: true },
+            payload: { phone, toNumber: phone, recipientName, purpose, firstMessage, voiceGender, callType, channel, voiceApproved: true },
             summary: `${channel === 'whatsapp' ? '💬📞' : '📞'} ${who} কে লাইভ কল (কলে Boss-এর মুখের অনুমোদন) — "${purpose.slice(0, 60)}"`,
             costEstimate: 0.5,
             status: 'approved',
@@ -266,7 +272,7 @@ export const place_agent_call: AgentTool = {
           purpose,
           firstMessage,
           voiceGender,
-          callType: 'contact',
+          callType,
           channel,
           conversationId: input.conversationId ? String(input.conversationId) : null,
           pendingActionId: action.id,
@@ -292,7 +298,7 @@ export const place_agent_call: AgentTool = {
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'agent_voice_call',
-          payload: { phone, toNumber: phone, recipientName, purpose, firstMessage, voiceGender, callType: 'contact', channel },
+          payload: { phone, toNumber: phone, recipientName, purpose, firstMessage, voiceGender, callType, channel },
           summary: `${channel === 'whatsapp' ? '💬📞' : '📞'} ${who} কে ${channel === 'whatsapp' ? 'WhatsApp-এ ' : ''}লাইভ কল — "${purpose.slice(0, 60)}"`,
           costEstimate: 0.5,
           status: 'pending',

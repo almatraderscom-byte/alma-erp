@@ -100,3 +100,29 @@ describe('call_boss_with_report — callback precision guard (PA-5R)', () => {
     expect(ownerRequestedCallback(['৫ মিনিট পরে ফোন করে জানিও'])).toBe(true)
   })
 })
+
+describe('role-aware calling (contact list drives persona)', () => {
+  it('a contact marked staff dials with callType staff', async () => {
+    mockPrisma.familyContact.findMany.mockResolvedValue([
+      { id: 'c1', name: 'Mohammad Eyafi', relation: 'স্টাফ — ALMA অফিস', phone: '+8801884308343', notes: 'ALMA Lifestyle স্টাফ' },
+    ])
+    const res = await place_agent_call.handler({
+      relationOrName: 'Eyafi',
+      purpose: 'কাজের খোঁজ',
+      voiceCallInstruction: true,
+    })
+    expect(res.success).toBe(true)
+    expect(mockVoiceCall.placeOutboundCall).toHaveBeenCalledWith(
+      expect.objectContaining({ callType: 'staff', toNumber: '+8801884308343' }),
+    )
+  })
+  it('an ordinary contact stays callType contact', async () => {
+    mockPrisma.familyContact.findMany.mockResolvedValue([
+      { id: 'c2', name: 'Karim', relation: 'সাপ্লায়ার', phone: '+8801712345678', notes: '' },
+    ])
+    await place_agent_call.handler({ relationOrName: 'Karim', purpose: 'দাম জিজ্ঞেস', voiceCallInstruction: true })
+    expect(mockVoiceCall.placeOutboundCall).toHaveBeenCalledWith(
+      expect.objectContaining({ callType: 'contact' }),
+    )
+  })
+})
