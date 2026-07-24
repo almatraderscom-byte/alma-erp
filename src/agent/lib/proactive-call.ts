@@ -124,6 +124,8 @@ export interface QueueEscalationInput {
   refId: string
   title: string
   purpose: string
+  /** Delay before the ladder may dial (boss said "৫ মিনিট পরে জানাবে"). */
+  notBeforeMs?: number
 }
 
 /**
@@ -147,7 +149,7 @@ export async function queueCallEscalation(input: QueueEscalationInput): Promise<
       title: input.title.slice(0, 200),
       purpose: input.purpose.slice(0, 2000),
       status: 'queued',
-      nextCheckAt: new Date(),
+      nextCheckAt: new Date(Date.now() + Math.max(0, input.notBeforeMs ?? 0)),
     },
   })
   return row.id

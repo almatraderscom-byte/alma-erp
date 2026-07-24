@@ -110,6 +110,17 @@ describe('queueCallEscalation', () => {
     const id = await queueCallEscalation({ trigger: 'manual', refId: 'x', title: 't', purpose: 'p' })
     expect(id).toBeNull()
   })
+
+  it('notBeforeMs defers the first dial (PA-5R "৫ মিনিট পরে জানাবে")', async () => {
+    mockPrisma.agentCallEscalation.findFirst.mockResolvedValue(null)
+    mockPrisma.agentCallEscalation.create.mockResolvedValue({ id: 'delayed' })
+    const before = Date.now()
+    await queueCallEscalation({
+      trigger: 'boss_callback', refId: 'cb-delay', title: 't', purpose: 'p', notBeforeMs: 5 * 60_000,
+    })
+    const arg = mockPrisma.agentCallEscalation.create.mock.calls[0][0].data
+    expect(arg.nextCheckAt.getTime()).toBeGreaterThanOrEqual(before + 5 * 60_000 - 50)
+  })
 })
 
 describe('processCallEscalations — queued rows', () => {

@@ -44,7 +44,7 @@ export async function duplicateCallReason(phone: string): Promise<string | null>
 export const add_family_contact: AgentTool = {
   name: 'add_family_contact',
   description:
-    'Save a family member contact (name, relation, phone, optional notes). Use when the owner shares a family member\'s details.',
+    'CONTACT LIST-এ নম্বর সেভ করে (নাম, সম্পর্ক/পরিচয়, নম্বর, ঐচ্ছিক নোট) — family, বন্ধু, সাপ্লায়ার, ডেলিভারি — যে কেউ। Boss একটা নম্বর আর নাম বললেই ("এই নম্বরটা X-এর, সেভ করো") সাথে সাথে এক ধাপে এটা চালাও — memory-তে নয়, এখানেই। relation-এ পরিচয় দাও (বন্ধু/সাপ্লায়ার/ভাই ইত্যাদি)।',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -79,7 +79,7 @@ export const add_family_contact: AgentTool = {
 export const list_family_contacts: AgentTool = {
   name: 'list_family_contacts',
   description:
-    'List saved family contacts. Use to resolve "আম্মু", "স্ত্রী" etc. to a phone number, or when owner asks who is saved.',
+    'CONTACT LIST পড়ে — সেভ করা সব contact (family/বন্ধু/সাপ্লায়ার/সবাই)। Boss কাউকে নাম ধরে কল/মেসেজ দিতে বললে নাম→নম্বর resolve করতে সবসময় প্রথমে ও শুধুমাত্র এটা চালাও — এক ধাপ; memory search/অন্য পথ নিষেধ। এখানে না পেলে Boss-কে নম্বর জিজ্ঞেস করো।',
   input_schema: { type: 'object' as const, properties: {} },
   handler: async () => {
     try {
@@ -242,6 +242,52 @@ export const place_agent_call: AgentTool = {
       const voiceGender: 'male' | 'female' = pref?.gender === 'male' ? 'male' : 'female'
       const who = recipientName ?? phone
       const channel = input.channel === 'whatsapp' ? 'whatsapp' : 'phone'
+
+      // PA-5R — the boss ordered this call VERBALLY on a live owner-verified call
+      // (server-injected flag, model can't spoof it: serverContext wins the merge).
+      // His spoken word IS the approval — dial now, no card. The duplicate guard
+      // and rate limit above still apply; the post-call summary reports back.
+      if (input.voiceCallInstruction === true) {
+        const action = await db.agentPendingAction.create({
+          data: {
+            conversationId: input.conversationId ? String(input.conversationId) : null,
+            type: 'agent_voice_call',
+            payload: { phone, toNumber: phone, recipientName, purpose, firstMessage, voiceGender, callType: 'contact', channel, voiceApproved: true },
+            summary: `${channel === 'whatsapp' ? '💬📞' : '📞'} ${who} কে লাইভ কল (কলে Boss-এর মুখের অনুমোদন) — "${purpose.slice(0, 60)}"`,
+            costEstimate: 0.5,
+            status: 'approved',
+            resolvedAt: new Date(),
+          },
+        })
+        const { placeOutboundCall } = await import('@/agent/lib/voice-call')
+        const placed = await placeOutboundCall({
+          toNumber: phone,
+          recipientName,
+          purpose,
+          firstMessage,
+          voiceGender,
+          callType: 'contact',
+          channel,
+          conversationId: input.conversationId ? String(input.conversationId) : null,
+          pendingActionId: action.id,
+        })
+        if (!placed.ok) {
+          await db.agentPendingAction.update({
+            where: { id: action.id },
+            data: { status: 'failed', result: { error: placed.error } },
+          }).catch(() => {})
+          return { success: false, error: `কল দেওয়া যায়নি: ${placed.error ?? 'অজানা কারণ'}` }
+        }
+        return {
+          success: true,
+          data: {
+            status: 'dialing',
+            callRecordId: placed.callRecordId,
+            message: `${who} কে কল দিচ্ছি (Boss কলে বলেছিলেন, তাই card ছাড়াই)। কথা শেষে সারাংশ আসবে — Boss রিপোর্ট চাইলে call_boss_with_report দিয়ে জানাও।`,
+          },
+        }
+      }
+
       const action = await db.agentPendingAction.create({
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
@@ -287,6 +333,7 @@ export const call_boss_with_report: AgentTool = {
     properties: {
       title: { type: 'string', description: 'কাজের এক-লাইনের শিরোনাম (বাংলা), যেমন "ইয়াফিকে মেসেজ পাঠানো"।' },
       report: { type: 'string', description: 'কলে যা বলা হবে — ২-৪ বাক্যের বাংলা রিপোর্ট (কী করলে, ফলাফল, পরের ধাপ)।' },
+      delayMinutes: { type: 'number', description: 'Boss নির্দিষ্ট সময় পরে কল চাইলে (যেমন "৫ মিনিট পরে জানাবে") — তত মিনিট delay (০-১২০)। না দিলে এখনই কল যায়।' },
       conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['title', 'report'],
@@ -298,12 +345,15 @@ export const call_boss_with_report: AgentTool = {
       if (!title || !report) return { success: false, error: 'title এবং report দুটোই লাগবে' }
       const { queueCallEscalation } = await import('@/agent/lib/proactive-call')
       const conv = input.conversationId ? String(input.conversationId) : 'chat'
+      const rawDelay = Number(input.delayMinutes)
+      const delayMinutes = Number.isFinite(rawDelay) ? Math.min(120, Math.max(0, Math.round(rawDelay))) : 0
       const id = await queueCallEscalation({
         trigger: 'boss_callback',
         refId: `callback:${conv}:${Date.now()}`,
         title,
         purpose:
           `Boss চেয়েছিলেন কাজ শেষে কল করে জানাতে। কাজ: ${title}। রিপোর্টটা Boss-কে পরিষ্কারভাবে শোনাও: ${report}`,
+        notBeforeMs: delayMinutes > 0 ? delayMinutes * 60_000 : undefined,
       })
       if (!id) return { success: false, error: 'callback queue করা যায়নি (owner number config দেখুন)' }
       return {
@@ -311,7 +361,9 @@ export const call_boss_with_report: AgentTool = {
         data: {
           status: 'callback_queued',
           escalationId: id,
-          message: 'Boss-কে কল যাচ্ছে (WhatsApp আগে, না ধরলে সরাসরি নম্বরে; তাও না ধরলে report push)।',
+          message: delayMinutes > 0
+            ? `${delayMinutes} মিনিট পরে Boss-কে কল যাবে (WhatsApp আগে, না ধরলে সরাসরি নম্বরে; তাও না ধরলে report push)।`
+            : 'Boss-কে কল যাচ্ছে (WhatsApp আগে, না ধরলে সরাসরি নম্বরে; তাও না ধরলে report push)।',
         },
       }
     } catch (err) {
