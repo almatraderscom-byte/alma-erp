@@ -65,6 +65,11 @@ const BOT_WS_URL = process.env.SIP_BOT_WS_URL || process.env.NGS_LIVE_WS_URL || 
 const CTRL_BASE = (process.env.SIP_GATEWAY_CTRL_BASE || `http://127.0.0.1:${CTRL_PORT}`).replace(/\/$/, '')
 // Optional per-call token secret (owner rule: only OUR calls open the bot ws).
 const INTERNAL_TOKEN = process.env.AGENT_INTERNAL_TOKEN || ''
+// Phase 2 (inbound): where to ask who the caller is + which persona answers. Our own
+// Next.js route (sip-inbound) owns owner-recognition, the DB row and the DID→persona map.
+const APP_URL = (process.env.APP_URL || '').replace(/\/$/, '')
+const SIP_INBOUND_SECRET = process.env.SIP_INBOUND_SECRET || process.env.NGS_INBOUND_SECRET || ''
+const INBOUND_VOICE = process.env.SIP_INBOUND_VOICE || process.env.NGS_INBOUND_VOICE || 'Charon'
 
 const ARI_READY = Boolean(ARI_USER && ARI_PASS)
 
@@ -272,12 +277,145 @@ function startAri() {
   ws.on('error', (e) => log('ARI events err', e?.message))
 }
 
+// Wire an answered channel to the bot: mixing bridge + externalMedia(AudioSocket) + bot ws.
+// Shared by the outbound path (channel answers, enters Stasis) and the inbound path
+// (call arrives from the trunk, we answer it, then wire the same way).
+async function bridgeAndStartBot(call) {
+  // 1) mixing bridge
+  const bridge = await ari('POST', '/bridges', { type: 'mixing' })
+  call.bridgeId = bridge.id
+  // 2) externalMedia (AudioSocket, TCP, Asterisk = client) -> our AS server
+  const ext = await ari('POST', '/channels/externalMedia', {
+    app: ARI_APP,
+    external_host: `${AS_ADVERTISE}:${AS_PORT}`,
+    encapsulation: 'audiosocket',
+    transport: 'tcp',
+    connection_type: 'client',
+    format: 'slin',
+    direction: 'both',
+    data: call.audioUuid,
+  })
+  call.extChannelId = ext.id
+  // 3) bridge the PSTN leg + the media leg
+  await ari('POST', `/bridges/${call.bridgeId}/addChannel`, { channel: `${call.channelId},${call.extChannelId}` })
+  // 4) open the bot ws now that audio can flow
+  call.connectBot()
+  log(call.channelId, 'bridged externalMedia', call.extChannelId)
+}
+
+/**
+ * INBOUND (Phase 2) — the caller-ID win. Somebody dialed our DID; the trunk sent an
+ * INVITE to our Asterisk, the from-alma dialplan handed it to Stasis, and the ARI event
+ * carries the REAL caller number in `channel.caller.number` (the field NGS stripped, which
+ * is why "জি বস" owner-recognition never worked on NGS).
+ *
+ * We ask our own Next.js route who this is (owner vs customer), get back the persona +
+ * a signed bot token + the DB row id, then answer and wire the same bridge as outbound.
+ * If the app is unreachable we STILL answer with a generic assistant persona and a
+ * self-minted token — a customer's call must never drop because Vercel hiccuped.
+ */
+async function onInboundCall(e) {
+  const chanId = e.channel?.id
+  // Dialplan hands us Stasis(alma-sip,inbound,<callerid>,<did>). Prefer the channel's own
+  // caller field, and take the DID from the args — `dialplan.exten` is 's' by then because
+  // from-alma routes through a shared handler, which would break the multi-DID persona map.
+  const args = e.args || []
+  const caller = normalizeCaller(e.channel?.caller?.number || args[1] || '')
+  const did = String(args[2] || e.channel?.dialplan?.exten || '').trim()
+  log(chanId, `INBOUND from=${caller || 'unknown'} did=${did || '-'}`)
+  let params = await fetchInboundParams(caller, did)
+  if (!params) {
+    // Fail-safe persona: answer with a locally-signed token so the bot accepts the media
+    // session. No DB row -> the post-call report has no target, which is a far smaller loss
+    // than dropping the caller. Owner-recognition still applies locally (OWNER_PHONE_NUMBERS)
+    // so the boss never gets the receptionist just because the app was unreachable.
+    const id = 'sipin-' + randomUUID()
+    const exp = Date.now() + 15 * 60_000
+    const owner = isOwnerCaller(caller)
+    params = {
+      id, exp,
+      t: INTERNAL_TOKEN ? createHmac('sha256', INTERNAL_TOKEN).update(`relay:${id}:${exp}`).digest('hex') : '',
+      purpose: owner
+        ? 'Boss নিজে ফোন করেছেন — সালাম দিয়ে জিজ্ঞেস করো কী লাগবে।'
+        : 'ইনকামিং কল — ব্যবসার সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও',
+      recipientName: owner ? 'Boss' : (caller || ''),
+      voice: INBOUND_VOICE,
+      callType: owner ? 'owner' : 'inbound',
+    }
+    log(chanId, `inbound params fallback (app unreachable) owner=${owner ? 'y' : 'n'}`)
+  }
+  const call = new Call(chanId, { ...params, caller, did })
+  call.inbound = true
+  calls.set(chanId, call)
+  try {
+    await ari('POST', `/channels/${chanId}/answer`)
+    call.answered = true
+    await bridgeAndStartBot(call)
+    log(chanId, `inbound answered as callType=${params.callType}`)
+  } catch (err) {
+    log(chanId, 'inbound wiring failed:', err?.message)
+    void call.hangup('inbound wiring failed')
+  }
+}
+
+/**
+ * Local owner check, mirroring isOwnerNumber() in src/agent/lib/voice-call.ts (last 10
+ * digits, so +880/0 prefixes don't matter). Only used on the app-unreachable fallback
+ * path — the sip-inbound route stays authoritative whenever it answers.
+ */
+function isOwnerCaller(number) {
+  const tail = (n) => String(n || '').replace(/\D/g, '').slice(-10)
+  const target = tail(number)
+  if (!target) return false
+  return (process.env.OWNER_PHONE_NUMBERS || '')
+    .split(',').map(tail).filter(Boolean)
+    .some((n) => n === target)
+}
+
+/** BD numbers arrive as +8801… or 8801… or 01… — normalise to +E.164 for owner matching. */
+function normalizeCaller(raw) {
+  const d = String(raw || '').replace(/\D/g, '')
+  if (!d) return ''
+  if (d.startsWith('880')) return '+' + d
+  if (d.startsWith('01') && d.length === 11) return '+88' + d
+  return String(raw).startsWith('+') ? String(raw) : d
+}
+
+/** Ask our Next.js route for the persona + signed token + DB row. null on any failure. */
+async function fetchInboundParams(caller, did) {
+  if (!APP_URL || !SIP_INBOUND_SECRET) return null
+  try {
+    const res = await fetch(`${APP_URL}/api/assistant/voice-call/sip-inbound?k=${encodeURIComponent(SIP_INBOUND_SECRET)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ caller, did }),
+      signal: AbortSignal.timeout(8_000),
+    })
+    const data = await res.json().catch(() => null)
+    if (!res.ok || !data?.ok || !data.params?.id) { log('sip-inbound route said', res.status, JSON.stringify(data).slice(0, 120)); return null }
+    return data.params
+  } catch (err) { log('sip-inbound fetch failed:', err?.message); return null }
+}
+
 async function onAriEvent(e) {
   const chanId = e.channel?.id
   switch (e.type) {
     case 'StasisStart': {
       const call = chanId && calls.get(chanId)
-      if (!call || call.answered) return
+      if (!call) {
+        // Unknown channel entering our Stasis app. Either the externalMedia leg we
+        // just created (no args — ignore, it is already being bridged) or an INBOUND
+        // PSTN call handed over by the from-alma dialplan: Stasis(alma-sip,inbound).
+        if ((e.args || [])[0] === 'inbound') { await onInboundCall(e); return }
+        // Anything else that is NOT our AudioSocket leg would sit in Stasis forever
+        // (nothing drives it), holding a channel. Hang it up rather than leak.
+        if (!/^AudioSocket\//.test(e.channel?.name || '')) {
+          log(chanId, 'stray channel in Stasis — hanging up', e.channel?.name || '')
+          await ari('DELETE', `/channels/${chanId}`).catch(() => {})
+        }
+        return
+      }
+      if (call.answered) return
       // Transfer path: a forward leg answering just needs to join the existing bridge.
       if (call._bridgeInto) {
         call.answered = true
@@ -285,30 +423,11 @@ async function onAriEvent(e) {
         catch (err) { log(call.channelId, 'forward bridge failed', err?.message) }
         return
       }
-      // Our originated PSTN channel just answered and entered Stasis. Ignore the
-      // externalMedia channel's own StasisStart (it isn't in `calls`).
+      // Our originated PSTN channel just answered and entered Stasis.
       call.answered = true
       try {
-        // 1) mixing bridge
-        const bridge = await ari('POST', '/bridges', { type: 'mixing' })
-        call.bridgeId = bridge.id
-        // 2) externalMedia (AudioSocket, TCP, Asterisk = client) -> our AS server
-        const ext = await ari('POST', '/channels/externalMedia', {
-          app: ARI_APP,
-          external_host: `${AS_ADVERTISE}:${AS_PORT}`,
-          encapsulation: 'audiosocket',
-          transport: 'tcp',
-          connection_type: 'client',
-          format: 'slin',
-          direction: 'both',
-          data: call.audioUuid,
-        })
-        call.extChannelId = ext.id
-        // 3) bridge the PSTN leg + the media leg
-        await ari('POST', `/bridges/${call.bridgeId}/addChannel`, { channel: `${call.channelId},${call.extChannelId}` })
-        // 4) open the bot ws now that audio can flow
-        call.connectBot()
-        log(call.channelId, 'answered -> bridged externalMedia', call.extChannelId)
+        await bridgeAndStartBot(call)
+        log(call.channelId, 'answered -> wired')
       } catch (err) {
         log(call.channelId, 'StasisStart wiring failed:', err?.message)
         void call.hangup('wiring failed')

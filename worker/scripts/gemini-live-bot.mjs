@@ -491,12 +491,17 @@ class Call {
 
   isOwnerCall() { const c = this.params?.callType; return !c || c === 'owner' }
 
+  // Where a transfer goes. Multi-DID (self-hosted SIP): the inbound resolver can hand
+  // this call its OWN forward number per line (boss line vs support line); everything
+  // else keeps using the single NGS_FORWARD_NUMBER env.
+  forwardNumber() { return this.params?.forwardNumber || NGS_FORWARD_NUMBER }
+
   // Which function tools this call gets: owner → ERP reads; inbound → forward_call (only
   // when a forward number is configured); staff/contact → none.
   toolDecls() {
     // PA-3: owner calls also get submit_boss_instruction (head-agent hand-off).
     if (this.isOwnerCall()) return [...ERP_FN_DECLS, SUBMIT_INSTRUCTION_FN_DECL]
-    if (this.params?.callType === 'inbound' && NGS_FORWARD_NUMBER) return [FORWARD_FN_DECL]
+    if (this.params?.callType === 'inbound' && this.forwardNumber()) return [FORWARD_FN_DECL]
     return []
   }
 
@@ -526,11 +531,11 @@ class Call {
       return { ok: true, status: 'message_mode', instruction: 'কলদাতাকে ভদ্রভাবে বলো: "উনি এই মুহূর্তে ব্যস্ত আছেন — আপনার নাম আর প্রয়োজনটা বলুন, আমি এখনই ওনাকে পৌঁছে দিচ্ছি।" তারপর নাম/নম্বর/বিষয় জেনে নাও; কল ট্রান্সফার হবে না।' }
     }
     if (!this.callId || !NGS_KEY) return { ok: false, error: 'forward not configured (callId/creds)' }
-    if (!NGS_FORWARD_NUMBER) return { ok: false, error: 'NGS_FORWARD_NUMBER not set' }
+    if (!this.forwardNumber()) return { ok: false, error: 'forward number not set (NGS_FORWARD_NUMBER / per-DID forwardNumber)' }
     this.forwarding = true
     this.forwardReason = reason || ''
     this.forwardAt = Date.now() // don't transfer until the hand-off line has had time to play
-    console.log(`[glive] ${this.id} forward QUEUED -> ${NGS_FORWARD_NUMBER} (reason: ${this.forwardReason || '-'})`)
+    console.log(`[glive] ${this.id} forward QUEUED -> ${this.forwardNumber()} (reason: ${this.forwardReason || '-'})`)
     return { ok: true, status: 'connecting', instruction: 'কলদাতাকে সংক্ষেপে "জি, একটু ধরুন, যুক্ত করে দিচ্ছি" বলো, তারপর অপেক্ষা করো — সিস্টেম এখন যুক্ত করছে।' }
   }
 
@@ -549,7 +554,7 @@ class Call {
       const P = (n, v) => `<parameter name="${esc(n)}" value="${esc(v)}"/>`
       const backPurpose = 'কলটি টিমের নম্বরে যুক্ত করার চেষ্টা হয়েছিল এবং কলদাতা আবার তোমার লাইনে ফিরে এসেছে (সম্ভবত কেউ ধরেনি)। বিনয়ের সাথে বলো — "আমি আবার লাইনে আছি" — এই মুহূর্তে সরাসরি যুক্ত করা গেল না; তার নাম, নম্বর ও বিষয়টি নিশ্চিত করে নাও যাতে টিম পরে কল করতে পারে, অথবা তুমি নিজে যতটা পারো সাহায্য করো।'
       const fallbackStream = `<Connect><Stream name="alma" url="${esc(GLIVE_PUBLIC_WS_URL)}">${P('id', this.params?.id || '')}${P('exp', String(exp))}${P('t', t)}${P('purpose', backPurpose)}${P('recipientName', this.params?.recipientName || '')}${P('voice', this.params?.voice || VOICE)}${P('callType', 'inbound')}</Stream></Connect>`
-      const responseXml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true" timeout="30" to="${esc(NGS_FORWARD_NUMBER)}"/>${fallbackStream}</Response>`
+      const responseXml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true" timeout="30" to="${esc(this.forwardNumber())}"/>${fallbackStream}</Response>`
       try {
         // Self-hosted SIP routes the live-modify to our gateway (which parses <Dial to=…>);
         // NGS keeps its own base + creds. Same responseXml body shape either way.
@@ -563,7 +568,7 @@ class Call {
           body: new URLSearchParams({ responseXml }),
         })
         const text = await res.text()
-        console.log(`[glive] ${this.id} forward_call -> ${NGS_FORWARD_NUMBER} PUT ${res.status} ${text.slice(0, 120)}`)
+        console.log(`[glive] ${this.id} forward_call -> ${this.forwardNumber()} PUT ${res.status} ${text.slice(0, 120)}`)
         if (!res.ok) { this.forwarding = false; this._fwdTimer = null } // transfer refused — stay on the line
         else this.quiesceAfterTransfer() // NGS accepted the bridge — get OFF the audio path
       } catch (e) {

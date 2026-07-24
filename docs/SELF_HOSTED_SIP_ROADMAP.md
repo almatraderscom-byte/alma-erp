@@ -76,7 +76,30 @@ DONE (owner-verified on his phone, call sip-06ead6fb… and two more):
 - Verify: place a call via sip flag while prod default stays ngs -> two-way Bangla AI,
   barge-in, clean hangup, DB row, report. Then flip the flag. Rollback = env var.
 
-## Phase 2 — Inbound + caller-ID (the win) — CLEAN CUTOVER
+## Phase 2 — Inbound + caller-ID  ✅ BUILT + LIVE-PROVEN 2026-07-25 (NGS off during test)
+DONE (owner called the DID from his phone; NGS was off so our registration held):
+- `[alma-reg]` registration added (in alma-trunk.conf) → `Registered`. Single-binding account,
+  so this only holds while NGS is off — inbound stays a CLEAN CUTOVER.
+- Inbound dialplan `worker/deploy/asterisk/alma-inbound.conf`: from-alma remembers the dialled
+  number (`ALMA_DID`, else the shared handler sees EXTEN='s' and every DID looks identical) →
+  `Stasis(alma-sip,inbound,<caller>,<did>)`.
+- Gateway `onInboundCall`: reads the REAL caller from `channel.caller.number`, asks the app who
+  it is, answers, bridges the same externalMedia/AudioSocket path as outbound. Fail-safe: if the
+  app is unreachable it still answers (self-signed token + local OWNER_PHONE_NUMBERS check) —
+  a customer call must never drop because Vercel hiccuped. Stray-channel guard added.
+- NEW `src/app/api/assistant/voice-call/sip-inbound/route.ts`: JSON port of ngs-inbound with the
+  real caller — `isOwnerNumber(caller)` → owner persona + ERP tools + submit_boss_instruction;
+  DB row (provider 'sip'); KV `inbound_transfer_mode`; multi-DID persona/forward via `SIP_DID_MAP`.
+- Bot: per-call `forwardNumber()` (per-DID forward target) replacing the single env constant.
+- PROVEN LIVE: `INBOUND from=+8801779640373 did=…` → `owner=y` → `callType=owner` → the bot
+  greeted "বস!" and ran two-way (in=294 chunks / out=88 msgs) → clean hangup. Unknown caller
+  self-test → `owner=n` (receptionist). DID capture verified (`did=09649777738`).
+- OPEN: the sip-inbound route only takes effect once deployed to prod (until then the gateway
+  fallback answers, so there is no DB row/report for inbound). STT language drift persists
+  (transcript rendered Hindi/Italian while the model still understood + replied in Bangla) —
+  transcript/summary quality only; batched with the deferred audio polish.
+
+### Original plan (kept for reference)
 - Add [alma-reg] registration (block in alma-trunk.conf) — takes the binding; NGS trunk must
   be disabled at cutover (owner sets NGS port wrong / disables trunk).
 - from-alma dialplan -> AudioSocket -> bot, passing caller-ID (From) + callType.
