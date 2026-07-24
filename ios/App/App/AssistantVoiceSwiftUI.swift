@@ -205,6 +205,10 @@ final class AlmaVoiceEngine {
     /// Turn id from the SSE `turn_id` event — lets the poller match OUR turn
     /// exactly and never deliver a stale previous answer.
     private var liveTurnId: String?
+    /// done.needContinue from the last SSE done event (deadline-cut turn).
+    private var lastDoneNeedContinue = false
+    /// Machine-continuation budget per owner ask (chat parity, bounded).
+    private var liveContinueBudget = 3
     private var heartbeatTask: Task<Void, Never>?
     private var lastUserText = ""
     private var lastToolNarration = Date.distantPast
@@ -999,6 +1003,9 @@ final class AlmaVoiceEngine {
         let files: [AgentFileRef]
         let resume: Resume?
         struct Resume: Encodable { let approve: Bool }
+        /// Server-claimed continuation of a deadline-cut turn (chat parity) —
+        /// no new owner message; consumes the predecessor's continuation flag.
+        var autoContinueFromTurnId: String? = nil
     }
 
     private func runTurn(_ text: String, resume: Bool = false) {
@@ -1113,7 +1120,7 @@ final class AlmaVoiceEngine {
             lastAudioAt = Date()
             if speak { tts.sayNow("এটার জন্য আরও শক্তিশালী মডেল দরকার, Boss — অনুমতি দিলে এগিয়ে যাই।") }
         case "done":
-            break
+            lastDoneNeedContinue = ev.needContinue ?? false
         case "error":
             if speak { tts.sayNow("দুঃখিত Boss, একটা সমস্যা হয়েছে — একটু পরে আরেকবার বলুন।") }
         default:
@@ -1159,6 +1166,9 @@ final class AlmaVoiceEngine {
     /// audio, transcripts, nudges) without a microphone.
     func debugInjectUserTurn(_ text: String) {
         guard liveActive else { return }
+        lastUserTurnAt = Date()
+        ackNudgesThisUserTurn = 0
+        lastUserText = text
         _ = feedUpsert(id: nil, kind: .user, text: text)
         feedFinalizeUser()
         live.sendTextTurn(text)
@@ -1168,6 +1178,8 @@ final class AlmaVoiceEngine {
     func liveInputTranscript(_ text: String) {
         // Gemini sends input transcription as incremental fragments — build the
         // full sentence for the live feed line (and the legacy MIC strip).
+        lastUserTurnAt = Date()
+        ackNudgesThisUserTurn = 0
         if let id = feedUserLineId, let i = liveFeed.firstIndex(where: { $0.id == id }) {
             let joined = (liveFeed[i].text + text)
             transcript = joined
@@ -1200,6 +1212,52 @@ final class AlmaVoiceEngine {
             if let held = pendingLiveToolResult {
                 sendLiveToolResultNow(callId: held.callId, text: held.text)
             }
+            armAckWithoutToolWatch()
+        }
+    }
+
+    /// Gemini Live sometimes SAYS "এক্ষুনি দেখছি / চেক করছি" and then never calls
+    /// the tool (sim repro 2026-07-24: ads question — ack spoken, zero toolCall,
+    /// owner waits forever). Enforcement, not hope: if a spoken turn ends with an
+    /// ack phrase, no tool is pending, and no tool has run since Boss's last
+    /// sentence, a 5s watch orders it to run run_agent_turn NOW. Max twice per
+    /// user turn so a stubborn model can't loop us.
+    private var lastToolCallAt = Date.distantPast
+    private var lastUserTurnAt = Date.distantPast
+    private var ackNudgesThisUserTurn = 0
+    private static let businessMarkers = ["বিক্রি", "অর্ডার", "স্টক", "ইনভেন্টরি", "টাকা",
+                                          "খরচ", "বেতন", "হাজিরা", "স্টাফ", "staff",
+                                          "অ্যাড", "ads", "Ads", "ক্যাম্পেইন", "রিপোর্ট",
+                                          "কাস্টমার", "ডেলিভারি", "পেন্ডিং", "অনুমোদন",
+                                          "approval", "টুডু", "todo", "মনে রাখ", "লিখে রাখ",
+                                          "চেক", "হিসাব", "ব্যালেন্স", "মেমরি", "রিমাইন্ডার"]
+    private static let ackMarkers = ["দেখছি", "চেক কর", "সময় দিন", "দেখে নিচ্ছি",
+                                     "আনিয়ে দিচ্ছি", "খোঁজ নিচ্ছি", "জানাচ্ছি"]
+
+    private func armAckWithoutToolWatch() {
+        guard liveActive, !liveToolTurnPending else { return }
+        guard lastUserTurnAt > lastToolCallAt else { return }   // tool already ran for this ask
+        guard ackNudgesThisUserTurn < 2 else { return }
+        let spoken = replyText
+        let userText = lastUserText
+        guard !userText.isEmpty else { return }
+        // Fire on EITHER signal: the model SAID it would check (ack), or Boss's
+        // sentence was plainly a business/status/task ask (owner hard rule: any
+        // hard question must cross the head — a made-up direct answer or silent
+        // shrug is as forbidden as a broken promise to check).
+        let ackHit = Self.ackMarkers.contains(where: { spoken.contains($0) })
+        let bizHit = Self.businessMarkers.contains(where: { userText.contains($0) })
+        guard ackHit || bizHit else { return }
+        let armedAt = Date()
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard let self, self.liveActive, !self.liveToolTurnPending else { return }
+            guard self.lastToolCallAt < armedAt, self.lastUserTurnAt > self.lastToolCallAt else { return }
+            self.ackNudgesThisUserTurn += 1
+            #if DEBUG
+            NSLog("ALMA-VOICE ack-without-tool — forcing run_agent_turn (nudge %d)", self.ackNudgesThisUserTurn)
+            #endif
+            self.live.sendTextTurn("STATUS_NOTE: তুমি এইমাত্র চেক করার কথা বলেছ কিন্তু কোনো tool চালাওনি — এটা নিষিদ্ধ। এখনই run_agent_turn চালাও এই অনুরোধ নিয়ে: \"\(String(userText.prefix(300)))\"। আগে tool, তারপর কথা।")
         }
     }
 
@@ -1271,6 +1329,7 @@ final class AlmaVoiceEngine {
     /// in seconds. Actions/memory/complex work still cross the head route.
     func runQuickLookup(tool: String, callId: String) {
         let started = Date()
+        lastToolCallAt = started
         feedStatus("তথ্য দেখা হচ্ছে…")
         state = .thinking
         Task { [weak self] in
@@ -1301,6 +1360,7 @@ final class AlmaVoiceEngine {
     /// still crosses the existing head route, preserving memory, tools, approvals,
     /// claim verification, and the durable call workflow.
     func runLiveAgentTurn(request: String, callId: String) {
+        lastToolCallAt = Date()
         // Boss repeating himself while a head turn is ALREADY running must not
         // cancel-and-restart it — the server refuses a second concurrent turn on
         // the same conversation and 30s of tool work gets thrown away (owner
@@ -1358,6 +1418,8 @@ final class AlmaVoiceEngine {
                                  resume: nil)
         pendingImages.removeAll()
         liveTurnId = nil
+        lastDoneNeedContinue = false
+        liveContinueBudget = 3
         turnTask?.cancel()
         turnTask = Task { [weak self] in
             guard let self else { return }
@@ -1373,6 +1435,29 @@ final class AlmaVoiceEngine {
                     NSLog("ALMA-VOICE sse %@", ev.type)
                     #endif
                     self?.handle(ev, speak: false)
+                }
+                // Deadline-cut turn (chat parity): the head asks for a machine
+                // continuation instead of finishing — chat auto-continues, so
+                // voice must too, else Boss gets HALF an answer for a hard task.
+                var continues = 0
+                while self.lastDoneNeedContinue, continues < 3, self.liveToolTurnPending,
+                      let fromTurn = self.liveTurnId {
+                    continues += 1
+                    self.lastDoneNeedContinue = false
+                    #if DEBUG
+                    NSLog("ALMA-VOICE turn needs continuation %d (from %@)", continues, fromTurn)
+                    #endif
+                    self.liveTurnId = nil
+                    var contBody = body
+                    contBody.autoContinueFromTurnId = fromTurn
+                    var contReq = URLRequest(url: AssistantNet.base.appendingPathComponent("/api/assistant/chat"))
+                    contReq.httpMethod = "POST"
+                    contReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    contReq.httpBody = try JSONEncoder().encode(contBody)
+                    try await AssistantNet.streamEvents(request: contReq,
+                                                        stopOn: { $0.type == "done" || $0.type == "error" }) { [weak self] ev in
+                        self?.handle(ev, speak: false)
+                    }
                 }
                 #if DEBUG
                 NSLog("ALMA-VOICE head turn stream ended; reply chars=%d", self.replyText.count)
@@ -1447,6 +1532,7 @@ final class AlmaVoiceEngine {
             let turnId: String?
             let assistantMessageId: String?
             let startedAt: String?
+            let continuationNeeded: Bool?
         }
         let st: StatusResp
         do {
@@ -1484,6 +1570,18 @@ final class AlmaVoiceEngine {
                   let startedAt = isoFrac.date(from: raw) ?? isoPlain.date(from: raw),
                   startedAt > requestStart.addingTimeInterval(-10) else { return nil }
         }
+        if status == "done", st.continuationNeeded == true, liveContinueBudget > 0,
+           let fromTurn = st.turnId {
+            // Deadline-cut turn discovered by POLLING (its stream is dead):
+            // trigger the machine continuation ourselves and keep waiting for
+            // the successor turn — never speak half an answer.
+            liveContinueBudget -= 1
+            #if DEBUG
+            NSLog("ALMA-VOICE poller triggering continuation (budget %d)", liveContinueBudget)
+            #endif
+            startVoiceContinuation(fromTurn: fromTurn)
+            return nil
+        }
         if status == "error" || status == "canceled" {
             return "কাজটা শেষ করা যায়নি। Boss-কে ছোট করে জানান, একটু পরে আবার চেষ্টা করা যাবে।"
         }
@@ -1491,6 +1589,35 @@ final class AlmaVoiceEngine {
             return Self.noSpokenReplyNote
         }
         return await fetchAssistantMessageText(conversationId: convId, messageId: mid)
+    }
+
+    /// Fire a server-claimed machine continuation for a deadline-cut turn whose
+    /// stream is gone. Events flow through handle(); the poller keeps watching.
+    private func startVoiceContinuation(fromTurn: String) {
+        let body = VoiceChatBody(conversationId: chatVM?.conversationId,
+                                 message: "",
+                                 modelId: chatVM?.modelId ?? "auto",
+                                 voice: true,
+                                 files: [],
+                                 resume: nil,
+                                 autoContinueFromTurnId: fromTurn)
+        liveTurnId = nil
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                await AlmaAPI.shared.syncCookies()
+                var req = URLRequest(url: AssistantNet.base.appendingPathComponent("/api/assistant/chat"))
+                req.httpMethod = "POST"
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                req.httpBody = try JSONEncoder().encode(body)
+                try await AssistantNet.streamEvents(request: req,
+                                                    stopOn: { $0.type == "done" || $0.type == "error" }) { [weak self] ev in
+                    self?.handle(ev, speak: false)
+                }
+            } catch {
+                // Poller keeps watching the successor turn regardless.
+            }
+        }
     }
 
     private static let noSpokenReplyNote =
