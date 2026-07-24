@@ -80,7 +80,8 @@ function down24to8(pcm24) { // PCM16 24k -> 8k (÷3 averaging)
 const SYS_COMMON = `- সহজ, কথ্য, স্বাভাবিক বাংলায় ছোট বাক্যে দ্রুত কথা বলো — ফোনালাপের মতো।
 - শুরুতেই বিদায় নিও না। প্রথম কথাটা হবে শুধু সংক্ষিপ্ত সালাম/পরিচয় + মূল কথা — তারপর অন্য পক্ষের উত্তরের জন্য অপেক্ষা করো। অন্য পক্ষ অন্তত একবার কথা না বলা পর্যন্ত কখনো "আল্লাহ হাফেজ" বলবে না।
 - কল শেষ করার সময় (অন্য পক্ষ "রাখো/কেটে দাও/বিদায়/আর কিছু লাগবে না" বললে বা কাজ শেষ হলে) — সংক্ষেপে বিদায় জানিয়ে বাক্যের একদম শেষে "আল্লাহ হাফেজ" বলবে। এটা বললেই সিস্টেম কলটা কেটে দেবে, তাই শুধু সত্যিই শেষ করার সময়ই বলবে।
-- ইসলামি আদব বজায় রেখো; অশ্লীল বা হারাম কিছু নয়।`
+- ইসলামি আদব বজায় রেখো; অশ্লীল বা হারাম কিছু নয়।
+- ব্র্যান্ডের নাম "ALMA" সবসময় "আলমা" উচ্চারণে বলো (আ-ল-মা) — কখনো "অলমা/OLMA" নয়। লিখলে "আলমা" লেখো।`
 
 // Owner companion call — the agent is talking to the owner (বস) himself.
 const SYS_OWNER = `তুমি মালিকের ব্যক্তিগত AI সঙ্গী ও সহকারী। ফোনে স্বয়ং মালিকের (বস) সাথে সরাসরি দুই-মুখী বাংলা কথা বলছ। তুমি রোবট নও — একজন উষ্ণ, আন্তরিক, মানুষের মতো সঙ্গী।
@@ -619,6 +620,10 @@ class Call {
     let m; try { m = JSON.parse(raw.toString()) } catch { return }
     switch (m.event) {
       case 'start': {
+        // DIAGNOSTIC 2026-07-25: NGS's inbound HTTP webhook sent only our `k`
+        // secret (no caller). Dump the raw start frame ONCE to see whether the
+        // media-stream start event carries the caller natively.
+        try { console.log(`[glive] START-RAW ${JSON.stringify(m).slice(0, 500)}`) } catch { /* */ }
         this.streamSid = m.streamId ?? m.start?.streamSid ?? m.streamSid
         this.callId = m.call_id ?? m.callId ?? m.start?.call_id ?? null
         this.params = m.params ?? m.start?.customParameters ?? {}
