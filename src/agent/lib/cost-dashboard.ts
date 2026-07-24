@@ -11,6 +11,7 @@ import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds } from '@/lib/agent-api
 import { PRICING_META } from '@/agent/lib/pricing'
 import { EFFECTIVE_PROVIDER_SQL } from '@/agent/lib/api-balances'
 import { MODEL_REGISTRY } from '@/agent/lib/models/registry'
+import { buildSpendBreakdown, type SpendGroupRow, type SpendBreakdown } from '@/agent/lib/billing/spend-categories'
 
 const DHAKA_TZ = 'Asia/Dhaka'
 
@@ -193,6 +194,40 @@ async function queryTwilioCallUsage(start: Date, end: Date): Promise<TwilioCallU
     minutesUsed: Math.round((totalSeconds / 60) * 10) / 10,
     costUsd,
   }
+}
+
+/**
+ * Spend grouped by owner-facing activity category over a window. Joins the
+ * conversation source so chat can be split into owner vs background, and maps the
+ * raw provider the same way EFFECTIVE_PROVIDER_SQL does (qualified with the event
+ * alias, since this query joins). The result reconciles: Σ categories == window total.
+ */
+export async function getSpendByCategory(start: Date, end: Date): Promise<SpendBreakdown> {
+  const rows = await prisma.$queryRaw<Array<{ kind: string; provider: string; source: string | null; total: string; cnt: string }>>(
+    Prisma.sql`SELECT e.kind AS kind,
+                      CASE
+                        WHEN e.units->>'provider' = 'openrouter' THEN 'openrouter'
+                        WHEN e.units->>'provider' = 'google' THEN 'gemini'
+                        WHEN e.units->>'provider' = 'openai' THEN 'openai'
+                        WHEN e.units->>'provider' = 'anthropic' THEN 'anthropic'
+                        ELSE e.provider
+                      END AS provider,
+                      c.source AS source,
+                      COALESCE(SUM(e.cost_usd), 0)::text AS total,
+                      COUNT(*)::text AS cnt
+               FROM agent_cost_events e
+               LEFT JOIN agent_conversations c ON c.id::text = e.conversation_id
+               WHERE e.occurred_at >= ${start} AND e.occurred_at < ${end}
+               GROUP BY 1, 2, 3`,
+  )
+  const groups: SpendGroupRow[] = rows.map((r) => ({
+    kind: r.kind,
+    provider: r.provider,
+    source: r.source,
+    usd: parseFloat(r.total) || 0,
+    count: parseInt(r.cnt, 10) || 0,
+  }))
+  return buildSpendBreakdown(groups)
 }
 
 export async function getCostDashboardData() {
@@ -420,11 +455,18 @@ export async function getCostDashboardData() {
     getPromptCacheMonitorSnapshot(todayStr),
   ])
 
+  const [spendByCategoryToday, spendByCategoryMonth] = await Promise.all([
+    getSpendByCategory(todayBounds.start, todayBounds.end),
+    getSpendByCategory(monthB.start, monthB.end),
+  ])
+
   return {
     todayDhakaDate: todayStr,
     todayUsd,
     todayOxylabsCredits,
     monthUsd: monthBillable,
+    spendByCategoryToday,
+    spendByCategoryMonth,
     forecastUsd: Math.round(forecastUsd * 1_000_000) / 1_000_000,
     subscriptionAmortMonthUsd: Math.round(subMonthlyUsd * 1_000_000) / 1_000_000,
     dailyLast30,
