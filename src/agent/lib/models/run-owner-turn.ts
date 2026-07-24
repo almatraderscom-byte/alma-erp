@@ -959,8 +959,23 @@ async function* runAlternateProviderTurn(
           || (continuityLive && continuity?.decision.binding === 'active_focus' && continuity.decision.action === 'resume'),
       })
     : null
+  // Head tool diet safety (cost audit Phase 2): if an active workflow's bound
+  // tool was dieted out of the static pack, load its schema dynamically (same
+  // cache-safe append as a find_tool hit) instead of silently skipping the
+  // binding — deterministic template flows must not change under the diet.
+  if (stepBinding && !neutralTools.some((t) => t.name === stepBinding.toolName)) {
+    const [missing] = await resolveToolsByName([stepBinding.toolName])
+    if (missing) {
+      dynamicNeutralTools.push({
+        name: missing.name,
+        description: missing.description,
+        schema: missing.input_schema as object,
+      })
+    }
+  }
   const boundToolName =
-    stepBinding && neutralTools.some((t) => t.name === stepBinding.toolName)
+    stepBinding
+      && [...neutralTools, ...dynamicNeutralTools].some((t) => t.name === stepBinding.toolName)
       ? stepBinding.toolName
       : null
   // ── LangGraph deterministic routine path (owner decision 2026-07-15) ────────

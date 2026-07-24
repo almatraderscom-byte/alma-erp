@@ -35,6 +35,10 @@
       "schedule": "*/2 * * * *"
     },
     {
+      "path": "/api/assistant/internal/cost-guard",
+      "schedule": "*/30 * * * *"
+    },
+    {
       "path": "/api/cron/growth-publish",
       "schedule": "*/5 * * * *"
     },
