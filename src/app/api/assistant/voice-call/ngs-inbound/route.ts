@@ -87,7 +87,17 @@ async function handle(req: NextRequest) {
   if (!wsUrl || !internalToken) return xml(EMPTY)
 
   // NGS field names vary; accept the common variants.
-  const caller = String(p.from ?? p.caller ?? p.src ?? p.caller_id ?? p.callerId ?? '').trim() || 'unknown'
+  // NGS action-callback naming uses event_* prefixes (docs: event_from/event_to/
+  // event_call_id) — live 2026-07-24 the inbound webhook sent NONE of our old
+  // variants and every caller landed as 'unknown' (boss got the receptionist).
+  const caller = String(
+    p.from ?? p.caller ?? p.src ?? p.caller_id ?? p.callerId
+    ?? p.event_from ?? p.eventFrom ?? p.caller_id_number ?? p.ani ?? '',
+  ).trim() || 'unknown'
+  if (caller === 'unknown') {
+    // One safe breadcrumb so the NEXT inbound call reveals the real field name.
+    console.warn('[ngs-inbound] caller id missing — payload keys:', Object.keys(p).join(','))
+  }
   const voice = process.env.NGS_INBOUND_VOICE || 'Charon'
   // Human-PA point 1 (owner audit 2026-07-24): the BOSS calling his own agent
   // must get the full assistant, not the receptionist. Owner number ⇒ owner
