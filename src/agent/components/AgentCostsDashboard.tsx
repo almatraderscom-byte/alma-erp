@@ -265,12 +265,6 @@ function fmtBalanceCell(row: BalanceProviderRow) {
   if (row.balanceKind === 'quota' && row.quota) {
     return `${Math.round(row.quota.remaining).toLocaleString()} ${row.quota.unit === 'characters' ? 'chars' : row.quota.unit}`
   }
-  if (row.balanceKind === 'manual_estimate' && row.balanceAmount != null) {
-    const amount = row.balanceUnit === 'USD'
-      ? fmtUsd(row.balanceAmount)
-      : `${Math.round(row.balanceAmount).toLocaleString()} ${row.balanceUnit ?? ''}`.trim()
-    return row.balanceAmount < 0 ? `${amount} · estimate শেষ` : `${amount} · estimate`
-  }
   if (
     row.capabilities.includes('wallet')
     && !(row.configuredCapabilities ?? []).includes('wallet')
@@ -297,15 +291,14 @@ function balanceSourceLabel(row: BalanceProviderRow) {
     : 'Credential required'
 }
 
-function fmtSpendCell(n: number | null, providerId?: string) {
+function fmtSpendCell(n: number | null) {
   if (n == null) return '—'
-  if (providerId === 'oxylabs') return `${Math.round(n)} ক্রেডিট`
   return fmtUsd(n)
 }
 
 const STATUS_STYLE: Record<BalanceProviderRow['status'], { label: string; cls: string }> = {
   live: { label: 'Connected', cls: 'tone-green border' },
-  partial: { label: 'Mixed (legacy)', cls: 'tone-blue border' },
+  partial: { label: 'Waiting for provider data', cls: 'tone-blue border' },
   manual: { label: 'Local only', cls: 'tone-amber border' },
   unconfigured: { label: 'Connect', cls: 'border border-border-subtle text-muted' },
   stale: { label: 'Stale', cls: 'tone-amber border' },
@@ -792,7 +785,7 @@ export default function AgentCostsDashboard() {
     .filter((row) => row.costAuthoritative && row.providerMonthUsd != null)
     .reduce((sum, row) => sum + (row.providerMonthUsd ?? 0), 0)
   const providerAttention = (balances?.providers ?? [])
-    .filter((row) => row.status === 'error' || row.status === 'stale').length
+    .filter((row) => row.status === 'error' || row.status === 'stale' || row.status === 'partial').length
   const missingConnections = (balances?.providers ?? [])
     .filter((row) => row.status === 'unconfigured').length
 
@@ -850,7 +843,7 @@ export default function AgentCostsDashboard() {
             <div>
               <p className="text-xs font-semibold text-[#E07A5F]">💳 Provider billing hub</p>
               <p className="mt-1 max-w-2xl text-[10px] leading-relaxed text-muted">
-                Cash wallet, quota, provider cost ও manual estimate আলাদা। “Live” শুধু official provider value-এর জন্য।
+                Main values-এ শুধু provider-published wallet, quota ও cost। Local estimate আলাদা; manual credit provider balance হিসেবে দেখানো হয় না।
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -875,9 +868,9 @@ export default function AgentCostsDashboard() {
                 note: 'শুধু verified USD wallets',
               },
               {
-                label: 'Provider-confirmed MTD',
+                label: 'Provider-published MTD',
                 value: fmtUsd(confirmedMonth),
-                note: 'শুধু API/export প্রকাশিত অংশ',
+                note: 'API/export প্রকাশিত org/team scope',
               },
               {
                 label: 'আগামী ৭ দিনে due',
@@ -933,9 +926,7 @@ export default function AgentCostsDashboard() {
                         ? 'Cash wallet'
                         : row.balanceKind === 'quota'
                           ? 'Available quota'
-                          : row.balanceKind === 'manual_estimate'
-                            ? 'Manual estimate'
-                            : 'Wallet'}
+                          : 'Provider wallet'}
                     </p>
                     <p className={cn('mt-1 text-xl font-bold tabular-nums', balanceColor(row))}>
                       {fmtBalanceCell(row)}
@@ -967,25 +958,54 @@ export default function AgentCostsDashboard() {
                     )}
                   </div>
 
-                  <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-3">
-                    <div>
-                      <p className="text-[9px] text-muted">আজ</p>
-                      <p className="mt-0.5 text-xs font-semibold text-cream">{fmtSpendCell(row.todayUsd, row.id)}</p>
+                  {row.costAuthoritative && row.providerMonthUsd != null ? (
+                    <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-3">
+                      <div>
+                        <p className="text-[9px] text-muted">
+                          {row.id === 'vercel' ? 'Team billed MTD' : 'Provider published MTD'}
+                        </p>
+                        <p className="mt-0.5 text-xs font-semibold text-cream">
+                          {fmtSpendCell(row.providerMonthUsd)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-muted">
+                          {row.id === 'vercel' ? 'Scope' : 'Local after cutoff'}
+                        </p>
+                        <p className="mt-0.5 text-xs font-semibold text-cream">
+                          {row.id === 'vercel' ? 'Entire team' : fmtSpendCell(row.localDeltaUsd ?? null)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-muted">
+                          {row.id === 'vercel' ? 'Invoice / due' : 'Combined tracked'}
+                        </p>
+                        <p className="mt-0.5 text-xs font-semibold text-cream">
+                          {row.id === 'vercel' ? 'Not exposed' : fmtSpendCell(row.monthUsd)}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-[9px] text-muted">এই মাস</p>
-                      <p className="mt-0.5 text-xs font-semibold text-cream">{fmtSpendCell(row.monthUsd, row.id)}</p>
+                  ) : (
+                    <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-3">
+                      <div>
+                        <p className="text-[9px] text-muted">Local today</p>
+                        <p className="mt-0.5 text-xs font-semibold text-cream">{fmtSpendCell(row.todayUsd)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-muted">Local MTD</p>
+                        <p className="mt-0.5 text-xs font-semibold text-cream">{fmtSpendCell(row.monthUsd)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-muted">Cost truth</p>
+                        <p className="mt-0.5 text-[10px] font-semibold text-cream">
+                          {row.monthUsd != null ? 'Estimate only' : 'Not exposed'}
+                        </p>
+                        <p className="mt-0.5 text-[8px] text-muted">
+                          {SOURCE_LABEL[row.costSourceType] ?? row.costSourceType}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-[9px] text-muted">Cost source</p>
-                      <p className="mt-0.5 text-[10px] font-semibold text-cream">
-                        {SOURCE_LABEL[row.costSourceType] ?? row.costSourceType}
-                      </p>
-                      <p className="mt-0.5 text-[8px] text-muted">
-                        {row.costAuthoritative ? 'provider base' : 'estimate'}
-                      </p>
-                    </div>
-                  </div>
+                  )}
 
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {(Object.entries(fieldTruth) as Array<[keyof typeof fieldTruth, FieldTruth]>).map(([field, truth]) => (

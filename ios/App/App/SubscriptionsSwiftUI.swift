@@ -390,15 +390,15 @@ struct SubscriptionsScreen: View {
         .sensoryFeedback(.impact(weight: .light), trigger: showEditor)
     }
 
-    /// Provider truth stays explicit: a wallet is cash, quota is usage capacity,
-    /// manual estimate is a declared estimate, and unavailable means no live API.
+    /// Provider truth stays explicit: only provider-published wallet, quota and
+    /// cost values occupy the main fields; local estimates stay separate.
     private var apiBalanceStrip: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("PROVIDER BILLING").font(.system(size: 10, weight: .bold))
                         .kerning(0.5).foregroundStyle(.secondary)
-                    Text("Wallet · quota · usage · sync status").font(.system(size: 10)).foregroundStyle(.tertiary)
+                    Text("Provider values · local estimate আলাদা").font(.system(size: 10)).foregroundStyle(.tertiary)
                 }
                 Spacer()
                 Button {
@@ -447,13 +447,34 @@ struct SubscriptionsScreen: View {
                             .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
-                    HStack(spacing: 6) {
-                        providerMetric("আজ", provider.todayUsd.map { fmt($0) } ?? "—")
-                        providerMetric("মাস", provider.monthUsd.map { fmt($0) } ?? "—")
-                        providerMetric(
-                            "খরচের উৎস",
-                            sourceLabel(provider.costSourceType) + (provider.costAuthoritative ? " · base" : " · estimate")
-                        )
+                    if provider.costAuthoritative, let published = provider.providerMonthUsd {
+                        HStack(spacing: 6) {
+                            providerMetric(
+                                provider.id == "vercel" ? "Team billed MTD" : "Provider MTD",
+                                fmt(published)
+                            )
+                            providerMetric(
+                                provider.id == "vercel" ? "Scope" : "Local after cutoff",
+                                provider.id == "vercel"
+                                    ? "Entire team"
+                                    : (provider.localDeltaUsd.map { fmt($0) } ?? "—")
+                            )
+                            providerMetric(
+                                provider.id == "vercel" ? "Invoice / due" : "Combined tracked",
+                                provider.id == "vercel"
+                                    ? "Not exposed"
+                                    : (provider.monthUsd.map { fmt($0) } ?? "—")
+                            )
+                        }
+                    } else {
+                        HStack(spacing: 6) {
+                            providerMetric("Local today", provider.todayUsd.map { fmt($0) } ?? "—")
+                            providerMetric("Local MTD", provider.monthUsd.map { fmt($0) } ?? "—")
+                            providerMetric(
+                                "Cost truth",
+                                provider.monthUsd == nil ? "Not exposed" : "Estimate only"
+                            )
+                        }
                     }
                     HStack(spacing: 5) {
                         fieldBadge("Wallet", fieldTruth(provider, "balance"))
@@ -487,9 +508,6 @@ struct SubscriptionsScreen: View {
                     HStack(spacing: 6) {
                         Circle().fill(statusColor(provider.status)).frame(width: 6, height: 6)
                         Text(statusLabel(provider.status)).font(.system(size: 9.5, weight: .bold))
-                        if provider.balanceKind == "manual_estimate" {
-                            Text("Estimate").font(.system(size: 8.5, weight: .bold)).foregroundStyle(SubPalette.amber)
-                        }
                         Spacer()
                         if let raw = provider.dashboardUrl, let url = URL(string: raw) {
                             Link(destination: url) {
@@ -516,10 +534,10 @@ struct SubscriptionsScreen: View {
     private var billingOverview: some View {
         let wallet = vm.apiBalances.filter { $0.balanceKind == "wallet" }.compactMap(\.balanceUsd).reduce(0, +)
         let confirmed = vm.apiBalances.filter { $0.costAuthoritative }.compactMap(\.providerMonthUsd).reduce(0, +)
-        let attention = vm.apiBalances.filter { ["error", "stale"].contains($0.status) }.count
+        let attention = vm.apiBalances.filter { ["error", "stale", "partial"].contains($0.status) }.count
         return HStack(spacing: 7) {
             billingStat(fmt(wallet), "Prepaid cash", SubPalette.emerald)
-            billingStat(fmt(confirmed), "Provider MTD", SubPalette.violet)
+            billingStat(fmt(confirmed), "Published MTD", SubPalette.violet)
             billingStat("\(vm.dueSummary.dueWithin7Days)", "Due ≤7d", SubPalette.amber)
             billingStat("\(attention)", "Attention", attention > 0 ? SubPalette.red : SubPalette.sage)
         }
@@ -542,6 +560,9 @@ struct SubscriptionsScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
     private func balanceText(_ provider: SubApiBalance) -> String {
+        if provider.balanceKind == "manual_estimate" {
+            return "API নেই"
+        }
         guard let amount = provider.balanceAmount else {
             let supportsBalance = provider.capabilities.contains("wallet") || provider.capabilities.contains("quota")
             let configuredBalance = provider.configuredCapabilities.contains("wallet")
@@ -560,7 +581,7 @@ struct SubscriptionsScreen: View {
         switch provider.balanceKind {
         case "wallet": return "CASH WALLET"
         case "quota": return "USAGE QUOTA"
-        case "manual_estimate": return "MANUAL ESTIMATE"
+        case "manual_estimate": return "NOT PROVIDER DATA"
         default:
             let supportsBalance = provider.capabilities.contains("wallet") || provider.capabilities.contains("quota")
             let configuredBalance = provider.configuredCapabilities.contains("wallet")
@@ -600,7 +621,6 @@ struct SubscriptionsScreen: View {
         switch field {
         case "balance":
             if provider.balanceAuthoritative { return "Live" }
-            if provider.balanceKind == "manual_estimate" { return "Estimated" }
             if needsCredential("wallet") || needsCredential("quota") { return "Needs key" }
             if syncFailed("wallet") || syncFailed("quota") { return "Sync error" }
             return "Not exposed"
@@ -654,7 +674,7 @@ struct SubscriptionsScreen: View {
     private func statusLabel(_ status: String) -> String {
         switch status {
         case "live", "fresh": return "Connected"
-        case "partial": return "Mixed (legacy)"
+        case "partial": return "Waiting for provider data"
         case "manual": return "Local only"
         case "unconfigured": return "Connect"
         case "free": return "Free"

@@ -9,7 +9,9 @@ import {
   roundProviderUsd,
 } from '@/agent/lib/provider-billing'
 import {
+  hasPublishedProviderCost,
   mergeProviderInvoiceDues,
+  normalizeCachedProvider,
   parseOpenAICostPage,
   providerLocalDeltaStart,
   summarizeSubscriptionDues,
@@ -198,6 +200,49 @@ describe('provider billing parsers', () => {
         },
       ],
     }).syncedThrough).toBe('2026-07-22')
+  })
+
+  it('does not treat an empty provider response as published cost truth', () => {
+    expect(hasPublishedProviderCost({
+      syncedThrough: null,
+    })).toBe(false)
+    expect(hasPublishedProviderCost({
+      syncedThrough: '2026-07-23',
+    })).toBe(true)
+  })
+
+  it('scrubs legacy manual balances and boundary-less confirmed cost from cache', () => {
+    expect(normalizeCachedProvider({
+      id: 'openai',
+      label: 'OpenAI',
+      balanceKind: 'manual_estimate',
+      balanceAmount: -25.47,
+      balanceUsd: -25.47,
+      balanceCurrency: 'USD',
+      balanceUnit: 'USD',
+      providerMonthUsd: 0,
+      monthUsd: 2.71,
+      localDeltaUsd: 2.71,
+      syncedThrough: null,
+      costAuthoritative: true,
+      authoritative: true,
+      status: 'live',
+      sourceType: 'manual',
+      costSourceType: 'provider_api',
+    }, '2026-07-24T00:00:00.000Z')).toMatchObject({
+      balanceKind: 'none',
+      balanceAmount: null,
+      balanceUsd: null,
+      balanceCurrency: null,
+      balanceUnit: null,
+      balanceAuthoritative: false,
+      providerMonthUsd: null,
+      localDeltaUsd: null,
+      costSourceType: 'local_measured',
+      costAuthoritative: false,
+      authoritative: false,
+      status: 'partial',
+    })
   })
 
   it('uses the source timezone at the provider/local reconciliation boundary', () => {
