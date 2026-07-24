@@ -14,7 +14,7 @@ import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { detectOutboundCallIntent, buildOutboundCallIntakeBlock } from '@/agent/lib/outbound-call-intent'
 import { buildReminderTimeHintBlock } from '@/agent/lib/bangla-time'
-import { isVoiceInstructionText } from '@/agent/lib/voice-instruction'
+import { isVoiceInstructionText, ownerRequestedCallback } from '@/agent/lib/voice-instruction'
 import { detectVoiceProviderRequest } from '@/agent/lib/voice-provider-intent'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
@@ -670,6 +670,9 @@ export async function* runAgentTurn(
   // PA-5R: instruction arrived verbally on an owner-verified live call (🎙️ marker).
   // Server-derived, always boolean, so a model-spoofed input field can never win.
   const voiceCallInstruction = isVoiceInstructionText(lastUserText)
+  // PA-5R precision: a report CALL needs the boss's own call-words in his recent
+  // messages. Always-set boolean — a model-spoofed input field can never win.
+  const callbackRequested = ownerRequestedCallback(recentUserTexts)
 
   const now = new Date()
   let teachingBlock: string | undefined
@@ -1512,8 +1515,8 @@ export async function* runAgentTurn(
               })
             : { success: false as const, error: aiosGuard.message }
           : personalMode
-          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction })
-          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization, ownerVoicePref, voiceCallInstruction })
+          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested })
+          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested })
         // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).
         runPostToolHooks({
           toolName: tb.name,

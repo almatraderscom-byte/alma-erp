@@ -342,6 +342,32 @@ export const call_boss_with_report: AgentTool = {
       const title = String(input.title ?? '').trim().slice(0, 120)
       const report = String(input.report ?? '').trim()
       if (!title || !report) return { success: false, error: 'title এবং report দুটোই লাগবে' }
+
+      // PA-5R precision guard (live complaint 2026-07-24: sales-update ask in the
+      // app's voice session got answered AND phoned — history imitation). The
+      // server derived callbackRequested from the boss's own recent words; without
+      // his explicit call-words this tool is refused, model claims notwithstanding.
+      if (input.callbackRequested !== true) {
+        return {
+          success: false,
+          error:
+            'Boss কল করে জানাতে বলেননি (ওনার কথায় "কল/ফোন করে জানাবে" নেই) — উত্তরটা এখানেই দিন। ' +
+            'শুধু Boss নিজে কল-রিপোর্ট চাইলে এই tool।',
+        }
+      }
+      // One report call at a time — a retry/self-correct round must not stack
+      // multiple ladders that ring the boss back-to-back (live 2026-07-24: 3 rows).
+      const activeCb = await db.agentCallEscalation.findFirst({
+        where: { trigger: 'boss_callback', status: { in: ['queued', 'awaiting_approval', 'wa_calling', 'pstn_calling'] } },
+        select: { id: true },
+      })
+      if (activeCb) {
+        return {
+          success: true,
+          data: { status: 'already_calling', escalationId: activeCb.id, message: 'Boss-কে একটা কল-রিপোর্ট ইতিমধ্যে চলছে — নতুন কল দেব না।' },
+        }
+      }
+
       const { queueCallEscalation } = await import('@/agent/lib/proactive-call')
       const conv = input.conversationId ? String(input.conversationId) : 'chat'
       const id = await queueCallEscalation({
