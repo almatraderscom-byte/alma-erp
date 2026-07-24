@@ -281,6 +281,77 @@ export const DYNAMIC_TOOLSET_ENABLED = (() => {
   return process.env.VERCEL_ENV === 'preview'
 })()
 
+// ── Head Tool Diet (cost audit Phase 2, owner-approved 2026-07-24) ───────────
+// The owner head shipped ~201 tool schemas (~47k tokens) EVERY request — `base`
+// alone holds 105 tools, most of them long-tail (browser suite, playbook,
+// personal-OS copies, workbench, artifacts…). With the xAI prefix cache now
+// PROVEN working (68% hit on the first measured turn), the correct diet is a
+// SMALLER but BYTE-STABLE prefix: a fixed curated core (~80 schemas ≈ 17k
+// tokens, same every turn so the cache keeps hitting) + `find_tool`, which
+// searches the FULL registry and dynamically loads any long-tail schema
+// mid-turn (cache-safe append; every execution guard unchanged). Zero
+// capability loss: nothing is removed, the long tail is one find_tool hop away.
+// Instant kill switch: AGENT_HEAD_TOOL_DIET=false restores the old full set.
+export const HEAD_TOOL_DIET_ENABLED = (() => {
+  const flag = process.env.AGENT_HEAD_TOOL_DIET
+  if (flag === 'true') return true
+  if (flag === 'false') return false // instant kill switch — full 201-tool set returns
+  return true
+})()
+
+// The curated always-on core. Selection principle, in order:
+// (1) tools the TURN MACHINERY depends on deterministically (plans, open tasks,
+//     action cards, ask_user, find_tool, delegation);
+// (2) the owner's daily-frequency asks (sales/orders/stock/staff/money/salah/
+//     reminders/todos/calls/WhatsApp/camera);
+// (3) memory — the head is the only memory writer.
+// Everything else (browser suite, playbook, personal-OS, workbench, artifacts,
+// marketing stagers, diag, vision, cost, website…) loads on demand via find_tool.
+// NOTE: keep this a SET — filtering preserves group order, so the emitted
+// schema list stays byte-stable across turns (prefix-cache requirement).
+export const HEAD_CORE_TOOL_NAMES = new Set<string>([
+  // machinery
+  'get_current_datetime', 'ask_user', 'find_tool', 'delegate_to_specialist',
+  'make_plan', 'execute_plan', 'get_plan', 'track_open_task', 'resolve_open_task',
+  'save_task_checkpoint', 'get_action_cards', 'get_workflow_history',
+  'check_autonomy', 'undo_action',
+  // memory (head = only writer)
+  'save_memory', 'search_memory', 'update_memory', 'delete_memory',
+  'graph_remember', 'graph_recall',
+  // reminders + urgent + todos + digest
+  'set_reminder', 'list_reminders', 'cancel_reminder', 'snooze_reminder',
+  'send_urgent_alert', 'add_owner_todo', 'list_owner_todos', 'update_owner_todo',
+  'get_daily_digest', 'manage_work_todos',
+  // comms the owner uses daily (WhatsApp + phone-agent program + camera)
+  'send_whatsapp', 'get_wa_inbox', 'outbound_phone_call', 'place_agent_call',
+  'call_boss_with_report', 'place_business_call', 'get_outbound_call_status',
+  'get_office_camera_snapshot', 'camera_speak',
+  // salah (owner's most sensitive domain — never behind a discovery hop)
+  'get_prayer_times', 'get_salah_status', 'mark_salah',
+  'get_salah_weekly_summary', 'request_salah_delay',
+  // erp daily reads + the approval surface
+  'get_sales_summary', 'get_orders', 'get_inventory_status', 'get_product',
+  'get_customer_summary', 'get_dashboard_snapshot', 'get_reorder_suggestions',
+  'check_order_issues', 'get_pending_approvals', 'dismiss_pending_approvals',
+  'recall_business_knowledge', 'generate_owner_briefing', 'generate_image',
+  'get_staff_location', 'get_attendance', 'get_employee_overview',
+  // staff daily flow (dispatch machinery + frequent reads)
+  'get_all_staff', 'get_staff_tasks', 'propose_staff_tasks', 'get_current_proposal',
+  'merge_into_proposal', 'approve_and_dispatch_tasks', 'approve_pending_dispatch',
+  'add_staff_task_now', 'update_staff_task_status', 'get_dispatch_status',
+  'send_staff_announcement', 'call_staff',
+  // finance daily flow
+  'log_expense', 'log_expenses_batch', 'log_ledger_entry', 'log_ledger_entries_batch',
+  'get_expense_summary', 'get_ledger_balances', 'list_recent_transactions',
+  'get_financial_health', 'edit_finance_entry', 'delete_finance_entry',
+])
+
+/** Diet filter — identity when the kill switch is off. */
+function applyHeadToolDiet(tools: AgentTool[]): AgentTool[] {
+  if (!HEAD_TOOL_DIET_ENABLED) return tools
+  return tools.filter((t) => HEAD_CORE_TOOL_NAMES.has(t.name))
+}
+
 /**
  * Shared owner-head post-processing: slim-router delegation shape (content/
  * growth stay delegated to workers), the marketing-read denylist, and the
@@ -297,6 +368,11 @@ function finalizeOwnerHeadTools(
   let assembled = assembleSelectedTools(headGroups)
   if (DELEGATION_APPROVAL_TEST) {
     assembled = assembled.filter((t) => !DELEGATION_FORCE_DENYLIST.has(t.name))
+  }
+  // Head tool diet (Phase 2): shrink to the curated core. The growth keeps are
+  // long-tail under the diet — reachable via find_tool, so skip the append.
+  if (HEAD_TOOL_DIET_ENABLED) {
+    return { tools: applyToolCacheControl(toolsToDefinitions(applyHeadToolDiet(assembled))), groups: headGroups }
   }
   for (const keep of HEAD_KEPT_GROWTH_TOOLS) {
     if (!assembled.some((t) => t.name === keep)) {
@@ -371,6 +447,11 @@ export async function selectToolsAndGroupsForTurnAsync(
       // groups so the head CANNOT do marketing itself → it must transfer to a
       // specialist (which the owner then approves). Reversible; flag-gated.
       assembled = assembled.filter((t) => !DELEGATION_FORCE_DENYLIST.has(t.name))
+    }
+    // Head tool diet (Phase 2): fixed curated core, byte-stable every turn so
+    // the provider prefix cache keeps hitting; long tail rides find_tool.
+    if (HEAD_TOOL_DIET_ENABLED) {
+      return { tools: applyToolCacheControl(toolsToDefinitions(applyHeadToolDiet(assembled))), groups }
     }
     // A few growth-group tools the slim head MUST keep, even though growth is
     // otherwise delegated to the marketer worker. launch_campaign + the two

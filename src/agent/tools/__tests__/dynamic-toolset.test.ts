@@ -22,8 +22,14 @@ describe('dynamic toolset', () => {
     ] as never[])
     expect(tools.length).toBeLessThan(fullRouter.length)
     expect(groups).toContain('base') // memory/ask/delegate always ride along
-    // Approval-card growth tools the head must never lose (owner-facing cards).
-    expect(tools.some((t) => t.name === 'launch_campaign')).toBe(true)
+    if (mod.HEAD_TOOL_DIET_ENABLED) {
+      // Head tool diet (Phase 2): growth stagers are long-tail now — the head
+      // reaches them via find_tool, which must always ride the pack.
+      expect(tools.some((t) => t.name === 'find_tool')).toBe(true)
+    } else {
+      // Approval-card growth tools the head must never lose (owner-facing cards).
+      expect(tools.some((t) => t.name === 'launch_campaign')).toBe(true)
+    }
   })
 
   it('delegated domains (content/growth) stay off the head even on keyword match', async () => {
@@ -40,6 +46,10 @@ describe('dynamic toolset', () => {
 
   it('kill switch restores the fixed router set', async () => {
     vi.stubEnv('AGENT_DYNAMIC_TOOLSET', 'false')
+    // This test asserts the DYNAMIC-toolset kill switch specifically — hold the
+    // head tool diet (Phase 2, its own flag + tests) off so the full router set
+    // is what returns.
+    vi.stubEnv('AGENT_HEAD_TOOL_DIET', 'false')
     vi.resetModules()
     const mod = await import('@/agent/tools/select-tools')
     const { tools } = await mod.selectToolsAndGroupsForTurnAsync('aj koto sale holo?', {
