@@ -401,12 +401,18 @@ export class OpenAiAdapter implements ProviderAdapter {
         const costUsd = typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost > 0
           ? rawCost
           : undefined
+        // Reasoning tokens (cost audit Phase 7) — observability only. Reasoning
+        // models report these under completion_tokens_details.reasoning_tokens.
+        const reasoningTokens =
+          (chunk.usage as { completion_tokens_details?: { reasoning_tokens?: number } })
+            .completion_tokens_details?.reasoning_tokens ?? 0
         yield {
           type: 'usage',
           inputTokens: Math.max(0, promptTokens - cachedTokens),
           outputTokens: chunk.usage.completion_tokens ?? 0,
           cacheRead: cachedTokens,
           costUsd,
+          reasoningTokens: reasoningTokens > 0 ? reasoningTokens : undefined,
         }
       }
     }
