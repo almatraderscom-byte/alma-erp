@@ -22,6 +22,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
 import { getBudgetSettings } from '@/agent/lib/cost-events'
 import { querySpendByProviderBetween } from '@/agent/lib/api-balances'
+import { computeMonthlyReconciliation } from '@/agent/lib/cost-reconciliation'
 import { todayYmdDhaka, dhakaDayBounds } from '@/lib/agent-api/dhaka-date'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 
@@ -127,5 +128,38 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  return Response.json({ ok: true, dryRun, today, verdicts })
+  // Estimate-drift guard: the deeper check. A budget can look fine while the
+  // local dashboard is simply WRONG (the 2026-07-24 incident: $4 shown, $2.71
+  // real). Once a day, if any provider's local estimate has drifted materially
+  // from its published bill, tell the owner the dashboard itself is off — that's
+  // a cost-model bug, not just spend. Reuses the reconciliation module.
+  let driftAlert: { provider: string; driftUsd: number; driftPct: number | null } | null = null
+  try {
+    const recon = await computeMonthlyReconciliation()
+    const worst = recon.flagged[0]
+    if (worst && worst.driftUsd != null) {
+      driftAlert = { provider: worst.id, driftUsd: worst.driftUsd, driftPct: worst.driftPct }
+      if (!dryRun) {
+        const dedupKey = `cost_guard_drift:${worst.id}:${today}`
+        if (!(await kvGet(dedupKey))) {
+          const dir = worst.status === 'LOCAL_HIGH' ? 'বেশি' : 'কম'
+          const msg =
+            `📊 AI খরচ হিসাব-গরমিল\n\n` +
+            `${worst.label}: ড্যাশবোর্ডের local হিসাব provider-এর আসল বিলের চেয়ে ${dir} দেখাচ্ছে।\n` +
+            `Local ${fmtUsd(recon.providers.find((p) => p.id === worst.id)?.localEstimateUsd ?? 0)} vs আসল ` +
+            `${fmtUsd(worst.providerActualUsd ?? 0)} (গরমিল ${fmtUsd(Math.abs(worst.driftUsd))}` +
+            `${worst.driftPct != null ? `, ${Math.abs(worst.driftPct)}%` : ''})।\n\n` +
+            `মানে cost model ঠিক করা দরকার — খরচ নয়, হিসাবের ভুল, Boss।`
+          const res = await sendOwnerText(msg)
+          if (res.ok) await kvSet(dedupKey, new Date().toISOString())
+        }
+      }
+    }
+  } catch (err) {
+    // Reconciliation is best-effort — a failure here must never block the budget
+    // guard's primary job above.
+    console.warn('[cost-guard] reconciliation drift check failed:', err instanceof Error ? err.message : err)
+  }
+
+  return Response.json({ ok: true, dryRun, today, verdicts, driftAlert })
 }

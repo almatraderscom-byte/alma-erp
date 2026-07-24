@@ -37,7 +37,21 @@ describe('provider billing parsers', () => {
       todayUsd: 1.25,
       monthUsd: 3.75,
       syncedThrough: '2026-07-23',
+      // No ServiceCategory/ServiceName on these rows → all hosting, no AI tokens.
+      breakdown: { aiTokensUsd: 0, hostingUsd: 3.75, topLines: [] },
     })
+  })
+
+  it('splits Vercel Agent AI-token charges from app hosting', () => {
+    const raw = [
+      JSON.stringify({ BilledCost: '75.29', BillingCurrency: 'USD', ChargePeriodStart: '2026-07-22T00:00:00Z', ServiceCategory: 'AI Tokens', ServiceName: 'Vercel Agent' }),
+      JSON.stringify({ BilledCost: '17.81', BillingCurrency: 'USD', ChargePeriodStart: '2026-07-22T00:00:00Z', ServiceCategory: 'Vercel Functions', ServiceName: 'Function Invocations' }),
+    ].join('\n')
+    const snap = parseVercelFocusCharges(raw, '2026-07-23')
+    expect(snap.monthUsd).toBeCloseTo(93.1, 2)
+    expect(snap.breakdown?.aiTokensUsd).toBeCloseTo(75.29, 2)
+    expect(snap.breakdown?.hostingUsd).toBeCloseTo(17.81, 2)
+    expect(snap.breakdown?.topLines[0]).toEqual({ name: 'Vercel Agent', usd: 75.29 })
   })
 
   it('refuses to relabel a non-USD provider charge as USD', () => {
