@@ -37,6 +37,8 @@
 import http from 'node:http'
 import net from 'node:net'
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import { unlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { WebSocket } from 'ws'
 import { muLawToPcm16, pcm16ToMuLaw } from './sarvam-media.mjs'
 
@@ -105,6 +107,39 @@ const calls = new Map()
 /** audiosocket uuid -> Call */
 const byUuid = new Map()
 
+// Phase 3 — per-call CDR. Once a channel is gone ARI can tell us nothing about it, but the
+// outcome sweep still needs to know WHY a call never connected (busy vs nobody answered vs
+// failed) to report it honestly to the owner. So we keep a small ring of finished calls.
+const CDR_MAX = Number(process.env.SIP_CDR_MAX || 500)
+/** callId -> {call_id, direction, to, answered, startedAt, answeredAt, endedAt, cause, causeTxt, status} */
+const cdr = new Map()
+function putCdr(id, patch) {
+  if (!id) return
+  const prev = cdr.get(id) || { call_id: id }
+  cdr.set(id, { ...prev, ...patch })
+  // Map.keys() is insertion-ordered, so the oldest entry is always first.
+  while (cdr.size > CDR_MAX) cdr.delete(cdr.keys().next().value)
+}
+/**
+ * Turn an ISDN hangup cause into the outcome vocabulary the rest of the system already
+ * speaks (same words the NGS path reports). Answered calls are 'completed' regardless of
+ * cause — the bot's own post-call report carries the substance.
+ */
+function outcomeFromCause(answered, cause) {
+  if (answered) return 'completed'
+  switch (Number(cause)) {
+    case 17: return 'busy'                    // user busy
+    case 18: case 19: case 21: return 'no_answer' // no user responding / no answer / rejected
+    default: return 'failed'
+  }
+}
+
+// Cost + abuse guard: a runaway loop (or a stolen control-API key) must not be able to
+// dial dozens of PSTN legs. Owner-tunable; refuses politely past the cap.
+const MAX_CONCURRENT = Number(process.env.SIP_MAX_CONCURRENT_CALLS || 4)
+// Where one-way message audio is staged for Asterisk to play (must be readable by Asterisk).
+const PLAY_DIR = process.env.SIP_PLAY_DIR || tmpdir()
+
 class Call {
   constructor(channelId, params) {
     this.channelId = channelId          // = call_id in the control API + ARI channel id
@@ -121,6 +156,9 @@ class Call {
     this.answered = false
     this.closed = false
     this.transferring = false
+    this.playOnly = false               // one-way message call: play a file, then hang up
+    this.playUrl = ''
+    this.playFile = ''
     byUuid.set(this.audioUuid, this)
   }
 
@@ -219,6 +257,7 @@ class Call {
     try { if (this.extChannelId) await ari('DELETE', `/channels/${this.extChannelId}`).catch(() => {}) } catch { /* */ }
     try { await ari('DELETE', `/channels/${this.channelId}`).catch(() => {}) } catch { /* */ }
     try { if (this.bridgeId) await ari('DELETE', `/bridges/${this.bridgeId}`).catch(() => {}) } catch { /* */ }
+    if (this.playFile) await unlink(this.playFile).catch(() => {})
     calls.delete(this.channelId)
     byUuid.delete(this.audioUuid)
   }
@@ -301,6 +340,28 @@ async function bridgeAndStartBot(call) {
   // 4) open the bot ws now that audio can flow
   call.connectBot()
   log(call.channelId, 'bridged externalMedia', call.extChannelId)
+}
+
+/**
+ * ONE-WAY message call (Phase 3, the NGS <Play> replacement). ARI can only play media it
+ * can reach locally — `sound:` URIs, not HTTP — so we fetch the caller's audio URL (a
+ * Supabase signed URL in practice) to a temp file and play that, then hang up when the
+ * PlaybackFinished event arrives. Asterisk resolves `sound:/path/foo` without the
+ * extension, so the file is written as .wav and referenced extensionless.
+ */
+async function playAndHangup(call) {
+  const file = `${PLAY_DIR}/alma-play-${call.channelId}`
+  try {
+    const res = await fetch(call.playUrl, { signal: AbortSignal.timeout(20_000) })
+    if (!res.ok) throw new Error(`fetch audio ${res.status}`)
+    await writeFile(`${file}.wav`, Buffer.from(await res.arrayBuffer()))
+    call.playFile = `${file}.wav`
+    await ari('POST', `/channels/${call.channelId}/play`, { media: `sound:${file}` })
+    log(call.channelId, 'one-way playback started')
+  } catch (err) {
+    log(call.channelId, 'one-way playback failed:', err?.message)
+    void call.hangup('playback failed')
+  }
 }
 
 /**
@@ -425,7 +486,11 @@ async function onAriEvent(e) {
       }
       // Our originated PSTN channel just answered and entered Stasis.
       call.answered = true
+      putCdr(call.channelId, { answered: true, answeredAt: Date.now(), status: 'answered' })
       try {
+        // One-way message call (the NGS <Play> replacement): speak the file and hang up.
+        // No bot, no Gemini spend — this is the alert/notification path.
+        if (call.playOnly) { await playAndHangup(call); return }
         await bridgeAndStartBot(call)
         log(call.channelId, 'answered -> wired')
       } catch (err) {
@@ -434,8 +499,28 @@ async function onAriEvent(e) {
       }
       break
     }
+    case 'ChannelDestroyed': {
+      // The only place Asterisk tells us WHY the leg ended — keep it for the sweep.
+      const call = chanId && calls.get(chanId)
+      if (chanId && cdr.has(chanId)) {
+        putCdr(chanId, {
+          endedAt: Date.now(),
+          cause: e.cause ?? null,
+          causeTxt: e.cause_txt ?? '',
+          status: outcomeFromCause(Boolean(call?.answered ?? cdr.get(chanId)?.answered), e.cause),
+        })
+      }
+      if (call && !call.closed) void call.hangup(`ari ${e.type}`)
+      break
+    }
+    case 'PlaybackFinished': {
+      // One-way message call: the audio finished, so end the leg (nothing else to say).
+      const target = String(e.playback?.target_uri || '').replace(/^channel:/, '')
+      const call = target && calls.get(target)
+      if (call && call.playOnly && !call.closed) void call.hangup('playback finished')
+      break
+    }
     case 'StasisEnd':
-    case 'ChannelDestroyed':
     case 'ChannelHangupRequest': {
       const call = chanId && calls.get(chanId)
       if (call && !call.closed) void call.hangup(`ari ${e.type}`)
@@ -478,7 +563,7 @@ const ctrlServer = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost')
   const m = url.pathname.match(/^\/api\/v1\/call(?:\/([^/]+))?$/)
   if (url.pathname === '/health') {
-    return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size })
+    return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size })
   }
   if (!m) return json(res, 404, { error: 'not found' })
   if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
@@ -496,12 +581,23 @@ const ctrlServer = http.createServer(async (req, res) => {
       const to = localDial(body.to)
       if (!to) return json(res, 400, { error: 'missing to' })
       const params = body.params || {}
-      // Optional: verify the per-call token so only OUR backend can originate.
-      const fail = authFailReason(params)
-      if (fail) return json(res, 401, { error: `token: ${fail}` })
+      // One-way message call: no bot, just speak this audio and hang up (NGS <Play> parity).
+      const playUrl = String(body.playUrl || '').trim()
+      // Optional: verify the per-call token so only OUR backend can originate. One-way
+      // calls carry no bot session, so they are authorised by the control-API key alone.
+      if (!playUrl) {
+        const fail = authFailReason(params)
+        if (fail) return json(res, 401, { error: `token: ${fail}` })
+      }
+      if (calls.size >= MAX_CONCURRENT) {
+        log(`REFUSED originate -> ${to}: ${calls.size}/${MAX_CONCURRENT} concurrent`)
+        return json(res, 429, { error: `concurrency cap reached (${MAX_CONCURRENT})` })
+      }
       const channelId = 'sip-' + randomUUID()
       const call = new Call(channelId, params)
+      if (playUrl) { call.playOnly = true; call.playUrl = playUrl }
       calls.set(channelId, call)
+      putCdr(channelId, { direction: 'outbound', to, startedAt: Date.now(), answered: false, status: 'ringing' })
       try {
         await ari('POST', '/channels', {
           endpoint: `PJSIP/${to}@${TRUNK_ENDPOINT}`,
@@ -512,16 +608,24 @@ const ctrlServer = http.createServer(async (req, res) => {
         })
       } catch (err) {
         calls.delete(channelId); byUuid.delete(call.audioUuid)
+        putCdr(channelId, { endedAt: Date.now(), status: 'failed', causeTxt: String(err?.message || '').slice(0, 120) })
         return json(res, 502, { error: `originate failed: ${err?.message}` })
       }
-      log(channelId, `originate -> ${to}@${TRUNK_ENDPOINT}`)
+      log(channelId, `originate -> ${to}@${TRUNK_ENDPOINT}${call.playOnly ? ' [one-way]' : ''}`)
       return json(res, 200, { call_id: channelId, status: 'ringing' })
     }
 
     if (req.method === 'GET' && id) {
-      const call = calls.get(id)
-      try { const ch = await ari('GET', `/channels/${id}`); return json(res, 200, { call_id: id, status: ch.state, active: Boolean(call) }) }
-      catch { return json(res, 404, { call_id: id, status: 'ended', active: false }) }
+      // Live channel first (authoritative state), then the CDR — the outcome sweep asks
+      // about calls that are already gone, and needs the hangup cause to report honestly.
+      const active = calls.has(id)
+      try {
+        const ch = await ari('GET', `/channels/${id}`)
+        return json(res, 200, { call_id: id, status: ch.state, answered: Boolean(calls.get(id)?.answered), ended: false, active })
+      } catch { /* channel gone — fall through to the CDR */ }
+      const rec = cdr.get(id)
+      if (rec) return json(res, 200, { ...rec, ended: Boolean(rec.endedAt), active: false })
+      return json(res, 404, { call_id: id, status: 'unknown', ended: true, active: false })
     }
 
     if (req.method === 'DELETE' && id) {

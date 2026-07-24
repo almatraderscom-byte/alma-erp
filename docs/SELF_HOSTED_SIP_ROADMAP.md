@@ -111,7 +111,43 @@ DONE (owner called the DID from his phone; NGS was off so our registration held)
   trivially (NGS single-forward limit gone).
 - Verify: owner calls the DID -> greeted as Boss; unknown number -> receptionist + transfer.
 
-## Phase 3 — Parity + retire NGS
+## Phase 3 — Parity + retire NGS  ✅ BUILT 2026-07-25 (code complete; NGS retirement = owner's call)
+DONE:
+- **Per-call CDR in the gateway** — once a channel ends, ARI can say nothing about it, so the
+  outcome sweep could never explain a failed call. The gateway now keeps a bounded ring
+  (SIP_CDR_MAX, default 500) with the ISDN hangup cause, and `GET /api/v1/call/{id}` serves the
+  live channel state first, then the CDR. PROVEN: an unroutable number returned
+  `status:"no_answer", cause:19 "User alerting, no answer"`.
+- **Provider-aware outcome reporting** — `reportNgsCallOutcome` dispatches SIP rows to a new
+  `reportSipCallOutcome` (asks OUR gateway, maps busy/no_answer/failed, honours the 90s
+  report_pending grace, and after 10 min closes a row the gateway has no memory of rather than
+  leaving it 'ringing' forever — without inventing an outcome). Sweep cron now includes
+  `provider: 'sip'`.
+- **One-way message calls** — `makeSipCall()` in worker/src/notify/twilio-call.mjs: same TTS →
+  8 kHz WAV → Supabase signed URL pipeline, but the gateway originates via ARI, plays the file
+  (`playUrl` on POST /api/v1/call; ARI can't play HTTP, so the gateway stages it to disk and
+  plays `sound:/path`) and hangs up on PlaybackFinished. No bot = no Gemini spend on an alert.
+  `ONE_WAY_CALL_PROVIDER=sip`, Twilio remains the automatic fallback; salah stays on Twilio.
+- **Concurrency cap** — SIP_MAX_CONCURRENT_CALLS (default 4): a runaway loop or stolen control
+  key cannot dial a fleet of PSTN legs. Returns 429.
+- **SIP port hardening** — `worker/deploy/asterisk/sip-firewall.sh`, APPLIED + VERIFIED LIVE.
+  Measured before: 281 scanner packets in 20s from one host; after: the flood stops at the
+  kernel. Surgical (UDP 5060/5062 only — SSH, worker ports and the RTP range untouched), and
+  re-registration through the firewall was verified immediately (`Registered`). Rules are NOT
+  reboot-persistent by design: that fails OPEN, so it can never cause an outage.
+- VERIFICATION STATUS: CDR + cap + auth + firewall + registration all proven live. One-way
+  playback proven as far as possible without an answered call — Asterisk converted our WAV
+  cleanly (`file convert` → ulaw, 8.7s), so format/path are correct; the owner did not pick up
+  the two test calls, so **live one-way audio is still owner-pending**.
+
+### Retirement checklist (do NOT rush — owner decision)
+1. Flip `VOICE_CALL_PROVIDER=sip` (+ SIP_GATEWAY_*) and `ONE_WAY_CALL_PROVIDER=sip` on Vercel.
+2. Deploy the sip-inbound route to prod (inbound DB rows/reports need it; until then the
+   gateway's fail-safe persona answers).
+3. Run 2–4 weeks with NGS off but still subscribed (instant rollback = one env var).
+4. Only then drop the NGS_* env vars and cancel the subscription.
+
+### Original plan (kept for reference)
 - ngs-call-outcome.ts + ngs-call-sweep cron accept provider sip (GET gateway state).
 - worker/src/notify/twilio-call.mjs one-way <Play> -> ARI channels/{id}/play.
 - Security hardening, MAX_CONCURRENT cap, per-call CDR. After 2-4 weeks clean: drop ~12

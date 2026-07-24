@@ -35,8 +35,11 @@ export async function GET(req: NextRequest) {
   // permanently orphaned answered calls whose report callback was lost.
   const rows: Array<{ id: string }> = await db.agentVoiceCall.findMany({
     where: {
+      // Both BD two-way paths: NGS (legacy) and our self-hosted SIP gateway. The
+      // outcome helper asks whichever provider owns the call.
       OR: [
         { provider: 'ngs' },
+        { provider: 'sip' },
         { provider: null, summary: { startsWith: 'ngs live:' } },
       ],
       status: { in: ['dispatching', 'ringing', 'answered', 'report_pending'] },
