@@ -33,6 +33,64 @@ export type StudioProductOption = {
   available: number | null
 }
 
+export type ErpStockProductRow = {
+  sku: unknown
+  product: unknown
+  currentStock: unknown
+  available: unknown
+  sellValue: unknown
+  imageUrl: unknown
+}
+
+/**
+ * Some ERP tenants still have their sellable catalog in the stock master while
+ * `lifestyle_products` is being backfilled. Keep the Studio picker read-only,
+ * but merge those stock variants into one honest product snapshot per SKU.
+ */
+export function erpStockRowsToProductOptions(
+  rows: ErpStockProductRow[],
+): StudioProductOption[] {
+  const products = new Map<string, {
+    name: string
+    currentStock: number
+    available: number
+    sellValue: number
+    sourceImage: string | null
+  }>()
+
+  for (const row of rows) {
+    const code = typeof row.sku === 'string' ? row.sku.trim() : ''
+    if (!code) continue
+    const current = products.get(code) ?? {
+      name: typeof row.product === 'string' && row.product.trim() ? row.product.trim() : code,
+      currentStock: 0,
+      available: 0,
+      sellValue: 0,
+      sourceImage: null,
+    }
+    const currentStock = Number(row.currentStock)
+    const available = Number(row.available)
+    const sellValue = Number(row.sellValue)
+    current.currentStock += Number.isFinite(currentStock) ? Math.max(0, currentStock) : 0
+    current.available += Number.isFinite(available) ? Math.max(0, available) : 0
+    current.sellValue += Number.isFinite(sellValue) ? Math.max(0, sellValue) : 0
+    if (!current.sourceImage && typeof row.imageUrl === 'string' && row.imageUrl.trim()) {
+      current.sourceImage = row.imageUrl.trim()
+    }
+    products.set(code, current)
+  }
+
+  return [...products.entries()].map(([code, product]) => ({
+    code,
+    name: product.name,
+    priceBdt: product.currentStock > 0
+      ? Math.max(0, Math.round(product.sellValue / product.currentStock))
+      : 0,
+    sourceImage: product.sourceImage,
+    available: product.available,
+  }))
+}
+
 export type StudioBrandRecipe = {
   id: string
   brandProfileId: string

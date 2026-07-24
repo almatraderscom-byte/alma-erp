@@ -5,6 +5,7 @@ import {
   LEGACY_PROJECT_ID,
   ProjectContractError,
   assetTypeFromJob,
+  erpStockRowsToProductOptions,
   normalizeProjectAssetLinkInput,
   normalizeProjectAssetPatchInput,
   normalizeProjectCreateInput,
@@ -904,23 +905,66 @@ export async function updateProjectAsset(
 
 export async function searchErpProducts(query: string): Promise<StudioProductOption[]> {
   const clean = query.trim().slice(0, 80)
-  const products = await db.lifestyleProduct.findMany({
-    where: {
-      active: true,
-      ...(clean
-        ? {
-            OR: [
-              { sku: { contains: clean, mode: 'insensitive' } },
-              { name: { contains: clean, mode: 'insensitive' } },
-              { category: { contains: clean, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
-    },
-    orderBy: [{ updatedAt: 'desc' }, { sku: 'asc' }],
-    take: 30,
-  })
-  const codes = products.map((product: AnyRecord) => String(product.sku))
+  const [products, stockRows] = await Promise.all([
+    db.lifestyleProduct.findMany({
+      where: {
+        active: true,
+        ...(clean
+          ? {
+              OR: [
+                { sku: { contains: clean, mode: 'insensitive' } },
+                { name: { contains: clean, mode: 'insensitive' } },
+                { category: { contains: clean, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ updatedAt: 'desc' }, { sku: 'asc' }],
+      take: 30,
+    }),
+    db.lifestyleStockItem.findMany({
+      where: {
+        archived: false,
+        active: true,
+        ...(clean
+          ? {
+              OR: [
+                { sku: { contains: clean, mode: 'insensitive' } },
+                { product: { contains: clean, mode: 'insensitive' } },
+                { category: { contains: clean, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ updatedAt: 'desc' }, { sku: 'asc' }],
+      select: {
+        sku: true,
+        product: true,
+        currentStock: true,
+        available: true,
+        sellValue: true,
+        imageUrl: true,
+      },
+      take: 240,
+    }),
+  ])
+  const candidates = new Map<string, StudioProductOption>()
+  for (const product of products as AnyRecord[]) {
+    const code = String(product.sku)
+    candidates.set(code, {
+      code,
+      name: String(product.name),
+      priceBdt: safeCostBdt(product.defaultPrice),
+      sourceImage: typeof product.imageUrl === 'string' && product.imageUrl ? product.imageUrl : null,
+      available: null,
+    })
+  }
+  for (const product of erpStockRowsToProductOptions(stockRows)) {
+    if (!candidates.has(product.code)) candidates.set(product.code, product)
+    if (candidates.size >= 30) break
+  }
+  const selected = [...candidates.values()].slice(0, 30)
+  const codes = selected.map((product) => product.code)
   if (!codes.length) return []
   const [images, stock] = await Promise.all([
     db.productImage.findMany({
@@ -940,20 +984,19 @@ export async function searchErpProducts(query: string): Promise<StudioProductOpt
   const stockByCode = new Map(
     (stock as AnyRecord[]).map((row) => [String(row.sku), Number(object(row._sum).available ?? 0)]),
   )
-  return products.map((product: AnyRecord) => {
-    const code = String(product.sku)
-    const image = imageByCode.get(code)
+  return selected.map((product) => {
+    const image = imageByCode.get(product.code)
     const sourceImage =
       (typeof image?.storagePath === 'string' && image.storagePath)
       || (typeof image?.url === 'string' && image.url)
-      || (typeof product.imageUrl === 'string' && product.imageUrl)
+      || product.sourceImage
       || null
     return {
-      code,
-      name: String(product.name),
-      priceBdt: safeCostBdt(product.defaultPrice),
+      ...product,
       sourceImage,
-      available: stockByCode.has(code) ? stockByCode.get(code)! : null,
+      available: stockByCode.has(product.code)
+        ? stockByCode.get(product.code)!
+        : product.available,
     }
   })
 }

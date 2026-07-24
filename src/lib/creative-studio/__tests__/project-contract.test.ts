@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_PROJECT_FOLDER,
+  erpStockRowsToProductOptions,
   normalizeProjectAssetLinkInput,
   normalizeProjectPatchInput,
   normalizeTagNames,
@@ -42,6 +43,33 @@ describe('CSE3 project ownership contract', () => {
       productPriceBdt: null,
       productSourceImage: null,
     })
+  })
+
+  it('uses the read-only ERP stock master when the product master is empty', () => {
+    expect(erpStockRowsToProductOptions([
+      {
+        sku: ' AL-475 ',
+        product: 'Eid Panjabi',
+        currentStock: 2,
+        available: 1,
+        sellValue: 3000,
+        imageUrl: 'https://cdn.example/al-475.jpg',
+      },
+      {
+        sku: 'AL-475',
+        product: 'Eid Panjabi',
+        currentStock: 3,
+        available: 2,
+        sellValue: 4500,
+        imageUrl: null,
+      },
+    ])).toEqual([{
+      code: 'AL-475',
+      name: 'Eid Panjabi',
+      priceBdt: 1500,
+      sourceImage: 'https://cdn.example/al-475.jpg',
+      available: 3,
+    }])
   })
 })
 
