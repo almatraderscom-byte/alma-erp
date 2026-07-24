@@ -1,6 +1,6 @@
 # Phase 69 — Accurate Subscription & Provider Billing Hub
 
-**Status:** Preview-ready; web verified; final iOS re-verification awaiting owner login
+**Status:** Preview-ready; web and native iOS live verification passed
 **Branch:** `agent-phase-69`
 **Safety tag:** `pre-agent-phase-69`
 **Implementation commit:** `7eb589c8`
@@ -89,8 +89,27 @@ Native iOS verification uses the isolated simulator **ALMA Phase69 Billing**:
 - Clean simulator build, install, and launch passed.
 - Final app build:
   `/tmp/alma-phase69-final-derived/Build/Products/Debug-iphonesimulator/App.app`.
-- Reinstall cleared the preview login session, so final native render/refresh proof is
-  pending the owner's one-time login. Codex will not enter owner credentials.
+- The owner completed the one-time login; Codex then opened Subscriptions and triggered
+  the provider refresh himself.
+- Fresh native result at **24 July 2026, 10:48 AM (Asia/Dhaka)**:
+  `$57.81` verified prepaid cash, `$161.87` provider MTD, `0` due within 7 days,
+  and `0` attention.
+- Twilio and OpenRouter wallets, OpenAI official cost, Google Billing Export,
+  ElevenLabs quota/plan/invoice, fal.ai wallet, FASHN quota, xAI wallet/invoice,
+  and Vercel FOCUS charges all rendered with their expected live/provider-delayed
+  field states.
+- Supabase remained manual and Oxylabs/Fal Admin remained owner-deferred, as expected.
+- The protected Vercel Preview required a simulator-only share-cookie bootstrap before
+  the app's redirect-blocking API session could call the branch alias. No source or
+  production behavior was changed for this verification.
+
+Native proof screenshots:
+
+- `/tmp/alma-phase69-ios-live-final.png`
+- `/tmp/alma-phase69-ios-live-page2.png`
+- `/tmp/alma-phase69-ios-live-page3.png`
+- `/tmp/alma-phase69-ios-live-page4.png`
+- `/tmp/alma-phase69-ios-live-page5.png`
 
 ## Migration
 
@@ -118,7 +137,7 @@ Vercel preview build logs confirm the migration was applied successfully.
 | Vercel preview build/deployment | PASS |
 | iOS workspace simulator build | PASS |
 | Owner Chrome live preview + refresh | PASS |
-| Isolated iOS simulator render + refresh | PENDING — owner login required after reinstall |
+| Isolated iOS simulator render + provider refresh | PASS |
 | Production deployment/merge | NOT DONE — intentionally owner-gated |
 
 After Next regenerates `.next/types`, the repository's pre-existing generated route
