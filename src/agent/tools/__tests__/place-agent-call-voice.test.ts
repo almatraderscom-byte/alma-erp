@@ -5,6 +5,8 @@
  * so these tests exercise the handler contract both ways.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const mockPrisma = vi.hoisted(() => ({
   familyContact: { findMany: vi.fn().mockResolvedValue([]), create: vi.fn() },
@@ -76,8 +78,6 @@ describe('place_agent_call — voice-approved direct dial (PA-5R)', () => {
 
 describe('server-side flag injection (spoof-proofing)', () => {
   it('core + run-owner-turn always set voiceCallInstruction in serverContext', () => {
-    const { readFileSync } = require('node:fs') as typeof import('node:fs')
-    const { join } = require('node:path') as typeof import('node:path')
     for (const f of ['src/agent/lib/core.ts', 'src/agent/lib/models/run-owner-turn.ts']) {
       const src = readFileSync(join(process.cwd(), f), 'utf8')
       expect(src, `${f} must derive the flag`).toContain('isVoiceInstructionText(lastUserText)')
