@@ -229,6 +229,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   openai: '#81B29A',
   openrouter: '#A78BFA',
   gemini: '#3B82F6',
+  xai: '#64748B',
   google_tts: '#8B5CF6',
   twilio: '#D4A84B',
   elevenlabs: '#EC4899',
@@ -240,6 +241,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   openai: 'OpenAI',
   openrouter: 'OpenRouter',
   gemini: 'Gemini',
+  xai: 'xAI (Grok)',
   google_tts: 'Google TTS',
   twilio: 'Twilio',
   elevenlabs: 'ElevenLabs',
@@ -945,6 +947,7 @@ export default function AgentCostsDashboard() {
     openai: Number(d.openai ?? 0),
     openrouter: Number(d.openrouter ?? 0),
     gemini: Number(d.gemini ?? 0),
+    xai: Number(d.xai ?? 0),
     google_tts: Number(d.google_tts ?? 0),
     elevenlabs: Number(d.elevenlabs ?? 0),
     veo: Number(d.veo ?? 0),
@@ -1498,6 +1501,7 @@ export default function AgentCostsDashboard() {
                 <Bar dataKey="openai" stackId="a" fill={PROVIDER_COLORS.openai} />
                 <Bar dataKey="openrouter" stackId="a" fill={PROVIDER_COLORS.openrouter} />
                 <Bar dataKey="gemini" stackId="a" fill={PROVIDER_COLORS.gemini} />
+                <Bar dataKey="xai" stackId="a" fill={PROVIDER_COLORS.xai} />
                 <Bar dataKey="google_tts" stackId="a" fill={PROVIDER_COLORS.google_tts} />
                 <Bar dataKey="elevenlabs" stackId="a" fill={PROVIDER_COLORS.elevenlabs} />
                 <Bar dataKey="veo" stackId="a" fill={PROVIDER_COLORS.veo} />

@@ -9,6 +9,7 @@ export type CostProvider =
   | 'openai'
   | 'openrouter'
   | 'gemini'
+  | 'xai'
   | 'veo'
   | 'google_tts'
   | 'twilio'

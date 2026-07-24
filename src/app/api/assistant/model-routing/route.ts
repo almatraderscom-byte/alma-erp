@@ -14,6 +14,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
+import { EFFECTIVE_PROVIDER_SQL } from '@/agent/lib/api-balances'
 import { todayYmdDhaka, dhakaDayBounds } from '@/lib/agent-api/dhaka-date'
 import {
   getModelRoutingConfig,
@@ -33,6 +34,10 @@ const ESCALATION_CANDIDATE_IDS = ['claude-opus-4-8', 'gemini-3.1-pro', 'gpt-5.5'
 /** Friendly identity for each underlying provider — the owner's "agents". */
 const AGENT_PROFILE: Record<string, { emoji: string; label: string; role: string }> = {
   anthropic: { emoji: '🧠', label: 'হেড এজেন্ট', role: 'Reasoning · chat · decisions (Claude)' },
+  // Cost audit 2026-07-24: Grok head + OpenRouter workers get their own cards —
+  // both previously collapsed into 'openai' and displayed as Whisper/voice cost.
+  xai: { emoji: '🧠', label: 'হেড এজেন্ট (Grok)', role: 'Reasoning · chat · decisions (Grok)' },
+  openrouter: { emoji: '🤝', label: 'সাব-এজেন্ট পুল', role: 'Specialists · triage (DeepSeek · Qwen)' },
   google: { emoji: '🎨', label: 'ইমেজ ও ভিডিও', role: 'Image / video generation (Gemini · Veo)' },
   gemini: { emoji: '🎨', label: 'ইমেজ ও ভিডিও', role: 'Image / video generation (Gemini)' },
   openai: { emoji: '🎙️', label: 'ভয়েস (Whisper)', role: 'Voice transcription / embeddings' },
@@ -65,11 +70,13 @@ export async function GET(req: NextRequest) {
   ])
 
   // Per-provider activity today → the "what each agent did today" CCTV view.
+  // EFFECTIVE_PROVIDER_SQL re-homes historical rows whose cost column was
+  // mislabeled (Grok/DeepSeek turns stored as 'openai') to their real provider.
   const providerRows = await prisma.$queryRaw<Array<{ provider: string; calls: bigint; total: string }>>(
-    Prisma.sql`SELECT provider, COUNT(*) AS calls, COALESCE(SUM(cost_usd), 0)::text AS total
+    Prisma.sql`SELECT ${EFFECTIVE_PROVIDER_SQL} AS provider, COUNT(*) AS calls, COALESCE(SUM(cost_usd), 0)::text AS total
                FROM agent_cost_events
                WHERE occurred_at >= ${start} AND occurred_at < ${end}
-               GROUP BY provider
+               GROUP BY 1
                ORDER BY SUM(cost_usd) DESC`,
   ).catch(() => [] as Array<{ provider: string; calls: bigint; total: string }>)
 
@@ -199,19 +206,28 @@ export async function GET(req: NextRequest) {
     }
   })
 
-  const headTokenRows = await prisma.$queryRaw<Array<{ input_tokens: string; output_tokens: string }>>(
+  // Head-turn token totals — provider-agnostic (the head has been Claude, Gemini
+  // and now Grok; the old provider='anthropic' filter zeroed this out the moment
+  // the head moved off Claude). Owner head turns are precisely the events with
+  // dedup_key 'chat:msg:<id>' (run-owner-turn's long-standing key format) — this
+  // excludes specialists, triage/classifier helpers, and background summarizers
+  // that also log kind='chat'.
+  const headTokenRows = await prisma.$queryRaw<Array<{ input_tokens: string; output_tokens: string; cache_read: string }>>(
     Prisma.sql`SELECT COALESCE(SUM((units->>'input_tokens')::bigint), 0)::text AS input_tokens,
-                      COALESCE(SUM((units->>'output_tokens')::bigint), 0)::text AS output_tokens
+                      COALESCE(SUM((units->>'output_tokens')::bigint), 0)::text AS output_tokens,
+                      COALESCE(SUM((units->>'cache_read_input_tokens')::bigint), 0)::text AS cache_read
                FROM agent_cost_events
                WHERE occurred_at >= ${start} AND occurred_at < ${end}
-                 AND provider = 'anthropic'
                  AND kind = 'chat'
-                 AND units->>'subagent' IS NULL`,
-  ).catch(() => [{ input_tokens: '0', output_tokens: '0' }])
+                 AND dedup_key LIKE 'chat:msg:%'`,
+  ).catch(() => [{ input_tokens: '0', output_tokens: '0', cache_read: '0' }])
 
   const headTokensToday = {
     inputTokens: parseInt(headTokenRows[0]?.input_tokens ?? '0', 10) || 0,
     outputTokens: parseInt(headTokenRows[0]?.output_tokens ?? '0', 10) || 0,
+    // Prompt-cache effectiveness (Phase 1 cache activation): cached input tokens
+    // + hit% so the owner can SEE whether the provider prefix cache is working.
+    cacheReadTokens: parseInt(headTokenRows[0]?.cache_read ?? '0', 10) || 0,
   }
 
   const criticalModelOptions = ESCALATION_CANDIDATE_IDS.map((id) => {

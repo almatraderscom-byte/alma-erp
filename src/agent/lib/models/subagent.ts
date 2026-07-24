@@ -99,9 +99,14 @@ function buildSystemPrompt(def: (typeof SPECIALIST_ROLES)[SpecialistRole]): stri
   )
 }
 
-function costProviderForModel(model: ModelEntry): 'anthropic' | 'openai' | 'gemini' {
+// Cost audit 2026-07-24: specialists bill under their REAL provider. The old
+// openrouter→'openai' collapse dumped DeepSeek/Qwen worker spend onto the
+// dashboard's Whisper/voice card (mislabeled voice cost incident).
+function costProviderForModel(model: ModelEntry): 'anthropic' | 'openai' | 'gemini' | 'openrouter' | 'xai' {
   if (model.provider === 'google') return 'gemini'
-  if (model.provider === 'openrouter' || model.provider === 'openai') return 'openai'
+  if (model.provider === 'openrouter') return 'openrouter'
+  if (model.provider === 'xai') return 'xai'
+  if (model.provider === 'openai') return 'openai'
   return 'anthropic'
 }
 
