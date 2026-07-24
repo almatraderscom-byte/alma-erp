@@ -2,18 +2,64 @@ import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creativ
 import type { EngineAvailability, StudioEngineId } from '@/lib/creative-studio/provider-registry'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 import type { LifestyleLayoutOverrides } from '@/lib/content-engine/lifestyle-layout'
-import type {
-  GalleryMediaFilter,
-  GalleryQcFilter,
-  GalleryStateFilter,
-} from '@/lib/creative-studio/gallery-query'
+import type { GalleryMediaFilter, GalleryQcFilter, GalleryStateFilter } from '@/lib/creative-studio/gallery-query'
 import type { StudioAssetState } from '@/lib/creative-studio/studio-policy'
 import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
 
-async function readStudioResponse<T>(res: Response, fallback: string): Promise<T> {
+export const STUDIO_NAV_DEFINITIONS = [
+  { id: 'studio', label: 'স্টুডিও' },
+  { id: 'gallery', label: 'গ্যালারি' },
+  { id: 'video', label: 'ভিডিও' },
+  { id: 'audio', label: 'অডিও' },
+  { id: 'library', label: 'লাইব্রেরি' },
+] as const
+
+export type StudioView = (typeof STUDIO_NAV_DEFINITIONS)[number]['id']
+
+export function isStudioView(value: unknown): value is StudioView {
+  return typeof value === 'string' && STUDIO_NAV_DEFINITIONS.some((item) => item.id === value)
+}
+
+export function normalizeStudioView(value: unknown): StudioView {
+  return isStudioView(value) ? value : 'studio'
+}
+
+export class StudioClientError extends Error {
+  readonly status: number
+  readonly code: string
+
+  constructor(message: string, status: number, code: string) {
+    super(message)
+    this.name = 'StudioClientError'
+    this.status = status
+    this.code = code
+  }
+}
+
+function errorCodeFromPayload(payload: unknown, fallback: string): string {
+  if (!payload || typeof payload !== 'object') return fallback
+  const value = (payload as Record<string, unknown>).code ?? (payload as Record<string, unknown>).error
+  return typeof value === 'string' && /^[a-z0-9_-]{2,80}$/i.test(value) ? value.toLowerCase() : fallback
+}
+
+export function normalizeStudioApiError(payload: unknown, status: number, fallback: string): StudioClientError {
+  return new StudioClientError(sanitizeStudioError(payload, status), status, errorCodeFromPayload(payload, fallback))
+}
+
+export async function readStudioResponse<T>(res: Response, fallback: string): Promise<T> {
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(sanitizeStudioError(data, res.status) || fallback)
+  if (!res.ok) throw normalizeStudioApiError(data, res.status, fallback)
   return data as T
+}
+
+export async function studioRequest<T>(input: RequestInfo | URL, init: RequestInit | undefined, fallback: string): Promise<T> {
+  try {
+    const response = await fetch(input, init)
+    return await readStudioResponse<T>(response, fallback)
+  } catch (error) {
+    if (error instanceof StudioClientError) throw error
+    throw normalizeStudioApiError(error, 0, fallback)
+  }
 }
 
 export type StudioConfig = {
@@ -52,7 +98,12 @@ export type GalleryItem = {
   latencyMs?: number | null
   costUsd?: number | null
   researchOnly?: boolean
-  qc?: { pass?: boolean; overall?: number; attempts?: number; flagged?: string } | null
+  qc?: {
+    pass?: boolean
+    overall?: number
+    attempts?: number
+    flagged?: string
+  } | null
   /** CS10 — plain-Bangla QC/protection summary for the lightbox */
   qcDetailsBn?: string | null
   maskPreset?: string | null
@@ -107,9 +158,7 @@ export type FinishOptions = {
 }
 
 export async function fetchBrandStatus(): Promise<BrandStatus> {
-  const res = await fetch('/api/assistant/creative-studio/branding')
-  if (!res.ok) throw new Error('brand_status_failed')
-  return res.json()
+  return studioRequest<BrandStatus>('/api/assistant/creative-studio/branding', undefined, 'brand_status_failed')
 }
 
 /** Upload / replace the ALMA logo (auto-resized server-side). Stored in BrandAsset. */
@@ -117,20 +166,20 @@ export async function saveBrandLogo(logo: File, transparent = true): Promise<Bra
   const fd = new FormData()
   fd.append('logo', logo)
   fd.append('transparent', transparent ? '1' : '0')
-  const res = await fetch('/api/assistant/creative-studio/branding', { method: 'POST', body: fd })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message ?? data.error ?? 'logo_save_failed')
-  return data as BrandStatus
+  return studioRequest<BrandStatus>('/api/assistant/creative-studio/branding', { method: 'POST', body: fd }, 'logo_save_failed')
 }
 
 /** Apply the deterministic brand frame (logo + this image's code + hook). */
 export async function finishImage(opts: FinishOptions): Promise<{ framedPath: string; framedUrl: string }> {
-  const res = await fetch('/api/assistant/creative-studio/finish', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(opts),
-  })
-  return readStudioResponse<{ framedPath: string; framedUrl: string }>(res, 'finish_failed')
+  return studioRequest<{ framedPath: string; framedUrl: string }>(
+    '/api/assistant/creative-studio/finish',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts),
+    },
+    'finish_failed',
+  )
 }
 
 export type RunPayload = {
@@ -167,9 +216,7 @@ export type RunPayload = {
 }
 
 export async function fetchStudioConfig(): Promise<StudioConfig> {
-  const res = await fetch('/api/assistant/creative-studio/config')
-  if (!res.ok) throw new Error('config_failed')
-  return res.json()
+  return studioRequest<StudioConfig>('/api/assistant/creative-studio/config', undefined, 'config_failed')
 }
 
 /**
@@ -181,8 +228,7 @@ export async function fetchStudioConfig(): Promise<StudioConfig> {
  * send the original and let the server handle it.
  */
 async function prepareImageForUpload(file: File): Promise<File> {
-  const looksImage =
-    file.type.startsWith('image/') || /\.(heic|heif|jpe?g|png|webp)$/i.test(file.name)
+  const looksImage = file.type.startsWith('image/') || /\.(heic|heif|jpe?g|png|webp)$/i.test(file.name)
   if (!looksImage || typeof document === 'undefined') return file
   try {
     const bitmap = await createImageBitmap(file)
@@ -197,9 +243,7 @@ async function prepareImageForUpload(file: File): Promise<File> {
     if (!ctx) return file
     ctx.drawImage(bitmap, 0, 0, width, height)
     bitmap.close?.()
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.9),
-    )
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.9))
     if (!blob) return file
     const baseName = file.name.replace(/\.[^.]+$/, '') || 'image'
     return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' })
@@ -216,14 +260,11 @@ export type DriveStatus = {
 }
 
 export async function fetchDriveStatus(): Promise<DriveStatus> {
-  const res = await fetch('/api/assistant/creative-studio/drive-status')
-  if (!res.ok) throw new Error('drive_status_failed')
-  return res.json()
+  return studioRequest<DriveStatus>('/api/assistant/creative-studio/drive-status', undefined, 'drive_status_failed')
 }
 
 export async function disconnectDrive(): Promise<void> {
-  const res = await fetch('/api/assistant/creative-studio/drive-status', { method: 'DELETE' })
-  if (!res.ok) throw new Error('drive_disconnect_failed')
+  await studioRequest<unknown>('/api/assistant/creative-studio/drive-status', { method: 'DELETE' }, 'drive_disconnect_failed')
 }
 
 /** Full-page redirect into Google's consent screen (one-time connect). */
@@ -236,14 +277,15 @@ export async function uploadStudioFile(file: File, folder: string): Promise<stri
   const fd = new FormData()
   fd.append('file', prepared)
   fd.append('conversationId', folder)
-  const res = await fetch('/api/assistant/upload', { method: 'POST', body: fd })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? 'upload_failed')
-  return data.path as string
+  const data = await studioRequest<{ path: string }>('/api/assistant/upload', { method: 'POST', body: fd }, 'upload_failed')
+  return data.path
 }
 
 /** CS7 — upload a painted FLUX Fill mask; server validates dims vs base + coverage. */
-export async function uploadFillMask(maskBlob: Blob, basePath: string): Promise<{
+export async function uploadFillMask(
+  maskBlob: Blob,
+  basePath: string,
+): Promise<{
   maskPath: string
   width: number
   height: number
@@ -253,34 +295,45 @@ export async function uploadFillMask(maskBlob: Blob, basePath: string): Promise<
   const fd = new FormData()
   fd.append('mask', new File([maskBlob], 'mask.png', { type: 'image/png' }))
   fd.append('basePath', basePath)
-  const res = await fetch('/api/assistant/creative-studio/mask-upload', { method: 'POST', body: fd })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? 'mask_upload_failed')
-  return data
+  return studioRequest<{
+    maskPath: string
+    width: number
+    height: number
+    coveragePct: number
+    estimatedCostUsd: number
+  }>('/api/assistant/creative-studio/mask-upload', { method: 'POST', body: fd }, 'mask_upload_failed')
 }
 
 export async function runStudioJob(payload: RunPayload) {
-  const res = await fetch('/api/assistant/creative-studio/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  return readStudioResponse<{
+  return studioRequest<{
     jobs: Array<{ pendingActionId: string; label: string }>
     provider: string
     message: string
-  }>(res, 'run_failed')
+  }>(
+    '/api/assistant/creative-studio/run',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    'run_failed',
+  )
 }
 
 export async function runAutoStudioJob(input: { productImagePath: string; includeFamily?: boolean; includeReel?: boolean }) {
-  const res = await fetch('/api/assistant/creative-studio/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ auto: true, ...input }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? data.message ?? 'run_failed')
-  return data as { jobs: Array<{ pendingActionId: string; label: string }>; provider: string; message: string }
+  return studioRequest<{
+    jobs: Array<{ pendingActionId: string; label: string }>
+    provider: string
+    message: string
+  }>(
+    '/api/assistant/creative-studio/run',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto: true, ...input }),
+    },
+    'run_failed',
+  )
 }
 
 export type GalleryQuery = {
@@ -312,8 +365,7 @@ export async function fetchGallery(input: GalleryQuery | number = {}): Promise<G
   if (query.qc && query.qc !== 'all') params.set('qc', query.qc)
   if (query.query?.trim()) params.set('q', query.query.trim())
   if (query.includeTest) params.set('includeTest', '1')
-  const res = await fetch(`/api/assistant/creative-studio/gallery?${params.toString()}`)
-  return readStudioResponse<GalleryPage>(res, 'gallery_failed')
+  return studioRequest<GalleryPage>(`/api/assistant/creative-studio/gallery?${params.toString()}`, undefined, 'gallery_failed')
 }
 
 export type SavedStudioModel = {
@@ -330,9 +382,7 @@ export type SavedStudioModel = {
 }
 
 export async function fetchModels() {
-  const res = await fetch('/api/assistant/brand-models')
-  if (!res.ok) throw new Error('models_failed')
-  return res.json() as Promise<{ models: SavedStudioModel[] }>
+  return studioRequest<{ models: SavedStudioModel[] }>('/api/assistant/brand-models', undefined, 'models_failed')
 }
 
 // ── CS14: Model Avatar (multi-angle identity) ───────────────────────────────
@@ -349,64 +399,73 @@ export type StudioModelAvatar = {
 }
 
 export async function fetchAvatar(modelId: string) {
-  const res = await fetch(`/api/assistant/brand-models/avatar?id=${encodeURIComponent(modelId)}`)
-  if (!res.ok) throw new Error('avatar_failed')
-  return res.json() as Promise<{ avatar: StudioModelAvatar | null }>
+  return studioRequest<{ avatar: StudioModelAvatar | null }>(
+    `/api/assistant/brand-models/avatar?id=${encodeURIComponent(modelId)}`,
+    undefined,
+    'avatar_failed',
+  )
 }
 
 export async function setAvatarImages(modelId: string, imagePaths: string[]) {
-  const res = await fetch('/api/assistant/brand-models/avatar', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'set_images', id: modelId, imagePaths }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message ?? data.error ?? 'avatar_save_failed')
-  return data as { ok: true; count: number; max: number }
+  return studioRequest<{ ok: true; count: number; max: number }>(
+    '/api/assistant/brand-models/avatar',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'set_images', id: modelId, imagePaths }),
+    },
+    'avatar_save_failed',
+  )
 }
 
 export async function buildAvatar(modelId: string, canonical: boolean) {
-  const res = await fetch('/api/assistant/brand-models/avatar', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'build', id: modelId, canonical }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message ?? data.error ?? 'avatar_build_failed')
-  return data as { ok: true; pendingActionId: string }
+  return studioRequest<{ ok: true; pendingActionId: string }>(
+    '/api/assistant/brand-models/avatar',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'build', id: modelId, canonical }),
+    },
+    'avatar_build_failed',
+  )
 }
 
 export async function clearAvatarImages(modelId: string) {
-  const res = await fetch('/api/assistant/brand-models/avatar', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'clear', id: modelId }),
-  })
-  if (!res.ok) throw new Error('avatar_clear_failed')
+  await studioRequest<unknown>(
+    '/api/assistant/brand-models/avatar',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'clear', id: modelId }),
+    },
+    'avatar_clear_failed',
+  )
 }
 
 /** Make one saved model the default the Auto tab uses (per-image select stays manual). */
 export async function setDefaultModel(id: string) {
-  const res = await fetch('/api/assistant/brand-models', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'set_default', id }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message ?? data.error ?? 'set_default_failed')
-  return data
+  return studioRequest<unknown>(
+    '/api/assistant/brand-models',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'set_default', id }),
+    },
+    'set_default_failed',
+  )
 }
 
 /** Remove a saved model from the library. */
 export async function deleteModel(id: string) {
-  const res = await fetch('/api/assistant/brand-models', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'remove', id }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message ?? data.error ?? 'delete_failed')
-  return data
+  return studioRequest<unknown>(
+    '/api/assistant/brand-models',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'remove', id }),
+    },
+    'delete_failed',
+  )
 }
 
 // ── Phase V1: owner-shot video → deterministic recipe reels ─────────────────
@@ -430,9 +489,7 @@ export type VideoJobStatus = {
 }
 
 export async function fetchStudioVideos(): Promise<StudioVideoUpload[]> {
-  const res = await fetch('/api/assistant/creative-studio/video')
-  if (!res.ok) throw new Error('videos_failed')
-  const data = await res.json()
+  const data = await studioRequest<{ uploads?: StudioVideoUpload[] }>('/api/assistant/creative-studio/video', undefined, 'videos_failed')
   return (data.uploads ?? []) as StudioVideoUpload[]
 }
 
@@ -441,17 +498,21 @@ export async function fetchStudioVideos(): Promise<StudioVideoUpload[]> {
  * signed upload URL — Vercel never sees the body. XHR (not fetch) so the owner
  * gets a real progress bar on a multi-minute upload.
  */
-export async function uploadStudioVideo(
-  file: File,
-  onProgress?: (pct: number) => void,
-): Promise<StudioVideoUpload> {
-  const urlRes = await fetch('/api/assistant/creative-studio/video/upload-url', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fileName: file.name, sizeBytes: file.size }),
-  })
-  const urlData = await urlRes.json().catch(() => ({}))
-  if (!urlRes.ok) throw new Error(urlData.error ?? 'upload_url_failed')
+export async function uploadStudioVideo(file: File, onProgress?: (pct: number) => void): Promise<StudioVideoUpload> {
+  const urlData = await studioRequest<{
+    uploadUrl: string
+    uploadId: string
+    path: string
+    contentType?: string
+  }>(
+    '/api/assistant/creative-studio/video/upload-url',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName: file.name, sizeBytes: file.size }),
+    },
+    'upload_url_failed',
+  )
 
   await new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -460,29 +521,30 @@ export async function uploadStudioVideo(
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100))
     }
-    xhr.onload = () =>
-      xhr.status >= 200 && xhr.status < 300
-        ? resolve()
-        : reject(new Error(`upload_failed_${xhr.status}`))
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`upload_failed_${xhr.status}`)))
     xhr.onerror = () => reject(new Error('upload_network_error'))
     xhr.send(file)
   })
 
-  const regRes = await fetch('/api/assistant/creative-studio/video', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ uploadId: urlData.uploadId, path: urlData.path, name: file.name, sizeBytes: file.size }),
-  })
-  const regData = await regRes.json().catch(() => ({}))
-  if (!regRes.ok) throw new Error(regData.error ?? 'register_failed')
+  const regData = await studioRequest<{ upload: StudioVideoUpload }>(
+    '/api/assistant/creative-studio/video',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        uploadId: urlData.uploadId,
+        path: urlData.path,
+        name: file.name,
+        sizeBytes: file.size,
+      }),
+    },
+    'register_failed',
+  )
   return regData.upload as StudioVideoUpload
 }
 
 export async function deleteStudioVideo(id: string): Promise<void> {
-  const res = await fetch(`/api/assistant/creative-studio/video?id=${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  })
-  if (!res.ok) throw new Error('delete_failed')
+  await studioRequest<unknown>(`/api/assistant/creative-studio/video?id=${encodeURIComponent(id)}`, { method: 'DELETE' }, 'delete_failed')
 }
 
 export type StudioMusicTrack = {
@@ -495,25 +557,26 @@ export type StudioMusicTrack = {
 }
 
 export async function fetchMusicTracks(): Promise<StudioMusicTrack[]> {
-  const res = await fetch('/api/assistant/creative-studio/music')
-  if (!res.ok) throw new Error('music_failed')
-  const data = await res.json()
+  const data = await studioRequest<{ tracks?: StudioMusicTrack[] }>('/api/assistant/creative-studio/music', undefined, 'music_failed')
   return (data.tracks ?? []) as StudioMusicTrack[]
 }
 
 /** Owner-approved music beds only — uploaded from his own files, signed direct upload. */
-export async function uploadMusicTrack(
-  file: File,
-  vibe: string,
-  onProgress?: (pct: number) => void,
-): Promise<StudioMusicTrack> {
-  const urlRes = await fetch('/api/assistant/creative-studio/music/upload-url', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fileName: file.name, sizeBytes: file.size }),
-  })
-  const urlData = await urlRes.json().catch(() => ({}))
-  if (!urlRes.ok) throw new Error(urlData.error ?? 'upload_url_failed')
+export async function uploadMusicTrack(file: File, vibe: string, onProgress?: (pct: number) => void): Promise<StudioMusicTrack> {
+  const urlData = await studioRequest<{
+    uploadUrl: string
+    uploadId: string
+    path: string
+    contentType?: string
+  }>(
+    '/api/assistant/creative-studio/music/upload-url',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName: file.name, sizeBytes: file.size }),
+    },
+    'upload_url_failed',
+  )
 
   await new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -522,37 +585,44 @@ export async function uploadMusicTrack(
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100))
     }
-    xhr.onload = () =>
-      xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`upload_failed_${xhr.status}`))
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`upload_failed_${xhr.status}`)))
     xhr.onerror = () => reject(new Error('upload_network_error'))
     xhr.send(file)
   })
 
-  const regRes = await fetch('/api/assistant/creative-studio/music', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ uploadId: urlData.uploadId, path: urlData.path, name: file.name, vibe, sizeBytes: file.size }),
-  })
-  const regData = await regRes.json().catch(() => ({}))
-  if (!regRes.ok) throw new Error(regData.error ?? 'register_failed')
+  const regData = await studioRequest<{ track: StudioMusicTrack }>(
+    '/api/assistant/creative-studio/music',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        uploadId: urlData.uploadId,
+        path: urlData.path,
+        name: file.name,
+        vibe,
+        sizeBytes: file.size,
+      }),
+    },
+    'register_failed',
+  )
   return regData.track as StudioMusicTrack
 }
 
 export async function deleteMusicTrack(id: string): Promise<void> {
-  const res = await fetch(`/api/assistant/creative-studio/music?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error('delete_failed')
+  await studioRequest<unknown>(`/api/assistant/creative-studio/music?id=${encodeURIComponent(id)}`, { method: 'DELETE' }, 'delete_failed')
 }
 
 /** Set a reel's cover from the worker's candidate frames. */
 export async function setReelCover(pendingActionId: string, coverPath: string): Promise<{ thumbUrl: string | null }> {
-  const res = await fetch('/api/assistant/creative-studio/video/cover', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pendingActionId, coverPath }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? 'cover_failed')
-  return data as { thumbUrl: string | null }
+  return studioRequest<{ thumbUrl: string | null }>(
+    '/api/assistant/creative-studio/video/cover',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pendingActionId, coverPath }),
+    },
+    'cover_failed',
+  )
 }
 
 export type VideoFinishTemplates = {
@@ -568,12 +638,15 @@ export async function finishVideo(
   pendingActionId: string,
   templates: VideoFinishTemplates,
 ): Promise<{ pendingActionId: string; message: string }> {
-  const res = await fetch('/api/assistant/creative-studio/video/finish', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pendingActionId, templates }),
-  })
-  return readStudioResponse<{ pendingActionId: string; message: string }>(res, 'finish_failed')
+  return studioRequest<{ pendingActionId: string; message: string }>(
+    '/api/assistant/creative-studio/video/finish',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pendingActionId, templates }),
+    },
+    'finish_failed',
+  )
 }
 
 // ── E1 Audio Lab helpers ─────────────────────────────────────────────────────
@@ -586,9 +659,7 @@ export type AudioLabStatus = {
 }
 
 export async function fetchAudioLabStatus(): Promise<AudioLabStatus> {
-  const res = await fetch('/api/assistant/creative-studio/audio')
-  if (!res.ok) throw new Error('audio_status_failed')
-  return res.json()
+  return studioRequest<AudioLabStatus>('/api/assistant/creative-studio/audio', undefined, 'audio_status_failed')
 }
 
 export type AudioJobEstimate = {
@@ -599,34 +670,47 @@ export type AudioJobEstimate = {
 }
 
 export async function estimateAudioJob(body: Record<string, unknown>): Promise<AudioJobEstimate> {
-  const res = await fetch('/api/assistant/creative-studio/audio', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, intent: 'estimate' }),
-  })
-  return readStudioResponse<AudioJobEstimate>(res, 'audio_estimate_failed')
+  return studioRequest<AudioJobEstimate>(
+    '/api/assistant/creative-studio/audio',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, intent: 'estimate' }),
+    },
+    'audio_estimate_failed',
+  )
 }
 
-export async function queueAudioJob(
-  body: Record<string, unknown>,
-  confirmation: { confirmedCostBdt: number; costCapBdt: number },
-) {
-  const res = await fetch('/api/assistant/creative-studio/audio', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, intent: 'queue', ...confirmation }),
-  })
-  return readStudioResponse<{ pendingActionId: string; costBdt: number; maxCostBdt: number }>(res, 'audio_failed')
+export async function queueAudioJob(body: Record<string, unknown>, confirmation: { confirmedCostBdt: number; costCapBdt: number }) {
+  return studioRequest<{
+    pendingActionId: string
+    costBdt: number
+    maxCostBdt: number
+  }>(
+    '/api/assistant/creative-studio/audio',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, intent: 'queue', ...confirmation }),
+    },
+    'audio_failed',
+  )
 }
 
 export async function uploadAudioFile(file: File, onProgress?: (pct: number) => void): Promise<string> {
-  const urlRes = await fetch('/api/assistant/creative-studio/audio/upload-url', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fileName: file.name, sizeBytes: file.size }),
-  })
-  const urlData = await urlRes.json().catch(() => ({}))
-  if (!urlRes.ok) throw new Error(urlData.error ?? 'upload_url_failed')
+  const urlData = await studioRequest<{
+    uploadUrl: string
+    path: string
+    contentType?: string
+  }>(
+    '/api/assistant/creative-studio/audio/upload-url',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName: file.name, sizeBytes: file.size }),
+    },
+    'upload_url_failed',
+  )
   await new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('PUT', urlData.uploadUrl)
@@ -644,20 +728,23 @@ export async function uploadAudioFile(file: File, onProgress?: (pct: number) => 
 // ── CS4 helpers ──────────────────────────────────────────────────────────────
 
 export async function sendItemFeedback(pendingActionId: string, verdict: 'good' | 'bad') {
-  const res = await fetch('/api/assistant/creative-studio/feedback', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pendingActionId, verdict }),
-  })
-  if (!res.ok) throw new Error('feedback_failed')
-  return res.json() as Promise<{ weighted: boolean; weight?: number }>
+  return studioRequest<{ weighted: boolean; weight?: number }>(
+    '/api/assistant/creative-studio/feedback',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pendingActionId, verdict }),
+    },
+    'feedback_failed',
+  )
 }
 
 export async function retryStudioJob(pendingActionId: string) {
-  const res = await fetch(`/api/assistant/creative-studio/jobs/${pendingActionId}/retry`, { method: 'POST' })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? 'retry_failed')
-  return data as { pendingActionId: string }
+  return studioRequest<{ pendingActionId: string }>(
+    `/api/assistant/creative-studio/jobs/${pendingActionId}/retry`,
+    { method: 'POST' },
+    'retry_failed',
+  )
 }
 
 export type StudioSettings = {
@@ -666,7 +753,13 @@ export type StudioSettings = {
   /** Which model family renders images: Nano Banana (default) or GPT Image 2. */
   imageEngine: 'gemini' | 'gpt' | 'seedream'
   sceneWeights: Record<string, number>
-  childGarments: Array<{ key: string; role: string; productPath: string; garmentPath: string; url: string | null }>
+  childGarments: Array<{
+    key: string
+    role: string
+    productPath: string
+    garmentPath: string
+    url: string | null
+  }>
   /** CS5 — Fal foundation flags (default OFF; engines runnable from CS6/CS7) */
   falEnabled: boolean
   idmVtonEnabled: boolean
@@ -679,9 +772,7 @@ export type StudioSettings = {
 }
 
 export async function fetchStudioSettings(): Promise<StudioSettings> {
-  const res = await fetch('/api/assistant/creative-studio/settings')
-  if (!res.ok) throw new Error('settings_failed')
-  return res.json()
+  return studioRequest<StudioSettings>('/api/assistant/creative-studio/settings', undefined, 'settings_failed')
 }
 
 export async function saveStudioSettings(patch: {
@@ -695,17 +786,23 @@ export async function saveStudioSettings(patch: {
   singleVtonDefault?: StudioEngineId
   pipelineMode?: 'preview' | 'production'
 }) {
-  const res = await fetch('/api/assistant/creative-studio/settings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  })
-  if (!res.ok) throw new Error('settings_save_failed')
+  await studioRequest<unknown>(
+    '/api/assistant/creative-studio/settings',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    },
+    'settings_save_failed',
+  )
 }
 
 export async function deleteGarmentCache(key: string) {
-  const res = await fetch(`/api/assistant/creative-studio/settings?key=${encodeURIComponent(key)}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error('cache_delete_failed')
+  await studioRequest<unknown>(
+    `/api/assistant/creative-studio/settings?key=${encodeURIComponent(key)}`,
+    { method: 'DELETE' },
+    'cache_delete_failed',
+  )
 }
 
 // ── CS12: engine health + kill switches ─────────────────────────────────────
@@ -742,29 +839,40 @@ export type StudioHealth = {
     lastSeenBn: string
     healthy: boolean
   }
-  balances: Array<{ id: string; label: string; balanceUsd: number | null; monthUsd: number | null }>
+  balances: Array<{
+    id: string
+    label: string
+    balanceUsd: number | null
+    monthUsd: number | null
+  }>
 }
 
 export async function fetchStudioHealth(): Promise<StudioHealth> {
-  const res = await fetch('/api/assistant/creative-studio/health')
-  if (!res.ok) throw new Error('health_failed')
-  return res.json()
+  return studioRequest<StudioHealth>('/api/assistant/creative-studio/health', undefined, 'health_failed')
 }
 
 export async function setEngineKill(id: string, killed: boolean): Promise<void> {
-  const res = await fetch('/api/assistant/creative-studio/settings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ killEngine: { id, killed } }),
-  })
-  if (!res.ok) throw new Error('kill_save_failed')
+  await studioRequest<unknown>(
+    '/api/assistant/creative-studio/settings',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ killEngine: { id, killed } }),
+    },
+    'kill_save_failed',
+  )
 }
 
 // ── CS10: golden evaluation helpers ─────────────────────────────────────────
 
 export type GoldenEvalSummary = {
   cases: Array<{ id: string; garmentType: string; modelRole: string }>
-  runs: Array<{ runId: string; finishedAt: string; attempts: number; totalCostUsd: number }>
+  runs: Array<{
+    runId: string
+    finishedAt: string
+    attempts: number
+    totalCostUsd: number
+  }>
   comparison: {
     rankings: Array<{ engine: string; score: number; reasonBn: string }>
     recommended: string | null
@@ -773,31 +881,34 @@ export type GoldenEvalSummary = {
 }
 
 export async function fetchGoldenEval(): Promise<GoldenEvalSummary> {
-  const res = await fetch('/api/assistant/creative-studio/evaluations')
-  if (!res.ok) throw new Error('eval_fetch_failed')
-  return res.json()
+  return studioRequest<GoldenEvalSummary>('/api/assistant/creative-studio/evaluations', undefined, 'eval_fetch_failed')
 }
 
-export async function runGoldenEvalNow(): Promise<{ runId: string; estimatedCostUsd: number }> {
-  const res = await fetch('/api/assistant/creative-studio/evaluations', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'run' }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? 'eval_run_failed')
-  return data
+export async function runGoldenEvalNow(): Promise<{
+  runId: string
+  estimatedCostUsd: number
+}> {
+  return studioRequest<{ runId: string; estimatedCostUsd: number }>(
+    '/api/assistant/creative-studio/evaluations',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'run' }),
+    },
+    'eval_run_failed',
+  )
 }
 
 export async function generateBrandModel(role: string) {
-  const res = await fetch('/api/assistant/creative-studio/model-creator', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? 'model_gen_failed')
-  return data as { pendingActionId: string }
+  return studioRequest<{ pendingActionId: string }>(
+    '/api/assistant/creative-studio/model-creator',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role }),
+    },
+    'model_gen_failed',
+  )
 }
 
 export type VideoRunOptions = {
@@ -816,36 +927,36 @@ export async function runVideoRecipe(body: {
   targets: number[]
   aspect: string
   options?: VideoRunOptions
-}): Promise<{ jobs: Array<{ pendingActionId: string; label: string; targetSec: number }>; message: string }> {
-  const res = await fetch('/api/assistant/creative-studio/video/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? 'run_failed')
-  return data
+}): Promise<{
+  jobs: Array<{ pendingActionId: string; label: string; targetSec: number }>
+  message: string
+}> {
+  return studioRequest<{
+    jobs: Array<{ pendingActionId: string; label: string; targetSec: number }>
+    message: string
+  }>(
+    '/api/assistant/creative-studio/video/run',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    'run_failed',
+  )
 }
 
 export async function fetchVideoJob(id: string): Promise<VideoJobStatus> {
-  const res = await fetch(`/api/assistant/creative-studio/jobs/${id}`)
-  if (!res.ok) throw new Error('job_failed')
-  return res.json() as Promise<VideoJobStatus>
+  return studioRequest<VideoJobStatus>(`/api/assistant/creative-studio/jobs/${id}`, undefined, 'job_failed')
 }
 
-export async function saveModel(body: {
-  id: string
-  name: string
-  imagePath: string
-  role: string
-  notes?: string
-}) {
-  const res = await fetch('/api/assistant/brand-models', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'add', ...body }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message ?? data.error ?? 'save_failed')
-  return data
+export async function saveModel(body: { id: string; name: string; imagePath: string; role: string; notes?: string }) {
+  return studioRequest<unknown>(
+    '/api/assistant/brand-models',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'add', ...body }),
+    },
+    'save_failed',
+  )
 }
