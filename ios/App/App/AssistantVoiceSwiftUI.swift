@@ -1159,6 +1159,9 @@ final class AlmaVoiceEngine {
     /// audio, transcripts, nudges) without a microphone.
     func debugInjectUserTurn(_ text: String) {
         guard liveActive else { return }
+        lastUserTurnAt = Date()
+        ackNudgesThisUserTurn = 0
+        lastUserText = text
         _ = feedUpsert(id: nil, kind: .user, text: text)
         feedFinalizeUser()
         live.sendTextTurn(text)
@@ -1168,6 +1171,8 @@ final class AlmaVoiceEngine {
     func liveInputTranscript(_ text: String) {
         // Gemini sends input transcription as incremental fragments — build the
         // full sentence for the live feed line (and the legacy MIC strip).
+        lastUserTurnAt = Date()
+        ackNudgesThisUserTurn = 0
         if let id = feedUserLineId, let i = liveFeed.firstIndex(where: { $0.id == id }) {
             let joined = (liveFeed[i].text + text)
             transcript = joined
@@ -1200,6 +1205,40 @@ final class AlmaVoiceEngine {
             if let held = pendingLiveToolResult {
                 sendLiveToolResultNow(callId: held.callId, text: held.text)
             }
+            armAckWithoutToolWatch()
+        }
+    }
+
+    /// Gemini Live sometimes SAYS "এক্ষুনি দেখছি / চেক করছি" and then never calls
+    /// the tool (sim repro 2026-07-24: ads question — ack spoken, zero toolCall,
+    /// owner waits forever). Enforcement, not hope: if a spoken turn ends with an
+    /// ack phrase, no tool is pending, and no tool has run since Boss's last
+    /// sentence, a 5s watch orders it to run run_agent_turn NOW. Max twice per
+    /// user turn so a stubborn model can't loop us.
+    private var lastToolCallAt = Date.distantPast
+    private var lastUserTurnAt = Date.distantPast
+    private var ackNudgesThisUserTurn = 0
+    private static let ackMarkers = ["দেখছি", "চেক কর", "সময় দিন", "দেখে নিচ্ছি",
+                                     "আনিয়ে দিচ্ছি", "খোঁজ নিচ্ছি", "জানাচ্ছি"]
+
+    private func armAckWithoutToolWatch() {
+        guard liveActive, !liveToolTurnPending else { return }
+        guard lastUserTurnAt > lastToolCallAt else { return }   // tool already ran for this ask
+        guard ackNudgesThisUserTurn < 2 else { return }
+        let spoken = replyText
+        guard Self.ackMarkers.contains(where: { spoken.contains($0) }) else { return }
+        let userText = lastUserText
+        guard !userText.isEmpty else { return }
+        let armedAt = Date()
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard let self, self.liveActive, !self.liveToolTurnPending else { return }
+            guard self.lastToolCallAt < armedAt, self.lastUserTurnAt > self.lastToolCallAt else { return }
+            self.ackNudgesThisUserTurn += 1
+            #if DEBUG
+            NSLog("ALMA-VOICE ack-without-tool — forcing run_agent_turn (nudge %d)", self.ackNudgesThisUserTurn)
+            #endif
+            self.live.sendTextTurn("STATUS_NOTE: তুমি এইমাত্র চেক করার কথা বলেছ কিন্তু কোনো tool চালাওনি — এটা নিষিদ্ধ। এখনই run_agent_turn চালাও এই অনুরোধ নিয়ে: \"\(String(userText.prefix(300)))\"। আগে tool, তারপর কথা।")
         }
     }
 
@@ -1271,6 +1310,7 @@ final class AlmaVoiceEngine {
     /// in seconds. Actions/memory/complex work still cross the head route.
     func runQuickLookup(tool: String, callId: String) {
         let started = Date()
+        lastToolCallAt = started
         feedStatus("তথ্য দেখা হচ্ছে…")
         state = .thinking
         Task { [weak self] in
@@ -1301,6 +1341,7 @@ final class AlmaVoiceEngine {
     /// still crosses the existing head route, preserving memory, tools, approvals,
     /// claim verification, and the durable call workflow.
     func runLiveAgentTurn(request: String, callId: String) {
+        lastToolCallAt = Date()
         // Boss repeating himself while a head turn is ALREADY running must not
         // cancel-and-restart it — the server refuses a second concurrent turn on
         // the same conversation and 30s of tool work gets thrown away (owner
