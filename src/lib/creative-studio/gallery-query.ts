@@ -1,5 +1,3 @@
-import { Prisma } from '@prisma/client'
-
 export const GALLERY_PAGE_SIZE = 24
 export const GALLERY_MAX_PAGE_SIZE = 48
 
@@ -43,6 +41,27 @@ const QC_PASSED_WHERE = {
     { result: { path: ['qc', 'pass'], equals: true } },
     { result: { path: ['videoQc', 'pass'], equals: true } },
   ],
+}
+
+export const GALLERY_TEST_ARTIFACT_WHERE = {
+  OR: [
+    { payload: { path: ['testArtifact'], equals: true } },
+    { payload: { path: ['e2e'], equals: true } },
+    { payload: { path: ['videoName'], string_contains: 'e2e-' } },
+    { payload: { path: ['videoName'], string_contains: 'E2E-' } },
+    { summary: { contains: 'e2e-', mode: 'insensitive' } },
+  ],
+}
+
+export function isGalleryTestArtifact(row: {
+  payload?: Record<string, unknown> | null
+  summary?: string | null
+}): boolean {
+  const payload = row.payload ?? {}
+  return payload.testArtifact === true
+    || payload.e2e === true
+    || (typeof payload.videoName === 'string' && payload.videoName.toLowerCase().includes('e2e-'))
+    || (typeof row.summary === 'string' && row.summary.toLowerCase().includes('e2e-'))
 }
 
 function oneOf<T extends string>(value: string | null, values: Set<T>, fallback: T): T {
@@ -104,34 +123,6 @@ export function buildGalleryWhere(filters: GalleryFilters): Record<string, unkno
   else if (filters.media === 'video') and.push({ type: { in: ['video_gen', 'video_edit'] } })
   else if (filters.media === 'audio') and.push({ type: 'audio_gen' })
   else and.push({ type: { in: ['image_gen', 'video_gen', 'video_edit', 'audio_gen'] } })
-
-  if (!filters.includeTest) {
-    // PostgreSQL JSON-path comparisons return SQL NULL when a key is absent.
-    // Wrapping several of those comparisons in one `NOT (a OR b …)` therefore
-    // excludes normal legacy rows as UNKNOWN. Include absent keys explicitly,
-    // then reject only rows that positively identify themselves as test data.
-    and.push(
-      {
-        OR: [
-          { payload: { path: ['testArtifact'], equals: Prisma.AnyNull } },
-          { payload: { path: ['testArtifact'], not: true } },
-        ],
-      },
-      {
-        OR: [
-          { payload: { path: ['e2e'], equals: Prisma.AnyNull } },
-          { payload: { path: ['e2e'], not: true } },
-        ],
-      },
-      {
-        OR: [
-          { payload: { path: ['videoName'], equals: Prisma.AnyNull } },
-          { NOT: { payload: { path: ['videoName'], string_contains: 'e2e-' } } },
-        ],
-      },
-      { NOT: { summary: { contains: 'e2e-', mode: 'insensitive' } } },
-    )
-  }
 
   if (filters.query) {
     and.push({

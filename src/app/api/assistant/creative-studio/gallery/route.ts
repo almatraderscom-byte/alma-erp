@@ -5,10 +5,12 @@ import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { agentStorageSignedUrls } from '@/agent/lib/storage'
 import {
+  GALLERY_TEST_ARTIFACT_WHERE,
   buildGalleryCursorWhere,
   buildGalleryWhere,
   decodeGalleryCursor,
   encodeGalleryCursor,
+  isGalleryTestArtifact,
   normalizeGalleryFilters,
   normalizeGalleryLimit,
 } from '@/lib/creative-studio/gallery-query'
@@ -16,6 +18,24 @@ import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
 import { classifyStudioAsset, isStudioAssetPublishable } from '@/lib/creative-studio/studio-policy'
 
 export const runtime = 'nodejs'
+
+type Row = {
+  id: string
+  type: string
+  status: string
+  summary: string | null
+  createdAt: Date
+  payload: Record<string, unknown>
+  result: Record<string, unknown> | null
+}
+
+type Meta = {
+  row: Row
+  result: Record<string, unknown>
+  storagePath: string | null
+  brandedPath: string | null
+  thumbPath: string | null
+}
 
 /** CS10 — one plain-Bangla line summarizing QC + protection metadata. */
 function buildQcDetailsBn(result: Record<string, unknown>, payload?: Record<string, unknown>): string | null {
@@ -81,41 +101,70 @@ export async function GET(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
   const baseWhere = buildGalleryWhere(filters)
-  const where = cursor
-    ? { AND: [baseWhere, buildGalleryCursorWhere(cursor)] }
-    : baseWhere
   // Cursor pagination is stable when new jobs arrive while the owner is
   // scrolling. `page`/skip remains as a backwards-compatible fallback.
   const legacySkip = cursor ? 0 : (page - 1) * limit
-  const [total, rows] = await Promise.all([
-    db.agentPendingAction.count({ where: baseWhere }),
-    db.agentPendingAction.findMany({
+  const totalPromise: Promise<number> = filters.includeTest
+    ? db.agentPendingAction.count({ where: baseWhere })
+    : Promise.all([
+        db.agentPendingAction.count({ where: baseWhere }),
+        db.agentPendingAction.count({
+          where: { AND: [baseWhere, GALLERY_TEST_ARTIFACT_WHERE] },
+        }),
+      ]).then(([all, tests]: [number, number]) => Math.max(0, all - tests))
+
+  let visibleRows: Row[] = []
+  if (filters.includeTest) {
+    const where = cursor
+      ? { AND: [baseWhere, buildGalleryCursorWhere(cursor)] }
+      : baseWhere
+    visibleRows = await db.agentPendingAction.findMany({
       where,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
       skip: legacySkip,
-    }),
-  ])
-  const hasMore = rows.length > limit
-  const slice = rows.slice(0, limit)
+    }) as Row[]
+  } else {
+    // Do not negate JSON-path comparisons in SQL. Missing keys evaluate to
+    // UNKNOWN in PostgreSQL and previously hid every legacy production asset.
+    // Scan stable cursor batches and remove only rows with a positive test
+    // marker. The separate positive-marker count keeps total/hasMore exact.
+    const target = limit + 1
+    const batchSize = Math.max(48, Math.min(192, limit * 4))
+    let scanCursor = cursor
+    let visibleSkipped = 0
 
-  type Row = {
-    id: string
-    type: string
-    status: string
-    summary: string | null
-    createdAt: Date
-    payload: Record<string, unknown>
-    result: Record<string, unknown> | null
+    while (visibleRows.length < target) {
+      const scanWhere = scanCursor
+        ? { AND: [baseWhere, buildGalleryCursorWhere(scanCursor)] }
+        : baseWhere
+      const batch = await db.agentPendingAction.findMany({
+        where: scanWhere,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: batchSize,
+      }) as Row[]
+      if (batch.length === 0) break
+
+      for (const row of batch) {
+        if (isGalleryTestArtifact(row)) continue
+        if (visibleSkipped < legacySkip) {
+          visibleSkipped += 1
+          continue
+        }
+        visibleRows.push(row)
+        if (visibleRows.length >= target) break
+      }
+
+      if (visibleRows.length >= target || batch.length < batchSize) break
+      const lastScanned = batch.at(-1)
+      if (!lastScanned) break
+      scanCursor = { createdAt: lastScanned.createdAt.toISOString(), id: lastScanned.id }
+    }
   }
 
-  type Meta = {
-    row: Row
-    result: Record<string, unknown>
-    storagePath: string | null
-    brandedPath: string | null
-    thumbPath: string | null
-  }
+  const total = await totalPromise
+  const hasMore = visibleRows.length > limit
+  const slice = visibleRows.slice(0, limit)
 
   // Collect every object path across the page, then sign them all in ONE batch
   // request (was one signed-URL round-trip per image → slow gallery).

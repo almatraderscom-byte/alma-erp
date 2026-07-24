@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { Prisma } from '@prisma/client'
 import {
+  GALLERY_TEST_ARTIFACT_WHERE,
   buildGalleryCursorWhere,
   buildGalleryWhere,
   decodeGalleryCursor,
   encodeGalleryCursor,
+  isGalleryTestArtifact,
   mergeGalleryPage,
   normalizeGalleryFilters,
   normalizeGalleryLimit,
@@ -45,20 +46,21 @@ describe('Creative Studio Gallery query', () => {
     expect(json).toContain('creativeStudio')
     expect(json).toContain('image_gen')
     expect(json).toContain('AL-101')
-    expect(json).toContain('e2e-')
-    expect(where).toMatchObject({
-      AND: expect.arrayContaining([
-        {
-          OR: expect.arrayContaining([
-            { payload: { path: ['testArtifact'], equals: Prisma.AnyNull } },
-          ]),
-        },
-      ]),
-    })
-    expect(json).toContain('"path":["testArtifact"],"not":true')
-    expect(json).toContain('"path":["e2e"],"not":true')
+    const testWhere = JSON.stringify(GALLERY_TEST_ARTIFACT_WHERE)
+    expect(testWhere).toContain('"path":["testArtifact"],"equals":true')
+    expect(testWhere).toContain('"path":["e2e"],"equals":true')
+    expect(testWhere).toContain('e2e-')
     expect(json).toContain('"path":["qc","pass"],"equals":false')
     expect(json).toContain('"path":["qc","pass"],"equals":true')
+  })
+
+  it('classifies only explicit test artifacts and preserves legacy rows', () => {
+    expect(isGalleryTestArtifact({ payload: { creativeStudio: true }, summary: 'Real image' })).toBe(false)
+    expect(isGalleryTestArtifact({ payload: { creativeStudio: true, testArtifact: false }, summary: 'Real image' })).toBe(false)
+    expect(isGalleryTestArtifact({ payload: { testArtifact: true }, summary: 'Fixture' })).toBe(true)
+    expect(isGalleryTestArtifact({ payload: { e2e: true }, summary: 'Fixture' })).toBe(true)
+    expect(isGalleryTestArtifact({ payload: { videoName: 'E2E-reel-1' }, summary: 'Fixture' })).toBe(true)
+    expect(isGalleryTestArtifact({ payload: {}, summary: 'E2E-gallery fixture' })).toBe(true)
   })
 
   it('round-trips an opaque cursor and rejects malformed cursors', () => {
