@@ -18,6 +18,7 @@ import { type NextRequest } from 'next/server'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
+import { isOwnerNumber } from '@/agent/lib/voice-call'
 
 export const runtime = 'nodejs'
 export const maxDuration = 20
@@ -88,6 +89,19 @@ async function handle(req: NextRequest) {
   // NGS field names vary; accept the common variants.
   const caller = String(p.from ?? p.caller ?? p.src ?? p.caller_id ?? p.callerId ?? '').trim() || 'unknown'
   const voice = process.env.NGS_INBOUND_VOICE || 'Charon'
+  // Human-PA point 1 (owner audit 2026-07-24): the BOSS calling his own agent
+  // must get the full assistant, not the receptionist. Owner number ⇒ owner
+  // persona + ERP tools + submit_boss_instruction (the record's toNumber is the
+  // caller, so the submit route's owner-call gate passes naturally).
+  const ownerCalling = caller !== 'unknown' && isOwnerNumber(caller)
+  // Human-PA point 7: transfer policy. 'direct' (default) dials the team number
+  // as before; 'ask_first' makes the bot take a message + ping the boss instead
+  // of blind-transferring (owner flips via KV inbound_transfer_mode).
+  let transferMode = 'direct'
+  try {
+    const kv = await db.agentKvSetting.findUnique({ where: { key: 'inbound_transfer_mode' } })
+    if (kv?.value === 'ask_first') transferMode = 'ask_first'
+  } catch { /* default */ }
 
   // Pre-create the row so the post-call report has a target + the owner gets a summary.
   let recordId: string
@@ -95,8 +109,8 @@ async function handle(req: NextRequest) {
     const rec = await db.agentVoiceCall.create({
       data: {
         toNumber: caller,
-        recipientName: `ইনকামিং কল: ${caller}`,
-        purpose: 'inbound_call',
+        recipientName: ownerCalling ? 'Boss' : `ইনকামিং কল: ${caller}`,
+        purpose: ownerCalling ? 'inbound_owner_call' : 'inbound_call',
         firstMessage: '',
         status: 'ringing',
       },
@@ -112,8 +126,12 @@ async function handle(req: NextRequest) {
   const body =
     `<response><connect><stream name="alma" url="${escapeXmlAttr(wsUrl)}">` +
     P('id', recordId) + P('exp', String(exp)) + P('t', t) +
-    P('purpose', 'ইনকামিং কল — ব্যবসার সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও') +
-    P('recipientName', caller) + P('voice', voice) + P('callType', 'inbound') +
+    P('purpose', ownerCalling
+      ? 'Boss নিজে ফোন করেছেন — পূর্ণ সহকারী মোডে সালাম দিয়ে জিজ্ঞেস করো কী লাগবে; তথ্য চাইলে টুল দিয়ে দাও, কাজের নির্দেশ দিলে submit_boss_instruction-এ পাঠাও।'
+      : 'ইনকামিং কল — ব্যবসার সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও') +
+    P('recipientName', ownerCalling ? 'Boss' : caller) + P('voice', voice) +
+    P('callType', ownerCalling ? 'owner' : 'inbound') +
+    P('transferMode', transferMode) +
     '</stream></connect></response>'
   return xml(body)
 }

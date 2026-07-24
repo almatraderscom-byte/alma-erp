@@ -487,6 +487,26 @@ class Call {
   // from the drain loop (finishForward). The tool response tells the model it's connecting
   // so it says the hand-off line and then waits.
   requestForward(reason) {
+    // Human-PA point 7: ask_first mode — never blind-transfer. Take the message,
+    // ping the boss instantly (urgent-alert), and keep the caller with the AI.
+    if (this.params?.transferMode === 'ask_first') {
+      const APP_URL = (process.env.APP_URL || '').replace(/\/$/, '')
+      if (APP_URL && AUTH_TOKEN) {
+        fetch(`${APP_URL}/api/assistant/internal/urgent-alert`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+          body: JSON.stringify({
+            tier: 2,
+            title: 'ইনকামিং কলে মালিককে চাইছেন',
+            message: `কলদাতা (${this.params?.recipientName || 'অজানা নম্বর'}) মালিকের সাথে কথা বলতে চান। কারণ: ${reason || 'বলা হয়নি'}। এজেন্ট বার্তা নিয়ে রাখছে।`,
+            voice: false,
+            category: 'inbound_transfer_request',
+          }),
+          signal: AbortSignal.timeout(10_000),
+        }).catch(() => {})
+      }
+      return { ok: true, status: 'message_mode', instruction: 'কলদাতাকে ভদ্রভাবে বলো: "উনি এই মুহূর্তে ব্যস্ত আছেন — আপনার নাম আর প্রয়োজনটা বলুন, আমি এখনই ওনাকে পৌঁছে দিচ্ছি।" তারপর নাম/নম্বর/বিষয় জেনে নাও; কল ট্রান্সফার হবে না।' }
+    }
     if (!this.callId || !NGS_KEY) return { ok: false, error: 'forward not configured (callId/creds)' }
     if (!NGS_FORWARD_NUMBER) return { ok: false, error: 'NGS_FORWARD_NUMBER not set' }
     this.forwarding = true

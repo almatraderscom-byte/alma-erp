@@ -46,6 +46,7 @@ import { GROWTH_TOOLS } from './growth-tools'
 import { COMPETITOR_TOOLS } from './competitor-tools'
 import { ADVISOR_TOOLS } from './advisor-tools'
 import { FAMILY_TOOLS, place_agent_call, call_boss_with_report } from './personal-tools'
+import { place_business_call } from './business-call-tools'
 import { PERSONAL_OS_TOOLS } from './personal-os-tools'
 import { BUSINESS_OS_TOOLS } from './business-os-tools'
 import { OWNER_TODO_TOOLS } from './owner-todo-tools'
@@ -558,6 +559,8 @@ export const TOOLS: AgentTool[] = [
   place_agent_call,
   // PA-5R human-PA callback — boss-requested completion call, no card.
   call_boss_with_report,
+  // Human-PA point 2 — order-aware customer call (delegates dialing to place_agent_call).
+  place_business_call,
   ...ASK_TOOLS,
   // Harness gap 5 — registry-wide tool discovery (dynamic schema load per turn).
   find_tool,

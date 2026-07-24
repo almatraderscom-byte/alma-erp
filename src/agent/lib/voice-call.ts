@@ -267,7 +267,25 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
   }
 
   const firstMessage = input.firstMessage.trim() || 'আসসালামু আলাইকুম।'
-  const purpose = input.purpose.trim()
+  let purpose = input.purpose.trim()
+
+  // Human-PA point 5 (owner audit 2026-07-24): continuity. A human PA remembers
+  // the LAST conversation with this person — inject the previous call's summary
+  // into the prompt so the agent can say "আগেরবার আপনি বলেছিলেন…". Owner-companion
+  // calls skip it (their context is the live conversation, not old summaries).
+  if (input.callType !== 'owner' && !isOwnerNumber(toNumber)) {
+    try {
+      const prev = await db.agentVoiceCall.findFirst({
+        where: { toNumber, status: 'completed', summary: { not: null } },
+        orderBy: { createdAt: 'desc' },
+        select: { summary: true, createdAt: true },
+      })
+      if (prev?.summary) {
+        const when = new Date(prev.createdAt).toLocaleDateString('bn-BD', { timeZone: 'Asia/Dhaka', day: 'numeric', month: 'long' })
+        purpose += ` [আগের কলের প্রসঙ্গ (${when}): ${String(prev.summary).slice(0, 300)} — প্রাসঙ্গিক হলে ধারাবাহিকতা রেখে কথা বলো।]`
+      }
+    } catch { /* continuity is best-effort */ }
+  }
   // Role/identity context (owner complaint 2026-07-23): a call placed to the
   // OWNER'S OWN NUMBER must run the owner persona — companion tone, mid-call
   // ERP tools, and never "আমি বসের এজেন্ট বলছি, বস জানতে চাচ্ছেন…" said AT the
