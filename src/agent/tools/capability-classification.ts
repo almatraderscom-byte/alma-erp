@@ -192,6 +192,8 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   preview_call_voice: write('calls'),
   outbound_phone_call: stage('calls', 'high'),
   place_agent_call: stage('calls', 'high'),
+  // Boss-requested callback — dials the OWNER only; consent is the boss's own ask.
+  call_boss_with_report: write('calls', 'medium'),
 
   // ── ask card ───────────────────────────────────────────────────────────────
   ask_user: { domain: 'ask', mode: 'write', risk: 'low', idempotency: 'required', concurrency: 'sequential' },

@@ -266,6 +266,60 @@ export const place_agent_call: AgentTool = {
   },
 }
 
+/**
+ * PA-5R — human-PA callback: the boss asked "কাজ শেষ হলে আমাকে কল করে জানাবে"।
+ * When the work is done, this places a REAL call TO THE BOSS (WhatsApp live
+ * first, unanswered → direct number, still unreached → push with the report)
+ * via the PA-2 escalation ladder. NO approval card — the boss's own request IS
+ * the consent (trigger boss_callback bypasses the permission card, rides its
+ * own daily cap). Owner numbers only, enforced server-side by the ladder.
+ */
+export const call_boss_with_report: AgentTool = {
+  name: 'call_boss_with_report',
+  description:
+    'Boss-কে ফোন কল করে কাজের রিপোর্ট শোনায় (human-PA callback)। ব্যবহার করো ঠিক তখনই ' +
+    'যখন Boss নিজে বলেছিলেন কাজ শেষে জানাতে/কল করতে ("শেষ হলে জানাবে", "কল করে জানিও", ' +
+    '"confirm দিবে") — এবং কাজটা এইমাত্র সত্যিই শেষ হয়েছে (tool-verified)। WhatsApp লাইভ কল ' +
+    'যায় আগে, না ধরলে সরাসরি নম্বরে, তাও না ধরলে report push হয়। কোনো card লাগে না — Boss-এর ' +
+    'অনুরোধটাই অনুমতি। report হবে ২-৪ বাক্যের পরিষ্কার বাংলা — কী করা হলো, ফলাফল কী, পরের ধাপ কী।',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      title: { type: 'string', description: 'কাজের এক-লাইনের শিরোনাম (বাংলা), যেমন "ইয়াফিকে মেসেজ পাঠানো"।' },
+      report: { type: 'string', description: 'কলে যা বলা হবে — ২-৪ বাক্যের বাংলা রিপোর্ট (কী করলে, ফলাফল, পরের ধাপ)।' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
+    },
+    required: ['title', 'report'],
+  },
+  handler: async (input) => {
+    try {
+      const title = String(input.title ?? '').trim().slice(0, 120)
+      const report = String(input.report ?? '').trim()
+      if (!title || !report) return { success: false, error: 'title এবং report দুটোই লাগবে' }
+      const { queueCallEscalation } = await import('@/agent/lib/proactive-call')
+      const conv = input.conversationId ? String(input.conversationId) : 'chat'
+      const id = await queueCallEscalation({
+        trigger: 'boss_callback',
+        refId: `callback:${conv}:${Date.now()}`,
+        title,
+        purpose:
+          `Boss চেয়েছিলেন কাজ শেষে কল করে জানাতে। কাজ: ${title}। রিপোর্টটা Boss-কে পরিষ্কারভাবে শোনাও: ${report}`,
+      })
+      if (!id) return { success: false, error: 'callback queue করা যায়নি (owner number config দেখুন)' }
+      return {
+        success: true,
+        data: {
+          status: 'callback_queued',
+          escalationId: id,
+          message: 'Boss-কে কল যাচ্ছে (WhatsApp আগে, না ধরলে সরাসরি নম্বরে; তাও না ধরলে report push)।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const schedule_call: AgentTool = {
   name: 'schedule_call',
   description:

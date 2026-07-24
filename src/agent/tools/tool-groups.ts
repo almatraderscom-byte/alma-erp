@@ -50,7 +50,7 @@ import { HEARTBEAT_TOOLS } from './heartbeat-tools'
 import { VISION_TOOLS } from './vision-tools'
 import { SIMULATE_TOOLS } from './simulate-tools'
 import { PERSONAL_SAFE_TOOLS } from './registry'
-import { place_agent_call } from './personal-tools'
+import { place_agent_call, call_boss_with_report } from './personal-tools'
 import { WA_TOOLS } from './wa-tools'
 import { find_tool } from './find-tool'
 import { BILLS_TOOLS } from './bills-tools'
@@ -93,6 +93,8 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     // without this the head only ever saw the one-way tool and (correctly) said it
     // had "no two-way call tool" when asked to talk + listen.
     place_agent_call,
+    // PA-5R: boss-requested completion callback (no card; ladder-enforced owner-only).
+    call_boss_with_report,
     // Business WhatsApp send (Twilio). Dormant + kill-switched until the owner sets
     // the Twilio WhatsApp creds; visible to the head so "WhatsApp-এ পাঠাও/টেস্ট" works.
     ...WA_TOOLS,
