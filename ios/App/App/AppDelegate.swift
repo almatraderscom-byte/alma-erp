@@ -255,6 +255,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
                 NotificationCenter.default.post(name: Notification.Name("almaVoiceDebugMin"), object: nil)
                 return true
             }
+            if url.host == "voice-badge-fixture" {
+                NotificationCenter.default.post(name: Notification.Name("almaVoiceBadgeFixture"), object: nil)
+                return true
+            }
             if url.host == "voice-say" {
                 let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
                 if let text = comps?.queryItems?.first(where: { $0.name == "text" })?.value, !text.isEmpty {
