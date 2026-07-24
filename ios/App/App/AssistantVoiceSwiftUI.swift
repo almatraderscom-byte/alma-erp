@@ -1218,6 +1218,16 @@ final class AlmaVoiceEngine {
             NSLog("ALMA-VOICE result held until playback idle (%d chars)", text.count)
             #endif
             pendingLiveToolResult = (callId, text)
+            // Failsafe: if the playback-idle event never arrives (missed state
+            // transition), a held result must NOT sit forever — force-send in 5s.
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard let self, let held = self.pendingLiveToolResult, held.callId == callId else { return }
+                #if DEBUG
+                NSLog("ALMA-VOICE held result force-flushed after 5s")
+                #endif
+                self.sendLiveToolResultNow(callId: held.callId, text: held.text)
+            }
             return
         }
         sendLiveToolResultNow(callId: callId, text: text)
@@ -1366,6 +1376,13 @@ final class AlmaVoiceEngine {
                 }
                 #if DEBUG
                 NSLog("ALMA-VOICE head turn stream ended; reply chars=%d", self.replyText.count)
+                // Poller-path test harness: pretend the stream died right at the
+                // finish line — the DB poller MUST deliver the answer instead.
+                if ProcessInfo.processInfo.environment["ALMA_VOICE_KILL_SSE"] == "1"
+                    || ProcessInfo.processInfo.arguments.contains("ALMA_VOICE_KILL_SSE=1") {
+                    NSLog("ALMA-VOICE TEST killSSE — suppressing SSE completion")
+                    return
+                }
                 #endif
                 guard self.liveToolTurnPending else { return }   // poller already delivered
                 let result = self.replyText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1419,16 +1436,41 @@ final class AlmaVoiceEngine {
     /// One poll round: DB turn status for the live conversation. Returns the
     /// spoken-result payload once OUR turn reached a terminal state, else nil.
     private func pollHeadTurnOutcome(requestStart: Date) async -> String? {
-        guard let convId = chatVM?.conversationId, !convId.isEmpty else { return nil }
+        guard let convId = chatVM?.conversationId, !convId.isEmpty else {
+            #if DEBUG
+            NSLog("ALMA-VOICE poll: no conversationId yet")
+            #endif
+            return nil
+        }
         struct StatusResp: Decodable {
             let status: String?
             let turnId: String?
             let assistantMessageId: String?
             let startedAt: String?
         }
-        guard let st: StatusResp = try? await AlmaAPI.shared.send(
-            "GET", "/api/assistant/conversations/\(convId)/turn-status") else { return nil }
-        guard let status = st.status, status != "running", status != "idle" else { return nil }
+        let st: StatusResp
+        do {
+            st = try await AlmaAPI.shared.send(
+                "GET", "/api/assistant/conversations/\(convId)/turn-status")
+        } catch {
+            #if DEBUG
+            NSLog("ALMA-VOICE poll: turn-status FAILED %@", String(describing: error))
+            #endif
+            return nil
+        }
+        #if DEBUG
+        NSLog("ALMA-VOICE poll: status=%@ turn=%@ ourTurn=%@ msg=%@",
+              st.status ?? "nil", st.turnId ?? "nil", liveTurnId ?? "nil",
+              st.assistantMessageId ?? "nil")
+        #endif
+        guard let status = st.status, status != "running", status != "idle" else {
+            // The turn is alive server-side even if the SSE went quiet — keep the
+            // 120s stall watchdog from killing a healthy long turn (it cleared
+            // liveToolTurnPending, which also stopped THIS poller: owner's 3min
+            // silence on 2026-07-24).
+            if st.status == "running" { lastEventAt = Date() }
+            return nil
+        }
         // Stale-turn guard: never speak a PREVIOUS answer. Prefer an exact turn-id
         // match; without one (the turn_id event died with the stream) accept only
         // a turn that started after this request did.
