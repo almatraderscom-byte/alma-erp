@@ -1913,6 +1913,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         tapInstalled = true
         audioEngine.prepare()
         do { try audioEngine.start() } catch { throw AlmaLiveVoiceError.audioStart }
+        // setVoiceProcessingEnabled RESETS the output route to the receiver, so
+        // the override above is dead by now — first-call greeting played near-
+        // silent into the earpiece (owner device 2026-07-24; reopening worked
+        // because this whole block is skipped once configured). Re-assert AFTER
+        // VP + engine start so call one is as loud as call two.
+        try? av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
         configured = true
     }
 
@@ -2299,6 +2305,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         audioQueue.async { [weak self] in
             guard let self, !self.stopped else { return }
             if !self.player.isPlaying { self.player.play() }
+        }
+        // Belt+suspenders (same fix the legacy TTS path needed): anything can
+        // flip the route to the receiver between turns — force the loud speaker
+        // back whenever a spoken turn starts.
+        audioLock.lock(); let wantSpeaker = speakerEnabled; audioLock.unlock()
+        if wantSpeaker {
+            DispatchQueue.main.async {
+                try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
+            }
         }
         #if DEBUG
         NSLog("ALMA-VOICE playback turn started prebuffer=%.3fs", prebufferDuration)
