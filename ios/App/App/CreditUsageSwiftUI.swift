@@ -684,6 +684,8 @@ struct CreditUsageScreen: View {
     @State private var csvExporting = false   // NP-4 (AG-11) native CSV export
     @State private var categoryRange: CUCatRange = .today
     @State private var chatExpanded = false
+    // Entrance animations play once (first load); pane toggles are then instant.
+    @State private var introPlayed = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     /// Live mode: ~10s auto-refresh of the first log page while ON (green dot pulses).
@@ -706,7 +708,10 @@ struct CreditUsageScreen: View {
         .claudeTopFade()
         .scrollDismissesKeyboard(.interactively)
         .refreshable { await vm.load() }
-        .task { await vm.load() }
+        .task {
+            await vm.load()
+            introPlayed = true   // first load done → further pane toggles skip the intro
+        }
         .onReceive(liveTimer) { _ in
             guard pane == 1, vm.live, !vm.logsLoading, !vm.loadingMore else { return }
             Task { await vm.loadUsageLogs() }
@@ -731,12 +736,12 @@ struct CreditUsageScreen: View {
 
     @ViewBuilder private var usagePane: some View {
         if let s = vm.summary {
-            spendHero(s).cuAppear(0)
-            todayInsight(s).cuAppear(1)
-            statTrio(s).cuAppear(2)
-            if s.spendByCategoryToday != nil || s.spendByCategoryMonth != nil { spendByCategory(s).cuAppear(3) }
-            if !s.byModel.isEmpty { modelBreakdown(s).cuAppear(4) }
-            if let bud = budgetCard(s) { bud.cuAppear(5) }
+            spendHero(s).cuAppear(0, play: !introPlayed)
+            todayInsight(s).cuAppear(1, play: !introPlayed)
+            statTrio(s).cuAppear(2, play: !introPlayed)
+            if s.spendByCategoryToday != nil || s.spendByCategoryMonth != nil { spendByCategory(s).cuAppear(3, play: !introPlayed) }
+            if !s.byModel.isEmpty { modelBreakdown(s).cuAppear(4, play: !introPlayed) }
+            if let bud = budgetCard(s) { bud.cuAppear(5, play: !introPlayed) }
         }
     }
 
@@ -1263,9 +1268,9 @@ struct CreditUsageScreen: View {
 
     private var logsPane: some View {
         VStack(spacing: 12) {
-            logRangeBar.cuAppear(0)
-            activityCard.cuAppear(1)
-            filterChips.cuAppear(2)
+            logRangeBar.cuAppear(0, play: !introPlayed)
+            activityCard.cuAppear(1, play: !introPlayed)
+            filterChips.cuAppear(2, play: !introPlayed)
             if let err = vm.logsError { errorCard(err) }
             if vm.logsLoading && vm.usageEvents.isEmpty {
                 loadingRows
@@ -1276,7 +1281,7 @@ struct CreditUsageScreen: View {
                 VStack(spacing: 0) {
                     ForEach(vm.filteredUsageEvents) { e in usageRow(e) }
                 }
-                .cuSolid(scheme, corner: 18).cuAppear(3)
+                .cuSolid(scheme, corner: 18).cuAppear(3, play: !introPlayed)
             }
             if vm.nextCursor != nil && !vm.logsLoading { loadMoreButton }
         }
@@ -1605,7 +1610,10 @@ private struct CUSegment: View {
     var body: some View {
         HStack(spacing: 2) {
             ForEach(Array(items.enumerated()), id: \.offset) { i, t in
-                Button { withAnimation(.spring(duration: 0.3)) { selection = i } } label: {
+                // Instant switch — no withAnimation wrapping the heavy pane rebuild
+                // (that spring is what dropped the first tap + delayed the content).
+                // The highlight still eases via the matchedGeometryEffect below.
+                Button { selection = i } label: {
                     Text(t).font(.system(size: 13, weight: .bold)).foregroundStyle(selection == i ? Color.primary : .secondary)
                         .frame(maxWidth: .infinity).padding(.vertical, 9)
                         .background {
@@ -1620,6 +1628,8 @@ private struct CUSegment: View {
             }
         }
         .padding(3).cuGlass(scheme, corner: 14)
+        // Ease only the highlight pill; the pane content (outside this view) stays instant.
+        .animation(.spring(duration: 0.28), value: selection)
     }
 }
 
@@ -1844,7 +1854,7 @@ private extension View {
     }
     func cuShimmer() -> some View { modifier(CUShimmer()) }
     /// Subtle scroll-in appear (staggered by index).
-    func cuAppear(_ i: Int) -> some View { modifier(CUAppear(index: i)) }
+    func cuAppear(_ i: Int, play: Bool = true) -> some View { modifier(CUAppear(index: i, play: play)) }
 }
 
 @available(iOS 17.0, *)
@@ -1866,10 +1876,17 @@ private struct CUPulse: ViewModifier {
 @available(iOS 17.0, *)
 private struct CUAppear: ViewModifier {
     let index: Int
+    var play: Bool = true
     @State private var shown = false
     func body(content: Content) -> some View {
-        content.opacity(shown ? 1 : 0).offset(y: shown ? 0 : 14)
+        // `play == false` → render fully visible immediately (no entrance). This is
+        // what makes the Usage⇄Logs switch instant: the intro stagger runs only on the
+        // first page load, never again on a pane toggle (was the "logs opens slowly"
+        // + dropped-tap jank — a full staggered fade replayed on every switch).
+        let visible = shown || !play
+        return content.opacity(visible ? 1 : 0).offset(y: visible ? 0 : 14)
             .onAppear {
+                guard play else { return }
                 withAnimation(.spring(duration: 0.5).delay(Double(min(index, 6)) * 0.05)) { shown = true }
             }
     }
