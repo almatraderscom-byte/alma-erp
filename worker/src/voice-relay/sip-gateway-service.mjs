@@ -36,6 +36,8 @@
  */
 import http from 'node:http'
 import net from 'node:net'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -120,6 +122,29 @@ function putCdr(id, patch) {
   // Map.keys() is insertion-ordered, so the oldest entry is always first.
   while (cdr.size > CDR_MAX) cdr.delete(cdr.keys().next().value)
 }
+/**
+ * Push a finished call's record to the app so it survives this process. The in-memory ring
+ * is lost on every restart, which would take call history, outcomes and cost with it — and
+ * for a TRANSFERRED call this is the only trace that exists at all, because the bot steps
+ * off the audio path and never sees how the two humans' conversation went.
+ */
+async function persistCdr(id) {
+  const rec = cdr.get(id)
+  if (!rec || !APP_URL || !INTERNAL_TOKEN || rec._persisted) return
+  rec._persisted = true
+  try {
+    const res = await fetch(`${APP_URL}/api/assistant/voice-call/sip-cdr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INTERNAL_TOKEN}` },
+      body: JSON.stringify(rec),
+      signal: AbortSignal.timeout(10_000),
+    })
+    // Log non-2xx too: a call record that silently fails to persist looks identical to one
+    // that was never attempted, and this is the only copy of a transferred call's outcome.
+    if (!res.ok) log(id, `cdr persist HTTP ${res.status}`)
+  } catch (err) { log(id, 'cdr persist failed:', err?.message) }
+}
+
 /**
  * Turn an ISDN hangup cause into the outcome vocabulary the rest of the system already
  * speaks (same words the NGS path reports). Answered calls are 'completed' regardless of
@@ -480,6 +505,8 @@ async function onInboundCall(e) {
   try {
     await ari('POST', `/channels/${chanId}/answer`)
     call.answered = true
+    call.answeredAt = Date.now()
+    putCdr(chanId, { direction: 'inbound', from: caller, did, startedAt: Date.now(), answered: true, answeredAt: call.answeredAt, status: 'answered' })
     await bridgeAndStartBot(call)
     log(chanId, `inbound answered as callType=${params.callType}`)
   } catch (err) {
@@ -549,13 +576,15 @@ async function onAriEvent(e) {
       // Transfer path: a forward leg answering just needs to join the existing bridge.
       if (call._bridgeInto) {
         call.answered = true
+        call.answeredAt = Date.now()
         try { await ari('POST', `/bridges/${call._bridgeInto}/addChannel`, { channel: call.channelId }) }
         catch (err) { log(call.channelId, 'forward bridge failed', err?.message) }
         return
       }
       // Our originated PSTN channel just answered and entered Stasis.
       call.answered = true
-      putCdr(call.channelId, { answered: true, answeredAt: Date.now(), status: 'answered' })
+      call.answeredAt = Date.now()
+      putCdr(call.channelId, { answered: true, answeredAt: call.answeredAt, status: 'answered' })
       try {
         // One-way message call (the NGS <Play> replacement): speak the file and hang up.
         // No bot, no Gemini spend — this is the alert/notification path.
@@ -571,6 +600,17 @@ async function onAriEvent(e) {
     case 'ChannelDestroyed': {
       // The only place Asterisk tells us WHY the leg ended — keep it for the sweep.
       const call = chanId && calls.get(chanId)
+      // A forward leg dying tells us how the human-to-human half went; fold it into the
+      // ORIGINAL call's record, which is the row the owner actually reads.
+      const fwdParent = call?._transferParent
+      if (fwdParent && cdr.has(fwdParent)) {
+        const answered = Boolean(call.answered)
+        putCdr(fwdParent, {
+          transferAnswered: answered,
+          transferTalkSecs: answered && call.answeredAt ? Math.round((Date.now() - call.answeredAt) / 1000) : 0,
+          transferCauseTxt: e.cause_txt ?? '',
+        })
+      }
       if (chanId && cdr.has(chanId)) {
         putCdr(chanId, {
           endedAt: Date.now(),
@@ -578,6 +618,7 @@ async function onAriEvent(e) {
           causeTxt: e.cause_txt ?? '',
           status: outcomeFromCause(Boolean(call?.answered ?? cdr.get(chanId)?.answered), e.cause),
         })
+        void persistCdr(chanId)
       }
       if (call && !call.closed) void call.hangup(`ari ${e.type}`)
       break
@@ -639,7 +680,7 @@ const ctrlServer = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost')
   const m = url.pathname.match(/^\/api\/v1\/call(?:\/([^/]+))?$/)
   if (url.pathname === '/health') {
-    return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size })
+    return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size, registration: { registered: regState.registered, status: regState.lastStatus, failures: regState.consecutiveFailures } })
   }
   if (!m) return json(res, 404, { error: 'not found' })
   if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
@@ -766,7 +807,9 @@ async function transferCall(call, forwardTo) {
   // register a minimal Call so its StasisStart bridges into the SAME bridge
   const fwd = new Call(fwdId, {})
   fwd._bridgeInto = call.bridgeId
+  fwd._transferParent = call.channelId   // so the forward leg's outcome lands on the real call
   calls.set(fwdId, fwd)
+  putCdr(call.channelId, { transferredTo: forwardTo, transferredAt: Date.now() })
   // when the forward answers, its StasisStart handler bridges it in; drop AI media.
   try { if (call.extChannelId) await ari('DELETE', `/channels/${call.extChannelId}`).catch(() => {}) } catch { /* */ }
   try { call.bot?.close() } catch { /* */ }
@@ -789,8 +832,90 @@ function authFailReason(params) {
   return null
 }
 
+// ── registration watchdog ────────────────────────────────────────────────────
+/**
+ * INBOUND depends entirely on our SIP registration holding. If it drops — trunk restart,
+ * network blip, credential change — every incoming call to the business number dies and
+ * NOTHING would tell us; the phone would just look quiet. NGS monitored their own side; now
+ * that we own the stack we own the monitoring.
+ *
+ * Every REG_CHECK_SECS we ask Asterisk for the registration state, force a re-register on
+ * failure, and alert the owner after REG_FAIL_ALERTS consecutive failures (once, not every
+ * cycle) — plus a recovery message so a silent alarm can't be mistaken for "it fixed itself".
+ */
+const REG_NAME = process.env.SIP_REGISTRATION_NAME || 'alma-reg'
+const REG_CHECK_SECS = Number(process.env.SIP_REG_CHECK_SECS || 60)
+const REG_FAIL_ALERTS = Number(process.env.SIP_REG_FAIL_ALERTS || 2)
+const execFileAsync = promisify(execFile)
+const regState = { registered: null, consecutiveFailures: 0, alerted: false, lastCheck: 0, lastStatus: '' }
+
+async function asteriskCli(command) {
+  const { stdout } = await execFileAsync('asterisk', ['-rx', command], { timeout: 10_000 })
+  return stdout || ''
+}
+
+/** Tell the owner something about the phone line. Best-effort, never throws. */
+async function alertOwner(title, message) {
+  if (!APP_URL || !INTERNAL_TOKEN) { log('alert skipped (APP_URL/token unset):', title, message); return }
+  try {
+    const res = await fetch(`${APP_URL}/api/assistant/internal/urgent-alert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INTERNAL_TOKEN}` },
+      // voice:false — alerting about a broken phone line by phoning would be absurd.
+      body: JSON.stringify({ tier: 2, title, message, voice: false, category: 'sip_registration' }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    // Log the outcome: an alert that silently fails to send makes the whole watchdog
+    // worthless, and that failure must be visible in the logs rather than assumed away.
+    const body = await res.text().catch(() => '')
+    log(`alert "${title}" -> HTTP ${res.status} ${body.slice(0, 120)}`)
+  } catch (err) { log('alert FAILED to send:', err?.message) }
+}
+
+async function checkRegistration() {
+  let ok = false
+  let statusWord = 'unknown'
+  try {
+    const out = await asteriskCli('pjsip show registrations')
+    const line = out.split('\n').find((l) => l.includes(REG_NAME)) || ''
+    statusWord = (line.match(/\b(Registered|Unregistered|Rejected|Auth\s*Sent|Sent)\b/i) || [])[1] || 'missing'
+    ok = /Registered/i.test(statusWord)
+  } catch (err) {
+    statusWord = `check-failed: ${err?.message || err}`
+  }
+  regState.lastCheck = Date.now()
+  regState.lastStatus = statusWord
+  regState.registered = ok
+
+  if (ok) {
+    if (regState.alerted) {
+      await alertOwner('ফোন লাইন আবার ঠিক আছে', 'SIP registration ফিরে এসেছে — ইনকামিং কল আবার আসছে।')
+      log('registration RECOVERED')
+    }
+    regState.consecutiveFailures = 0
+    regState.alerted = false
+    return
+  }
+
+  regState.consecutiveFailures++
+  log(`registration NOT OK (${statusWord}) — failure #${regState.consecutiveFailures}`)
+  // Try to heal before shouting: a single missed refresh is normal.
+  try { await asteriskCli(`pjsip send register ${REG_NAME}`) } catch { /* best effort */ }
+  if (regState.consecutiveFailures >= REG_FAIL_ALERTS && !regState.alerted) {
+    regState.alerted = true
+    await alertOwner(
+      'জরুরি: ফোন লাইনের registration পড়ে গেছে',
+      `আমাদের SIP registration "${statusWord}" অবস্থায় আছে — এই মুহূর্তে ব্যবসার নম্বরে আসা কল আমাদের কাছে পৌঁছাচ্ছে না। আবার registration করার চেষ্টা চলছে।`,
+    )
+  }
+}
+
 // ── boot ─────────────────────────────────────────────────────────────────────
 audioServer.listen(AS_PORT, AS_BIND, () => log(`AudioSocket TCP listening ${AS_BIND}:${AS_PORT} (advertise ${AS_ADVERTISE})`))
 ctrlServer.listen(CTRL_PORT, '0.0.0.0', () => log(`control API listening :${CTRL_PORT}`))
 startAri()
+if (ARI_READY) {
+  void checkRegistration()
+  setInterval(() => { void checkRegistration() }, REG_CHECK_SECS * 1000).unref()
+}
 log(`boot: ariReady=${ARI_READY} trunk=${TRUNK_ENDPOINT} bot=${BOT_WS_URL} ctrlBase=${CTRL_BASE}`)
