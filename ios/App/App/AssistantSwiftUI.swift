@@ -14276,6 +14276,17 @@ struct AssistantScreen: View {
             vm.showVoice = true
             #endif
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("almaVoiceBadgeFixture"))) { _ in
+            #if DEBUG
+            // Sim harness (PA-4 badge proof): append a LOCAL voice-instruction row +
+            // settled reply so the badge/chip render without driving the GUI.
+            var u = AgentChatMessage(id: "fixture-voice-\(UUID().uuidString)", role: .user)
+            u.text = AgentChatMessage.voiceInstructionPrefix + " আজকের সেল রিপোর্টটা রেডি করে রাখো"
+            var a = AgentChatMessage(id: "fixture-voice-reply-\(UUID().uuidString)", role: .assistant)
+            a.text = "ঠিক আছে Boss — রিপোর্ট রেডি করা হয়েছে।"
+            vm.messages.append(contentsOf: [u, a])
+            #endif
+        }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("almaDictateToggle"))) { _ in
             #if DEBUG
             vm.toggleRecording()
