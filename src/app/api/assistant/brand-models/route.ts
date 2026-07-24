@@ -11,6 +11,11 @@ import {
   listModelsByRole,
   type ModelRole,
 } from '@/lib/tryon/model-library'
+import { prisma } from '@/lib/prisma'
+import { AVATAR_KV_PREFIX, type ModelAvatar } from '@/lib/tryon/model-avatar'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = prisma as any
 
 export const runtime = 'nodejs'
 
@@ -47,7 +52,27 @@ export async function GET(req: NextRequest) {
   } catch {
     signed = {}
   }
-  const withUrls = models.map((m) => ({ ...m, imageUrl: signed[m.imagePath] ?? null }))
+  // CS14 — avatar status per model (one batched kv read)
+  const avatarByModel: Record<string, { built: boolean; building: boolean; count: number }> = {}
+  try {
+    const rows = await db.agentKvSetting.findMany({ where: { key: { startsWith: AVATAR_KV_PREFIX } } })
+    for (const r of rows as Array<{ key: string; value: string }>) {
+      try {
+        const a = JSON.parse(r.value) as ModelAvatar
+        avatarByModel[r.key.slice(AVATAR_KV_PREFIX.length)] = {
+          built: Boolean(a.builtAt),
+          building: Boolean(a.building),
+          count: Array.isArray(a.imagePaths) ? a.imagePaths.length : 0,
+        }
+      } catch { /* skip malformed row */ }
+    }
+  } catch { /* avatar status optional */ }
+
+  const withUrls = models.map((m) => ({
+    ...m,
+    imageUrl: signed[m.imagePath] ?? null,
+    avatar: avatarByModel[m.id] ?? null,
+  }))
 
   return Response.json({ models: withUrls, byRole })
 }

@@ -140,6 +140,29 @@ describe('CS13 — run brief per mode', () => {
   it('never exceeds 3 references and rejects video mode', () => {
     expect(() => buildXaiRunBrief({ mode: 'image_to_video', sourceImagePath: 's.jpg' })).toThrow('invalid_mode')
   })
+
+  it('CS14: avatar identity sheet rides as an extra ref only when a slot is free', () => {
+    // try_on = 2 refs → sheet fits as 3rd
+    const withSheet = buildXaiRunBrief({
+      mode: 'try_on',
+      modelImagePath: 'avatar/canonical.png',
+      productImagePath: 'p.jpg',
+      identitySheetPath: 'avatar/sheet.jpg',
+    })
+    expect(withSheet.referenceImagePaths).toEqual(['avatar/canonical.png', 'p.jpg', 'avatar/sheet.jpg'])
+    expect(withSheet.referenceRoles).toEqual(['person', 'garment', 'source'])
+    expect(withSheet.prompt).toContain('identity sheet')
+    // product_to_model with product+model = 2 refs → sheet fits; with sheet full at 3
+    const full = buildXaiRunBrief({
+      mode: 'edit',
+      sourceImagePath: 's.jpg',
+      productImagePath: 'extra.jpg',
+      prompt: 'x',
+      identitySheetPath: 'avatar/sheet.jpg',
+    })
+    // edit mode is not a person-carrying mode — sheet must NOT attach
+    expect(full.referenceImagePaths).toEqual(['s.jpg', 'extra.jpg'])
+  })
 })
 
 describe('CS13 — registry + templates coherence', () => {

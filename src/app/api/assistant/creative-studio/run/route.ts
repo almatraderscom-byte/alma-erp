@@ -100,11 +100,18 @@ export async function POST(req: NextRequest) {
 
   if (body.modelId && !body.modelImagePath) {
     const model = await resolveModel(body.modelId)
-    if (model) body.modelImagePath = model.imagePath
+    if (model) {
+      // CS14 — a built avatar takes over: canonical (or sheet) becomes the
+      // person reference; the sheet rides along for xAI identity accuracy.
+      const { resolvePersonRef } = await import('@/lib/tryon/model-avatar')
+      const ref = await resolvePersonRef(model)
+      body.modelImagePath = ref.path
+      if (ref.sheetPath) body.avatarSheetPath = ref.sheetPath
+    }
   }
   if (body.modelId && body.faceReferencePath === undefined) {
     const model = await resolveModel(body.modelId)
-    if (model) body.faceReferencePath = model.imagePath
+    if (model) body.faceReferencePath = body.modelImagePath ?? model.imagePath
   }
 
   try {
