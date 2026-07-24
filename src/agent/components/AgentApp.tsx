@@ -338,6 +338,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''))
   }, [])
 
+  // Cost dashboard deep-links a specific chat as ?conversation=<id> ("open this
+  // chat" from the চ্যাট breakdown). Load it once on mount, then strip the param.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const convId = params.get('conversation')
+    if (!convId) return
+    void loadConversation({ id: convId, title: null, projectId: null, archived: false, updatedAt: '' })
+    params.delete('conversation')
+    const qs = params.toString()
+    window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const abortRef = useRef<AbortController | null>(null)
   // Durable server-side turn id (from the chat stream) — used by the Stop button to
   // issue a real cross-instance cancel, and to poll a backgrounded turn to completion.

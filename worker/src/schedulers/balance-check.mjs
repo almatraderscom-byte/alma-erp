@@ -44,13 +44,24 @@ export async function runBalanceCheck() {
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
 
     for (const alert of data.alerts ?? []) {
-      const key = `cost.alert.lowbalance.${alert.provider}.${todayStr}`
+      // severity/reason/runwayDays are Phase D additions; older app builds omit
+      // them, so every read below tolerates undefined.
+      const severity = alert.severity || 'action'
+      const emoji = severity === 'emergency' ? '🔴' : '⚠️'
+      const balanceStr = `$${Number(alert.balanceUsd ?? 0).toFixed(2)}`
+      const runwayNote = alert.reason === 'low_runway' && alert.runwayDays != null
+        ? ` — আনুমানিক ${alert.runwayDays} দিন চলবে`
+        : ''
+
+      // Include severity in the dedup key so an escalation (action → emergency)
+      // re-alerts the same day, while repeats at the same level stay quiet.
+      const key = `cost.alert.lowbalance.${alert.provider}.${severity}.${todayStr}`
       if (await wasAlerted(key)) continue
 
       await notify({
         tier: 1,
-        title: `Low API balance: ${alert.label}`,
-        message: `⚠️ ${alert.label} ব্যালেন্স $${alert.balanceUsd.toFixed(2)} — রিচার্জ করুন`,
+        title: `${severity === 'emergency' ? 'URGENT — ' : ''}Low API balance: ${alert.label}`,
+        message: `${emoji} ${alert.label}${runwayNote} (ব্যালেন্স ${balanceStr}) — রিচার্জ করুন`,
         category: 'urgent',
       })
       await markAlert(key)

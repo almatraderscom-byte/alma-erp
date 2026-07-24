@@ -8,6 +8,8 @@ import {
 } from 'recharts'
 import { cn } from '@/lib/utils'
 import { AgentSubHeader } from '@/agent/components/AgentSubHeader'
+import type { SpendBreakdown, SpendCategoryTotal } from '@/agent/lib/billing/spend-categories'
+import type { ChatConversationCost } from '@/agent/lib/cost-dashboard'
 
 type DashboardData = {
   todayDhakaDate?: string
@@ -15,6 +17,10 @@ type DashboardData = {
   todayOxylabsCredits?: number
   monthUsd: number
   forecastUsd: number
+  spendByCategoryToday?: SpendBreakdown
+  spendByCategoryMonth?: SpendBreakdown
+  chatConversationsToday?: ChatConversationCost[]
+  chatConversationsMonth?: ChatConversationCost[]
   subscriptionAmortMonthUsd: number
   dailyLast30: Array<Record<string, number | string>>
   byProvider: Array<{ provider: string; totalUsd: number }>
@@ -119,6 +125,14 @@ type BalanceProviderRow = {
   configuredCapabilities?: string[]
   free?: boolean
   syncedThrough?: string | null
+  // Funding runway (estimates from local spend)
+  runwayDays?: number | null
+  runwayStatus?: 'ok' | 'warning' | 'action' | 'emergency' | 'unknown'
+  runwayConfident?: boolean
+  burnUsdPerDay?: number | null
+  suggestedTopUpUsd?: number | null
+  criticality?: 'critical' | 'important' | 'variable' | 'free'
+  fundingMode?: 'provider_auto_recharge' | 'usage_based_billing' | 'postpaid' | 'hosted_top_up' | 'app_top_up' | 'free' | 'unsupported'
 }
 
 type BalanceData = {
@@ -323,6 +337,37 @@ const FIELD_TRUTH: Record<FieldTruth, { label: string; cls: string }> = {
   needs_credential: { label: 'Needs credential', cls: 'tone-amber border' },
   sync_error: { label: 'Sync error', cls: 'tone-red border' },
   no_current_value: { label: 'None reported', cls: 'border border-border-subtle text-muted' },
+}
+
+const RUNWAY_STYLE: Record<NonNullable<BalanceProviderRow['runwayStatus']>, { label: string; cls: string }> = {
+  ok: { label: 'সুস্থ', cls: 'tone-green border' },
+  warning: { label: 'নজরে রাখুন', cls: 'tone-amber border' },
+  action: { label: 'রিচার্জ দরকার', cls: 'tone-amber border' },
+  emergency: { label: 'জরুরি', cls: 'tone-red border' },
+  unknown: { label: 'অজানা', cls: 'border border-border-subtle text-muted' },
+}
+
+const CRITICALITY_LABEL: Record<NonNullable<BalanceProviderRow['criticality']>, string> = {
+  critical: 'Critical',
+  important: 'Important',
+  variable: 'Variable',
+  free: 'Free',
+}
+
+const FUNDING_MODE_LABEL: Record<NonNullable<BalanceProviderRow['fundingMode']>, string> = {
+  provider_auto_recharge: 'Auto-recharge',
+  usage_based_billing: 'Usage billing',
+  postpaid: 'Postpaid',
+  hosted_top_up: 'Hosted top-up',
+  app_top_up: 'App top-up',
+  free: 'Free',
+  unsupported: 'Unsupported',
+}
+
+function fmtRunwayDays(days: number | null | undefined): string {
+  if (days == null) return '—'
+  if (days >= 90) return '90+ দিন'
+  return `${days} দিন`
 }
 
 function providerFieldTruth(row: BalanceProviderRow) {
@@ -589,6 +634,153 @@ function TtsProviderCard({
   )
 }
 
+function SpendCategoryRow({ c, maxUsd, expandable, expanded }: {
+  c: SpendCategoryTotal; maxUsd: number; expandable?: boolean; expanded?: boolean
+}) {
+  const width = maxUsd > 0 ? Math.max(3, (c.usd / maxUsd) * 100) : 0
+  return (
+    <div className={cn('rounded-xl border border-border-subtle bg-card/40 px-3 py-2', expandable && 'hover:border-[#E07A5F]/30')}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {expandable && (
+            <span className={cn('text-[9px] text-muted transition-transform', expanded && 'rotate-90')}>▶</span>
+          )}
+          <span className="text-sm">{c.icon}</span>
+          <div className="min-w-0">
+            <p className="truncate text-xs font-semibold text-cream">
+              {c.label}
+              {c.headline && <span className="ml-1 text-[8px] text-[#E07A5F]">★</span>}
+              {expandable && <span className="ml-1 text-[8px] text-[#E07A5F]">{expanded ? '· লুকান' : '· কোন কোন চ্যাট?'}</span>}
+            </p>
+            <p className="truncate text-[8px] text-muted">{c.hint}</p>
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="text-sm font-bold tabular-nums text-cream">{fmtUsd(c.usd)}</p>
+          <p className="text-[8px] text-muted">{c.pct}% · {c.count.toLocaleString()} বার</p>
+        </div>
+      </div>
+      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-black/10">
+        <div className="h-full rounded-full bg-[#E07A5F]" style={{ width: `${width}%` }} />
+      </div>
+    </div>
+  )
+}
+
+function ChatConversationList({ convs }: { convs: ChatConversationCost[] }) {
+  if (!convs.length) {
+    return <p className="px-3 py-2 text-[10px] text-muted">এই সময়ে আলাদা চ্যাট পাওয়া যায়নি।</p>
+  }
+  return (
+    <div className="mt-1 space-y-1 border-l-2 border-[#E07A5F]/20 pl-2">
+      {convs.map((cv) => (
+        <Link
+          key={cv.conversationId}
+          href={`/agent?conversation=${encodeURIComponent(cv.conversationId)}`}
+          className="flex items-center justify-between gap-2 rounded-lg border border-border-subtle bg-card/60 px-2.5 py-1.5 hover:border-[#E07A5F]/40 hover:bg-[#E07A5F]/[0.04]"
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="text-[10px]">💬</span>
+            <span className="truncate text-[11px] font-medium text-cream">
+              {cv.title?.trim() || 'শিরোনামহীন চ্যাট'}
+            </span>
+            {cv.source && cv.source !== 'web' && (
+              <span className="shrink-0 rounded-full border border-border-subtle px-1.5 py-0.5 text-[7px] uppercase text-muted">{cv.source}</span>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="text-[11px] font-bold tabular-nums text-cream">{fmtUsd(cv.totalUsd)}</span>
+            <span className="text-[9px] text-[#E07A5F]">খুলুন ↗</span>
+          </div>
+        </Link>
+      ))}
+    </div>
+  )
+}
+
+function SpendByCategorySection({ today, month, chatToday, chatMonth }: {
+  today?: SpendBreakdown; month?: SpendBreakdown
+  chatToday?: ChatConversationCost[]; chatMonth?: ChatConversationCost[]
+}) {
+  const [range, setRange] = useState<'today' | 'month'>('today')
+  const [chatOpen, setChatOpen] = useState(false)
+  const b = range === 'today' ? today : month
+  if (!b) return null
+  const maxUsd = b.categories.length ? b.categories[0].usd : 0
+  const chatConvs = (range === 'today' ? chatToday : chatMonth) ?? []
+  return (
+    <section className="space-y-3">
+      <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold text-[#E07A5F]">🧾 কোন খাতে কত খরচ</p>
+            <p className="mt-1 max-w-2xl text-[10px] leading-relaxed text-muted">
+              প্রতিটি খরচ ঠিক এক খাতে গোনা — সব খাত যোগ করলে মোট মিলে যায়, তাই সহজেই মিলিয়ে নিতে পারবেন।
+            </p>
+          </div>
+          <div className="flex rounded-lg border border-border-subtle p-0.5 text-[10px]">
+            <button
+              onClick={() => setRange('today')}
+              className={cn('rounded-md px-2.5 py-1 font-semibold transition-all', range === 'today' ? 'bg-[#E07A5F]/15 text-[#E07A5F]' : 'text-muted')}
+            >
+              আজ
+            </button>
+            <button
+              onClick={() => setRange('month')}
+              className={cn('rounded-md px-2.5 py-1 font-semibold transition-all', range === 'month' ? 'bg-[#E07A5F]/15 text-[#E07A5F]' : 'text-muted')}
+            >
+              এই মাসে
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className="rounded-xl border border-[#E07A5F]/20 bg-[#E07A5F]/[0.06] px-3 py-2.5">
+            <p className="text-[9px] uppercase tracking-wider text-muted">{range === 'today' ? 'আজকের মোট' : 'এই মাসের মোট'}</p>
+            <p className="mt-1 text-xl font-bold tabular-nums text-cream">{fmtUsd(b.totalUsd)}</p>
+          </div>
+          <div className="rounded-xl border border-border-subtle bg-card/60 px-3 py-2.5">
+            <p className="text-[9px] uppercase tracking-wider text-muted">💬 চ্যাট (Boss)</p>
+            <p className="mt-1 text-xl font-bold tabular-nums text-cream">{fmtUsd(b.chatHeadlineUsd)}</p>
+          </div>
+          <div className="rounded-xl border border-border-subtle bg-card/60 px-3 py-2.5">
+            <p className="text-[9px] uppercase tracking-wider text-muted">খাত সংখ্যা</p>
+            <p className="mt-1 text-xl font-bold tabular-nums text-cream">{b.categories.length}</p>
+          </div>
+        </div>
+
+        {!b.reconciled && (
+          <p className="mt-2 text-[9px] text-[#D4A84B]">⚠️ যোগফল মোটের সাথে মিলছে না — refresh দিন।</p>
+        )}
+
+        <div className="mt-3 space-y-1.5">
+          {b.categories.length === 0 ? (
+            <p className="py-4 text-center text-[11px] text-muted">এই সময়ে কোনো খরচ হয়নি।</p>
+          ) : (
+            b.categories.map((c) =>
+              c.id === 'owner_chat' ? (
+                <div key={c.id}>
+                  <button
+                    type="button"
+                    onClick={() => setChatOpen((o) => !o)}
+                    className="w-full text-left"
+                    aria-expanded={chatOpen}
+                  >
+                    <SpendCategoryRow c={c} maxUsd={maxUsd} expandable expanded={chatOpen} />
+                  </button>
+                  {chatOpen && <ChatConversationList convs={chatConvs} />}
+                </div>
+              ) : (
+                <SpendCategoryRow key={c.id} c={c} maxUsd={maxUsd} />
+              ),
+            )
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 export default function AgentCostsDashboard() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [balances, setBalances] = useState<BalanceData | null>(null)
@@ -836,6 +1028,14 @@ export default function AgentCostsDashboard() {
         }
       />
     <div className="safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6 bg-transparent">
+      {/* Daily spend by activity category — the one-glance "where did my money go" */}
+      <SpendByCategorySection
+        today={data.spendByCategoryToday}
+        month={data.spendByCategoryMonth}
+        chatToday={data.chatConversationsToday}
+        chatMonth={data.chatConversationsMonth}
+      />
+
       {/* Truthful provider billing hub */}
       <section className="space-y-3">
         <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
@@ -957,6 +1157,45 @@ export default function AgentCostsDashboard() {
                       </p>
                     )}
                   </div>
+
+                  {!row.free && (row.runwayStatus || row.criticality) && (
+                    <div className="mt-3 rounded-xl border border-border-subtle bg-black/[0.02] px-3 py-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted">
+                          Runway{row.criticality ? ` · ${CRITICALITY_LABEL[row.criticality]}` : ''}
+                        </p>
+                        {row.runwayStatus && (
+                          <span className={cn('rounded-full px-2 py-0.5 text-[9px] font-semibold', RUNWAY_STYLE[row.runwayStatus].cls)}>
+                            {RUNWAY_STYLE[row.runwayStatus].label}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1.5 flex items-end justify-between gap-2">
+                        <div>
+                          <p className="text-lg font-bold tabular-nums text-cream">
+                            {row.runwayDays != null ? fmtRunwayDays(row.runwayDays) : (row.balanceKind === 'wallet' ? '—' : 'N/A')}
+                          </p>
+                          <p className="text-[8px] text-muted">
+                            {row.runwayDays != null
+                              ? 'আনুমানিক — এই খরচে চললে'
+                              : row.balanceKind === 'wallet' ? 'burn নেই' : 'wallet নেই (postpaid/quota)'}
+                            {row.runwayConfident === false && row.runwayDays != null ? ' · rough' : ''}
+                          </p>
+                        </div>
+                        <div className="space-y-0.5 text-right">
+                          {row.burnUsdPerDay != null && (
+                            <p className="text-[9px] text-muted">দৈনিক ~{fmtUsd(row.burnUsdPerDay)}</p>
+                          )}
+                          {row.fundingMode && (
+                            <p className="text-[9px] text-muted">{FUNDING_MODE_LABEL[row.fundingMode]}</p>
+                          )}
+                          {row.suggestedTopUpUsd != null && (
+                            <p className="text-[9px] font-semibold text-[#E07A5F]">Top-up ~{fmtUsd(row.suggestedTopUpUsd)}</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {row.costAuthoritative && row.providerMonthUsd != null ? (
                     <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-3">
