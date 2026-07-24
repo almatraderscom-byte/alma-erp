@@ -85,6 +85,18 @@ describe('owner turn authorization — model cannot widen owner intent', () => {
   })
 })
 
+describe('callback phrasing = action (PA-5R live miss 2026-07-24)', () => {
+  it.each([
+    'আজকের সেল কত হয়েছে দেখো, আর দেখা শেষ হলে এখনই আমাকে কল করে রিপোর্টটা জানাও।',
+    'stock check koro ar amake call kore janabi',
+    'কাজটা শেষ হলে আমাকে ফোন করে জানিও',
+    'Eyafi ke pouchale amake kol kore jana',
+    'আমাকে কল দিবে কাজ শেষে',
+  ])('authorizes mutations: %s', (text) => {
+    expect(deriveOwnerTurnAuthorization(text).allowMutations).toBe(true)
+  })
+})
+
 describe('banglish -aw imperative spellings (live miss 2026-07-22)', () => {
   it('"message pathaw" is an explicit action, not information-only', () => {
     const auth = deriveOwnerTurnAuthorization('Eyafi ke send_whatsapp tool diye message pathaw: "test"')
