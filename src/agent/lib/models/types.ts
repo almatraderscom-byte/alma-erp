@@ -30,6 +30,15 @@ export type TurnEvent =
       cacheRead?: number
       cacheWrite?: number
       /**
+       * Reasoning/thinking tokens the provider reports separately
+       * (completion_tokens_details.reasoning_tokens on OpenAI-compatible reasoning
+       * models). Cost audit Phase 7: observability only for now — recorded in the
+       * cost event so we can see whether xAI/Grok bills reasoning tokens ON TOP of
+       * completion_tokens (the suspected source of the ~24% xai under-estimate) or
+       * folds them in. Billing is unchanged until the data confirms.
+       */
+      reasoningTokens?: number
+      /**
        * Provider-billed ACTUAL cost for this turn, in USD. OpenRouter returns it
        * in `usage.cost` when the request opts in (`usage: { include: true }`).
        * When present it is authoritative — callers use it instead of the local

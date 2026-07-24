@@ -293,6 +293,9 @@ async function* runAlternateProviderTurn(
   let totalOutputTokens = 0
   let totalCacheCreationTokens = 0
   let totalCacheReadTokens = 0
+  // Reasoning tokens (cost audit Phase 7) — observability only; recorded in units
+  // to diagnose the xai under-estimate, does not change billing.
+  let totalReasoningTokens = 0
   // OpenRouter's ACTUAL billed cost, summed across every tool-loop turn. Stays
   // null for providers that don't report it (native Gemini/Anthropic) — those
   // keep the local token×rate estimate, which is accurate since we control the
@@ -1434,6 +1437,7 @@ async function* runAlternateProviderTurn(
           totalOutputTokens += ev.outputTokens
           totalCacheCreationTokens += ev.cacheWrite ?? 0
           totalCacheReadTokens += ev.cacheRead ?? 0
+          totalReasoningTokens += ev.reasoningTokens ?? 0
           apiRounds++
           if (ev.costUsd != null) {
             totalActualCostUsd = (totalActualCostUsd ?? 0) + ev.costUsd
@@ -2332,6 +2336,10 @@ async function* runAlternateProviderTurn(
         // the head's biggest cost lever was invisible.
         cache_read_input_tokens: totalCacheReadTokens,
         cache_creation_input_tokens: totalCacheCreationTokens,
+        // Phase 7 observability: reasoning tokens the provider reported separately.
+        // Non-zero here on xai/Grok would mean completion_tokens excludes reasoning
+        // and we under-bill output — the diagnosis for the xai drift.
+        ...(totalReasoningTokens > 0 ? { reasoning_tokens: totalReasoningTokens } : {}),
         model: model.id,
         apiModel: model.apiModel,
         provider: model.provider,
