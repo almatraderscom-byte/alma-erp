@@ -196,6 +196,15 @@ final class AlmaVoiceEngine {
     private var recorder: AVAudioRecorder?
     private var vadTask: Task<Void, Never>?
     private var turnTask: Task<Void, Never>?
+    /// Durable completion detector for run_agent_turn: the chat SSE connection
+    /// can die SILENTLY mid-turn on real networks (owner device 2026-07-24 — the
+    /// head's reply landed in chat but the voice agent waited the full 120s
+    /// watchdog). This task polls the DB-backed turn-status endpoint alongside
+    /// the stream; whichever channel finishes first wins.
+    private var livePollTask: Task<Void, Never>?
+    /// Turn id from the SSE `turn_id` event — lets the poller match OUR turn
+    /// exactly and never deliver a stale previous answer.
+    private var liveTurnId: String?
     private var heartbeatTask: Task<Void, Never>?
     private var lastUserText = ""
     private var lastToolNarration = Date.distantPast
@@ -1043,6 +1052,8 @@ final class AlmaVoiceEngine {
         switch ev.type {
         case "conversation_id":
             if let id = ev.id { chatVM?.conversationId = id }
+        case "turn_id":
+            if let id = ev.id { liveTurnId = id }
         case "text_delta":
             replyText += ev.delta ?? ""
             if speak { tts.feed(ev.delta ?? "") }
@@ -1177,11 +1188,64 @@ final class AlmaVoiceEngine {
     func livePlaybackChanged(active: Bool, level: Double) {
         ttsLevel = level
         if active {
+            lastPlaybackStartAt = Date()
             state = .speaking
             feedFinalizeUser()          // Boss's sentence is done once ALMA starts answering
         } else {
             feedFinalizeAgent()         // agent turn ended — next reply is a new line
             if liveActive { state = liveToolTurnPending ? .thinking : .listening }
+            // A tool result that arrived MID-SPEECH was held back (Gemini drops
+            // function responses landing during its own audio turn — sim repro
+            // 2026-07-24); the moment the mouth is free, deliver it.
+            if let held = pendingLiveToolResult {
+                sendLiveToolResultNow(callId: held.callId, text: held.text)
+            }
+        }
+    }
+
+    /// Deliver a run_agent_turn/quick-lookup result to Gemini so it actually gets
+    /// SPOKEN. Sent immediately when the model is quiet; held until playback ends
+    /// when it is mid-speech (a function response landing during an active audio
+    /// turn is silently dropped — the owner heard nothing while the answer sat in
+    /// chat). A 6s watch re-nudges if no spoken turn follows delivery.
+    private var pendingLiveToolResult: (callId: String, text: String)?
+    private var liveResultSpeakWatch: Task<Void, Never>?
+    private var lastPlaybackStartAt = Date.distantPast
+
+    private func deliverLiveToolResult(callId: String, text: String) {
+        if state == .speaking {
+            #if DEBUG
+            NSLog("ALMA-VOICE result held until playback idle (%d chars)", text.count)
+            #endif
+            pendingLiveToolResult = (callId, text)
+            // Failsafe: if the playback-idle event never arrives (missed state
+            // transition), a held result must NOT sit forever — force-send in 5s.
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard let self, let held = self.pendingLiveToolResult, held.callId == callId else { return }
+                #if DEBUG
+                NSLog("ALMA-VOICE held result force-flushed after 5s")
+                #endif
+                self.sendLiveToolResultNow(callId: held.callId, text: held.text)
+            }
+            return
+        }
+        sendLiveToolResultNow(callId: callId, text: text)
+    }
+
+    private func sendLiveToolResultNow(callId: String, text: String) {
+        pendingLiveToolResult = nil
+        let sentAt = Date()
+        live.sendToolResponse(callId: callId, result: text)
+        liveResultSpeakWatch?.cancel()
+        liveResultSpeakWatch = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard let self, !Task.isCancelled, self.liveActive else { return }
+            guard self.lastPlaybackStartAt < sentAt else { return }   // it spoke
+            #if DEBUG
+            NSLog("ALMA-VOICE result unspoken after 6s — nudging Gemini to say it")
+            #endif
+            self.live.sendTextTurn("STATUS_NOTE: কাজের ফল এসে গেছে — এখনই Boss-কে সংক্ষেপে নিজের ভাষায় বলো: \(String(text.prefix(400)))")
         }
     }
 
@@ -1223,12 +1287,12 @@ final class AlmaVoiceEngine {
                       tool, Int(Date().timeIntervalSince(started) * 1000), resp.ms ?? -1, (resp.ok ?? false) ? 1 : 0)
                 #endif
                 if resp.ok == true, let payload = resp.result {
-                    self.live.sendToolResponse(callId: callId, result: "তথ্য (JSON): \(payload)। এখান থেকে Boss-এর প্রশ্নের উত্তরটুকু সংক্ষেপে স্বাভাবিক বাংলায় বলুন।")
+                    self.deliverLiveToolResult(callId: callId, text: "তথ্য (JSON): \(payload)। এখান থেকে Boss-এর প্রশ্নের উত্তরটুকু সংক্ষেপে স্বাভাবিক বাংলায় বলুন।")
                 } else {
-                    self.live.sendToolResponse(callId: callId, result: "তথ্যটা এখন আনা গেল না (\(resp.error ?? "unknown"))। Boss-কে ছোট করে জানান, দরকার হলে run_agent_turn দিয়ে চেষ্টা করুন।")
+                    self.deliverLiveToolResult(callId: callId, text: "তথ্যটা এখন আনা গেল না (\(resp.error ?? "unknown"))। Boss-কে ছোট করে জানান, দরকার হলে run_agent_turn দিয়ে চেষ্টা করুন।")
                 }
             } catch {
-                self.live.sendToolResponse(callId: callId, result: "তথ্যটা এখন আনা গেল না। Boss-কে ছোট করে জানান।")
+                self.deliverLiveToolResult(callId: callId, text: "তথ্যটা এখন আনা গেল না। Boss-কে ছোট করে জানান।")
             }
         }
     }
@@ -1293,6 +1357,7 @@ final class AlmaVoiceEngine {
                                  files: readyImageFiles,
                                  resume: nil)
         pendingImages.removeAll()
+        liveTurnId = nil
         turnTask?.cancel()
         turnTask = Task { [weak self] in
             guard let self else { return }
@@ -1311,21 +1376,159 @@ final class AlmaVoiceEngine {
                 }
                 #if DEBUG
                 NSLog("ALMA-VOICE head turn stream ended; reply chars=%d", self.replyText.count)
+                // Poller-path test harness: pretend the stream died right at the
+                // finish line — the DB poller MUST deliver the answer instead.
+                if ProcessInfo.processInfo.environment["ALMA_VOICE_KILL_SSE"] == "1"
+                    || ProcessInfo.processInfo.arguments.contains("ALMA_VOICE_KILL_SSE=1") {
+                    NSLog("ALMA-VOICE TEST killSSE — suppressing SSE completion")
+                    return
+                }
                 #endif
+                guard self.liveToolTurnPending else { return }   // poller already delivered
                 let result = self.replyText.trimmingCharacters(in: .whitespacesAndNewlines)
-                self.live.sendToolResponse(
+                self.deliverLiveToolResult(
                     callId: callId,
-                    result: result.isEmpty ? "Head agent কোনো কথ্য উত্তর দেয়নি। স্ক্রিনের approval বা প্রশ্নের card দেখুন।" : result
+                    text: result.isEmpty ? "Head agent কোনো কথ্য উত্তর দেয়নি। স্ক্রিনের approval বা প্রশ্নের card দেখুন।" : result
                 )
                 self.liveToolTurnPending = false
+                self.livePollTask?.cancel()
             } catch is CancellationError {
+                // Cancelled by the owner OR because the poller won the race — in
+                // the latter case the answer is already delivered; stay silent.
+                guard self.liveToolTurnPending else { return }
                 self.live.sendToolResponse(callId: callId, result: "আগের অনুরোধটি বাতিল হয়েছে।")
                 self.liveToolTurnPending = false
+                self.livePollTask?.cancel()
             } catch {
-                self.live.sendToolResponse(callId: callId, result: "Head agent-এর সাথে সাময়িক সংযোগ সমস্যা হয়েছে। Boss-কে আবার বলতে বলুন।")
-                self.liveToolTurnPending = false
+                // Stream transport died. Do NOT give up: the turn keeps running
+                // server-side and the DB poller below fetches its result. pending
+                // stays SET; the 120s stall watchdog remains the last net.
+                #if DEBUG
+                NSLog("ALMA-VOICE head turn stream FAILED (%@) — poller keeps waiting", String(describing: error))
+                #endif
             }
         }
+        // DB-backed completion poller: catches the answer within ~4s of the turn
+        // finishing even when the SSE connection is silently dead (owner device
+        // 2026-07-24: reply visible in chat, voice waited the full watchdog).
+        livePollTask?.cancel()
+        livePollTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            while let self, !Task.isCancelled, self.liveToolTurnPending {
+                if let outcome = await self.pollHeadTurnOutcome(requestStart: started) {
+                    guard self.liveToolTurnPending, !Task.isCancelled else { return }
+                    self.liveToolTurnPending = false
+                    self.liveStatusNudgeTask?.cancel()
+                    self.turnTask?.cancel()
+                    #if DEBUG
+                    NSLog("ALMA-VOICE poller delivered turn outcome (%d chars)", outcome.count)
+                    #endif
+                    self.replyText = outcome
+                    self.lastEventAt = Date()
+                    self.deliverLiveToolResult(callId: callId, text: outcome)
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+            }
+        }
+    }
+
+    /// One poll round: DB turn status for the live conversation. Returns the
+    /// spoken-result payload once OUR turn reached a terminal state, else nil.
+    private func pollHeadTurnOutcome(requestStart: Date) async -> String? {
+        guard let convId = chatVM?.conversationId, !convId.isEmpty else {
+            #if DEBUG
+            NSLog("ALMA-VOICE poll: no conversationId yet")
+            #endif
+            return nil
+        }
+        struct StatusResp: Decodable {
+            let status: String?
+            let turnId: String?
+            let assistantMessageId: String?
+            let startedAt: String?
+        }
+        let st: StatusResp
+        do {
+            st = try await AlmaAPI.shared.send(
+                "GET", "/api/assistant/conversations/\(convId)/turn-status")
+        } catch {
+            #if DEBUG
+            NSLog("ALMA-VOICE poll: turn-status FAILED %@", String(describing: error))
+            #endif
+            return nil
+        }
+        #if DEBUG
+        NSLog("ALMA-VOICE poll: status=%@ turn=%@ ourTurn=%@ msg=%@",
+              st.status ?? "nil", st.turnId ?? "nil", liveTurnId ?? "nil",
+              st.assistantMessageId ?? "nil")
+        #endif
+        guard let status = st.status, status != "running", status != "idle" else {
+            // The turn is alive server-side even if the SSE went quiet — keep the
+            // 120s stall watchdog from killing a healthy long turn (it cleared
+            // liveToolTurnPending, which also stopped THIS poller: owner's 3min
+            // silence on 2026-07-24).
+            if st.status == "running" { lastEventAt = Date() }
+            return nil
+        }
+        // Stale-turn guard: never speak a PREVIOUS answer. Prefer an exact turn-id
+        // match; without one (the turn_id event died with the stream) accept only
+        // a turn that started after this request did.
+        if let ourId = liveTurnId {
+            guard st.turnId == ourId else { return nil }
+        } else {
+            let isoFrac = ISO8601DateFormatter()
+            isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let isoPlain = ISO8601DateFormatter()
+            guard let raw = st.startedAt,
+                  let startedAt = isoFrac.date(from: raw) ?? isoPlain.date(from: raw),
+                  startedAt > requestStart.addingTimeInterval(-10) else { return nil }
+        }
+        if status == "error" || status == "canceled" {
+            return "কাজটা শেষ করা যায়নি। Boss-কে ছোট করে জানান, একটু পরে আবার চেষ্টা করা যাবে।"
+        }
+        guard let mid = st.assistantMessageId, !mid.isEmpty else {
+            return Self.noSpokenReplyNote
+        }
+        return await fetchAssistantMessageText(conversationId: convId, messageId: mid)
+    }
+
+    private static let noSpokenReplyNote =
+        "Head agent কোনো কথ্য উত্তর দেয়নি। স্ক্রিনের approval বা প্রশ্নের card দেখুন।"
+
+    /// Fetch the final assistant message text by id (latest-30 page first, full
+    /// history as fallback).
+    private func fetchAssistantMessageText(conversationId: String, messageId: String) async -> String? {
+        struct Block: Decodable { let type: String?; let text: String? }
+        enum FlexContent: Decodable {
+            case blocks([Block]), plain(String), empty
+            init(from decoder: Decoder) throws {
+                let c = try decoder.singleValueContainer()
+                if let b = try? c.decode([Block].self) { self = .blocks(b) }
+                else if let s = try? c.decode(String.self) { self = .plain(s) }
+                else { self = .empty }
+            }
+            var joined: String {
+                switch self {
+                case .blocks(let b):
+                    return b.compactMap { $0.type == "text" ? $0.text : nil }
+                        .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                case .plain(let s): return s.trimmingCharacters(in: .whitespacesAndNewlines)
+                case .empty: return ""
+                }
+            }
+        }
+        struct Msg: Decodable { let id: String?; let content: FlexContent? }
+        for query in [["limit": "30"], [:]] {
+            let page: [Msg]? = try? await AlmaAPI.shared.send(
+                "GET", "/api/assistant/conversations/\(conversationId)/messages",
+                query: query.mapValues { Optional($0) }, body: Optional<AnyEncodable>.none)
+            if let row = page?.first(where: { $0.id == messageId }) {
+                let text = row.content?.joined ?? ""
+                return text.isEmpty ? Self.noSpokenReplyNote : text
+            }
+        }
+        return "কাজ শেষ হয়েছে, উত্তরটা পড়া গেল না — Boss-কে চ্যাটে দেখতে বলুন।"
     }
 
     /// Web heartbeat: every 4s while thinking, if silent for 14s say "এখনো কাজ চলছে…".
@@ -1710,6 +1913,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         tapInstalled = true
         audioEngine.prepare()
         do { try audioEngine.start() } catch { throw AlmaLiveVoiceError.audioStart }
+        // setVoiceProcessingEnabled RESETS the output route to the receiver, so
+        // the override above is dead by now — first-call greeting played near-
+        // silent into the earpiece (owner device 2026-07-24; reopening worked
+        // because this whole block is skipped once configured). Re-assert AFTER
+        // VP + engine start so call one is as loud as call two.
+        try? av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
         configured = true
     }
 
@@ -2096,6 +2305,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         audioQueue.async { [weak self] in
             guard let self, !self.stopped else { return }
             if !self.player.isPlaying { self.player.play() }
+        }
+        // Belt+suspenders (same fix the legacy TTS path needed): anything can
+        // flip the route to the receiver between turns — force the loud speaker
+        // back whenever a spoken turn starts.
+        audioLock.lock(); let wantSpeaker = speakerEnabled; audioLock.unlock()
+        if wantSpeaker {
+            DispatchQueue.main.async {
+                try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
+            }
         }
         #if DEBUG
         NSLog("ALMA-VOICE playback turn started prebuffer=%.3fs", prebufferDuration)
@@ -2784,6 +3002,17 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
             else if let sink = self.onFallbackUploadSink { sink(wav) }
             else { self.onNoSpeechSink?() }
         }
+    }
+
+    /// Whole-utterance WAV for the dictation ACCURACY pass: the live view is
+    /// built from 1.4–5s chunks transcribed independently (no cross-chunk
+    /// context — Bangla accuracy suffers); the composer re-transcribes THIS
+    /// full buffer in one call instead. nil when nothing was really spoken.
+    func fullUtteranceWav() -> Data? {
+        guard spoke else { return nil }
+        lock.lock(); let pcm = fullAudio; lock.unlock()
+        guard pcm.count > 48_000 else { return nil }   // <1s — nothing to gain
+        return Self.wavData(pcm: pcm)
     }
 
     /// Minimal WAV container: PCM16 mono 24k.
