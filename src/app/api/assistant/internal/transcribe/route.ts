@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
     void logCost({
       provider: 'openai',
       kind: 'transcribe',
-      units: { duration_seconds: durationSec, bytes: audioFile.size, model: transcription.model },
+      units: { duration_seconds: durationSec, bytes: audioFile.size, model: transcription.model, purpose: 'telegram_voice' },
       costUsd,
       dedupKey: `whisper:${audioFile.size}:${transcription.text.slice(0, 20)}`,
     })

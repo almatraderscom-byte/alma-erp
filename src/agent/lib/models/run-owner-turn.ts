@@ -148,10 +148,12 @@ async function conversationAutoApprovesUpgrade(conversationId: string): Promise<
 function providerToCostProvider(provider: string): CostProvider {
   if (provider === 'google') return 'gemini'
   if (provider === 'openrouter') return 'openrouter'
-  // xAI direct is OpenAI-compatible and priced from the same registry rates —
-  // tag its spend under 'openai' (CostProvider has no xai bucket; adding one
-  // would ripple through the cost dashboards for no accounting gain).
-  if (provider === 'openai' || provider === 'xai') return 'openai'
+  // Cost audit 2026-07-24: xAI gets its OWN bucket. Tagging Grok head turns as
+  // 'openai' put ~$4/day of chat spend on the dashboard's "ভয়েস (Whisper)" card —
+  // the owner read his voice cost as 30x reality. EFFECTIVE_PROVIDER_SQL remaps
+  // historical rows (units->>'provider'='xai') so old spend re-homes too.
+  if (provider === 'xai') return 'xai'
+  if (provider === 'openai') return 'openai'
   return 'anthropic'
 }
 
@@ -845,6 +847,15 @@ async function* runAlternateProviderTurn(
       'ব্রাউজার-কাজ চললে আগে live_browser_look দিয়ে এখনকার পেজ দেখো — গোড়া থেকে navigate করা বা main view-এ ফেরত যাওয়া নিষেধ।'
     volatileSections.push(answerNote)
   }
+  // Owner Control Center: gate OFF-capability tools + add the "ask owner to
+  // enable, don't improvise" note and autonomy preference. Fail-open.
+  // Cost audit 2026-07-24: the controls note goes into the VOLATILE per-turn
+  // block, NOT the system prompt — appended to system it made the cached stable
+  // prefix change whenever the owner toggled a capability, busting the provider
+  // prompt cache for every conversation at once. Same text, cache-safe placement.
+  const agentControls = await getAgentControls()
+  const controlsNote = controlsPromptNote(agentControls)
+  if (controlsNote) volatileSections.push(controlsNote)
   // Scoped memory / business context (buildSystemPromptBlocks volatile) comes
   // AFTER the canonical job state — deterministic order, cheap to reason about.
   const systemVolatile = systemBlocksToText(volatile)
@@ -859,11 +870,7 @@ async function* runAlternateProviderTurn(
       }
     }
   }
-  // Owner Control Center: gate OFF-capability tools + add the "ask owner to
-  // enable, don't improvise" note and autonomy preference. Fail-open.
-  const agentControls = await getAgentControls()
-  const controlsNote = controlsPromptNote(agentControls)
-  const systemText = systemBlocksToText(stable) + (controlsNote ? `\n\n${controlsNote}` : '')
+  const systemText = systemBlocksToText(stable)
   // P1-1 context-compiler SHADOW: run the SPEC-041 compiler over the exact
   // segments this turn uses and record provenance + token-budget verdicts into
   // the per-turn span spine (route.context_compile). Observe-only — the model
@@ -2305,6 +2312,11 @@ async function* runAlternateProviderTurn(
       units: {
         input_tokens: totalInputTokens,
         output_tokens: totalOutputTokens,
+        // Prompt-cache effectiveness (cost audit 2026-07-24): without these the
+        // dashboard cannot tell "cache is working" from "cache not reported" —
+        // the head's biggest cost lever was invisible.
+        cache_read_input_tokens: totalCacheReadTokens,
+        cache_creation_input_tokens: totalCacheCreationTokens,
         model: model.id,
         apiModel: model.apiModel,
         provider: model.provider,

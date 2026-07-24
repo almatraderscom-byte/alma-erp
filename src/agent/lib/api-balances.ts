@@ -321,6 +321,7 @@ export async function setApiCredit(
 export const EFFECTIVE_PROVIDER_SQL = Prisma.sql`CASE
   WHEN units->>'provider' = 'openrouter' THEN 'openrouter'
   WHEN units->>'provider' = 'google' THEN 'gemini'
+  WHEN units->>'provider' = 'xai' THEN 'xai'
   WHEN units->>'provider' = 'openai' THEN 'openai'
   WHEN units->>'provider' = 'anthropic' THEN 'anthropic'
   ELSE provider
