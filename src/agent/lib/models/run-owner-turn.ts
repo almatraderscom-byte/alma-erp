@@ -2146,6 +2146,11 @@ async function* runAlternateProviderTurn(
 
     // Prefer OpenRouter's actual billed cost; fall back to the local estimate only
     // when the provider didn't report one (native Gemini/Anthropic).
+    // Bill reasoning tokens ONLY for xai-direct, where a live turn proved they
+    // are reported separately from completion_tokens (Phase 7). Other providers
+    // either return an actual cost (OpenRouter) or fold reasoning into
+    // completion_tokens, so adding it there would double-count.
+    const billedReasoningTokens = model.provider === 'xai' ? totalReasoningTokens : 0
     const costUsd = totalActualCostUsd != null
       ? roundUsd(totalActualCostUsd)
       : calcModelTurnCostUsd(model, {
@@ -2153,6 +2158,7 @@ async function* runAlternateProviderTurn(
           outputTokens: totalOutputTokens,
           cacheRead: totalCacheReadTokens,
           cacheWrite: totalCacheCreationTokens,
+          reasoningTokens: billedReasoningTokens,
         })
 
     // Ask-card breadcrumbs are appended after the text block — same reload-survival
@@ -2375,7 +2381,7 @@ async function* runAlternateProviderTurn(
               tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
               costUsd: totalActualCostUsd != null
                 ? roundUsd(totalActualCostUsd)
-                : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens }),
+                : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens, reasoningTokens: model.provider === 'xai' ? totalReasoningTokens : 0 }),
               usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
             },
           })
@@ -2406,7 +2412,7 @@ async function* runAlternateProviderTurn(
             tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
             costUsd: totalActualCostUsd != null
               ? roundUsd(totalActualCostUsd)
-              : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens }),
+              : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens, reasoningTokens: model.provider === 'xai' ? totalReasoningTokens : 0 }),
             usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
           },
         })
