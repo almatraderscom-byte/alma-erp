@@ -56,14 +56,30 @@ export async function GET(req: NextRequest) {
   }
   lines.push('')
   lines.push('=== Subscriptions ===')
-  lines.push(['name', 'amount', 'currency', 'billing_cycle', 'next_renewal_at', 'category', 'active', 'notes'].join(','))
+  lines.push([
+    'name', 'provider_id', 'plan', 'amount', 'currency', 'billing_cycle',
+    'next_renewal_at', 'invoice_amount', 'invoice_currency', 'invoice_due_at',
+    'invoice_status', 'source_type', 'sync_status', 'last_synced_at',
+    'source_url', 'payment_method', 'category', 'active', 'notes',
+  ].join(','))
   for (const s of subs) {
     lines.push([
       csvEscape(s.name),
+      csvEscape(s.providerId),
+      csvEscape(s.plan),
       csvEscape(s.amount),
       csvEscape(s.currency),
       csvEscape(s.billingCycle),
       csvEscape(s.nextRenewalAt.toISOString().slice(0, 10)),
+      csvEscape(s.invoiceAmount),
+      csvEscape(s.invoiceCurrency),
+      csvEscape(s.invoiceDueAt?.toISOString().slice(0, 10)),
+      csvEscape(s.invoiceStatus),
+      csvEscape(s.sourceType),
+      csvEscape(s.syncStatus),
+      csvEscape(s.lastSyncedAt?.toISOString()),
+      csvEscape(s.sourceUrl),
+      csvEscape(s.paymentMethod),
       csvEscape(s.category),
       csvEscape(s.active),
       csvEscape(s.notes),

@@ -116,7 +116,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'security-audit',       cronUtc: '30 16 * * 5',  description: 'Weekly security audit (Fri 22:30 Dhaka)' },
   { name: 'subscription-renewal',   cronUtc: '0 4 * * *',    description: 'Subscription renewal alerts (10:00 Dhaka)' },
   { name: 'budget-check',           cronUtc: '0 * * * *',    description: 'Hourly AI budget threshold check' },
-  { name: 'balance-check',          cronUtc: '0 */6 * * *',  description: 'API provider balance refresh (every 6h)' },
+  { name: 'balance-check',          cronUtc: '*/15 * * * *', description: 'Provider billing + wallet refresh (every 15m)' },
   { name: 'proof-timeout',          cronUtc: '*/5 * * * *',    description: 'Task proof reminder + 2h unverified flag' },
   { name: 'ack-escalation',         cronUtc: '*/5 * * * *',    description: 'Escalate unseen staff messages (every 5 min)' },
   { name: 'lunch-watch',            cronUtc: '*/5 * * * *',    description: 'Check overdue staff lunches (every 5 min)' },

@@ -28,6 +28,10 @@ type DashboardData = {
   subscriptions: Array<{
     id: string; name: string; amount: number; currency: string
     billingCycle: string; nextRenewalAt: string; category: string | null
+    plan: string | null; paymentMethod: string | null; providerId: string | null
+    sourceType: string; invoiceAmount: number | null; invoiceCurrency: string | null
+    invoiceDueAt: string | null; invoiceStatus: string | null; sourceUrl: string | null
+    lastSyncedAt: string | null; syncStatus: string
     dailyUsd: number
   }>
   budgets: { dailyUsd: number | null; monthlyUsd: number | null }
@@ -67,9 +71,52 @@ type BalanceProviderRow = {
   id: string
   label: string
   balanceUsd: number | null
+  balanceKind: 'wallet' | 'manual_estimate' | 'quota' | 'none'
+  balanceAmount: number | null
+  balanceCurrency: string | null
+  balanceUnit: string | null
+  quota?: {
+    used: number
+    limit: number
+    remaining: number
+    unit: string
+    plan: string | null
+    resetAt: string | null
+    subscription: number | null
+    onDemand: number | null
+    overage: { amount: number; currency: string } | null
+  } | null
+  usage?: {
+    amount: number
+    unit: string
+    period: 'month'
+  } | null
+  invoice?: {
+    kind: 'open' | 'next' | 'preview'
+    amount: number
+    currency: string
+    dueAt: string | null
+    status: string
+  } | null
   todayUsd: number | null
   monthUsd: number | null
+  providerMonthUsd?: number | null
+  localDeltaUsd?: number | null
   source: string
+  sourceType: string
+  costSourceType: string
+  status: 'live' | 'partial' | 'manual' | 'unconfigured' | 'stale' | 'error' | 'free'
+  statusMessage?: string | null
+  balanceAuthoritative: boolean
+  costAuthoritative: boolean
+  planAuthoritative: boolean
+  authoritative: boolean
+  fetchedAt: string
+  staleAfter: string | null
+  dashboardUrl?: string | null
+  plan?: string | null
+  capabilities: string[]
+  configuredCapabilities?: string[]
   free?: boolean
   syncedThrough?: string | null
 }
@@ -78,6 +125,12 @@ type BalanceData = {
   checkedAt: string
   providers: BalanceProviderRow[]
   summaryLine: string
+  dueSummary?: {
+    dueNow: number
+    dueWithin7Days: number
+    dueWithin30Days: number
+    amountsWithin30Days: Array<{ currency: string; amount: number }>
+  }
 }
 
 type CostLogEvent = {
@@ -204,21 +257,140 @@ function renewalBadge(dateStr: string) {
 
 function fmtBalanceCell(row: BalanceProviderRow) {
   if (row.free) return 'Free'
-  if (row.balanceUsd == null) return '—'
-  return fmtUsd(row.balanceUsd)
+  if (row.balanceKind === 'wallet' && row.balanceAmount != null) {
+    return row.balanceCurrency === 'USD'
+      ? fmtUsd(row.balanceAmount)
+      : `${row.balanceCurrency ?? ''} ${row.balanceAmount.toFixed(2)}`.trim()
+  }
+  if (row.balanceKind === 'quota' && row.quota) {
+    return `${Math.round(row.quota.remaining).toLocaleString()} ${row.quota.unit === 'characters' ? 'chars' : row.quota.unit}`
+  }
+  if (
+    row.capabilities.includes('wallet')
+    && !(row.configuredCapabilities ?? []).includes('wallet')
+  ) {
+    return 'Credential দরকার'
+  }
+  if (
+    row.capabilities.includes('quota')
+    && !(row.configuredCapabilities ?? []).includes('quota')
+  ) {
+    return 'Credential দরকার'
+  }
+  return 'Wallet API নেই'
 }
 
-function fmtSpendCell(n: number | null, providerId?: string) {
+function balanceSourceLabel(row: BalanceProviderRow) {
+  if (row.free) return 'Free'
+  if (row.balanceKind !== 'none') return SOURCE_LABEL[row.sourceType] ?? row.sourceType
+  const balanceCapabilities = row.capabilities.filter((field) => field === 'wallet' || field === 'quota')
+  if (!balanceCapabilities.length) return 'Not exposed by provider'
+  const configured = new Set(row.configuredCapabilities ?? [])
+  return balanceCapabilities.some((field) => configured.has(field))
+    ? 'Provider returned no current value'
+    : 'Credential required'
+}
+
+function fmtSpendCell(n: number | null) {
   if (n == null) return '—'
-  if (providerId === 'oxylabs') return `${Math.round(n)} ক্রেডিট`
   return fmtUsd(n)
 }
 
-// Per-provider deep link to the live billing page so the owner can see the
-// not-yet-synced most-recent ~2 days that the provider's API hasn't published.
-const PLATFORM_COST_URL: Record<string, string> = {
-  anthropic: 'https://platform.claude.com/workspaces/default/cost',
-  openrouter: 'https://openrouter.ai/activity',
+const STATUS_STYLE: Record<BalanceProviderRow['status'], { label: string; cls: string }> = {
+  live: { label: 'Connected', cls: 'tone-green border' },
+  partial: { label: 'Waiting for provider data', cls: 'tone-blue border' },
+  manual: { label: 'Local only', cls: 'tone-amber border' },
+  unconfigured: { label: 'Connect', cls: 'border border-border-subtle text-muted' },
+  stale: { label: 'Stale', cls: 'tone-amber border' },
+  error: { label: 'Error', cls: 'tone-red border' },
+  free: { label: 'Free', cls: 'tone-green border' },
+}
+
+type FieldTruth =
+  | 'live'
+  | 'delayed'
+  | 'estimated'
+  | 'not_exposed'
+  | 'needs_credential'
+  | 'sync_error'
+  | 'no_current_value'
+
+const FIELD_TRUTH: Record<FieldTruth, { label: string; cls: string }> = {
+  live: { label: 'Live', cls: 'tone-green border' },
+  delayed: { label: 'Provider delayed', cls: 'tone-blue border' },
+  estimated: { label: 'Local estimate', cls: 'tone-amber border' },
+  not_exposed: { label: 'Not exposed', cls: 'border border-border-subtle text-muted' },
+  needs_credential: { label: 'Needs credential', cls: 'tone-amber border' },
+  sync_error: { label: 'Sync error', cls: 'tone-red border' },
+  no_current_value: { label: 'None reported', cls: 'border border-border-subtle text-muted' },
+}
+
+function providerFieldTruth(row: BalanceProviderRow) {
+  const configured = new Set(row.configuredCapabilities ?? [])
+  const hasCapability = (field: string) => row.capabilities.includes(field)
+  const needsCredential = (field: string) => hasCapability(field) && !configured.has(field)
+  const syncFailed = (field: string) => hasCapability(field) && configured.has(field) && row.status === 'error'
+  return {
+    balance: row.balanceAuthoritative
+      ? 'live'
+      : row.balanceKind === 'manual_estimate'
+        ? 'estimated'
+        : needsCredential('wallet') || needsCredential('quota')
+          ? 'needs_credential'
+          : syncFailed('wallet') || syncFailed('quota')
+            ? 'sync_error'
+          : 'not_exposed',
+    cost: row.costAuthoritative
+      ? (row.costSourceType === 'provider_export' || Boolean(row.syncedThrough) ? 'delayed' : 'live')
+      : needsCredential('cost')
+          ? 'needs_credential'
+          : syncFailed('cost')
+            ? 'sync_error'
+            : row.monthUsd != null
+              ? 'estimated'
+              : hasCapability('cost') && configured.has('cost')
+                ? 'no_current_value'
+                : 'not_exposed',
+    plan: row.planAuthoritative
+      ? 'live'
+      : needsCredential('plan')
+        ? 'needs_credential'
+        : syncFailed('plan')
+          ? 'sync_error'
+          : hasCapability('plan') && configured.has('plan')
+            ? 'no_current_value'
+            : 'not_exposed',
+    invoice: row.invoice
+      ? 'live'
+      : needsCredential('invoice')
+        ? 'needs_credential'
+        : syncFailed('invoice')
+          ? 'sync_error'
+          : hasCapability('invoice') && configured.has('invoice')
+            ? 'no_current_value'
+        : 'not_exposed',
+    usage: row.usage || row.quota
+      ? 'live'
+      : row.costAuthoritative && row.costSourceType === 'provider_export'
+        ? 'delayed'
+        : needsCredential('usage')
+          ? 'needs_credential'
+          : syncFailed('usage')
+            ? 'sync_error'
+            : row.monthUsd != null
+              ? 'estimated'
+              : hasCapability('usage') && configured.has('usage')
+                ? 'no_current_value'
+                : 'not_exposed',
+  } satisfies Record<string, FieldTruth>
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  provider_api: 'Provider API',
+  provider_export: 'Billing export',
+  local_measured: 'Local measured',
+  manual: 'Manual',
+  free: 'Free',
 }
 
 // "2026-06-21" → "২১ জুন" (Bangla short date) for the sync note.
@@ -268,9 +440,10 @@ function fmtTokens(inTok: number | null, outTok: number | null) {
 
 function balanceColor(row: BalanceProviderRow): string {
   if (row.free) return 'txt-pos'
-  if (row.balanceUsd == null) return 'text-muted'
-  if (row.balanceUsd < 1) return 'txt-neg'
-  if (row.balanceUsd < 5) return 'text-amber-400'
+  if (row.balanceKind === 'manual_estimate') return row.balanceAmount != null && row.balanceAmount < 0 ? 'txt-neg' : 'text-amber-400'
+  if (row.balanceAmount == null) return 'text-muted'
+  if (row.balanceAmount < 1) return 'txt-neg'
+  if (row.balanceAmount < 5 && row.balanceKind === 'wallet') return 'text-amber-400'
   return 'txt-pos'
 }
 
@@ -605,6 +778,16 @@ export default function AgentCostsDashboard() {
     providerId: p.provider,
     value: p.totalUsd,
   }))
+  const walletTotal = (balances?.providers ?? [])
+    .filter((row) => row.balanceKind === 'wallet' && row.balanceCurrency === 'USD')
+    .reduce((sum, row) => sum + (row.balanceAmount ?? 0), 0)
+  const confirmedMonth = (balances?.providers ?? [])
+    .filter((row) => row.costAuthoritative && row.providerMonthUsd != null)
+    .reduce((sum, row) => sum + (row.providerMonthUsd ?? 0), 0)
+  const providerAttention = (balances?.providers ?? [])
+    .filter((row) => row.status === 'error' || row.status === 'stale' || row.status === 'partial').length
+  const missingConnections = (balances?.providers ?? [])
+    .filter((row) => row.status === 'unconfigured').length
 
   if (loading) {
     return (
@@ -653,93 +836,246 @@ export default function AgentCostsDashboard() {
         }
       />
     <div className="safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6 bg-transparent">
-      {/* API balances */}
-      <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-semibold text-[#E07A5F]">💳 API ব্যালেন্স</p>
-          <div className="flex items-center gap-2">
-            {balances?.checkedAt && (
-              <p className="text-[10px] text-muted">
-                শেষ চেক: {fmtCheckedAt(balances.checkedAt)}
+      {/* Truthful provider billing hub */}
+      <section className="space-y-3">
+        <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-[#E07A5F]">💳 Provider billing hub</p>
+              <p className="mt-1 max-w-2xl text-[10px] leading-relaxed text-muted">
+                Main values-এ শুধু provider-published wallet, quota ও cost। Local estimate আলাদা; manual credit provider balance হিসেবে দেখানো হয় না।
               </p>
-            )}
-            <button
-              onClick={() => void refreshBalances()}
-              disabled={refreshingBalances}
-              className="rounded-lg border border-border-subtle bg-transparent px-2.5 py-1 text-[10px] text-muted hover:text-cream hover:border-[#E07A5F]/30 disabled:opacity-50 transition-all"
-            >
-              {refreshingBalances ? 'রিফ্রেশ…' : '🔄 Refresh'}
-            </button>
+            </div>
+            <div className="flex items-center gap-2">
+              {balances?.checkedAt && (
+                <p className="text-[10px] text-muted">শেষ full sync: {fmtCheckedAt(balances.checkedAt)}</p>
+              )}
+              <button
+                onClick={() => void refreshBalances()}
+                disabled={refreshingBalances}
+                className="rounded-lg border border-border-subtle bg-transparent px-2.5 py-1 text-[10px] text-muted hover:border-[#E07A5F]/30 hover:text-cream disabled:opacity-50 transition-all"
+              >
+                {refreshingBalances ? 'সব provider sync হচ্ছে…' : '🔄 সব refresh'}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+            {[
+              {
+                label: 'Prepaid cash',
+                value: fmtUsd(walletTotal),
+                note: 'শুধু verified USD wallets',
+              },
+              {
+                label: 'Provider-published MTD',
+                value: fmtUsd(confirmedMonth),
+                note: 'API/export প্রকাশিত org/team scope',
+              },
+              {
+                label: 'আগামী ৭ দিনে due',
+                value: `${balances?.dueSummary?.dueWithin7Days ?? 0}টি`,
+                note: balances?.dueSummary?.amountsWithin30Days?.length
+                  ? balances.dueSummary.amountsWithin30Days.map((item) => `${item.currency} ${item.amount}`).join(' · ')
+                  : 'কোনো tracked amount নেই',
+              },
+              {
+                label: 'Sync health',
+                value: providerAttention ? `${providerAttention} attention` : 'Healthy',
+                note: `${missingConnections}টি optional connection বাকি`,
+              },
+            ].map((item) => (
+              <div key={item.label} className="rounded-xl border border-border-subtle bg-black/[0.02] p-3">
+                <p className="text-[9px] uppercase tracking-wider text-muted">{item.label}</p>
+                <p className="mt-1 text-lg font-bold text-cream">{item.value}</p>
+                <p className="mt-1 text-[9px] text-muted">{item.note}</p>
+              </div>
+            ))}
           </div>
         </div>
+
         {!balances?.providers?.length ? (
-          <p className="py-4 text-center text-[11px] text-muted">ব্যালেন্স লোড হচ্ছে…</p>
+          <div className="rounded-[18px] border border-border-subtle bg-card/80 py-8 text-center text-[11px] text-muted shadow-card">
+            Provider data লোড হচ্ছে…
+          </div>
         ) : (
-          <div className="overflow-x-auto min-w-0 max-w-full table-scroll">
-            <table className="w-full min-w-[520px] text-left text-[11px]">
-              <thead>
-                <tr className="border-b border-border-subtle">
-                  <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">Provider</th>
-                  <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">ব্যালেন্স</th>
-                  <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">আজ খরচ</th>
-                  <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">এই মাসে</th>
-                  <th className="py-2.5 pr-3 font-medium text-[#E07A5F]">সূত্র</th>
-                  <th className="py-2.5 font-medium text-[#E07A5F] text-right">লগ</th>
-                </tr>
-              </thead>
-              <tbody>
-                {balances.providers.map((row) => (
-                  <tr key={row.id} className="border-b border-border-subtle last:border-0 hover:bg-white/[0.04] transition-colors">
-                    <td className="py-2.5 pr-3 text-cream">{row.label}</td>
-                    <td className={cn('py-2.5 pr-3 font-medium', balanceColor(row))}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {balances.providers.map((row) => {
+              const state = STATUS_STYLE[row.status]
+              const fieldTruth = providerFieldTruth(row)
+              const quotaPct = row.quota?.limit
+                ? Math.min(100, Math.max(0, (row.quota.used / row.quota.limit) * 100))
+                : 0
+              return (
+                <article key={row.id} className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-cream">{row.label}</p>
+                      <p className="mt-0.5 text-[9px] text-muted">
+                        {row.plan ? `${row.plan} · ` : ''}{row.capabilities.join(' · ')}
+                      </p>
+                    </div>
+                    <span className={cn('rounded-full px-2 py-0.5 text-[9px] font-semibold', state.cls)}>
+                      {state.label}
+                    </span>
+                  </div>
+
+                  <div className="mt-3">
+                    <p className="text-[9px] uppercase tracking-wider text-muted">
+                      {row.balanceKind === 'wallet'
+                        ? 'Cash wallet'
+                        : row.balanceKind === 'quota'
+                          ? 'Available quota'
+                          : 'Provider wallet'}
+                    </p>
+                    <p className={cn('mt-1 text-xl font-bold tabular-nums', balanceColor(row))}>
                       {fmtBalanceCell(row)}
-                      {row.free && (
-                        <span className="ml-1.5 inline-flex items-center rounded-md border tone-green px-1.5 py-0.5 text-[9px]">
-                          Free
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2.5 pr-3 text-muted">{fmtSpendCell(row.todayUsd, row.id)}</td>
-                    <td className="py-2.5 pr-3 text-muted">
-                      {fmtSpendCell(row.monthUsd, row.id)}
-                      {row.syncedThrough && (
-                        <span className="mt-0.5 flex flex-col gap-0.5">
-                          <span className="text-[9px] leading-tight text-amber-600/90">
-                            ⏳ {fmtSyncDate(row.syncedThrough)} পর্যন্ত sync (API ~২ দিন পিছিয়ে)
-                          </span>
-                          {PLATFORM_COST_URL[row.id] && (
-                            <a
-                              href={PLATFORM_COST_URL[row.id]}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex w-fit items-center gap-0.5 text-[9px] font-medium text-[#E07A5F] hover:underline"
-                            >
-                              শেষ ২ দিন platform-এ দেখুন →
-                            </a>
-                          )}
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2.5 pr-3 text-muted">{row.source}</td>
-                    <td className="py-2.5 text-right">
-                      {row.free ? (
-                        <span className="text-[10px] text-muted/60">—</span>
-                      ) : (
-                        <button
-                          onClick={() => openProviderLogs(row.id, row.label)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-[#E07A5F]/25 bg-[#E07A5F]/[0.06] px-2.5 py-1 text-[10px] font-semibold text-[#E07A5F] hover:bg-[#E07A5F]/12 hover:shadow-[0_2px_8px_rgba(224,122,95,0.12)] transition-all"
-                        >
-                          📊 লগ
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </p>
+                    <p className="mt-1 text-[9px] text-muted">
+                      {balanceSourceLabel(row)}
+                      {' · '}{row.balanceAuthoritative ? 'provider verified' : 'not provider verified'}
+                    </p>
+                    {row.quota && row.quota.limit > 0 && (
+                      <div className="mt-2">
+                        <div className="h-1.5 overflow-hidden rounded-full bg-black/10">
+                          <div
+                            className="h-full rounded-full bg-[#E07A5F]"
+                            style={{ width: `${quotaPct}%` }}
+                          />
+                        </div>
+                        <p className="mt-1 text-[9px] text-muted">
+                          Used {Math.round(row.quota.used).toLocaleString()} / {Math.round(row.quota.limit).toLocaleString()}
+                          {row.quota.subscription != null ? ` · plan ${row.quota.subscription}` : ''}
+                          {row.quota.onDemand != null ? ` · on-demand ${row.quota.onDemand}` : ''}
+                          {row.quota.overage ? ` · overage ${row.quota.overage.currency} ${row.quota.overage.amount.toFixed(2)}` : ''}
+                        </p>
+                      </div>
+                    )}
+                    {row.usage && (
+                      <p className="mt-2 text-[9px] font-semibold text-cream">
+                        This month {Math.round(row.usage.amount).toLocaleString()} {row.usage.unit}
+                      </p>
+                    )}
+                  </div>
+
+                  {row.costAuthoritative && row.providerMonthUsd != null ? (
+                    <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-3">
+                      <div>
+                        <p className="text-[9px] text-muted">
+                          {row.id === 'vercel' ? 'Team billed MTD' : 'Provider published MTD'}
+                        </p>
+                        <p className="mt-0.5 text-xs font-semibold text-cream">
+                          {fmtSpendCell(row.providerMonthUsd)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-muted">
+                          {row.id === 'vercel' ? 'Scope' : 'Local after cutoff'}
+                        </p>
+                        <p className="mt-0.5 text-xs font-semibold text-cream">
+                          {row.id === 'vercel' ? 'Entire team' : fmtSpendCell(row.localDeltaUsd ?? null)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-muted">
+                          {row.id === 'vercel' ? 'Invoice / due' : 'Combined tracked'}
+                        </p>
+                        <p className="mt-0.5 text-xs font-semibold text-cream">
+                          {row.id === 'vercel' ? 'Not exposed' : fmtSpendCell(row.monthUsd)}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-3">
+                      <div>
+                        <p className="text-[9px] text-muted">Local today</p>
+                        <p className="mt-0.5 text-xs font-semibold text-cream">{fmtSpendCell(row.todayUsd)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-muted">Local MTD</p>
+                        <p className="mt-0.5 text-xs font-semibold text-cream">{fmtSpendCell(row.monthUsd)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-muted">Cost truth</p>
+                        <p className="mt-0.5 text-[10px] font-semibold text-cream">
+                          {row.monthUsd != null ? 'Estimate only' : 'Not exposed'}
+                        </p>
+                        <p className="mt-0.5 text-[8px] text-muted">
+                          {SOURCE_LABEL[row.costSourceType] ?? row.costSourceType}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {(Object.entries(fieldTruth) as Array<[keyof typeof fieldTruth, FieldTruth]>).map(([field, truth]) => (
+                      <span
+                        key={field}
+                        className={cn('rounded-full px-2 py-0.5 text-[8px] font-semibold', FIELD_TRUTH[truth].cls)}
+                      >
+                        {field} · {FIELD_TRUTH[truth].label}
+                      </span>
+                    ))}
+                  </div>
+
+                  {row.invoice && (
+                    <div className="mt-3 rounded-xl border border-[#D4A84B]/25 bg-[#D4A84B]/[0.06] px-3 py-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-[#D4A84B]">
+                          {row.invoice.kind === 'open'
+                            ? 'Open invoice'
+                            : row.invoice.kind === 'preview'
+                              ? 'Current invoice preview'
+                              : 'Next invoice'}
+                        </p>
+                        <p className="text-xs font-bold tabular-nums text-cream">
+                          {row.invoice.currency} {row.invoice.amount.toFixed(2)}
+                        </p>
+                      </div>
+                      <p className="mt-1 text-[9px] text-muted">
+                        Status {row.invoice.status}
+                        {row.invoice.dueAt ? ` · Due ${fmtCheckedAt(row.invoice.dueAt)}` : ' · due date not published'}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="mt-3 space-y-1 text-[9px] leading-relaxed text-muted">
+                    <p>{row.statusMessage ?? row.source}</p>
+                    <p>
+                      Fetched {fmtCheckedAt(row.fetchedAt)}
+                      {row.syncedThrough ? ` · provider data ${fmtSyncDate(row.syncedThrough)} পর্যন্ত` : ''}
+                      {row.localDeltaUsd != null && row.localDeltaUsd > 0
+                        ? ` · এরপর local ${fmtUsd(row.localDeltaUsd)}`
+                        : ''}
+                    </p>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {row.dashboardUrl && (
+                      <a
+                        href={row.dashboardUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-lg border border-border-subtle px-2.5 py-1 text-[10px] font-semibold text-muted hover:border-[#E07A5F]/30 hover:text-[#E07A5F]"
+                      >
+                        Provider খুলুন ↗
+                      </a>
+                    )}
+                    {!row.free && (
+                      <button
+                        onClick={() => openProviderLogs(row.id, row.label)}
+                        className="rounded-lg border border-[#E07A5F]/25 bg-[#E07A5F]/[0.06] px-2.5 py-1 text-[10px] font-semibold text-[#E07A5F]"
+                      >
+                        📊 Local logs
+                      </button>
+                    )}
+                  </div>
+                </article>
+              )
+            })}
           </div>
         )}
-      </div>
+      </section>
 
       {(data.googleTts || data.elevenLabs) && (
         <div className="space-y-3">
@@ -1157,27 +1493,54 @@ export default function AgentCostsDashboard() {
 
       {/* Subscriptions */}
       <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
-        <p className="text-xs font-semibold text-muted mb-3">সাবস্ক্রিপশন</p>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-xs font-semibold text-muted">Subscriptions & invoices</p>
+            <p className="mt-1 text-[9px] text-muted">
+              Due এখন {balances?.dueSummary?.dueNow ?? 0} · ৭ দিনে {balances?.dueSummary?.dueWithin7Days ?? 0} · ৩০ দিনে {balances?.dueSummary?.dueWithin30Days ?? 0}
+            </p>
+          </div>
+          <span className="rounded-full border border-border-subtle px-2 py-0.5 text-[9px] text-muted">
+            {data.subscriptions.length} tracked
+          </span>
+        </div>
         {data.subscriptions.length === 0 ? (
           <p className="text-[11px] text-muted py-4 text-center">
-            কোনো সাবস্ক্রিপশন নেই — এজেন্টকে বলুন: &quot;ChatGPT subscription add koro…&quot;
+            Provider usage উপরে live আছে, কিন্তু renewal/invoice track করার subscription এখনো যোগ করা হয়নি।
           </p>
         ) : (
           <ul className="space-y-2">
             {data.subscriptions.map((s) => {
-              const badge = renewalBadge(s.nextRenewalAt)
+              const dueDate = s.invoiceDueAt ?? s.nextRenewalAt
+              const badge = renewalBadge(dueDate)
+              const chargeAmount = s.invoiceAmount ?? s.amount
+              const chargeCurrency = s.invoiceCurrency ?? s.currency
               return (
-                <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle bg-transparent px-3 py-2.5 hover:bg-card/80 hover:shadow-sm transition-all">
-                  <div>
-                    <p className="text-xs font-medium text-cream">{s.name}</p>
-                    <p className="text-[10px] text-muted">
-                      {s.currency} {s.amount}/{s.billingCycle === 'yearly' ? 'বছর' : 'মাস'}
-                      {s.category ? ` · ${s.category}` : ''}
-                    </p>
+                <li key={s.id} className="rounded-xl border border-border-subtle bg-transparent px-3 py-3 hover:bg-card/80 hover:shadow-sm transition-all">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-medium text-cream">{s.name}</p>
+                      <p className="text-[10px] text-muted">
+                        {s.plan ?? s.providerId ?? s.category ?? 'Manual subscription'}
+                        {' · '}{chargeCurrency} {chargeAmount}/{s.billingCycle === 'yearly' ? 'বছর' : 'মাস'}
+                      </p>
+                    </div>
+                    <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-semibold', badge.cls)}>
+                      {badge.label}
+                    </span>
                   </div>
-                  <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-semibold', badge.cls)}>
-                    {badge.label}
-                  </span>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] text-muted">
+                    <span>Due {dueDate}</span>
+                    <span>Source: {SOURCE_LABEL[s.sourceType] ?? s.sourceType}</span>
+                    <span>Sync: {s.syncStatus}</span>
+                    {s.invoiceStatus && <span>Invoice: {s.invoiceStatus}</span>}
+                    {s.lastSyncedAt && <span>Updated {fmtShortTime(s.lastSyncedAt)}</span>}
+                    {s.sourceUrl && (
+                      <a href={s.sourceUrl} target="_blank" rel="noopener noreferrer" className="font-semibold text-[#E07A5F] hover:underline">
+                        Source ↗
+                      </a>
+                    )}
+                  </div>
                 </li>
               )
             })}
