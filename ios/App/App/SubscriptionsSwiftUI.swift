@@ -524,7 +524,7 @@ struct SubscriptionsScreen: View {
                 Divider()
                 if provider.costAuthoritative, let published = provider.providerMonthUsd {
                     providerFact(
-                        provider.id == "vercel" ? "Team billed MTD" : "Provider MTD",
+                        provider.id == "vercel" ? "Current cycle billed" : "Provider MTD",
                         fmt(published)
                     )
                     Divider()
@@ -699,7 +699,7 @@ struct SubscriptionsScreen: View {
             return provider.balanceKind == "wallet" ? "Cash wallet" : "Usage quota"
         }
         if provider.costAuthoritative, provider.providerMonthUsd != nil {
-            return provider.id == "vercel" ? "Team billed MTD" : "Provider MTD"
+            return provider.id == "vercel" ? "Current cycle billed" : "Provider MTD"
         }
         if provider.monthUsd != nil {
             return "Local estimate"

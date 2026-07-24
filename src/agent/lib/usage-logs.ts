@@ -15,6 +15,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { MODEL_REGISTRY } from '@/agent/lib/models/registry'
 import { kindLabel } from '@/agent/lib/cost-logs'
+import { effectiveCostProvider } from '@/agent/lib/cost-provider'
 
 const MODEL_LABEL = new Map(MODEL_REGISTRY.map((m) => [m.id, m.label]))
 
@@ -59,15 +60,6 @@ export type UsageLogsPage = {
   bucketMs?: number
   totalCalls?: number
   totalCostUsd?: number
-}
-
-/** Same effective-provider mapping as cost-logs (historical rows stored under 'openai'). */
-function effectiveProvider(unitsProvider: unknown, column: string): string {
-  if (unitsProvider === 'openrouter') return 'openrouter'
-  if (unitsProvider === 'google') return 'gemini'
-  if (unitsProvider === 'openai') return 'openai'
-  if (unitsProvider === 'anthropic') return 'anthropic'
-  return column
 }
 
 function pickNum(u: Record<string, unknown>, keys: string[]): number | null {
@@ -121,7 +113,7 @@ function toEvent(e: {
   return {
     id: e.id,
     occurredAt: e.occurredAt.toISOString(),
-    provider: effectiveProvider(units.provider, e.provider),
+    provider: effectiveCostProvider(units.provider, e.provider),
     kind: e.kind,
     kindLabel: kindLabel(e.kind),
     modelId,

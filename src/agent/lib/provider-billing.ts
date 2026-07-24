@@ -43,6 +43,11 @@ export type ProviderCostBreakdown = {
   topLines: Array<{ name: string; usd: number }>
 }
 
+export type VercelCostSnapshot = ProviderCostSnapshot & {
+  billingPeriodStart: string | null
+  billingPeriodEnd: string | null
+}
+
 export type ProviderQuotaSnapshot = {
   used: number
   limit: number
@@ -109,6 +114,8 @@ type VercelFocusCharge = {
   BilledCost?: number | string
   EffectiveCost?: number | string
   BillingCurrency?: string
+  BillingPeriodStart?: string
+  BillingPeriodEnd?: string
   ChargePeriodStart?: string
   ServiceName?: string
   ServiceCategory?: string
@@ -118,7 +125,7 @@ type BigQueryField = { name?: string }
 type BigQueryRow = { f?: Array<{ v?: unknown }> }
 
 export type XaiBillingSnapshot = {
-  balanceUsd: number
+  balanceUsd: number | null
   cost: ProviderCostSnapshot
   invoice: ProviderInvoiceSnapshot | null
 }
@@ -143,9 +150,22 @@ export function roundProviderUsd(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000
 }
 
-export function parseVercelFocusCharges(raw: string, todayYmd: string): ProviderCostSnapshot {
+export function parseVercelFocusCharges(
+  raw: string,
+  todayYmd: string,
+  now = new Date(),
+): VercelCostSnapshot {
   const trimmed = raw.trim()
-  if (!trimmed) return { todayUsd: 0, monthUsd: 0, syncedThrough: null }
+  if (!trimmed) {
+    return {
+      todayUsd: 0,
+      monthUsd: 0,
+      syncedThrough: null,
+      breakdown: { aiTokensUsd: 0, hostingUsd: 0, topLines: [] },
+      billingPeriodStart: null,
+      billingPeriodEnd: null,
+    }
+  }
 
   let rows: VercelFocusCharge[] = []
   try {
@@ -165,12 +185,24 @@ export function parseVercelFocusCharges(raw: string, todayYmd: string): Provider
       })
   }
 
+  const nowMs = now.getTime()
+  const currentPeriodRows = rows.filter((row) => {
+    const start = Date.parse(row.BillingPeriodStart ?? '')
+    const end = Date.parse(row.BillingPeriodEnd ?? '')
+    return Number.isFinite(start) && Number.isFinite(end) && start <= nowMs && nowMs < end
+  })
+  if (rows.length > 0 && currentPeriodRows.length === 0) {
+    throw new Error('Vercel FOCUS response did not include the current billing period')
+  }
+
+  const billingPeriodStart = currentPeriodRows[0]?.BillingPeriodStart ?? null
+  const billingPeriodEnd = currentPeriodRows[0]?.BillingPeriodEnd ?? null
   let todayUsd = 0
   let monthUsd = 0
   let syncedThrough: string | null = null
   let aiTokensUsd = 0
   const byName = new Map<string, number>()
-  for (const row of rows) {
+  for (const row of currentPeriodRows) {
     const currency = (row.BillingCurrency ?? 'USD').toUpperCase()
     if (currency !== 'USD') {
       throw new Error(`Vercel billing currency ${currency} is not supported as USD`)
@@ -200,22 +232,28 @@ export function parseVercelFocusCharges(raw: string, todayYmd: string): Provider
       hostingUsd: roundProviderUsd(monthUsd - aiTokensUsd),
       topLines,
     },
+    billingPeriodStart,
+    billingPeriodEnd,
   }
 }
 
 export async function fetchVercelBillingCosts(
-  monthStart: Date,
+  _monthStart: Date,
   now = new Date(),
   todayYmd: string,
-): Promise<ProviderFetchResult<ProviderCostSnapshot>> {
+): Promise<ProviderFetchResult<VercelCostSnapshot>> {
   const token = (process.env.VERCEL_BILLING_TOKEN ?? process.env.VERCEL_TOKEN)?.trim()
   const teamId = (process.env.VERCEL_BILLING_TEAM_ID ?? process.env.VERCEL_ORG_ID)?.trim()
   const teamSlug = process.env.VERCEL_BILLING_TEAM_SLUG?.trim()
   if (!token || (!teamId && !teamSlug)) return unconfigured()
 
   try {
+    // A calendar-month query mixes two Vercel billing cycles when the team's
+    // renewal day is not the first. Fetch enough history to include a complete
+    // monthly cycle, then let the FOCUS BillingPeriod fields select this cycle.
+    const lookbackStart = new Date(now.getTime() - (45 * 24 * 60 * 60 * 1_000))
     const url = new URL('https://api.vercel.com/v1/billing/charges')
-    url.searchParams.set('from', monthStart.toISOString())
+    url.searchParams.set('from', lookbackStart.toISOString())
     url.searchParams.set('to', new Date(now.getTime() + 1_000).toISOString())
     if (teamId) url.searchParams.set('teamId', teamId)
     else if (teamSlug) url.searchParams.set('slug', teamSlug)
@@ -225,7 +263,7 @@ export async function fetchVercelBillingCosts(
       signal: AbortSignal.timeout(25_000),
     })
     if (!response.ok) return failed(`Vercel billing HTTP ${response.status}`)
-    return succeeded(parseVercelFocusCharges(await response.text(), todayYmd))
+    return succeeded(parseVercelFocusCharges(await response.text(), todayYmd, now))
   } catch (error) {
     return failed(error instanceof Error ? error.message : 'Vercel billing request failed')
   }
@@ -474,6 +512,8 @@ export function parseXaiBilling(
     coreInvoice?: {
       totalWithCorr?: { val?: number | string }
       amountAfterVat?: number | string
+      prepaidCredits?: { val?: number | string } | number | string
+      prepaidCreditsUsed?: { val?: number | string } | number | string
     }
   },
   todayYmd: string,
@@ -495,19 +535,44 @@ export function parseXaiBilling(
     }
   }
 
-  const rawInvoiceCents = Number(
-    invoicePreview.coreInvoice?.totalWithCorr?.val
-      ?? invoicePreview.coreInvoice?.amountAfterVat
-      ?? 0,
-  )
-  const invoiceAmount = Number.isFinite(rawInvoiceCents)
-    ? roundProviderUsd(Math.max(0, rawInvoiceCents) / 100)
+  const moneyValue = (value: { val?: number | string } | number | string | undefined): number => {
+    if (value && typeof value === 'object') return Number(value.val)
+    return Number(value)
+  }
+  const coreInvoice = invoicePreview.coreInvoice
+  const prepaidCreditsCents = moneyValue(coreInvoice?.prepaidCredits ?? rawBalanceCents)
+  const prepaidCreditsUsedCents = moneyValue(coreInvoice?.prepaidCreditsUsed)
+  const hasPrepaidBreakdown =
+    Number.isFinite(prepaidCreditsCents)
+    && Number.isFinite(prepaidCreditsUsedCents)
+  const fundedCreditCents = Number.isFinite(prepaidCreditsCents)
+    ? Math.max(0, -prepaidCreditsCents)
     : 0
+  const appliedCreditCents = Number.isFinite(prepaidCreditsUsedCents)
+    ? Math.max(0, prepaidCreditsUsedCents)
+    : 0
+  const balanceUsd = hasPrepaidBreakdown
+    ? roundProviderUsd(Math.max(0, fundedCreditCents - appliedCreditCents) / 100)
+    : null
+
+  const rawInvoiceCents = moneyValue(
+    coreInvoice?.totalWithCorr ?? coreInvoice?.amountAfterVat,
+  )
+  // totalWithCorr is the current usage/invoice preview before the prepaid credit
+  // application. Only the uncovered part is an amount due.
+  const invoiceDueCents = Number.isFinite(rawInvoiceCents)
+    ? hasPrepaidBreakdown
+      ? Math.max(0, rawInvoiceCents - appliedCreditCents)
+      : fundedCreditCents === 0
+        ? Math.max(0, rawInvoiceCents)
+        : 0
+    : 0
+  const invoiceAmount = roundProviderUsd(invoiceDueCents / 100)
 
   return {
-    // xAI's ledger represents an available prepaid credit as a negative USD-cent
-    // liability (the official example returns -1000 for $10 remaining).
-    balanceUsd: roundProviderUsd(Math.max(0, -rawBalanceCents) / 100),
+    // xAI exposes funded prepaid credit as a negative ledger liability. It is
+    // not the remaining balance: subtract the preview's prepaidCreditsUsed.
+    balanceUsd,
     cost: {
       todayUsd: roundProviderUsd(todayUsd),
       monthUsd: roundProviderUsd(monthUsd),
@@ -578,6 +643,8 @@ export async function fetchXaiBilling(
         coreInvoice?: {
           totalWithCorr?: { val?: number | string }
           amountAfterVat?: number | string
+          prepaidCredits?: { val?: number | string } | number | string
+          prepaidCreditsUsed?: { val?: number | string } | number | string
         }
       },
       todayYmd,

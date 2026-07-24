@@ -110,7 +110,7 @@ import {
   systemBlocksToText,
 } from '@/agent/lib/models/neutral'
 import type { NeutralMsg, NeutralTool } from '@/agent/lib/models/types'
-import type { CostProvider } from '@/agent/lib/pricing'
+import { modelProviderToCostProvider } from '@/agent/lib/cost-provider'
 
 export interface RunOwnerTurnOptions extends RunAgentTurnOptions {
   /** Registry model id from AgentConversation.modelId */
@@ -198,18 +198,6 @@ function sectionFingerprints(systemText: string): string {
     })
     .join('|')
     .slice(0, 4000)
-}
-
-function providerToCostProvider(provider: string): CostProvider {
-  if (provider === 'google') return 'gemini'
-  if (provider === 'openrouter') return 'openrouter'
-  // Cost audit 2026-07-24: xAI gets its OWN bucket. Tagging Grok head turns as
-  // 'openai' put ~$4/day of chat spend on the dashboard's "ভয়েস (Whisper)" card —
-  // the owner read his voice cost as 30x reality. EFFECTIVE_PROVIDER_SQL remaps
-  // historical rows (units->>'provider'='xai') so old spend re-homes too.
-  if (provider === 'xai') return 'xai'
-  if (provider === 'openai') return 'openai'
-  return 'anthropic'
 }
 
 // One-time message injected when the Qwen MARKETING head exhausts its (larger)
@@ -2452,7 +2440,7 @@ async function* runAlternateProviderTurn(
     }
 
     void logCost({
-      provider: providerToCostProvider(model.provider),
+      provider: modelProviderToCostProvider(model.provider),
       kind: 'chat',
       units: {
         input_tokens: totalInputTokens,

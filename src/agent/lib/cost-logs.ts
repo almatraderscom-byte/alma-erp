@@ -7,6 +7,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { MODEL_REGISTRY } from '@/agent/lib/models/registry'
 import { EFFECTIVE_PROVIDER_SQL } from '@/agent/lib/api-balances'
+import { effectiveCostProvider } from '@/agent/lib/cost-provider'
 import { dhakaDayBounds } from '@/lib/agent-api/dhaka-date'
 
 const MODEL_LABEL = new Map(MODEL_REGISTRY.map((m) => [m.id, m.label]))
@@ -29,19 +30,6 @@ const KIND_LABEL: Record<string, string> = {
 
 export function kindLabel(kind: string): string {
   return KIND_LABEL[kind] ?? kind
-}
-
-/**
- * Effective cost-provider for a units payload — mirrors the SQL CASE in
- * api-balances so logs label OpenRouter (DeepSeek/Qwen) correctly even for
- * historical rows that were stored under 'openai'.
- */
-function effectiveProvider(unitsProvider: string | undefined, column: string): string {
-  if (unitsProvider === 'openrouter') return 'openrouter'
-  if (unitsProvider === 'google') return 'gemini'
-  if (unitsProvider === 'openai') return 'openai'
-  if (unitsProvider === 'anthropic') return 'anthropic'
-  return column
 }
 
 /** Pull readable text out of an Anthropic content-block array (or plain string). */
@@ -126,7 +114,7 @@ export async function getRecentCostEvents(limit = 100): Promise<CostLogEvent[]> 
     return {
       id: e.id,
       occurredAt: e.occurredAt.toISOString(),
-      provider: effectiveProvider(typeof units.provider === 'string' ? units.provider : undefined, e.provider),
+      provider: effectiveCostProvider(units.provider, e.provider),
       model: modelId ? (MODEL_LABEL.get(modelId) ?? modelId) : null,
       kind: e.kind,
       kindLabel: kindLabel(e.kind),
