@@ -49,6 +49,8 @@ const NON_TOOL_ALLOWLIST = new Set([
   // PA-2 proactive-call KV keys + pending-action type (documented for update_setting)
   'proactive_calls_enabled', 'proactive_call_stage_wait_min', 'proactive_call_daily_cap',
   'proactive_call_approval_stuck_min', 'proactive_call_urgent_stuck_min', 'urgent_notify',
+  // Human-PA batch: inbound transfer-policy KV key + its value (not tools)
+  'inbound_transfer_mode', 'ask_first',
 ])
 
 function snakeTokens(text: string): string[] {
