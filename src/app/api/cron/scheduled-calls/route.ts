@@ -17,6 +17,43 @@ export const dynamic = 'force-dynamic'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+
+/** Human-PA point 4 — next occurrence for a recurring call row. */
+function nextRecurrence(dueAt: Date, recurrence: string): Date | null {
+  const next = new Date(dueAt)
+  if (recurrence === 'daily') { next.setUTCDate(next.getUTCDate() + 1); return next }
+  if (recurrence === 'weekly') { next.setUTCDate(next.getUTCDate() + 7); return next }
+  if (recurrence === 'weekdays') {
+    // Dhaka business week: skip Friday+Saturday.
+    do { next.setUTCDate(next.getUTCDate() + 1) }
+    while (['Fri', 'Sat'].includes(next.toLocaleDateString('en-US', { timeZone: 'Asia/Dhaka', weekday: 'short' })))
+    return next
+  }
+  return null
+}
+
+/** Book the next occurrence (fired OR missed — a human PA does not skip tomorrow
+ *  because today slipped). Duplicate-safe: skips if an identical future row exists. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function rebookRecurring(db: any, row: { id: string; recurrence?: string | null; dueAt: Date; toNumber: string; recipientName: string | null; purpose: string; firstMessage: string | null; callType: string; voiceGender: string; conversationId: string | null; businessId: string }) {
+  if (!row.recurrence) return
+  const nextAt = nextRecurrence(new Date(row.dueAt), row.recurrence)
+  if (!nextAt) return
+  const dup = await db.scheduledCall.findFirst({
+    where: { toNumber: row.toNumber, purpose: row.purpose, status: 'scheduled', dueAt: nextAt },
+    select: { id: true },
+  })
+  if (dup) return
+  await db.scheduledCall.create({
+    data: {
+      toNumber: row.toNumber, recipientName: row.recipientName, purpose: row.purpose,
+      firstMessage: row.firstMessage, callType: row.callType, voiceGender: row.voiceGender,
+      dueAt: nextAt, recurrence: row.recurrence, conversationId: row.conversationId,
+      businessId: row.businessId,
+    },
+  }).catch(() => {})
+}
+
 const STALE_MIN = 30
 const MAX_PER_RUN = 5
 
@@ -39,6 +76,7 @@ export async function GET(req: NextRequest) {
     const ageMin = (now - new Date(row.dueAt).getTime()) / 60_000
     if (ageMin > STALE_MIN) {
       await db.scheduledCall.update({ where: { id: row.id }, data: { status: 'missed', error: `stale ${Math.round(ageMin)}m` } })
+      await rebookRecurring(db, row)
       results.push({ id: row.id, outcome: 'missed_stale' })
       continue
     }
@@ -61,9 +99,11 @@ export async function GET(req: NextRequest) {
       })
       if (res.ok) {
         await db.scheduledCall.update({ where: { id: row.id }, data: { status: 'placed', placedCallId: res.callRecordId ?? null, placedAt: new Date(), error: null } })
+        await rebookRecurring(db, row)
         results.push({ id: row.id, outcome: 'placed' })
       } else {
         await db.scheduledCall.update({ where: { id: row.id }, data: { status: 'failed', error: (res.error ?? 'failed').slice(0, 300) } })
+        await rebookRecurring(db, row)
         results.push({ id: row.id, outcome: 'failed' })
       }
     } catch (err) {

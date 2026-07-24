@@ -30,6 +30,27 @@ import { getQuietHoursConfig, isQuietHoursDhaka } from '@/agent/lib/quiet-hours'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+/**
+ * Human-PA point 8 (owner audit 2026-07-24): never ring the boss mid-salah.
+ * Returns the Date the ladder may dial (waqt end + 10 min) when NOW falls
+ * inside a prayer window, else null. Fail-open — schedule data missing must
+ * never block an urgent call.
+ */
+export async function salahDeferUntil(now = new Date()): Promise<Date | null> {
+  try {
+    const { getDhakaPrayerTimes } = await import('@/agent/lib/salah-times')
+    const times = await getDhakaPrayerTimes()
+    for (const w of times) {
+      const start = new Date(w.prayerStart)
+      const end = new Date(w.end)
+      if (now >= start && now < end) return new Date(end.getTime() + 10 * 60_000)
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 export const ACTIVE_STATUSES = ['queued', 'awaiting_approval', 'wa_calling', 'pstn_calling'] as const
 
 export interface ProactiveCallConfig {
@@ -361,6 +382,18 @@ export async function processCallEscalations(limit = 10): Promise<Array<{ id: st
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function stepEscalation(row: any, cfg: ProactiveCallConfig): Promise<string> {
   if (row.status === 'queued') {
+    // Salah window: even a legit ladder waits out the boss's prayer (+10 min).
+    // business_alert pierces — a genuine emergency is the human-PA exception too.
+    if (row.trigger !== 'business_alert') {
+      const deferTo = await salahDeferUntil()
+      if (deferTo) {
+        await db.agentCallEscalation.update({
+          where: { id: row.id },
+          data: { nextCheckAt: deferTo },
+        })
+        return 'deferred_salah'
+      }
+    }
     // Quiet hours: defer non-critical ladders; business alerts pierce.
     if (row.trigger !== 'business_alert') {
       try {

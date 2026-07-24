@@ -408,6 +408,7 @@ export const schedule_call: AgentTool = {
       relationOrName: { type: 'string', description: 'Saved family contact (মা/ভাই) or ALMA staff name. Optional if phone given.' },
       phone: { type: 'string', description: 'Raw number (01XXXXXXXXX / +880…). Optional if relationOrName resolves.' },
       purpose: { type: 'string', description: 'Why we are calling, in Bangla — steers the call.' },
+      recurrence: { type: 'string', enum: ['daily', 'weekdays', 'weekly'], description: 'Boss নিয়মিত কল চাইলে ("প্রতিদিন রাত ৯টায় কল করে দিনের সারাংশ") — daily/weekdays (শুক্র-শনি বাদ)/weekly। এককালীন হলে omit।' },
       dueAt: { type: 'string', description: 'ISO 8601 date-time (Asia/Dhaka resolved) when the call should be placed.' },
       firstMessage: { type: 'string', description: 'Optional first Bangla line the agent speaks.' },
       conversationId: { type: 'string', description: 'Server-managed — omit.' },
@@ -466,7 +467,7 @@ export const schedule_call: AgentTool = {
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'schedule_call',
-          payload: { toNumber: phone, phone, recipientName, purpose, firstMessage, callType, voiceGender, dueAt: dueAt.toISOString() },
+          payload: { toNumber: phone, phone, recipientName, purpose, firstMessage, callType, voiceGender, dueAt: dueAt.toISOString(), recurrence: ['daily','weekdays','weekly'].includes(String(input.recurrence)) ? String(input.recurrence) : null },
           summary: `⏰📞 ${who} কে ${whenLabel}-এ কল শিডিউল — "${purpose.slice(0, 50)}"`,
           costEstimate: 0.5,
           status: 'pending',

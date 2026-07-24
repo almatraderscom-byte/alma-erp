@@ -4418,6 +4418,9 @@ model ScheduledCall {
   voiceGender    String    @default("female") @map("voice_gender")
   dueAt          DateTime  @map("due_at")
   status         String    @default("scheduled")
+  /// null = one-off; 'daily' | 'weekdays' | 'weekly' — the cron re-books the next
+  /// occurrence after firing (human-PA point 4: recurring report calls).
+  recurrence     String?
   placedCallId   String?   @map("placed_call_id")
   error          String?
   conversationId String?   @map("conversation_id")
