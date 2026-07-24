@@ -348,6 +348,39 @@ export async function querySpendSince(provider: string, since: Date): Promise<nu
   return parseFloat(rows[0]?.total ?? '0') || 0
 }
 
+export type ProviderBurnWindowRow = { totalUsd: number; activeDays: number }
+
+/**
+ * Per-provider spend + distinct active-day count over a trailing window, used to
+ * derive the funding runway (see billing/runway.ts). Active days are counted in
+ * the Dhaka calendar so the burn rate matches the owner's day boundaries.
+ */
+export async function querySpendByProviderOverWindow(
+  start: Date,
+  end: Date,
+): Promise<Record<string, ProviderBurnWindowRow>> {
+  const rows = await prisma.$queryRaw<Array<{ provider: string; total: string; active_days: string }>>(
+    Prisma.sql`SELECT provider,
+                      COALESCE(SUM(cost_usd), 0)::text AS total,
+                      COUNT(DISTINCT day)::text AS active_days
+               FROM (
+                 SELECT ${EFFECTIVE_PROVIDER_SQL} AS provider,
+                        cost_usd,
+                        (occurred_at AT TIME ZONE 'Asia/Dhaka')::date AS day
+                 FROM agent_cost_events
+                 WHERE occurred_at >= ${start} AND occurred_at < ${end}
+                   AND cost_usd > 0
+               ) t
+               GROUP BY provider`,
+  )
+  return Object.fromEntries(
+    rows.map((r) => [r.provider, {
+      totalUsd: parseFloat(r.total) || 0,
+      activeDays: parseInt(r.active_days, 10) || 0,
+    }]),
+  )
+}
+
 async function fetchTwilioBalance(): Promise<number | null> {
   const sid = process.env.TWILIO_ACCOUNT_SID
   const token = process.env.TWILIO_AUTH_TOKEN
