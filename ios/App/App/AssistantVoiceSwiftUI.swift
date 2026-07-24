@@ -318,6 +318,7 @@ final class AlmaVoiceEngine {
         // Re-opening a minimized call must only reveal its existing engine. Starting
         // a second socket here would duplicate audio and lose the live context.
         guard callConnection == .idle else { return }
+        if #available(iOS 17.0, *) { AlmaCallBarBridge.shared.engine = self }
         closed = false
         callConnection = .connecting
         connectionFailureText = ""
@@ -491,6 +492,10 @@ final class AlmaVoiceEngine {
     }
 
     func end() {
+        if #available(iOS 17.0, *), AlmaCallBarBridge.shared.engine === self {
+            AlmaCallBarBridge.shared.engine = nil
+            AlmaCallBarBridge.shared.consoleVisible = false
+        }
         closed = true
         liveConnectTask?.cancel(); liveConnectTask = nil
         connectionGeneration += 1
@@ -3807,6 +3812,10 @@ struct AlmaVoiceConsoleView: View {
     var body: some View {
         ZStack {
             bg0.ignoresSafeArea()
+                // Shell-level floating bar coordination: hide it while the full
+                // console is on screen, restore it on minimize.
+                .onAppear { AlmaCallBarBridge.shared.consoleVisible = true }
+                .onDisappear { AlmaCallBarBridge.shared.consoleVisible = false }
             aurora.ignoresSafeArea()
             AlmaStarfieldView().ignoresSafeArea().allowsHitTesting(false)
             dotGrid.ignoresSafeArea().allowsHitTesting(false)
@@ -3866,6 +3875,13 @@ struct AlmaVoiceConsoleView: View {
             // The chat button deliberately keeps the persistent Live session alive.
             // Any other dismissal is treated as a real hang-up.
             if !minimizing && !endingCall { engine.end() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("almaVoiceDebugMin"))) { _ in
+            #if DEBUG
+            // Sim harness: minimize like the chevron does — call stays alive.
+            minimizing = true
+            dismiss()
+            #endif
         }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
@@ -4369,6 +4385,65 @@ struct AlmaVoiceConsoleView: View {
 /// Compact, persistent call surface shown over chat after the full-screen call is
 /// minimized. The same `AlmaVoiceEngine` keeps the socket, audio, and context alive.
 @available(iOS 17.0, *)
+/// App-wide handle to the live call: the mini bar must follow the owner to
+/// EVERY tab (a phone call isn't an Assistant-page detail). The engine
+/// registers itself on begin()/end(); the shell-level bar observes this.
+@available(iOS 17.0, *)
+@Observable
+final class AlmaCallBarBridge {
+    static let shared = AlmaCallBarBridge()
+    weak var engine: AlmaVoiceEngine?
+    /// Full-screen console open — the floating bar hides while the real UI shows.
+    var consoleVisible = false
+}
+
+/// Shell-level floating call bar: rendered by AlmaTabBarController above ALL
+/// tabs; tapping it selects the Assistant tab and reopens the console.
+@available(iOS 17.0, *)
+struct AlmaGlobalCallBar: View {
+    let selectAssistant: () -> Void
+    private var bridge: AlmaCallBarBridge { AlmaCallBarBridge.shared }
+    var body: some View {
+        if let engine = bridge.engine, engine.isCallRunning, !bridge.consoleVisible {
+            AlmaVoiceCallMiniBar(engine: engine,
+                                 reopen: selectAssistant,
+                                 end: { engine.end() })
+                .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+}
+
+/// Live who-is-talking wave for the mini bar: agent speech (green, slow pulse)
+/// and the owner's own voice (coral, sharper) get visibly different designs,
+/// driven by the same levels the orb uses — so "কথা হচ্ছে" is visible at a glance.
+@available(iOS 17.0, *)
+struct AlmaCallMiniWave: View {
+    let engine: AlmaVoiceEngine
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            let agent = engine.state == .speaking || engine.ttsLevel > 0.03
+            let ownerTalking = !agent && engine.micLevel > 0.10
+            let level = agent ? max(engine.ttsLevel, 0.2) : engine.micLevel
+            let color = agent
+                ? Color(red: 0.231, green: 0.878, blue: 0.561)
+                : Color(red: 0.878, green: 0.478, blue: 0.373)   // ALMA coral
+            HStack(spacing: 2.5) {
+                ForEach(0..<5, id: \.self) { i in
+                    let phase = sin(t * (agent ? 8.0 : 13.0) + Double(i) * 1.15) * 0.5 + 0.5
+                    let active = agent || ownerTalking
+                    let h: CGFloat = active ? 6 + CGFloat(min(1, level) * phase) * 16 : 4
+                    Capsule()
+                        .fill(active ? color : Color.white.opacity(0.28))
+                        .frame(width: 3, height: h)
+                }
+            }
+            .frame(width: 30, height: 24)
+        }
+    }
+}
+
+@available(iOS 17.0, *)
 struct AlmaVoiceCallMiniBar: View {
     let engine: AlmaVoiceEngine
     let reopen: () -> Void
@@ -4389,18 +4464,24 @@ struct AlmaVoiceCallMiniBar: View {
                 HStack(spacing: 11) {
                     ZStack {
                         Circle().fill(statusColor.opacity(0.15)).frame(width: 38, height: 38)
-                        Image(systemName: engine.state == .speaking ? "waveform" : "phone.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(statusColor)
+                        AlmaCallMiniWave(engine: engine)
                     }
                     VStack(alignment: .leading, spacing: 2) {
                         Text("ALMA AI Call")
                             .font(.system(size: 13.5, weight: .semibold))
                             .foregroundStyle(Color(red: 0.918, green: 0.949, blue: 0.984))
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            Text("\(engine.transportBadgeText)  ·  \(engine.callElapsedText(at: context.date))")
+                        TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                            let agentTalking = engine.state == .speaking || engine.ttsLevel > 0.03
+                            let ownerTalking = !agentTalking && engine.micLevel > 0.10
+                            Text(agentTalking ? "ALMA বলছে…"
+                                 : ownerTalking ? "আপনি বলছেন…"
+                                 : "\(engine.transportBadgeText)  ·  \(engine.callElapsedText(at: context.date))")
                                 .font(.system(size: 11.5, design: .monospaced))
-                                .foregroundStyle(Color(red: 0.486, green: 0.573, blue: 0.663))
+                                .foregroundStyle(agentTalking
+                                    ? Color(red: 0.231, green: 0.878, blue: 0.561)
+                                    : ownerTalking
+                                        ? Color(red: 0.878, green: 0.478, blue: 0.373)
+                                        : Color(red: 0.486, green: 0.573, blue: 0.663))
                         }
                     }
                 }
