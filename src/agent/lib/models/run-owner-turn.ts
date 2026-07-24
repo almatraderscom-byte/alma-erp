@@ -18,7 +18,7 @@ import { buildBusinessContext } from '@/agent/lib/business-brain'
 import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { detectOutboundCallIntent, buildOutboundCallIntakeBlock } from '@/agent/lib/outbound-call-intent'
 import { buildReminderTimeHintBlock } from '@/agent/lib/bangla-time'
-import { isVoiceInstructionText } from '@/agent/lib/voice-instruction'
+import { isVoiceInstructionText, ownerRequestedCallback } from '@/agent/lib/voice-instruction'
 import { detectVoiceProviderRequest } from '@/agent/lib/voice-provider-intent'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
@@ -366,6 +366,9 @@ async function* runAlternateProviderTurn(
   // (🎙️ marker). Server-derived, always set (true/false) so a model-spoofed
   // input field can never win the {...input, ...serverContext} merge.
   const voiceCallInstruction = isVoiceInstructionText(lastUserText)
+  // PA-5R precision: a report CALL needs the boss's own call-words in his recent
+  // messages. Always-set boolean — a model-spoofed input field can never win.
+  const callbackRequested = ownerRequestedCallback(recentUserTexts)
 
   const now = new Date()
   // Salah conscience-nudge + nightly muhasaba must work on this cheap-head path too
@@ -1719,7 +1722,7 @@ async function* runAlternateProviderTurn(
               })
             : { success: false as const, error: aiosGuard.message }
           : personalMode
-          ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction })
+          ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested })
           : await executeTool(call.name, call.input, {
             conversationId,
             businessId,
@@ -1729,6 +1732,7 @@ async function* runAlternateProviderTurn(
             driveClientSeoBatch,
             ownerVoicePref,
             voiceCallInstruction,
+            callbackRequested,
           })
         const durationMs = Date.now() - started
         // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).
