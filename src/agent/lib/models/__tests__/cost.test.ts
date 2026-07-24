@@ -105,4 +105,18 @@ describe('calcModelTurnCostUsd — bills each model at its own rate', () => {
     })
     expect(cost).toBeCloseTo(2.5 * 0.5, 6) // 1.25
   })
+
+  it('reasoning tokens bill at the output rate on top of completion (Phase 7 xai gap)', () => {
+    const grok = getModel('xai-grok-4.20')
+    const base = calcModelTurnCostUsd(grok, { inputTokens: 0, outputTokens: 1000 })
+    const withReasoning = calcModelTurnCostUsd(grok, { inputTokens: 0, outputTokens: 1000, reasoningTokens: 2000 })
+    // 2000 reasoning tokens add exactly 2000 * outPerM / 1e6 over the visible-only cost.
+    expect(withReasoning - base).toBeCloseTo((2000 / ONE_M) * grok.outPerM, 9)
+  })
+
+  it('reasoning tokens default to zero — existing callers are unchanged', () => {
+    const grok = getModel('xai-grok-4.20')
+    expect(calcModelTurnCostUsd(grok, { inputTokens: 0, outputTokens: 1000 }))
+      .toBeCloseTo(calcModelTurnCostUsd(grok, { inputTokens: 0, outputTokens: 1000, reasoningTokens: 0 }), 9)
+  })
 })

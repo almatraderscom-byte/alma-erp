@@ -43,10 +43,21 @@ export function calcModelTurnCostUsd(
     outputTokens: number
     cacheRead?: number
     cacheWrite?: number
+    /**
+     * Reasoning/thinking tokens the provider bills as generation but reports
+     * SEPARATELY from completion_tokens (cost audit Phase 7). xAI/Grok is the
+     * confirmed case: a live turn showed reasoning 2023 vs visible output 383 —
+     * reasoning > completion is only possible if it's not folded in, so we were
+     * under-billing output by ~1500 tok/turn (~$3.5/mo, the xai −24% gap).
+     * Billed at the model's OUTPUT rate. Callers pass this ONLY for providers
+     * where reasoning is confirmed separate (never for OpenAI-style models whose
+     * completion_tokens already INCLUDE reasoning — that would double-count).
+     */
+    reasoningTokens?: number
   },
 ): number {
   const input = (usage.inputTokens / 1_000_000) * model.inPerM
-  const output = (usage.outputTokens / 1_000_000) * model.outPerM
+  const output = ((usage.outputTokens + (usage.reasoningTokens ?? 0)) / 1_000_000) * model.outPerM
 
   let cache = 0
   if (model.provider === 'anthropic') {
