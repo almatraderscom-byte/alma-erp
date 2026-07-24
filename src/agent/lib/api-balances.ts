@@ -143,6 +143,13 @@ export type LowBalanceAlert = {
   label: string
   balanceUsd: number
   thresholdUsd: number
+  // ---- Phase D: runway-aware alerting (optional, back-compat) ----
+  /** Why the alert fired: flat wallet floor, or short days-left runway. */
+  reason?: 'low_balance' | 'low_runway'
+  /** Escalation level from the runway band / floor. */
+  severity?: 'warning' | 'action' | 'emergency'
+  /** Estimated days of headroom at current burn, when known. */
+  runwayDays?: number | null
 }
 
 const CREDIT_KEY_PREFIX = 'api_balance:'
@@ -1834,35 +1841,45 @@ export function computeLowBalanceAlerts(
     const policy = opts.policies?.[row.id]
     if (policy && policy.enabled === false) continue
 
-    if (row.id === 'twilio') {
-      const threshold = policy?.minBalanceUsd ?? DEFAULT_TWILIO_FLOOR
-      if (!opts.twilioConfigured || row.balanceUsd >= threshold) continue
-      alerts.push({
-        provider: row.id,
-        label: row.label,
-        balanceUsd: row.balanceUsd,
-        thresholdUsd: threshold,
-      })
+    const configured =
+      row.id === 'twilio'
+        ? opts.twilioConfigured
+        : row.id === 'anthropic'
+          ? Boolean(opts.creditSet.anthropic || opts.anthropicAdmin)
+          : row.id === 'openai'
+            ? Boolean(opts.creditSet.openai || opts.openaiAdmin)
+            : row.id === 'elevenlabs'
+              ? Boolean(opts.creditSet.elevenlabs)
+              : Boolean(opts.creditSet[row.id])
+    if (!configured) continue
+
+    const threshold = policy?.minBalanceUsd ?? (row.id === 'twilio' ? DEFAULT_TWILIO_FLOOR : DEFAULT_GENERAL_FLOOR)
+
+    // Two independent triggers, most severe wins:
+    //   1. Runway — days-left has fallen into the action/emergency band. Catches a
+    //      wallet that is dollars-healthy but burning fast (flat floor would miss it).
+    //   2. Flat floor — balance below the wallet minimum. Catches a genuinely low
+    //      balance even when burn is idle and runway is unknown.
+    let severity: LowBalanceAlert['severity']
+    let reason: LowBalanceAlert['reason']
+    if (row.runwayStatus === 'emergency') {
+      severity = 'emergency'; reason = 'low_runway'
+    } else if (row.runwayStatus === 'action') {
+      severity = 'action'; reason = 'low_runway'
+    } else if (row.balanceUsd < threshold) {
+      severity = 'action'; reason = 'low_balance'
+    } else {
       continue
     }
-
-    const configured =
-      row.id === 'anthropic'
-        ? Boolean(opts.creditSet.anthropic || opts.anthropicAdmin)
-        : row.id === 'openai'
-          ? Boolean(opts.creditSet.openai || opts.openaiAdmin)
-          : row.id === 'elevenlabs'
-            ? Boolean(opts.creditSet.elevenlabs)
-            : Boolean(opts.creditSet[row.id])
-
-    const threshold = policy?.minBalanceUsd ?? DEFAULT_GENERAL_FLOOR
-    if (!configured || row.balanceUsd >= threshold) continue
 
     alerts.push({
       provider: row.id,
       label: row.label,
       balanceUsd: row.balanceUsd,
       thresholdUsd: threshold,
+      severity,
+      reason,
+      runwayDays: row.runwayDays ?? null,
     })
   }
 

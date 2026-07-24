@@ -114,11 +114,17 @@ describe('effectiveMonthlyCapUsd', () => {
 
 // ---- computeLowBalanceAlerts wiring (Phase B) ----
 
-function walletRow(id: BalanceProviderRow['id'], balanceUsd: number): BalanceProviderRow {
+function walletRow(
+  id: BalanceProviderRow['id'],
+  balanceUsd: number,
+  runway?: { runwayStatus: BalanceProviderRow['runwayStatus']; runwayDays: number },
+): BalanceProviderRow {
   return {
     id,
     label: id,
     balanceUsd,
+    runwayStatus: runway?.runwayStatus,
+    runwayDays: runway?.runwayDays,
     balanceKind: 'wallet',
     balanceAmount: balanceUsd,
     balanceCurrency: 'USD',
@@ -177,6 +183,45 @@ describe('computeLowBalanceAlerts — policy-driven floors', () => {
     const alerts = computeLowBalanceAlerts([walletRow('openrouter', 1)], {
       anthropicAdmin: false, openaiAdmin: false, twilioConfigured: true, creditSet: CONFIGURED,
       policies: { openrouter: { minBalanceUsd: 10, enabled: false } },
+    })
+    expect(alerts).toHaveLength(0)
+  })
+})
+
+describe('computeLowBalanceAlerts — runway-aware (Phase D)', () => {
+  const base = { anthropicAdmin: false, openaiAdmin: false, twilioConfigured: true, creditSet: CONFIGURED }
+
+  it('alerts on an emergency runway even when the balance is above the flat floor', () => {
+    // $100 balance (well above $3 floor) but only 2 days of runway
+    const alerts = computeLowBalanceAlerts([walletRow('openrouter', 100, { runwayStatus: 'emergency', runwayDays: 2 })], base)
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0].severity).toBe('emergency')
+    expect(alerts[0].reason).toBe('low_runway')
+    expect(alerts[0].runwayDays).toBe(2)
+  })
+
+  it('alerts at action severity for an action-band runway', () => {
+    const alerts = computeLowBalanceAlerts([walletRow('openrouter', 100, { runwayStatus: 'action', runwayDays: 6 })], base)
+    expect(alerts[0].severity).toBe('action')
+    expect(alerts[0].reason).toBe('low_runway')
+  })
+
+  it('does not alert a healthy runway with a healthy balance', () => {
+    const alerts = computeLowBalanceAlerts([walletRow('openrouter', 100, { runwayStatus: 'ok', runwayDays: 60 })], base)
+    expect(alerts).toHaveLength(0)
+  })
+
+  it('still fires a low_balance alert when runway is ok but the wallet is under the floor', () => {
+    const alerts = computeLowBalanceAlerts([walletRow('openrouter', 1, { runwayStatus: 'ok', runwayDays: 40 })], base)
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0].reason).toBe('low_balance')
+    expect(alerts[0].severity).toBe('action')
+  })
+
+  it('respects a disabled policy even under an emergency runway', () => {
+    const alerts = computeLowBalanceAlerts([walletRow('openrouter', 100, { runwayStatus: 'emergency', runwayDays: 1 })], {
+      ...base,
+      policies: { openrouter: { minBalanceUsd: 3, enabled: false } },
     })
     expect(alerts).toHaveLength(0)
   })
