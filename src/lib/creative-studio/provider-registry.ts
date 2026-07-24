@@ -180,8 +180,15 @@ export const SINGLE_VTON_ENGINE_IDS: readonly StudioEngineId[] = STUDIO_ENGINES.
   (e) => e.modes.includes('try_on') && e.singlePersonOnly,
 ).map((e) => e.id)
 
+/** CS13.2 — the default-engine picker also allows Grok Imagine (multi-person
+ * capable; chains still run their FASHN/Fal machinery when it is the default). */
+export const DEFAULT_VTON_ENGINE_IDS: readonly StudioEngineId[] = [
+  ...SINGLE_VTON_ENGINE_IDS,
+  'xai_imagine',
+]
+
 export function normalizeSingleVtonDefault(value: string | null | undefined): StudioEngineId {
-  return SINGLE_VTON_ENGINE_IDS.includes(value as StudioEngineId)
+  return DEFAULT_VTON_ENGINE_IDS.includes(value as StudioEngineId)
     ? (value as StudioEngineId)
     : 'fashn'
 }

@@ -15,7 +15,7 @@ import {
   CS_IDM_VTON_ENABLED_KEY,
   CS_SINGLE_VTON_DEFAULT_KEY,
   CS_XAI_ENABLED_KEY,
-  SINGLE_VTON_ENGINE_IDS,
+  DEFAULT_VTON_ENGINE_IDS,
   STUDIO_ENGINES,
   engineKillKey,
   normalizeCanaryPct,
@@ -149,8 +149,8 @@ export async function POST(req: NextRequest) {
     await writeKv(CS_XAI_ENABLED_KEY, body.xaiEnabled ? '1' : '0')
   }
   if (typeof body.singleVtonDefault === 'string') {
-    // Reject anything outside the single-person VTON allowlist (no injection).
-    if (!SINGLE_VTON_ENGINE_IDS.includes(body.singleVtonDefault as StudioEngineId)) {
+    // Reject anything outside the default-engine allowlist (no injection).
+    if (!DEFAULT_VTON_ENGINE_IDS.includes(body.singleVtonDefault as StudioEngineId)) {
       return Response.json({ error: 'invalid_vton_default' }, { status: 422 })
     }
     await writeKv(CS_SINGLE_VTON_DEFAULT_KEY, body.singleVtonDefault)

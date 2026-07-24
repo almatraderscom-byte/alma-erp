@@ -3141,6 +3141,7 @@ function StudioSettingsCard() {
             <option value="fal_fashn_v16">Fal FASHN v1.6 · কমার্শিয়াল</option>
             <option value="fashn">FASHN Pro (direct)</option>
             <option value="fal_idm_vton">IDM-VTON (পরীক্ষামূলক · শুধু সিঙ্গেল)</option>
+            <option value="xai_imagine">Grok Imagine (xAI) — Auto সোলো শটেও</option>
           </select>
         </label>
       </div>

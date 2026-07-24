@@ -80,7 +80,9 @@ export async function POST(req: NextRequest) {
         includeReel: body.includeReel,
       })
       const imageCount = result.jobs.filter((j) => j.type === 'image_gen').length
-      const engine = result.provider === 'fashn' ? 'FASHN (best realism)' : 'Gemini'
+      const engine = result.provider === 'xai_imagine'
+        ? 'Grok Imagine (xAI)'
+        : result.provider === 'fashn' ? 'FASHN (best realism)' : 'Gemini'
       const parts = [`✨ ${imageCount}টি ছবি`]
       if (result.reelQueued) parts.push('১টি রিল')
       return Response.json({
