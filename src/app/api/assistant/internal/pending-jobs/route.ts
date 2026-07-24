@@ -34,11 +34,20 @@ export async function GET(req: NextRequest) {
   const db = prisma as any
   const jobs = await db.agentPendingAction.findMany({
     where: {
-      status: 'approved',
       // NOTE: this list is the single gate between "queued" and "the worker ever
       // sees it" — a job type missing here hangs at approved until the watchdog
       // checkpoints it (exactly how workbench_run was caught missing in the P2 e2e).
-      type: { in: ['campaign_pack_local', 'image_gen', 'video_gen', 'video_edit', 'video_finish', 'audio_gen', 'long_agent_task', 'dispatch_staff_tasks', 'add_staff_task_now', 'staff_announcement', 'urgent_notify', 'outbound_call', 'browser_action', 'workbench_run', 'seo_audit', 'agent_graph_run', 'voice_instruction_turn'] },
+      OR: [
+        {
+          status: 'approved',
+          type: { in: ['image_gen', 'video_gen', 'video_edit', 'video_finish', 'audio_gen', 'long_agent_task', 'dispatch_staff_tasks', 'add_staff_task_now', 'staff_announcement', 'urgent_notify', 'outbound_call', 'browser_action', 'workbench_run', 'seo_audit', 'agent_graph_run', 'voice_instruction_turn'] },
+        },
+        {
+          status: 'campaign_approved',
+          type: 'image_gen',
+          payload: { path: ['provider'], equals: 'campaign_pack_local' },
+        },
+      ],
     },
     orderBy: { createdAt: 'asc' },
     take: 20,
@@ -51,9 +60,9 @@ export async function GET(req: NextRequest) {
   // (cron/legacy rows) pass through untouched — the lease narrows duplicates,
   // it never blocks delivery.
   const LEASE_TTL_MS: Record<string, number> = {
-    // CSE4 local layouts are isolated from generic/paid image jobs. Keep one
-    // lease across either lane so a second poller never starts the same stage.
-    campaign_pack_local: 15 * 60_000,
+    // CSE4 local layouts use a dedicated queued status but retain image_gen
+    // lineage. Keep one lease across either lane so a second poller cannot start
+    // the same stage.
     image_gen: 15 * 60_000,
     video_gen: 15 * 60_000, video_edit: 15 * 60_000, video_finish: 15 * 60_000,
     long_agent_task: 15 * 60_000, browser_action: 15 * 60_000, workbench_run: 15 * 60_000, agent_graph_run: 30 * 60_000,
