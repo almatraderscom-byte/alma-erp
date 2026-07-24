@@ -9,6 +9,7 @@ import {
 import { cn } from '@/lib/utils'
 import { AgentSubHeader } from '@/agent/components/AgentSubHeader'
 import type { SpendBreakdown, SpendCategoryTotal } from '@/agent/lib/billing/spend-categories'
+import type { ChatConversationCost } from '@/agent/lib/cost-dashboard'
 
 type DashboardData = {
   todayDhakaDate?: string
@@ -18,6 +19,8 @@ type DashboardData = {
   forecastUsd: number
   spendByCategoryToday?: SpendBreakdown
   spendByCategoryMonth?: SpendBreakdown
+  chatConversationsToday?: ChatConversationCost[]
+  chatConversationsMonth?: ChatConversationCost[]
   subscriptionAmortMonthUsd: number
   dailyLast30: Array<Record<string, number | string>>
   byProvider: Array<{ provider: string; totalUsd: number }>
@@ -631,17 +634,23 @@ function TtsProviderCard({
   )
 }
 
-function SpendCategoryRow({ c, maxUsd }: { c: SpendCategoryTotal; maxUsd: number }) {
+function SpendCategoryRow({ c, maxUsd, expandable, expanded }: {
+  c: SpendCategoryTotal; maxUsd: number; expandable?: boolean; expanded?: boolean
+}) {
   const width = maxUsd > 0 ? Math.max(3, (c.usd / maxUsd) * 100) : 0
   return (
-    <div className="rounded-xl border border-border-subtle bg-card/40 px-3 py-2">
+    <div className={cn('rounded-xl border border-border-subtle bg-card/40 px-3 py-2', expandable && 'hover:border-[#E07A5F]/30')}>
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
+          {expandable && (
+            <span className={cn('text-[9px] text-muted transition-transform', expanded && 'rotate-90')}>▶</span>
+          )}
           <span className="text-sm">{c.icon}</span>
           <div className="min-w-0">
             <p className="truncate text-xs font-semibold text-cream">
               {c.label}
               {c.headline && <span className="ml-1 text-[8px] text-[#E07A5F]">★</span>}
+              {expandable && <span className="ml-1 text-[8px] text-[#E07A5F]">{expanded ? '· লুকান' : '· কোন কোন চ্যাট?'}</span>}
             </p>
             <p className="truncate text-[8px] text-muted">{c.hint}</p>
           </div>
@@ -658,11 +667,47 @@ function SpendCategoryRow({ c, maxUsd }: { c: SpendCategoryTotal; maxUsd: number
   )
 }
 
-function SpendByCategorySection({ today, month }: { today?: SpendBreakdown; month?: SpendBreakdown }) {
+function ChatConversationList({ convs }: { convs: ChatConversationCost[] }) {
+  if (!convs.length) {
+    return <p className="px-3 py-2 text-[10px] text-muted">এই সময়ে আলাদা চ্যাট পাওয়া যায়নি।</p>
+  }
+  return (
+    <div className="mt-1 space-y-1 border-l-2 border-[#E07A5F]/20 pl-2">
+      {convs.map((cv) => (
+        <Link
+          key={cv.conversationId}
+          href={`/agent?conversation=${encodeURIComponent(cv.conversationId)}`}
+          className="flex items-center justify-between gap-2 rounded-lg border border-border-subtle bg-card/60 px-2.5 py-1.5 hover:border-[#E07A5F]/40 hover:bg-[#E07A5F]/[0.04]"
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="text-[10px]">💬</span>
+            <span className="truncate text-[11px] font-medium text-cream">
+              {cv.title?.trim() || 'শিরোনামহীন চ্যাট'}
+            </span>
+            {cv.source && cv.source !== 'web' && (
+              <span className="shrink-0 rounded-full border border-border-subtle px-1.5 py-0.5 text-[7px] uppercase text-muted">{cv.source}</span>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="text-[11px] font-bold tabular-nums text-cream">{fmtUsd(cv.totalUsd)}</span>
+            <span className="text-[9px] text-[#E07A5F]">খুলুন ↗</span>
+          </div>
+        </Link>
+      ))}
+    </div>
+  )
+}
+
+function SpendByCategorySection({ today, month, chatToday, chatMonth }: {
+  today?: SpendBreakdown; month?: SpendBreakdown
+  chatToday?: ChatConversationCost[]; chatMonth?: ChatConversationCost[]
+}) {
   const [range, setRange] = useState<'today' | 'month'>('today')
+  const [chatOpen, setChatOpen] = useState(false)
   const b = range === 'today' ? today : month
   if (!b) return null
   const maxUsd = b.categories.length ? b.categories[0].usd : 0
+  const chatConvs = (range === 'today' ? chatToday : chatMonth) ?? []
   return (
     <section className="space-y-3">
       <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
@@ -712,7 +757,23 @@ function SpendByCategorySection({ today, month }: { today?: SpendBreakdown; mont
           {b.categories.length === 0 ? (
             <p className="py-4 text-center text-[11px] text-muted">এই সময়ে কোনো খরচ হয়নি।</p>
           ) : (
-            b.categories.map((c) => <SpendCategoryRow key={c.id} c={c} maxUsd={maxUsd} />)
+            b.categories.map((c) =>
+              c.id === 'owner_chat' ? (
+                <div key={c.id}>
+                  <button
+                    type="button"
+                    onClick={() => setChatOpen((o) => !o)}
+                    className="w-full text-left"
+                    aria-expanded={chatOpen}
+                  >
+                    <SpendCategoryRow c={c} maxUsd={maxUsd} expandable expanded={chatOpen} />
+                  </button>
+                  {chatOpen && <ChatConversationList convs={chatConvs} />}
+                </div>
+              ) : (
+                <SpendCategoryRow key={c.id} c={c} maxUsd={maxUsd} />
+              ),
+            )
           )}
         </div>
       </div>
@@ -968,7 +1029,12 @@ export default function AgentCostsDashboard() {
       />
     <div className="safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6 bg-transparent">
       {/* Daily spend by activity category — the one-glance "where did my money go" */}
-      <SpendByCategorySection today={data.spendByCategoryToday} month={data.spendByCategoryMonth} />
+      <SpendByCategorySection
+        today={data.spendByCategoryToday}
+        month={data.spendByCategoryMonth}
+        chatToday={data.chatConversationsToday}
+        chatMonth={data.chatConversationsMonth}
+      />
 
       {/* Truthful provider billing hub */}
       <section className="space-y-3">
