@@ -19,6 +19,20 @@ import {
   type ProviderSyncStatus,
   type ProviderUsageSnapshot,
 } from '@/agent/lib/provider-billing'
+import {
+  computeDailyBurn,
+  computeRunway,
+  computeSuggestedTopUp,
+  type RunwayStatus,
+} from '@/agent/lib/billing/runway'
+import {
+  readFundingPolicies,
+  runwayThresholdsFor,
+  effectiveMonthlyCapUsd,
+  type FundingCriticality,
+  type FundingMode,
+  type FundingPolicy,
+} from '@/agent/lib/billing/funding-policy'
 
 export const API_BALANCE_CACHE_KEY = 'api_balance_cache'
 
@@ -96,6 +110,20 @@ export type BalanceProviderRow = {
   // only up to this date; the UI shows it as a "sync: <date>" note + a deep link
   // to the platform for the not-yet-synced most-recent days.
   syncedThrough?: string | null
+  // ---- Funding runway (Billing Command Center) — all ESTIMATES from local spend ----
+  // Whole days the wallet can run at the trailing-7d burn, or null when unknown
+  // (no wallet / idle burn). Never infinite.
+  runwayDays?: number | null
+  runwayStatus?: RunwayStatus
+  /** false when too few active spend-days back the estimate — UI marks it rough. */
+  runwayConfident?: boolean
+  /** Trailing-7d USD/day burn, or null when there was no spend. */
+  burnUsdPerDay?: number | null
+  /** Display-only suggested top-up to reach the policy target runway. No charge. */
+  suggestedTopUpUsd?: number | null
+  /** Owner funding policy classification. */
+  criticality?: FundingCriticality
+  fundingMode?: FundingMode
 }
 
 export type ApiBalanceCache = {
@@ -828,6 +856,15 @@ export function normalizeCachedProvider(
     configuredCapabilities: row.configuredCapabilities ?? [],
     free: row.free,
     syncedThrough: row.syncedThrough ?? null,
+    // Runway/policy fields are re-derived fresh on read (overlayLiveLocalSpend),
+    // but carry the cached values through so nothing is lost if that step is skipped.
+    runwayDays: row.runwayDays ?? null,
+    runwayStatus: row.runwayStatus,
+    runwayConfident: row.runwayConfident,
+    burnUsdPerDay: row.burnUsdPerDay ?? null,
+    suggestedTopUpUsd: row.suggestedTopUpUsd ?? null,
+    criticality: row.criticality,
+    fundingMode: row.fundingMode,
   }
 }
 
@@ -1079,6 +1116,8 @@ export async function refreshApiBalanceCache(): Promise<{
 }> {
   const startedAt = new Date()
   const { todayStr, dayStart, dayEnd, monthStart, monthEnd } = dhakaSpendBounds()
+  // Trailing 7-day window (Dhaka calendar) for the funding burn rate / runway.
+  const sevenDayStart = dhakaDayBounds(addDaysYmd(todayStr, -6)).start
   const [
     previousCache,
     todayByProvider,
@@ -1098,6 +1137,8 @@ export async function refreshApiBalanceCache(): Promise<{
     supabasePlan,
     googleBilling,
     credits,
+    burnWindow,
+    fundingPolicies,
   ] = await Promise.all([
     readBalanceCache(),
     querySpendByProviderBetween(dayStart, dayEnd),
@@ -1120,6 +1161,8 @@ export async function refreshApiBalanceCache(): Promise<{
       provider,
       credit: await getApiBalanceCredit(provider),
     }))),
+    querySpendByProviderOverWindow(sevenDayStart, dayEnd),
+    readFundingPolicies(),
   ])
   const creditByProvider = new Map(credits.map((item) => [item.provider, item.credit]))
 
@@ -1670,6 +1713,12 @@ export async function refreshApiBalanceCache(): Promise<{
     free: true,
   })
 
+  // ---- Funding runway enrichment (Billing Command Center) ----
+  // All figures here are ESTIMATES from locally measured spend. Wallet providers
+  // get a days-left runway; quota/postpaid providers have no wallet, so runway
+  // stays unknown by design.
+  enrichProviderRunway(providers, burnWindow, monthByProvider, fundingPolicies)
+
   const providerInvoices = providers
     .filter((row) => row.invoice != null)
     .map((row) => row.invoice as ProviderInvoiceSnapshot)
@@ -1699,14 +1748,62 @@ export async function refreshApiBalanceCache(): Promise<{
   creditFlags.fal = Boolean(process.env.FAL_KEY || creditByProvider.get('fal'))
   creditFlags.fashn = Boolean(process.env.FASHN_API_KEY)
 
+  const alertPolicies: AlertPolicyInput = {}
+  for (const id of Object.keys(fundingPolicies) as BalanceProviderId[]) {
+    alertPolicies[id] = { minBalanceUsd: fundingPolicies[id].minBalanceUsd, enabled: fundingPolicies[id].enabled }
+  }
   const alerts = computeLowBalanceAlerts(providers, {
     anthropicAdmin: Boolean(process.env.ANTHROPIC_ADMIN_API_KEY),
     openaiAdmin: Boolean(process.env.OPENAI_ADMIN_API_KEY),
     twilioConfigured: Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN),
     creditSet: creditFlags,
+    policies: alertPolicies,
   })
 
   return { cache, twilioRaw, alerts }
+}
+
+/**
+ * Attach funding-runway estimates + policy classification to each provider row,
+ * in place. Mutates rows; returns nothing. Free providers are left untouched.
+ */
+export function enrichProviderRunway(
+  providers: BalanceProviderRow[],
+  burnWindow: Record<string, ProviderBurnWindowRow>,
+  monthByProvider: Record<string, number>,
+  policies: Record<BalanceProviderId, FundingPolicy>,
+): void {
+  const WINDOW_DAYS = 7
+  for (const row of providers) {
+    if (row.free) continue
+    const policy = policies[row.id]
+    if (!policy) continue
+
+    row.criticality = policy.criticality
+    row.fundingMode = policy.fundingMode
+
+    const win = burnWindow[row.id] ?? { totalUsd: 0, activeDays: 0 }
+    const burn = computeDailyBurn({ totalUsd: win.totalUsd, activeDays: win.activeDays, windowDays: WINDOW_DAYS })
+    const runway = computeRunway(row.balanceUsd, burn, runwayThresholdsFor(policy))
+
+    row.runwayDays = runway.days
+    row.runwayStatus = runway.status
+    row.runwayConfident = runway.confident
+    row.burnUsdPerDay = burn.basis === 'no_spend' ? null : burn.usdPerDay
+
+    // Display-only suggestion to reach the policy target runway, capped by the
+    // effective monthly ceiling. Moves no money.
+    if (row.balanceKind === 'wallet' && row.balanceUsd != null) {
+      const monthlyMax = effectiveMonthlyCapUsd(policy, monthByProvider[row.id] ?? null)
+      const suggestion = computeSuggestedTopUp(row.balanceUsd, burn, {
+        targetDays: policy.targetDays,
+        monthlyMaxUsd: monthlyMax,
+      })
+      row.suggestedTopUpUsd = suggestion.none ? null : suggestion.amountUsd
+    } else {
+      row.suggestedTopUpUsd = null
+    }
+  }
 }
 
 /** Minimal policy shape the alert calc needs — kept structural so the function
@@ -1794,12 +1891,15 @@ export async function getApiBalances(opts?: { refresh?: boolean }): Promise<ApiB
 async function overlayLiveLocalSpend(cache: ApiBalanceCache): Promise<ApiBalanceCache> {
   try {
     const { todayStr, dayStart, dayEnd, monthStart, monthEnd } = dhakaSpendBounds()
+    const sevenDayStart = dhakaDayBounds(addDaysYmd(todayStr, -6)).start
     // Refresh the OpenRouter live balance too (throttled) — the cached snapshot's
     // balance could be up to 6h stale behind its "Live API" label.
-    const [todayByProvider, monthByProvider, freshOpenRouterBalance] = await Promise.all([
+    const [todayByProvider, monthByProvider, freshOpenRouterBalance, burnWindow, fundingPolicies] = await Promise.all([
       querySpendByProviderBetween(dayStart, dayEnd),
       querySpendByProviderBetween(monthStart, monthEnd),
       getFreshOpenRouterBalanceUsd(),
+      querySpendByProviderOverWindow(sevenDayStart, dayEnd),
+      readFundingPolicies(),
     ])
     const normalized = cache.providers.map((row) => normalizeCachedProvider(row, cache.checkedAt))
     const providers = await Promise.all(normalized.map(async (row) => {
@@ -1860,6 +1960,9 @@ async function overlayLiveLocalSpend(cache: ApiBalanceCache): Promise<ApiBalance
         statusMessage,
       }
     }))
+    // Re-derive runway against the just-overlaid balances + latest 7-day burn, so
+    // the dashboard's days-left tracks the current wallet, not the last cron snapshot.
+    enrichProviderRunway(providers, burnWindow, monthByProvider, fundingPolicies)
     const providerInvoices = providers
       .filter((row) => row.invoice != null)
       .map((row) => row.invoice as ProviderInvoiceSnapshot)

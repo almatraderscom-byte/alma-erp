@@ -119,6 +119,14 @@ type BalanceProviderRow = {
   configuredCapabilities?: string[]
   free?: boolean
   syncedThrough?: string | null
+  // Funding runway (estimates from local spend)
+  runwayDays?: number | null
+  runwayStatus?: 'ok' | 'warning' | 'action' | 'emergency' | 'unknown'
+  runwayConfident?: boolean
+  burnUsdPerDay?: number | null
+  suggestedTopUpUsd?: number | null
+  criticality?: 'critical' | 'important' | 'variable' | 'free'
+  fundingMode?: 'provider_auto_recharge' | 'usage_based_billing' | 'postpaid' | 'hosted_top_up' | 'app_top_up' | 'free' | 'unsupported'
 }
 
 type BalanceData = {
@@ -323,6 +331,37 @@ const FIELD_TRUTH: Record<FieldTruth, { label: string; cls: string }> = {
   needs_credential: { label: 'Needs credential', cls: 'tone-amber border' },
   sync_error: { label: 'Sync error', cls: 'tone-red border' },
   no_current_value: { label: 'None reported', cls: 'border border-border-subtle text-muted' },
+}
+
+const RUNWAY_STYLE: Record<NonNullable<BalanceProviderRow['runwayStatus']>, { label: string; cls: string }> = {
+  ok: { label: 'সুস্থ', cls: 'tone-green border' },
+  warning: { label: 'নজরে রাখুন', cls: 'tone-amber border' },
+  action: { label: 'রিচার্জ দরকার', cls: 'tone-amber border' },
+  emergency: { label: 'জরুরি', cls: 'tone-red border' },
+  unknown: { label: 'অজানা', cls: 'border border-border-subtle text-muted' },
+}
+
+const CRITICALITY_LABEL: Record<NonNullable<BalanceProviderRow['criticality']>, string> = {
+  critical: 'Critical',
+  important: 'Important',
+  variable: 'Variable',
+  free: 'Free',
+}
+
+const FUNDING_MODE_LABEL: Record<NonNullable<BalanceProviderRow['fundingMode']>, string> = {
+  provider_auto_recharge: 'Auto-recharge',
+  usage_based_billing: 'Usage billing',
+  postpaid: 'Postpaid',
+  hosted_top_up: 'Hosted top-up',
+  app_top_up: 'App top-up',
+  free: 'Free',
+  unsupported: 'Unsupported',
+}
+
+function fmtRunwayDays(days: number | null | undefined): string {
+  if (days == null) return '—'
+  if (days >= 90) return '90+ দিন'
+  return `${days} দিন`
 }
 
 function providerFieldTruth(row: BalanceProviderRow) {
@@ -957,6 +996,45 @@ export default function AgentCostsDashboard() {
                       </p>
                     )}
                   </div>
+
+                  {!row.free && (row.runwayStatus || row.criticality) && (
+                    <div className="mt-3 rounded-xl border border-border-subtle bg-black/[0.02] px-3 py-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted">
+                          Runway{row.criticality ? ` · ${CRITICALITY_LABEL[row.criticality]}` : ''}
+                        </p>
+                        {row.runwayStatus && (
+                          <span className={cn('rounded-full px-2 py-0.5 text-[9px] font-semibold', RUNWAY_STYLE[row.runwayStatus].cls)}>
+                            {RUNWAY_STYLE[row.runwayStatus].label}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1.5 flex items-end justify-between gap-2">
+                        <div>
+                          <p className="text-lg font-bold tabular-nums text-cream">
+                            {row.runwayDays != null ? fmtRunwayDays(row.runwayDays) : (row.balanceKind === 'wallet' ? '—' : 'N/A')}
+                          </p>
+                          <p className="text-[8px] text-muted">
+                            {row.runwayDays != null
+                              ? 'আনুমানিক — এই খরচে চললে'
+                              : row.balanceKind === 'wallet' ? 'burn নেই' : 'wallet নেই (postpaid/quota)'}
+                            {row.runwayConfident === false && row.runwayDays != null ? ' · rough' : ''}
+                          </p>
+                        </div>
+                        <div className="space-y-0.5 text-right">
+                          {row.burnUsdPerDay != null && (
+                            <p className="text-[9px] text-muted">দৈনিক ~{fmtUsd(row.burnUsdPerDay)}</p>
+                          )}
+                          {row.fundingMode && (
+                            <p className="text-[9px] text-muted">{FUNDING_MODE_LABEL[row.fundingMode]}</p>
+                          )}
+                          {row.suggestedTopUpUsd != null && (
+                            <p className="text-[9px] font-semibold text-[#E07A5F]">Top-up ~{fmtUsd(row.suggestedTopUpUsd)}</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {row.costAuthoritative && row.providerMonthUsd != null ? (
                     <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-3">
