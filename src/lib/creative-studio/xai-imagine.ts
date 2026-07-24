@@ -140,6 +140,8 @@ export function buildXaiRunBrief(input: {
   modelImagePath?: string
   sourceImagePath?: string
   faceReferencePath?: string
+  /** CS14 — avatar identity sheet rides as an EXTRA reference when a slot is free */
+  identitySheetPath?: string
 }): XaiRunBrief {
   const ownerText = [input.familyPrompt, input.prompt, input.backgroundPrompt]
     .map((s) => s?.trim())
@@ -193,12 +195,25 @@ export function buildXaiRunBrief(input: {
   }
   if (refs.length > XAI_MAX_EDIT_REFERENCES) { refs.length = XAI_MAX_EDIT_REFERENCES; roles.length = XAI_MAX_EDIT_REFERENCES }
 
+  // CS14 — attach the avatar identity sheet on the person-carrying modes when
+  // a reference slot is free (never displaces a functional reference).
+  let sheetLine = ''
+  if (
+    input.identitySheetPath
+    && refs.length < XAI_MAX_EDIT_REFERENCES
+    && (input.mode === 'try_on' || input.mode === 'product_to_model' || input.mode === 'face_to_model' || input.mode === 'model_swap')
+  ) {
+    refs.push(input.identitySheetPath)
+    roles.push('source') // sheet is a collage — plate-cleanup must not touch it
+    sheetLine = ` Reference image ${refs.length} is an identity sheet showing the SAME person from multiple angles — use it to keep the face and identity perfectly accurate.`
+  }
+
   const scaffold = MODE_SCAFFOLDS[input.mode]
   return {
     op: 'edit',
     referenceImagePaths: refs,
     referenceRoles: roles,
-    prompt: [scaffold, ownerText].filter(Boolean).join(' '),
+    prompt: [scaffold, ownerText].filter(Boolean).join(' ') + sheetLine,
   }
 }
 

@@ -730,6 +730,41 @@ async function processImageGen(job) {
     return
   }
 
+  // CS14 — Model Avatar build: free identity sheet + optional Grok canonical.
+  if (payload.provider === 'avatar_build') {
+    try {
+      const { processAvatarBuild } = await import('./avatar/build.mjs')
+      const { logCost } = await import('./cost-log.mjs')
+      const result = await processAvatarBuild({ supabase, pendingActionId, payload, logCost })
+      await callJobResult(pendingActionId, 'success', {
+        provider: 'avatar_build',
+        modelId: payload.modelId,
+        sheetPath: result.sheetPath,
+        canonicalPath: result.canonicalPath ?? undefined,
+        // gallery shows the best artifact (canonical when built, else the sheet)
+        storagePath: result.canonicalPath ?? result.sheetPath,
+        imageCount: result.imageCount,
+        creativeStudio: true,
+        studioMode: 'avatar_build',
+      })
+      console.log(`[worker] avatar-build ${payload.modelId} — done (${result.imageCount} angles${result.canonicalPath ? ' + canonical' : ''})`)
+    } catch (err) {
+      // clear the building flag so the UI never sticks on "building"
+      try {
+        const key = `model_avatar:${payload.modelId}`
+        const { data: row } = await supabase.from('agent_kv_settings').select('value').eq('key', key).maybeSingle()
+        if (row?.value) {
+          const avatar = JSON.parse(row.value)
+          avatar.building = false
+          await supabase.from('agent_kv_settings').upsert({ key, value: JSON.stringify(avatar) }, { onConflict: 'key' })
+        }
+      } catch { /* best effort */ }
+      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      console.error(`[worker] avatar-build ${payload.modelId} — failed:`, err.message)
+    }
+    return
+  }
+
   // CS13 — xAI Grok Imagine (generation + natural-language edit, up to 3 refs).
   // Synchronous API — no durable queue state; adapter retries transients only.
   if (payload.provider === 'xai') {

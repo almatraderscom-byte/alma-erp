@@ -77,6 +77,8 @@ export type CreativeStudioRunInput = {
   seed?: number
   /** CS9 — family protected compositing (no face/garment regen in the merge) */
   protectedComposite?: boolean
+  /** CS14 — avatar identity sheet (extra xAI reference when a slot is free) */
+  avatarSheetPath?: string
   /** CS7 — FLUX Fill precision edit: mask object path (white=edit, black=keep) */
   maskPath?: string
   /** CS7 — mask preset id (replace_background / remove_object / …) */
@@ -290,9 +292,12 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
         const missing = [...(!modelA ? [roleA] : []), ...(!modelB ? [roleB] : [])]
         throw new Error(`missing_models:${missing.join(',')}`)
       }
+      // CS14 — built avatars (canonical portraits) serve as the person refs
+      const { resolvePersonRef } = await import('@/lib/tryon/model-avatar')
+      const [refA, refB] = await Promise.all([resolvePersonRef(modelA), resolvePersonRef(modelB)])
       brief = buildXaiFamilyPairBrief({
         preset: input.familyPreset as string,
-        personPaths: [modelA.imagePath, modelB.imagePath],
+        personPaths: [refA.path, refB.path],
         personLabels: [roleA, roleB],
         productImagePath: input.productImagePath,
         prompt: input.prompt,
@@ -308,6 +313,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
         modelImagePath: input.modelImagePath,
         sourceImagePath: input.sourceImagePath,
         faceReferencePath: input.faceReferencePath,
+        identitySheetPath: input.avatarSheetPath,
       })
       // CS13.3 — same free readiness gate as the FASHN/Fal single try-on:
       // stop unusable inputs BEFORE any paid xAI call.
@@ -798,19 +804,24 @@ export async function runAutoStudio(input: {
   // Solo on-model shot: FASHN accuracy + a Bangladeshi background swap (2-step
   // chain) so every Auto run comes back with a different pose/scene. Falls back
   // to the Gemini try-on batch without a FASHN key.
+  // CS14 — a built avatar (canonical portrait) is the best person reference
+  const { resolvePersonRef } = await import('@/lib/tryon/model-avatar')
+  const defaultRef = await resolvePersonRef(defaultModel)
+
   if (xaiAutoReady) {
     const solo = await runCreativeStudio({
       mode: 'try_on',
       vtonEngine: 'xai_imagine',
       productImagePath,
-      modelImagePath: defaultModel.imagePath,
+      modelImagePath: defaultRef.path,
+      avatarSheetPath: defaultRef.sheetPath,
       resolution: '2k',
     })
     for (const j of solo.jobs) jobs.push(j)
   } else if (useFashn) {
     const job = await startSingleRescueChain({
       productImagePath,
-      modelImagePath: defaultModel.imagePath,
+      modelImagePath: defaultRef.path,
       generationMode: 'quality',
       vtonEngine: await resolveChainVtonEngine(),
       conversationId: null,

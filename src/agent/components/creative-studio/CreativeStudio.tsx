@@ -42,6 +42,11 @@ import {
   fetchStudioConfig,
   fetchGallery,
   fetchModels,
+  fetchAvatar,
+  setAvatarImages,
+  buildAvatar,
+  clearAvatarImages,
+  type StudioModelAvatar,
   setDefaultModel,
   deleteModel,
   runAutoStudioJob,
@@ -110,6 +115,8 @@ type StudioModel = {
   isDefault: boolean
   imagePath?: string
   imageUrl?: string | null
+  /** CS14 — avatar status (multi-angle identity) */
+  avatar?: { built: boolean; building: boolean; count: number } | null
 }
 
 /** Bangla label for a model role (falls back to the raw role for anything odd). */
@@ -2639,10 +2646,183 @@ function FinishPanel({
   )
 }
 
+/**
+ * CS14 — Avatar sheet: up to 10 different-angle photos of a saved model.
+ * "Avatar বানাও" queues the worker build — free identity sheet + optional
+ * Grok canonical portrait (~$0.07). Once built, every render that uses this
+ * model automatically rides the avatar references.
+ */
+function AvatarSheet({ model, onClose }: { model: StudioModel; onClose: () => void }) {
+  const [avatar, setAvatar] = useState<StudioModelAvatar | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [uploading, setUploading] = useState(false)
+  const [building, setBuilding] = useState(false)
+  const [canonical, setCanonical] = useState(true)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const reload = useCallback(async () => {
+    const d = await fetchAvatar(model.id)
+    setAvatar(d.avatar)
+    setLoading(false)
+  }, [model.id])
+
+  useEffect(() => { void reload().catch(() => setLoading(false)) }, [reload])
+
+  const paths = avatar?.imagePaths ?? []
+
+  const addFiles = async (files: FileList) => {
+    const room = 10 - paths.length
+    const list = Array.from(files).slice(0, Math.max(0, room))
+    if (list.length === 0) { toast.error('সর্বোচ্চ ১০টি ছবি'); return }
+    setUploading(true)
+    try {
+      const uploaded: string[] = []
+      for (const f of list) uploaded.push(await uploadStudioFile(f, 'model-avatar'))
+      await setAvatarImages(model.id, [...paths, ...uploaded])
+      await reload()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const removeAt = async (i: number) => {
+    const next = paths.filter((_, idx) => idx !== i)
+    try {
+      if (next.length === 0) await clearAvatarImages(model.id)
+      else await setAvatarImages(model.id, next)
+      await reload()
+    } catch { toast.error('হয়নি') }
+  }
+
+  const startBuild = async () => {
+    setBuilding(true)
+    try {
+      await buildAvatar(model.id, canonical)
+      toast.success('Avatar তৈরি হচ্ছে — একটু পরে ব্যাজ সবুজ হবে')
+      onClose()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Build failed')
+      setBuilding(false)
+    }
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm md:items-center"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: 60 }}
+        animate={{ y: 0 }}
+        exit={{ y: 60 }}
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-t-3xl border border-border bg-bg-1 p-4 shadow-2xl md:rounded-3xl"
+      >
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => { if (e.target.files?.length) void addFiles(e.target.files); e.target.value = '' }}
+        />
+        <div className="mb-1 flex items-center justify-between">
+          <h3 className="text-[15px] font-bold text-cream">🧬 Avatar — {model.name}</h3>
+          <button type="button" onClick={onClose} className="rounded-full bg-white/10 px-3 py-1 text-[11px] text-muted">বন্ধ</button>
+        </div>
+        <p className="mb-3 text-[11px] leading-snug text-muted">
+          বিভিন্ন অ্যাঙ্গেলের সর্বোচ্চ ১০টি ছবি দিন (সামনে, পাশ, থ্রি-কোয়ার্টার…)। সব অ্যাঙ্গেল মিলিয়ে
+          আইডেন্টিটি শিট (ফ্রি) + Grok canonical পোর্ট্রেট (~$0.07) তৈরি হবে — এরপর এই মডেলের সব রেন্ডারে
+          মুখের accuracy আরও ভালো হবে। পুরনো এক-ছবির সিস্টেমও আগের মতোই কাজ করবে।
+        </p>
+
+        {loading ? (
+          <p className="py-6 text-center text-[12px] text-muted">লোড হচ্ছে…</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+              {paths.map((p, i) => (
+                <div key={p} className="relative aspect-[3/4] overflow-hidden rounded-xl border border-border-subtle bg-card/60">
+                  {avatar?.imageUrls?.[i] ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={avatar.imageUrls[i] as string} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="grid h-full w-full place-items-center text-[10px] text-muted">ছবি {i + 1}</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void removeAt(i)}
+                    className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-black/60 text-[10px] text-white"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              {paths.length < 10 && (
+                <button
+                  type="button"
+                  disabled={uploading}
+                  onClick={() => fileRef.current?.click()}
+                  className="grid aspect-[3/4] place-items-center rounded-xl border-2 border-dashed border-[#E07A5F]/35 bg-[#E07A5F]/[0.05] text-2xl text-[#E07A5F] disabled:opacity-50"
+                >
+                  {uploading ? '…' : '+'}
+                </button>
+              )}
+            </div>
+            <p className="mt-1.5 text-[10px] text-muted">{paths.length}/10 ছবি{avatar?.builtAt ? ` · সর্বশেষ build: ${new Date(avatar.builtAt).toLocaleString()}` : ''}</p>
+
+            {(avatar?.canonicalUrl || avatar?.sheetUrl) && (
+              <div className="mt-3 flex gap-2">
+                {avatar?.canonicalUrl && (
+                  <div className="flex-1">
+                    <p className="mb-1 text-[10px] font-semibold text-muted">Canonical পোর্ট্রেট</p>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={avatar.canonicalUrl} alt="canonical" className="w-full rounded-xl border border-border-subtle" />
+                  </div>
+                )}
+                {avatar?.sheetUrl && (
+                  <div className="flex-1">
+                    <p className="mb-1 text-[10px] font-semibold text-muted">আইডেন্টিটি শিট</p>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={avatar.sheetUrl} alt="sheet" className="w-full rounded-xl border border-border-subtle" />
+                  </div>
+                )}
+              </div>
+            )}
+
+            <label className="mt-3 flex items-center justify-between gap-2">
+              <span className="text-[11px] text-muted">Grok canonical পোর্ট্রেটও বানাও (~$0.07 · best accuracy)</span>
+              <input type="checkbox" checked={canonical} onChange={(e) => setCanonical(e.target.checked)} className="h-4 w-4 accent-[#E07A5F]" />
+            </label>
+            <button
+              type="button"
+              disabled={building || paths.length === 0 || Boolean(avatar?.building)}
+              onClick={() => void startBuild()}
+              className={cn(
+                'mt-2 w-full rounded-xl py-3 text-[13px] font-bold text-white',
+                paths.length > 0 && !building && !avatar?.building ? 'bg-[#E07A5F]' : 'bg-[#94A3B8]',
+              )}
+            >
+              {avatar?.building ? 'Avatar তৈরি হচ্ছে…' : building ? '…' : avatar?.builtAt ? 'Avatar আবার বানাও' : 'Avatar বানাও'}
+            </button>
+          </>
+        )}
+      </motion.div>
+    </motion.div>
+  )
+}
+
 function ModelsView() {
   const [models, setModels] = useState<StudioModel[]>([])
   const [busyId, setBusyId] = useState<string | null>(null)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  // CS14 — which model's avatar sheet is open
+  const [avatarModel, setAvatarModel] = useState<StudioModel | null>(null)
   // Draft = the add-model sheet: opens once a photo is picked, collects name + role.
   const [draftPreview, setDraftPreview] = useState<string | null>(null)
   const [draftPath, setDraftPath] = useState<string | null>(null)
@@ -2801,8 +2981,28 @@ function ModelsView() {
                 </span>
               )}
 
+              {/* CS14 — avatar status badge */}
+              {m.avatar && (m.avatar.built || m.avatar.building) && (
+                <span className={cn(
+                  'absolute left-2 rounded-full px-2 py-0.5 text-[9px] font-bold text-white shadow-sm',
+                  m.isDefault ? 'top-8' : 'top-2',
+                  m.avatar.building ? 'bg-amber-500' : 'bg-[#81B29A]',
+                )}>
+                  🧬 {m.avatar.building ? 'Avatar হচ্ছে…' : 'Avatar'}
+                </span>
+              )}
+
               {/* action buttons (top-right) */}
               <div className="absolute right-1.5 top-1.5 flex gap-1">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setAvatarModel(m)}
+                  title="Avatar — বিভিন্ন অ্যাঙ্গেলের ছবি"
+                  className="grid h-7 w-7 place-items-center rounded-full bg-black/45 text-[12px] text-white backdrop-blur-sm transition-colors hover:bg-black/65 disabled:opacity-50"
+                >
+                  🧬
+                </button>
                 {!m.isDefault && (
                   <button
                     type="button"
@@ -2861,6 +3061,16 @@ function ModelsView() {
 
       <ModelCreatorCard models={models} onQueued={() => void load()} />
       <StudioSettingsCard />
+
+      {/* CS14 — avatar sheet */}
+      <AnimatePresence>
+        {avatarModel && (
+          <AvatarSheet
+            model={avatarModel}
+            onClose={() => { setAvatarModel(null); void load() }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Add-model sheet */}
       <AnimatePresence>

@@ -49,7 +49,10 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('func setSpeakerEnabled(_ enabled: Bool) throws')
     expect(voice).toContain('struct AlmaVoiceCallMiniBar: View')
     expect(assistant).toContain('let voiceEngine = AlmaVoiceEngine()')
-    expect(assistant).toContain('AlmaVoiceCallMiniBar(')
+    // PR #541 moved the mini-bar instantiation into the voice file (app-wide
+    // call bar via AlmaCallBarBridge) — assert the bar is wired SOMEWHERE, not
+    // pinned to the old call site.
+    expect(`${assistant}\n${voice}`).toContain('AlmaVoiceCallMiniBar(')
     expect(voice).toContain('স্বাভাবিকভাবে বলুন—ট্যাপ করার প্রয়োজন নেই')
   })
 
