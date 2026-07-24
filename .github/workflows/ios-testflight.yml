@@ -22,9 +22,9 @@ on:
   workflow_dispatch:
     inputs:
       expected_build:
-        description: 'Exact committed CFBundleVersion to upload (this release: 83).'
+        description: 'Exact committed CFBundleVersion to upload (this release: 84).'
         required: true
-        default: '83'
+        default: '84'
       marketing_version:
         description: 'App version shown to testers (e.g. 1.1). Leave empty to keep the current project version.'
         required: false
