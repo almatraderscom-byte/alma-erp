@@ -7,7 +7,15 @@
  * Audio Lab jobs — never in autonomous or customer-facing flows.
  */
 
-export type AudioLabKind = 'voice_clone' | 'music' | 'wish_song' | 'owner_voice' | 'clean_voice' | 'sfx'
+export type AudioLabKind =
+  | 'voice_clone'
+  | 'music'
+  | 'wish_song'
+  | 'owner_voice'
+  | 'clean_voice'
+  | 'sfx'
+  | 'dub'
+  | 'voice_change'
 
 export const MUSIC_STYLES = [
   {
@@ -67,13 +75,23 @@ export function buildWishSong(occasionId: string, name: string): { lyrics: strin
 
 /** Honest ballpark estimates (ElevenLabs credits → USD), shown before run. */
 export function audioCostBdt(kind: AudioLabKind, seconds = 30, usdToBdt = 125): number {
+  const safeSeconds = Math.min(600, Math.max(1, Number(seconds) || 30))
   const usd =
-    kind === 'music' || kind === 'wish_song' ? (seconds / 60) * 0.55
+    kind === 'music' || kind === 'wish_song' ? (safeSeconds / 60) * 0.55
+    : kind === 'dub' ? (safeSeconds / 60) * 0.3
+    : kind === 'voice_change' ? (safeSeconds / 60) * 0.3
     : kind === 'sfx' ? 0.08
     : kind === 'clean_voice' ? 0.1
     : kind === 'owner_voice' ? 0.15
     : 0 // voice_clone itself
   return Math.max(1, Math.round(usd * usdToBdt))
+}
+
+export function audioProviderLabel(kind: AudioLabKind): string {
+  if (kind === 'dub') return 'ElevenLabs Dubbing'
+  if (kind === 'voice_change') return 'ElevenLabs Voice Changer'
+  if (kind === 'voice_clone') return 'ElevenLabs Instant Voice Clone'
+  return 'ElevenLabs'
 }
 
 export const AUDIO_UPLOAD_EXTENSIONS = ['mp3', 'm4a', 'wav', 'aac', 'ogg', 'webm'] as const

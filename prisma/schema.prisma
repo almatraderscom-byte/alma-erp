@@ -2742,6 +2742,73 @@ model CreativeProjectAssetTag {
   @@map("creative_project_asset_tags")
 }
 
+// ─── Creative Studio Enterprise CSE5: owner voice lifecycle ────────────────
+// Voice versions are append-only provider identities. Lifecycle changes never
+// overwrite consent/provider identity: activation, revocation and provider
+// deletion are recorded separately in the durable audit ledger.
+
+model CreativeVoice {
+  id              String                 @id @default(uuid())
+  ownerId         String                 @map("owner_id")
+  name            String
+  provider        String                 @default("elevenlabs")
+  ownerOnly       Boolean                @default(true) @map("owner_only")
+  activeVersionId String?                @unique @map("active_version_id")
+  activeVersion   CreativeVoiceVersion?  @relation("CreativeVoiceActiveVersion", fields: [activeVersionId], references: [id], onDelete: SetNull)
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+  versions        CreativeVoiceVersion[] @relation("CreativeVoiceVersions")
+  audits          CreativeVoiceAudit[]
+
+  @@unique([ownerId, name])
+  @@index([ownerId, updatedAt(sort: Desc)])
+  @@map("creative_voices")
+}
+
+model CreativeVoiceVersion {
+  id                String               @id @default(uuid())
+  voiceId           String               @map("voice_id")
+  voice             CreativeVoice        @relation("CreativeVoiceVersions", fields: [voiceId], references: [id], onDelete: Restrict)
+  activeFor         CreativeVoice?       @relation("CreativeVoiceActiveVersion")
+  version           Int
+  providerVoiceId   String?              @map("provider_voice_id")
+  status            String               @default("pending")
+  consentRecordedAt DateTime             @map("consent_recorded_at")
+  consentStatement  String               @map("consent_statement") @db.Text
+  consentSha256     String               @map("consent_sha256")
+  samplePaths       Json                 @default("[]") @map("sample_paths")
+  activatedAt       DateTime?            @map("activated_at")
+  revokedAt         DateTime?            @map("revoked_at")
+  providerDeletedAt DateTime?            @map("provider_deleted_at")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  audits            CreativeVoiceAudit[]
+
+  @@unique([voiceId, version])
+  @@unique([voiceId, providerVoiceId])
+  @@index([voiceId, createdAt(sort: Desc)])
+  @@index([status])
+  @@map("creative_voice_versions")
+}
+
+model CreativeVoiceAudit {
+  id             String                @id @default(uuid())
+  voiceId        String                @map("voice_id")
+  voice          CreativeVoice         @relation(fields: [voiceId], references: [id], onDelete: Restrict)
+  voiceVersionId String?               @map("voice_version_id")
+  voiceVersion   CreativeVoiceVersion? @relation(fields: [voiceVersionId], references: [id], onDelete: Restrict)
+  ownerId        String                @map("owner_id")
+  action         String
+  provider       String                @default("elevenlabs")
+  reason         String?               @db.Text
+  metadata       Json                  @default("{}")
+  createdAt      DateTime              @default(now()) @map("created_at")
+
+  @@index([voiceId, createdAt(sort: Desc)])
+  @@index([voiceVersionId, createdAt(sort: Desc)])
+  @@index([ownerId, createdAt(sort: Desc)])
+  @@map("creative_voice_audits")
+}
+
 model AgentBrandModel {
   id        String   @id
   name      String

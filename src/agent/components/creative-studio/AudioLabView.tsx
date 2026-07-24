@@ -1,6 +1,7 @@
 'use client'
 
 import { StudioConfirmationDialog } from '@/agent/components/creative-studio/StudioUi'
+import { VoiceLibrary } from '@/agent/components/creative-studio/VoiceLibrary'
 import {
   estimateAudioJob,
   fetchAudioLabStatus,
@@ -23,6 +24,9 @@ export function AudioLabView() {
   const [wishName, setWishName] = useState('')
   const [voiceText, setVoiceText] = useState('')
   const [sfxText, setSfxText] = useState('')
+  const [dubLanguage, setDubLanguage] = useState('bn')
+  const [dubSeconds, setDubSeconds] = useState(30)
+  const [changeSeconds, setChangeSeconds] = useState(30)
   const [pct, setPct] = useState<number | null>(null)
   const [confirmation, setConfirmation] = useState<{
     label: string
@@ -30,14 +34,19 @@ export function AudioLabView() {
     estimate: AudioJobEstimate
     capBdt: number
   } | null>(null)
-  const cloneRef = useRef<HTMLInputElement>(null)
   const noteRef = useRef<HTMLInputElement>(null)
+  const dubRef = useRef<HTMLInputElement>(null)
+  const changeRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
+  const refreshStatus = useCallback(() => {
     void fetchAudioLabStatus()
       .then(setStatus)
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    refreshStatus()
+  }, [refreshStatus])
 
   const run = useCallback((label: string, body: Record<string, unknown>) => {
     setBusy(label)
@@ -98,7 +107,9 @@ export function AudioLabView() {
               <div className="mt-3 rounded-xl bg-[#E07A5F]/10 p-3 text-center">
                 <p className="text-[10px] text-muted">সর্বোচ্চ আনুমানিক খরচ</p>
                 <p className="text-2xl font-extrabold text-[#E07A5F]">৳{confirmation.estimate.costBdt}</p>
-                <p className="text-[9px] text-muted">চূড়ান্ত provider charge কম হতে পারে; এই সীমার বেশি Queue হবে না।</p>
+                <p className="text-[9px] text-muted">
+                  {confirmation.estimate.provider} · চূড়ান্ত provider charge কম হতে পারে; এই সীমার বেশি Queue হবে না।
+                </p>
               </div>
               <label className="mt-3 block space-y-1 text-[10px] font-semibold text-muted">
                 এই run-এর hard cap (৳)
@@ -126,42 +137,7 @@ export function AudioLabView() {
           )}
         </StudioConfirmationDialog>
 
-        {/* voice clone */}
-        <div className={card}>
-          <p className="text-[12px] font-bold text-cream">
-            🧬 আপনার ভয়েস {status?.voiceCloned ? <span className="text-[#81B29A]">— ক্লোন করা আছে ✓</span> : '— এখনো ক্লোন হয়নি'}
-          </p>
-          <p className="text-[10px] text-muted">
-            ১-৩টা পরিষ্কার ভয়েস রেকর্ডিং দিন (একবারই লাগবে)। এই ভয়েস শুধু আপনার নিজের কাজে ব্যবহার হবে — অটো বা কাস্টমার ফ্লোতে কখনোই না।
-          </p>
-          <input
-            ref={cloneRef}
-            type="file"
-            accept="audio/*"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? []).slice(0, 3)
-              if (!files.length) return
-              setPct(0)
-              void Promise.all(files.map((f) => uploadAudioFile(f, setPct)))
-                .then((paths) =>
-                  run('ভয়েস ক্লোন', {
-                    kind: 'voice_clone',
-                    samplePaths: paths,
-                  }),
-                )
-                .catch((err) => toast.error(err instanceof Error ? err.message : 'আপলোড ব্যর্থ'))
-                .finally(() => {
-                  setPct(null)
-                  if (cloneRef.current) cloneRef.current.value = ''
-                })
-            }}
-          />
-          <button type="button" disabled={busy !== null || pct !== null} onClick={() => cloneRef.current?.click()} className={btn}>
-            {pct !== null ? `আপলোড ${pct}%` : status?.voiceCloned ? 'আবার ক্লোন করাও' : 'স্যাম্পল দিয়ে ক্লোন করাও'}
-          </button>
-        </div>
+        <VoiceLibrary onChanged={refreshStatus} />
 
         {/* text → music */}
         <div className={card}>
@@ -265,6 +241,106 @@ export function AudioLabView() {
             onClick={() => run('ভয়েস লাইন', { kind: 'owner_voice', text: voiceText })}
           >
             {status?.voiceCloned ? 'বলাও' : 'আগে ভয়েস ক্লোন করুন'}
+          </button>
+        </div>
+
+        {/* dubbing */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">🌐 Dubbing</p>
+          <p className="text-[10px] text-muted">
+            Provider: ElevenLabs Dubbing · source voice clone বন্ধ থাকে · Queue করার আগে $1 ceiling-এর ভেতরে estimate দেখাবে।
+          </p>
+          <div className="flex gap-2">
+            <select
+              value={dubLanguage}
+              onChange={(event) => setDubLanguage(event.target.value)}
+              className={input}
+            >
+              <option value="bn">বাংলা</option>
+              <option value="en">English</option>
+              <option value="hi">हिन्दी</option>
+              <option value="ar">العربية</option>
+            </select>
+            <select value={dubSeconds} onChange={(event) => setDubSeconds(Number(event.target.value))} className={input}>
+              {[30, 60, 120].map((seconds) => <option key={seconds} value={seconds}>{seconds}s</option>)}
+            </select>
+          </div>
+          <input
+            ref={dubRef}
+            type="file"
+            accept="audio/*"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (!file) return
+              setPct(0)
+              void uploadAudioFile(file, setPct)
+                .then((sourcePath) => run('Dubbing', {
+                  kind: 'dub',
+                  sourcePath,
+                  targetLanguage: dubLanguage,
+                  seconds: dubSeconds,
+                }))
+                .catch((err) => toast.error(err instanceof Error ? err.message : 'Dubbing upload ব্যর্থ'))
+                .finally(() => {
+                  setPct(null)
+                  if (dubRef.current) dubRef.current.value = ''
+                })
+            }}
+          />
+          <button type="button" disabled={busy !== null || pct !== null} onClick={() => dubRef.current?.click()} className={btn}>
+            {pct !== null ? `Upload ${pct}%` : 'Audio দিন ও estimate দেখুন'}
+          </button>
+        </div>
+
+        {/* voice changer */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">🎭 Voice changer → Active owner voice</p>
+          <p className="text-[10px] text-muted">
+            Provider: ElevenLabs Voice Changer · emotion/timing থাকবে, voice হবে active owner-only version।
+          </p>
+          <div className="flex items-center gap-2">
+            {[15, 30, 60].map((seconds) => (
+              <button
+                key={seconds}
+                type="button"
+                onClick={() => setChangeSeconds(seconds)}
+                className={cn('rounded-lg px-3 py-1.5 text-[11px]', changeSeconds === seconds ? 'st-chip-on' : 'st-chip')}
+              >
+                {seconds}s
+              </button>
+            ))}
+          </div>
+          <input
+            ref={changeRef}
+            type="file"
+            accept="audio/*"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (!file) return
+              setPct(0)
+              void uploadAudioFile(file, setPct)
+                .then((sourcePath) => run('Voice changer', {
+                  kind: 'voice_change',
+                  sourcePath,
+                  voiceVersionId: status?.activeVoiceVersionId,
+                  seconds: changeSeconds,
+                }))
+                .catch((err) => toast.error(err instanceof Error ? err.message : 'Voice-change upload ব্যর্থ'))
+                .finally(() => {
+                  setPct(null)
+                  if (changeRef.current) changeRef.current.value = ''
+                })
+            }}
+          />
+          <button
+            type="button"
+            disabled={busy !== null || pct !== null || !status?.activeVoiceVersionId}
+            onClick={() => changeRef.current?.click()}
+            className={btn}
+          >
+            {status?.activeVoiceVersionId ? 'Audio দিন ও estimate দেখুন' : 'আগে lifecycle voice Active করুন'}
           </button>
         </div>
 

@@ -5,8 +5,10 @@ import {
   deleteStudioVideo,
   fetchMusicTracks,
   fetchStudioVideos,
+  fetchVideoEditSource,
   fetchVideoJob,
   finishVideo,
+  partiallyFinishVideo,
   runVideoRecipe,
   uploadMusicTrack,
   uploadStudioVideo,
@@ -15,6 +17,8 @@ import {
   type VideoFinishTemplates,
   type VideoJobStatus,
 } from '@/agent/components/creative-studio/studio-api'
+import { TimelineLite } from '@/agent/components/creative-studio/TimelineLite'
+import { TranscriptEditor } from '@/agent/components/creative-studio/TranscriptEditor'
 import {
   AUDIO_MODES,
   MUSIC_VIBES,
@@ -26,6 +30,10 @@ import {
 import { cn } from '@/lib/utils'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'react-hot-toast'
+import {
+  createDefaultVideoEditContract,
+  type VideoEditContract,
+} from '@/lib/creative-studio/video-edit-contract'
 
 import { VideoSvg } from '@/agent/components/creative-studio/StudioUi'
 
@@ -486,6 +494,7 @@ export function VideoStudioView({ onOpenGallery, onOpenStudio }: { onOpenGallery
  * with Remotion and the finished version lands on this same gallery item.
  */
 export function VideoFinishPanel({ pendingActionId, onDone }: { pendingActionId: string; onDone: () => void }) {
+  const [panelMode, setPanelMode] = useState<'templates' | 'timeline'>('timeline')
   const [price, setPrice] = useState('')
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
@@ -495,6 +504,40 @@ export function VideoFinishPanel({ pendingActionId, onDone }: { pendingActionId:
   const [endCard, setEndCard] = useState(true)
   const [state, setState] = useState<'idle' | 'queued' | 'working'>('idle')
   const [progress, setProgress] = useState('')
+  const [editContract, setEditContract] = useState<VideoEditContract>(() => createDefaultVideoEditContract(15))
+  const [editLoading, setEditLoading] = useState(true)
+
+  useEffect(() => {
+    let live = true
+    void fetchVideoEditSource(pendingActionId)
+      .then((source) => {
+        if (!live) return
+        setEditContract(source.editContract ?? createDefaultVideoEditContract(source.durationSec))
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (live) setEditLoading(false)
+      })
+    return () => { live = false }
+  }, [pendingActionId])
+
+  const pollQueuedJob = useCallback((jobId: string, failureMessage: string) => {
+    const poll = window.setInterval(() => {
+      void fetchVideoJob(jobId)
+        .then((job) => {
+          if (job.videoProgress) setProgress(`ধাপ ${job.videoProgress.step}/${job.videoProgress.total}: ${job.videoProgress.labelBn}`)
+          if (job.status === 'executed') {
+            window.clearInterval(poll)
+            onDone()
+          } else if (job.status === 'failed') {
+            window.clearInterval(poll)
+            setState('idle')
+            toast.error(job.error ?? failureMessage)
+          }
+        })
+        .catch(() => {})
+    }, 4000)
+  }, [onDone])
 
   const submit = useCallback(async () => {
     const templates: VideoFinishTemplates = {}
@@ -517,26 +560,29 @@ export function VideoFinishPanel({ pendingActionId, onDone }: { pendingActionId:
     try {
       const res = await finishVideo(pendingActionId, templates)
       setState('working')
-      const poll = window.setInterval(() => {
-        void fetchVideoJob(res.pendingActionId)
-          .then((job) => {
-            if (job.videoProgress) setProgress(`ধাপ ${job.videoProgress.step}/${job.videoProgress.total}: ${job.videoProgress.labelBn}`)
-            if (job.status === 'executed') {
-              window.clearInterval(poll)
-              onDone()
-            } else if (job.status === 'failed') {
-              window.clearInterval(poll)
-              setState('idle')
-              toast.error(job.error ?? 'টেমপ্লেট বসানো ব্যর্থ হয়েছে')
-            }
-          })
-          .catch(() => {})
-      }, 4000)
+      pollQueuedJob(res.pendingActionId, 'টেমপ্লেট বসানো ব্যর্থ হয়েছে')
     } catch (err) {
       setState('idle')
       toast.error(err instanceof Error ? err.message : 'শুরু করা যায়নি')
     }
-  }, [pendingActionId, price, code, name, cta, days, watermark, endCard, onDone])
+  }, [pendingActionId, price, code, name, cta, days, watermark, endCard, pollQueuedJob])
+
+  const submitTimeline = useCallback(async () => {
+    if (editContract.rerender.length === 0) {
+      toast.error('অন্তত একটি track বাছুন')
+      return
+    }
+    setState('queued')
+    try {
+      const res = await partiallyFinishVideo(pendingActionId, editContract)
+      setState('working')
+      setProgress('বাছাই করা track render হচ্ছে…')
+      pollQueuedJob(res.pendingActionId, 'Timeline edit ব্যর্থ হয়েছে')
+    } catch (err) {
+      setState('idle')
+      toast.error(err instanceof Error ? err.message : 'Timeline edit শুরু করা যায়নি')
+    }
+  }, [editContract, pendingActionId, pollQueuedJob])
 
   const inputCls = 'w-full rounded-lg border border-white/15 bg-black/40 px-2.5 py-2 text-[13px] text-white placeholder:text-white/40'
   return (
@@ -548,48 +594,89 @@ export function VideoFinishPanel({ pendingActionId, onDone }: { pendingActionId:
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-2">
-            <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="দাম (৳)" className={inputCls} />
-            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="প্রোডাক্ট কোড" className={inputCls} />
+          <div className="grid grid-cols-2 gap-1 rounded-lg bg-white/[0.06] p-1">
+            <button
+              type="button"
+              onClick={() => setPanelMode('timeline')}
+              className={cn('rounded-md px-2 py-1.5 text-[11px] font-semibold', panelMode === 'timeline' ? 'bg-[#E07A5F] text-white' : 'text-white/60')}
+            >
+              ✂️ Timeline
+            </button>
+            <button
+              type="button"
+              onClick={() => setPanelMode('templates')}
+              className={cn('rounded-md px-2 py-1.5 text-[11px] font-semibold', panelMode === 'templates' ? 'bg-[#E07A5F] text-white' : 'text-white/60')}
+            >
+              🎞️ Templates
+            </button>
           </div>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="প্রোডাক্টের নাম (ঐচ্ছিক)" className={inputCls} />
-          <div className="grid grid-cols-2 gap-2">
-            <input
-              value={cta}
-              onChange={(e) => setCta(e.target.value)}
-              placeholder="CTA (ডিফল্ট: অর্ডার করতে ইনবক্স করুন)"
-              className={inputCls}
-            />
-            <input
-              value={days}
-              onChange={(e) => setDays(e.target.value.replace(/\D/g, ''))}
-              placeholder="অফার শেষ হতে দিন"
-              className={inputCls}
-            />
-          </div>
-          <div className="flex items-center gap-4 py-0.5">
-            <label className="flex items-center gap-1.5 text-[12px] text-white/85">
-              <input
-                type="checkbox"
-                checked={watermark}
-                onChange={(e) => setWatermark(e.target.checked)}
-                className="h-3.5 w-3.5 accent-[#E07A5F]"
-              />
-              লোগো ওয়াটারমার্ক
-            </label>
-            <label className="flex items-center gap-1.5 text-[12px] text-white/85">
-              <input
-                type="checkbox"
-                checked={endCard}
-                onChange={(e) => setEndCard(e.target.checked)}
-                className="h-3.5 w-3.5 accent-[#E07A5F]"
-              />
-              এন্ড কার্ড (CTA)
-            </label>
-          </div>
-          <button type="button" disabled={state !== 'idle'} onClick={() => void submit()} className="st-btn w-full py-2.5 text-[13px]">
-            {state === 'queued' ? 'শুরু হচ্ছে…' : 'টেমপ্লেট বসাও'}
-          </button>
+
+          {panelMode === 'timeline' ? (
+            editLoading ? (
+              <div className="h-28 animate-pulse rounded-xl bg-white/[0.06]" />
+            ) : (
+              <>
+                <TimelineLite value={editContract} onChange={setEditContract} />
+                <TranscriptEditor value={editContract} onChange={setEditContract} />
+                <p className="rounded-lg bg-[#81B29A]/10 px-2.5 py-2 text-[10px] text-[#b8e0cf]">
+                  Source regenerate হবে না। Trim/crop local ffmpeg-এ; caption/audio/cover আলাদা track হিসেবে partial render হবে। খরচ ৳0।
+                </p>
+                <button
+                  type="button"
+                  disabled={state !== 'idle' || editContract.rerender.length === 0}
+                  onClick={() => void submitTimeline()}
+                  className="st-btn w-full py-2.5 text-[13px]"
+                >
+                  {state === 'queued' ? 'শুরু হচ্ছে…' : 'বাছাই করা track render করুন · ৳0'}
+                </button>
+              </>
+            )
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="দাম (৳)" className={inputCls} />
+                <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="প্রোডাক্ট কোড" className={inputCls} />
+              </div>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="প্রোডাক্টের নাম (ঐচ্ছিক)" className={inputCls} />
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  value={cta}
+                  onChange={(e) => setCta(e.target.value)}
+                  placeholder="CTA (ডিফল্ট: অর্ডার করতে ইনবক্স করুন)"
+                  className={inputCls}
+                />
+                <input
+                  value={days}
+                  onChange={(e) => setDays(e.target.value.replace(/\D/g, ''))}
+                  placeholder="অফার শেষ হতে দিন"
+                  className={inputCls}
+                />
+              </div>
+              <div className="flex items-center gap-4 py-0.5">
+                <label className="flex items-center gap-1.5 text-[12px] text-white/85">
+                  <input
+                    type="checkbox"
+                    checked={watermark}
+                    onChange={(e) => setWatermark(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-[#E07A5F]"
+                  />
+                  লোগো ওয়াটারমার্ক
+                </label>
+                <label className="flex items-center gap-1.5 text-[12px] text-white/85">
+                  <input
+                    type="checkbox"
+                    checked={endCard}
+                    onChange={(e) => setEndCard(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-[#E07A5F]"
+                  />
+                  এন্ড কার্ড (CTA)
+                </label>
+              </div>
+              <button type="button" disabled={state !== 'idle'} onClick={() => void submit()} className="st-btn w-full py-2.5 text-[13px]">
+                {state === 'queued' ? 'শুরু হচ্ছে…' : 'টেমপ্লেট বসাও'}
+              </button>
+            </>
+          )}
         </>
       )}
     </div>

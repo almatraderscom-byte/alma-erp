@@ -1829,6 +1829,9 @@ async function shutdown(signal) {
   await Promise.all([
     imageGenWorker.close(),
     videoGenWorker.close(),
+    videoEditWorker.close(),
+    videoFinishWorker.close(),
+    audioGenWorker.close(),
     longTaskWorker.close(),
     workbenchWorker.close(),
     seoAuditWorker.close(),

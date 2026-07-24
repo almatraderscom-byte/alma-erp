@@ -14,6 +14,7 @@ import type {
   CampaignPackManifest,
   CampaignPackStageId,
 } from '@/lib/creative-studio/campaign-pack'
+import type { VideoEditContract } from '@/lib/creative-studio/video-edit-contract'
 import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
 
 export const STUDIO_NAV_DEFINITIONS = [
@@ -988,10 +989,45 @@ export async function finishVideo(
   return result
 }
 
-// ── E1 Audio Lab helpers ─────────────────────────────────────────────────────
+export type VideoEditSource = {
+  pendingActionId: string
+  durationSec: number
+  sourcePath: string
+  editContract: VideoEditContract | null
+}
+
+export async function fetchVideoEditSource(pendingActionId: string): Promise<VideoEditSource> {
+  return studioRequest<VideoEditSource>(
+    `/api/assistant/creative-studio/video/finish?pendingActionId=${encodeURIComponent(pendingActionId)}`,
+    undefined,
+    'video_edit_source_failed',
+  )
+}
+
+export async function partiallyFinishVideo(
+  pendingActionId: string,
+  editContract: VideoEditContract,
+): Promise<{ pendingActionId: string; message: string }> {
+  const result = await studioRequest<{ pendingActionId: string; message: string }>(
+    '/api/assistant/creative-studio/video/finish',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pendingActionId, mode: 'partial_edit', editContract }),
+    },
+    'partial_finish_failed',
+  )
+  await linkQueuedStudioJobs([result], [pendingActionId])
+  return result
+}
+
+// ── CSE5 Audio Lab + voice lifecycle helpers ────────────────────────────────
 
 export type AudioLabStatus = {
   voiceCloned: boolean
+  activeVoiceVersionId: string | null
+  activeVoiceVersion: number | null
+  legacyVoiceAvailable: boolean
   styles: Array<{ id: string; labelBn: string }>
   occasions: Array<{ id: string; labelBn: string }>
   maxCostBdt: number
@@ -1004,8 +1040,16 @@ export async function fetchAudioLabStatus(): Promise<AudioLabStatus> {
 export type AudioJobEstimate = {
   requiresConfirmation: true
   summary: string
+  provider: string
   costBdt: number
   maxCostBdt: number
+  ceilingUsd?: number
+}
+
+function withOwnerVoiceContext(body: Record<string, unknown>): Record<string, unknown> {
+  return body.kind === 'owner_voice' || body.kind === 'voice_change'
+    ? { ...body, usageContext: 'owner_studio' }
+    : body
 }
 
 export async function estimateAudioJob(body: Record<string, unknown>): Promise<AudioJobEstimate> {
@@ -1014,7 +1058,7 @@ export async function estimateAudioJob(body: Record<string, unknown>): Promise<A
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...body, intent: 'estimate' }),
+      body: JSON.stringify({ ...withOwnerVoiceContext(body), intent: 'estimate' }),
     },
     'audio_estimate_failed',
   )
@@ -1030,7 +1074,7 @@ export async function queueAudioJob(body: Record<string, unknown>, confirmation:
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...body, intent: 'queue', ...confirmation }),
+      body: JSON.stringify({ ...withOwnerVoiceContext(body), intent: 'queue', ...confirmation }),
     },
     'audio_failed',
   )
@@ -1064,6 +1108,117 @@ export async function uploadAudioFile(file: File, onProgress?: (pct: number) => 
     xhr.send(file)
   })
   return urlData.path as string
+}
+
+export type CreativeVoiceVersionClient = {
+  id: string
+  version: number
+  status: string
+  providerReady: boolean
+  consentRecordedAt: string
+  consentSha256: string
+  activatedAt: string | null
+  revokedAt: string | null
+  providerDeletedAt: string | null
+  createdAt: string
+}
+
+export type CreativeVoiceAuditClient = {
+  id: string
+  voiceVersionId: string | null
+  action: string
+  reason: string | null
+  createdAt: string
+}
+
+export type CreativeVoiceClient = {
+  id: string
+  name: string
+  provider: string
+  ownerOnly: true
+  activeVersionId: string | null
+  versions: CreativeVoiceVersionClient[]
+  audits: CreativeVoiceAuditClient[]
+}
+
+export async function fetchCreativeVoices(): Promise<CreativeVoiceClient[]> {
+  const result = await studioRequest<{ voices: CreativeVoiceClient[] }>(
+    '/api/assistant/creative-studio/voices',
+    undefined,
+    'voices_failed',
+  )
+  return result.voices ?? []
+}
+
+export async function estimateVoiceClone(input: {
+  name: string
+  samplePaths: string[]
+  consent: { accepted: true; statement: string }
+}): Promise<AudioJobEstimate> {
+  return studioRequest<AudioJobEstimate>(
+    '/api/assistant/creative-studio/voices',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...input, intent: 'estimate' }),
+    },
+    'voice_clone_estimate_failed',
+  )
+}
+
+export async function queueVoiceClone(
+  input: {
+    name: string
+    samplePaths: string[]
+    consent: { accepted: true; statement: string }
+  },
+  confirmation: { confirmedCostBdt: number; costCapBdt: number },
+) {
+  const result = await studioRequest<{
+    pendingActionId: string
+    voiceVersionId: string
+    costBdt: number
+  }>(
+    '/api/assistant/creative-studio/voices',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...input, intent: 'queue', ...confirmation }),
+    },
+    'voice_clone_failed',
+  )
+  await linkQueuedStudioJobs([result])
+  return result
+}
+
+export async function updateVoiceVersion(
+  voiceVersionId: string,
+  action: 'activate' | 'revoke',
+  reason?: string,
+) {
+  return studioRequest<{ ok: true; status: string }>(
+    `/api/assistant/creative-studio/voices/${encodeURIComponent(voiceVersionId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, reason }),
+    },
+    'voice_update_failed',
+  )
+}
+
+export async function deleteVoiceVersion(voiceVersionId: string, reason?: string) {
+  const result = await studioRequest<{ ok: true; pendingActionId: string | null; status: string }>(
+    `/api/assistant/creative-studio/voices/${encodeURIComponent(voiceVersionId)}`,
+    {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    },
+    'voice_delete_failed',
+  )
+  if (result.pendingActionId) await linkQueuedStudioJobs([{ pendingActionId: result.pendingActionId }])
+  return result
 }
 
 // ── CS4 helpers ──────────────────────────────────────────────────────────────
