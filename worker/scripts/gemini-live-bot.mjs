@@ -31,6 +31,11 @@ const MAX_MIN = Number(process.env.GLIVE_MAX_MIN || 8)
 const NGS_API = (process.env.NGS_API_BASE || 'https://alma-traders.infosoftbd.com').replace(/\/$/, '')
 const NGS_KEY = process.env.NGS_KEY
 const NGS_SECRET = process.env.NGS_SECRET
+// Self-hosted SIP gateway control creds. When a call's start-frame carries a `ctrl`
+// param (our sip-gateway-service.mjs), hang-up / transfer target THAT gateway instead
+// of NGS. Same header shape as NGS. Backward-compatible: NGS/Twilio calls have no ctrl.
+const SIP_CTRL_KEY = process.env.SIP_GATEWAY_KEY || ''
+const SIP_CTRL_SECRET = process.env.SIP_GATEWAY_SECRET || ''
 // Token auth (Phase 0): the caller (voice-call.ts placeNgsLiveCall) signs each call's
 // <stream> with HMAC(AGENT_INTERNAL_TOKEN, `relay:${id}:${exp}`) and passes id/exp/t as
 // <parameter>s. We verify on the 'start' frame so a stranger who opens our ws (and burns
@@ -401,6 +406,18 @@ class Call {
     // Twilio leg: ending the <Connect><Stream> websocket ends the call — there is
     // no NGS-side call to DELETE, and calling NGS with a Twilio CallSid would 404.
     if (this.transport === 'twilio') { console.log(`[glive] ${this.id} twilio hangup = ws close`); return }
+    // Self-hosted SIP: end the PSTN leg via our gateway's control API (DELETE). Closing
+    // our ws also triggers a gateway-side hangup, but calling it directly is deterministic.
+    if (this.ctrl) {
+      try {
+        const res = await fetch(`${this.ctrl}/api/v1/call/${this.callId}`, {
+          method: 'DELETE',
+          headers: { 'X-Authorization': SIP_CTRL_KEY, 'X-Authorization-Secret': SIP_CTRL_SECRET },
+        })
+        console.log(`[glive] ${this.id} SIP ctrl DELETE hangup ${res.status}`)
+      } catch (e) { console.log(`[glive] ${this.id} SIP ctrl hangup err ${e?.message}`) }
+      return
+    }
     if (!this.callId || !NGS_KEY) { console.log(`[glive] ${this.id} hangupNgs skipped (callId=${this.callId} key=${NGS_KEY ? 'y' : 'n'})`); return }
     try {
       // DELETE /api/v1/call/{id} is how NGS ends an active call (probe-verified: DELETE
@@ -534,9 +551,15 @@ class Call {
       const fallbackStream = `<Connect><Stream name="alma" url="${esc(GLIVE_PUBLIC_WS_URL)}">${P('id', this.params?.id || '')}${P('exp', String(exp))}${P('t', t)}${P('purpose', backPurpose)}${P('recipientName', this.params?.recipientName || '')}${P('voice', this.params?.voice || VOICE)}${P('callType', 'inbound')}</Stream></Connect>`
       const responseXml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true" timeout="30" to="${esc(NGS_FORWARD_NUMBER)}"/>${fallbackStream}</Response>`
       try {
-        const res = await fetch(`${NGS_API}/api/v1/call/${this.callId}`, {
+        // Self-hosted SIP routes the live-modify to our gateway (which parses <Dial to=…>);
+        // NGS keeps its own base + creds. Same responseXml body shape either way.
+        const ctrlBase = this.ctrl ? `${this.ctrl}/api/v1/call/${this.callId}` : `${NGS_API}/api/v1/call/${this.callId}`
+        const ctrlHeaders = this.ctrl
+          ? { 'X-Authorization': SIP_CTRL_KEY, 'X-Authorization-Secret': SIP_CTRL_SECRET, 'Content-Type': 'application/x-www-form-urlencoded' }
+          : { 'X-Authorization': NGS_KEY, 'X-Authorization-Secret': NGS_SECRET, 'Content-Type': 'application/x-www-form-urlencoded' }
+        const res = await fetch(ctrlBase, {
           method: 'PUT',
-          headers: { 'X-Authorization': NGS_KEY, 'X-Authorization-Secret': NGS_SECRET, 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: ctrlHeaders,
           body: new URLSearchParams({ responseXml }),
         })
         const text = await res.text()
@@ -627,6 +650,11 @@ class Call {
         this.streamSid = m.streamId ?? m.start?.streamSid ?? m.streamSid
         this.callId = m.call_id ?? m.callId ?? m.start?.call_id ?? null
         this.params = m.params ?? m.start?.customParameters ?? {}
+        // Self-hosted SIP gateway injects `ctrl` (its own control-API base). Its media
+        // frames are NGS-shaped (top-level streamId), so mark transport explicitly here
+        // and route hang-up/transfer to ctrl instead of NGS.
+        this.ctrl = (this.params?.ctrl || '').replace(/\/$/, '') || null
+        if (this.ctrl) this.transport = 'sip'
         // Twilio Media Streams transport (WhatsApp live calls ride Twilio, not NGS):
         // same μ-law 8k media frames, but the ack key is `streamSid`, the call id is
         // `callSid`, and hangup = close the <Connect><Stream> ws (no NGS DELETE).

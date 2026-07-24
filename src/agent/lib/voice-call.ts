@@ -95,7 +95,7 @@ const RELAY_STT_HINTS =
 /** Which engine runs two-way calls: ElevenLabs ConvAI (legacy), Twilio
  * ConversationRelay + Gemini + Google Charon (relay), or Twilio Media Streams →
  * our Sarvam pipeline (saaras:v3 STT + Gemini + Bulbul TTS, owner's chosen voice). */
-export type VoiceCallProvider = 'elevenlabs' | 'relay' | 'sarvam' | 'ngs'
+export type VoiceCallProvider = 'elevenlabs' | 'relay' | 'sarvam' | 'ngs' | 'sip'
 
 export interface VoiceCallConfig {
   enabled: boolean
@@ -117,15 +117,21 @@ export interface VoiceCallConfig {
   ngsApiSecret: string
   ngsFrom: string
   ngsLiveWsUrl: string
+  /** sip provider only — our self-hosted Asterisk gateway (sip-gateway-service.mjs) */
+  sipGatewayBase: string
+  sipGatewayKey: string
+  sipGatewaySecret: string
+  sipFrom: string
 }
 
 /** Read + validate config from env. `enabled` is false unless everything required is present. */
 export function getVoiceCallConfig(): VoiceCallConfig {
   const provider: VoiceCallProvider =
-    process.env.VOICE_CALL_PROVIDER === 'ngs' ? 'ngs'
-      : process.env.VOICE_CALL_PROVIDER === 'sarvam' ? 'sarvam'
-        : process.env.VOICE_CALL_PROVIDER === 'relay' ? 'relay'
-          : 'elevenlabs'
+    process.env.VOICE_CALL_PROVIDER === 'sip' ? 'sip'
+      : process.env.VOICE_CALL_PROVIDER === 'ngs' ? 'ngs'
+        : process.env.VOICE_CALL_PROVIDER === 'sarvam' ? 'sarvam'
+          : process.env.VOICE_CALL_PROVIDER === 'relay' ? 'relay'
+            : 'elevenlabs'
   const apiKey = process.env.ELEVENLABS_API_KEY ?? ''
   const agentId = process.env.ELEVENLABS_AGENT_ID ?? ''
   const agentPhoneNumberId = process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID ?? ''
@@ -143,13 +149,21 @@ export function getVoiceCallConfig(): VoiceCallConfig {
   const ngsApiSecret = process.env.NGS_API_SECRET ?? ''
   const ngsFrom = process.env.NGS_FROM ?? '2323'
   const ngsLiveWsUrl = process.env.NGS_LIVE_WS_URL ?? '' // e.g. ws://31.97.237.40:8766/ws
+  // sip = our self-hosted Asterisk gateway (sip-gateway-service.mjs on the VPS). Drop-in
+  // NGS replacement: same control-API shape, caller-ID owned, multi-DID capable.
+  const sipGatewayBase = (process.env.SIP_GATEWAY_BASE ?? '').replace(/\/$/, '') // e.g. http://31.97.237.40:8770
+  const sipGatewayKey = process.env.SIP_GATEWAY_KEY ?? ''
+  const sipGatewaySecret = process.env.SIP_GATEWAY_SECRET ?? ''
+  const sipFrom = process.env.SIP_FROM ?? process.env.SIP_CALLER_ID ?? ''
   const enabled =
     killSwitch &&
-    (provider === 'ngs'
-      ? Boolean(ngsApiKey && ngsApiSecret && ngsLiveWsUrl && internalToken)
-      : provider === 'relay' || provider === 'sarvam'
-        ? Boolean(relayWssUrl && twilioAccountSid && twilioAuthToken && twilioFromNumber && internalToken)
-        : Boolean(apiKey && agentId && agentPhoneNumberId))
+    (provider === 'sip'
+      ? Boolean(sipGatewayBase && sipGatewayKey && sipGatewaySecret && internalToken)
+      : provider === 'ngs'
+        ? Boolean(ngsApiKey && ngsApiSecret && ngsLiveWsUrl && internalToken)
+        : provider === 'relay' || provider === 'sarvam'
+          ? Boolean(relayWssUrl && twilioAccountSid && twilioAuthToken && twilioFromNumber && internalToken)
+          : Boolean(apiKey && agentId && agentPhoneNumberId))
   return {
     enabled,
     provider,
@@ -168,6 +182,10 @@ export function getVoiceCallConfig(): VoiceCallConfig {
     ngsApiSecret,
     ngsFrom,
     ngsLiveWsUrl,
+    sipGatewayBase,
+    sipGatewayKey,
+    sipGatewaySecret,
+    sipFrom,
   }
 }
 
@@ -175,6 +193,12 @@ export function getVoiceCallConfig(): VoiceCallConfig {
 export function voiceCallUnavailableReason(config = getVoiceCallConfig()): string | null {
   if (process.env.VOICE_CALL_ENABLED !== 'true') {
     return 'ভয়েস কল বন্ধ আছে (VOICE_CALL_ENABLED off)। চালু করতে owner সেটিং লাগবে।'
+  }
+  if (config.provider === 'sip') {
+    if (!config.sipGatewayBase) return 'SIP_GATEWAY_BASE সেট করা নেই — self-hosted Asterisk gateway-এর ঠিকানা বসান (যেমন http://31.97.237.40:8770)।'
+    if (!config.sipGatewayKey || !config.sipGatewaySecret) return 'SIP_GATEWAY_KEY / SIP_GATEWAY_SECRET সেট করা নেই — gateway control API-এর key।'
+    if (!config.internalToken) return 'AGENT_INTERNAL_TOKEN সেট করা নেই — call stream signing ও terminal report-এর জন্য এটি আবশ্যক।'
+    return null
   }
   if (config.provider === 'ngs') {
     if (!config.ngsApiKey || !config.ngsApiSecret) return 'NGS_API_KEY / NGS_API_SECRET সেট করা নেই (infosoftbd Programmable Voice API)।'
@@ -336,6 +360,10 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
     // owner's own number runs the OWNER persona (mid-call ERP read tools);
     // everyone else stays on the tool-less contact/staff persona.
     return placeGliveMediaCall(config, record.id, toNumber, purpose, input.recipientName, effectiveCallType, 'whatsapp')
+  }
+
+  if (config.provider === 'sip') {
+    return placeSipLiveCall(config, record.id, toNumber, purpose, input.recipientName, input.voiceGender, effectiveCallType)
   }
 
   if (config.provider === 'ngs') {
@@ -807,6 +835,71 @@ async function placeNgsLiveCall(
     await db.agentVoiceCall.update({
       where: { id: callRecordId },
       data: { status: 'ringing', providerStatus: String(data.status ?? 'ringing'), dialedAt: new Date(), callSid: data.call_id, summary: `ngs live: ${voice}` },
+    })
+    return { ok: true, callRecordId, callSid: data.call_id }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'failed', providerStatus: 'failed', summary: `কল দেওয়া যায়নি: ${msg}`, endedAt: new Date() },
+    }).catch(() => {})
+    return { ok: false, error: `কল দেওয়া যায়নি: ${msg}`, callRecordId }
+  }
+}
+
+/**
+ * Two-way call via our SELF-HOSTED Asterisk gateway (worker/src/voice-relay/
+ * sip-gateway-service.mjs) → the SAME Gemini Live bot. A drop-in NGS replacement
+ * that drops the monthly NGS/EasyPBX fee and — the whole point — OWNS the caller-ID
+ * (SIP From), which NGS strips. The gateway's control API mirrors NGS
+ * (POST /api/v1/call, X-Authorization headers) but takes a JSON body; it originates
+ * the call through our trunk via ARI, bridges the answered leg to the bot over
+ * AudioSocket, and injects a `ctrl` param so the bot hangs up / transfers against
+ * the gateway (not NGS). Behind VOICE_CALL_PROVIDER='sip'; NGS/relay stay the
+ * fallback one env var away until this is proven 100% (owner rule).
+ */
+async function placeSipLiveCall(
+  config: VoiceCallConfig,
+  callRecordId: string,
+  toNumber: string,
+  purpose: string,
+  recipientName: string | undefined,
+  voiceGender: 'male' | 'female' | undefined,
+  callType: 'owner' | 'staff' | 'contact' | undefined,
+): Promise<PlaceCallResult> {
+  try {
+    const exp = Date.now() + 15 * 60_000
+    const t = createHmac('sha256', config.internalToken).update(`relay:${callRecordId}:${exp}`).digest('hex')
+    const voice = voiceGender === 'female' ? 'Aoede' : 'Charon'
+    // The gateway normalises to the local 01XXXXXXXXX form itself; pass +E.164 as-is.
+    const body = JSON.stringify({
+      to: toNumber,
+      from: config.sipFrom || undefined,
+      params: {
+        id: callRecordId, exp, t,
+        purpose, recipientName: recipientName ?? '', voice,
+        callType: callType ?? 'owner',
+      },
+    })
+    const res = await fetch(`${config.sipGatewayBase}/api/v1/call`, {
+      method: 'POST',
+      headers: {
+        'X-Authorization': config.sipGatewayKey,
+        'X-Authorization-Secret': config.sipGatewaySecret,
+        'Content-Type': 'application/json',
+      },
+      body,
+      signal: AbortSignal.timeout(30_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as { call_id?: string; status?: string; error?: string }
+    if (!res.ok || !data.call_id) {
+      const err = `SIP gateway ${res.status}: ${data.error ?? JSON.stringify(data).slice(0, 160)}`
+      await db.agentVoiceCall.update({ where: { id: callRecordId }, data: { status: 'failed', providerStatus: 'failed', summary: err, endedAt: new Date() } })
+      return { ok: false, error: err, callRecordId }
+    }
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'ringing', providerStatus: String(data.status ?? 'ringing'), dialedAt: new Date(), callSid: data.call_id, summary: `sip live: ${voice}` },
     })
     return { ok: true, callRecordId, callSid: data.call_id }
   } catch (err) {
