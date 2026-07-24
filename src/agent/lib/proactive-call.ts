@@ -117,7 +117,10 @@ export function callOutcome(call: { status?: string | null } | null): 'answered'
 }
 
 export interface QueueEscalationInput {
-  trigger: 'approval_stuck' | 'staff_task_stuck' | 'business_alert' | 'manual'
+  /** boss_callback (PA-5R): the boss ASKED to be called back when the work is
+   * done — verbal/explicit consent already given, so the ladder dials without
+   * the "কল দেব?" permission card, under its own daily cap. */
+  trigger: 'approval_stuck' | 'staff_task_stuck' | 'business_alert' | 'manual' | 'boss_callback'
   refId: string
   title: string
   purpose: string
@@ -243,7 +246,10 @@ export async function scanEscalationTriggers(): Promise<{ queued: number }> {
 }
 
 async function laddersDialedToday(): Promise<number> {
-  return db.agentCallEscalation.count({ where: { firstCallAt: { gte: dhakaDayStart() } } })
+  // boss_callback rides its own cap — keep it out of the proactive budget.
+  return db.agentCallEscalation.count({
+    where: { firstCallAt: { gte: dhakaDayStart() }, trigger: { not: 'boss_callback' } },
+  })
 }
 
 async function resolve(id: string, status: string, extra: Record<string, unknown> = {}) {
@@ -365,6 +371,23 @@ async function stepEscalation(row: any, cfg: ProactiveCallConfig): Promise<strin
           return 'deferred_quiet_hours'
         }
       } catch { /* fail-open */ }
+    }
+
+    // PA-5R boss-callback: the boss explicitly asked "শেষ হলে কল করে জানাবে" —
+    // that IS the consent, so no permission card. Own (higher) daily cap; on
+    // cap overflow the report still reaches him as a push.
+    if (row.trigger === 'boss_callback') {
+      const cbCap = kvNumber(await kvGet('proactive_callback_daily_cap'), 10, 1, 50)
+      const cbToday = await db.agentCallEscalation.count({
+        where: { trigger: 'boss_callback', firstCallAt: { gte: dhakaDayStart() } },
+      })
+      if (cbToday >= cbCap) {
+        await resolve(row.id, 'cancelled', { note: `callback daily cap ${cbCap} reached` })
+        await pushUnreachedSummary(row, 'আজকের callback-কল লিমিট শেষ — রিপোর্টটা এখানে')
+        return 'cancelled_daily_cap'
+      }
+      const started = await startEscalationLadder(row.id, cfg)
+      return started.ok ? `dialed_${started.stage}` : `dial_failed: ${started.error}`
     }
 
     if ((await laddersDialedToday()) >= cfg.dailyCap) {
