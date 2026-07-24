@@ -104,10 +104,12 @@ async function handle(req: NextRequest) {
     return ''
   }
   const caller = (named || scanForBdPhone(p)) || 'unknown'
-  // Diagnostic: when still unknown, persist the raw payload into recipientName so
-  // ONE inbound call reveals NGS's real field(s) in the DB (log tailing is flaky).
-  const debugPayload = caller === 'unknown' ? JSON.stringify(p).slice(0, 150) : ''
-  if (debugPayload) console.warn('[ngs-inbound] caller unknown — payload:', debugPayload)
+  // Diagnostic 2026-07-25: NGS's answer-URL is being probed with candidate caller
+  // template variables (c1..c12) to discover which one NGS resolves. Persist the
+  // FULL raw params on EVERY inbound call (not only unknown) so one call reveals
+  // exactly which variable carried the number — remove after the winner is found.
+  const debugPayload = JSON.stringify(p).slice(0, 250)
+  console.warn('[ngs-inbound] payload:', debugPayload, '→ caller:', caller)
   const voice = process.env.NGS_INBOUND_VOICE || 'Charon'
   // Human-PA point 1 (owner audit 2026-07-24): the BOSS calling his own agent
   // must get the full assistant, not the receptionist. Owner number ⇒ owner
@@ -129,7 +131,10 @@ async function handle(req: NextRequest) {
     const rec = await db.agentVoiceCall.create({
       data: {
         toNumber: caller,
-        recipientName: ownerCalling ? 'Boss' : (debugPayload ? `ইনকামিং [debug ${debugPayload}]` : `ইনকামিং কল: ${caller}`),
+        recipientName: ownerCalling ? 'Boss' : `ইনকামিং কল: ${caller}`,
+        // Diagnostic: stash the raw params in summary so the variable-discovery
+        // call is readable from the DB even when a caller WAS resolved.
+        summary: `[debug ${debugPayload}]`,
         purpose: ownerCalling ? 'inbound_owner_call' : 'inbound_call',
         firstMessage: '',
         status: 'ringing',
