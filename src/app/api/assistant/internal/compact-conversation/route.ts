@@ -8,7 +8,7 @@ import { timingSafeEqual } from 'crypto'
 import { getToken } from 'next-auth/jwt'
 import { isSystemOwner } from '@/lib/roles'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { compactConversationById } from '@/agent/lib/conversation-compact'
+import { compactConversationById, compactConversationIfNeeded } from '@/agent/lib/conversation-compact'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -36,13 +36,21 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  let body: { conversationId?: string }
+  let body: { conversationId?: string; ifNeeded?: boolean }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'invalid_json' }, { status: 400 }) }
 
   const conversationId = body.conversationId
   if (!conversationId) return NextResponse.json({ error: 'conversationId required' }, { status: 400 })
 
   try {
+    // ifNeeded (voice-call end, 2026-07-24): a COST-GATED check, not a forced
+    // fold — compaction only happens once the conversation crossed the
+    // AGENT_COMPACT_THRESHOLD_USD safety valve. Cheap to call after every call.
+    if (body.ifNeeded === true) {
+      const maybe = await compactConversationIfNeeded(conversationId)
+      if (!maybe) return NextResponse.json({ compacted: false })
+      return NextResponse.json({ compacted: true, newConversationId: maybe.newConversationId })
+    }
     const result = await compactConversationById(conversationId)
     return NextResponse.json({ newConversationId: result.newConversationId, summary: result.summary })
   } catch (err) {
