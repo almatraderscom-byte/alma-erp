@@ -9,6 +9,7 @@ import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { buildOverlayPlan, type FinishTemplateInput } from '@/lib/creative-studio/video-finish'
 import { VIDEO_ASPECTS } from '@/lib/creative-studio/video-recipes'
+import { studioActionBlockReason } from '@/lib/creative-studio/studio-policy'
 
 export const runtime = 'nodejs'
 
@@ -33,14 +34,15 @@ export async function POST(req: NextRequest) {
   const source = await db.agentPendingAction.findUnique({ where: { id: sourceId } })
   const sourceResult = (source?.result ?? {}) as Record<string, unknown>
   const sourcePath = sourceResult.storagePath as string | undefined
-  if (
-    !source
-    || source.status !== 'executed'
-    || !['video_edit', 'video_gen'].includes(source.type)
-    || !sourcePath
-  ) {
+  if (!source || !['video_edit', 'video_gen'].includes(source.type)) {
     return Response.json({ error: 'আগে রিলটি তৈরি শেষ হতে দিন।' }, { status: 422 })
   }
+  const blocked = studioActionBlockReason({
+    status: source.status,
+    result: sourceResult,
+    hasArtifact: Boolean(sourcePath),
+  }, 'video_finish')
+  if (blocked) return Response.json({ error: 'qc_failed_blocked', message: blocked }, { status: 409 })
 
   const aspectDef = VIDEO_ASPECTS.find((a) => a.id === sourceResult.aspect) ?? VIDEO_ASPECTS[0]
   const durationSec = Number(sourceResult.durationSec ?? 0) || 15

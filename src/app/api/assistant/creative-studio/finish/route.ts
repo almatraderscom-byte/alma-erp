@@ -18,6 +18,8 @@ import { applyBrandFrame } from '@/lib/content-engine/brand-frame'
 import type { LifestyleLayoutOverrides } from '@/lib/content-engine/lifestyle-layout'
 import { THEME_ACCENT, type BrandTheme } from '@/lib/content-engine/brand-identity'
 import { agentStorageSignedUrl } from '@/agent/lib/storage'
+import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
+import { studioActionBlockReason } from '@/lib/creative-studio/studio-policy'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -67,6 +69,36 @@ export async function POST(req: NextRequest) {
   const hook = (typeof body.hook === 'string' ? body.hook : '').trim()
   if (!hook) return Response.json({ error: 'hook_required', message: 'একটা hook লেখা লাগবে।' }, { status: 400 })
 
+  const pendingActionId = typeof body.pendingActionId === 'string' ? body.pendingActionId.trim() : ''
+  const source = pendingActionId
+    ? await db.agentPendingAction.findUnique({ where: { id: pendingActionId } })
+    : await db.agentPendingAction.findFirst({
+      where: {
+        payload: { path: ['creativeStudio'], equals: true },
+        OR: [
+          { result: { path: ['storagePath'], equals: storagePath } },
+          { result: { path: ['videoPath'], equals: storagePath } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+  if (pendingActionId && !source) {
+    return Response.json({ error: 'source_not_found', message: 'Creative-টি খুঁজে পাওয়া যায়নি।' }, { status: 404 })
+  }
+  if (source) {
+    const sourceResult = (source.result ?? {}) as Record<string, unknown>
+    const sourcePath = String(sourceResult.storagePath ?? sourceResult.videoPath ?? '')
+    if (sourcePath && sourcePath !== storagePath) {
+      return Response.json({ error: 'source_mismatch', message: 'Creative এবং file এক নয়। Refresh করুন।' }, { status: 409 })
+    }
+    const blocked = studioActionBlockReason({
+      status: source.status,
+      result: sourceResult,
+      hasArtifact: Boolean(sourcePath),
+    }, 'finish')
+    if (blocked) return Response.json({ error: 'qc_failed_blocked', message: blocked }, { status: 409 })
+  }
+
   const mode =
     body.mode === 'product_card' ? 'product_card'
     : body.mode === 'lifestyle' ? 'lifestyle'
@@ -98,13 +130,11 @@ export async function POST(req: NextRequest) {
           : null,
     })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return Response.json({ error: 'finish_failed', message: msg }, { status: 422 })
+    return Response.json({ error: 'finish_failed', message: sanitizeStudioError(err) }, { status: 422 })
   }
 
   // Persist the framed copy back onto the gallery item so it shows the "Branded"
   // toggle and survives a reload (best-effort — never fail the finish for this).
-  const pendingActionId = typeof body.pendingActionId === 'string' ? body.pendingActionId.trim() : ''
   if (pendingActionId) {
     try {
       const row = await db.agentPendingAction.findUnique({ where: { id: pendingActionId } })
@@ -140,7 +170,7 @@ export async function POST(req: NextRequest) {
   try {
     framedUrl = await agentStorageSignedUrl(framedPath, 3600)
   } catch (err) {
-    return Response.json({ error: 'sign_failed', message: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return Response.json({ error: 'sign_failed', message: sanitizeStudioError(err) }, { status: 500 })
   }
 
   return Response.json({ framedPath, framedUrl })

@@ -33,6 +33,7 @@ Make the current Studio truthful and safe to operate before adding new creation 
 - `src/app/api/assistant/creative-studio/finish/route.ts`
 - `src/app/api/assistant/creative-studio/gallery/route.ts`
 - `src/app/api/assistant/creative-studio/health/route.ts`
+- `src/app/api/assistant/creative-studio/run/route.ts`
 - `src/app/api/assistant/creative-studio/video/finish/route.ts`
 - `src/app/api/assistant/creative-studio/video/run/route.ts`
 - `src/lib/creative-studio/gallery-query.ts`
@@ -49,6 +50,15 @@ Make the current Studio truthful and safe to operate before adding new creation 
 
 No schema migration is allowed in CSE1.
 
+## Diagnosis record (2026-07-24)
+
+- The API's earlier in-memory truncation is already fixed on current `main`, but the Web Gallery still always requests page 1 and discards pagination metadata.
+- Non-video provider errors pass from `result.error` to the tile; only the video-specific path is sanitized.
+- UI actions and finishing/reel server routes check execution state, not explicit QC failure.
+- Audio Lab inserts an approved job before returning the cost displayed by the toast.
+- Studio health reads the turn-consumer KV heartbeat instead of the canonical `agent_heartbeats.queue-consumer` heartbeat posted by the worker.
+- Test/e2e artifacts are not excluded by the Gallery query.
+
 ## Acceptance gates
 
 - Page 2+ assets are reachable without duplicates or gaps.
@@ -62,4 +72,3 @@ No schema migration is allowed in CSE1.
 ## Cost ceiling
 
 `$0`. Use existing assets and fixture/error simulations. Do not trigger a paid generation.
-

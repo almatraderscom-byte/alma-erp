@@ -5,7 +5,9 @@ import { isSystemOwner } from '@/lib/roles'
 import { runAutoStudio, runCreativeStudio, type CreativeStudioRunInput } from '@/lib/creative-studio/create-run'
 import { READINESS_ERRORS_BN } from '@/lib/creative-studio/single-pipeline'
 import { resolveModel } from '@/lib/tryon/model-library'
-import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creative-studio/constants'
+import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
+import { studioActionBlockReason } from '@/lib/creative-studio/studio-policy'
+import { prisma } from '@/lib/prisma'
 
 const AUTO_ERRORS: Record<string, string> = {
   no_default_model: 'প্রথমে Models ট্যাবে একটি মডেল সেভ করুন — তারপর শুধু product upload দিলেই হবে।',
@@ -65,11 +67,48 @@ export async function POST(req: NextRequest) {
   const denied = await auth(req)
   if (denied) return denied
 
-  let body: CreativeStudioRunInput & { modelId?: string; auto?: boolean; includeFamily?: boolean; includeReel?: boolean }
+  let body: CreativeStudioRunInput & {
+    modelId?: string
+    auto?: boolean
+    includeFamily?: boolean
+    includeReel?: boolean
+    sourcePendingActionId?: string
+  }
   try {
     body = await req.json()
   } catch {
     return Response.json({ error: 'invalid_json' }, { status: 400 })
+  }
+
+  if (body.mode === 'image_to_video' && body.sourceImagePath) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = prisma as any
+    const sourceId = String(body.sourcePendingActionId ?? '').trim()
+    const source = sourceId
+      ? await db.agentPendingAction.findUnique({ where: { id: sourceId } })
+      : await db.agentPendingAction.findFirst({
+        where: {
+          payload: { path: ['creativeStudio'], equals: true },
+          result: { path: ['storagePath'], equals: body.sourceImagePath },
+        },
+        orderBy: { createdAt: 'desc' },
+      })
+    if (sourceId && !source) {
+      return Response.json({ error: 'source_not_found', message: 'Creative-টি খুঁজে পাওয়া যায়নি।' }, { status: 404 })
+    }
+    if (source) {
+      const sourceResult = (source.result ?? {}) as Record<string, unknown>
+      const sourcePath = String(sourceResult.storagePath ?? '')
+      if (sourcePath && sourcePath !== body.sourceImagePath) {
+        return Response.json({ error: 'source_mismatch', message: 'Creative এবং file এক নয়। Refresh করুন।' }, { status: 409 })
+      }
+      const blocked = studioActionBlockReason({
+        status: source.status,
+        result: sourceResult,
+        hasArtifact: Boolean(sourcePath),
+      }, 'reel')
+      if (blocked) return Response.json({ error: 'qc_failed_blocked', message: blocked }, { status: 409 })
+    }
   }
 
   if (body.auto) {
@@ -94,7 +133,7 @@ export async function POST(req: NextRequest) {
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      return Response.json({ error: mapRunError(msg) }, { status: 422 })
+      return Response.json({ error: sanitizeStudioError(mapRunError(msg)) }, { status: 422 })
     }
   }
 
@@ -138,6 +177,6 @@ export async function POST(req: NextRequest) {
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    return Response.json({ error: mapRunError(msg) }, { status: 422 })
+    return Response.json({ error: sanitizeStudioError(mapRunError(msg)) }, { status: 422 })
   }
 }

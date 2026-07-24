@@ -14,6 +14,10 @@ import {
   WISH_OCCASIONS,
   type AudioLabKind,
 } from '@/lib/creative-studio/audio-lab'
+import {
+  checkStudioCostConfirmation,
+  normalizeStudioRunCap,
+} from '@/lib/creative-studio/studio-policy'
 
 export const runtime = 'nodejs'
 
@@ -37,6 +41,7 @@ export async function GET(req: NextRequest) {
     voiceCloned: Boolean(row?.value),
     styles: MUSIC_STYLES.map(({ id, labelBn }) => ({ id, labelBn })),
     occasions: WISH_OCCASIONS,
+    maxCostBdt: normalizeStudioRunCap(process.env.CREATIVE_STUDIO_MAX_RUN_COST_BDT),
   })
 }
 
@@ -54,6 +59,9 @@ export async function POST(req: NextRequest) {
     text?: string
     sourcePath?: string
     samplePaths?: string[]
+    intent?: 'estimate' | 'queue'
+    confirmedCostBdt?: number
+    costCapBdt?: number
   }
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
 
@@ -103,7 +111,36 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'invalid_kind' }, { status: 422 })
   }
 
-  const costUsd = audioCostBdt(kind, seconds) / 125
+  const costBdt = audioCostBdt(kind, seconds)
+  const defaultCapBdt = normalizeStudioRunCap(process.env.CREATIVE_STUDIO_MAX_RUN_COST_BDT)
+  const costGate = checkStudioCostConfirmation({
+    estimateBdt: costBdt,
+    confirmedCostBdt: body.intent === 'queue' ? body.confirmedCostBdt : undefined,
+    capBdt: body.costCapBdt ?? defaultCapBdt,
+  })
+
+  if (body.intent !== 'queue' || (!costGate.ok && costGate.reason === 'confirmation_required')) {
+    return Response.json({
+      ok: true,
+      requiresConfirmation: true,
+      summary,
+      costBdt,
+      maxCostBdt: costGate.capBdt,
+    })
+  }
+  if (!costGate.ok) {
+    const capExceeded = costGate.reason === 'cap_exceeded'
+    return Response.json({
+      error: capExceeded ? 'cost_cap_exceeded' : 'cost_estimate_changed',
+      message: capExceeded
+        ? `এই কাজের আনুমানিক খরচ ৳${costGate.estimateBdt}, কিন্তু আপনার সীমা ৳${costGate.capBdt}।`
+        : `খরচ এখন ৳${costGate.estimateBdt}। নতুন হিসাব দেখে আবার নিশ্চিত করুন।`,
+      costBdt: costGate.estimateBdt,
+      maxCostBdt: costGate.capBdt,
+    }, { status: 409 })
+  }
+
+  const costUsd = costBdt / 125
   payload.costUsd = costUsd
 
   const row = await db.agentPendingAction.create({
@@ -116,5 +153,5 @@ export async function POST(req: NextRequest) {
       status: 'approved',
     },
   })
-  return Response.json({ ok: true, pendingActionId: row.id, costBdt: audioCostBdt(kind, seconds) })
+  return Response.json({ ok: true, pendingActionId: row.id, costBdt, maxCostBdt: costGate.capBdt })
 }

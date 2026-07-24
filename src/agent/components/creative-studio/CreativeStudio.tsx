@@ -18,6 +18,11 @@ import {
   type StudioProvider,
   type FamilyPresetId,
 } from '@/lib/creative-studio/constants'
+import type {
+  GalleryMediaFilter,
+  GalleryQcFilter,
+  GalleryStateFilter,
+} from '@/lib/creative-studio/gallery-query'
 import { FAMILY_CHAIN_LABEL_BN, type StudioEngineId } from '@/lib/creative-studio/provider-registry'
 import { XAI_TEMPLATES, type XaiTemplate } from '@/lib/creative-studio/xai-imagine'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
@@ -84,8 +89,10 @@ import {
   type StudioHealth,
   type StudioSettings,
   fetchAudioLabStatus,
+  estimateAudioJob,
   queueAudioJob,
   uploadAudioFile,
+  type AudioJobEstimate,
   type AudioLabStatus,
   type StudioMusicTrack,
   type VideoFinishTemplates,
@@ -1838,6 +1845,17 @@ function GeneratingTile({ createdAt, label = 'তৈরি হচ্ছে…' }
 function GalleryView() {
   const [items, setItems] = useState<GalleryItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [total, setTotal] = useState(0)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(false)
+  const [mediaFilter, setMediaFilter] = useState<GalleryMediaFilter>('all')
+  const [stateFilter, setStateFilter] = useState<GalleryStateFilter>('all')
+  const [qcFilter, setQcFilter] = useState<GalleryQcFilter>('all')
+  const [includeTest, setIncludeTest] = useState(false)
+  const [searchInput, setSearchInput] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
   // Full-screen lightbox (complaint: clicking an image opened nothing).
   const [selected, setSelected] = useState<GalleryItem | null>(null)
   // When a branded variant exists, show it by default in the viewer.
@@ -1850,6 +1868,12 @@ function GalleryView() {
   // FLUX Fill repairs ONLY that region (never auto face/embroidery repaint).
   const [rescueItem, setRescueItem] = useState<GalleryItem | null>(null)
   const [rescueRunning, setRescueRunning] = useState(false)
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchQuery(searchInput.trim()), 300)
+    return () => window.clearTimeout(timer)
+  }, [searchInput])
+
   const handleRescueRun = useCallback(async (r: MaskEditorResult) => {
     if (!rescueItem?.storagePath) return
     setRescueRunning(true)
@@ -1900,14 +1924,58 @@ function GalleryView() {
     setShowFinish(false)
   }, [])
 
-  const load = useCallback(async () => {
+  const galleryQuery = useMemo(() => ({
+    media: mediaFilter,
+    state: stateFilter,
+    qc: qcFilter,
+    query: searchQuery,
+    includeTest,
+  }), [includeTest, mediaFilter, qcFilter, searchQuery, stateFilter])
+
+  const loadFirstPage = useCallback(async (preserveLoadedPages = false) => {
+    if (!preserveLoadedPages) setLoading(true)
+    setLoadError(null)
     try {
-      const data = await fetchGallery(1)
-      setItems(data.items)
+      const data = await fetchGallery(galleryQuery)
+      setItems((previous) => {
+        if (!preserveLoadedPages) return data.items
+        const freshIds = new Set(data.items.map((item) => item.id))
+        return [...data.items, ...previous.filter((item) => !freshIds.has(item.id))]
+      })
+      setSelected((current) => current
+        ? data.items.find((item) => item.id === current.id) ?? current
+        : null)
+      setTotal(data.total)
+      if (!preserveLoadedPages) {
+        setNextCursor(data.nextCursor)
+        setHasMore(data.hasMore)
+      }
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Gallery লোড করা যায়নি।')
     } finally {
-      setLoading(false)
+      if (!preserveLoadedPages) setLoading(false)
     }
-  }, [])
+  }, [galleryQuery])
+
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore) return
+    setLoadingMore(true)
+    setLoadError(null)
+    try {
+      const data = await fetchGallery({ ...galleryQuery, cursor: nextCursor })
+      setItems((previous) => {
+        const existingIds = new Set(previous.map((item) => item.id))
+        return [...previous, ...data.items.filter((item) => !existingIds.has(item.id))]
+      })
+      setTotal(data.total)
+      setNextCursor(data.nextCursor)
+      setHasMore(data.hasMore)
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'আরও Creative লোড করা যায়নি।')
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [galleryQuery, loadingMore, nextCursor])
 
   // How many renders are still in flight — drives the "generating" banner and
   // whether we keep polling at all (poll fast while pending, stop when done so
@@ -1915,25 +1983,96 @@ function GalleryView() {
   const pendingCount = items.filter((i) => isPendingStatus(i.status)).length
 
   useEffect(() => {
-    void load()
-  }, [load])
+    void loadFirstPage(false)
+  }, [loadFirstPage])
 
   // Poll ONLY while something is rendering. 4s while pending (snappier than the
   // old fixed 8s), then stop — finished images don't need constant re-fetching.
   useEffect(() => {
     if (pendingCount === 0) return
-    const t = window.setInterval(() => void load(), 4000)
+    const t = window.setInterval(() => void loadFirstPage(true), 4000)
     return () => window.clearInterval(t)
-  }, [pendingCount, load])
+  }, [pendingCount, loadFirstPage])
 
   return (
     <div className="px-3 py-3 pb-20 md:pb-4">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-bold">Library</h2>
-        <button type="button" onClick={() => void load()} className="text-[11px] font-semibold text-[#E07A5F]">
-          Refresh
+        <div>
+          <h2 className="text-sm font-bold">Gallery</h2>
+          <p className="text-[10px] text-muted">{total}টি ফলাফল · {items.length}টি দেখা যাচ্ছে</p>
+        </div>
+        <button type="button" onClick={() => void loadFirstPage(false)} className="text-[11px] font-semibold text-[#E07A5F]">
+          রিফ্রেশ
         </button>
       </div>
+
+      <div className="mb-3 space-y-2 rounded-xl border border-border-subtle bg-card/60 p-2.5">
+        <input
+          type="search"
+          value={searchInput}
+          onChange={(event) => setSearchInput(event.target.value)}
+          placeholder="Product code, নাম বা mode খুঁজুন"
+          className="w-full rounded-lg border border-border-subtle bg-bg-1 px-3 py-2 text-[12px] text-cream placeholder:text-muted/60"
+        />
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <label className="space-y-1 text-[9px] font-semibold text-muted">
+            ধরন
+            <select
+              value={mediaFilter}
+              onChange={(event) => setMediaFilter(event.target.value as GalleryMediaFilter)}
+              className="w-full rounded-lg border border-border-subtle bg-bg-1 px-2 py-1.5 text-[11px] text-cream"
+            >
+              <option value="all">সব</option>
+              <option value="image">ছবি</option>
+              <option value="video">ভিডিও</option>
+              <option value="audio">অডিও</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-[9px] font-semibold text-muted">
+            অবস্থা
+            <select
+              value={stateFilter}
+              onChange={(event) => setStateFilter(event.target.value as GalleryStateFilter)}
+              className="w-full rounded-lg border border-border-subtle bg-bg-1 px-2 py-1.5 text-[11px] text-cream"
+            >
+              <option value="all">সব</option>
+              <option value="ready">Ready</option>
+              <option value="qc_failed">QC ফেল</option>
+              <option value="draft">Draft</option>
+              <option value="processing">তৈরি হচ্ছে</option>
+              <option value="failed">ব্যর্থ</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-[9px] font-semibold text-muted">
+            QC
+            <select
+              value={qcFilter}
+              onChange={(event) => setQcFilter(event.target.value as GalleryQcFilter)}
+              className="w-full rounded-lg border border-border-subtle bg-bg-1 px-2 py-1.5 text-[11px] text-cream"
+            >
+              <option value="all">সব</option>
+              <option value="pass">পাস</option>
+              <option value="fail">ফেল</option>
+            </select>
+          </label>
+        </div>
+        <label className="flex items-center gap-2 text-[10px] text-muted">
+          <input
+            type="checkbox"
+            checked={includeTest}
+            onChange={(event) => setIncludeTest(event.target.checked)}
+            className="h-3.5 w-3.5 accent-[#E07A5F]"
+          />
+          টেস্ট/E2E Creative দেখুন
+        </label>
+      </div>
+
+      {loadError && (
+        <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-red-400/20 bg-red-500/[0.08] px-3 py-2 text-[11px] text-red-300">
+          <span>{loadError}</span>
+          <button type="button" onClick={() => void loadFirstPage(false)} className="font-bold text-white">আবার চেষ্টা</button>
+        </div>
+      )}
 
       {/* Google Drive archive status. When connected, the worker auto-uploads
           gallery originals to the owner's own Drive (month folders) and frees
@@ -1983,11 +2122,12 @@ function GalleryView() {
           ))}
         </div>
       ) : items.length === 0 ? (
-        <p className="text-sm text-muted">No generations yet — Studio থেকে Run করুন।</p>
+        <p className="text-sm text-muted">এই filter-এ কোনো Creative নেই। Studio থেকে নতুন কাজ চালাতে পারেন।</p>
       ) : (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-          {items.map((item) => {
-            const isVideo = item.storagePath?.endsWith('.mp4') || item.type === 'video_gen'
+        <>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+            {items.map((item) => {
+            const isVideo = item.storagePath?.endsWith('.mp4') || item.type === 'video_gen' || item.type === 'video_edit'
             const isAudio = item.type === 'audio_gen'
             const pending = isPendingStatus(item.status)
             const failed = isFailedStatus(item.status)
@@ -2037,7 +2177,7 @@ function GalleryView() {
                             onClick={(e) => {
                               e.stopPropagation()
                               void retryStudioJob(item.id)
-                                .then(() => { toast.success('আবার চালানো হচ্ছে, বস'); void load() })
+                                .then(() => { toast.success('আবার চালানো হচ্ছে, বস'); void loadFirstPage(true) })
                                 .catch((err) => toast.error(err instanceof Error ? err.message : 'হয়নি'))
                             }}
                             className="rounded-full bg-[#E07A5F] px-2.5 py-1 text-[10px] font-bold text-white"
@@ -2064,6 +2204,25 @@ function GalleryView() {
                       Branded
                     </span>
                   )}
+                  <span
+                    className={cn(
+                      'absolute bottom-1.5 right-1.5 rounded-md px-1.5 py-0.5 text-[9px] font-bold',
+                      item.assetState === 'ready' && 'bg-emerald-500/90 text-white',
+                      item.assetState === 'qc_failed' && 'bg-amber-500/90 text-black',
+                      item.assetState === 'failed' && 'bg-red-500/90 text-white',
+                      (item.assetState === 'draft' || item.assetState === 'processing') && 'bg-black/60 text-white',
+                    )}
+                  >
+                    {item.assetState === 'ready'
+                      ? 'Ready'
+                      : item.assetState === 'qc_failed'
+                        ? 'QC ফেল'
+                        : item.assetState === 'processing'
+                          ? 'তৈরি হচ্ছে'
+                          : item.assetState === 'failed'
+                            ? 'ব্যর্থ'
+                            : 'Draft'}
+                  </span>
                   {isVideo && item.previewUrl && (
                     <span className="absolute inset-0 flex items-center justify-center">
                       <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white">▶</span>
@@ -2076,8 +2235,19 @@ function GalleryView() {
                 </div>
               </motion.button>
             )
-          })}
-        </div>
+            })}
+          </div>
+          {hasMore && (
+            <button
+              type="button"
+              disabled={loadingMore}
+              onClick={() => void loadMore()}
+              className="mt-3 w-full rounded-xl border border-border-subtle bg-card/70 py-2.5 text-[12px] font-bold text-cream disabled:opacity-50"
+            >
+              {loadingMore ? 'লোড হচ্ছে…' : `আরও দেখুন (${Math.max(0, total - items.length)}টি বাকি)`}
+            </button>
+          )}
+        </>
       )}
 
       {/* Full-screen viewer */}
@@ -2185,6 +2355,14 @@ function GalleryView() {
                 </span>
               </div>
             )}
+            {selected.assetState === 'qc_failed' && (
+              <div
+                onClick={(event) => event.stopPropagation()}
+                className="absolute bottom-[calc(5.25rem+env(safe-area-inset-bottom))] left-1/2 w-[min(90vw,460px)] -translate-x-1/2 rounded-xl border border-amber-300/30 bg-amber-500/90 px-3 py-2 text-center text-[11px] font-bold text-black shadow-xl"
+              >
+                QC ফেল — Download করে পরীক্ষা করতে পারবেন; Publish, Finishing বা Reel-এর আগে Repair/Retry করে QC পাস করান।
+              </div>
+            )}
 
             {/* Original ↔ Branded toggle (only when a branded variant exists) */}
             {selected.brandedUrl && !(selected.storagePath?.endsWith('.mp4') || selected.type === 'video_gen') && (
@@ -2215,7 +2393,7 @@ function GalleryView() {
                 onClick={(e) => e.stopPropagation()}
                 className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 flex -translate-x-1/2 items-center gap-2"
               >
-                {selected.storagePath && (
+                {selected.storagePath && selected.publishable && (
                   <button
                     type="button"
                     onClick={() => setShowFinish((v) => !v)}
@@ -2261,7 +2439,7 @@ function GalleryView() {
                   </div>
                 )}
                 {/* CS4: AI-generated brand model → save into the Models library */}
-                {selected.modelCreator && selected.status === 'executed' && selected.storagePath && (
+                {selected.modelCreator && selected.publishable && selected.storagePath && (
                   <button
                     type="button"
                     onClick={() => {
@@ -2281,7 +2459,7 @@ function GalleryView() {
                 )}
                 {/* V4: one-tap reel from any finished studio image — the family
                     merge becomes a moving reel; 16/24s = multi-clip Veo chain */}
-                {selected.status === 'executed' && selected.storagePath && (
+                {selected.publishable && selected.storagePath && (
                   <div className="flex items-center gap-1.5 rounded-full bg-black/50 px-2 py-1 ring-1 ring-white/20 backdrop-blur-md">
                     <span className="pl-1 text-[11px] font-semibold text-white/80">রিল:</span>
                     {[6, 16, 24].map((d) => {
@@ -2291,7 +2469,12 @@ function GalleryView() {
                           key={d}
                           type="button"
                           onClick={() => {
-                            void runStudioJob({ mode: 'image_to_video', sourceImagePath: selected.storagePath ?? undefined, durationSec: d })
+                            void runStudioJob({
+                              mode: 'image_to_video',
+                              sourceImagePath: selected.storagePath ?? undefined,
+                              sourcePendingActionId: selected.id,
+                              durationSec: d,
+                            })
                               .then(() => toast.success(`${d}s রিল তৈরি হচ্ছে (~৳${cost}) — Gallery-তে আসবে, বস`))
                               .catch((e) => toast.error(e instanceof Error ? e.message : 'শুরু করা যায়নি'))
                           }}
@@ -2350,7 +2533,7 @@ function GalleryView() {
                   </div>
                 )}
                 <div className="flex items-center gap-2">
-                  {selected.status === 'executed' && (
+                  {selected.publishable && (
                     <button
                       type="button"
                       onClick={() => setShowFinish((v) => !v)}
@@ -2373,14 +2556,7 @@ function GalleryView() {
                       pendingActionId={selected.id}
                       onDone={() => {
                         setShowFinish(false)
-                        void fetchGallery(1).then((d) => {
-                          setItems(d.items)
-                          const fresh = d.items.find((it) => it.id === selected.id)
-                          if (fresh) {
-                            setSelected(fresh)
-                            setShowBranded(Boolean(fresh.brandedUrl))
-                          }
-                        })
+                        void loadFirstPage(true)
                         toast.success('টেমপ্লেট বসে গেছে — "টেমপ্লেট সহ" ভার্সন দেখুন, বস')
                       }}
                     />
@@ -2390,7 +2566,7 @@ function GalleryView() {
             ) : null}
 
             {/* Finishing panel — per-image code + hook, applied with the real brand frame */}
-            {showFinish && selected.storagePath && (
+            {showFinish && selected.storagePath && selected.publishable && (
               <div
                 onClick={(e) => e.stopPropagation()}
                 className="absolute bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-1/2 w-[min(92vw,420px)] -translate-x-1/2"
@@ -3372,15 +3548,24 @@ function StudioSettingsCard() {
         <div className="border-t border-border-subtle pt-2.5">
           <div className="flex items-center justify-between">
             <p className="text-[12px] font-bold text-cream">🚦 ইঞ্জিন হেলথ (শেষ {health.windowDays} দিন)</p>
-            <span className={cn('rounded-full px-2 py-0.5 text-[9px] font-semibold', health.worker.healthy ? 'bg-[#81B29A]/15 text-[#2d6a4f]' : 'bg-red-100 text-red-700')}>
-              Worker {health.worker.healthy ? 'সচল' : 'সাড়া নেই'}
+            <span className={cn(
+              'rounded-full px-2 py-0.5 text-[9px] font-semibold',
+              health.worker.state === 'healthy' && 'bg-[#81B29A]/15 text-[#2d6a4f]',
+              health.worker.state === 'delayed' && 'bg-amber-100 text-amber-800',
+              health.worker.state === 'offline' && 'bg-red-100 text-red-700',
+              health.worker.state === 'unknown' && 'bg-white/10 text-muted-hi',
+            )}>
+              Worker {health.worker.labelBn}
             </span>
           </div>
+          <p className="mt-1 text-[9px] text-muted">
+            Queue signal: {health.worker.lastSeenBn} · Turn consumer: {health.turnConsumer.labelBn} ({health.turnConsumer.lastSeenBn})
+          </p>
           <div className="mt-1.5 space-y-1">
             {health.engines.slice(0, 6).map((e) => (
               <div key={e.engine} className="flex items-center justify-between gap-2">
                 <p className="min-w-0 flex-1 truncate text-[10px] leading-snug text-muted-hi">
-                  {e.labelBn}: {e.jobs} কাজ · ব্যর্থ {e.errorRatePct}%{e.qcPassRatePct !== null ? ` · QC পাস ${e.qcPassRatePct}%` : ''}{e.p95LatencyMs ? ` · p95 ${Math.round(e.p95LatencyMs / 1000)}s` : ''} · ${e.spendUsd}
+                  {e.labelBn}: {e.jobs} কাজ · ব্যর্থ {e.errorRatePct}%{e.qcPassRatePct !== null ? ` · QC পাস ${e.qcPassRatePct}%` : ''}{e.p95LatencyMs ? ` · p95 ${Math.round(e.p95LatencyMs / 1000)}s` : ''} · $${e.spendUsd}
                 </p>
                 <label className="flex shrink-0 items-center gap-1 text-[9px] text-muted">
                   বন্ধ
@@ -4283,6 +4468,12 @@ function AudioLabView() {
   const [voiceText, setVoiceText] = useState('')
   const [sfxText, setSfxText] = useState('')
   const [pct, setPct] = useState<number | null>(null)
+  const [confirmation, setConfirmation] = useState<{
+    label: string
+    body: Record<string, unknown>
+    estimate: AudioJobEstimate
+    capBdt: number
+  } | null>(null)
   const cloneRef = useRef<HTMLInputElement>(null)
   const noteRef = useRef<HTMLInputElement>(null)
 
@@ -4290,11 +4481,32 @@ function AudioLabView() {
 
   const run = useCallback((label: string, body: Record<string, unknown>) => {
     setBusy(label)
-    void queueAudioJob(body)
-      .then((r) => toast.success(`${label} তৈরি হচ্ছে (~৳${r.costBdt}) — Gallery-তে আসবে, বস`))
+    void estimateAudioJob(body)
+      .then((estimate) => setConfirmation({
+        label,
+        body,
+        estimate,
+        capBdt: estimate.maxCostBdt,
+      }))
       .catch((e) => toast.error(e instanceof Error ? e.message : 'হয়নি'))
       .finally(() => setBusy(null))
   }, [])
+
+  const confirmRun = useCallback(() => {
+    if (!confirmation) return
+    const { body, estimate, label, capBdt } = confirmation
+    setBusy(label)
+    void queueAudioJob(body, {
+      confirmedCostBdt: estimate.costBdt,
+      costCapBdt: capBdt,
+    })
+      .then((result) => {
+        setConfirmation(null)
+        toast.success(`${label} তৈরি হচ্ছে (সর্বোচ্চ ৳${result.costBdt}) — Gallery-তে আসবে, বস`)
+      })
+      .catch((error) => toast.error(error instanceof Error ? error.message : 'হয়নি'))
+      .finally(() => setBusy(null))
+  }, [confirmation])
 
   const card = 'space-y-2 st-card p-3'
   const input = 'w-full rounded-lg border border-border-subtle bg-bg-1 px-2.5 py-2 text-[12px] text-cream placeholder:text-muted/50'
@@ -4305,8 +4517,75 @@ function AudioLabView() {
       <div className="mx-auto max-w-xl space-y-3">
         <div>
           <h2 className="text-sm font-bold">🎙️ অডিও ল্যাব</h2>
-          <p className="text-[11px] text-muted">মিউজিক, উইশ গান, আপনার ভয়েস — সব এক জায়গায়। খরচ আগে দেখানো হয়।</p>
+          <p className="text-[11px] text-muted">মিউজিক, উইশ গান, আপনার ভয়েস — Queue করার আগে খরচ ও সর্বোচ্চ সীমা নিশ্চিত করতে হবে।</p>
         </div>
+
+        <AnimatePresence>
+          {confirmation && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              role="dialog"
+              aria-modal="true"
+              aria-label="অডিও খরচ নিশ্চিত করুন"
+              onClick={() => setConfirmation(null)}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+            >
+              <motion.div
+                initial={{ y: 16, scale: 0.98 }}
+                animate={{ y: 0, scale: 1 }}
+                onClick={(event) => event.stopPropagation()}
+                className="w-[min(92vw,420px)] rounded-2xl border border-white/15 bg-[#17181d] p-4 shadow-2xl"
+              >
+                <p className="text-sm font-bold text-cream">খরচ নিশ্চিত করুন</p>
+                <p className="mt-1 text-[11px] text-muted">{confirmation.estimate.summary}</p>
+                <div className="mt-3 rounded-xl bg-[#E07A5F]/10 p-3 text-center">
+                  <p className="text-[10px] text-muted">সর্বোচ্চ আনুমানিক খরচ</p>
+                  <p className="text-2xl font-extrabold text-[#E07A5F]">৳{confirmation.estimate.costBdt}</p>
+                  <p className="text-[9px] text-muted">চূড়ান্ত provider charge কম হতে পারে; এই সীমার বেশি Queue হবে না।</p>
+                </div>
+                <label className="mt-3 block space-y-1 text-[10px] font-semibold text-muted">
+                  এই run-এর hard cap (৳)
+                  <input
+                    type="number"
+                    min={1}
+                    max={5000}
+                    step={1}
+                    value={confirmation.capBdt}
+                    onChange={(event) => setConfirmation({
+                      ...confirmation,
+                      capBdt: Math.max(1, Math.min(5000, Math.round(Number(event.target.value) || 1))),
+                    })}
+                    className="w-full rounded-lg border border-border-subtle bg-bg-1 px-3 py-2 text-[12px] text-cream"
+                  />
+                </label>
+                {confirmation.estimate.costBdt > confirmation.capBdt && (
+                  <p className="mt-2 rounded-lg bg-red-500/10 px-2.5 py-2 text-[10px] font-semibold text-red-300">
+                    Estimate hard cap-এর চেয়ে বেশি—cap বাড়ান বা বাতিল করুন।
+                  </p>
+                )}
+                <div className="mt-4 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmation(null)}
+                    className="flex-1 rounded-xl bg-white/10 py-2.5 text-[12px] font-bold text-cream"
+                  >
+                    বাতিল
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy !== null || confirmation.estimate.costBdt > confirmation.capBdt}
+                    onClick={confirmRun}
+                    className="flex-1 rounded-xl bg-[#E07A5F] py-2.5 text-[12px] font-bold text-white disabled:opacity-40"
+                  >
+                    {busy ? 'Queue হচ্ছে…' : `৳${confirmation.estimate.costBdt} পর্যন্ত চালান`}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* voice clone */}
         <div className={card}>

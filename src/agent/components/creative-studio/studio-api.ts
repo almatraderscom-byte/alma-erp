@@ -2,6 +2,19 @@ import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creativ
 import type { EngineAvailability, StudioEngineId } from '@/lib/creative-studio/provider-registry'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 import type { LifestyleLayoutOverrides } from '@/lib/content-engine/lifestyle-layout'
+import type {
+  GalleryMediaFilter,
+  GalleryQcFilter,
+  GalleryStateFilter,
+} from '@/lib/creative-studio/gallery-query'
+import type { StudioAssetState } from '@/lib/creative-studio/studio-policy'
+import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
+
+async function readStudioResponse<T>(res: Response, fallback: string): Promise<T> {
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(sanitizeStudioError(data, res.status) || fallback)
+  return data as T
+}
 
 export type StudioConfig = {
   fashnConfigured: boolean
@@ -24,6 +37,8 @@ export type GalleryItem = {
   id: string
   type: string
   status: string
+  assetState: StudioAssetState
+  publishable: boolean
   summary: string | null
   createdAt: string
   mode: string
@@ -52,6 +67,8 @@ export type GalleryItem = {
   coverOptions?: Array<{ path: string; url: string }>
   /** CS4: role when this image is an AI-generated brand model portrait */
   modelCreator?: string | null
+  /** Last finishing inputs, used when reopening the editor. */
+  finishParams?: Record<string, unknown> | null
   error: string | null
 }
 
@@ -113,9 +130,7 @@ export async function finishImage(opts: FinishOptions): Promise<{ framedPath: st
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(opts),
   })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message ?? data.error ?? 'finish_failed')
-  return data as { framedPath: string; framedUrl: string }
+  return readStudioResponse<{ framedPath: string; framedUrl: string }>(res, 'finish_failed')
 }
 
 export type RunPayload = {
@@ -147,6 +162,8 @@ export type RunPayload = {
   numImages?: number
   durationSec?: number
   vibe?: 'premium' | 'festival' | 'offer' | 'lifestyle'
+  /** Gallery source id — lets the server enforce the QC action gate. */
+  sourcePendingActionId?: string
 }
 
 export async function fetchStudioConfig(): Promise<StudioConfig> {
@@ -248,9 +265,11 @@ export async function runStudioJob(payload: RunPayload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? data.message ?? 'run_failed')
-  return data as { jobs: Array<{ pendingActionId: string; label: string }>; provider: string; message: string }
+  return readStudioResponse<{
+    jobs: Array<{ pendingActionId: string; label: string }>
+    provider: string
+    message: string
+  }>(res, 'run_failed')
 }
 
 export async function runAutoStudioJob(input: { productImagePath: string; includeFamily?: boolean; includeReel?: boolean }) {
@@ -264,10 +283,37 @@ export async function runAutoStudioJob(input: { productImagePath: string; includ
   return data as { jobs: Array<{ pendingActionId: string; label: string }>; provider: string; message: string }
 }
 
-export async function fetchGallery(page = 1): Promise<{ items: GalleryItem[]; hasMore: boolean; total: number }> {
-  const res = await fetch(`/api/assistant/creative-studio/gallery?page=${page}&limit=24`)
-  if (!res.ok) throw new Error('gallery_failed')
-  return res.json()
+export type GalleryQuery = {
+  cursor?: string | null
+  page?: number
+  media?: GalleryMediaFilter
+  state?: GalleryStateFilter
+  qc?: GalleryQcFilter
+  query?: string
+  includeTest?: boolean
+  limit?: number
+}
+
+export type GalleryPage = {
+  items: GalleryItem[]
+  hasMore: boolean
+  total: number
+  nextCursor: string | null
+}
+
+export async function fetchGallery(input: GalleryQuery | number = {}): Promise<GalleryPage> {
+  const query: GalleryQuery = typeof input === 'number' ? { page: input } : input
+  const params = new URLSearchParams()
+  params.set('limit', String(query.limit ?? 24))
+  if (query.cursor) params.set('cursor', query.cursor)
+  else if (query.page && query.page > 1) params.set('page', String(query.page))
+  if (query.media && query.media !== 'all') params.set('media', query.media)
+  if (query.state && query.state !== 'all') params.set('state', query.state)
+  if (query.qc && query.qc !== 'all') params.set('qc', query.qc)
+  if (query.query?.trim()) params.set('q', query.query.trim())
+  if (query.includeTest) params.set('includeTest', '1')
+  const res = await fetch(`/api/assistant/creative-studio/gallery?${params.toString()}`)
+  return readStudioResponse<GalleryPage>(res, 'gallery_failed')
 }
 
 export type SavedStudioModel = {
@@ -527,9 +573,7 @@ export async function finishVideo(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ pendingActionId, templates }),
   })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? 'finish_failed')
-  return data
+  return readStudioResponse<{ pendingActionId: string; message: string }>(res, 'finish_failed')
 }
 
 // ── E1 Audio Lab helpers ─────────────────────────────────────────────────────
@@ -538,6 +582,7 @@ export type AudioLabStatus = {
   voiceCloned: boolean
   styles: Array<{ id: string; labelBn: string }>
   occasions: Array<{ id: string; labelBn: string }>
+  maxCostBdt: number
 }
 
 export async function fetchAudioLabStatus(): Promise<AudioLabStatus> {
@@ -546,15 +591,32 @@ export async function fetchAudioLabStatus(): Promise<AudioLabStatus> {
   return res.json()
 }
 
-export async function queueAudioJob(body: Record<string, unknown>) {
+export type AudioJobEstimate = {
+  requiresConfirmation: true
+  summary: string
+  costBdt: number
+  maxCostBdt: number
+}
+
+export async function estimateAudioJob(body: Record<string, unknown>): Promise<AudioJobEstimate> {
   const res = await fetch('/api/assistant/creative-studio/audio', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, intent: 'estimate' }),
   })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? 'audio_failed')
-  return data as { pendingActionId: string; costBdt: number }
+  return readStudioResponse<AudioJobEstimate>(res, 'audio_estimate_failed')
+}
+
+export async function queueAudioJob(
+  body: Record<string, unknown>,
+  confirmation: { confirmedCostBdt: number; costCapBdt: number },
+) {
+  const res = await fetch('/api/assistant/creative-studio/audio', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, intent: 'queue', ...confirmation }),
+  })
+  return readStudioResponse<{ pendingActionId: string; costBdt: number; maxCostBdt: number }>(res, 'audio_failed')
 }
 
 export async function uploadAudioFile(file: File, onProgress?: (pct: number) => void): Promise<string> {
@@ -664,7 +726,22 @@ export type StudioHealth = {
   }>
   kills: Record<string, boolean>
   canaryPct: number
-  worker: { heartbeatAt: string | null; heartbeatAgeSec: number | null; healthy: boolean }
+  worker: {
+    state: 'healthy' | 'delayed' | 'offline' | 'unknown'
+    labelBn: string
+    heartbeatAt: string | null
+    heartbeatAgeSec: number | null
+    lastSeenBn: string
+    healthy: boolean
+  }
+  turnConsumer: {
+    state: 'healthy' | 'delayed' | 'offline' | 'unknown'
+    labelBn: string
+    heartbeatAt: string | null
+    heartbeatAgeSec: number | null
+    lastSeenBn: string
+    healthy: boolean
+  }
   balances: Array<{ id: string; label: string; balanceUsd: number | null; monthUsd: number | null }>
 }
 

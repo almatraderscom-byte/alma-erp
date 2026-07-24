@@ -4,7 +4,16 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { agentStorageSignedUrls } from '@/agent/lib/storage'
-import { looksLikeRawInternalError, sanitizeVideoErrorMessage } from '@/lib/creative-studio/video-recipes'
+import {
+  buildGalleryCursorWhere,
+  buildGalleryWhere,
+  decodeGalleryCursor,
+  encodeGalleryCursor,
+  normalizeGalleryFilters,
+  normalizeGalleryLimit,
+} from '@/lib/creative-studio/gallery-query'
+import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
+import { classifyStudioAsset, isStudioAssetPublishable } from '@/lib/creative-studio/studio-policy'
 
 export const runtime = 'nodejs'
 
@@ -61,29 +70,34 @@ export async function GET(req: NextRequest) {
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
   const page = Math.max(1, Number(req.nextUrl.searchParams.get('page') ?? 1))
-  const limit = Math.min(48, Math.max(12, Number(req.nextUrl.searchParams.get('limit') ?? 24)))
-  const skip = (page - 1) * limit
+  const limit = normalizeGalleryLimit(req.nextUrl.searchParams.get('limit'))
+  const rawCursor = req.nextUrl.searchParams.get('cursor')
+  const cursor = decodeGalleryCursor(rawCursor)
+  if (rawCursor && !cursor) {
+    return Response.json({ error: 'invalid_cursor', message: 'Gallery cursor ঠিক নয়। Refresh করুন।' }, { status: 400 })
+  }
+  const filters = normalizeGalleryFilters(req.nextUrl.searchParams)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
-  // Filter creativeStudio IN SQL (JSONB path), not in memory. The old version
-  // fetched only the newest `limit + 50` rows of these types and then filtered —
-  // chat/marketing image_gen rows pushed older studio assets out of that window,
-  // so the gallery silently lost them (live bug 2026-07-23: 69 assets in DB,
-  // at most 43 reachable) and `total`/pagination were wrong.
-  const where = {
-    type: { in: ['image_gen', 'video_gen', 'video_edit', 'audio_gen'] },
-    payload: { path: ['creativeStudio'], equals: true },
-  }
-  const [total, slice] = await Promise.all([
-    db.agentPendingAction.count({ where }),
+  const baseWhere = buildGalleryWhere(filters)
+  const where = cursor
+    ? { AND: [baseWhere, buildGalleryCursorWhere(cursor)] }
+    : baseWhere
+  // Cursor pagination is stable when new jobs arrive while the owner is
+  // scrolling. `page`/skip remains as a backwards-compatible fallback.
+  const legacySkip = cursor ? 0 : (page - 1) * limit
+  const [total, rows] = await Promise.all([
+    db.agentPendingAction.count({ where: baseWhere }),
     db.agentPendingAction.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-      skip,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      skip: legacySkip,
     }),
   ])
+  const hasMore = rows.length > limit
+  const slice = rows.slice(0, limit)
 
   type Row = {
     id: string
@@ -147,10 +161,17 @@ export async function GET(req: NextRequest) {
     const previewUrl =
       signedPreview
       ?? (driveAvailable ? `/api/assistant/creative-studio/drive-file?id=${encodeURIComponent(row.id)}` : null)
+    const policyInput = {
+      status: row.status,
+      result,
+      hasArtifact: Boolean(storagePath),
+    }
     return {
       id: row.id,
       type: row.type,
       status: row.status,
+      assetState: classifyStudioAsset(policyInput),
+      publishable: isStudioAssetPublishable(policyInput),
       summary: row.summary,
       createdAt: row.createdAt.toISOString(),
       mode: payload.studioMode ?? payload.tryOnVariant ?? 'try_on',
@@ -192,17 +213,23 @@ export async function GET(req: NextRequest) {
       coverOptions: (Array.isArray(result.coverCandidates) ? (result.coverCandidates as string[]) : [])
         .filter((c) => signed[c])
         .map((c) => ({ path: c, url: signed[c] })),
-      // CS11 — never show raw ffmpeg/internal text; legacy rows get masked
-      error: typeof result.error === 'string' && looksLikeRawInternalError(result.error)
-        ? sanitizeVideoErrorMessage(result.error)
-        : (result.error ?? null),
+      // Never render provider JSON, request URLs, credentials, stack traces or
+      // raw rate-limit payloads to the owner.
+      error: result.error == null ? null : sanitizeStudioError(result.error),
     }
   })
+
+  const last = slice.at(-1) as Row | undefined
+  const nextCursor = hasMore && last
+    ? encodeGalleryCursor({ createdAt: last.createdAt.toISOString(), id: last.id })
+    : null
 
   return Response.json({
     items,
     page,
     total,
-    hasMore: skip + limit < total,
+    hasMore,
+    nextCursor,
+    filters,
   })
 }

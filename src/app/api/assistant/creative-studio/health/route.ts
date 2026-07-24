@@ -16,6 +16,7 @@ import {
 } from '@/lib/creative-studio/provider-registry'
 import { percentile } from '@/lib/creative-studio/eval-types'
 import { readBalanceCache } from '@/agent/lib/api-balances'
+import { classifyWorkerHeartbeat, formatHeartbeatAgeBn } from '@/lib/creative-studio/studio-health'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -134,19 +135,23 @@ export async function GET(req: NextRequest) {
       }))
   } catch { /* balances optional */ }
 
-  const heartbeat = await readKv('worker_heartbeat_at')
-  const heartbeatAgeSec = heartbeat ? Math.round((Date.now() - new Date(heartbeat).getTime()) / 1000) : null
+  // The canonical worker signal is the queue-consumer service heartbeat posted
+  // by startHeartbeatLoop. `worker_heartbeat_at` is a narrower turn-consumer
+  // signal and can legitimately be absent/stale while the main worker is alive.
+  const [queueHeartbeat, turnHeartbeatAt] = await Promise.all([
+    db.agentHeartbeat.findUnique({ where: { service: 'queue-consumer' } }).catch(() => null),
+    readKv('worker_heartbeat_at'),
+  ])
+  const worker = classifyWorkerHeartbeat(queueHeartbeat?.lastBeatAt ?? null)
+  const turnConsumer = classifyWorkerHeartbeat(turnHeartbeatAt)
 
   return Response.json({
     windowDays: WINDOW_DAYS,
     engines,
     kills,
     canaryPct: normalizeCanaryPct(await readKv(CS_AUTO_CANARY_PCT_KEY)),
-    worker: {
-      heartbeatAt: heartbeat,
-      heartbeatAgeSec,
-      healthy: heartbeatAgeSec !== null && heartbeatAgeSec < 180,
-    },
+    worker: { ...worker, lastSeenBn: formatHeartbeatAgeBn(worker.heartbeatAgeSec) },
+    turnConsumer: { ...turnConsumer, lastSeenBn: formatHeartbeatAgeBn(turnConsumer.heartbeatAgeSec) },
     balances,
   })
 }
