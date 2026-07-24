@@ -50,7 +50,7 @@ function secretOk(provided: string): boolean {
  *   SIP_DID_MAP={"09649777738":{"line":"boss"},"09649777739":{"line":"support","forward":"01XXXXXXXXX"}}
  * Unknown/absent DIDs fall back to the default assistant behaviour.
  */
-type DidConfig = { line?: string; forward?: string; label?: string }
+type DidConfig = { line?: string; forward?: string; forwardBoss?: string; forwardSupport?: string; label?: string }
 function didConfig(did: string): DidConfig {
   try {
     const map = JSON.parse(process.env.SIP_DID_MAP ?? '{}') as Record<string, DidConfig>
@@ -130,7 +130,13 @@ export async function POST(req: NextRequest) {
       voice: process.env.SIP_INBOUND_VOICE ?? process.env.NGS_INBOUND_VOICE ?? 'Charon',
       callType: ownerCalling ? 'owner' : 'inbound',
       transferMode,
-      // Per-DID forward target (multi-DID); the bot falls back to its own env when absent.
+      // Where a live transfer can go. Self-hosted SIP lifted NGS's single-forward limit, so
+      // the bot picks per call: customer-service topics reach the business line, and only a
+      // caller who genuinely needs the owner reaches his personal number (owner rule
+      // 2026-07-25 — a routine order question must never ring the boss's phone).
+      forwardSupport: cfg.forwardSupport ?? process.env.SIP_FORWARD_SUPPORT ?? '',
+      forwardBoss: cfg.forwardBoss ?? process.env.SIP_FORWARD_BOSS ?? process.env.NGS_FORWARD_NUMBER ?? '',
+      // Legacy single-target field, still honoured as a fallback by the bot.
       ...(cfg.forward ? { forwardNumber: cfg.forward } : {}),
     },
   })

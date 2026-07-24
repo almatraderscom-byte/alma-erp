@@ -147,6 +147,8 @@ const PLAY_DIR = process.env.SIP_PLAY_DIR || tmpdir()
  * which is what identified it. 45s matches the Twilio path's Timeout.
  */
 const RING_TIMEOUT = Number(process.env.SIP_RING_TIMEOUT || 45)
+// How long to stay on the line waiting for a keypress after a confirmation message.
+const CONFIRM_WAIT_SECS = Number(process.env.SIP_CONFIRM_WAIT_SECS || 12)
 
 class Call {
   constructor(channelId, params) {
@@ -167,6 +169,11 @@ class Call {
     this.playOnly = false               // one-way message call: play a file, then hang up
     this.playUrl = ''
     this.playFile = ''
+    this.collectDigits = false          // wait for a keypress after the message (confirmation)
+    this.digit = null                   // what the receiver actually pressed
+    this.digitTimer = null
+    this.confirmCallbackUrl = ''        // where to POST the confirmation result
+    this.confirmRef = ''                // caller-supplied id echoed back with the result
     byUuid.set(this.audioUuid, this)
   }
 
@@ -253,12 +260,62 @@ class Call {
     try { this.asSocket.write(Buffer.concat([hdr, payload])) } catch { /* */ }
   }
 
+  // ── keypress confirmation (one-way calls) ──────────────────────────────────
+  /**
+   * The message has finished playing and we asked the receiver to press a key. Stay on the
+   * line for a bounded window — hanging up immediately would make confirmation impossible,
+   * and staying forever would burn call minutes on someone who walked away.
+   */
+  awaitDigit() {
+    if (this.digitTimer || this.closed) return
+    log(this.channelId, `awaiting keypress (${CONFIRM_WAIT_SECS}s)`)
+    this.digitTimer = setTimeout(() => {
+      if (this.closed || this.digit) return
+      log(this.channelId, 'no keypress — timed out')
+      void this.finishConfirm('timeout')
+    }, CONFIRM_WAIT_SECS * 1000)
+  }
+
+  async onDigit(digit) {
+    if (!digit || this.digit) return
+    this.digit = digit
+    log(this.channelId, `keypress: ${digit}`)
+    await this.finishConfirm('pressed')
+  }
+
+  /** Record the answer, tell whoever asked for it, then end the call. */
+  async finishConfirm(how) {
+    if (this.digitTimer) { clearTimeout(this.digitTimer); this.digitTimer = null }
+    const result = {
+      call_id: this.channelId,
+      ref: this.confirmRef || null,
+      digit: this.digit,
+      // 'confirmed' / 'declined' are just the conventional meanings of 1 and 2; any other
+      // key is reported verbatim so the caller can define its own mapping later.
+      outcome: this.digit === '1' ? 'confirmed' : this.digit === '2' ? 'declined' : how === 'timeout' ? 'no_response' : 'other',
+      answeredAt: cdr.get(this.channelId)?.answeredAt ?? null,
+    }
+    putCdr(this.channelId, { digit: this.digit, confirmOutcome: result.outcome })
+    if (this.confirmCallbackUrl) {
+      try {
+        await fetch(this.confirmCallbackUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(INTERNAL_TOKEN ? { Authorization: `Bearer ${INTERNAL_TOKEN}` } : {}) },
+          body: JSON.stringify(result),
+          signal: AbortSignal.timeout(10_000),
+        })
+      } catch (err) { log(this.channelId, 'confirm callback failed:', err?.message) }
+    }
+    await this.hangup(`confirm ${result.outcome}`)
+  }
+
   // ── lifecycle ──────────────────────────────────────────────────────────────
   async hangup(reason) {
     if (this.closed) return
     this.closed = true
     log(this.channelId, 'hangup', reason ? `(${reason})` : '')
     if (this.playTimer) { clearInterval(this.playTimer); this.playTimer = null }
+    if (this.digitTimer) { clearTimeout(this.digitTimer); this.digitTimer = null }
     try { this.bot?.close() } catch { /* */ }
     try { this.asSocket?.end() } catch { /* */ }
     // End the PSTN leg + tidy the bridge/externalMedia via ARI.
@@ -410,6 +467,10 @@ async function onInboundCall(e) {
       recipientName: owner ? 'Boss' : (caller || ''),
       voice: INBOUND_VOICE,
       callType: owner ? 'owner' : 'inbound',
+      // Human transfer must keep working on the fallback path too — a customer who asks for
+      // a person should still reach the support line when the app is unreachable.
+      forwardSupport: process.env.SIP_FORWARD_SUPPORT || '',
+      forwardBoss: process.env.SIP_FORWARD_BOSS || process.env.NGS_FORWARD_NUMBER || '',
     }
     log(chanId, `inbound params fallback (app unreachable) owner=${owner ? 'y' : 'n'}`)
   }
@@ -522,10 +583,17 @@ async function onAriEvent(e) {
       break
     }
     case 'PlaybackFinished': {
-      // One-way message call: the audio finished, so end the leg (nothing else to say).
       const target = String(e.playback?.target_uri || '').replace(/^channel:/, '')
       const call = target && calls.get(target)
-      if (call && call.playOnly && !call.closed) void call.hangup('playback finished')
+      if (!call || call.closed || !call.playOnly) break
+      // Confirmation calls stay on the line waiting for a keypress; plain message calls end.
+      if (call.collectDigits) call.awaitDigit()
+      else void call.hangup('playback finished')
+      break
+    }
+    case 'ChannelDtmfReceived': {
+      const call = chanId && calls.get(chanId)
+      if (call && call.collectDigits && !call.digit) void call.onDigit(String(e.digit ?? ''))
       break
     }
     case 'StasisEnd':
@@ -603,7 +671,15 @@ const ctrlServer = http.createServer(async (req, res) => {
       }
       const channelId = 'sip-' + randomUUID()
       const call = new Call(channelId, params)
-      if (playUrl) { call.playOnly = true; call.playUrl = playUrl }
+      if (playUrl) {
+        call.playOnly = true
+        call.playUrl = playUrl
+        // Confirmation mode: after the message, wait for the receiver to press a key
+        // (1 = confirmed, 2 = declined by convention) and report what they pressed.
+        call.collectDigits = Boolean(body.collectDigits)
+        call.confirmCallbackUrl = String(body.confirmCallbackUrl || '')
+        call.confirmRef = String(body.ref || '')
+      }
       calls.set(channelId, call)
       putCdr(channelId, { direction: 'outbound', to, startedAt: Date.now(), answered: false, status: 'ringing' })
       try {
@@ -648,7 +724,17 @@ const ctrlServer = http.createServer(async (req, res) => {
       // Live-modify / transfer. Body carries responseXml with <Dial to="…">. Phase 2
       // wires the full bridged transfer; Phase 1 answers safely so the bot never errors.
       const bodyRaw = await readBody(req)
-      const to = (bodyRaw.match(/<Dial[^>]*\bto="([^"]+)"/i) || [])[1]
+      // The bot posts the XML the NGS way: form-encoded as `responseXml`, so the raw body is
+      // percent-encoded and a regex over it finds nothing (live 2026-07-25: every transfer
+      // failed with "no <Dial to=…>"). Decode first, and accept JSON/raw XML too.
+      let xml = bodyRaw
+      const ct = String(req.headers['content-type'] || '')
+      if (ct.includes('application/x-www-form-urlencoded')) {
+        xml = new URLSearchParams(bodyRaw).get('responseXml') || bodyRaw
+      } else if (ct.includes('application/json')) {
+        try { xml = JSON.parse(bodyRaw)?.responseXml || bodyRaw } catch { /* keep raw */ }
+      }
+      const to = (xml.match(/<Dial[^>]*\bto="([^"]+)"/i) || [])[1]
       const call = calls.get(id)
       if (!call) return json(res, 404, { error: 'no such call' })
       if (!to) return json(res, 400, { error: 'no <Dial to=…> in body' })

@@ -431,7 +431,13 @@ export async function makeSipCall(text, opts = {}) {
     return { ok: false, error: 'SIP one-way env missing (SIP_GATEWAY_BASE/KEY/SECRET + destination)' }
   }
   try {
-    const mp3Buffer = await synthesizeCallAudio(text.slice(0, MESSAGE_CALL_TEXT_LIMIT), opts)
+    // Confirmation calls end with a spoken instruction, then the gateway stays on the line
+    // for the keypress. Appending it here (rather than at the call site) guarantees the
+    // receiver is ALWAYS told what to press whenever confirmation is requested.
+    const spoken = opts.confirm
+      ? `${text} ${opts.confirmPrompt ?? 'বুঝেছেন এবং কাজটি করবেন — নিশ্চিত করতে ১ চাপুন। না পারলে বা পরে জানাতে চাইলে ২ চাপুন।'}`
+      : text
+    const mp3Buffer = await synthesizeCallAudio(spoken.slice(0, MESSAGE_CALL_TEXT_LIMIT), opts)
     const wavBuffer = await mp3ToTelephonyWav(mp3Buffer)
     const supabase = getSupabase()
     const storagePath = `calls/sip_${Date.now()}.wav`
@@ -444,10 +450,23 @@ export async function makeSipCall(text, opts = {}) {
       .createSignedUrl(storagePath, 3600)
     if (signErr || !signed?.signedUrl) throw new Error(`signed url: ${signErr?.message ?? 'none'}`)
 
+    const appUrl = (process.env.APP_URL || '').replace(/\/$/, '')
     const res = await fetch(`${base}/api/v1/call`, {
       method: 'POST',
       headers: { 'X-Authorization': key, 'X-Authorization-Secret': secret, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: String(toNumber), playUrl: signed.signedUrl }),
+      body: JSON.stringify({
+        to: String(toNumber),
+        playUrl: signed.signedUrl,
+        ...(opts.confirm
+          ? {
+              collectDigits: true,
+              ref: opts.ref ?? '',
+              // Where the keypress lands. Default: our own app, so the result is recorded
+              // and the owner can be told whether the staff member actually acknowledged.
+              confirmCallbackUrl: opts.confirmCallbackUrl ?? (appUrl ? `${appUrl}/api/assistant/voice-call/sip-confirm` : ''),
+            }
+          : {}),
+      }),
       signal: AbortSignal.timeout(30_000),
     })
     const data = await res.json().catch(() => ({}))

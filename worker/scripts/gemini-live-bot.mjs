@@ -137,7 +137,8 @@ const SYS_INBOUND = `তুমি ALMA-র (একটি বাংলাদে�
 - গ্রাহককে সম্মানের সাথে "আপনি" বলে সহজ, স্পষ্ট বাংলায় কথা বলো। তুমি ব্যবসার মালিক নও — মালিককে "বস" ইত্যাদি বলবে না।
 - গ্রাহক কী চান মন দিয়ে বুঝে নাও (পণ্যের খোঁজ, অর্ডার, দাম, ডেলিভারি, অভিযোগ ইত্যাদি)। বিনয়ের সাথে দরকারি তথ্য (নাম, কী চান, ফোন) জেনে নাও।
 - ভেতরের গোপন তথ্য (মোট বিক্রি, অন্য গ্রাহকের তথ্য, হিসাব) কখনো বলবে না। নিশ্চিত না জানলে বানিয়ে বলবে না — বলো "আমি বিষয়টা টিম/মালিককে জানিয়ে দিচ্ছি, উনি আপনাকে জানাবেন।"
-- কলদাতা যদি সরাসরি বস/মালিক বা টিমের সাথে কথা বলতে চান, অথবা বিষয়টি গুরুত্বপূর্ণ/জরুরি/স্পর্শকাতর মনে হয় এবং তুমি নিজে সমাধান করতে পারছ না — তখন কলটা টিমের নম্বরে যুক্ত করে দাও। এর জন্য অবশ্যই forward_call ফাংশনটা কল করতে হবে — শুধু মুখে "যুক্ত করে দিচ্ছি" বললে ট্রান্সফার হবে না, ফাংশন কল না করলে সিস্টেম যুক্ত করতে পারবে না। সংক্ষেপে "জি, একটু ধরুন, যুক্ত করে দিচ্ছি" বলেই সাথে সাথে forward_call কল করবে। অকারণে বারবার ট্রান্সফার করবে না — আগে নিজে সাহায্যের চেষ্টা করবে।
+- কলদাতা যদি সরাসরি মানুষের সাথে কথা বলতে চান, অথবা বিষয়টি গুরুত্বপূর্ণ/জরুরি/স্পর্শকাতর মনে হয় এবং তুমি নিজে সমাধান করতে পারছ না — তখন কলটা যুক্ত করে দাও। এর জন্য অবশ্যই forward_call ফাংশনটা কল করতে হবে — শুধু মুখে "যুক্ত করে দিচ্ছি" বললে ট্রান্সফার হবে না, ফাংশন কল না করলে সিস্টেম যুক্ত করতে পারবে না। সংক্ষেপে "জি, একটু ধরুন, যুক্ত করে দিচ্ছি" বলেই সাথে সাথে forward_call কল করবে। অকারণে বারবার ট্রান্সফার করবে না — আগে নিজে সাহায্যের চেষ্টা করবে।
+- **কোথায় যুক্ত করবে (target) খুব সাবধানে বাছবে:** অর্ডার, ডেলিভারি, পণ্য, দাম, সাইজ, রিটার্ন/এক্সচেঞ্জ, পেমেন্ট, অভিযোগ — অর্থাৎ গ্রাহক-সংক্রান্ত সব বিষয়ে target="support" (কাস্টমার সার্ভিস লাইন)। শুধুমাত্র কলদাতা যখন নির্দিষ্টভাবে বস/মালিককেই চাইছেন, অথবা বিষয়টি ব্যক্তিগত/অত্যন্ত জরুরি এবং সাপোর্ট টিমের এখতিয়ারের বাইরে — তখনই target="boss"। সাধারণ গ্রাহকের প্রশ্ন কখনোই বসের ফোনে পাঠাবে না।
 - কাজ শেষ হলে ভদ্রভাবে ধন্যবাদ দিয়ে বিদায় নাও। কল শেষে মালিক গ্রাহকের দরকারের একটা সারাংশ পাবেন।
 ${SYS_COMMON}`
 
@@ -212,10 +213,27 @@ const NGS_FORWARD_NUMBER = process.env.NGS_FORWARD_NUMBER || ''
 // The ws URL NGS uses to reach THIS bot — needed to reconnect the caller to the AI if the
 // forward isn't answered. Same value as the inbound webhook's NGS_LIVE_WS_URL.
 const GLIVE_PUBLIC_WS_URL = process.env.GLIVE_PUBLIC_WS_URL || process.env.NGS_LIVE_WS_URL || 'ws://31.97.237.40:8766/ws'
+// Self-hosted SIP gives us as many forward targets as we want (NGS allowed exactly one).
+// Owner decision 2026-07-25: boss-related calls go to the owner, customer-service topics go
+// to the business support line — the model picks, so a customer never lands on the boss's
+// phone for an order enquiry. Per-call values (from the inbound resolver) override these.
+const FORWARD_BOSS_NUMBER = process.env.SIP_FORWARD_BOSS || process.env.NGS_FORWARD_NUMBER || ''
+const FORWARD_SUPPORT_NUMBER = process.env.SIP_FORWARD_SUPPORT || ''
 const FORWARD_FN_DECL = {
   name: 'forward_call',
-  description: 'কলদাতাকে সরাসরি বস/মালিক বা টিমের সাথে যুক্ত করতে কলটি ট্রান্সফার করে দাও। ব্যবহার করো যখন: কলদাতা বলেন তিনি বস/মালিক/টিমের সাথে কথা বলতে চান, অথবা বিষয়টি গুরুত্বপূর্ণ/জরুরি/স্পর্শকাতর এবং তুমি নিজে সমাধান করতে পারছ না। ট্রান্সফারের ঠিক আগে কলদাতাকে সংক্ষেপে বলো "জি, একটু ধরুন, যুক্ত করে দিচ্ছি"। ট্রান্সফারের পর কল আর তোমার কাছে থাকবে না।',
-  parameters: { type: Type.OBJECT, properties: { reason: { type: Type.STRING, description: 'কেন ট্রান্সফার করছ — সংক্ষেপে (মালিকের রেকর্ডের জন্য)।' } } },
+  description: 'কলদাতাকে একজন মানুষের সাথে যুক্ত করতে কলটি ট্রান্সফার করে দাও। ব্যবহার করো যখন: কলদাতা বস/মালিক বা টিমের সাথে কথা বলতে চান, অথবা বিষয়টি গুরুত্বপূর্ণ/জরুরি/স্পর্শকাতর এবং তুমি নিজে সমাধান করতে পারছ না। target দিয়ে ঠিক করো কোথায় যাবে — এটা ভুল হলে কাস্টমারের সাধারণ প্রশ্ন সরাসরি বসের ফোনে চলে যাবে, তাই মন দিয়ে বাছো। ট্রান্সফারের ঠিক আগে কলদাতাকে সংক্ষেপে বলো "জি, একটু ধরুন, যুক্ত করে দিচ্ছি"। ট্রান্সফারের পর কল আর তোমার কাছে থাকবে না।',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      target: {
+        type: Type.STRING,
+        enum: ['support', 'boss'],
+        description: 'কোথায় যুক্ত করবে। "support" = কাস্টমার সার্ভিস/ব্যবসার লাইন — অর্ডার, ডেলিভারি, পণ্য, দাম, রিটার্ন, অভিযোগ, পেমেন্ট, যেকোনো গ্রাহক-সংক্রান্ত বিষয় (বেশিরভাগ কলই এটা)। "boss" = শুধু তখনই, যখন কলদাতা নির্দিষ্টভাবে বস/মালিককেই চাইছেন অথবা বিষয়টি ব্যক্তিগত/অত্যন্ত জরুরি এবং সাপোর্ট টিমের এখতিয়ারের বাইরে।',
+      },
+      reason: { type: Type.STRING, description: 'কেন ট্রান্সফার করছ — সংক্ষেপে (মালিকের রেকর্ডের জন্য)।' },
+    },
+    required: ['target'],
+  },
 }
 
 let seq = 0
@@ -246,6 +264,8 @@ class Call {
     this.reported = false        // post-call report fires exactly once
     this.forwarding = false      // forward_call queued — transfer after the hand-off line plays
     this.forwardReason = ''
+    this.forwardTarget = ''      // 'support' | 'boss' — chosen by the model
+    this.forwardDest = ''        // the resolved number for that target
     this.transferred = false     // <Dial> bridge accepted — bot is OFF the audio path
     this._xferIdle = null
   }
@@ -470,9 +490,10 @@ class Call {
     const costBdt = durationSecs != null ? Math.round(Math.ceil(durationSecs / 60) * perMin) : null
     let summary = this.turns.length > 0 ? await this.summarize(this.turns) : null
     if (this.transferred) {
+      const where = this.forwardTarget === 'boss' ? 'বসের নম্বরে' : 'কাস্টমার সাপোর্ট নম্বরে'
       summary = summary
-        ? `কলটি টিমের নম্বরে যুক্ত করে দেওয়া হয়েছে। ${summary}`
-        : 'কলটি টিমের নম্বরে যুক্ত করে দেওয়া হয়েছে।'
+        ? `কলটি ${where} যুক্ত করে দেওয়া হয়েছে। ${summary}`
+        : `কলটি ${where} যুক্ত করে দেওয়া হয়েছে।`
     }
     const payload = { callRecordId, callSid: this.callId, transcript: this.turns, summary, durationSecs, status, costBdt, provider: this.transport === 'twilio' ? 'glive-wa' : 'ngs' }
     if (!APP_URL || !AUTH_TOKEN) {
@@ -491,17 +512,30 @@ class Call {
 
   isOwnerCall() { const c = this.params?.callType; return !c || c === 'owner' }
 
-  // Where a transfer goes. Multi-DID (self-hosted SIP): the inbound resolver can hand
-  // this call its OWN forward number per line (boss line vs support line); everything
-  // else keeps using the single NGS_FORWARD_NUMBER env.
-  forwardNumber() { return this.params?.forwardNumber || NGS_FORWARD_NUMBER }
+  /**
+   * Where a transfer goes, for the target the model chose. Per-call values (sent by the
+   * inbound resolver, so a DID can have its own pair) win over the env defaults. Falls back
+   * across targets rather than failing a live transfer: a caller mid-sentence must never be
+   * told "sorry, that line isn't configured" when another human line exists.
+   */
+  forwardNumber(target) {
+    const boss = this.params?.forwardBoss || FORWARD_BOSS_NUMBER
+    const support = this.params?.forwardSupport || FORWARD_SUPPORT_NUMBER
+    // params.forwardNumber = the legacy single-target field (NGS-era calls still send it).
+    const legacy = this.params?.forwardNumber || ''
+    if (target === 'boss') return boss || legacy || support
+    if (target === 'support') return support || legacy || boss
+    return legacy || support || boss
+  }
+  /** Is ANY human line reachable on this call? (gates the tool being offered at all) */
+  hasForwardTarget() { return Boolean(this.forwardNumber('support') || this.forwardNumber('boss')) }
 
   // Which function tools this call gets: owner → ERP reads; inbound → forward_call (only
   // when a forward number is configured); staff/contact → none.
   toolDecls() {
     // PA-3: owner calls also get submit_boss_instruction (head-agent hand-off).
     if (this.isOwnerCall()) return [...ERP_FN_DECLS, SUBMIT_INSTRUCTION_FN_DECL]
-    if (this.params?.callType === 'inbound' && this.forwardNumber()) return [FORWARD_FN_DECL]
+    if (this.params?.callType === 'inbound' && this.hasForwardTarget()) return [FORWARD_FN_DECL]
     return []
   }
 
@@ -509,7 +543,7 @@ class Call {
   // agent's "একটু ধরুন, যুক্ত করে দিচ্ছি" line fully play (drain), THEN issue the transfer
   // from the drain loop (finishForward). The tool response tells the model it's connecting
   // so it says the hand-off line and then waits.
-  requestForward(reason) {
+  requestForward(reason, target) {
     // Human-PA point 7: ask_first mode — never blind-transfer. Take the message,
     // ping the boss instantly (urgent-alert), and keep the caller with the AI.
     if (this.params?.transferMode === 'ask_first') {
@@ -531,11 +565,14 @@ class Call {
       return { ok: true, status: 'message_mode', instruction: 'কলদাতাকে ভদ্রভাবে বলো: "উনি এই মুহূর্তে ব্যস্ত আছেন — আপনার নাম আর প্রয়োজনটা বলুন, আমি এখনই ওনাকে পৌঁছে দিচ্ছি।" তারপর নাম/নম্বর/বিষয় জেনে নাও; কল ট্রান্সফার হবে না।' }
     }
     if (!this.callId || !NGS_KEY) return { ok: false, error: 'forward not configured (callId/creds)' }
-    if (!this.forwardNumber()) return { ok: false, error: 'forward number not set (NGS_FORWARD_NUMBER / per-DID forwardNumber)' }
+    const dest = this.forwardNumber(target)
+    if (!dest) return { ok: false, error: 'forward number not set (SIP_FORWARD_BOSS / SIP_FORWARD_SUPPORT)' }
+    this.forwardTarget = target || 'support'
+    this.forwardDest = dest
     this.forwarding = true
     this.forwardReason = reason || ''
     this.forwardAt = Date.now() // don't transfer until the hand-off line has had time to play
-    console.log(`[glive] ${this.id} forward QUEUED -> ${this.forwardNumber()} (reason: ${this.forwardReason || '-'})`)
+    console.log(`[glive] ${this.id} forward QUEUED -> ${this.forwardTarget}:${dest} (reason: ${this.forwardReason || '-'})`)
     return { ok: true, status: 'connecting', instruction: 'কলদাতাকে সংক্ষেপে "জি, একটু ধরুন, যুক্ত করে দিচ্ছি" বলো, তারপর অপেক্ষা করো — সিস্টেম এখন যুক্ত করছে।' }
   }
 
@@ -554,7 +591,7 @@ class Call {
       const P = (n, v) => `<parameter name="${esc(n)}" value="${esc(v)}"/>`
       const backPurpose = 'কলটি টিমের নম্বরে যুক্ত করার চেষ্টা হয়েছিল এবং কলদাতা আবার তোমার লাইনে ফিরে এসেছে (সম্ভবত কেউ ধরেনি)। বিনয়ের সাথে বলো — "আমি আবার লাইনে আছি" — এই মুহূর্তে সরাসরি যুক্ত করা গেল না; তার নাম, নম্বর ও বিষয়টি নিশ্চিত করে নাও যাতে টিম পরে কল করতে পারে, অথবা তুমি নিজে যতটা পারো সাহায্য করো।'
       const fallbackStream = `<Connect><Stream name="alma" url="${esc(GLIVE_PUBLIC_WS_URL)}">${P('id', this.params?.id || '')}${P('exp', String(exp))}${P('t', t)}${P('purpose', backPurpose)}${P('recipientName', this.params?.recipientName || '')}${P('voice', this.params?.voice || VOICE)}${P('callType', 'inbound')}</Stream></Connect>`
-      const responseXml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true" timeout="30" to="${esc(this.forwardNumber())}"/>${fallbackStream}</Response>`
+      const responseXml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true" timeout="30" to="${esc(this.forwardDest)}"/>${fallbackStream}</Response>`
       try {
         // Self-hosted SIP routes the live-modify to our gateway (which parses <Dial to=…>);
         // NGS keeps its own base + creds. Same responseXml body shape either way.
@@ -568,7 +605,7 @@ class Call {
           body: new URLSearchParams({ responseXml }),
         })
         const text = await res.text()
-        console.log(`[glive] ${this.id} forward_call -> ${this.forwardNumber()} PUT ${res.status} ${text.slice(0, 120)}`)
+        console.log(`[glive] ${this.id} forward_call -> ${this.forwardTarget}:${this.forwardDest} PUT ${res.status} ${text.slice(0, 120)}`)
         if (!res.ok) { this.forwarding = false; this._fwdTimer = null } // transfer refused — stay on the line
         else this.quiesceAfterTransfer() // NGS accepted the bridge — get OFF the audio path
       } catch (e) {
@@ -606,7 +643,7 @@ class Call {
     for (const fc of calls) {
       let out
       if (fc.name === 'forward_call') {
-        out = this.requestForward(fc.args?.reason)
+        out = this.requestForward(fc.args?.reason, fc.args?.target)
       } else if (fc.name === 'submit_boss_instruction') {
         // PA-3: owner-call only (server re-verifies against the call record).
         if (!this.isOwnerCall()) {
