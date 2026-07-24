@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { Prisma } from '@prisma/client'
 import {
   buildGalleryCursorWhere,
   buildGalleryWhere,
@@ -45,6 +46,17 @@ describe('Creative Studio Gallery query', () => {
     expect(json).toContain('image_gen')
     expect(json).toContain('AL-101')
     expect(json).toContain('e2e-')
+    expect(where).toMatchObject({
+      AND: expect.arrayContaining([
+        {
+          OR: expect.arrayContaining([
+            { payload: { path: ['testArtifact'], equals: Prisma.AnyNull } },
+          ]),
+        },
+      ]),
+    })
+    expect(json).toContain('"path":["testArtifact"],"not":true')
+    expect(json).toContain('"path":["e2e"],"not":true')
     expect(json).toContain('"path":["qc","pass"],"equals":false')
     expect(json).toContain('"path":["qc","pass"],"equals":true')
   })

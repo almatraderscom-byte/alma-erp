@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client'
+
 export const GALLERY_PAGE_SIZE = 24
 export const GALLERY_MAX_PAGE_SIZE = 48
 
@@ -104,16 +106,31 @@ export function buildGalleryWhere(filters: GalleryFilters): Record<string, unkno
   else and.push({ type: { in: ['image_gen', 'video_gen', 'video_edit', 'audio_gen'] } })
 
   if (!filters.includeTest) {
-    and.push({
-      NOT: {
+    // PostgreSQL JSON-path comparisons return SQL NULL when a key is absent.
+    // Wrapping several of those comparisons in one `NOT (a OR b …)` therefore
+    // excludes normal legacy rows as UNKNOWN. Include absent keys explicitly,
+    // then reject only rows that positively identify themselves as test data.
+    and.push(
+      {
         OR: [
-          { payload: { path: ['testArtifact'], equals: true } },
-          { payload: { path: ['e2e'], equals: true } },
-          { payload: { path: ['videoName'], string_contains: 'e2e-' } },
-          { summary: { contains: 'e2e-', mode: 'insensitive' } },
+          { payload: { path: ['testArtifact'], equals: Prisma.AnyNull } },
+          { payload: { path: ['testArtifact'], not: true } },
         ],
       },
-    })
+      {
+        OR: [
+          { payload: { path: ['e2e'], equals: Prisma.AnyNull } },
+          { payload: { path: ['e2e'], not: true } },
+        ],
+      },
+      {
+        OR: [
+          { payload: { path: ['videoName'], equals: Prisma.AnyNull } },
+          { NOT: { payload: { path: ['videoName'], string_contains: 'e2e-' } } },
+        ],
+      },
+      { NOT: { summary: { contains: 'e2e-', mode: 'insensitive' } } },
+    )
   }
 
   if (filters.query) {
