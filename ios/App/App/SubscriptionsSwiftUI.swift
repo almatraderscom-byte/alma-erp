@@ -355,6 +355,7 @@ struct SubscriptionsScreen: View {
     @State private var vm = SubscriptionsVM()
     @State private var editing: Subscription? = nil
     @State private var showEditor = false
+    @State private var expandedProviderIDs = Set<String>()
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -393,12 +394,14 @@ struct SubscriptionsScreen: View {
     /// Provider truth stays explicit: only provider-published wallet, quota and
     /// cost values occupy the main fields; local estimates stay separate.
     private var apiBalanceStrip: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("PROVIDER BILLING").font(.system(size: 10, weight: .bold))
-                        .kerning(0.5).foregroundStyle(.secondary)
-                    Text("Provider values · local estimate আলাদা").font(.system(size: 10)).foregroundStyle(.tertiary)
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Provider billing")
+                        .font(.headline)
+                    Text("Tap a provider to view its full billing detail")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button {
@@ -407,161 +410,367 @@ struct SubscriptionsScreen: View {
                     if vm.refreshingProviders {
                         ProgressView().controlSize(.small)
                     } else {
-                        Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .bold))
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 14, weight: .semibold))
                     }
                 }
                 .disabled(vm.refreshingProviders)
                 .accessibilityLabel("Provider data refresh")
-                .frame(width: 32, height: 32)
-                .subGlass(scheme, corner: 10)
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.circle)
             }
-            ForEach(vm.apiBalances) { provider in
-                VStack(alignment: .leading, spacing: 9) {
-                    HStack(alignment: .top, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(provider.label).font(.system(size: 13.5, weight: .bold))
-                            Text(provider.plan ?? sourceLabel(provider.sourceType))
-                                .font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(balanceText(provider))
-                                .font(.system(size: 15, weight: .bold, design: .rounded).monospacedDigit())
-                                .foregroundStyle(balanceColor(provider))
-                            Text(balanceKindLabel(provider))
-                                .font(.system(size: 8.5, weight: .bold))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    if let quota = provider.quota, quota.limit > 0 {
-                        ProgressView(value: min(max(quota.used / quota.limit, 0), 1))
-                            .tint(quota.remaining <= quota.limit * 0.1 ? SubPalette.red : SubPalette.emerald)
-                        Text(
-                            "\(compact(quota.remaining)) \(quota.unit) বাকি · \(compact(quota.used))/\(compact(quota.limit))"
-                            + (quota.overage.map { " · overage \($0.currency) \(String(format: "%.2f", $0.amount))" } ?? "")
-                        )
-                            .font(.system(size: 9.5).monospacedDigit()).foregroundStyle(.secondary)
-                    }
-                    if let usage = provider.usage {
-                        Text("এই মাসে \(compact(usage.amount)) \(usage.unit)")
-                            .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                    if provider.costAuthoritative, let published = provider.providerMonthUsd {
-                        HStack(spacing: 6) {
-                            providerMetric(
-                                provider.id == "vercel" ? "Team billed MTD" : "Provider MTD",
-                                fmt(published)
-                            )
-                            providerMetric(
-                                provider.id == "vercel" ? "Scope" : "Local after cutoff",
-                                provider.id == "vercel"
-                                    ? "Entire team"
-                                    : (provider.localDeltaUsd.map { fmt($0) } ?? "—")
-                            )
-                            providerMetric(
-                                provider.id == "vercel" ? "Invoice / due" : "Combined tracked",
-                                provider.id == "vercel"
-                                    ? "Not exposed"
-                                    : (provider.monthUsd.map { fmt($0) } ?? "—")
-                            )
-                        }
-                    } else {
-                        HStack(spacing: 6) {
-                            providerMetric("Local today", provider.todayUsd.map { fmt($0) } ?? "—")
-                            providerMetric("Local MTD", provider.monthUsd.map { fmt($0) } ?? "—")
-                            providerMetric(
-                                "Cost truth",
-                                provider.monthUsd == nil ? "Not exposed" : "Estimate only"
-                            )
-                        }
-                    }
-                    HStack(spacing: 5) {
-                        fieldBadge("Wallet", fieldTruth(provider, "balance"))
-                        fieldBadge("Cost", fieldTruth(provider, "cost"))
-                        fieldBadge("Usage", fieldTruth(provider, "usage"))
-                    }
-                    HStack(spacing: 5) {
-                        fieldBadge("Plan", fieldTruth(provider, "plan"))
-                        fieldBadge("Invoice", fieldTruth(provider, "invoice"))
-                        Spacer(minLength: 0)
-                    }
-                    if let invoice = provider.invoice {
-                        HStack(alignment: .top, spacing: 8) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(
-                                    invoice.kind == "open"
-                                        ? "OPEN INVOICE"
-                                        : invoice.kind == "preview" ? "CURRENT INVOICE PREVIEW" : "NEXT INVOICE"
-                                )
-                                    .font(.system(size: 8.5, weight: .bold)).foregroundStyle(SubPalette.gold)
-                                Text(invoice.status + " · " + invoiceDate(invoice.dueAt))
-                                    .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                            Spacer()
-                            Text(invoiceAmount(invoice))
-                                .font(.system(size: 11.5, weight: .bold, design: .rounded).monospacedDigit())
-                        }
-                        .padding(.horizontal, 9).padding(.vertical, 8)
-                        .background(SubPalette.gold.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                    }
-                    HStack(spacing: 6) {
-                        Circle().fill(statusColor(provider.status)).frame(width: 6, height: 6)
-                        Text(statusLabel(provider.status)).font(.system(size: 9.5, weight: .bold))
-                        Spacer()
-                        if let raw = provider.dashboardUrl, let url = URL(string: raw) {
-                            Link(destination: url) {
-                                Label("Dashboard", systemImage: "arrow.up.right.square")
-                                    .font(.system(size: 9.5, weight: .semibold))
-                            }
-                        }
-                    }
-                    if let message = provider.statusMessage, !message.isEmpty {
-                        Text(message).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(2)
-                    }
+            .padding(16)
+
+            Divider().padding(.leading, 16)
+
+            ForEach(Array(vm.apiBalances.enumerated()), id: \.element.id) { index, provider in
+                providerRow(provider)
+                if index < vm.apiBalances.count - 1 {
+                    Divider().padding(.leading, 68)
                 }
-                .padding(13)
-                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(statusColor(provider.status).opacity(0.25), lineWidth: 1))
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(13)
-        .background(Color.primary.opacity(0.03),
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .subSolid(scheme, corner: 22)
+    }
+
+    private func providerRow(_ provider: SubApiBalance) -> some View {
+        let expanded = expandedProviderIDs.contains(provider.id)
+        return VStack(spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.24)) {
+                    if expanded {
+                        expandedProviderIDs.remove(provider.id)
+                    } else {
+                        expandedProviderIDs = [provider.id]
+                    }
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    providerIcon(provider)
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(provider.label)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(statusColor(provider.status))
+                                .frame(width: 6, height: 6)
+                            Text(statusLabel(provider.status))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Spacer(minLength: 8)
+
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text(providerPrimaryValue(provider))
+                            .font(.system(.headline, design: .rounded, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(providerPrimaryColor(provider))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                        Text(providerPrimaryLabel(provider))
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                "\(provider.label), \(providerPrimaryValue(provider)), "
+                + "\(providerPrimaryLabel(provider)), \(statusLabel(provider.status))"
+            )
+            .accessibilityHint(expanded ? "Hide billing details" : "Show billing details")
+
+            if expanded {
+                providerDetails(provider)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    private func providerIcon(_ provider: SubApiBalance) -> some View {
+        let color = SubPalette.brand(provider.label)
+        return ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(color.opacity(scheme == .dark ? 0.18 : 0.12))
+            Text(String(provider.label.prefix(1)).uppercased())
+                .font(.system(size: 17, weight: .bold, design: .rounded))
+                .foregroundStyle(color)
+        }
+        .frame(width: 40, height: 40)
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(color.opacity(0.22), lineWidth: 1)
+        }
+    }
+
+    private func providerDetails(_ provider: SubApiBalance) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(spacing: 0) {
+                providerFact("Source", provider.plan ?? sourceLabel(provider.sourceType))
+                Divider()
+                if provider.costAuthoritative, let published = provider.providerMonthUsd {
+                    providerFact(
+                        provider.id == "vercel" ? "Team billed MTD" : "Provider MTD",
+                        fmt(published)
+                    )
+                    Divider()
+                    providerFact(
+                        provider.id == "vercel" ? "Scope" : "Local after cutoff",
+                        provider.id == "vercel"
+                            ? "Entire team"
+                            : (provider.localDeltaUsd.map { fmt($0) } ?? "—")
+                    )
+                    Divider()
+                    providerFact(
+                        provider.id == "vercel" ? "Invoice / due" : "Combined tracked",
+                        provider.id == "vercel"
+                            ? "Not exposed"
+                            : (provider.monthUsd.map { fmt($0) } ?? "—")
+                    )
+                } else {
+                    providerFact("Local today", provider.todayUsd.map { fmt($0) } ?? "—")
+                    Divider()
+                    providerFact("Local MTD", provider.monthUsd.map { fmt($0) } ?? "—")
+                    Divider()
+                    providerFact(
+                        "Cost truth",
+                        provider.monthUsd == nil ? "Not exposed" : "Estimate only"
+                    )
+                }
+
+                if let quota = provider.quota, quota.limit > 0 {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack {
+                            Text("Usage quota")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(compact(quota.remaining)) \(quota.unit) remaining")
+                                .fontWeight(.semibold)
+                        }
+                        .font(.subheadline)
+                        ProgressView(value: min(max(quota.used / quota.limit, 0), 1))
+                            .tint(quota.remaining <= quota.limit * 0.1 ? SubPalette.red : SubPalette.emerald)
+                    }
+                    .padding(.vertical, 10)
+                }
+
+                if let usage = provider.usage {
+                    Divider()
+                    providerFact("This month", "\(compact(usage.amount)) \(usage.unit)")
+                }
+            }
+            .padding(.horizontal, 12)
+            .background(
+                Color.primary.opacity(0.035),
+                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+            )
+
+            VStack(spacing: 0) {
+                truthRow("wallet.pass", "Wallet", fieldTruth(provider, "balance"))
+                Divider().padding(.leading, 34)
+                truthRow("chart.line.uptrend.xyaxis", "Cost", fieldTruth(provider, "cost"))
+                Divider().padding(.leading, 34)
+                truthRow("gauge.with.dots.needle.33percent", "Usage", fieldTruth(provider, "usage"))
+                Divider().padding(.leading, 34)
+                truthRow("rectangle.3.group", "Plan", fieldTruth(provider, "plan"))
+                Divider().padding(.leading, 34)
+                truthRow("doc.text", "Invoice", fieldTruth(provider, "invoice"))
+            }
+            .padding(.horizontal, 12)
+            .background(
+                Color.primary.opacity(0.035),
+                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+            )
+
+            if let invoice = provider.invoice {
+                HStack(spacing: 10) {
+                    Image(systemName: "doc.text.fill")
+                        .foregroundStyle(SubPalette.gold)
+                        .frame(width: 28, height: 28)
+                        .background(SubPalette.gold.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(invoiceTitle(invoice))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(invoice.status + " · " + invoiceDate(invoice.dueAt))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(invoiceAmount(invoice))
+                        .font(.headline.monospacedDigit())
+                }
+                .padding(12)
+                .background(
+                    SubPalette.gold.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                )
+            }
+
+            if let message = provider.statusMessage, !message.isEmpty {
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let raw = provider.dashboardUrl, let url = URL(string: raw) {
+                Link(destination: url) {
+                    Label("Open provider dashboard", systemImage: "arrow.up.right.square")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
+    }
+
+    private func providerFact(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 12) {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .fontWeight(.semibold)
+                .monospacedDigit()
+                .multilineTextAlignment(.trailing)
+        }
+        .font(.subheadline)
+        .padding(.vertical, 10)
+    }
+
+    private func truthRow(_ icon: String, _ label: String, _ truth: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 24)
+            Text(label)
+            Spacer()
+            Circle()
+                .fill(truthColor(truth))
+                .frame(width: 6, height: 6)
+            Text(truth)
+                .foregroundStyle(truthColor(truth))
+                .fontWeight(.medium)
+        }
+        .font(.subheadline)
+        .padding(.vertical, 9)
+    }
+
+    private func invoiceTitle(_ invoice: SubProviderInvoice) -> String {
+        if invoice.kind == "open" { return "OPEN INVOICE" }
+        if invoice.kind == "preview" { return "CURRENT INVOICE PREVIEW" }
+        return "NEXT INVOICE"
+    }
+
+    private func providerPrimaryValue(_ provider: SubApiBalance) -> String {
+        if provider.balanceAuthoritative, hasDisplayableBalance(provider) {
+            return balanceText(provider)
+        }
+        if provider.costAuthoritative, let published = provider.providerMonthUsd {
+            return fmt(published)
+        }
+        if let local = provider.monthUsd {
+            return fmt(local)
+        }
+        return "—"
+    }
+
+    private func providerPrimaryLabel(_ provider: SubApiBalance) -> String {
+        if provider.balanceAuthoritative, hasDisplayableBalance(provider) {
+            return provider.balanceKind == "wallet" ? "Cash wallet" : "Usage quota"
+        }
+        if provider.costAuthoritative, provider.providerMonthUsd != nil {
+            return provider.id == "vercel" ? "Team billed MTD" : "Provider MTD"
+        }
+        if provider.monthUsd != nil {
+            return "Local estimate"
+        }
+        return "No cost data"
+    }
+
+    private func providerPrimaryColor(_ provider: SubApiBalance) -> Color {
+        if provider.balanceAuthoritative, hasDisplayableBalance(provider) {
+            return balanceColor(provider)
+        }
+        if provider.costAuthoritative, provider.providerMonthUsd != nil {
+            return SubPalette.accentText(scheme)
+        }
+        if provider.monthUsd != nil {
+            return SubPalette.amber
+        }
+        return .secondary
+    }
+
+    private func hasDisplayableBalance(_ provider: SubApiBalance) -> Bool {
+        provider.balanceAmount != nil || (provider.balanceKind == "quota" && provider.quota != nil)
     }
 
     private var billingOverview: some View {
         let wallet = vm.apiBalances.filter { $0.balanceKind == "wallet" }.compactMap(\.balanceUsd).reduce(0, +)
         let confirmed = vm.apiBalances.filter { $0.costAuthoritative }.compactMap(\.providerMonthUsd).reduce(0, +)
         let attention = vm.apiBalances.filter { ["error", "stale", "partial"].contains($0.status) }.count
-        return HStack(spacing: 7) {
-            billingStat(fmt(wallet), "Prepaid cash", SubPalette.emerald)
-            billingStat(fmt(confirmed), "Published MTD", SubPalette.violet)
-            billingStat("\(vm.dueSummary.dueWithin7Days)", "Due ≤7d", SubPalette.amber)
-            billingStat("\(attention)", "Attention", attention > 0 ? SubPalette.red : SubPalette.sage)
+        let columns = [GridItem(.flexible()), GridItem(.flexible())]
+        return LazyVGrid(columns: columns, spacing: 10) {
+            billingStat(fmt(wallet), "Prepaid cash", "wallet.pass.fill", SubPalette.emerald)
+            billingStat(fmt(confirmed), "Published MTD", "chart.bar.fill", SubPalette.violet)
+            billingStat("\(vm.dueSummary.dueWithin7Days)", "Due in 7 days", "calendar.badge.clock", SubPalette.amber)
+            billingStat(
+                "\(attention)",
+                "Needs attention",
+                "exclamationmark.triangle.fill",
+                attention > 0 ? SubPalette.red : SubPalette.sage
+            )
         }
     }
-    private func billingStat(_ value: String, _ label: String, _ color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(value).font(.system(size: 12.5, weight: .bold, design: .rounded).monospacedDigit())
-                .foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.62)
-            Text(label).font(.system(size: 7.5, weight: .semibold)).foregroundStyle(.secondary).lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.vertical, 10)
-        .subSolid(scheme, corner: 11)
-    }
-    private func providerMetric(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.system(size: 8)).foregroundStyle(.tertiary)
-            Text(value).font(.system(size: 9.5, weight: .semibold).monospacedDigit())
-                .lineLimit(1).minimumScaleFactor(0.7)
+    private func billingStat(_ value: String, _ label: String, _ icon: String, _ color: Color) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 32, height: 32)
+                .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value)
+                    .font(.system(.headline, design: .rounded, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                Text(label)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .subSolid(scheme, corner: 15)
     }
     private func balanceText(_ provider: SubApiBalance) -> String {
         if provider.balanceKind == "manual_estimate" {
             return "API নেই"
+        }
+        if provider.balanceKind == "quota", let quota = provider.quota {
+            return "\(compact(quota.remaining)) \(quota.unit)"
         }
         guard let amount = provider.balanceAmount else {
             let supportsBalance = provider.capabilities.contains("wallet") || provider.capabilities.contains("quota")
@@ -576,20 +785,6 @@ struct SubscriptionsScreen: View {
             return fmt(amount)
         }
         return "\(provider.balanceCurrency ?? "") \(String(format: "%.2f", amount))"
-    }
-    private func balanceKindLabel(_ provider: SubApiBalance) -> String {
-        switch provider.balanceKind {
-        case "wallet": return "CASH WALLET"
-        case "quota": return "USAGE QUOTA"
-        case "manual_estimate": return "NOT PROVIDER DATA"
-        default:
-            let supportsBalance = provider.capabilities.contains("wallet") || provider.capabilities.contains("quota")
-            let configuredBalance = provider.configuredCapabilities.contains("wallet")
-                || provider.configuredCapabilities.contains("quota")
-            if supportsBalance && !configuredBalance { return "NEEDS CREDENTIAL" }
-            if supportsBalance && configuredBalance { return "NO CURRENT VALUE" }
-            return "NOT EXPOSED"
-        }
     }
     private func sourceLabel(_ source: String) -> String {
         switch source {
@@ -656,20 +851,14 @@ struct SubscriptionsScreen: View {
             return "Not exposed"
         }
     }
-    private func fieldBadge(_ field: String, _ truth: String) -> some View {
-        let color: Color = truth == "Live"
+    private func truthColor(_ truth: String) -> Color {
+        truth == "Live"
             ? SubPalette.emerald
             : truth == "Delayed"
                 ? SubPalette.violet
             : truth == "Sync error"
                 ? SubPalette.red
                 : (truth == "Estimated" || truth == "Needs key") ? SubPalette.amber : .secondary
-        return Text("\(field) · \(truth)")
-            .font(.system(size: 7.5, weight: .bold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 7).padding(.vertical, 4)
-            .background(color.opacity(0.08), in: Capsule())
-            .overlay(Capsule().strokeBorder(color.opacity(0.22), lineWidth: 1))
     }
     private func statusLabel(_ status: String) -> String {
         switch status {

@@ -1,9 +1,10 @@
 # Phase 69 — Accurate Subscription & Provider Billing Hub
 
-**Status:** Preview-ready; web and native iOS live verification passed
+**Status:** Preview-ready; corrected live data and native iOS redesign verified
 **Branch:** `agent-phase-69`
 **Safety tag:** `pre-agent-phase-69`
 **Implementation commit:** `7eb589c8`
+**Provider-truth correction:** `e1a9ad36`
 **Final env-verification build:** `b6dc3d52`
 **Preview:** `https://alma-erp-git-agent-phase-69-maruf-s-projects2.vercel.app`
 
@@ -16,6 +17,18 @@ separate source/authority/freshness metadata.
 
 The UI no longer calls a manual opening amount or a quota a provider-verified cash
 balance. A provider with no public wallet or invoice API says so directly.
+
+After the first live review exposed misleading presentation, the correction also
+removes every legacy manual-credit-derived value from the main balance field. A
+successful but empty provider response is no longer `Connected`: it is
+`Waiting for provider data`, and local usage remains explicitly `Estimate only`.
+Vercel FOCUS charges are labelled as whole-team billed charges rather than ALMA ERP
+project due/invoice.
+
+The native iOS screen is no longer a compressed copy of the web card grid. It now
+uses a compact provider list, a four-stat native summary, and one-at-a-time
+progressive disclosure so the normal view stays scannable while the complete field
+truth remains available on tap.
 
 ## Delivered
 
@@ -44,72 +57,82 @@ balance. A provider with no public wallet or invoice API says so directly.
   double-counting provider invoices and manual subscriptions.
 - Enriched manual subscription records with provider, invoice, source, and sync metadata.
 - Added manual full refresh and a 15-minute VPS worker refresh schedule.
-- Added equivalent web and native iOS cards, summaries, source labels, status badges,
-  provider dashboard links, and CSV fields.
+- Added equivalent provider truth on web and native iOS, provider dashboard links,
+  and CSV fields.
+- Rebuilt the iOS provider section as a native compact list with coloured monograms,
+  primary-value hierarchy, SF Symbol summary stats, and tap-to-expand billing detail.
 
-## Live preview evidence
+## Corrected live preview evidence
 
-Chrome full refresh on the fresh env-verification deployment completed at
-**24 July 2026, 2:19 AM (Asia/Dhaka)**:
+Chrome full refresh on correction commit `e1a9ad36` completed at
+**24 July 2026, 11:44 AM (Asia/Dhaka)**:
 
-- Sync health: `Healthy`, `0 attention`, and `3 optional connections`.
-- Verified prepaid USD cash: `$57.84`.
-- Provider-confirmed month-to-date cost: `$159.61`.
+- Sync health: `3 attention` and `2 optional connections`; waiting/partial providers
+  now count as attention instead of being hidden by an overall healthy state.
+- Verified prepaid USD cash: `$57.58`.
+- Provider-published month-to-date cost: `$161.87`.
 - Due within 7 days: `0`; ElevenLabs reports the next `USD 23.10` invoice due
   16 August 2026.
-- Twilio: `$18.35` provider-verified cash wallet.
-- OpenAI: official organization cost connected; provider report plus only the
+- Twilio: `$18.28` provider-verified cash wallet.
+- OpenAI: no wallet value is shown. The official organization report publishes
+  `$2.71` MTD through 23 July, with `$1.58` post-boundary local estimate separated.
+- OpenRouter: `$11.98` provider-verified cash wallet; provider activity plus only the
   post-boundary local delta.
-- OpenRouter: `$12.17` provider-verified cash wallet; provider activity plus only the
-  post-boundary local delta.
-- Google Cloud Billing export: Gemini, Google TTS, and Veo are all `Connected`;
-  their data is correctly labelled `Provider delayed` because the export has not
-  yet published a current boundary.
+- Google Cloud Billing export is reachable, but Gemini, Google TTS, and Veo have no
+  dated billing rows yet. They show `Waiting for provider data`; their `$27.51`,
+  `$1.35`, and `$0.60` figures appear only as local MTD estimates, never as provider
+  balance or provider-published cost.
 - ElevenLabs: `220,685` characters available, plan/usage/invoice all live, with the
   next `USD 23.10` invoice exposed separately from cash.
 - fal.ai: `$7.32` provider-verified cash wallet; official Admin cost remains the
   owner-deferred optional connection.
 - FASHN: `0 credits`, correctly presented as quota rather than USD cash.
 - xAI: `$20.00` provider-verified cash wallet, provider-delayed cost, and a live
-  `USD 10.62` current invoice preview whose due date is not published.
-- Vercel: FOCUS billing export connected; month-to-date card shows `$116.54`, with
-  provider delay labelled explicitly. Vercel exposes no wallet endpoint.
+  `USD 12.42` current invoice preview whose due date is not published.
+- Vercel: `$116.54` is explicitly `Team billed MTD`, scope `Entire team`;
+  wallet and invoice/due are `Not exposed`. It is not presented as ALMA ERP
+  project-only due.
 - Oxylabs usage and Supabase plan remain the other two owner-deferred optional
   connections.
+- Vercel runtime logs confirm the manual refresh request:
+  `POST /api/assistant/costs/balances 200`.
 
 Web proof was captured from the owner's logged-in Chrome at:
 
-- `/tmp/alma-phase69-web-live-final.png`
-- `/tmp/alma-phase69-web-live-google-final.png`
-- `/tmp/alma-phase69-web-live-providers-final.png`
-- `/tmp/alma-phase69-web-live-xai-vercel-final.png`
+- `/tmp/alma-phase69-web-provider-truth.png`
 
-Native iOS verification uses the isolated simulator **ALMA Phase69 Billing**:
+Corrected native iOS verification uses the isolated simulator
+**ALMA Phase69 Billing**:
 
-- Clean simulator build, install, and launch passed.
-- Final app build:
-  `/tmp/alma-phase69-final-derived/Build/Products/Debug-iphonesimulator/App.app`.
-- The owner completed the one-time login; Codex then opened Subscriptions and triggered
-  the provider refresh himself.
-- Fresh native result at **24 July 2026, 10:48 AM (Asia/Dhaka)**:
-  `$57.81` verified prepaid cash, `$161.87` provider MTD, `0` due within 7 days,
-  and `0` attention.
-- Twilio and OpenRouter wallets, OpenAI official cost, Google Billing Export,
-  ElevenLabs quota/plan/invoice, fal.ai wallet, FASHN quota, xAI wallet/invoice,
-  and Vercel FOCUS charges all rendered with their expected live/provider-delayed
-  field states.
-- Supabase remained manual and Oxylabs/Fal Admin remained owner-deferred, as expected.
+- Clean workspace simulator build passed with the branch preview URL injected only
+  into the temporary verification artifact:
+  `/tmp/alma-phase69-derived-native-redesign/Build/Products/Debug-iphonesimulator/App.app`.
 - The protected Vercel Preview required a simulator-only share-cookie bootstrap before
   the app's redirect-blocking API session could call the branch alias. No source or
   production behavior was changed for this verification.
-
-Native proof screenshots:
-
-- `/tmp/alma-phase69-ios-live-final.png`
-- `/tmp/alma-phase69-ios-live-page2.png`
-- `/tmp/alma-phase69-ios-live-page3.png`
-- `/tmp/alma-phase69-ios-live-page4.png`
-- `/tmp/alma-phase69-ios-live-page5.png`
+- After the owner completed the one-time native login, Codex opened Subscriptions and
+  triggered the provider refresh. Vercel runtime logs confirm
+  `POST /api/assistant/costs/balances 200` at **12:25 PM Asia/Dhaka**, followed by
+  successful native reads.
+- The refreshed native summary showed `$57.40` prepaid cash, `$161.87`
+  provider-published MTD, `0` due within 7 days, and `3` attention items. Small wallet
+  movement versus the earlier web proof is expected because prepaid balances are live.
+- The redesigned default view shows one concise native row per provider; tapping a
+  row opens that provider's full source, billing metrics, wallet/cost/usage/plan/
+  invoice truth, explanation, and dashboard action. Only one row expands at a time.
+- OpenAI showed no cash wallet, `$2.71` Provider MTD, `$1.90` local after cutoff, and
+  `$4.61` combined tracked—never the old negative manual value. The local delta moved
+  since the earlier proof because usage continued during verification.
+- Gemini showed `API নেই / NOT EXPOSED`, local MTD `$27.71`, `Estimate only`, and
+  `Waiting for provider data`.
+- Vercel showed `$116.54` as `Team billed MTD`, scope `Entire team`, and
+  `Invoice / due: Not exposed`.
+- The final native refresh is visible in Vercel runtime logs as
+  `POST /api/assistant/costs/balances 200` at **12:57 PM Asia/Dhaka**.
+- Latest native redesign screenshots:
+  - `/tmp/alma-phase69-ios-native-redesign-list-latest.png`
+  - `/tmp/alma-phase69-ios-native-redesign-details-latest.png`
+  - `/tmp/alma-phase69-ios-native-redesign-vercel-latest.png`
 
 ## Migration
 
@@ -130,14 +153,14 @@ Vercel preview build logs confirm the migration was applied successfully.
 | --- | --- |
 | Locked-file scope diff | PASS |
 | Additive migration only | PASS |
-| Provider billing unit tests | PASS — 13/13 |
+| Provider billing unit tests | PASS — 15/15 |
 | Prisma schema validation | PASS |
 | Clean-source TypeScript check | PASS |
 | Local production build | PASS |
 | Vercel preview build/deployment | PASS |
-| iOS workspace simulator build | PASS |
+| iOS workspace simulator build | PASS — exact redesigned source |
 | Owner Chrome live preview + refresh | PASS |
-| Isolated iOS simulator render + provider refresh | PASS |
+| Isolated iOS native redesign + provider refresh | PASS |
 | Production deployment/merge | NOT DONE — intentionally owner-gated |
 
 After Next regenerates `.next/types`, the repository's pre-existing generated route
