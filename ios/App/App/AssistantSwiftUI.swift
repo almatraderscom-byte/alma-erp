@@ -2763,6 +2763,18 @@ final class AssistantVM {
             newerHistoryCache.append(contentsOf: additions.filter { cachedKnown.insert($0.id).inserted })
         } else {
             reconciled.append(contentsOf: additions)
+            // Chronological repair: rows persisted by a VOICE call sync in AFTER
+            // the owner's just-typed local row and used to land below it (his new
+            // message drifted up-screen). Stable-sort by server createdAt; local
+            // rows (no stamp yet: optimistic owner bubble, streaming tail) sink
+            // to the bottom in their original order.
+            let indexed = reconciled.enumerated().sorted { a, b in
+                let ka = a.element.createdAt ?? "\u{10FFFF}"
+                let kb = b.element.createdAt ?? "\u{10FFFF}"
+                if ka != kb { return ka < kb }
+                return a.offset < b.offset
+            }
+            reconciled = indexed.map(\.element)
             if reconciled.count > Self.mountedHistoryLimit {
                 let overflow = reconciled.count - Self.mountedHistoryLimit
                 let evicted = Array(reconciled.prefix(overflow))
@@ -6458,6 +6470,19 @@ final class AssistantVM {
             messages[index].localImages = selected.compactMap(\.image)
             messages[index].outgoingState = state
             return
+        }
+        // Voice-call turns keep writing rows while the mounted window sits
+        // BEHIND the newest edge — appending the new message into that stale
+        // window rendered it above the (newer) voice rows, "মাঝখানে চলে যায়"
+        // (owner 2026-07-24). Jump to the newest edge before appending; any
+        // still-unfetched server rows sort into place at the next reconcile.
+        if canLoadNewer {
+            let combined = olderHistoryCache + messages + newerHistoryCache
+            newerHistoryCache = []
+            serverHasNewer = false
+            olderHistoryCache = Array(combined.dropLast(Self.mountedHistoryLimit))
+            messages = Array(combined.suffix(Self.mountedHistoryLimit))
+            AlmaTurnLog.event("sync.jumpToNewestOnSend", "mounted=\(messages.count)")
         }
         var owner = AgentChatMessage(
             id: "local-\(clientMessageId)", role: .user,
@@ -14189,16 +14214,10 @@ struct AssistantScreen: View {
         .fullScreenCover(isPresented: $vm.showVoice) {
             AlmaVoiceConsoleView(vm: vm)
         }
-        .overlay(alignment: .top) {
-            if !vm.showVoice && vm.voiceEngine.isCallRunning {
-                AlmaVoiceCallMiniBar(
-                    engine: vm.voiceEngine,
-                    reopen: { vm.showVoice = true },
-                    end: { vm.voiceEngine.end() }
-                )
-                .transition(.move(edge: .top).combined(with: .opacity))
-                .zIndex(50)
-            }
+        // The floating call bar is now SHELL-LEVEL (AlmaTabBarController) so it
+        // follows the owner to every tab; this view only answers its reopen tap.
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("almaVoiceReopenConsole"))) { _ in
+            vm.showVoice = true
         }
         .fullScreenCover(item: $debugViewer) { PortalImageViewer(preview: $0, showsSave: true) }
         .sheet(item: $toolSheet) { tool in

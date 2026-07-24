@@ -27,6 +27,7 @@
 
 import UIKit
 import WebKit
+import SwiftUI
 
 extension Notification.Name {
     /// Broadcast when the owner flips light/dark so every tab's chrome + web content updates.
@@ -1190,6 +1191,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
     static var base: String { AlmaAPI.baseURL.absoluteString }
     weak var dashboardVC: UIViewController?  // internal: makeDashboardTab() (SwiftUIShell.swift) mounts it
     private var approvalsBadgeTimer: Timer?
+    private var callBarHost: UIViewController?
     private static let approvalsTabIndex = 3
 
     /// - Parameter dashboard: the storyboard's Capacitor bridge VC, reused as tab 0.
@@ -1268,6 +1270,27 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         // modes without GUI clicks. Never set on a real launch.
         if let a = ProcessInfo.processInfo.environment["ALMA_DASH_APPEARANCE"] {
             AlmaTheme.set(dark: a != "light")
+        }
+        // App-wide floating call bar: a live voice call must follow the owner to
+        // EVERY tab (phone-call semantics), not just the Assistant page. The bar
+        // itself decides visibility (call running + console closed); with no call
+        // its intrinsic size is zero, so it never blocks touches.
+        if #available(iOS 17.0, *), callBarHost == nil {
+            let host = UIHostingController(rootView: AlmaGlobalCallBar(selectAssistant: { [weak self] in
+                self?.selectedIndex = 2
+                NotificationCenter.default.post(name: Notification.Name("almaVoiceReopenConsole"), object: nil)
+            }))
+            host.view.backgroundColor = .clear
+            host.sizingOptions = [.intrinsicContentSize]
+            addChild(host)
+            view.addSubview(host.view)
+            host.didMove(toParent: self)
+            host.view.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                host.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 2),
+                host.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            ])
+            callBarHost = host
         }
         // Approvals badge: first fetch once the shell is on screen, then a 90s heartbeat.
         refreshApprovalsBadge()
