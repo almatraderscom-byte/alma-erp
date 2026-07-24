@@ -7,6 +7,7 @@
 export type CostProvider =
   | 'anthropic'
   | 'openai'
+  | 'xai'
   | 'openrouter'
   | 'gemini'
   | 'veo'

@@ -105,7 +105,7 @@ import {
   systemBlocksToText,
 } from '@/agent/lib/models/neutral'
 import type { NeutralMsg, NeutralTool } from '@/agent/lib/models/types'
-import type { CostProvider } from '@/agent/lib/pricing'
+import { modelProviderToCostProvider } from '@/agent/lib/cost-provider'
 
 export interface RunOwnerTurnOptions extends RunAgentTurnOptions {
   /** Registry model id from AgentConversation.modelId */
@@ -143,16 +143,6 @@ async function conversationAutoApprovesUpgrade(conversationId: string): Promise<
   } catch {
     return false
   }
-}
-
-function providerToCostProvider(provider: string): CostProvider {
-  if (provider === 'google') return 'gemini'
-  if (provider === 'openrouter') return 'openrouter'
-  // xAI direct is OpenAI-compatible and priced from the same registry rates —
-  // tag its spend under 'openai' (CostProvider has no xai bucket; adding one
-  // would ripple through the cost dashboards for no accounting gain).
-  if (provider === 'openai' || provider === 'xai') return 'openai'
-  return 'anthropic'
 }
 
 // One-time message injected when the Qwen MARKETING head exhausts its (larger)
@@ -2300,7 +2290,7 @@ async function* runAlternateProviderTurn(
     }
 
     void logCost({
-      provider: providerToCostProvider(model.provider),
+      provider: modelProviderToCostProvider(model.provider),
       kind: 'chat',
       units: {
         input_tokens: totalInputTokens,
