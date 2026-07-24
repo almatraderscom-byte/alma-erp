@@ -33,6 +33,9 @@ const mockQuiet = vi.hoisted(() => ({
 }))
 vi.mock('@/agent/lib/quiet-hours', () => mockQuiet)
 
+const mockSalah = vi.hoisted(() => ({ getDhakaPrayerTimes: vi.fn().mockResolvedValue([]) }))
+vi.mock('@/agent/lib/salah-times', () => mockSalah)
+
 import {
   callOutcome,
   ownerPrimaryNumber,
@@ -46,6 +49,7 @@ beforeEach(() => {
   process.env.OWNER_PHONE_NUMBERS = '01779640373'
   mockPrisma.agentKvSetting.findUnique.mockResolvedValue(null)
   mockQuiet.isQuietHoursDhaka.mockReturnValue(false)
+  mockSalah.getDhakaPrayerTimes.mockResolvedValue([])
 })
 
 describe('callOutcome', () => {
@@ -190,6 +194,23 @@ describe('processCallEscalations — queued rows', () => {
     const res = await processCallEscalations()
     // autonomy OFF here, so it lands on the card — but it was NOT deferred.
     expect(res).toEqual([{ id: 'esc1', outcome: 'awaiting_approval' }])
+  })
+})
+
+describe('salah-aware deferral (human-PA point 8)', () => {
+  it('a queued ladder inside a prayer window defers to waqt end + 10 min', async () => {
+    const now = Date.now()
+    mockSalah.getDhakaPrayerTimes.mockResolvedValue([
+      { waqt: 'dhuhr', prayerStart: new Date(now - 5 * 60_000).toISOString(), end: new Date(now + 10 * 60_000).toISOString() },
+    ])
+    mockPrisma.agentCallEscalation.findMany.mockResolvedValue([{
+      id: 'esc-salah', trigger: 'boss_callback', refId: 's', title: 't', purpose: 'p',
+      status: 'queued', createdAt: new Date(), nextCheckAt: new Date(now - 1000),
+      waCallId: null, pstnCallId: null, approvalActionId: null,
+    }])
+    const res = await processCallEscalations()
+    expect(res).toEqual([{ id: 'esc-salah', outcome: 'deferred_salah' }])
+    expect(mockVoiceCall.placeOutboundCall).not.toHaveBeenCalled()
   })
 })
 

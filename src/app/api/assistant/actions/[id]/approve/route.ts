@@ -1415,6 +1415,7 @@ async function runApprove(
     const p = payload as {
       toNumber?: string; phone?: string; recipientName?: string; purpose?: string
       firstMessage?: string; callType?: 'owner' | 'staff' | 'contact'; voiceGender?: 'male' | 'female'; dueAt?: string
+      recurrence?: string | null
     }
     const toNumber = String(p.toNumber ?? p.phone ?? '')
     const dueAt = p.dueAt ? new Date(p.dueAt) : null
@@ -1431,6 +1432,7 @@ async function runApprove(
         callType: p.callType === 'staff' ? 'staff' : p.callType === 'owner' ? 'owner' : 'contact',
         voiceGender: p.voiceGender === 'male' ? 'male' : 'female',
         dueAt,
+        recurrence: ['daily', 'weekdays', 'weekly'].includes(String(p.recurrence)) ? String(p.recurrence) : null,
         conversationId: resolveConversationId(action) ?? null,
         businessId: (action.businessId as string) ?? 'ALMA_LIFESTYLE',
       },

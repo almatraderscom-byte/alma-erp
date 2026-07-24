@@ -51,6 +51,7 @@ import { VISION_TOOLS } from './vision-tools'
 import { SIMULATE_TOOLS } from './simulate-tools'
 import { PERSONAL_SAFE_TOOLS } from './registry'
 import { place_agent_call, call_boss_with_report } from './personal-tools'
+import { place_business_call } from './business-call-tools'
 import { WA_TOOLS } from './wa-tools'
 import { find_tool } from './find-tool'
 import { BILLS_TOOLS } from './bills-tools'
@@ -95,6 +96,8 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     place_agent_call,
     // PA-5R: boss-requested completion callback (no card; ladder-enforced owner-only).
     call_boss_with_report,
+    // Human-PA point 2: order-aware customer calls.
+    place_business_call,
     // Business WhatsApp send (Twilio). Dormant + kill-switched until the owner sets
     // the Twilio WhatsApp creds; visible to the head so "WhatsApp-এ পাঠাও/টেস্ট" works.
     ...WA_TOOLS,

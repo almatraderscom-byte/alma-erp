@@ -174,6 +174,39 @@ export async function persistVoiceCallReport(input: PersistVoiceCallReportInput)
     }
     return updated
   })
+    .then(async (updated: unknown) => {
+      // Human-PA point 3: an unanswered third-party call gets a retry ladder
+      // (10 min ×2) and finally a WhatsApp-text fallback + boss notice. Outside
+      // the transaction and fail-open — report delivery must never break.
+      if (updated && ['no_answer', 'busy'].includes(input.status)) {
+        try {
+          const { applyCallRetryPolicy } = await import('@/agent/lib/call-retry-policy')
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await applyCallRetryPolicy(updated as any, input.status)
+        } catch { /* fail-open */ }
+      }
+      // Human-PA point 6: an UNKNOWN inbound caller gets a save-to-contacts
+      // suggestion appended to the owner's report ("নাম বললে সেভ করে রাখব").
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rec = updated as any
+        if (rec && String(rec.purpose ?? '') === 'inbound_call' && rec.toNumber && rec.toNumber !== 'unknown') {
+          const tail = String(rec.toNumber).replace(/\D/g, '').slice(-10)
+          const { isOwnerNumber } = await import('@/agent/lib/voice-call')
+          const known = isOwnerNumber(rec.toNumber)
+            || Boolean(await db.familyContact.findFirst({
+              where: { phone: { contains: tail.slice(-8) } }, select: { id: true },
+            }))
+          if (!known && !String(rec.summary ?? '').includes('contact list-এ নেই')) {
+            await db.agentVoiceCall.update({
+              where: { id: rec.id },
+              data: { summary: `${String(rec.summary ?? '').trim()}\n📇 নম্বরটা (${rec.toNumber}) contact list-এ নেই — কার নম্বর বলে দিলে সেভ করে রাখব।`.trim() },
+            }).catch(() => {})
+          }
+        }
+      } catch { /* fail-open */ }
+      return updated
+    })
 }
 
 async function runDelivery(row: any): Promise<void> {
