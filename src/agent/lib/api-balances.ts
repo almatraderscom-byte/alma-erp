@@ -876,6 +876,10 @@ export function normalizeCachedProvider(
     suggestedTopUpUsd: row.suggestedTopUpUsd ?? null,
     criticality: row.criticality,
     fundingMode: row.fundingMode,
+    // Carry the Vercel Agent-vs-hosting breakdown through cache reads — without
+    // this, the dashboard (which reads the cached snapshot) never sees it and the
+    // breakdown box silently vanishes until a manual refresh.
+    costBreakdown: row.costBreakdown ?? null,
   }
 }
 
