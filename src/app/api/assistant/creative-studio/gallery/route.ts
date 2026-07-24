@@ -5,12 +5,14 @@ import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { agentStorageSignedUrls } from '@/agent/lib/storage'
 import {
+  GALLERY_QC_FAILED_WHERE,
   GALLERY_TEST_ARTIFACT_WHERE,
   buildGalleryCursorWhere,
   buildGalleryWhere,
   decodeGalleryCursor,
   encodeGalleryCursor,
   isGalleryTestArtifact,
+  isGalleryQcFailed,
   normalizeGalleryFilters,
   normalizeGalleryLimit,
 } from '@/lib/creative-studio/gallery-query'
@@ -104,17 +106,21 @@ export async function GET(req: NextRequest) {
   // Cursor pagination is stable when new jobs arrive while the owner is
   // scrolling. `page`/skip remains as a backwards-compatible fallback.
   const legacySkip = cursor ? 0 : (page - 1) * limit
-  const totalPromise: Promise<number> = filters.includeTest
+  const exclusionPredicates: Array<Record<string, unknown>> = []
+  if (!filters.includeTest) exclusionPredicates.push(GALLERY_TEST_ARTIFACT_WHERE)
+  if (filters.state === 'ready') exclusionPredicates.push(GALLERY_QC_FAILED_WHERE)
+
+  const totalPromise: Promise<number> = exclusionPredicates.length === 0
     ? db.agentPendingAction.count({ where: baseWhere })
     : Promise.all([
         db.agentPendingAction.count({ where: baseWhere }),
         db.agentPendingAction.count({
-          where: { AND: [baseWhere, GALLERY_TEST_ARTIFACT_WHERE] },
+          where: { AND: [baseWhere, { OR: exclusionPredicates }] },
         }),
       ]).then(([all, tests]: [number, number]) => Math.max(0, all - tests))
 
   let visibleRows: Row[] = []
-  if (filters.includeTest) {
+  if (exclusionPredicates.length === 0) {
     const where = cursor
       ? { AND: [baseWhere, buildGalleryCursorWhere(cursor)] }
       : baseWhere
@@ -146,7 +152,8 @@ export async function GET(req: NextRequest) {
       if (batch.length === 0) break
 
       for (const row of batch) {
-        if (isGalleryTestArtifact(row)) continue
+        if (!filters.includeTest && isGalleryTestArtifact(row)) continue
+        if (filters.state === 'ready' && isGalleryQcFailed(row)) continue
         if (visibleSkipped < legacySkip) {
           visibleSkipped += 1
           continue

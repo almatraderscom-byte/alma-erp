@@ -6,6 +6,7 @@ import {
   decodeGalleryCursor,
   encodeGalleryCursor,
   isGalleryTestArtifact,
+  isGalleryQcFailed,
   mergeGalleryPage,
   normalizeGalleryFilters,
   normalizeGalleryLimit,
@@ -50,7 +51,6 @@ describe('Creative Studio Gallery query', () => {
     expect(testWhere).toContain('"path":["testArtifact"],"equals":true')
     expect(testWhere).toContain('"path":["e2e"],"equals":true')
     expect(testWhere).toContain('e2e-')
-    expect(json).toContain('"path":["qc","pass"],"equals":false')
     expect(json).toContain('"path":["qc","pass"],"equals":true')
   })
 
@@ -61,6 +61,14 @@ describe('Creative Studio Gallery query', () => {
     expect(isGalleryTestArtifact({ payload: { e2e: true }, summary: 'Fixture' })).toBe(true)
     expect(isGalleryTestArtifact({ payload: { videoName: 'E2E-reel-1' }, summary: 'Fixture' })).toBe(true)
     expect(isGalleryTestArtifact({ payload: {}, summary: 'E2E-gallery fixture' })).toBe(true)
+  })
+
+  it('classifies only explicit QC failures and preserves legacy executed rows', () => {
+    expect(isGalleryQcFailed({ result: null })).toBe(false)
+    expect(isGalleryQcFailed({ result: {} })).toBe(false)
+    expect(isGalleryQcFailed({ result: { qc: { pass: true } } })).toBe(false)
+    expect(isGalleryQcFailed({ result: { qc: { pass: false } } })).toBe(true)
+    expect(isGalleryQcFailed({ result: { videoQc: { pass: false } } })).toBe(true)
   })
 
   it('round-trips an opaque cursor and rejects malformed cursors', () => {

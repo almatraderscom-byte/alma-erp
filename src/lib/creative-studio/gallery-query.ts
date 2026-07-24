@@ -29,7 +29,7 @@ const QC_VALUES = new Set<GalleryQcFilter>(['all', 'pass', 'fail'])
 const PENDING_STATUSES = ['approved', 'pending', 'processing']
 const FAILED_STATUSES = ['failed', 'error', 'rejected']
 
-const QC_FAILED_WHERE = {
+export const GALLERY_QC_FAILED_WHERE = {
   OR: [
     { result: { path: ['qc', 'pass'], equals: false } },
     { result: { path: ['videoQc', 'pass'], equals: false } },
@@ -62,6 +62,16 @@ export function isGalleryTestArtifact(row: {
     || payload.e2e === true
     || (typeof payload.videoName === 'string' && payload.videoName.toLowerCase().includes('e2e-'))
     || (typeof row.summary === 'string' && row.summary.toLowerCase().includes('e2e-'))
+}
+
+export function isGalleryQcFailed(row: {
+  result?: Record<string, unknown> | null
+}): boolean {
+  const result = row.result ?? {}
+  const imageQc = result.qc
+  const videoQc = result.videoQc
+  return (typeof imageQc === 'object' && imageQc !== null && 'pass' in imageQc && imageQc.pass === false)
+    || (typeof videoQc === 'object' && videoQc !== null && 'pass' in videoQc && videoQc.pass === false)
 }
 
 function oneOf<T extends string>(value: string | null, values: Set<T>, fallback: T): T {
@@ -136,9 +146,12 @@ export function buildGalleryWhere(filters: GalleryFilters): Record<string, unkno
   }
 
   if (filters.state === 'ready') {
-    and.push({ status: 'executed' }, { NOT: QC_FAILED_WHERE })
+    // QC-failed rows are removed by the route's null-safe cursor scan. Keeping
+    // the SQL condition positive avoids hiding executed legacy rows that have
+    // no `qc.pass` JSON key.
+    and.push({ status: 'executed' })
   } else if (filters.state === 'qc_failed') {
-    and.push({ status: 'executed' }, QC_FAILED_WHERE)
+    and.push({ status: 'executed' }, GALLERY_QC_FAILED_WHERE)
   } else if (filters.state === 'draft') {
     and.push({ status: { notIn: ['executed', ...PENDING_STATUSES, ...FAILED_STATUSES] } })
   } else if (filters.state === 'processing') {
@@ -148,7 +161,7 @@ export function buildGalleryWhere(filters: GalleryFilters): Record<string, unkno
   }
 
   if (filters.qc === 'pass') and.push(QC_PASSED_WHERE)
-  else if (filters.qc === 'fail') and.push(QC_FAILED_WHERE)
+  else if (filters.qc === 'fail') and.push(GALLERY_QC_FAILED_WHERE)
 
   return { AND: and }
 }
