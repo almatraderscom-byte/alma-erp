@@ -1709,6 +1709,10 @@ export async function refreshApiBalanceCache(): Promise<{
   return { cache, twilioRaw, alerts }
 }
 
+/** Minimal policy shape the alert calc needs — kept structural so the function
+ * stays pure and unit-testable without a DB read. */
+export type AlertPolicyInput = Partial<Record<BalanceProviderId, { minBalanceUsd: number; enabled: boolean }>>
+
 export function computeLowBalanceAlerts(
   providers: BalanceProviderRow[],
   opts: {
@@ -1716,24 +1720,31 @@ export function computeLowBalanceAlerts(
     openaiAdmin: boolean
     twilioConfigured: boolean
     creditSet: Partial<Record<BalanceProviderId, boolean>>
+    /** Owner funding policy. When present, per-provider minBalanceUsd replaces the
+     * flat $3/$5 floors and a disabled provider is skipped. Absent → legacy floors. */
+    policies?: AlertPolicyInput
   },
 ): LowBalanceAlert[] {
   const alerts: LowBalanceAlert[] = []
-  const generalThreshold = 3
-  const twilioThreshold = 5
+  const DEFAULT_GENERAL_FLOOR = 3
+  const DEFAULT_TWILIO_FLOOR = 5
 
   for (const row of providers) {
     // Alerts are only valid for authoritative cash wallets. Manual estimates and
     // quota units must never trigger a "recharge $X" cash warning.
     if (row.free || row.balanceKind !== 'wallet' || row.balanceUsd == null) continue
 
+    const policy = opts.policies?.[row.id]
+    if (policy && policy.enabled === false) continue
+
     if (row.id === 'twilio') {
-      if (!opts.twilioConfigured || row.balanceUsd >= twilioThreshold) continue
+      const threshold = policy?.minBalanceUsd ?? DEFAULT_TWILIO_FLOOR
+      if (!opts.twilioConfigured || row.balanceUsd >= threshold) continue
       alerts.push({
         provider: row.id,
         label: row.label,
         balanceUsd: row.balanceUsd,
-        thresholdUsd: twilioThreshold,
+        thresholdUsd: threshold,
       })
       continue
     }
@@ -1747,13 +1758,14 @@ export function computeLowBalanceAlerts(
             ? Boolean(opts.creditSet.elevenlabs)
             : Boolean(opts.creditSet[row.id])
 
-    if (!configured || row.balanceUsd >= generalThreshold) continue
+    const threshold = policy?.minBalanceUsd ?? DEFAULT_GENERAL_FLOOR
+    if (!configured || row.balanceUsd >= threshold) continue
 
     alerts.push({
       provider: row.id,
       label: row.label,
       balanceUsd: row.balanceUsd,
-      thresholdUsd: generalThreshold,
+      thresholdUsd: threshold,
     })
   }
 
