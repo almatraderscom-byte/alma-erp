@@ -33,6 +33,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'react-hot-toast'
 
 import { UserSvg } from '@/agent/components/creative-studio/StudioUi'
+import { CampaignPackPanel } from '@/agent/components/creative-studio/CampaignPackPanel'
 
 export type StudioModel = {
   id: string
@@ -610,7 +611,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
   const [vibe, setVibe] = useState<'premium' | 'festival' | 'offer' | 'lifestyle'>('premium')
   const [running, setRunning] = useState(false)
   const [panelOpen, setPanelOpen] = useState(true)
-  const [tab, setTab] = useState<'auto' | 'advanced'>('auto')
+  const [tab, setTab] = useState<'auto' | 'pack' | 'advanced'>('auto')
   const [includeFamily, setIncludeFamily] = useState(false)
   const [includeReel, setIncludeReel] = useState(false)
   const [autoRunning, setAutoRunning] = useState(false)
@@ -960,14 +961,14 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
     <div className="flex h-full flex-col">
       {/* Auto / Advanced switch */}
       <div className="flex shrink-0 gap-1.5 px-3 pb-1 pt-2.5">
-        {(['auto', 'advanced'] as const).map((t) => (
+        {(['auto', 'pack', 'advanced'] as const).map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => setTab(t)}
             className={cn('flex-1 py-2.5 text-[12px]', tab === t ? 'st-chip-on' : 'st-chip')}
           >
-            {t === 'auto' ? '✨ Auto — এক ট্যাপ' : '⚙ Advanced'}
+            {t === 'auto' ? '✨ Auto' : t === 'pack' ? '📦 Campaign Pack' : '⚙ Advanced'}
           </button>
         ))}
       </div>
@@ -990,6 +991,8 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
           onRun={() => void handleAutoRun()}
         />
       )}
+
+      {tab === 'pack' && <CampaignPackPanel />}
 
       {tab === 'advanced' && (
         <>

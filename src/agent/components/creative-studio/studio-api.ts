@@ -10,6 +10,10 @@ import type {
   StudioProjectAsset,
   StudioProjectSummary,
 } from '@/lib/creative-studio/project-contract'
+import type {
+  CampaignPackManifest,
+  CampaignPackStageId,
+} from '@/lib/creative-studio/campaign-pack'
 import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
 
 export const STUDIO_NAV_DEFINITIONS = [
@@ -81,10 +85,139 @@ let activeContentContext: StudioContentContext | null = null
 
 export function setActiveStudioContentContext(context: StudioContentContext | null) {
   activeContentContext = context
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('alma-studio-content-context', { detail: context }))
+  }
 }
 
 export function getActiveStudioContentContext(): StudioContentContext | null {
   return activeContentContext
+}
+
+export type CampaignPackStageClient = {
+  stageId: CampaignPackStageId
+  actionId: string | null
+  attempt: number
+  labelBn: string
+  mediaType: 'image' | 'text' | 'video'
+  engine: string
+  estimatedCostUsd: number
+  status: 'not_started' | 'queued' | 'running' | 'ready' | 'failed' | 'rejected'
+  storagePath: string | null
+  previewUrl: string | null
+  captionBn: string | null
+  error: string | null
+}
+
+export type CampaignPackClient = {
+  id: string
+  status: 'drafting' | 'waiting_selection' | 'processing' | 'ready' | 'attention'
+  manifest: CampaignPackManifest
+  selectedDraftStageId: CampaignPackStageId | null
+  progressPercent: number
+  estimatedCostUsd: number
+  actualCostUsd: number
+  createdAt: string
+  updatedAt: string
+  stages: CampaignPackStageClient[]
+}
+
+export async function previewCampaignPack(input: {
+  projectId: string
+  includeFamily: boolean
+  includeReel: boolean
+}): Promise<CampaignPackManifest> {
+  const data = await studioRequest<{ manifest: CampaignPackManifest }>(
+    '/api/assistant/creative-studio/campaign-packs',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        intent: 'preview',
+        projectId: input.projectId,
+        options: {
+          includeFamily: input.includeFamily,
+          includeReel: input.includeReel,
+        },
+      }),
+    },
+    'campaign_pack_preview_failed',
+  )
+  return data.manifest
+}
+
+export async function queueCampaignPack(input: {
+  projectId: string
+  includeFamily: boolean
+  includeReel: boolean
+  idempotencyKey: string
+  confirmedCostUsd: number
+}): Promise<{ pack: CampaignPackClient; idempotent: boolean }> {
+  return studioRequest<{ pack: CampaignPackClient; idempotent: boolean }>(
+    '/api/assistant/creative-studio/campaign-packs',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        intent: 'queue',
+        projectId: input.projectId,
+        options: {
+          includeFamily: input.includeFamily,
+          includeReel: input.includeReel,
+        },
+        idempotencyKey: input.idempotencyKey,
+        confirmedCostUsd: input.confirmedCostUsd,
+      }),
+    },
+    'campaign_pack_queue_failed',
+  )
+}
+
+export async function fetchCampaignPack(packId: string): Promise<CampaignPackClient> {
+  const data = await studioRequest<{ pack: CampaignPackClient }>(
+    `/api/assistant/creative-studio/campaign-packs/${encodeURIComponent(packId)}`,
+    undefined,
+    'campaign_pack_fetch_failed',
+  )
+  return data.pack
+}
+
+export async function selectCampaignPackDraft(
+  packId: string,
+  selectedDraftStageId: 'draft-a' | 'draft-b',
+): Promise<CampaignPackClient> {
+  const data = await studioRequest<{ pack: CampaignPackClient }>(
+    `/api/assistant/creative-studio/campaign-packs/${encodeURIComponent(packId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'select_draft', selectedDraftStageId }),
+    },
+    'campaign_pack_selection_failed',
+  )
+  return data.pack
+}
+
+export async function retryCampaignPackStage(input: {
+  packId: string
+  stageId: CampaignPackStageId
+  confirmedCostUsd?: number
+  reason?: string
+}): Promise<CampaignPackClient> {
+  const data = await studioRequest<{ pack: CampaignPackClient }>(
+    `/api/assistant/creative-studio/campaign-packs/${encodeURIComponent(input.packId)}/retry`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stageId: input.stageId,
+        confirmedCostUsd: input.confirmedCostUsd,
+        reason: input.reason,
+      }),
+    },
+    'campaign_pack_retry_failed',
+  )
+  return data.pack
 }
 
 async function linkQueuedStudioJobs(

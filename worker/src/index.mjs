@@ -590,6 +590,22 @@ async function processImageGen(job) {
     return
   }
 
+  // CSE4 — deterministic campaign-pack previews, crops/frames and Bangla
+  // captions. These are local/free and storage-addressed; a worker restart can
+  // safely repeat the exact path without duplicating any paid provider call.
+  if (payload.provider === 'campaign_pack_local') {
+    try {
+      const { processCampaignPackStage } = await import('./campaign-pack.mjs')
+      const result = await processCampaignPackStage({ supabase, pendingActionId, payload })
+      await callJobResult(pendingActionId, 'success', result)
+      console.log(`[worker] campaign-pack ${payload.campaignPack?.stageId} ${pendingActionId} — done`)
+    } catch (err) {
+      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      console.error(`[worker] campaign-pack ${pendingActionId} — failed:`, err.message)
+    }
+    return
+  }
+
   // Supplier-photo garment prep (free local segmentation): split the reseller
   // photo into per-person crops; the chain uses the REAL adult/child pieces.
   if (payload.provider === 'garment_prep') {

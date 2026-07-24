@@ -51,6 +51,10 @@ export async function GET(req: NextRequest) {
   // (cron/legacy rows) pass through untouched — the lease narrows duplicates,
   // it never blocks delivery.
   const LEASE_TTL_MS: Record<string, number> = {
+    // CSE4 local layouts are quick, while a paid campaign-family image can use
+    // the same image_gen lane. Keep one lease across either path so a second
+    // poller never starts the same paid stage while the first worker is alive.
+    image_gen: 15 * 60_000,
     video_gen: 15 * 60_000, video_edit: 15 * 60_000, video_finish: 15 * 60_000,
     long_agent_task: 15 * 60_000, browser_action: 15 * 60_000, workbench_run: 15 * 60_000, agent_graph_run: 30 * 60_000,
     seo_audit: 15 * 60_000,
