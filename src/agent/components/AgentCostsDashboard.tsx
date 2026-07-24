@@ -8,6 +8,7 @@ import {
 } from 'recharts'
 import { cn } from '@/lib/utils'
 import { AgentSubHeader } from '@/agent/components/AgentSubHeader'
+import type { SpendBreakdown, SpendCategoryTotal } from '@/agent/lib/billing/spend-categories'
 
 type DashboardData = {
   todayDhakaDate?: string
@@ -15,6 +16,8 @@ type DashboardData = {
   todayOxylabsCredits?: number
   monthUsd: number
   forecastUsd: number
+  spendByCategoryToday?: SpendBreakdown
+  spendByCategoryMonth?: SpendBreakdown
   subscriptionAmortMonthUsd: number
   dailyLast30: Array<Record<string, number | string>>
   byProvider: Array<{ provider: string; totalUsd: number }>
@@ -628,6 +631,95 @@ function TtsProviderCard({
   )
 }
 
+function SpendCategoryRow({ c, maxUsd }: { c: SpendCategoryTotal; maxUsd: number }) {
+  const width = maxUsd > 0 ? Math.max(3, (c.usd / maxUsd) * 100) : 0
+  return (
+    <div className="rounded-xl border border-border-subtle bg-card/40 px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-sm">{c.icon}</span>
+          <div className="min-w-0">
+            <p className="truncate text-xs font-semibold text-cream">
+              {c.label}
+              {c.headline && <span className="ml-1 text-[8px] text-[#E07A5F]">★</span>}
+            </p>
+            <p className="truncate text-[8px] text-muted">{c.hint}</p>
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="text-sm font-bold tabular-nums text-cream">{fmtUsd(c.usd)}</p>
+          <p className="text-[8px] text-muted">{c.pct}% · {c.count.toLocaleString()} বার</p>
+        </div>
+      </div>
+      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-black/10">
+        <div className="h-full rounded-full bg-[#E07A5F]" style={{ width: `${width}%` }} />
+      </div>
+    </div>
+  )
+}
+
+function SpendByCategorySection({ today, month }: { today?: SpendBreakdown; month?: SpendBreakdown }) {
+  const [range, setRange] = useState<'today' | 'month'>('today')
+  const b = range === 'today' ? today : month
+  if (!b) return null
+  const maxUsd = b.categories.length ? b.categories[0].usd : 0
+  return (
+    <section className="space-y-3">
+      <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold text-[#E07A5F]">🧾 কোন খাতে কত খরচ</p>
+            <p className="mt-1 max-w-2xl text-[10px] leading-relaxed text-muted">
+              প্রতিটি খরচ ঠিক এক খাতে গোনা — সব খাত যোগ করলে মোট মিলে যায়, তাই সহজেই মিলিয়ে নিতে পারবেন।
+            </p>
+          </div>
+          <div className="flex rounded-lg border border-border-subtle p-0.5 text-[10px]">
+            <button
+              onClick={() => setRange('today')}
+              className={cn('rounded-md px-2.5 py-1 font-semibold transition-all', range === 'today' ? 'bg-[#E07A5F]/15 text-[#E07A5F]' : 'text-muted')}
+            >
+              আজ
+            </button>
+            <button
+              onClick={() => setRange('month')}
+              className={cn('rounded-md px-2.5 py-1 font-semibold transition-all', range === 'month' ? 'bg-[#E07A5F]/15 text-[#E07A5F]' : 'text-muted')}
+            >
+              এই মাসে
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className="rounded-xl border border-[#E07A5F]/20 bg-[#E07A5F]/[0.06] px-3 py-2.5">
+            <p className="text-[9px] uppercase tracking-wider text-muted">{range === 'today' ? 'আজকের মোট' : 'এই মাসের মোট'}</p>
+            <p className="mt-1 text-xl font-bold tabular-nums text-cream">{fmtUsd(b.totalUsd)}</p>
+          </div>
+          <div className="rounded-xl border border-border-subtle bg-card/60 px-3 py-2.5">
+            <p className="text-[9px] uppercase tracking-wider text-muted">💬 চ্যাট (Boss)</p>
+            <p className="mt-1 text-xl font-bold tabular-nums text-cream">{fmtUsd(b.chatHeadlineUsd)}</p>
+          </div>
+          <div className="rounded-xl border border-border-subtle bg-card/60 px-3 py-2.5">
+            <p className="text-[9px] uppercase tracking-wider text-muted">খাত সংখ্যা</p>
+            <p className="mt-1 text-xl font-bold tabular-nums text-cream">{b.categories.length}</p>
+          </div>
+        </div>
+
+        {!b.reconciled && (
+          <p className="mt-2 text-[9px] text-[#D4A84B]">⚠️ যোগফল মোটের সাথে মিলছে না — refresh দিন।</p>
+        )}
+
+        <div className="mt-3 space-y-1.5">
+          {b.categories.length === 0 ? (
+            <p className="py-4 text-center text-[11px] text-muted">এই সময়ে কোনো খরচ হয়নি।</p>
+          ) : (
+            b.categories.map((c) => <SpendCategoryRow key={c.id} c={c} maxUsd={maxUsd} />)
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 export default function AgentCostsDashboard() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [balances, setBalances] = useState<BalanceData | null>(null)
@@ -875,6 +967,9 @@ export default function AgentCostsDashboard() {
         }
       />
     <div className="safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6 bg-transparent">
+      {/* Daily spend by activity category — the one-glance "where did my money go" */}
+      <SpendByCategorySection today={data.spendByCategoryToday} month={data.spendByCategoryMonth} />
+
       {/* Truthful provider billing hub */}
       <section className="space-y-3">
         <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
