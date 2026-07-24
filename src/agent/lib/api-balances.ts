@@ -13,6 +13,7 @@ import {
   fetchSupabaseOrganizationPlan,
   fetchVercelBillingCosts,
   fetchXaiBilling,
+  type ProviderCostBreakdown,
   type ProviderInvoiceSnapshot,
   type ProviderQuotaSnapshot,
   type ProviderSourceType,
@@ -124,6 +125,8 @@ export type BalanceProviderRow = {
   /** Owner funding policy classification. */
   criticality?: FundingCriticality
   fundingMode?: FundingMode
+  /** Per-line cost split (Vercel only today): AI-agent product vs app hosting. */
+  costBreakdown?: ProviderCostBreakdown | null
 }
 
 export type ApiBalanceCache = {
@@ -1198,6 +1201,7 @@ export async function refreshApiBalanceCache(): Promise<{
     let invoice: ProviderInvoiceSnapshot | null = null
     let syncedThrough: string | null = null
     let plan: string | null = null
+    let costBreakdown: ProviderCostBreakdown | null = null
     let sourceType: ProviderSourceType = 'local_measured'
     let costSourceType: ProviderSourceType = 'local_measured'
     let status: ProviderSyncStatus = monthUsd > 0 ? 'manual' : 'unconfigured'
@@ -1552,6 +1556,7 @@ export async function refreshApiBalanceCache(): Promise<{
       monthUsd = providerMonthUsd
       todayUsd = vercelBilling.value.todayUsd
       syncedThrough = vercelBilling.value.syncedThrough
+      costBreakdown = vercelBilling.value.breakdown ?? null
       sourceType = costSourceType = 'provider_export'
       status = 'live'
       statusMessage = 'Vercel team-এর FOCUS billed charges connected। এটি পুরো team scope—ALMA ERP project-only due/invoice নয়; upcoming invoice/due public API-তে exposed নয়।'
@@ -1685,6 +1690,7 @@ export async function refreshApiBalanceCache(): Promise<{
       capabilities: meta.capabilities,
       configuredCapabilities,
       syncedThrough,
+      costBreakdown,
     })
   }
 

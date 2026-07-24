@@ -27,6 +27,20 @@ export type ProviderCostSnapshot = {
   todayUsd: number
   monthUsd: number
   syncedThrough: string | null
+  // Optional per-line breakdown (Vercel FOCUS charges). Lets the dashboard split
+  // "Vercel Agent" AI-token spend (the owner's v0/Agent product usage) from the
+  // ERP app's actual hosting — cost audit 2026-07-25 found $75 of a $128 Vercel
+  // bill was the Agent product, NOT the app, and it was invisible.
+  breakdown?: ProviderCostBreakdown
+}
+
+export type ProviderCostBreakdown = {
+  /** AI-token / agent product spend (Vercel "AI Tokens" category). */
+  aiTokensUsd: number
+  /** Everything else — real app hosting (functions, build, bandwidth, plan…). */
+  hostingUsd: number
+  /** Top line items by USD, largest first (name + amount). */
+  topLines: Array<{ name: string; usd: number }>
 }
 
 export type ProviderQuotaSnapshot = {
@@ -96,6 +110,8 @@ type VercelFocusCharge = {
   EffectiveCost?: number | string
   BillingCurrency?: string
   ChargePeriodStart?: string
+  ServiceName?: string
+  ServiceCategory?: string
 }
 
 type BigQueryField = { name?: string }
@@ -152,6 +168,8 @@ export function parseVercelFocusCharges(raw: string, todayYmd: string): Provider
   let todayUsd = 0
   let monthUsd = 0
   let syncedThrough: string | null = null
+  let aiTokensUsd = 0
+  const byName = new Map<string, number>()
   for (const row of rows) {
     const currency = (row.BillingCurrency ?? 'USD').toUpperCase()
     if (currency !== 'USD') {
@@ -163,11 +181,25 @@ export function parseVercelFocusCharges(raw: string, todayYmd: string): Provider
     const day = row.ChargePeriodStart?.slice(0, 10) ?? null
     if (day === todayYmd) todayUsd += amount
     if (day && (syncedThrough == null || day > syncedThrough)) syncedThrough = day
+    // FOCUS "AI Tokens" category = Vercel Agent / v0 product usage, distinct from
+    // the app's hosting. Isolate it so the dashboard can show the split.
+    if ((row.ServiceCategory ?? '') === 'AI Tokens') aiTokensUsd += amount
+    if (row.ServiceName) byName.set(row.ServiceName, (byName.get(row.ServiceName) ?? 0) + amount)
   }
+  const topLines = [...byName.entries()]
+    .filter(([, usd]) => Math.abs(usd) > 0.005)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([name, usd]) => ({ name, usd: roundProviderUsd(usd) }))
   return {
     todayUsd: roundProviderUsd(todayUsd),
     monthUsd: roundProviderUsd(monthUsd),
     syncedThrough,
+    breakdown: {
+      aiTokensUsd: roundProviderUsd(aiTokensUsd),
+      hostingUsd: roundProviderUsd(monthUsd - aiTokensUsd),
+      topLines,
+    },
   }
 }
 
