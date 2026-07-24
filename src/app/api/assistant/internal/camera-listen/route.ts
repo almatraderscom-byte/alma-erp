@@ -39,7 +39,7 @@ import {
 } from '@/agent/lib/camera-voice-policy'
 import { transcribeVoiceBangla } from '@/agent/lib/voice-bangla'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
-import { calcWhisperCostUsd, estimateAudioDurationSeconds } from '@/agent/lib/pricing'
+import { calcWhisperCostUsd, audioDurationSeconds, wavDurationSeconds } from '@/agent/lib/pricing'
 import { logCost } from '@/agent/lib/cost-events'
 
 export const runtime = 'nodejs'
@@ -165,15 +165,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, ignored: 'daily_stt_cap', usedToday, cap })
     }
     try {
+      // Read the raw bytes ONCE so the cost estimate can use the WAV header's
+      // exact duration. The listener uploads WAV 16 kHz mono 16-bit (32000 B/s);
+      // the old bytes/2000 estimate over-counted duration ~16× and billed the
+      // dashboard ~$17/month of phantom OpenAI cost (cost audit Phase 6).
+      const audioBytes = new Uint8Array(await input.audio.arrayBuffer())
       const sttPrompt = (await kvGet('camera_listen_stt_prompt')) ?? DEFAULT_STT_PROMPT
       const t = await transcribeVoiceBangla(openai(), input.audio, sttPrompt)
       transcript = (t.text ?? '').trim()
       await kvSet(dayKey, String(usedToday + 1))
-      const durationSec = estimateAudioDurationSeconds(input.audio.size)
+      const durationSec = audioDurationSeconds(audioBytes, input.audio.size)
       void logCost({
         provider: 'openai',
         kind: 'transcribe',
-        units: { duration_seconds: durationSec, bytes: input.audio.size, model: t.model, purpose: 'camera_listen' },
+        units: {
+          duration_seconds: durationSec,
+          duration_source: wavDurationSeconds(audioBytes) != null ? 'wav_header' : 'byte_estimate',
+          bytes: input.audio.size,
+          model: t.model,
+          purpose: 'camera_listen',
+        },
         costUsd: calcWhisperCostUsd(durationSec),
         dedupKey: `camlisten:${input.audio.size}:${transcript.slice(0, 20)}`,
       })
