@@ -730,6 +730,77 @@ async function processImageGen(job) {
     return
   }
 
+  // CS14 — Model Avatar build: free identity sheet + optional Grok canonical.
+  if (payload.provider === 'avatar_build') {
+    try {
+      const { processAvatarBuild } = await import('./avatar/build.mjs')
+      const { logCost } = await import('./cost-log.mjs')
+      const result = await processAvatarBuild({ supabase, pendingActionId, payload, logCost })
+      await callJobResult(pendingActionId, 'success', {
+        provider: 'avatar_build',
+        modelId: payload.modelId,
+        sheetPath: result.sheetPath,
+        canonicalPath: result.canonicalPath ?? undefined,
+        // gallery shows the best artifact (canonical when built, else the sheet)
+        storagePath: result.canonicalPath ?? result.sheetPath,
+        imageCount: result.imageCount,
+        creativeStudio: true,
+        studioMode: 'avatar_build',
+      })
+      console.log(`[worker] avatar-build ${payload.modelId} — done (${result.imageCount} angles${result.canonicalPath ? ' + canonical' : ''})`)
+    } catch (err) {
+      // clear the building flag so the UI never sticks on "building"
+      try {
+        const key = `model_avatar:${payload.modelId}`
+        const { data: row } = await supabase.from('agent_kv_settings').select('value').eq('key', key).maybeSingle()
+        if (row?.value) {
+          const avatar = JSON.parse(row.value)
+          avatar.building = false
+          await supabase.from('agent_kv_settings').upsert({ key, value: JSON.stringify(avatar) }, { onConflict: 'key' })
+        }
+      } catch { /* best effort */ }
+      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      console.error(`[worker] avatar-build ${payload.modelId} — failed:`, err.message)
+    }
+    return
+  }
+
+  // CS13 — xAI Grok Imagine (generation + natural-language edit, up to 3 refs).
+  // Synchronous API — no durable queue state; adapter retries transients only.
+  if (payload.provider === 'xai') {
+    try {
+      const { isEngineKilled } = await import('./fal/client.mjs')
+      if (await isEngineKilled(supabase, 'xai_imagine')) {
+        await callJobResult(pendingActionId, 'failed', undefined, 'Grok Imagine ইঞ্জিনটি kill switch দিয়ে বন্ধ করা আছে — সেটিংস থেকে চালু করে আবার চালান।')
+        return
+      }
+      const { processXaiImagine } = await import('./xai/adapter.mjs')
+      const { logCost } = await import('./cost-log.mjs')
+      const result = await processXaiImagine({ supabase, pendingActionId, payload, logCost })
+      const { postProcessImage } = await import('./cs/branding.mjs')
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath)
+      await callJobResult(pendingActionId, 'success', {
+        storagePath: result.storagePath,
+        allPaths: result.allPaths,
+        provider: 'xai',
+        xaiEngine: result.xaiEngine,
+        xaiModel: result.xaiModel,
+        xaiOp: result.xaiOp,
+        latencyMs: result.latencyMs,
+        costUsd: result.costUsd,
+        creativeStudio: true,
+        studioMode: payload.studioMode,
+        qc: result.qc ?? undefined,
+        ...finishing,
+      })
+      console.log(`[worker] xai:${result.xaiModel} ${pendingActionId} — done → ${result.storagePath}`)
+    } catch (err) {
+      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      console.error(`[worker] xai ${pendingActionId} — failed:`, err.message)
+    }
+    return
+  }
+
   if (payload.provider === 'fashn') {
     try {
       const { isEngineKilled } = await import('./fal/client.mjs')

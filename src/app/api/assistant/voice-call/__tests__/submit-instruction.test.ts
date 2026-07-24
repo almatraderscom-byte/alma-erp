@@ -34,7 +34,20 @@ const mockTurnQueue = vi.hoisted(() => ({
 vi.mock('@/agent/lib/turn-queue', () => mockTurnQueue)
 
 import { POST } from '../submit-instruction/route'
-import { VOICE_INSTRUCTION_PREFIX } from '@/agent/lib/voice-instruction'
+import {
+  VOICE_INSTRUCTION_PREFIX,
+  isVoiceInstructionText,
+  stripVoiceInstructionPrefix,
+} from '@/agent/lib/voice-instruction'
+
+describe('voice-instruction markers (PA-4 badge)', () => {
+  it('detects and strips the prefix', () => {
+    const msg = `${VOICE_INSTRUCTION_PREFIX} কাল ব্যাংকে যেতে হবে`
+    expect(isVoiceInstructionText(msg)).toBe(true)
+    expect(stripVoiceInstructionPrefix(msg)).toBe('কাল ব্যাংকে যেতে হবে')
+    expect(isVoiceInstructionText('সাধারণ মেসেজ')).toBe(false)
+  })
+})
 
 function makeReq(body: unknown, token = 'test-token') {
   return new Request('http://local/api/assistant/voice-call/submit-instruction', {

@@ -10,6 +10,7 @@ import {
   CS_FLUX_FILL_ENABLED_KEY,
   CS_IDM_VTON_ENABLED_KEY,
   CS_SINGLE_VTON_DEFAULT_KEY,
+  CS_XAI_ENABLED_KEY,
   FAMILY_CHAIN_LABEL_BN,
   describeEngineAvailability,
   normalizeSingleVtonDefault,
@@ -30,16 +31,18 @@ export async function GET(req: NextRequest) {
   // Missing FAL_KEY is a truthful availability state (configured:false in the
   // engines list) — never a crash for the FASHN/Gemini modes.
   const falConfigured = Boolean(process.env.FAL_KEY?.trim())
+  const xaiConfigured = Boolean(process.env.XAI_API_KEY?.trim())
 
-  const [falEnabled, idmEnabled, fillEnabled, vtonDefault] = await Promise.all([
+  const [falEnabled, idmEnabled, fillEnabled, xaiEnabled, vtonDefault] = await Promise.all([
     readKv(CS_FAL_ENABLED_KEY),
     readKv(CS_IDM_VTON_ENABLED_KEY),
     readKv(CS_FLUX_FILL_ENABLED_KEY),
+    readKv(CS_XAI_ENABLED_KEY),
     readKv(CS_SINGLE_VTON_DEFAULT_KEY),
   ])
   // CS12 — per-engine kill switches feed availability truthfully
   const kills: Record<string, boolean> = {}
-  for (const id of ['fashn', 'gemini', 'fal_fashn_v16', 'fal_idm_vton', 'fal_flux_fill']) {
+  for (const id of ['fashn', 'gemini', 'fal_fashn_v16', 'fal_idm_vton', 'fal_flux_fill', 'xai_imagine']) {
     kills[id] = (await readKv(`${CS_ENGINE_KILL_PREFIX}${id}`)) === '1'
   }
 
@@ -48,14 +51,17 @@ export async function GET(req: NextRequest) {
     geminiConfigured,
     veoConfigured: geminiConfigured,
     falConfigured,
+    xaiConfigured,
     engines: describeEngineAvailability({
       fashnConfigured,
       geminiConfigured,
       falConfigured,
+      xaiConfigured,
       flags: {
         [CS_FAL_ENABLED_KEY]: falEnabled === '1',
         [CS_IDM_VTON_ENABLED_KEY]: idmEnabled === '1',
         [CS_FLUX_FILL_ENABLED_KEY]: fillEnabled === '1',
+        [CS_XAI_ENABLED_KEY]: xaiEnabled === '1',
       },
       kills,
     }),

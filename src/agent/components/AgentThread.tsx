@@ -22,6 +22,7 @@ import { GlassSheet, GlassSheetGrip } from '@/components/ui/GlassSheet'
 import { agentReplyHaptic } from '@/agent/lib/haptics'
 import { impactLight, selection } from '@/lib/haptics'
 import { isHeartbeatWakeText } from '@/agent/lib/heartbeat/wake-marker'
+import { isVoiceInstructionText, stripVoiceInstructionPrefix } from '@/agent/lib/voice-instruction'
 
 /**
  * Inline "ALMA woke on its own" divider — the Claude-Code ScheduleWakeup look.
@@ -30,6 +31,46 @@ import { isHeartbeatWakeText } from '@/agent/lib/heartbeat/wake-marker'
  * render as a fake owner pill, so it collapses to this small centered marker and
  * the head's real turn renders normally right below it.
  */
+/** PA-4 — a boss instruction spoken on a live call: 🎙️ badge over the coral
+ *  pill + a status chip (গৃহীত → চলছে → শেষ) driven by the following turn. */
+function VoiceInstructionBubble({ text, createdAt, status }: {
+  text: string
+  createdAt?: string
+  status: 'received' | 'working' | 'done'
+}) {
+  const chip =
+    status === 'working'
+      ? { label: 'চলছে…', cls: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' }
+      : status === 'done'
+        ? { label: 'শেষ ✓', cls: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' }
+        : { label: 'গৃহীত — এজেন্ট নিচ্ছে…', cls: 'bg-white/[0.08] text-muted' }
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[85%] min-w-0">
+        <div className="mb-1 flex items-center justify-end gap-1.5">
+          <span className="inline-flex items-center gap-1 rounded-full bg-[#E07A5F]/15 px-2 py-0.5 text-[10px] font-medium text-[#E07A5F]">
+            🎙️ ভয়েস নির্দেশ
+          </span>
+          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${chip.cls}`}>
+            {status === 'working' && (
+              <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" aria-hidden />
+            )}
+            {chip.label}
+          </span>
+        </div>
+        <div className="agent-bubble-press rounded-2xl rounded-br-sm bg-gradient-to-br from-[#E07A5F] to-[#C45A3C] px-4 py-3 text-[15px] leading-relaxed text-white shadow-sm shadow-[#E07A5F]/20 whitespace-pre-wrap break-words select-text">
+          <CollapsibleMessage collapsedMaxPx={260}>{text}</CollapsibleMessage>
+        </div>
+        {createdAt && (
+          <div className="mt-1 text-right">
+            <RelativeTime iso={createdAt} className="text-[10px] text-muted" />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function HeartbeatWakeDivider() {
   return (
     <div className="my-1 flex items-center justify-center gap-2.5">
@@ -1353,6 +1394,19 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                 /* Autonomous heartbeat self-wake — render as an inline divider, NOT
                    a fake owner message (the directive is the head's own cue). */
                 <HeartbeatWakeDivider />
+              ) : msg.role === 'user' && isVoiceInstructionText(msg.text) ? (
+                /* PA-4 — boss instruction relayed from a live phone call: badge +
+                   the spoken words + a live status chip fed by the next turn. */
+                <VoiceInstructionBubble
+                  text={stripVoiceInstructionPrefix(msg.text ?? '')}
+                  createdAt={msg.createdAt}
+                  status={(() => {
+                    const src = isOfficeShift ? messages.filter((m) => m.streaming) : messages
+                    const next = src[index + 1]
+                    if (!next || next.role !== 'assistant') return 'received' as const
+                    return next.streaming ? ('working' as const) : ('done' as const)
+                  })()}
+                />
               ) : msg.role === 'user' ? (
                 /* User message — coral-tinted pill */
                 <div className="flex justify-end">

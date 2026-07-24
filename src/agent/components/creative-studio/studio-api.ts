@@ -9,6 +9,8 @@ export type StudioConfig = {
   veoConfigured: boolean
   /** CS5 — FAL_KEY present on the server (foundation; engines runnable from CS6/CS7) */
   falConfigured: boolean
+  /** CS13 — XAI_API_KEY present on the server (Grok Imagine engine) */
+  xaiConfigured: boolean
   /** CS5 — registry availability snapshot (identity/status/flags, truthful when key missing) */
   engines: EngineAvailability[]
   /** CS5 — owner default for single-person Try-On (used from CS6) */
@@ -277,12 +279,64 @@ export type SavedStudioModel = {
   imagePath?: string
   /** signed, ready-to-render URL for the saved photo (1h) */
   imageUrl?: string | null
+  /** CS14 — avatar status (multi-angle identity) */
+  avatar?: { built: boolean; building: boolean; count: number } | null
 }
 
 export async function fetchModels() {
   const res = await fetch('/api/assistant/brand-models')
   if (!res.ok) throw new Error('models_failed')
   return res.json() as Promise<{ models: SavedStudioModel[] }>
+}
+
+// ── CS14: Model Avatar (multi-angle identity) ───────────────────────────────
+
+export type StudioModelAvatar = {
+  imagePaths: string[]
+  imageUrls: (string | null)[]
+  sheetPath?: string
+  sheetUrl?: string | null
+  canonicalPath?: string
+  canonicalUrl?: string | null
+  builtAt?: string
+  building?: boolean
+}
+
+export async function fetchAvatar(modelId: string) {
+  const res = await fetch(`/api/assistant/brand-models/avatar?id=${encodeURIComponent(modelId)}`)
+  if (!res.ok) throw new Error('avatar_failed')
+  return res.json() as Promise<{ avatar: StudioModelAvatar | null }>
+}
+
+export async function setAvatarImages(modelId: string, imagePaths: string[]) {
+  const res = await fetch('/api/assistant/brand-models/avatar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'set_images', id: modelId, imagePaths }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? data.error ?? 'avatar_save_failed')
+  return data as { ok: true; count: number; max: number }
+}
+
+export async function buildAvatar(modelId: string, canonical: boolean) {
+  const res = await fetch('/api/assistant/brand-models/avatar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'build', id: modelId, canonical }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? data.error ?? 'avatar_build_failed')
+  return data as { ok: true; pendingActionId: string }
+}
+
+export async function clearAvatarImages(modelId: string) {
+  const res = await fetch('/api/assistant/brand-models/avatar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'clear', id: modelId }),
+  })
+  if (!res.ok) throw new Error('avatar_clear_failed')
 }
 
 /** Make one saved model the default the Auto tab uses (per-image select stays manual). */
@@ -555,6 +609,8 @@ export type StudioSettings = {
   falEnabled: boolean
   idmVtonEnabled: boolean
   fluxFillEnabled: boolean
+  /** CS13 — xAI Grok Imagine master switch */
+  xaiEnabled: boolean
   singleVtonDefault: StudioEngineId
   /** CS8 — Preview (১টি সাশ্রয়ী রান) vs Production (কড়া QC + bounded repair) */
   pipelineMode: 'preview' | 'production'
@@ -573,6 +629,7 @@ export async function saveStudioSettings(patch: {
   falEnabled?: boolean
   idmVtonEnabled?: boolean
   fluxFillEnabled?: boolean
+  xaiEnabled?: boolean
   singleVtonDefault?: StudioEngineId
   pipelineMode?: 'preview' | 'production'
 }) {

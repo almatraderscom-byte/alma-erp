@@ -182,6 +182,50 @@ describe('processCallEscalations — queued rows', () => {
   })
 })
 
+describe('processCallEscalations — boss_callback (PA-5R)', () => {
+  const cbRow = {
+    id: 'cb1',
+    trigger: 'boss_callback',
+    refId: 'callback:conv:1',
+    title: 'কাজ শেষ',
+    purpose: 'রিপোর্ট',
+    status: 'queued',
+    createdAt: new Date(),
+    nextCheckAt: new Date(Date.now() - 1000),
+    waCallId: null,
+    pstnCallId: null,
+    approvalActionId: null,
+  }
+
+  it('dials WITHOUT the permission card even though autonomy is OFF', async () => {
+    mockPrisma.agentCallEscalation.findMany.mockResolvedValue([cbRow])
+    mockPrisma.agentCallEscalation.count.mockResolvedValue(0)
+    mockPrisma.agentCallEscalation.findUnique.mockResolvedValue(cbRow)
+    mockPrisma.agentCallEscalation.updateMany.mockResolvedValue({ count: 1 })
+    mockVoiceCall.placeOutboundCall.mockResolvedValue({ ok: true, callRecordId: 'call1' })
+    const res = await processCallEscalations()
+    expect(res).toEqual([{ id: 'cb1', outcome: 'dialed_wa_calling' }])
+    expect(mockPrisma.agentPendingAction.create).not.toHaveBeenCalled()
+    expect(mockCard.sendOwnerApprovalCard).not.toHaveBeenCalled()
+  })
+
+  it('own daily cap → cancelled + report delivered as push', async () => {
+    mockPrisma.agentCallEscalation.findMany.mockResolvedValue([cbRow])
+    mockPrisma.agentCallEscalation.count.mockResolvedValue(10)
+    const res = await processCallEscalations()
+    expect(res).toEqual([{ id: 'cb1', outcome: 'cancelled_daily_cap' }])
+    expect(mockVoiceCall.placeOutboundCall).not.toHaveBeenCalled()
+    expect(mockNotify.notifyOwner).toHaveBeenCalled()
+  })
+
+  it('still defers in quiet hours (boss asleep — report can wait)', async () => {
+    mockQuiet.isQuietHoursDhaka.mockReturnValue(true)
+    mockPrisma.agentCallEscalation.findMany.mockResolvedValue([cbRow])
+    const res = await processCallEscalations()
+    expect(res).toEqual([{ id: 'cb1', outcome: 'deferred_quiet_hours' }])
+  })
+})
+
 describe('processCallEscalations — awaiting_approval', () => {
   const awaitingRow = {
     id: 'esc3',

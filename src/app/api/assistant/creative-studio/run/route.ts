@@ -17,6 +17,10 @@ const AUTO_ERRORS: Record<string, string> = {
   idm_vton_disabled: 'IDM-VTON বন্ধ আছে — লাইব্রেরি → স্টুডিও সেটিংস থেকে পরীক্ষামূলক IDM-VTON চালু করুন।',
   // CS7 — FLUX Fill gates
   flux_fill_disabled: 'FLUX Fill বন্ধ আছে — লাইব্রেরি → স্টুডিও সেটিংস থেকে চালু করুন।',
+  // CS13 — xAI Grok Imagine gates
+  xai_not_configured: 'XAI_API_KEY সেট করা নেই — Grok Imagine ইঞ্জিন এখন চালানো যাবে না।',
+  xai_engine_disabled: 'Grok Imagine বন্ধ আছে — লাইব্রেরি → স্টুডিও সেটিংস থেকে চালু করুন।',
+  prompt_required: 'কী বানাতে চান প্রম্পটে লিখে দিন — Generate/Edit মোডে প্রম্পট লাগবেই।',
   custom_prompt_required: 'নিজের প্রম্পট প্রিসেটে কী বদলাতে চান লিখে দিন।',
   mask_empty: 'মাস্ক খালি — আগে ব্রাশ দিয়ে এলাকা আঁকুন।',
   mask_covers_everything: 'পুরো ছবি মাস্ক করা যাবে না — যেটুকু বদলাবে সেটুকুই আঁকুন।',
@@ -76,7 +80,9 @@ export async function POST(req: NextRequest) {
         includeReel: body.includeReel,
       })
       const imageCount = result.jobs.filter((j) => j.type === 'image_gen').length
-      const engine = result.provider === 'fashn' ? 'FASHN (best realism)' : 'Gemini'
+      const engine = result.provider === 'xai_imagine'
+        ? 'Grok Imagine (xAI)'
+        : result.provider === 'fashn' ? 'FASHN (best realism)' : 'Gemini'
       const parts = [`✨ ${imageCount}টি ছবি`]
       if (result.reelQueued) parts.push('১টি রিল')
       return Response.json({
@@ -94,18 +100,27 @@ export async function POST(req: NextRequest) {
 
   if (body.modelId && !body.modelImagePath) {
     const model = await resolveModel(body.modelId)
-    if (model) body.modelImagePath = model.imagePath
+    if (model) {
+      // CS14 — a built avatar takes over: canonical (or sheet) becomes the
+      // person reference; the sheet rides along for xAI identity accuracy.
+      const { resolvePersonRef } = await import('@/lib/tryon/model-avatar')
+      const ref = await resolvePersonRef(model)
+      body.modelImagePath = ref.path
+      if (ref.sheetPath) body.avatarSheetPath = ref.sheetPath
+    }
   }
   if (body.modelId && body.faceReferencePath === undefined) {
     const model = await resolveModel(body.modelId)
-    if (model) body.faceReferencePath = model.imagePath
+    if (model) body.faceReferencePath = body.modelImagePath ?? model.imagePath
   }
 
   try {
     const result = await runCreativeStudio(body)
     // CS6 — name the engine that will ACTUALLY run, never a blanket "FASHN".
     const message =
-      result.provider === 'fal_flux_fill'
+      result.provider === 'xai_imagine'
+        ? 'Grok Imagine (xAI) render queued — Gallery-তে ফলাফল দেখুন।'
+        : result.provider === 'fal_flux_fill'
         ? 'FLUX Fill precision edit queued — শুধু মাস্ক-করা জায়গা বদলাবে। Gallery-তে দেখুন।'
         : result.provider === 'fal_idm_vton'
         ? 'IDM-VTON (পরীক্ষামূলক) render queued — Gallery-তে ফলাফল দেখুন। ফলাফল যাচাই না করে পাবলিশ করবেন না।'

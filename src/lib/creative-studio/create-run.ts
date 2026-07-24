@@ -4,7 +4,7 @@ import { buildVideoBrief, estimateReelCostUsd } from '@/lib/content-engine/video
 import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creative-studio/constants'
 import { STUDIO_MODES } from '@/lib/creative-studio/constants'
 import { queueTryOnBatch, type ChatTryOnVariant } from '@/lib/tryon/tryon-batch'
-import { getDefaultModel, getModelByRole } from '@/lib/tryon/model-library'
+import { getDefaultModel, getModelByRole, type ModelRole } from '@/lib/tryon/model-library'
 import {
   startFamilyChain,
   startSingleRescueChain,
@@ -21,12 +21,23 @@ import {
   CS_FAL_ENABLED_KEY,
   CS_FLUX_FILL_ENABLED_KEY,
   CS_IDM_VTON_ENABLED_KEY,
+  CS_XAI_ENABLED_KEY,
   getEngine,
   isFalVtonEngine,
   isVtonClothType,
   type StudioEngineId,
   type VtonClothType,
 } from '@/lib/creative-studio/provider-registry'
+import {
+  XAI_FAMILY_PAIR_ROLES,
+  XAI_IMAGE_MODEL_QUALITY,
+  buildXaiFamilyPairBrief,
+  buildXaiRunBrief,
+  estimateXaiImageCostUsd,
+  toXaiAspectRatio,
+  toXaiResolution,
+  type XaiRunBrief,
+} from '@/lib/creative-studio/xai-imagine'
 import { buildFillPrompt, estimateFluxFillCostUsd, type MaskPresetId } from '@/lib/creative-studio/mask-contract'
 import {
   buildRunPlan,
@@ -66,6 +77,8 @@ export type CreativeStudioRunInput = {
   seed?: number
   /** CS9 — family protected compositing (no face/garment regen in the merge) */
   protectedComposite?: boolean
+  /** CS14 — avatar identity sheet (extra xAI reference when a slot is free) */
+  avatarSheetPath?: string
   /** CS7 — FLUX Fill precision edit: mask object path (white=edit, black=keep) */
   maskPath?: string
   /** CS7 — mask preset id (replace_background / remove_object / …) */
@@ -181,7 +194,43 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
 
   // FAMILY MERGE: combine two already-generated images (e.g. father+son and mother+daughter)
   // into ONE four-person family photoshoot. Worker composites both reference images via Gemini.
+  // CS13.3 — the owner's engine pick WINS: Grok selected ⇒ the merge runs as a
+  // 2-reference xAI edit (owner hit a silent Gemini override here live 2026-07-24).
   if (input.familyPreset === 'full_family' && input.sourceImagePath && input.secondSourceImagePath) {
+    if (input.vtonEngine === 'xai_imagine') {
+      if (!process.env.XAI_API_KEY?.trim()) throw new Error('xai_not_configured')
+      if ((await readKv(CS_XAI_ENABLED_KEY)) !== '1') throw new Error('xai_engine_disabled')
+      const { buildXaiFamilyMergeBrief } = await import('@/lib/creative-studio/xai-imagine')
+      const brief = buildXaiFamilyMergeBrief({
+        sourceImagePath: input.sourceImagePath,
+        secondSourceImagePath: input.secondSourceImagePath,
+        prompt: input.prompt,
+        backgroundPrompt: input.backgroundPrompt,
+      })
+      const xaiResolution = toXaiResolution(input.resolution)
+      const id = await createApprovedAction({
+        type: 'image_gen',
+        payload: {
+          provider: 'xai',
+          xaiEngine: 'xai_imagine',
+          xaiModel: XAI_IMAGE_MODEL_QUALITY,
+          xaiOp: brief.op,
+          referenceImagePaths: brief.referenceImagePaths,
+          referenceRoles: brief.referenceRoles,
+          prompt: brief.prompt,
+          aspectRatio: toXaiAspectRatio(input.aspectRatio ?? '4:5'),
+          resolution: xaiResolution,
+          creativeStudio: true,
+          studioMode: input.mode,
+          familyPreset: 'full_family',
+          familyMerge: true,
+        },
+        summary: '🎨 Studio Family Merge (Grok Imagine · xAI)',
+        costEstimate: estimateXaiImageCostUsd(xaiResolution),
+      })
+      jobs.push({ pendingActionId: id, label: 'Family Merge · Grok Imagine (xAI)', type: 'image_gen' })
+      return { jobs, provider: 'xai_imagine', fashnReady }
+    }
     const mergePrompt = [
       'Combine the people from BOTH reference images into ONE cohesive Bangladeshi family photoshoot.',
       'Reference image 1 shows some family members; reference image 2 shows the others.',
@@ -212,6 +261,126 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     })
     jobs.push({ pendingActionId: id, label: 'Family Merge', type: 'image_gen' })
     return { jobs, provider: 'gemini', fashnReady: isFashnConfigured() }
+  }
+
+  // ── CS13: xAI Grok Imagine — one engine for every image mode ───────────────
+  // `generate` is text-to-image (xAI is its only server); every other mode is
+  // a natural-language edit with 1–3 ordered references. 2-person family
+  // presets send BOTH saved role-model photos + the product as references
+  // (identity match); full_family (4 জন) exceeds xAI's 3-reference cap and
+  // falls through to the FASHN accuracy chain below. The masked-edit flow
+  // (maskPath) stays on FLUX Fill — xAI edits are maskless by design.
+  const xaiFamilyPair = input.familyPreset && XAI_FAMILY_PAIR_ROLES[input.familyPreset]
+  if (
+    (input.vtonEngine === 'xai_imagine' || input.mode === 'generate')
+    && !input.maskPath
+    && input.mode !== 'image_to_video'
+    && !(input.familyPreset === 'full_family')
+  ) {
+    if (!process.env.XAI_API_KEY?.trim()) throw new Error('xai_not_configured')
+    if ((await readKv(CS_XAI_ENABLED_KEY)) !== '1') throw new Error('xai_engine_disabled')
+
+    let brief: XaiRunBrief
+    if (xaiFamilyPair && (input.mode === 'try_on' || input.mode === 'product_to_model')) {
+      if (!input.productImagePath) throw new Error('product_image_required')
+      const [roleA, roleB] = xaiFamilyPair
+      const [modelA, modelB] = await Promise.all([
+        getModelByRole(roleA as ModelRole),
+        getModelByRole(roleB as ModelRole),
+      ])
+      if (!modelA || !modelB) {
+        const missing = [...(!modelA ? [roleA] : []), ...(!modelB ? [roleB] : [])]
+        throw new Error(`missing_models:${missing.join(',')}`)
+      }
+      // CS14 — built avatars (canonical portraits) serve as the person refs
+      const { resolvePersonRef } = await import('@/lib/tryon/model-avatar')
+      const [refA, refB] = await Promise.all([resolvePersonRef(modelA), resolvePersonRef(modelB)])
+      brief = buildXaiFamilyPairBrief({
+        preset: input.familyPreset as string,
+        personPaths: [refA.path, refB.path],
+        personLabels: [roleA, roleB],
+        productImagePath: input.productImagePath,
+        prompt: input.prompt,
+        backgroundPrompt: input.backgroundPrompt,
+      })
+    } else {
+      brief = buildXaiRunBrief({
+        mode: input.mode,
+        prompt: input.prompt,
+        backgroundPrompt: input.backgroundPrompt,
+        familyPrompt: input.familyPreset && input.familyPreset !== 'single' ? familyPrompt(input.familyPreset) : undefined,
+        productImagePath: input.productImagePath,
+        modelImagePath: input.modelImagePath,
+        sourceImagePath: input.sourceImagePath,
+        faceReferencePath: input.faceReferencePath,
+        identitySheetPath: input.avatarSheetPath,
+      })
+      // CS13.3 — same free readiness gate as the FASHN/Fal single try-on:
+      // stop unusable inputs BEFORE any paid xAI call.
+      if (input.mode === 'try_on' && (!input.familyPreset || input.familyPreset === 'single')) {
+        const person = input.modelImagePath ?? input.sourceImagePath
+        if (person && input.productImagePath) {
+          const readiness = await checkSingleInputReadiness({
+            modelImagePath: person,
+            productImagePath: input.productImagePath,
+          })
+          if (!readiness.ok) throw new Error(`input_not_ready:${readiness.errors.join(',')}`)
+        }
+      }
+    }
+
+    // Zero-prompt accuracy parity with the FASHN path: garment placement hint
+    // (cached classifier) + per-image scene/pose variety from the same pool.
+    let clothHint = ''
+    if (input.productImagePath && (input.mode === 'try_on' || input.mode === 'product_to_model')) {
+      try {
+        const attrs = await getOrClassifyGarment(input.productImagePath)
+        const auto = mapGarmentToVtonClothType(attrs)
+        clothHint = ` Garment placement: ${auto.clothType} (${mapGarmentToFashnCategory(attrs)}).`
+      } catch { /* hint only — classification failure must not block the run */ }
+    }
+    const injectScene = !xaiFamilyPair
+      && (input.mode === 'product_to_model' || input.mode === 'try_on')
+      && !input.backgroundPrompt?.trim()
+    const [sceneWeights, recentScenes] = injectScene
+      ? await Promise.all([readSceneWeights(), readRecentSceneIds()])
+      : [{}, [] as string[]]
+
+    const engine = getEngine('xai_imagine')
+    const xaiResolution = toXaiResolution(input.resolution)
+    const count = Math.min(Math.max(input.numImages ?? 1, 1), 4)
+    for (let i = 0; i < count; i++) {
+      const picked = injectScene ? pickSceneDiverse(sceneWeights, recentScenes) : null
+      if (picked) {
+        recentScenes.unshift(picked.scene.id)
+        await recordSceneUse(picked.scene.id)
+      }
+      const sceneLine = picked ? ` Pose: ${picked.adultPose}. ${picked.scene.prompt}` : ''
+      const id = await createApprovedAction({
+        type: 'image_gen',
+        payload: {
+          provider: 'xai',
+          xaiEngine: 'xai_imagine',
+          xaiModel: XAI_IMAGE_MODEL_QUALITY,
+          xaiOp: brief.op,
+          referenceImagePaths: brief.referenceImagePaths,
+          referenceRoles: brief.referenceRoles,
+          prompt: `${brief.prompt}${clothHint}${sceneLine}`,
+          aspectRatio: toXaiAspectRatio(input.aspectRatio ?? '4:5'),
+          resolution: xaiResolution,
+          creativeStudio: true,
+          studioMode: input.mode,
+          familyPreset: input.familyPreset ?? 'single',
+          productImagePath: input.productImagePath,
+          modelImagePath: input.modelImagePath,
+          ...(picked ? { sceneRef: toSceneRef(picked) } : {}),
+        },
+        summary: `🎨 Studio ${modeDef.label}${count > 1 ? ` #${i + 1}` : ''} (${engine.label})`,
+        costEstimate: estimateXaiImageCostUsd(xaiResolution),
+      })
+      jobs.push({ pendingActionId: id, label: `${modeDef.label} · ${engine.label}`, type: 'image_gen' })
+    }
+    return { jobs, provider: 'xai_imagine', fashnReady }
   }
 
   // FAMILY ACCURACY CHAIN — the assembly line (adult FASHN shot → child garment →
@@ -583,7 +752,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
 
 export type AutoStudioResult = {
   jobs: CreativeStudioJobRef[]
-  provider: StudioProvider
+  provider: StudioProvider | 'xai_imagine'
   modelName: string
   variants: ChatTryOnVariant[]
   reelQueued: boolean
@@ -615,8 +784,17 @@ export async function runAutoStudio(input: {
   const defaultModel = await getDefaultModel()
   if (!defaultModel) throw new Error('no_default_model')
 
+  // CS13.2 — owner default engine = Grok Imagine: the Auto solo shot runs the
+  // xAI try-on brief (person + prepped garment refs). Family variants keep the
+  // proven FASHN accuracy chain regardless.
+  const { CS_SINGLE_VTON_DEFAULT_KEY: DEF_KEY, normalizeSingleVtonDefault: normDef } = await import('@/lib/creative-studio/provider-registry')
+  const ownerDefault = normDef(await readKv(DEF_KEY))
+  const xaiAutoReady = ownerDefault === 'xai_imagine'
+    && Boolean(process.env.XAI_API_KEY?.trim())
+    && (await readKv(CS_XAI_ENABLED_KEY)) === '1'
+
   const autoChainEngine = await resolveChainVtonEngine()
-  const useFashn = isFashnConfigured() || autoChainEngine === 'fal_fashn_v16' 
+  const useFashn = isFashnConfigured() || autoChainEngine === 'fal_fashn_v16'
   const jobs: CreativeStudioJobRef[] = []
   /** variants rendered via the legacy Gemini batch (no-FASHN fallback) */
   const variants: ChatTryOnVariant[] = []
@@ -626,10 +804,24 @@ export async function runAutoStudio(input: {
   // Solo on-model shot: FASHN accuracy + a Bangladeshi background swap (2-step
   // chain) so every Auto run comes back with a different pose/scene. Falls back
   // to the Gemini try-on batch without a FASHN key.
-  if (useFashn) {
+  // CS14 — a built avatar (canonical portrait) is the best person reference
+  const { resolvePersonRef } = await import('@/lib/tryon/model-avatar')
+  const defaultRef = await resolvePersonRef(defaultModel)
+
+  if (xaiAutoReady) {
+    const solo = await runCreativeStudio({
+      mode: 'try_on',
+      vtonEngine: 'xai_imagine',
+      productImagePath,
+      modelImagePath: defaultRef.path,
+      avatarSheetPath: defaultRef.sheetPath,
+      resolution: '2k',
+    })
+    for (const j of solo.jobs) jobs.push(j)
+  } else if (useFashn) {
     const job = await startSingleRescueChain({
       productImagePath,
-      modelImagePath: defaultModel.imagePath,
+      modelImagePath: defaultRef.path,
       generationMode: 'quality',
       vtonEngine: await resolveChainVtonEngine(),
       conversationId: null,
@@ -651,7 +843,26 @@ export async function runAutoStudio(input: {
     if (mother && son) pairs.push('mother_son')
     if (mother && daughter) pairs.push('mother_daughter')
 
-    if (useFashn) {
+    if (xaiAutoReady) {
+      // CS13.3 — default engine is Grok: family pairs run the 3-reference
+      // multi-image brief (both role models + product) instead of the chain.
+      for (const v of pairs) {
+        try {
+          const pair = await runCreativeStudio({
+            mode: 'try_on',
+            vtonEngine: 'xai_imagine',
+            familyPreset: v as FamilyPresetId,
+            productImagePath,
+            resolution: '2k',
+          })
+          for (const j of pair.jobs) jobs.push(j)
+          chainedVariants.push(v as ChatTryOnVariant)
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : ''
+          if (!msg.startsWith('missing_models:')) throw err
+        }
+      }
+    } else if (useFashn) {
       // Accuracy chain per pair — saved child models keep the same face every run.
       for (const v of pairs) {
         try {
@@ -719,7 +930,7 @@ export async function runAutoStudio(input: {
 
   return {
     jobs,
-    provider: useFashn ? 'fashn' : 'gemini',
+    provider: xaiAutoReady ? 'xai_imagine' : useFashn ? 'fashn' : 'gemini',
     modelName: defaultModel.name,
     variants: [...chainedVariants, ...variants],
     reelQueued,
