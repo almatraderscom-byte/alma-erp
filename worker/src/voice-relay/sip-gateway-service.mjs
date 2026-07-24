@@ -40,6 +40,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { unlink, writeFile } from 'node:fs/promises'
+import { createWriteStream } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { WebSocket } from 'ws'
 import { muLawToPcm16, pcm16ToMuLaw } from './sarvam-media.mjs'
@@ -167,6 +168,38 @@ const PLAY_DIR = process.env.SIP_PLAY_DIR || tmpdir()
 // One 20 ms slin frame of silence, used to keep the AudioSocket stream continuous while
 // the model is not speaking (see startPlayout).
 const SILENCE_FRAME = Buffer.alloc(320)
+// Byte-level capture of exactly what we hand Asterisk and what we get back (SIP_DEBUG_RECORD=1).
+// Recording at the ARI bridge returned 500 on this build, and capturing here is better anyway:
+// it isolates OUR pipeline, so a reported glitch can be shown to be present (our fault) or
+// absent (introduced downstream on the PSTN leg) instead of argued about.
+const DEBUG_RECORD = process.env.SIP_DEBUG_RECORD === '1'
+
+// Length of the barge-in fade, in 20 ms frames. Two frames (40 ms) is long enough to be
+// click-free and short enough that the caller still experiences an immediate interruption.
+const FADE_FRAMES = Number(process.env.SIP_BARGE_FADE_FRAMES || 2)
+/** One frame that eases from `from` down to digital zero, so audio never stops on a step. */
+function rampToZero(from) {
+  if (!from) return SILENCE_FRAME
+  const out = Buffer.allocUnsafe(320)
+  for (let i = 0; i < 160; i++) out.writeInt16LE(Math.round(from * (1 - (i + 1) / 160)), i * 2)
+  return out
+}
+
+/** Apply a linear fade to zero across the given slin frames (returns new buffers). */
+function fadeOutFrames(frames) {
+  const total = frames.reduce((n, f) => n + (f.length >> 1), 0)
+  if (!total) return []
+  let idx = 0
+  return frames.map((f) => {
+    const n = f.length >> 1
+    const out = Buffer.allocUnsafe(f.length)
+    for (let i = 0; i < n; i++, idx++) {
+      const gain = 1 - idx / total
+      out.writeInt16LE(Math.round(f.readInt16LE(i * 2) * gain), i * 2)
+    }
+    return out
+  })
+}
 /**
  * How long to let the callee's phone ring, in seconds. ARI's default is 30, which is too
  * short in practice — live 2026-07-25: the owner reached his phone at ~30s, by which time we
@@ -237,12 +270,14 @@ class Call {
       const mu = Buffer.from(m.media.payload, 'base64')
       this.enqueueAudio(muLawToPcm16(mu)) // μ-law -> slin8k -> 20ms playout queue -> AudioSocket
     } else if (m.event === 'clear') {
-      // Native barge-in flush: drop everything queued for Asterisk so the model's new
-      // turn starts clean (mirrors the bot's own out-buffer flush). Counted, because a
-      // spurious barge-in is indistinguishable from a bug when the caller reports the
-      // voice cutting out mid-word.
+      // Native barge-in: the model stopped talking because the caller started, so the
+      // queued audio must go. Dropping it INSTANTLY cuts the waveform mid-cycle, and a
+      // step discontinuity in a speaker is a click — the owner heard exactly that and
+      // described it as "শিস করে শব্দ কেটে যাচ্ছে" (live 2026-07-25). Fading the last few
+      // milliseconds to zero ends the audio silently instead. The interruption itself is
+      // still immediate; only the click goes away.
       this.barges = (this.barges || 0) + 1
-      this.playQueue.length = 0
+      this.playQueue = fadeOutFrames(this.playQueue.slice(0, FADE_FRAMES))
       this.slinResidual = Buffer.alloc(0)
     }
   }
@@ -279,7 +314,22 @@ class Call {
       while (now >= this.nextFrameAt && guard < 50) {
         const frame = this.playQueue.shift()
         if (frame) this.rawWriteAudio(frame)
-        else { this.rawWriteAudio(SILENCE_FRAME); this.silenceFrames = (this.silenceFrames || 0) + 1 }
+        else {
+          // Silence between turns is expected; silence RIGHT AFTER audio means the queue ran
+          // dry mid-utterance, which is exactly what a listener hears as the voice breaking.
+          // Either way, jumping straight from a mid-waveform sample to digital zero is a step
+          // discontinuity — a click in the earpiece. Ease the first silent frame down from
+          // wherever the audio stopped instead.
+          if (this.lastWasAudio) {
+            this.underruns = (this.underruns || 0) + 1
+            this.rawWriteAudio(rampToZero(this.lastSample))
+          } else {
+            this.rawWriteAudio(SILENCE_FRAME)
+          }
+          this.silenceFrames = (this.silenceFrames || 0) + 1
+        }
+        if (frame) this.lastSample = frame.readInt16LE(frame.length - 2)
+        this.lastWasAudio = Boolean(frame)
         this.nextFrameAt += 20
         guard++
       }
@@ -288,6 +338,7 @@ class Call {
 
   // Asterisk -> gateway: slin8k audio -> μ-law -> bot media frame.
   onAsteriskAudio(slin) {
+    if (this.rxFd) this.rxFd.write(slin)
     if (!this.botReady) return
     const mu = pcm16ToMuLaw(slin)
     this.send({ event: 'media', streamId: this.channelId, media: { payload: mu.toString('base64') } })
@@ -314,7 +365,19 @@ class Call {
       log(this.channelId, `playout OVERRUN — dropped ${dropped} frames (${this.dropped} total)`)
     }
   }
+  /** Open raw slin8k dumps for this call (debug only). */
+  openCapture() {
+    try {
+      this.txFile = `${PLAY_DIR}/dbg-${this.channelId}-tx.raw`
+      this.rxFile = `${PLAY_DIR}/dbg-${this.channelId}-rx.raw`
+      this.txFd = createWriteStream(this.txFile)
+      this.rxFd = createWriteStream(this.rxFile)
+      log(this.channelId, `debug capture -> ${this.txFile}`)
+    } catch (err) { log(this.channelId, 'capture open failed:', err?.message) }
+  }
+
   rawWriteAudio(payload) {
+    if (this.txFd) this.txFd.write(payload)
     if (!this.asSocket || this.asSocket.destroyed) return
     const hdr = Buffer.allocUnsafe(3)
     hdr[0] = AS_TYPE_AUDIO
@@ -376,8 +439,9 @@ class Call {
     if (this.closed) return
     this.closed = true
     log(this.channelId, 'hangup', reason ? `(${reason})` : '',
-      `| audio frames=${this.framesOut || 0} silence=${this.silenceFrames || 0} barge-ins=${this.barges || 0} dropped=${this.dropped || 0}`)
+      `| audio frames=${this.framesOut || 0} silence=${this.silenceFrames || 0} underruns=${this.underruns || 0} barge-ins=${this.barges || 0} dropped=${this.dropped || 0}`)
     if (this.playTimer) { clearInterval(this.playTimer); this.playTimer = null }
+    try { this.txFd?.end(); this.rxFd?.end() } catch { /* */ }
     if (this.digitTimer) { clearTimeout(this.digitTimer); this.digitTimer = null }
     try { this.bot?.close() } catch { /* */ }
     try { this.asSocket?.end() } catch { /* */ }
@@ -467,6 +531,11 @@ async function bridgeAndStartBot(call) {
   await ari('POST', `/bridges/${call.bridgeId}/addChannel`, { channel: `${call.channelId},${call.extChannelId}` })
   // 4) open the bot ws now that audio can flow
   call.connectBot()
+  // Debug capture (SIP_DEBUG_RECORD=1): record the bridge so a reported glitch can be
+  // measured instead of guessed at — it shows whether the damage is already present in what
+  // Asterisk played toward the caller (our side) or only reaches the caller's ear (the PSTN
+  // leg). Off by default; recordings stay on the VPS.
+  if (DEBUG_RECORD) call.openCapture()
   log(call.channelId, 'bridged externalMedia', call.extChannelId)
 }
 
