@@ -105,11 +105,18 @@ export function buildXaiFamilyPairBrief(input: {
     .map((s) => s?.trim())
     .filter(Boolean)
     .join(' ')
+  // Owner garment rule (CS4/PR #444): father_son + couple share ONE design
+  // (engine scales it); the other sets have per-person pieces in the photo.
+  const sameDesign = input.preset === 'father_son' || input.preset === 'couple'
+  const garmentLine = sameDesign
+    ? 'BOTH people wear the SAME garment design shown in image 3 — identical color, fabric and embroidery, ' +
+      'sized naturally to each person. Do NOT give either person a different color or design.'
+    : 'Each person wears their own correct piece exactly as shown in image 3 (adult piece for the adult, ' +
+      'child piece for the child) — never swap or invent a piece.'
   const scaffold =
     `Reference image 1 shows the ${input.personLabels[0]}; reference image 2 shows the ${input.personLabels[1]}; ` +
     'reference image 3 is the clothing product photo. Create ONE cohesive professional Bangladeshi family photoshoot ' +
-    'with BOTH people together in a single natural scene, wearing the matching outfits from image 3 — each person wears ' +
-    `their own correct piece (adult piece for the adult, child piece for the child, as shown in image 3). ${GARMENT_EXACTNESS} ` +
+    `with BOTH people together in a single natural scene. ${garmentLine} ${GARMENT_EXACTNESS} ` +
     "Preserve each person's face, age, skin tone, hair and identity EXACTLY as in their reference image — no face changes. " +
     'One consistent lighting, background and photographic style.'
   return {
