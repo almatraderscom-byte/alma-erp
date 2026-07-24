@@ -14,6 +14,7 @@ import { loadSalahAccountabilityContext } from '@/agent/lib/salah-context'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { detectOutboundCallIntent, buildOutboundCallIntakeBlock } from '@/agent/lib/outbound-call-intent'
 import { buildReminderTimeHintBlock } from '@/agent/lib/bangla-time'
+import { isVoiceInstructionText } from '@/agent/lib/voice-instruction'
 import { detectVoiceProviderRequest } from '@/agent/lib/voice-provider-intent'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
@@ -666,6 +667,9 @@ export async function* runAgentTurn(
   // call tool through server context (server wins over model args). Scans the last 3
   // messages because the call flow is routinely split ("ElevenLabs ভয়েসে…" → number).
   const ownerVoicePref = detectVoiceProviderRequest(recentUserTexts.slice(-3))
+  // PA-5R: instruction arrived verbally on an owner-verified live call (🎙️ marker).
+  // Server-derived, always boolean, so a model-spoofed input field can never win.
+  const voiceCallInstruction = isVoiceInstructionText(lastUserText)
 
   const now = new Date()
   let teachingBlock: string | undefined
@@ -1508,8 +1512,8 @@ export async function* runAgentTurn(
               })
             : { success: false as const, error: aiosGuard.message }
           : personalMode
-          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref })
-          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization, ownerVoicePref })
+          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction })
+          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization, ownerVoicePref, voiceCallInstruction })
         // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).
         runPostToolHooks({
           toolName: tb.name,
