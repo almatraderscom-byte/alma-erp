@@ -437,19 +437,54 @@ class Call {
     }
   }
 
-  // Jitter-buffer playout: wait for a small cushion, then play at real time; if the
-  // buffer runs dry mid-stream, PAUSE and re-buffer (prevents "kete kete" cuts) rather
-  // than stutter. Clock-scheduled (nextT) so a busy event loop just catches up.
+  /**
+   * Frame-align and FORWARD — one jitter buffer in the pipeline, and it lives downstream.
+   *
+   * Google's own Twilio + Gemini Live reference does exactly this: accumulate to one 20 ms
+   * frame (160 bytes of μ-law) and send it; no cushion, no clock of its own, no re-buffer
+   * state machine. Twilio's media server holds the single buffer. Our own /glive path to
+   * Twilio is the same bare pass-through, and that is the path the owner says sounds perfect.
+   *
+   * We used to run a full jitter buffer HERE as well as in the SIP gateway — two buffers in
+   * series, each with its own clock and its own "dry → pause → refill" rule. That is what the
+   * owner heard on 2026-07-25: the greeting was clean (both buffers full and draining), but
+   * every reply AFTER he spoke broke up, because each turn start makes both buffers refill and
+   * the smallest gap in Gemini's generation trips the first one, which then starves the second.
+   *
+   * A previous attempt to remove this pacing was reverted the same day ("speech cut out and
+   * the call dropped") — but the gateway cushion was only 160 ms then and could not absorb a
+   * whole utterance handed over at once. It now holds 240 ms and grows on demand, and its
+   * queue caps at 10 s, so a burst is buffered rather than dropped.
+   *
+   * GLIVE_PACE=1 restores the old paced behaviour: one env var, no code change, in case his
+   * ear says otherwise again.
+   */
   startDrain() {
-    const FB = 160, FMS = 20, CUSHION = 6 // ~120 ms of audio before (re)starting playout
-    // REVERTED 2026-07-25. Removing this pacing for the SIP path looked right on paper (one
-    // clock instead of two) and measured well on a SIMULATED call, but on the owner's real
-    // call it made things WORSE — speech cut out and the call dropped. Handing a whole
-    // Gemini utterance over at once is not something the downstream path handles gracefully.
-    // The owner's ear is the measurement that counts; the simulated metric was not.
+    const FB = 160, FMS = 20, CUSHION = 6 // 160 B = one 20 ms μ-law frame
+    const PACED = process.env.GLIVE_PACE === '1'
     this.drainer = setInterval(() => {
       if (this.closed) return
       const now = Date.now()
+
+      if (!PACED) {
+        // Send every whole frame we have, immediately. Downstream owns the timing.
+        let guard = 0
+        while (this.out.length >= FB && guard < 200) {
+          const frame = this.out.subarray(0, FB)
+          this.out = Buffer.from(this.out.subarray(FB))
+          this.sendNgs({ event: 'media', [this.streamKey]: this.streamSid, media: { payload: frame.toString('base64') } })
+          guard++
+        }
+        // Hang-up / transfer still wait for the audio to be handed over first, otherwise the
+        // goodbye line or the "connecting you" line is cut off mid-word.
+        if (this.out.length < FB) {
+          if (this.hangingUp) this.finishHangup()
+          else if (this.forwarding && Date.now() - this.forwardAt > 1200) this.finishForward()
+        }
+        return
+      }
+
+      // ── GLIVE_PACE=1: the old two-clock behaviour, kept for a one-variable revert ──
       if (!this.playing) {
         if (this.out.length >= CUSHION * FB) { this.playing = true; this.nextT = now }
         else if (this.hangingUp && this.out.length < FB) { this.finishHangup() }
