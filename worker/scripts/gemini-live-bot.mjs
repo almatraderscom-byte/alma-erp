@@ -139,6 +139,7 @@ const SYS_INBOUND = `তুমি ALMA-র (একটি বাংলাদে�
 - ভেতরের গোপন তথ্য (মোট বিক্রি, অন্য গ্রাহকের তথ্য, হিসাব) কখনো বলবে না। নিশ্চিত না জানলে বানিয়ে বলবে না — বলো "আমি বিষয়টা টিম/মালিককে জানিয়ে দিচ্ছি, উনি আপনাকে জানাবেন।"
 - কলদাতা যদি সরাসরি মানুষের সাথে কথা বলতে চান, অথবা বিষয়টি গুরুত্বপূর্ণ/জরুরি/স্পর্শকাতর মনে হয় এবং তুমি নিজে সমাধান করতে পারছ না — তখন কলটা যুক্ত করে দাও। এর জন্য অবশ্যই forward_call ফাংশনটা কল করতে হবে — শুধু মুখে "যুক্ত করে দিচ্ছি" বললে ট্রান্সফার হবে না, ফাংশন কল না করলে সিস্টেম যুক্ত করতে পারবে না। সংক্ষেপে "জি, একটু ধরুন, যুক্ত করে দিচ্ছি" বলেই সাথে সাথে forward_call কল করবে। অকারণে বারবার ট্রান্সফার করবে না — আগে নিজে সাহায্যের চেষ্টা করবে।
 - **কোথায় যুক্ত করবে (target) খুব সাবধানে বাছবে:** অর্ডার, ডেলিভারি, পণ্য, দাম, সাইজ, রিটার্ন/এক্সচেঞ্জ, পেমেন্ট, অভিযোগ — অর্থাৎ গ্রাহক-সংক্রান্ত সব বিষয়ে target="support" (কাস্টমার সার্ভিস লাইন)। শুধুমাত্র কলদাতা যখন নির্দিষ্টভাবে বস/মালিককেই চাইছেন, অথবা বিষয়টি ব্যক্তিগত/অত্যন্ত জরুরি এবং সাপোর্ট টিমের এখতিয়ারের বাইরে — তখনই target="boss"। সাধারণ গ্রাহকের প্রশ্ন কখনোই বসের ফোনে পাঠাবে না।
+- কলদাতা যদি স্পষ্টভাবে ক্ষুব্ধ হন, ব্যবসা ছেড়ে দেওয়ার হুমকি দেন, বড় টাকার/সুনামের ঝুঁকি থাকে, বা বিষয়টি সত্যিই জরুরি — তখন escalate_to_boss ফাংশনটা কল করো, যাতে মালিক কলটি চলা অবস্থাতেই জানতে পারেন। কলদাতাকে এটা বলার দরকার নেই, তুমি স্বাভাবিকভাবে সাহায্য চালিয়ে যাবে। সাধারণ প্রশ্নে বা হালকা অভিযোগে এটা ব্যবহার করবে না।
 - কাজ শেষ হলে ভদ্রভাবে ধন্যবাদ দিয়ে বিদায় নাও। কল শেষে মালিক গ্রাহকের দরকারের একটা সারাংশ পাবেন।
 ${SYS_COMMON}`
 
@@ -236,6 +237,29 @@ const FORWARD_FN_DECL = {
   },
 }
 
+/**
+ * Escalation. A customer who is angry, threatening to leave, or raising something expensive
+ * should reach the owner while they are still on the line — not via a summary he reads later.
+ * The MODEL decides, not a keyword list: "আপনারা তিনবার ঘুরিয়েছেন" is furious and contains no
+ * angry word, while "রাগ" appears in plenty of calm sentences.
+ */
+const ESCALATE_FN_DECL = {
+  name: 'escalate_to_boss',
+  description: 'কলদাতা স্পষ্টভাবে ক্ষুব্ধ/হতাশ, ব্যবসা ছেড়ে দেওয়ার হুমকি দিচ্ছেন, বড় টাকার বা সুনামের ঝুঁকি আছে, অথবা বিষয়টি সত্যিই জরুরি — এমন হলে সাথে সাথে মালিককে সতর্ক করতে এটা কল করো। কলদাতাকে এটা নিয়ে কিছু বলার দরকার নেই; তুমি স্বাভাবিকভাবে সাহায্য চালিয়ে যাবে। সাধারণ প্রশ্ন বা হালকা অভিযোগে ব্যবহার করবে না — অতিরিক্ত ব্যবহারে মালিকের কাছে সতর্কবার্তার মূল্য থাকবে না।',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      reason: { type: Type.STRING, description: 'কী হচ্ছে — এক-দুই বাক্যে, মালিকের পড়ার জন্য।' },
+      severity: {
+        type: Type.STRING,
+        enum: ['high', 'critical'],
+        description: '"critical" মানে মালিকের এখনই লাইনে আসা উচিত (হুমকি, বড় ক্ষতি); "high" মানে জানানো দরকার কিন্তু তুমি সামলাতে পারছ।',
+      },
+    },
+    required: ['reason', 'severity'],
+  },
+}
+
 let seq = 0
 class Call {
   constructor(ws) {
@@ -269,6 +293,7 @@ class Call {
     this.reported = false        // post-call report fires exactly once
     this.forwarding = false      // forward_call queued — transfer after the hand-off line plays
     this.forwardReason = ''
+    this.escalated = false       // the owner has already been alerted about this call
     this.forwardTarget = ''      // 'support' | 'boss' — chosen by the model
     this.forwardDest = ''        // the resolved number for that target
     this.transferred = false     // <Dial> bridge accepted — bot is OFF the audio path
@@ -521,6 +546,40 @@ class Call {
     }
   }
 
+  /**
+   * Tell the owner about a call going wrong WHILE it is still happening. Deliberately does not
+   * transfer on its own: yanking an angry customer onto the owner's phone unannounced tends to
+   * make things worse, and he can call in or pick up the support line himself. Fired at most
+   * once per call so a long, difficult conversation cannot turn into an alert storm.
+   */
+  async escalate(reason, severity) {
+    if (this.escalated) return { ok: true, status: 'already_alerted' }
+    this.escalated = true
+    const APP_URL = (process.env.APP_URL || '').replace(/\/$/, '')
+    if (!APP_URL || !AUTH_TOKEN) return { ok: false, error: 'alerting not configured' }
+    const who = this.params?.recipientName || this.params?.caller || 'অজানা নম্বর'
+    try {
+      const res = await fetch(`${APP_URL}/api/assistant/internal/urgent-alert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+        body: JSON.stringify({
+          // critical rings the owner's phone; high reaches him silently.
+          tier: 2,
+          title: severity === 'critical' ? 'জরুরি: কলে ক্ষুব্ধ গ্রাহক' : 'কলে গুরুত্বপূর্ণ পরিস্থিতি',
+          message: `${who} এখন লাইনে আছেন। ${reason || 'এজেন্ট পরিস্থিতিটি গুরুতর মনে করছে।'}`,
+          voice: severity === 'critical',
+          category: 'call_escalation',
+        }),
+        signal: AbortSignal.timeout(10_000),
+      })
+      console.log(`[glive] ${this.id} escalated (${severity}) -> HTTP ${res.status}`)
+      return { ok: true, status: 'boss_alerted', instruction: 'মালিককে জানানো হয়েছে। কলদাতাকে এটা বলার দরকার নেই — স্বাভাবিকভাবে সাহায্য চালিয়ে যাও।' }
+    } catch (err) {
+      console.log(`[glive] ${this.id} escalate failed ${err?.message}`)
+      return { ok: false, error: err?.message || String(err) }
+    }
+  }
+
   isOwnerCall() { const c = this.params?.callType; return !c || c === 'owner' }
 
   /**
@@ -546,7 +605,10 @@ class Call {
   toolDecls() {
     // PA-3: owner calls also get submit_boss_instruction (head-agent hand-off).
     if (this.isOwnerCall()) return [...ERP_FN_DECLS, SUBMIT_INSTRUCTION_FN_DECL]
-    if (this.params?.callType === 'inbound' && this.hasForwardTarget()) return [FORWARD_FN_DECL]
+    // Inbound customer calls can hand over to a human and can raise the alarm.
+    if (this.params?.callType === 'inbound') {
+      return this.hasForwardTarget() ? [FORWARD_FN_DECL, ESCALATE_FN_DECL] : [ESCALATE_FN_DECL]
+    }
     return []
   }
 
@@ -653,7 +715,9 @@ class Call {
     const responses = []
     for (const fc of calls) {
       let out
-      if (fc.name === 'forward_call') {
+      if (fc.name === 'escalate_to_boss') {
+        out = await this.escalate(fc.args?.reason, fc.args?.severity)
+      } else if (fc.name === 'forward_call') {
         out = this.requestForward(fc.args?.reason, fc.args?.target)
       } else if (fc.name === 'submit_boss_instruction') {
         // PA-3: owner-call only (server re-verifies against the call record).

@@ -29,6 +29,7 @@ export default function SoftphonePanel() {
   const { state, connect, disconnect, answer, hangup, dial, audioElement } = useSoftphone()
   const [number, setNumber] = useState('')
   const [caller, setCaller] = useState<CallerContext | null>(null)
+  const [colleagues, setColleagues] = useState<Array<{ ext: string; name: string }>>([])
 
   // Screen-pop: as soon as we know who is calling, fetch their history.
   useEffect(() => {
@@ -43,6 +44,17 @@ export default function SoftphonePanel() {
     })()
     return () => { cancelled = true }
   }, [state.peer, state.incoming])
+
+  // Colleague directory, so staff-to-staff calling does not require memorising extensions.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch('/api/assistant/phone/dial')
+        const data = (await res.json()) as { staff?: Array<{ ext: string; name: string }> }
+        setColleagues((data.staff ?? []).filter((s) => s.ext !== state.extension))
+      } catch { /* the dialler still works by typing */ }
+    })()
+  }, [state.extension])
 
   const onDial = useCallback(() => { if (number.trim()) void dial(number.trim()) }, [dial, number])
 
@@ -156,6 +168,23 @@ export default function SoftphonePanel() {
           </div>
         </div>
       ) : state.status === 'registered' ? (
+        <>
+        {colleagues.length ? (
+          <div className="mt-4">
+            <p className="mb-2 text-xs uppercase tracking-wide text-white/40">সহকর্মী — ফ্রি কল</p>
+            <div className="flex flex-wrap gap-2">
+              {colleagues.map((c) => (
+                <button
+                  key={c.ext}
+                  onClick={() => void dial(c.ext)}
+                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/80 hover:border-[#E07A5F]/50 hover:bg-white/10"
+                >
+                  {c.name || `এক্সটেনশন ${c.ext}`}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div className="mt-4 flex gap-2">
           <input
             value={number}
@@ -172,6 +201,7 @@ export default function SoftphonePanel() {
             কল
           </button>
         </div>
+        </>
       ) : null}
     </div>
   )

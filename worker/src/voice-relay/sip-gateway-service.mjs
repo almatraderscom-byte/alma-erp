@@ -1221,6 +1221,47 @@ const ctrlServer = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, extension: cred.ext, password: cred.password, realm: WEBRTC_REALM })
     } catch (err) { return json(res, 500, { error: err?.message || String(err) }) }
   }
+  if (url.pathname === '/api/v1/webrtc/list' && req.method === 'GET') {
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const store = await readWebrtcStore()
+    // Extensions and names only — passwords never leave this process.
+    return json(res, 200, {
+      ok: true,
+      staff: Object.entries(store).map(([staffId, s]) => ({ staffId, ext: s.ext, name: s.name || '' })),
+    })
+  }
+  if (url.pathname === '/api/v1/click2call' && req.method === 'POST') {
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const body = await readBody(req)
+    let parsed = {}
+    try { parsed = JSON.parse(body || '{}') } catch { /* */ }
+    const ext = String(parsed.ext || '').trim()
+    const to = localDial(parsed.to)
+    if (!ext || !to) return json(res, 400, { error: 'need ext and to' })
+    if (!DEST_ALLOW.test(to)) return json(res, 403, { error: 'destination not allowed' })
+    try {
+      // If their browser is not registered there is nothing to ring, and ARI would answer
+      // with an opaque "Allocation failed". Say so plainly instead.
+      const aor = await ari('GET', `/endpoints/PJSIP/${ext}`).catch(() => null)
+      if (!aor || String(aor.state || '').toLowerCase() === 'offline') {
+        return json(res, 409, { error: 'staff phone is not connected — open the phone page first' })
+      }
+      // Ring the staff member's own browser FIRST, then let the from-staff dialplan dial the
+      // customer when they pick up. Doing it this way round means the customer's phone only
+      // rings once a human is actually on the line — the opposite order makes the customer
+      // answer to silence while we chase the staff member.
+      const chan = await ari('POST', '/channels', {
+        endpoint: `PJSIP/${ext}`,
+        context: 'from-staff',
+        extension: to,
+        priority: '1',
+        timeout: String(RING_TIMEOUT),
+        callerId: `ALMA <${ext}>`,
+      })
+      log(`click2call: ringing ${ext} then dialling ${to}`)
+      return json(res, 200, { ok: true, channelId: chan.id })
+    } catch (err) { return json(res, 502, { error: err?.message || String(err) }) }
+  }
   if (url.pathname === '/health') {
     return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size, registration: { registered: regState.registered, status: regState.lastStatus, failures: regState.consecutiveFailures } })
   }
