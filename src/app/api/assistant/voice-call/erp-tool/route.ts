@@ -35,6 +35,9 @@ const ERP_CALL_TOOLS = new Set<string>([
   'get_staff_tasks',
   'get_lunch_status',
   'get_pending_approvals',
+  // Boss's own todo list. He asked for it on a live call and the model, having no such tool,
+  // reached for get_staff_tasks — staff work rather than his list (2026-07-25).
+  'list_owner_todos',
 ])
 
 function verifyToken(provided: string): boolean {

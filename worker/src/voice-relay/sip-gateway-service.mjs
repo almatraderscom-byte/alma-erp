@@ -332,6 +332,13 @@ const JITTER_FRAMES = Number(process.env.SIP_JITTER_FRAMES || 12)
  */
 const JITTER_MAX_FRAMES = Number(process.env.SIP_JITTER_MAX_FRAMES || 35)   // 700 ms ceiling
 const JITTER_GROW_FRAMES = Number(process.env.SIP_JITTER_GROW_FRAMES || 4)  // +80 ms per dry-out
+/**
+ * Overrun watermarks, in 20 ms frames. HIGH is where we admit we are hopelessly behind
+ * (10 s of unplayed speech); LOW is where one clean jump lands us (1 s), leaving a normal
+ * working buffer instead of parking on the ceiling and dropping a frame per arrival.
+ */
+const QUEUE_HIGH = Number(process.env.SIP_QUEUE_HIGH_FRAMES || 500)
+const QUEUE_LOW = Number(process.env.SIP_QUEUE_LOW_FRAMES || 50)
 
 /** Ease a frame up from digital zero, for the first audio after a silent gap. */
 function fadeInFrame(f) {
@@ -553,15 +560,23 @@ class Call {
       this.playQueue.push(buf.subarray(off, off + FRAME))
     }
     this.slinResidual = buf.subarray(off)
-    // Safety net only: with clock-scheduled playout the queue should never build up, so if
-    // this ever fires it means we are falling behind real time — log it instead of silently
-    // deleting the caller's audio, because dropped frames are exactly what "the voice keeps
-    // sticking" sounds like.
-    if (this.playQueue.length > 500) {
-      const dropped = this.playQueue.length - 500
+    // Overrun recovery, WITH HYSTERESIS.
+    //
+    // This used to trim back to exactly the cap on every enqueue, which meant that once the
+    // queue reached it, every single arriving frame pushed one frame off the FRONT — the audio
+    // about to be spoken. On 2026-07-25 that logged "dropped 1 frames" ninety times in one
+    // call: not one skip but a hole punched every 20 ms for nearly two seconds, which is
+    // precisely the "jhirjhir, kotha kete jay" the owner described.
+    //
+    // Being this far behind means the conversation is already broken, so the recovery is still
+    // to jump forward — but ONCE, cleanly, down to a low-water mark, and then run normally
+    // again instead of sitting at the ceiling shredding frames. One audible skip beats a
+    // hundred micro-gaps.
+    if (this.playQueue.length > QUEUE_HIGH) {
+      const dropped = this.playQueue.length - QUEUE_LOW
       this.playQueue.splice(0, dropped)
       this.dropped = (this.dropped || 0) + dropped
-      log(this.channelId, `playout OVERRUN — dropped ${dropped} frames (${this.dropped} total)`)
+      log(this.channelId, `playout OVERRUN — jumped forward ${dropped} frames (${Math.round(dropped * 20 / 1000)}s), queue now ${QUEUE_LOW} (${this.dropped} total)`)
     }
   }
   /** Open raw slin8k dumps for this call (debug only). */
