@@ -586,7 +586,7 @@ export function VideoFinishPanel({ pendingActionId, onDone }: { pendingActionId:
 
   const inputCls = 'w-full rounded-lg border border-white/15 bg-black/40 px-2.5 py-2 text-[13px] text-white placeholder:text-white/40'
   return (
-    <div className="space-y-2 rounded-2xl bg-black/70 p-3 ring-1 ring-white/15 backdrop-blur-md">
+    <div className="relative z-20 max-h-[72vh] space-y-2 overflow-y-auto rounded-2xl bg-black/90 p-3 ring-1 ring-white/15 backdrop-blur-md">
       {state === 'working' ? (
         <div className="flex items-center gap-2.5 py-2">
           <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
