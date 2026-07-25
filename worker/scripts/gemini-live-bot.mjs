@@ -207,6 +207,19 @@ function sysFor(params) {
 }
 
 const GOODBYE_RE = /আল্লাহ\s*হাফেজ|আল্লাহ\s*হাফিজ|খোদা\s*হাফেজ|আল্লাহ\s*হাফ/
+/**
+ * The other side asking to finish. Ending a call is THEIR decision, not the model's, and on
+ * an owner call nothing else may end it (live 2026-07-26: the model said "আর কিছু লাগবে বস,
+ * নাকি কলটা রাখব? আল্লাহ হাফেজ।" and the detector cut the line while the owner was still
+ * deciding — he had not asked for anything to end).
+ */
+const CALLER_END_RE = /রাখো|রাখেন|রাখুন|রাখছি|রাখি|কেটে\s*(দাও|দেন|দিন|দে)|শেষ\s*কর|আর\s*(কিছু\s*)?(লাগবে|দরকার)\s*না|আল্লাহ\s*হাফেজ|খোদা\s*হাফেজ|bye|good\s*bye/i
+/**
+ * A farewell that arrives inside a QUESTION is not a farewell — the model is asking whether
+ * to finish, and the answer belongs to the other person. This is the exact shape that cut the
+ * owner off, so it is checked for every call, owner or not.
+ */
+const ASKING_RE = /[?？]|নাকি|লাগবে\s*(কি|বস)|করব\s*কি|রাখব\b/
 
 // Mid-call ERP read tools (Gemini Live function calling) — owner calls ONLY. Each call
 // is bridged to /api/assistant/voice-call/erp-tool, which runs the real agent read-tool.
@@ -343,6 +356,7 @@ class Call {
     this.outText = ''            // rolling model transcript (for hang-up detection)
     this.hangingUp = false
     this.callerSpoke = false     // arm the goodbye→hangup only after the caller has spoken once
+    this.callerWantsEnd = false  // the OTHER side asked to finish — see CALLER_END_RE
     this.startedAt = 0
     this.turns = []              // [{role:'agent'|'caller', message}] accumulated transcript
     this.curRole = null          // speaker of the in-progress turn being accumulated
@@ -465,15 +479,29 @@ class Call {
       // at least once (or a long call has run). Without this the model saying "আল্লাহ
       // হাফেজ" inside its own opening greeting hangs up before the caller says a word
       // (live 2026-07-18: agent greeted + said goodbye + cut, owner never got a turn).
-      const armed = this.callerSpoke || (this.startedAt && Date.now() - this.startedAt > 45_000)
-      if (armed && GOODBYE_RE.test(this.outText)) { this.hangingUp = true; this.outText = '' }
-      else if (!armed && GOODBYE_RE.test(this.outText)) {
-        console.log(`[glive] ${this.id} goodbye in opening — IGNORED (caller hasn't spoken yet)`)
-        this.outText = ''
+      // On an OWNER call the boss alone ends it: the model saying goodbye is not enough, he
+      // must have asked to finish. On other calls the old rule stands (arm once the caller
+      // has spoken, or after a long call) so customer calls still wrap up normally.
+      const armed = this.isOwnerCall()
+        ? this.callerWantsEnd
+        : (this.callerSpoke || (this.startedAt && Date.now() - this.startedAt > 45_000))
+      if (GOODBYE_RE.test(this.outText)) {
+        // Asking and saying goodbye in one breath — wait for the answer, whoever is on the line.
+        if (ASKING_RE.test(this.outText)) {
+          console.log(`[glive] ${this.id} goodbye inside a question — IGNORED (waiting for the answer)`)
+          this.outText = ''
+        } else if (armed) {
+          this.hangingUp = true
+          this.outText = ''
+        } else {
+          console.log(`[glive] ${this.id} goodbye — IGNORED (${this.isOwnerCall() ? 'boss has not asked to finish' : "caller hasn't spoken yet"})`)
+          this.outText = ''
+        }
       }
     }
     if (sc?.inputTranscription?.text) {
       this.callerSpoke = true
+      if (CALLER_END_RE.test(sc.inputTranscription.text)) this.callerWantsEnd = true
       this.accum('caller', sc.inputTranscription.text)
       process.stdout.write(`[glive ${this.id} HEARD] ${sc.inputTranscription.text}\n`)
     }
