@@ -3,6 +3,7 @@ import {
   deriveOwnerTurnAuthorization,
   filterToolsForOwnerTurn,
   isToolAllowedForOwnerTurn,
+  upgradeAuthorizationForDeliverable,
 } from '../turn-authorization'
 
 describe('owner turn authorization — model cannot widen owner intent', () => {
@@ -94,6 +95,61 @@ describe('callback phrasing = action (PA-5R live miss 2026-07-24)', () => {
     'আমাকে কল দিবে কাজ শেষে',
   ])('authorizes mutations: %s', (text) => {
     expect(deriveOwnerTurnAuthorization(text).allowMutations).toBe(true)
+  })
+})
+
+// Live miss 2026-07-25: the owner typed "Do a Deep SEO Audit - almatraders.com"
+// in plain English. The Bangla/Banglish-only gate read it as information_only,
+// so ensureClientSeoBatchWorkflow never ran, the report-delivery contract never
+// armed, and the finished audit was never presented — the chat just said "done".
+describe('English task orders (live miss 2026-07-25)', () => {
+  it.each([
+    'Do a Deep SEO Audit - almatraders.com',
+    'do a full audit of almatraders.com',
+    'Perform a technical SEO audit on the site',
+    'Audit my website and give me the fixes',
+    'Analyze last month sales',
+    'Build a landing page for the eid campaign',
+    'Deep SEO Audit - almatraders.com',
+    'full end-to-end review of the checkout flow',
+  ])('authorizes mutations: %s', (text) => {
+    const auth = deriveOwnerTurnAuthorization(text)
+    expect(auth.allowMutations).toBe(true)
+    expect(auth.reason).toBe('explicit_action')
+  })
+
+  it.each([
+    'SEO audit report-এ কী আছে?',
+    'what do the numbers say today?',
+    'ei deep audit ta ki kaj korbe?',
+    'how do the orders look?',
+  ])('leaves questions information-only: %s', (text) => {
+    expect(deriveOwnerTurnAuthorization(text).allowMutations).toBe(false)
+  })
+
+  it('explicit no-action still wins over an English order', () => {
+    const auth = deriveOwnerTurnAuthorization('Do a deep SEO audit — no, just tell me, do not do anything')
+    expect(auth.allowMutations).toBe(false)
+  })
+})
+
+describe('deliverable requirement upgrades a guessed information turn', () => {
+  it('a clientSeo requirement authorizes the turn', () => {
+    const guessed = { allowMutations: false, reason: 'information_only' as const }
+    expect(upgradeAuthorizationForDeliverable(guessed, true)).toEqual({
+      allowMutations: true,
+      reason: 'explicit_action',
+    })
+  })
+
+  it('leaves an explicit no-action turn read-only', () => {
+    const strict = { allowMutations: false, reason: 'explicit_no_action' as const }
+    expect(upgradeAuthorizationForDeliverable(strict, true)).toBe(strict)
+  })
+
+  it('is a no-op without a deliverable requirement', () => {
+    const guessed = { allowMutations: false, reason: 'information_only' as const }
+    expect(upgradeAuthorizationForDeliverable(guessed, false)).toBe(guessed)
   })
 })
 

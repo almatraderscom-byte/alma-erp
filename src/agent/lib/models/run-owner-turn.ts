@@ -5,7 +5,7 @@
  */
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE } from '@/agent/config'
 import { computeHeadToolCap } from '@/agent/lib/models/head-tool-cap'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
@@ -65,6 +65,7 @@ import {
   deriveOwnerTurnAuthorization,
   filterToolsForOwnerTurn,
   ownerTurnAuthorizationNote,
+  upgradeAuthorizationForDeliverable,
 } from '@/agent/lib/turn-authorization'
 import {
   verifyClaimsAgainstLedger,
@@ -74,6 +75,8 @@ import {
   detectProseChoiceViolation,
   detectFabricatedStatViolations,
   detectRoboticStyleViolations,
+  detectAsyncCompletionViolation,
+  summarizeAsyncJobEvidence,
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
@@ -90,6 +93,7 @@ import { isActionGraphEnabled, stageExpenseActionGraph, type StageExpenseResult 
 import { runTurnGraphShadow } from '@/agent/lib/graph/turn-graph-shadow'
 import { resolveConversationContinuity } from '@/agent/lib/continuity-resolver'
 import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
+import { isJobDeliveryDirective } from '@/agent/lib/job-delivery'
 import { contractToolFailureText, findContractToolFailure } from '@/agent/lib/contract-tool-failure'
 import {
   clientSeoBatchProgressText,
@@ -412,8 +416,14 @@ async function* runAlternateProviderTurn(
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
   let currentOwnerInstructions = lastUserText
-  let turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
   const ownerRequirements = deriveOwnerTurnRequirements(lastUserText)
+  // A derived deliverable requirement (client SEO batch / live-browser walk) is
+  // itself an action order — the gate must not mark such a message
+  // information_only and disarm the very contract it just built (2026-07-25).
+  let turnAuthorization = upgradeAuthorizationForDeliverable(
+    deriveOwnerTurnAuthorization(lastUserText),
+    ownerRequirements.clientSeo || ownerRequirements.liveBrowser,
+  )
   // Harness round 2 — refresh the owner's kv-configured hook rules (block/notify)
   // for this turn. Fail-open inside; a broken rules JSON registers nothing.
   await applyOwnerHookRules()
@@ -662,6 +672,8 @@ async function* runAlternateProviderTurn(
         text: lastUserText,
         headTier,
         statusQuery: continuity?.decision.action === 'explain_stop' || continuity?.decision.reason.includes('status'),
+        deepWork: ownerRequirements.deepWork,
+        deliveryTurn: isJobDeliveryDirective(projectSystemInstructions),
       })
       const policy = policyForState(state)
       const plan = planResponse(state, policy, {
@@ -702,7 +714,7 @@ async function* runAlternateProviderTurn(
     && (
       ownerRequirements.clientSeo
       || isContinuationText(lastUserText)
-      || Boolean(projectSystemInstructions?.includes('[INTERNAL SEO JOB RESULT]'))
+      || isJobDeliveryDirective(projectSystemInstructions)
     )
 
   const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot, officePulse] = await Promise.all([
@@ -1285,7 +1297,12 @@ async function* runAlternateProviderTurn(
   let confirmCardsEmitted = 0
   // Live-browser turns raise this cap (see BROWSER_TURN_MAX_ITERATIONS) — a real
   // UI task is 15–30 look→act rounds and must not die silently at the default cap.
-  let maxIterations = MAX_TOOL_ITERATIONS
+  // Deep/full work and server-driven delivery turns get the same treatment: the
+  // crawl → poll → report → links → present chain does not fit in 8 rounds.
+  let maxIterations =
+    ownerRequirements.deepWork || driveClientSeoBatch || isJobDeliveryDirective(projectSystemInstructions)
+      ? DEEP_TURN_MAX_ITERATIONS
+      : MAX_TOOL_ITERATIONS
   const claimedSteeringIds = new Set<string>()
 
   // LG-3: the action graph staged a card (thread paused at its interrupt) —
@@ -1614,6 +1631,16 @@ async function* runAlternateProviderTurn(
           if (violations.length === 0 && emittedAskCards.length === 0 && confirmCardsEmitted === 0) {
             violations.push(...detectMissingCardViolation(iterationText.trim()))
             violations.push(...detectProseChoiceViolation(iterationText.trim()))
+          }
+          // Queued work is not finished work: block "অডিট সম্পন্ন" while the only
+          // evidence is a 200 ms queue insert (owner incident 2026-07-25).
+          if (violations.length === 0) {
+            violations.push(
+              ...detectAsyncCompletionViolation(
+                iterationText.trim(),
+                summarizeAsyncJobEvidence(toolRecords),
+              ),
+            )
           }
           // P1 — fabricated-stat gate (flag-gated inside → no-op when off).
           if (violations.length === 0) {

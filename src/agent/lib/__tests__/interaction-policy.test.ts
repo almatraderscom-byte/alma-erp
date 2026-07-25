@@ -13,6 +13,7 @@ import {
   policyForState,
   checkCommitmentLedger,
   violatesAddressContract,
+  DELIVERY_MAX_LINES,
   OWNER_ADDRESS,
   NON_DECEPTION_NOTE,
 } from '@/agent/lib/interaction-policy'
@@ -63,7 +64,7 @@ describe('emotion + correction + repair', () => {
 describe('policy contracts', () => {
   it('listen + crisis strip tools and forbid work pivot', () => {
     for (const mode of ['personal_listen', 'crisis_safety'] as const) {
-      const p = policyForState({ mode, emotion: 'low', correction: false, repairNeeded: false, detail: 'normal' })
+      const p = policyForState({ mode, emotion: 'low', correction: false, repairNeeded: false, detail: 'normal', deliveryTurn: false })
       expect(p.allowTools).toBe(false)
       expect(p.allowWorkPivot).toBe(false)
       expect(p.mustAcknowledgeFeeling).toBe(true)
@@ -72,14 +73,45 @@ describe('policy contracts', () => {
   it('only work mode may pivot to in-flight business', () => {
     const modes = ['personal_listen', 'crisis_safety', 'coaching', 'decision_support', 'concise_status', 'teaching'] as const
     for (const mode of modes) {
-      const p = policyForState({ mode, emotion: 'neutral', correction: false, repairNeeded: false, detail: 'normal' })
+      const p = policyForState({ mode, emotion: 'neutral', correction: false, repairNeeded: false, detail: 'normal', deliveryTurn: false })
       expect(p.allowWorkPivot, mode).toBe(false)
     }
-    expect(policyForState({ mode: 'work', emotion: 'neutral', correction: false, repairNeeded: false, detail: 'normal' }).allowWorkPivot).toBe(true)
+    expect(policyForState({ mode: 'work', emotion: 'neutral', correction: false, repairNeeded: false, detail: 'normal', deliveryTurn: false }).allowWorkPivot).toBe(true)
   })
   it('a low/anxious WORK message still gets a feeling acknowledgement', () => {
-    const p = policyForState({ mode: 'work', emotion: 'anxious', correction: false, repairNeeded: false, detail: 'normal' })
+    const p = policyForState({ mode: 'work', emotion: 'anxious', correction: false, repairNeeded: false, detail: 'normal', deliveryTurn: false })
     expect(p.mustAcknowledgeFeeling).toBe(true)
+  })
+})
+
+// Owner incident 2026-07-25 — a 40-page deep audit was answered against the
+// ~10-line brevity default and arrived as the word "done".
+describe('depth: deep work and delivery turns are not brief turns', () => {
+  it('a deep/full request reads as a detailed turn', () => {
+    expect(deriveInteractionState({ text: 'Do a Deep SEO Audit - almatraders.com', deepWork: true }).detail).toBe('detailed')
+    expect(deriveInteractionState({ text: 'ajker sales koto?' }).detail).toBe('normal')
+  })
+
+  it('an explicit "সংক্ষেপে" still wins over deep work', () => {
+    expect(deriveInteractionState({ text: 'সংক্ষেপে পুরো অডিটটা বলো', deepWork: true }).detail).toBe('short')
+  })
+
+  it('a delivery turn drops the line cap entirely', () => {
+    const state = deriveInteractionState({ text: 'Do a Deep SEO Audit - almatraders.com', deliveryTurn: true })
+    const policy = policyForState(state)
+    expect(policy.maxLines).toBe(DELIVERY_MAX_LINES)
+    expect(policy.maxLines).toBeGreaterThan(
+      policyForState(deriveInteractionState({ text: 'ajker sales koto?' })).maxLines,
+    )
+  })
+
+  it('the delivery directive orders the full result, not a summary', () => {
+    const state = deriveInteractionState({ text: 'Do a Deep SEO Audit - almatraders.com', deliveryTurn: true })
+    const policy = policyForState(state)
+    const directive = buildResponseDirective(state, policy, planResponse(state, policy, { turnCount: 2, hasEvidence: true, willCommit: false }))
+    expect(directive).toContain('পুরো ফলাফল')
+    expect(directive).toContain('যত লাইন লাগে')
+    expect(directive).not.toContain('সর্বোচ্চ ~')
   })
 })
 
@@ -121,7 +153,7 @@ describe('address + non-deception contracts', () => {
 })
 
 describe('response planner', () => {
-  const state = { mode: 'work' as const, emotion: 'low' as const, correction: true, repairNeeded: true, detail: 'normal' as const }
+  const state = { mode: 'work' as const, emotion: 'low' as const, correction: true, repairNeeded: true, detail: 'normal' as const, deliveryTurn: false }
   it('orders repair → acknowledge → answer → evidence → commitment; omits the unnecessary', () => {
     const policy = policyForState(state)
     const plan = planResponse(state, policy, { turnCount: 7, hasEvidence: true, willCommit: true })
@@ -142,7 +174,7 @@ describe('response planner', () => {
     expect(openerFor(a)).toEqual(openerFor(a2))
   })
   it('the directive carries repair, feeling, no-pivot, uncertainty and ledger rules', () => {
-    const st = { mode: 'personal_listen' as const, emotion: 'low' as const, correction: false, repairNeeded: false, detail: 'normal' as const }
+    const st = { mode: 'personal_listen' as const, emotion: 'low' as const, correction: false, repairNeeded: false, detail: 'normal' as const, deliveryTurn: false }
     const pol = policyForState(st)
     const d = buildResponseDirective(st, pol, planResponse(st, pol, { turnCount: 1, hasEvidence: false, willCommit: false }))
     expect(d).toContain('INTERACTION CONTRACT')

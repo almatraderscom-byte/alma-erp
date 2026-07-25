@@ -9,6 +9,7 @@ import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildOutboundDialMessage } from '@/agent/lib/outbound-call-tracking'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { shouldEmitGenericJobSuccess, shouldResumeAgentAfterJob } from '@/agent/lib/job-result-message-policy'
+import { isDeliverableJobType, markDeliveryPending } from '@/agent/lib/job-delivery'
 import { prisma } from '@/lib/prisma'
 
 const IMAGE_SIGNED_URL_TTL_SEC = 3600
@@ -112,6 +113,28 @@ export async function POST(req: NextRequest) {
     await wf.syncWorkflowWithPendingAction(pendingActionId, 'worker')
   } catch (err) {
     console.warn('[job-result] workflow sync failed open:', err instanceof Error ? err.message : err)
+  }
+
+  // Delivery contract: from this moment the owner is OWED the result in his
+  // conversation. The sweep in job-delivery.ts retries the continuation and, if
+  // the head still says nothing, posts the result itself.
+  if (status === 'success' && isDeliverableJobType(action.type)) {
+    await markDeliveryPending(pendingActionId, action.type)
+  }
+
+  // SEO: build the client report, the issues CSV and the live HTML dashboard
+  // NOW and file the dashboard as a chat artifact. Report quality no longer
+  // depends on the head remembering to ask for it (incident 2026-07-25).
+  if (status === 'success' && action.type === 'seo_audit') {
+    try {
+      const { buildSeoDeliverables } = await import('@/agent/lib/seo-deliverables')
+      const built = await buildSeoDeliverables(pendingActionId)
+      if (built) console.log(`[job-result] seo deliverables ready for ${built.host} (${built.pagesCrawled} pages)`)
+    } catch (err) {
+      // The raw result stays durable; the head's read:"report" path can still
+      // build everything on demand.
+      console.warn('[job-result] seo deliverables build failed:', err instanceof Error ? err.message : err)
+    }
   }
 
   const payload = action.payload as Record<string, unknown>
@@ -332,7 +355,10 @@ export async function POST(req: NextRequest) {
     if (!tg.ok) console.warn('[job-result] owner telegram notify failed:', tg.error)
   }
 
-  if (progressTurnId && (status === 'failed' || !resumeAgentAfterImage)) {
+  // The progress turn must stay OPEN while a continuation is about to present the
+  // result — finalizing it here is what literally put "done" on the owner's screen
+  // while the SEO report was still unwritten (2026-07-25).
+  if (progressTurnId && (status === 'failed' || (!resumeAgentAfterImage && !resumeAgentAfterSeo))) {
     await finalizeTurnIfRunning(progressTurnId, status === 'failed' ? 'error' : 'done').catch(() => {})
   }
 
@@ -368,10 +394,18 @@ export async function POST(req: NextRequest) {
     try {
       await enqueueAgentContinuation({
         conversationId: convId,
+        // Presenting a finished deliverable is correctness, not an
+        // approval convenience — it must not depend on the auto-continue
+        // preference, and it reuses the progress turn so the owner sees one
+        // unbroken span from his request to the report.
+        force: true,
+        turnId: progressTurnId,
         message:
           `[INTERNAL SEO JOB RESULT] Audit action ${pendingActionId} is now executed. ` +
-          'Resume the canonical client_seo_batch at its exact next tool. Read the full report and links; ' +
-          'then continue the next ordered target. Never rerun a completed audit and never ask Boss to type continue.',
+          'Resume the canonical client_seo_batch at its exact next tool. Read the full report (read:"report") ' +
+          'and the links (read:"links"), then PRESENT them in this reply: score, every critical/high issue with ' +
+          'its fix, what to do first, and the download links. Never rerun a completed audit, never ask Boss ' +
+          'whether he wants the report, and never end this turn with only a progress line.',
       })
     } catch (err) {
       console.warn('[job-result] SEO continuation enqueue failed (result remains durable):', err instanceof Error ? err.message : err)
