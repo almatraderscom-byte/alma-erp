@@ -100,7 +100,7 @@ const STAFF_AND_APPROVALS_RULE = `
 **TTS routing (worker auto):**
 - staff announcement/dispatch/nudge → ElevenLabs **Charlie** (male, energetic) — auto.
 - Boss voice reply → ElevenLabs **Charlie** (male) default; if "female voice" → **River**.
-- outbound_phone_call: default **Google TTS**; if Boss says "ElevenLabs voice" → ttsProvider=elevenlabs + voiceGender male/female.
+- outbound_phone_call: on the current phone line every call is **two-way Gemini Live**, voice **Charon (male)** — the TTS provider is not used there at all. Voice is resolved server-side from Boss's own words: male unless he asks for a woman's voice. Never promise a voice the card does not show.
 - **Salah** reminder/call → always **Google TTS** (never ElevenLabs).
 
 **Draft+Approve (code-enforced):** staff messages/dispatch never send directly — every send tool stages a card; only the owner's Approve executes it (the staff_task workflow tracks proposal → approval → dispatch → verification). Saying "sent" before Approve is forbidden.

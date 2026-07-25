@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { detectVoiceProviderRequest, voicePrefLabel } from '@/agent/lib/voice-provider-intent'
 
 describe('detectVoiceProviderRequest — Sarvam default unless Boss names another', () => {
-  it('defaults to Sarvam (female/anushka) when no voice is mentioned', () => {
+  it('defaults to Sarvam, spoken MALE, when no voice is mentioned', () => {
     for (const t of [
       '01949489548 এ কল করে বলো আমি আসছি',
       'oi nambare call kore bolo dokan bondho',
@@ -10,7 +10,7 @@ describe('detectVoiceProviderRequest — Sarvam default unless Boss names anothe
     ]) {
       const p = detectVoiceProviderRequest(t)
       expect(p.provider, t).toBe('sarvam')
-      expect(p.gender, t).toBe('female')
+      expect(p.gender, t).toBe('male')
       expect(p.explicit, t).toBe(false)
     }
   })
@@ -38,10 +38,9 @@ describe('detectVoiceProviderRequest — Sarvam default unless Boss names anothe
     }
   })
 
-  it('gender: female default for Sarvam; male only when Boss asks', () => {
-    // Sarvam (default) → female
-    expect(detectVoiceProviderRequest('01711111111 e call dao').gender).toBe('female')
-    // explicit male request → male (abhilash)
+  it('gender: MALE is the house voice; a woman must be asked for', () => {
+    // Owner 2026-07-25: a live call went out in a woman's voice he never requested.
+    expect(detectVoiceProviderRequest('01711111111 e call dao').gender).toBe('male')
     expect(detectVoiceProviderRequest('sarvam male voice e call dao').gender).toBe('male')
     expect(detectVoiceProviderRequest('ছেলে কণ্ঠে কল দাও').gender).toBe('male')
     // "female" must NOT trip the "male" match hiding inside it

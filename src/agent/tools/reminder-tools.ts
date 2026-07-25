@@ -7,6 +7,7 @@ import { checkUrgentRateLimit, checkOutboundCallRateLimit } from '@/agent/lib/ur
 import { summarizeOutboundAction, isBlockingOutboundDuplicate } from '@/agent/lib/outbound-call-tracking'
 import { normalizeOutboundPhone } from '@/lib/twilio/phone'
 import { voicePrefLabel, type OwnerVoicePref } from '@/agent/lib/voice-provider-intent'
+import { getVoiceCallConfig } from '@/agent/lib/voice-call'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -357,13 +358,21 @@ const outbound_phone_call: AgentTool = {
       const voiceGender: 'male' | 'female' = pref
         ? pref.gender
         : input.voiceGender === 'female' ? 'female'
-          : input.voiceGender === 'male' ? 'male'
-          : ttsProvider === 'sarvam' ? 'female' : 'male'
-      const voiceLine = pref
-        ? voicePrefLabel(pref)
-        : ttsProvider === 'elevenlabs' ? 'ElevenLabs'
-          : ttsProvider === 'sarvam' ? `Sarvam (${voiceGender === 'female' ? 'মেয়ে' : 'ছেলে'} কণ্ঠ)`
-          : 'Google'
+          : 'male'
+      // The card must name the engine that will ACTUALLY speak. On the sip and ngs
+      // providers every call is two-way Gemini Live (Charon male / Aoede female) and the TTS
+      // provider is never reached — yet the card used to advertise "Sarvam (মেয়ে কণ্ঠ)" and
+      // the owner then heard a Gemini voice he had not chosen. Approving a card is only
+      // meaningful if the card is true.
+      const callProvider = getVoiceCallConfig().provider
+      const liveEngine = callProvider === 'sip' || callProvider === 'ngs'
+      const voiceLine = liveEngine
+        ? `Gemini Live (${voiceGender === 'female' ? 'মেয়ে কণ্ঠ — Aoede' : 'ছেলে কণ্ঠ — Charon'})`
+        : pref
+          ? voicePrefLabel(pref)
+          : ttsProvider === 'elevenlabs' ? 'ElevenLabs'
+            : ttsProvider === 'sarvam' ? `Sarvam (${voiceGender === 'female' ? 'মেয়ে' : 'ছেলে'} কণ্ঠ)`
+            : 'Google'
       const cardSummary = (msg: string) =>
         `📞 কল → ${phone}\n🔊 ভয়েস: ${voiceLine}\n\n🗣️ "${msg.slice(0, 300)}"`
 
