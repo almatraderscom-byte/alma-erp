@@ -2374,6 +2374,15 @@ async function* runAlternateProviderTurn(
         // Cheap: two short hashes per turn, no extra queries.
         prefix_system_chars: systemText.length,
         prefix_system_sha: shortHash(systemText),
+        // Phase 8c: per-BLOCK fingerprints. The 8b probe proved the system text
+        // changes between turns at IDENTICAL length (69,044 chars both times) with
+        // an identical tool set — so the earlier "active tool names rewrite the
+        // core prompt" theory was wrong. Equal length + different bytes means
+        // either an embedded clock or the same items emitted in a different order.
+        // Hashing each block separately makes the guilty one self-identify: diff
+        // the two lists and the index that moved is the culprit.
+        prefix_block_shas: stable.map((b) => shortHash(b.text)).join(','),
+        prefix_block_lens: stable.map((b) => b.text.length).join(','),
         prefix_tool_count: turnToolNames.length,
         prefix_tools_sha: shortHash(turnToolNames.join(',')),
       },
