@@ -17,6 +17,8 @@ export interface Conversation {
   title: string | null
   projectId: string | null
   modelId?: string | null
+  /** Execution mode picker: auto | direct | plan | plan_drive (null = auto). */
+  chatMode?: string | null
   source?: string | null
   archived: boolean
   updatedAt: string

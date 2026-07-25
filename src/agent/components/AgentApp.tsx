@@ -6,6 +6,7 @@ import Link from 'next/link'
 import AgentSidebar, { type Conversation } from './AgentSidebar'
 import AgentThread, { type ChatMessage, type TimelineEntry } from './AgentThread'
 import AgentComposer, { type PendingFile } from './AgentComposer'
+import { DEFAULT_CHAT_MODE, normalizeChatMode, type ChatMode } from '@/agent/lib/chat-mode'
 import AgentArtifactsPanel, { type Artifact } from './AgentArtifactsPanel'
 import { notifyTodosChanged } from './AgentTodoContext'
 const VoiceConsole = dynamic(() => import('./voice/VoiceConsole'), { ssr: false })
@@ -297,6 +298,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   // 'auto' = let the per-turn router pick the head model (current cost-optimized
   // routing); a concrete id pins that exact model for the conversation.
   const [activeModelId, setActiveModelId] = useState('auto')
+  // Chat mode picker (auto | direct | plan | plan_drive) — per conversation, so a
+  // "plan only" chat stays plan-only after reload.
+  const [chatMode, setChatMode] = useState<ChatMode>(DEFAULT_CHAT_MODE)
   const [compacting, setCompacting] = useState(false)
   const [dayShift, setDayShift] = useState<{
     conversationId: string | null
@@ -511,6 +515,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           conversationId: string | null
           projectId: string | null
           modelId: string | null
+          chatMode: string | null
         }
         if (!data.conversationId) return
         if (streamingRef.current || activeConvIdRef.current) return
@@ -519,6 +524,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           title: null,
           projectId: data.projectId,
           modelId: data.modelId ?? undefined,
+          chatMode: data.chatMode,
           archived: false,
           updatedAt: '',
         })
@@ -609,17 +615,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
   // One owner-action handler for the Plan-Drive in-chat list (resume / add-budget /
   // abandon), reused on both the home screen and inside the office-shift thread.
-  const handlePlanDriveAction = useCallback(async (planId: string, action: PlanDriveAction) => {
+  const handlePlanDriveAction = useCallback(async (planId: string, action: PlanDriveAction, family?: string) => {
     try {
       const res = await fetch('/api/assistant/plan-driver/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ planId, action }),
+        body: JSON.stringify({ planId, action, family }),
       })
       if (!res.ok) { toast.error('কাজটি করা গেল না'); return }
       toast.success(
         action === 'abandon' ? 'প্ল্যান বাদ দেওয়া হলো' :
         action === 'add-budget' ? 'বাজেট বাড়িয়ে আবার চালু করা হলো' :
+        action === 'family-auto' ? 'এই ধরনের কাজ এখন থেকে নিজেই করবে' :
+        action === 'family-stop' ? 'এই ধরনের কাজ আর নিজে করবে না' :
         'আবার চালু করা হলো',
       )
       const r = await fetch('/api/assistant/plan-driver')
@@ -668,6 +676,16 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setActiveConvId(conv.id)
     setActiveConvProjectId(conv.projectId)
     setActiveModelId(conv.modelId ?? 'auto')
+    // Deep links and panel buttons hand us a PARTIAL conversation row, so an
+    // absent chatMode means "unknown", not "auto" — read the real one rather
+    // than silently dropping the owner back into full-tool mode.
+    setChatMode(normalizeChatMode(conv.chatMode))
+    if (conv.chatMode === undefined) {
+      void fetch(`/api/assistant/conversations/${conv.id}`)
+        .then(async (r) => (r.ok ? (await r.json()) as { chatMode?: string | null } : null))
+        .then((row) => { if (row) setChatMode(normalizeChatMode(row.chatMode)) })
+        .catch(() => { /* offline — the chip stays on auto, which withholds nothing */ })
+    }
     setActivePersonalMode(
       !!personalProjectId && conv.projectId === personalProjectId,
     )
@@ -714,6 +732,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setMessages([])
     setArtifacts([])
     setActiveModelId('claude-sonnet-4-6')
+    setChatMode(DEFAULT_CHAT_MODE)
     pendingProjectIdRef.current = projectId ?? null
     setActiveConvProjectId(projectId ?? null)
     setActivePersonalMode(!!personalProjectId && projectId === personalProjectId)
@@ -920,8 +939,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         if (finalConvId) body.conversationId = finalConvId
         else {
           if (pendingProjectIdRef.current) body.projectId = pendingProjectIdRef.current
-          // New conversation: persist the owner's model choice ('auto' or a pinned model).
+          // New conversation: persist the owner's model choice ('auto' or a pinned model)
+          // and the mode chip he is looking at right now.
           body.modelId = activeModelId
+          body.chatMode = chatMode
         }
         if (fileRefs.length > 0) body.files = fileRefs
       }
@@ -1894,6 +1915,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           isMobile={isMobile}
           activeModelId={activeModelId}
           onModelChange={setActiveModelId}
+          chatMode={chatMode}
+          onChatModeChange={setChatMode}
           onVoiceStart={() => setVoiceOpen(true)}
           seedText={composerSeed}
         />

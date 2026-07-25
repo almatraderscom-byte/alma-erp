@@ -21,6 +21,7 @@ import {
   loadVisiblePlanDrives,
 } from '@/agent/lib/planner'
 import { getAutodriveConfig } from '@/agent/lib/autodrive-config'
+import { prisma } from '@/lib/prisma'
 
 export type PlanDrivePhase =
   | 'driving' // actively advancing
@@ -59,6 +60,28 @@ export interface PlanDriveView {
   attemptCount: number
   maxAttempts: number
   costTaka: number
+  /**
+   * Present only for a grind campaign ("fix all 246 issues"). Additive — every
+   * existing web/native consumer keeps working without knowing about it.
+   */
+  grind?: GrindDriveView
+}
+
+/** Measured campaign progress. Every number here is counted, never claimed. */
+export interface GrindDriveView {
+  campaignId: string
+  target: string
+  /** "২৪৬ টার মধ্যে ১৮৩ টা ঠিক হয়েছে · ০ নতুন সমস্যা" */
+  headline: string
+  total: number
+  fixed: number
+  open: number
+  claimedOnly: number
+  regressed: number
+  introduced: number
+  /** What is standing between the campaign and "done" — empty means done. */
+  blockers: string[]
+  families: Array<{ family: string; total: number; fixed: number; open: number; mode: 'proposal' | 'apply' }>
 }
 
 export type PlanDriveHistoryStatus = 'completed' | 'failed' | 'stopped'
@@ -133,7 +156,7 @@ function currentLine(plan: Plan, phase: PlanDrivePhase): string {
   return 'কাজ চলছে…'
 }
 
-function toView(plan: Plan): PlanDriveView {
+async function toView(plan: Plan): Promise<PlanDriveView> {
   const phase = phaseOf(plan.autodriveState)
   const steps: PlanDriveStepView[] = plan.steps.map((s) => ({
     id: s.id,
@@ -163,6 +186,49 @@ function toView(plan: Plan): PlanDriveView {
     attemptCount: plan.attemptCount,
     maxAttempts: plan.maxAttempts,
     costTaka: plan.costTaka,
+    grind: (await grindViewForPlan(plan.id)) ?? undefined,
+  }
+}
+
+/**
+ * The campaign block, when this plan is one. Read-only and fail-open: a panel
+ * must never break because a campaign row is odd.
+ */
+async function grindViewForPlan(planId: string): Promise<GrindDriveView | null> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = prisma as any
+    const set = await db.agentFindingSet.findFirst({
+      where: { planId },
+      select: { id: true, target: true },
+    })
+    if (!set) return null
+
+    const { runGrindCompletionGate, grindHeadline } = await import('@/agent/lib/grind/completion')
+    const { getFamilyMode } = await import('@/agent/lib/grind/family-approval')
+    const verdict = await runGrindCompletionGate(set.id)
+    const families = await Promise.all(
+      verdict.tally.byFamily.map(async (f) => ({
+        ...f,
+        mode: await getFamilyMode(set.target, f.family),
+      })),
+    )
+    return {
+      campaignId: set.id,
+      target: set.target,
+      headline: grindHeadline(verdict.tally),
+      total: verdict.tally.total,
+      fixed: verdict.tally.fixed,
+      open: verdict.tally.open,
+      claimedOnly: verdict.tally.claimedOnly,
+      regressed: verdict.tally.regressed,
+      introduced: verdict.tally.introduced,
+      blockers: verdict.blockers,
+      families,
+    }
+  } catch (err) {
+    console.warn('[plan-drive-view] grind view failed open:', err instanceof Error ? err.message : err)
+    return null
   }
 }
 
@@ -229,7 +295,7 @@ export async function getPlanDrivePanel(): Promise<PlanDrivePanelData> {
     loadVisiblePlanDrives(),
     loadFinishedPlanDrives({ limit: 20 }),
   ])
-  const drives = plans.map(toView)
+  const drives = await Promise.all(plans.map(toView))
   const finished = finishedPlans.map(toHistoryView)
 
   // Order: needs-decision → waiting-approval → driving (most-recent within group).

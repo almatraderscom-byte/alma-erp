@@ -67,6 +67,36 @@ test('scoring penalizes by severity and never goes below 0', () => {
   assert.equal(scoreAudit(wrecked).score, 0)
 })
 
+test('page-level scoring is a RATE, so a deep crawl is not punished for being deep', () => {
+  const badPage = () => analyzeHtml(BAD, 'https://shop.example.com/bad')
+  const site = { issues: [] }
+  const small = scoreAudit({ siteChecks: site, pages: Array.from({ length: 5 }, badPage), pagesCrawled: 5 })
+  const big = scoreAudit({ siteChecks: site, pages: Array.from({ length: 80 }, badPage), pagesCrawled: 80 })
+
+  // Same problem on every page ⇒ same score, whether we saw 5 pages or 80.
+  assert.equal(small.score, big.score)
+  // …and the raw counts still grow, so nothing is hidden from the report.
+  assert.ok(big.counts.medium > small.counts.medium)
+  // The old unbounded sum floored an 80-page crawl at 0; a real site must stay
+  // on a usable scale so before/after is meaningful.
+  assert.ok(big.score > 0, `expected a usable score, got ${big.score}`)
+})
+
+test('a mostly-clean deep crawl scores well above a broken one', () => {
+  const site = { issues: [] }
+  const clean = scoreAudit({
+    siteChecks: site,
+    pages: Array.from({ length: 40 }, () => analyzeHtml(GOOD, 'https://shop.example.com/panjabi')),
+    pagesCrawled: 40,
+  })
+  const broken = scoreAudit({
+    siteChecks: site,
+    pages: Array.from({ length: 40 }, () => analyzeHtml(BAD, 'https://shop.example.com/bad')),
+    pagesCrawled: 40,
+  })
+  assert.ok(clean.score > broken.score + 20, `${clean.score} vs ${broken.score}`)
+})
+
 test('report markdown includes score, severities and a prioritized plan', () => {
   const crawl = {
     origin: 'https://shop.example.com', pagesCrawled: 2, avgTtfbMs: 420,

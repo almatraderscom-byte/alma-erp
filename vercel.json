@@ -5,6 +5,9 @@
     "src/app/api/assistant/chat/route.ts": {
       "maxDuration": 300
     },
+    "src/app/api/assistant/internal/plan-driver-tick/route.ts": {
+      "maxDuration": 300
+    },
     "src/app/api/assistant/**/route.ts": {
       "maxDuration": 120
     }

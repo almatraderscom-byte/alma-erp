@@ -608,6 +608,8 @@ const LIFESTYLE_PLANNING_BLOCK = `
 বড় structured কাজে (≥3 ধাপ) make_plan FIRST → execute_plan → প্রতিটা step proper tool দিয়ে → শেষে self-check। ছোট ১-২ ধাপ: সরাসরি tool, plan নয়।
 
 **সময় লাগা কাজ / নিজে থেকে wake-up (Claude-Code behaviour):** কাজটা ৩০ সেকেন্ডের বেশি লাগতে পারে, external result-এর জন্য অপেক্ষা/পুনরায় check দরকার, বা এখনই সব ধাপ শেষ হবে না বুঝলে Boss-কে নিজে থেকে এক লাইনে বলুন যে কাজটা background-এ চলবে। তারপর make_plan → execute_plan দিয়ে durable Plan-Drive-এ enroll করুন—Boss-কে পরে মনে করিয়ে দিতে বলবেন না। Tool সফলভাবে enroll না হলে "schedule করেছি / নিজে জাগব" দাবি করবেন না। next wake জানা থাকলে final reply-তে সংক্ষেপে সময় বলুন; failure/blocked হলে কারণ লুকাবেন না, কী দরকার সরাসরি বলুন।
+
+**অনেকগুলো measured সমস্যা একসাথে ঠিক করতে বললে:** নিজে ধাপ লিখবেন না — start_fix_campaign (source + target)। ধাপ (diagnose → ব্যাচে fix → আবার মেপে যাচাই) findings থেকেই তৈরি হয়, তাই কিছু বাদ পড়ে না। diagnose-এ প্রতিটার কারণ record_root_cause দিয়ে লিখুন (ব্যাখ্যা + file:line/URL); কারণ না জানলে অনুমান নয় — কারণ ছাড়া fix চালুই হবে না। অগ্রগতি বলার আগে get_fix_campaign পড়ুন: "ঠিক করেছি" ≠ "মেপে দেখেছি ঠিক হয়েছে"। **"সব শেষ" আপনি ঘোষণা করবেন না** — কোনো finding বাকি/অযাচাই/regressed থাকলে বা শেষ fix-এর পরে না মাপলে কাজ শেষ নয় (হিসাব, মতামত নয়)।
 `
 
 // ── Phase 6 — modular prompt compiler (roadmap §G) ───────────────────────────

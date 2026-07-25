@@ -2,7 +2,7 @@
  * Proactive signal scanner → Plan-Drive bridge (Feature A).
  *
  * The owner asked the agent to stop waiting for instructions and instead WATCH the
- * business — orders, stock, customers waiting, weak staff — and pull the genuinely
+ * business — orders, stock, customers waiting, ads, sales trend — and pull the genuinely
  * urgent issues into the autonomous Plan-Driver itself, so they get pursued until
  * resolved instead of sitting in a briefing nobody acts on.
  *
@@ -33,6 +33,7 @@ import {
   TERMINAL_AUTODRIVE_STATES,
   type AutodriveState,
 } from '@/agent/lib/planner'
+import { ensureDriveConversation } from '@/agent/lib/plan-driver/drive-conversation'
 import { buildOwnerBriefingData, type OwnerBriefingData } from '@/agent/lib/owner-briefing-data'
 import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
 
@@ -57,7 +58,7 @@ function activeKey(businessId: string, signalKey: string): string {
  * by a count that changes daily) so dedup actually holds.
  */
 export interface DrivableSignal {
-  area: 'stock' | 'orders' | 'customers' | 'staff'
+  area: 'stock' | 'orders' | 'customers' | 'ads' | 'business' | 'returns'
   urgency: 'high' | 'normal'
   /** Stable dedup identity, e.g. `stock:FM-133`, `orders:stuck_pending`. */
   signalKey: string
@@ -73,7 +74,14 @@ export interface DrivableSignal {
  *   - stock  : only HIGH-urgency reorder suggestions (urgent low stock).
  *   - orders : only HIGH-severity order issues (stuck/pile-up/mismatch etc.).
  *   - customers: only when the 24h reply window is actually closing (near-window).
- *   - staff  : repeat low performers (already 2+ low days when surfaced).
+ *   - ads    : a campaign whose performance actually dropped.
+ *   - business: yesterday's sales materially below the 7-day average.
+ *   - returns: an open return-rate flag.
+ *
+ * STAFF IS DELIBERATELY ABSENT (owner ruling 2026-07-25). Every staff follow-up
+ * this scanner ever created died unrun, and the owner kept switching Plan-Drive
+ * off because of them: staff performance belongs to the Office Manager agent, not
+ * to an autonomous plan. Business signals stay; people-management does not.
  * Capped to MAX_SIGNALS_PER_SCAN, highest-urgency first.
  */
 export function selectDrivableSignals(briefing: OwnerBriefingData): DrivableSignal[] {
@@ -115,14 +123,44 @@ export function selectDrivableSignals(briefing: OwnerBriefingData): DrivableSign
     })
   }
 
-  // ── Staff: repeat low performers (keyed by name) ──
-  for (const p of briefing.staffYesterday?.lowPerformers ?? []) {
+  // ── Ads: a campaign whose performance actually dropped ──
+  // (Owner 2026-07-25: "CS > ads manager scan" — he wants the agent watching the
+  // ad account itself, not just reporting yesterday's spend.)
+  for (const a of briefing.adsDigest?.anomalies ?? []) {
     out.push({
-      area: 'staff',
+      area: 'ads',
+      urgency: 'high',
+      signalKey: `ads:${a.campaign}`,
+      goal: `"${a.campaign}" ক্যাম্পেইনের পারফরম্যান্স ${a.dropPct}% পড়েছে — Ads Manager দেখে কারণ বের করো`,
+      doneCriteria: `"${a.campaign}"-এর পতনের কারণ চিহ্নিত এবং করণীয় (bid/creative/audience/বন্ধ) ঠিক হয়েছে।`,
+    })
+  }
+
+  // ── Business trend: yesterday materially below the 7-day average ──
+  // Owner asked for "ব্যবসা আগের থেকে খারাপ/ভালো যাওয়া নিয়ে research" — this is
+  // the cheap, already-measured version of that: no extra IO, just the briefing.
+  const sales = briefing.sales
+  if (sales && sales.sevenDayAvg > 0) {
+    const dropPct = Math.round(((sales.sevenDayAvg - sales.yesterdayTotal) / sales.sevenDayAvg) * 100)
+    if (dropPct >= 30) {
+      out.push({
+        area: 'business',
+        urgency: 'high',
+        signalKey: 'business:sales_drop',
+        goal: `গতকালের সেল ৭ দিনের গড়ের চেয়ে ${dropPct}% কম — কারণ খুঁজে বের করো`,
+        doneCriteria: 'সেল পড়ার কারণ (ট্রাফিক/অ্যাড/স্টক/সিজন) চিহ্নিত এবং করণীয় প্রস্তাব করা হয়েছে।',
+      })
+    }
+  }
+
+  // ── Returns: the return rate is a quality/finance signal, not a staff one ──
+  for (const flag of briefing.returns?.flags ?? []) {
+    out.push({
+      area: 'returns',
       urgency: 'normal',
-      signalKey: `staff:${p.name}`,
-      goal: `${p.name}-এর সাথে ফলো-আপ — গত ${p.daysLow} দিন কাজ কম শেষ করছে (${p.pct}%)`,
-      doneCriteria: `${p.name}-এর জন্য সহজ টাস্ক/ফলো-আপ ব্যবস্থা নেওয়া হয়েছে।`,
+      signalKey: `returns:${flag.slice(0, 40)}`,
+      goal: `রিটার্ন সমস্যা দেখো — ${flag}`,
+      doneCriteria: `"${flag}" রিটার্ন সমস্যার কারণ চিহ্নিত ও ব্যবস্থা নেওয়া হয়েছে।`,
     })
   }
 
@@ -235,6 +273,11 @@ export async function scanSignalsToPlanDrive(
         steps: [{ action: sig.goal }],
         businessId,
       })
+      // A plan with no conversation is DEAD ON ARRIVAL — the executor cannot run
+      // a head turn without one, so every self-created plan used to hard-fail on
+      // its first step. Give it its own drive conversation (which also keeps N
+      // synthetic step messages out of Boss's chat).
+      await ensureDriveConversation({ id: plan.id, goal: sig.goal, businessId })
       await enrollPlanForAutodrive(plan.id, { doneCriteria: sig.doneCriteria })
 
       await prisma.agentKvSetting.upsert({

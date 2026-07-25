@@ -8,6 +8,10 @@
  *   - 'add-budget'  → grant THIS plan one more cost-cap allowance, then resume.
  *                     Lifts ONLY this plan's cap (KV override), never the global one.
  *   - 'abandon'     → drop the plan from autodrive (terminal).
+ *   - 'family-auto' → "এই family আর জিজ্ঞেস কোরো না": grant this fix family
+ *                     unattended permission on THIS site (never on another).
+ *   - 'family-stop' → "এই family থামাও": take that permission back; the family
+ *                     returns to proposal mode and Boss sees the next batch first.
  *
  * Owner-only. The master kill-switch still applies — if AGENT_AUTODRIVE_ENABLED is
  * off the plan simply won't tick after resuming, which is the safe default.
@@ -25,8 +29,10 @@ import {
 
 export const runtime = 'nodejs'
 
-type Action = 'resume' | 'add-budget' | 'abandon'
-const ACTIONS: ReadonlySet<Action> = new Set<Action>(['resume', 'add-budget', 'abandon'])
+type Action = 'resume' | 'add-budget' | 'abandon' | 'family-auto' | 'family-stop'
+const ACTIONS: ReadonlySet<Action> = new Set<Action>([
+  'resume', 'add-budget', 'abandon', 'family-auto', 'family-stop',
+])
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -36,9 +42,9 @@ export async function POST(req: NextRequest) {
   if (!token?.sub) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(token)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
-  let body: { planId?: string; action?: string }
+  let body: { planId?: string; action?: string; family?: string }
   try {
-    body = (await req.json()) as { planId?: string; action?: string }
+    body = (await req.json()) as { planId?: string; action?: string; family?: string }
   } catch {
     return NextResponse.json({ error: 'bad json' }, { status: 400 })
   }
@@ -51,6 +57,23 @@ export async function POST(req: NextRequest) {
 
   const plan = await loadPlan(planId)
   if (!plan) return NextResponse.json({ error: 'plan নেই' }, { status: 404 })
+
+  if (action === 'family-auto' || action === 'family-stop') {
+    const family = body.family?.trim()
+    if (!family) return NextResponse.json({ error: 'family দরকার' }, { status: 400 })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { prisma } = await import('@/lib/prisma')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const set = await (prisma as any).agentFindingSet.findFirst({
+      where: { planId },
+      select: { target: true },
+    })
+    if (!set) return NextResponse.json({ error: 'এই plan কোনো campaign নয়' }, { status: 404 })
+    const { setFamilyGrant } = await import('@/agent/lib/grind/family-approval')
+    await setFamilyGrant(set.target, family, action === 'family-auto')
+    if (action === 'family-auto') await resumeAutodrive(planId)
+    return NextResponse.json({ ok: true, action, family, target: set.target })
+  }
 
   if (action === 'abandon') {
     await abandonAutodrive(planId)

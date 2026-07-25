@@ -2022,6 +2022,9 @@ model AgentConversation {
   project            AgentProject?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
   title              String?
   modelId            String          @default("claude-sonnet-4-6") @map("model")
+  /// How the agent may work in this chat: auto | direct | plan | plan_drive.
+  /// NULL = auto. Enforced by withholding tools, not by prompt text.
+  chatMode           String?         @map("chat_mode")
   source             String          @default("web")
   archived           Boolean         @default(false)
   pinned             Boolean         @default(false)
@@ -2290,6 +2293,10 @@ model AgentTurn {
   /// client's replay cursor and the "stream quiet but alive" liveness signal.
   lastSeq               Int       @default(-1) @map("last_seq")
   executionMode         String?   @map("execution_mode") // inline | worker
+  /// Whose instruction this turn executes — owner_direct (he typed it) vs
+  /// owner_policy (a standing policy / an unattended Plan-Driver step). The tool
+  /// guard reads it so unattended work meets the autonomy ladder + money cap.
+  instructionOrigin     String?   @map("instruction_origin")
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at")
 
   @@unique([conversationId, clientMessageId])
@@ -4147,48 +4154,64 @@ model AgentOwnerFeedback {
 }
 
 model AgentPlan {
-  id             String          @id @default(uuid())
-  conversationId String?         @map("conversation_id")
-  businessId     String          @default("ALMA_LIFESTYLE") @map("business_id")
-  goal           String
-  status         String          @default("draft")
+  id               String          @id @default(uuid())
+  conversationId   String?         @map("conversation_id")
+  businessId       String          @default("ALMA_LIFESTYLE") @map("business_id")
+  goal             String
+  status           String          @default("draft")
   /// Phase 4: the WorkflowRun this plan belongs to.
-  workflowRunId  String?         @map("workflow_run_id")
-  createdAt      DateTime        @default(now()) @map("created_at")
-  updatedAt      DateTime        @updatedAt @map("updated_at")
-  completedAt    DateTime?       @map("completed_at")
-  selfCheckNote  String?         @map("self_check_note")
+  workflowRunId    String?         @map("workflow_run_id")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  completedAt      DateTime?       @map("completed_at")
+  selfCheckNote    String?         @map("self_check_note")
   // Plan-Driver (autonomous pursue-until-completion). Phase A reads these only.
-  doneCriteria   String?         @map("done_criteria")
-  autodriveState String          @default("idle") @map("autodrive_state")
-  attemptCount   Int             @default(0) @map("attempt_count")
-  maxAttempts    Int             @default(5) @map("max_attempts")
-  nextTickAt     DateTime?       @map("next_tick_at")
-  lastDrivenAt   DateTime?       @map("last_driven_at")
-  costTaka       Int             @default(0) @map("cost_taka")
-  steps          AgentPlanStep[]
+  doneCriteria     String?         @map("done_criteria")
+  autodriveState   String          @default("idle") @map("autodrive_state")
+  attemptCount     Int             @default(0) @map("attempt_count")
+  maxAttempts      Int             @default(5) @map("max_attempts")
+  nextTickAt       DateTime?       @map("next_tick_at")
+  lastDrivenAt     DateTime?       @map("last_driven_at")
+  costTaka         Int             @default(0) @map("cost_taka")
+  /// S0 spend accounting: milli-taka so a sub-taka turn isn't rounded up to 1৳,
+  /// plus a per-DAY bucket so the daily cap stops summing lifetime plan cost.
+  costMilliTaka    Int             @default(0) @map("cost_milli_taka")
+  costMilliTakaDay Int             @default(0) @map("cost_milli_taka_day")
+  /// Asia/Dhaka calendar day (YYYY-MM-DD) the day-bucket above belongs to.
+  costDay          String?         @map("cost_day")
+  steps            AgentPlanStep[]
 
   @@index([conversationId])
   @@index([businessId, status])
   @@index([autodriveState, nextTickAt], map: "agent_plans_autodrive_idx")
+  @@index([costDay], map: "agent_plans_cost_day_idx")
   @@map("agent_plans")
 }
 
 model AgentPlanStep {
-  id        String    @id @default(uuid())
-  planId    String    @map("plan_id")
-  plan      AgentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  seq       Int
-  action    String
-  toolName  String?   @map("tool_name")
-  dependsOn String[]  @map("depends_on")
-  status    String    @default("pending")
-  result    Json?
-  error     String?
-  startedAt DateTime? @map("started_at")
-  doneAt    DateTime? @map("done_at")
+  id            String    @id @default(uuid())
+  planId        String    @map("plan_id")
+  plan          AgentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  seq           Int
+  action        String
+  toolName      String?   @map("tool_name")
+  dependsOn     String[]  @map("depends_on")
+  status        String    @default("pending")
+  result        Json?
+  error         String?
+  startedAt     DateTime? @map("started_at")
+  doneAt        DateTime? @map("done_at")
+  /// S0 retry state — a failed step is re-queued (with backoff) until its own
+  /// ceiling, instead of ending the whole plan on the first failure.
+  attemptCount  Int       @default(0) @map("attempt_count")
+  maxAttempts   Int       @default(3) @map("max_attempts")
+  nextAttemptAt DateTime? @map("next_attempt_at")
+  /// S0 queue mode — the worker turn this step is waiting on (reaped next tick).
+  turnId        String?   @map("turn_id")
+  dispatchedAt  DateTime? @map("dispatched_at")
 
   @@index([planId, seq])
+  @@index([planId, status], map: "agent_plan_steps_plan_status_idx")
   @@map("agent_plan_steps")
 }
 
@@ -4907,4 +4930,80 @@ model AgentFocusEvent {
   @@index([focusId, createdAt])
   @@index([conversationId, createdAt])
   @@map("agent_focus_events")
+}
+
+// ─── GRIND ENGINE: durable findings store (S1) ───────────────────────────────
+// One campaign ("fix all 246 issues the audit found") is one AgentFindingSet;
+// every individual problem is one AgentFinding. The fingerprint is byte-identical
+// to the key the before/after client report already uses (`${scope}|${code}`), so
+// the store and that report agree by construction.
+
+/// A fix campaign over one measured surface (a site audit, a health scan, the
+/// product-SEO sweep). Completion is decided by ARITHMETIC over its findings —
+/// see grind/completion.ts — never by a model saying it is done.
+model AgentFindingSet {
+  id              String         @id @default(uuid())
+  businessId      String         @default("ALMA_LIFESTYLE") @map("business_id")
+  /// Which adapter produced (and can re-measure) these findings.
+  /// 'seo_audit' | 'health_scan' | 'product_seo'
+  source          String
+  /// What was measured — a site origin, a scan scope, a catalogue id.
+  target          String
+  label           String?
+  /// open | complete | halted
+  status          String         @default("open")
+  planId          String?        @map("plan_id")
+  conversationId  String?        @map("conversation_id")
+  /// Storage path of the baseline snapshot the campaign is measured against.
+  baselineRef     String?        @map("baseline_ref")
+  haltReason      String?        @map("halt_reason")
+  /// How many times a fix batch introduced NEW problems. Three halts the campaign.
+  regressionCount Int            @default(0) @map("regression_count")
+  lastMeasuredAt  DateTime?      @map("last_measured_at")
+  lastFixAt       DateTime?      @map("last_fix_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  findings        AgentFinding[]
+
+  @@index([status], map: "agent_finding_sets_status_idx")
+  @@index([planId], map: "agent_finding_sets_plan_idx")
+  @@map("agent_finding_sets")
+}
+
+/// One problem inside a campaign.
+///
+/// `status` is the safety model: only the deterministic step-verifier may write
+/// 'fixed'. A model's verdict can reach at most 'fix_claimed', which the
+/// end-of-campaign re-measurement has to confirm.
+model AgentFinding {
+  id           String          @id @default(uuid())
+  setId        String          @map("set_id")
+  set          AgentFindingSet @relation(fields: [setId], references: [id], onDelete: Cascade)
+  /// `${scope}|${code}` — identical to seo-report.ts's compare key.
+  fingerprint  String
+  scope        String
+  code         String
+  /// Fix family — findings that share a root cause and one fix approach.
+  family       String
+  severity     String
+  detail       String?
+  /// open | in_progress | fix_claimed | fixed | regressed | needs_rediagnosis | wont_fix
+  status       String          @default("open")
+  rootCause    String?         @map("root_cause")
+  /// Concrete evidence for the root cause: file:line or a URL.
+  rootCauseRef String?         @map("root_cause_ref")
+  batchKey     String?         @map("batch_key")
+  stepId       String?         @map("step_id")
+  note         String?
+  /// True when this finding did NOT exist in the baseline — a regression we caused.
+  introduced   Boolean         @default(false)
+  firstSeenAt  DateTime        @default(now()) @map("first_seen_at")
+  lastSeenAt   DateTime?       @map("last_seen_at")
+  reMeasuredAt DateTime?       @map("re_measured_at")
+  fixedAt      DateTime?       @map("fixed_at")
+
+  @@unique([setId, fingerprint], map: "agent_findings_set_fingerprint_key")
+  @@index([setId, status], map: "agent_findings_set_status_idx")
+  @@index([setId, family], map: "agent_findings_set_family_idx")
+  @@map("agent_findings")
 }

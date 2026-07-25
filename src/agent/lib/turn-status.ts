@@ -23,7 +23,16 @@ const db = () => prisma as any
 /** Create a `running` turn row and return its id (null if persistence fails). */
 export async function createTurn(
   conversationId: string,
-  opts?: { clientMessageId?: string | null; executionMode?: 'inline' | 'worker' },
+  opts?: {
+    clientMessageId?: string | null
+    executionMode?: 'inline' | 'worker'
+    /**
+     * Whose instruction this turn executes. Absent ⇒ 'owner_direct' (he typed
+     * it). An unattended Plan-Driver step passes 'owner_policy' so the autonomy
+     * ladder and the money cap engage on work Boss is not watching.
+     */
+    instructionOrigin?: 'owner_direct' | 'owner_policy'
+  },
 ): Promise<string | null> {
   try {
     const row = await db().agentTurn.create({
@@ -34,6 +43,7 @@ export async function createTurn(
         status: 'running',
         clientMessageId: opts?.clientMessageId ?? null,
         executionMode: opts?.executionMode ?? null,
+        instructionOrigin: opts?.instructionOrigin ?? null,
         versions: AGENT_VERSIONS,
       },
       select: { id: true },
@@ -367,6 +377,28 @@ export async function getTurnStatus(turnId: string): Promise<TurnStatus | null> 
   } catch (err) {
     console.warn('[turn-status] getTurnStatus failed:', err instanceof Error ? err.message : err)
     return null
+  }
+}
+
+/**
+ * Whose instruction a turn is executing. Null/absent ⇒ the tool guard's own
+ * default ('owner_direct'). Read once at the start of a turn, so both the inline
+ * and the queued (worker) path see the same origin without changing the queue
+ * payload.
+ */
+export async function getTurnInstructionOrigin(
+  turnId: string | null | undefined,
+): Promise<'owner_direct' | 'owner_policy' | null> {
+  if (!turnId) return null
+  try {
+    const row = await db().agentTurn.findUnique({
+      where: { id: turnId },
+      select: { instructionOrigin: true },
+    })
+    const v = row?.instructionOrigin
+    return v === 'owner_policy' || v === 'owner_direct' ? v : null
+  } catch {
+    return null // fail-open: a bookkeeping read must never break a turn
   }
 }
 

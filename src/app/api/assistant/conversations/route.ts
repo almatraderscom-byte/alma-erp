@@ -84,6 +84,7 @@ export async function GET(req: NextRequest) {
       projectId: true,
       businessId: true,
       modelId: true,
+      chatMode: true,
       source: true,
       archived: true,
       pinned: true,
