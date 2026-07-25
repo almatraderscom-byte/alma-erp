@@ -44,6 +44,7 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/assistant/voice-call/sip-inbound') return true
   if (pathname === '/api/assistant/voice-call/sip-confirm') return true
   if (pathname === '/api/assistant/voice-call/sip-cdr') return true
+  if (pathname === '/api/assistant/voice-call/sip-voicemail') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   if (pathname === '/api/build-info') return true

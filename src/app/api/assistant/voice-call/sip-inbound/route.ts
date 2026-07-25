@@ -21,6 +21,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
 import { isOwnerNumber } from '@/agent/lib/voice-call'
+import { dhakaHour } from '@/agent/lib/quiet-hours'
 
 export const runtime = 'nodejs'
 export const maxDuration = 20
@@ -63,6 +64,27 @@ function didConfig(did: string): DidConfig {
   }
 }
 
+/**
+ * Is the shop open right now (Asia/Dhaka)? Outside these hours the AI still answers — a
+ * caller should never hear a dead line — but it says the office is closed and takes a
+ * message instead of ringing staff who are not there. Owner-tunable without a redeploy via
+ * the KV key `office_hours_dhaka` (e.g. "10-21"); env SIP_OFFICE_HOURS is the fallback.
+ */
+async function officeOpenNow(): Promise<{ open: boolean; window: string }> {
+  let window = process.env.SIP_OFFICE_HOURS ?? '10-21'
+  try {
+    const kv = await db.agentKvSetting.findUnique({ where: { key: 'office_hours_dhaka' } })
+    if (typeof kv?.value === 'string' && /^\d{1,2}-\d{1,2}$/.test(kv.value.trim())) window = kv.value.trim()
+  } catch { /* env fallback */ }
+  const [fromRaw, toRaw] = window.split('-').map((x) => Number(x))
+  const from = Number.isFinite(fromRaw) ? fromRaw : 10
+  const to = Number.isFinite(toRaw) ? toRaw : 21
+  const h = dhakaHour()
+  // A window that wraps midnight (e.g. 22-6) is still handled correctly.
+  const open = from <= to ? h >= from && h < to : h >= from || h < to
+  return { open, window }
+}
+
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return deny()
@@ -98,6 +120,12 @@ export async function POST(req: NextRequest) {
     if (kv?.value === 'ask_first') transferMode = 'ask_first'
   } catch { /* default */ }
 
+  // Outside office hours nobody is at the support line, so a blind transfer would ring an
+  // empty desk and drop the customer. Take the message instead — the boss himself is always
+  // allowed through, since he is calling his own assistant.
+  const office = await officeOpenNow()
+  if (!office.open && !ownerCalling) transferMode = 'ask_first'
+
   // Pre-create the row so the bot's post-call report has a target + the owner gets a summary.
   let recordId: string
   try {
@@ -122,6 +150,8 @@ export async function POST(req: NextRequest) {
 
   const purpose = ownerCalling
     ? 'Boss নিজে ফোন করেছেন — পূর্ণ সহকারী মোডে সালাম দিয়ে জিজ্ঞেস করো কী লাগবে; তথ্য চাইলে টুল দিয়ে দাও, কাজের নির্দেশ দিলে submit_boss_instruction-এ পাঠাও।'
+    : !office.open
+      ? `ইনকামিং কল — এখন অফিস সময়ের বাইরে (অফিস সময় প্রতিদিন ${office.window} টা)। বিনয়ের সাথে সালাম দিয়ে বলো এখন অফিস বন্ধ, তারপর গ্রাহকের নাম, নম্বর ও প্রয়োজনটা মন দিয়ে জেনে নাও এবং আশ্বস্ত করো অফিস খুললেই টিম যোগাযোগ করবে। কাউকে ফোন যুক্ত করার প্রতিশ্রুতি দেবে না।`
     : cfg.line === 'support'
       ? `ইনকামিং কল${cfg.label ? ` (${cfg.label} লাইন)` : ''} — ALMA-র সাপোর্ট সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও।`
       : 'ইনকামিং কল — ব্যবসার সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও'
@@ -137,6 +167,7 @@ export async function POST(req: NextRequest) {
       voice: process.env.SIP_INBOUND_VOICE ?? process.env.NGS_INBOUND_VOICE ?? 'Charon',
       callType: ownerCalling ? 'owner' : 'inbound',
       transferMode,
+      afterHours: !office.open,
       // Where a live transfer can go. Self-hosted SIP lifted NGS's single-forward limit, so
       // the bot picks per call: customer-service topics reach the business line, and only a
       // caller who genuinely needs the owner reaches his personal number (owner rule

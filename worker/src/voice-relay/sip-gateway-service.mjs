@@ -228,6 +228,14 @@ const RECORD_CALLS = process.env.SIP_RECORD_CALLS !== '0'
 const RECORD_MAX_SECS = Number(process.env.SIP_RECORD_MAX_SECS || 1800)
 const RECORD_DIR = process.env.SIP_RECORD_DIR || '/var/spool/asterisk/recording'
 
+// Voicemail safety net. If the AI cannot take an inbound call — Gemini session refused, the
+// bot process down, the kill switch off — the caller would otherwise get an answered line and
+// dead air. Instead we play a Bangla prompt, record what they say and tell the owner.
+const VOICEMAIL_ENABLED = process.env.SIP_VOICEMAIL_ENABLED !== '0'
+const VOICEMAIL_PROMPT = process.env.SIP_VOICEMAIL_PROMPT || '/var/lib/asterisk/sounds/alma-voicemail'
+const VOICEMAIL_AFTER_SECS = Number(process.env.SIP_VOICEMAIL_AFTER_SECS || 8)
+const VOICEMAIL_MAX_SECS = Number(process.env.SIP_VOICEMAIL_MAX_SECS || 120)
+
 // Length of the barge-in fade, in 20 ms frames. Two frames (40 ms) is long enough to be
 // click-free and short enough that the caller still experiences an immediate interruption.
 const FADE_FRAMES = Number(process.env.SIP_BARGE_FADE_FRAMES || 2)
@@ -296,6 +304,10 @@ class Call {
     this.playOnly = false               // one-way message call: play a file, then hang up
     this.playUrl = ''
     this.playFile = ''
+    this.voicemail = false              // AI unavailable -> taking a message instead
+    this.vmTimer = null
+    this.vmName = null
+    this.vmPromptTimer = null
     this.collectDigits = false          // wait for a keypress after the message (confirmation)
     this.digit = null                   // what the receiver actually pressed
     this.digitTimer = null
@@ -318,7 +330,16 @@ class Call {
       log(this.channelId, 'bot ws open -> start sent')
     })
     ws.on('message', (raw) => this.onBot(raw))
-    ws.on('close', () => { this.botReady = false; if (!this.closed && !this.transferring) this.hangup('bot ws closed') })
+    ws.on('close', () => {
+      this.botReady = false
+      if (this.closed || this.transferring || this.voicemail) return
+      // An INBOUND caller must never be hung up on because our AI is unavailable — that is
+      // precisely when a message should be taken instead. (Live self-test 2026-07-25: with the
+      // bot stopped, the ws closed immediately and the call was dropped before the voicemail
+      // watchdog could even fire.) Outbound calls we placed simply end.
+      if (VOICEMAIL_ENABLED && this.inbound) { void this.startVoicemail(); return }
+      this.hangup('bot ws closed')
+    })
     ws.on('error', (e) => log(this.channelId, 'bot ws err', e?.message))
   }
 
@@ -501,6 +522,101 @@ class Call {
     await persistCdr(this.channelId)
   }
 
+  /**
+   * A caller must never sit on an answered line hearing nothing. If no audio has come back
+   * from the bot within VOICEMAIL_AFTER_SECS, treat the AI as unavailable and take a message
+   * instead — dead air loses a customer, a recorded message does not.
+   */
+  armVoicemailFallback() {
+    if (!VOICEMAIL_ENABLED) return
+    this.vmTimer = setTimeout(() => {
+      if (this.closed || this.voicemail) return
+      if ((this.framesOut || 0) > 25) return // the bot is talking; nothing is wrong
+      log(this.channelId, `no bot audio in ${VOICEMAIL_AFTER_SECS}s — falling back to voicemail`)
+      void this.startVoicemail()
+    }, VOICEMAIL_AFTER_SECS * 1000)
+  }
+
+  /** Take the AI off the line and play the prompt; recording starts on PlaybackFinished. */
+  async startVoicemail() {
+    if (this.voicemail || this.closed) return
+    this.voicemail = true
+    try { this.bot?.close() } catch { /* */ }
+    this.botReady = false
+    this.playQueue.length = 0
+    if (this.playTimer) { clearInterval(this.playTimer); this.playTimer = null }
+    try {
+      // Drop the media leg first, or our silence fill would play over the prompt.
+      if (this.extChannelId) await ari('DELETE', `/channels/${this.extChannelId}`).catch(() => {})
+      this.extChannelId = null
+      // Everything stays BRIDGE-scoped from here. Taking the caller out of the bridge was
+      // tried first and does not work: both destroying the bridge and removeChannel eject the
+      // channel out of Stasis into the dialplan's Hangup, after which play returns "Channel
+      // not found" (live self-test 2026-07-25). Playing and recording on the bridge is the
+      // same path the call recording already proved.
+      await ari('POST', `/bridges/${this.bridgeId}/play`, { media: `sound:${VOICEMAIL_PROMPT}` })
+      log(this.channelId, 'voicemail prompt playing')
+      // Backstop: a missing event must never leave the caller sitting in silence. If the
+      // recording has not started by the time the prompt could possibly have ended, start it.
+      this.vmPromptTimer = setTimeout(() => {
+        if (!this.closed && !this.vmName) {
+          log(this.channelId, 'PlaybackFinished never arrived — starting recording anyway')
+          void this.recordVoicemail()
+        }
+      }, Number(process.env.SIP_VOICEMAIL_PROMPT_SECS || 20) * 1000)
+    } catch (err) {
+      log(this.channelId, 'voicemail prompt failed:', err?.message)
+      void this.hangup('voicemail prompt failed')
+    }
+  }
+
+  /** Record the caller's message; RecordingFinished delivers it. */
+  async recordVoicemail() {
+    this.vmName = `vm-${this.channelId}`
+    try {
+      await ari('POST', `/bridges/${this.bridgeId}/record`, {
+        name: this.vmName, format: 'wav', maxDurationSeconds: String(VOICEMAIL_MAX_SECS),
+        maxSilenceSeconds: '5', ifExists: 'overwrite', beep: 'false',
+      })
+      log(this.channelId, 'voicemail recording')
+    } catch (err) {
+      log(this.channelId, 'voicemail record failed:', err?.message)
+      void this.hangup('voicemail record failed')
+    }
+  }
+
+  /** Upload the message and tell the owner who called. */
+  async deliverVoicemail() {
+    const name = this.vmName
+    this.vmName = null
+    if (!name) return
+    const file = `${RECORD_DIR}/${name}.wav`
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const buf = await readFile(file)
+        const secs = Math.max(0, Math.round((buf.length - 44) / (8000 * 2)))
+        // Under ~2 s is someone hanging up on the beep, not a message worth forwarding.
+        if (buf.length > 32000) {
+          const url = await uploadRecording(name, buf)
+          if (url && APP_URL && INTERNAL_TOKEN) {
+            await fetch(`${APP_URL}/api/assistant/voice-call/sip-voicemail`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INTERNAL_TOKEN}` },
+              body: JSON.stringify({ caller: this.params?.caller || '', did: this.params?.did || '', url, secs }),
+              signal: AbortSignal.timeout(15_000),
+            }).catch((err) => log(this.channelId, 'voicemail notify failed:', err?.message))
+            log(this.channelId, `voicemail delivered (${secs}s)`)
+          }
+        } else {
+          log(this.channelId, 'voicemail too short — discarded')
+        }
+        await unlink(file).catch(() => {})
+        return
+      } catch { await new Promise((r) => setTimeout(r, 400)) }
+    }
+    log(this.channelId, 'voicemail file never appeared:', file)
+  }
+
   // ── keypress confirmation (one-way calls) ──────────────────────────────────
   /**
    * The message has finished playing and we asked the receiver to press a key. Stay on the
@@ -559,12 +675,15 @@ class Call {
     if (this.playTimer) { clearInterval(this.playTimer); this.playTimer = null }
     try { this.txFd?.end(); this.rxFd?.end() } catch { /* */ }
     if (this.digitTimer) { clearTimeout(this.digitTimer); this.digitTimer = null }
+    if (this.vmTimer) { clearTimeout(this.vmTimer); this.vmTimer = null }
+    if (this.vmPromptTimer) { clearTimeout(this.vmPromptTimer); this.vmPromptTimer = null }
     try { this.asSocket?.end() } catch { /* */ }
     // End the PSTN leg + tidy the bridge/externalMedia via ARI.
     try { if (this.extChannelId) await ari('DELETE', `/channels/${this.extChannelId}`).catch(() => {}) } catch { /* */ }
     try { await ari('DELETE', `/channels/${this.channelId}`).catch(() => {}) } catch { /* */ }
     try { if (this.bridgeId) await ari('DELETE', `/bridges/${this.bridgeId}`).catch(() => {}) } catch { /* */ }
     if (this.playFile) await unlink(this.playFile).catch(() => {})
+    if (this.vmName) await this.deliverVoicemail()
     if (this.recordingName) await this.finishRecording()
     // Closed LAST: closing it is what makes the bot send its post-call report, and by now the
     // recording is already on the record, so that report can carry the link.
@@ -602,14 +721,19 @@ const audioServer = net.createServer((socket) => {
       } else if (type === AS_TYPE_AUDIO) {
         if (call) call.onAsteriskAudio(Buffer.from(payload)) // slin8k
       } else if (type === AS_TYPE_TERMINATE) {
-        if (call) void call.hangup('audiosocket terminate')
+        if (call && !call.voicemail) void call.hangup('audiosocket terminate')
         socket.end()
       } else if (type === AS_TYPE_ERROR) {
         log(call?.channelId || '?', 'AudioSocket error frame')
       }
     }
   })
-  socket.on('close', () => { if (call && !call.closed) void call.hangup('audiosocket closed') })
+  socket.on('close', () => {
+    // In voicemail mode we deliberately delete the externalMedia channel, which closes this
+    // socket — hanging the caller up here would end the call before the prompt even finished
+    // (that is exactly what silently killed the first voicemail attempts, 2026-07-25).
+    if (call && !call.closed && !call.voicemail) void call.hangup('audiosocket closed')
+  })
   socket.on('error', (e) => log('audiosocket err', e?.message))
 })
 
@@ -754,6 +878,7 @@ async function onInboundCall(e) {
     putCdr(chanId, { direction: 'inbound', from: caller, did, startedAt: Date.now(), answered: true, answeredAt: call.answeredAt, status: 'answered' })
     await bridgeAndStartBot(call)
     log(chanId, `inbound answered as callType=${params.callType}`)
+    call.armVoicemailFallback()
   } catch (err) {
     log(chanId, 'inbound wiring failed:', err?.message)
     void call.hangup('inbound wiring failed')
@@ -873,12 +998,24 @@ async function onAriEvent(e) {
       break
     }
     case 'PlaybackFinished': {
-      const target = String(e.playback?.target_uri || '').replace(/^channel:/, '')
-      const call = target && calls.get(target)
-      if (!call || call.closed || !call.playOnly) break
+      // target_uri is channel:<id> for one-way message calls and bridge:<id> for the
+      // voicemail prompt, so resolve both shapes.
+      const target = String(e.playback?.target_uri || '')
+      const id = target.replace(/^(channel|bridge):/, '')
+      const call = calls.get(id) || [...calls.values()].find((c) => c.bridgeId === id)
+      if (!call || call.closed) break
+      // The voicemail prompt just finished — now capture what the caller says.
+      if (call.voicemail) { await call.recordVoicemail(); break }
+      if (!call.playOnly) break
       // Confirmation calls stay on the line waiting for a keypress; plain message calls end.
       if (call.collectDigits) call.awaitDigit()
       else void call.hangup('playback finished')
+      break
+    }
+    case 'RecordingFinished': {
+      const name = String(e.recording?.name || '')
+      const vmCall = [...calls.values()].find((c) => c.vmName === name)
+      if (vmCall) { await vmCall.deliverVoicemail(); void vmCall.hangup('voicemail complete') }
       break
     }
     case 'ChannelDtmfReceived': {
