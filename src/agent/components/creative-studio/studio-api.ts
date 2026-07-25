@@ -636,6 +636,8 @@ export type StudioConfig = {
   fashnConfigured: boolean
   geminiConfigured: boolean
   veoConfigured: boolean
+  genericImageModels: { standard: string; pro: string }
+  genericImageProvider: 'gemini' | 'openai' | 'fal'
   /** CS5 — FAL_KEY present on the server (foundation; engines runnable from CS6/CS7) */
   falConfigured: boolean
   /** CS13 — XAI_API_KEY present on the server (Grok Imagine engine) */
@@ -662,6 +664,13 @@ export type GalleryItem = {
   familyPreset: string | null
   /** CS6 — truthful engine lineage (fal VTON runs) */
   engine?: string | null
+  imageModel?: string | null
+  referenceReceipt?: {
+    expectedCount: number
+    sentCount: number
+    roles: string[]
+    allRequiredSent: boolean
+  } | null
   endpointId?: string | null
   requestId?: string | null
   seed?: number | null
@@ -878,6 +887,7 @@ export async function runStudioJob(payload: RunPayload) {
   const result = await studioRequest<{
     jobs: Array<{ pendingActionId: string; label: string }>
     provider: string
+    actualModel?: string
     message: string
   }>(
     '/api/assistant/creative-studio/run',

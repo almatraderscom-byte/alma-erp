@@ -11,7 +11,6 @@ import {
   FamilyChainModelError,
   type FamilyChainVariant,
 } from '@/lib/tryon/family-chain'
-import { pickScene } from '@/lib/tryon/scene-pool'
 import {
   getOrClassifyGarment,
   mapGarmentToVtonClothType,
@@ -49,6 +48,16 @@ import {
 import { pickSceneDiverse, toSceneRef } from '@/lib/tryon/scene-pool'
 import { readKv, readSceneWeights } from '@/lib/creative-studio/taste'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
+import {
+  assertAdvancedEngineMode,
+  buildDirectFashnInputs,
+  estimateDirectFashnCostUsd,
+  makeReferenceContract,
+  normalizeGenericImageModels,
+  type StudioReferenceBinding,
+  type StudioReferenceRole,
+  validateAdvancedControlValues,
+} from '@/lib/creative-studio/advanced-image-capabilities'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -142,6 +151,56 @@ async function mergeApprovedPayload(
   })
 }
 
+async function mergeGenericApprovedPayload(input: {
+  pendingActionId: string
+  run: CreativeStudioRunInput
+  imageModel: string
+  quality: 'standard' | 'pro'
+  familyPreset?: FamilyPresetId
+}): Promise<void> {
+  const existing = await db.agentPendingAction.findUnique({
+    where: { id: input.pendingActionId },
+    select: { payload: true },
+  })
+  const prev = (existing?.payload ?? {}) as Record<string, unknown>
+  const personPath = typeof prev.referenceImageId === 'string' ? prev.referenceImageId : null
+  const productPath = typeof prev.secondReferenceImageId === 'string' ? prev.secondReferenceImageId : null
+  const bindings: StudioReferenceBinding[] = []
+  if (personPath) bindings.push(referenceBinding('person', personPath, input.run, true))
+  if (productPath) bindings.push(referenceBinding('product', productPath, input.run, true))
+  const referenceContract = makeReferenceContract({
+    mode: input.run.mode,
+    requestedEngine: 'gemini',
+    actualModel: input.imageModel,
+    bindings,
+  })
+  await db.agentPendingAction.update({
+    where: { id: input.pendingActionId },
+    data: {
+      status: 'approved',
+      payload: {
+        ...prev,
+        studioMode: input.run.mode,
+        provider: 'generic_image',
+        imageModel: input.imageModel,
+        quality: input.quality,
+        imageSize: input.run.resolution?.toUpperCase() ?? '2K',
+        aspectRatio: input.run.aspectRatio ?? '4:5',
+        familyPreset: input.familyPreset,
+        referenceContract,
+        controlContract: controlContract(input.run, {
+          aspectRatio: input.run.aspectRatio ?? '4:5',
+          resolution: input.run.resolution?.toUpperCase() ?? '2K',
+          generationMode: input.quality,
+          numImagesPerAction: 1,
+        }, ['generic_generation_mode_mapped_to_quality_tier']),
+        creativeStudio: true,
+        skipTelegramCard: true,
+      },
+    },
+  })
+}
+
 async function createApprovedAction(data: {
   type: 'image_gen' | 'video_gen'
   payload: Record<string, unknown>
@@ -159,6 +218,91 @@ async function createApprovedAction(data: {
     },
   })
   return row.id as string
+}
+
+function referenceBinding(
+  role: StudioReferenceRole,
+  path: string,
+  input: CreativeStudioRunInput,
+  required: boolean,
+): StudioReferenceBinding {
+  const savedPerson = role === 'person' && Boolean(input.modelId) && path === input.modelImagePath
+  return {
+    role,
+    path,
+    source: role === 'identity_sheet' ? 'derived' : savedPerson ? 'saved_model' : 'uploaded',
+    ...(savedPerson && input.modelId ? { sourceId: input.modelId } : {}),
+    required,
+  }
+}
+
+function xaiReferenceContract(input: CreativeStudioRunInput, brief: XaiRunBrief) {
+  return makeReferenceContract({
+    mode: input.mode,
+    requestedEngine: 'xai_imagine',
+    actualModel: XAI_IMAGE_MODEL_QUALITY,
+    bindings: brief.referenceImagePaths.map((path, index) => {
+      const xaiRole = brief.referenceRoles[index]
+      const role: StudioReferenceRole =
+        path === input.avatarSheetPath
+          ? 'identity_sheet'
+          : xaiRole === 'garment'
+            ? 'product'
+            : xaiRole === 'person'
+              ? 'person'
+              : 'source'
+      return referenceBinding(role, path, input, role !== 'identity_sheet')
+    }),
+  })
+}
+
+function directFashnReferenceContract(input: CreativeStudioRunInput, actualModel: string) {
+  const person = input.faceReferencePath ?? input.modelImagePath
+  const bindings: StudioReferenceBinding[] = []
+  if (input.mode === 'product_to_model' || input.mode === 'try_on') {
+    if (input.productImagePath) bindings.push(referenceBinding('product', input.productImagePath, input, true))
+  }
+  if (input.mode === 'try_on' && input.modelImagePath) {
+    bindings.unshift(referenceBinding('person', input.modelImagePath, input, true))
+  } else if (input.mode === 'product_to_model' && person) {
+    bindings.push(referenceBinding('person', person, input, true))
+  } else if (input.mode === 'model_swap') {
+    if (input.sourceImagePath) bindings.push(referenceBinding('source', input.sourceImagePath, input, true))
+    if (person) bindings.push(referenceBinding('person', person, input, true))
+  } else if (input.mode === 'face_to_model' && person) {
+    bindings.push(referenceBinding('person', person, input, true))
+  } else if (input.mode === 'edit') {
+    if (input.sourceImagePath) bindings.push(referenceBinding('source', input.sourceImagePath, input, true))
+    if (input.productImagePath) bindings.push(referenceBinding('product', input.productImagePath, input, false))
+  }
+  return makeReferenceContract({
+    mode: input.mode,
+    requestedEngine: 'fashn',
+    actualModel,
+    bindings,
+  })
+}
+
+function controlContract(
+  input: CreativeStudioRunInput,
+  applied: Record<string, unknown>,
+  notes: string[] = [],
+) {
+  return {
+    version: 1,
+    requested: {
+      prompt: input.prompt?.trim() || null,
+      backgroundPrompt: input.backgroundPrompt?.trim() || null,
+      aspectRatio: input.aspectRatio ?? null,
+      resolution: input.resolution ?? null,
+      generationMode: input.generationMode ?? null,
+      numImages: input.numImages ?? 1,
+      clothType: input.clothType ?? null,
+      seed: Number.isFinite(input.seed) ? Math.trunc(input.seed as number) : null,
+    },
+    applied,
+    notes,
+  }
 }
 
 
@@ -183,10 +327,22 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
   jobs: CreativeStudioJobRef[]
   /** engine that will actually run — legacy 'fashn'/'gemini' or a CS6 fal VTON engine id */
   provider: StudioProvider | StudioEngineId
+  /** Exact queued model when a legacy provider id fronts an owner-switchable adapter. */
+  actualModel?: string
   fashnReady: boolean
 }> {
   const modeDef = STUDIO_MODES.find((m) => m.id === input.mode)
   if (!modeDef) throw new Error('invalid_mode')
+  validateAdvancedControlValues(input)
+  const multiPersonFamily = Boolean(
+    input.familyPreset
+    && input.familyPreset !== 'single'
+    && (input.mode === 'try_on' || input.mode === 'product_to_model'),
+  )
+  if (input.vtonEngine && !multiPersonFamily) {
+    assertAdvancedEngineMode(input.vtonEngine, input.mode)
+    validateAdvancedControlValues({ ...input, engine: input.vtonEngine })
+  }
 
   const provider = resolveProvider(input.provider, input.mode, input.familyPreset)
   const fashnReady = isFashnConfigured()
@@ -347,6 +503,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
       : [{}, [] as string[]]
 
     const engine = getEngine('xai_imagine')
+    const referenceContract = xaiReferenceContract(input, brief)
     const xaiResolution = toXaiResolution(input.resolution)
     const count = Math.min(Math.max(input.numImages ?? 1, 1), 4)
     for (let i = 0; i < count; i++) {
@@ -365,6 +522,16 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           xaiOp: brief.op,
           referenceImagePaths: brief.referenceImagePaths,
           referenceRoles: brief.referenceRoles,
+          referenceContract,
+          controlContract: controlContract(input, {
+            aspectRatio: toXaiAspectRatio(input.aspectRatio ?? '4:5'),
+            resolution: xaiResolution,
+            generationMode: null,
+            numImagesPerAction: 1,
+          }, [
+            ...(input.resolution === '4k' ? ['xai_resolution_4k_mapped_to_2k'] : []),
+            ...(input.generationMode ? ['xai_generation_mode_not_supported'] : []),
+          ]),
           prompt: `${brief.prompt}${clothHint}${sceneLine}`,
           aspectRatio: toXaiAspectRatio(input.aspectRatio ?? '4:5'),
           resolution: xaiResolution,
@@ -474,34 +641,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
       costEstimate: estimateReelCostUsd(durationSec),
     })
     jobs.push({ pendingActionId: id, label: 'Product Reel (Veo 3.1)', type: 'video_gen' })
-    return { jobs, provider: 'gemini', fashnReady }
-  }
-
-  // Family batch via Gemini try-on batch (works without FASHN)
-  if (
-    provider === 'gemini'
-    && input.productImagePath
-    && input.familyPreset
-    && input.familyPreset !== 'single'
-    && (input.mode === 'try_on' || input.mode === 'product_to_model')
-  ) {
-    const variants = [input.familyPreset] as ChatTryOnVariant[]
-    const batch = await queueTryOnBatch({
-      productImagePath: input.productImagePath,
-      modelId: input.modelId,
-      variants,
-      extra: extraPrompt,
-      conversationId: null,
-    })
-    for (const item of batch.items) {
-      await mergeApprovedPayload(item.pendingActionId, {
-        studioMode: input.mode,
-        provider: 'gemini',
-        familyPreset: input.familyPreset,
-      })
-      jobs.push({ pendingActionId: item.pendingActionId, label: item.label, type: 'image_gen' })
-    }
-    return { jobs, provider: 'gemini', fashnReady }
+    return { jobs, provider: 'gemini', actualModel: 'veo-3.1', fashnReady }
   }
 
   // ── CS7: FLUX Fill masked precision edit (Edit mode + a painted mask) ──────
@@ -519,6 +659,15 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     const fillPrompt = buildFillPrompt(input.maskPreset, input.prompt ?? '')
     const costEstimate = estimateFluxFillCostUsd(input.baseWidth ?? 0, input.baseHeight ?? 0)
     const seed = Number.isFinite(input.seed) ? Math.trunc(input.seed as number) : undefined
+    const referenceContract = makeReferenceContract({
+      mode: 'edit',
+      requestedEngine: 'fal_flux_fill',
+      actualModel: engine.falEndpointId ?? 'fal-ai/flux-pro/v1/fill',
+      bindings: [
+        referenceBinding('source', basePath, input, true),
+        referenceBinding('mask', input.maskPath, input, true),
+      ],
+    })
 
     const id = await createApprovedAction({
       type: 'image_gen',
@@ -530,6 +679,12 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
         maskPath: input.maskPath,
         fillPrompt,
         maskPreset: input.maskPreset ?? 'custom',
+        referenceContract,
+        controlContract: controlContract(input, {
+          maskPreset: input.maskPreset ?? 'custom',
+          sourceDimensions: { width: input.baseWidth ?? null, height: input.baseHeight ?? null },
+          seed: seed ?? null,
+        }),
         ...(seed !== undefined ? { seed } : {}),
         creativeStudio: true,
         studioMode: 'edit',
@@ -546,6 +701,15 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
   // Single Try-On ONLY — multi-person family presets never reach here (they're
   // handled by the accuracy chain above), and the UI hides these engines for
   // family/swap/face/edit/video. The worker runs the durable Fal queue client.
+  if (
+    isFalVtonEngine(input.vtonEngine)
+    && (!input.familyPreset || input.familyPreset === 'single')
+    && input.mode !== 'try_on'
+  ) {
+    // CSE-A: this used to fall through to direct FASHN Product→Model while the
+    // owner had selected a Fal Try-On endpoint. Refuse the mismatch pre-queue.
+    assertAdvancedEngineMode(input.vtonEngine, input.mode)
+  }
   if (
     isFalVtonEngine(input.vtonEngine)
     && input.mode === 'try_on'
@@ -567,6 +731,15 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     const plan = buildRunPlan(await readPipelineMode())
 
     const engine = getEngine(input.vtonEngine)
+    const referenceContract = makeReferenceContract({
+      mode: input.mode,
+      requestedEngine: input.vtonEngine,
+      actualModel: engine.falEndpointId ?? input.vtonEngine,
+      bindings: [
+        referenceBinding('person', vtonModelPath, input, true),
+        referenceBinding('product', input.productImagePath, input, true),
+      ],
+    })
     // Owner flag gates: fal master switch for the commercial engine, the
     // dedicated experimental switch for IDM.
     if (input.vtonEngine === 'fal_fashn_v16' && (await readKv(CS_FAL_ENABLED_KEY)) !== '1') {
@@ -593,6 +766,14 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           falEndpointId: engine.falEndpointId,
           productImagePath: input.productImagePath,
           modelImagePath: vtonModelPath,
+          referenceContract,
+          controlContract: controlContract(input, {
+            clothType,
+            generationMode: plan.economical ? 'performance' : (input.generationMode ?? 'balanced'),
+            aspectRatio: input.aspectRatio ?? '4:5',
+            seed: seed !== undefined ? seed + i : null,
+            numImagesPerAction: 1,
+          }),
           clothType,
           clothTypeSource: isVtonClothType(input.clothType) ? 'owner' : 'auto',
           clothTypeUncertain: auto.uncertain,
@@ -621,6 +802,8 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
   }
 
   if (provider === 'fashn' && modeDef.fashnModel) {
+    assertAdvancedEngineMode('fashn', input.mode)
+    validateAdvancedControlValues({ ...input, engine: 'fashn' })
     if (!input.productImagePath && modeDef.needsProduct) throw new Error('product_image_required')
     if (!input.modelImagePath && modeDef.needsModel) throw new Error('model_image_required')
     if (!input.sourceImagePath && modeDef.needsSource) throw new Error('source_image_required')
@@ -657,11 +840,15 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
       return { jobs, provider: 'fashn', fashnReady }
     }
 
-    const fashnInputs: Record<string, string> = {}
-    if (input.productImagePath) fashnInputs.product_image = input.productImagePath
-    if (input.modelImagePath) fashnInputs.model_image = input.modelImagePath
-    if (input.sourceImagePath) fashnInputs.model_image = input.sourceImagePath
-    if (input.faceReferencePath) fashnInputs.face_reference = input.faceReferencePath
+    if (input.mode === 'edit' && !extraPrompt.trim()) throw new Error('prompt_required')
+    const fashnInputs = buildDirectFashnInputs({
+      mode: input.mode,
+      productImagePath: input.productImagePath,
+      modelImagePath: input.modelImagePath,
+      sourceImagePath: input.sourceImagePath,
+      faceReferencePath: input.faceReferencePath,
+    })
+    const referenceContract = directFashnReferenceContract(input, modeDef.fashnModel)
 
     // product_to_model has no model photo to inherit a background from — vary the
     // look per image with a random pose + fully-Bangladeshi scene in the prompt.
@@ -687,8 +874,12 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           fashnInputs,
           fashnOptions: {
             prompt: [extraPrompt, sceneLine].filter(Boolean).join(' ') || undefined,
+            ...((input.mode === 'product_to_model' || input.mode === 'face_to_model')
+              ? { aspectRatio: input.aspectRatio ?? '4:5' }
+              : {}),
             resolution: input.resolution ?? '2k',
             generationMode: input.generationMode ?? 'balanced',
+            ...(Number.isFinite(input.seed) ? { seed: Math.trunc(input.seed as number) + i } : {}),
             numImages: 1,
             outputFormat: 'png',
           },
@@ -698,11 +889,27 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           familyPreset: input.familyPreset,
           productImagePath: input.productImagePath,
           modelImagePath: input.modelImagePath,
+          referenceContract,
+          controlContract: controlContract(input, {
+            aspectRatio: input.mode === 'product_to_model' || input.mode === 'face_to_model'
+              ? input.aspectRatio ?? '4:5'
+              : 'source_inherited',
+            resolution: input.resolution ?? '2k',
+            generationMode: input.generationMode ?? 'balanced',
+            seed: Number.isFinite(input.seed) ? Math.trunc(input.seed as number) + i : null,
+            numImagesPerAction: 1,
+          }, input.mode === 'model_swap' || input.mode === 'edit'
+            ? ['fashn_aspect_ratio_inherited_from_source']
+            : []),
           // CS8 — scene/pose lineage for diversity control
           sceneRef: picked ? toSceneRef(picked) : undefined,
         },
         summary: `🎨 Studio ${modeDef.label}${count > 1 ? ` #${i + 1}` : ''} (FASHN)`,
-        costEstimate: 0.25,
+        costEstimate: estimateDirectFashnCostUsd({
+          resolution: input.resolution,
+          generationMode: input.generationMode,
+          hasFaceReference: Boolean(fashnInputs.face_reference),
+        }),
       })
       jobs.push({ pendingActionId: id, label: modeDef.label, type: 'image_gen' })
     }
@@ -710,7 +917,11 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
   }
 
   // Gemini fallback single/batch
+  assertAdvancedEngineMode('gemini', input.mode)
   if (!input.productImagePath) throw new Error('product_image_required')
+  const genericModels = normalizeGenericImageModels(await readKv('cs_image_models'))
+  const genericQuality: 'standard' | 'pro' = input.generationMode === 'fast' ? 'standard' : 'pro'
+  const genericImageModel = genericModels[genericQuality]
 
   if (input.familyPreset && input.familyPreset !== 'single') {
     const batch = await queueTryOnBatch({
@@ -721,14 +932,16 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
       conversationId: null,
     })
     for (const item of batch.items) {
-      await mergeApprovedPayload(item.pendingActionId, {
-        studioMode: input.mode,
-        provider: 'gemini',
+      await mergeGenericApprovedPayload({
+        pendingActionId: item.pendingActionId,
+        run: input,
+        imageModel: genericImageModel,
+        quality: genericQuality,
         familyPreset: input.familyPreset,
       })
       jobs.push({ pendingActionId: item.pendingActionId, label: item.label, type: 'image_gen' })
     }
-    return { jobs, provider: 'gemini', fashnReady }
+    return { jobs, provider: 'gemini', actualModel: genericImageModel, fashnReady }
   }
 
   const batch = await queueTryOnBatch({
@@ -738,16 +951,18 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     extra: extraPrompt,
     conversationId: null,
   })
-  await mergeApprovedPayload(batch.items[0].pendingActionId, {
-    studioMode: input.mode,
-    provider: 'gemini',
+  await mergeGenericApprovedPayload({
+    pendingActionId: batch.items[0].pendingActionId,
+    run: input,
+    imageModel: genericImageModel,
+    quality: genericQuality,
   })
   jobs.push({
     pendingActionId: batch.items[0].pendingActionId,
     label: modeDef.label,
     type: 'image_gen',
   })
-  return { jobs, provider: 'gemini', fashnReady }
+  return { jobs, provider: 'gemini', actualModel: genericImageModel, fashnReady }
 }
 
 export type AutoStudioResult = {

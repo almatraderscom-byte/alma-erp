@@ -61,6 +61,18 @@ export function extractXaiImage(payload) {
   return null
 }
 
+export function validateXaiReferenceContract(refPaths, contract) {
+  const bindings = Array.isArray(contract?.bindings) ? contract.bindings : []
+  if (!bindings.length) return bindings
+  if (bindings.length !== refPaths.length) {
+    throw new Error(`xai reference contract mismatch: expected ${bindings.length}, queued ${refPaths.length}`)
+  }
+  for (let i = 0; i < bindings.length; i++) {
+    if (bindings[i]?.path !== refPaths[i]) throw new Error(`xai reference contract order mismatch at ${i + 1}`)
+  }
+  return bindings
+}
+
 async function callXai(path, body, { fetchImpl = fetch, maxRetries = 3, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
   let lastErr
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -137,9 +149,11 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
   const refPaths = Array.isArray(payload.referenceImagePaths) ? payload.referenceImagePaths.slice(0, 3) : []
   if (op === 'edit' && refPaths.length === 0) throw new Error('xai edit job has no reference images')
   const refRoles = Array.isArray(payload.referenceRoles) ? payload.referenceRoles : []
+  const contractBindings = validateXaiReferenceContract(refPaths, payload.referenceContract)
   const isFamilyPair = refRoles.filter((r) => r === 'person').length >= 2
 
   const referenceDataUris = []
+  const preparedPaths = []
   for (let i = 0; i < refPaths.length; i++) {
     const prepared = await prepareReferencePath({
       supabase,
@@ -149,7 +163,11 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
       pendingActionId,
       logCost,
     })
+    preparedPaths.push(prepared)
     referenceDataUris.push(await storagePathToNormalizedDataUri(supabase, prepared))
+  }
+  if (referenceDataUris.length !== refPaths.length) {
+    throw new Error(`xai required reference transport mismatch: expected ${refPaths.length}, sent ${referenceDataUris.length}`)
   }
 
   const resolution = payload.resolution === '1k' ? '1k' : '2k'
@@ -213,6 +231,9 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
         initialPath: first.storagePath,
         productType: null,
         productImagePath: payload.productImagePath ?? null,
+        personImagePath: payload.referenceContract?.bindings?.find((binding) => binding.role === 'person')?.path
+          ?? payload.modelImagePath
+          ?? null,
         regenerate: async (fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum, fixHint)
           paths.push(retry.storagePath)
@@ -238,6 +259,15 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
     xaiOp: op,
     latencyMs: lastMeta.latencyMs,
     costUsd: totalCostUsd,
+    referenceReceipt: {
+      version: 1,
+      expectedCount: refPaths.length,
+      sentCount: referenceDataUris.length,
+      roles: contractBindings.length ? contractBindings.map((binding) => binding.role) : refRoles,
+      sources: contractBindings.map((binding) => binding.source),
+      prepared: preparedPaths.map((path, index) => path !== refPaths[index]),
+      allRequiredSent: true,
+    },
     qc,
   }
 }

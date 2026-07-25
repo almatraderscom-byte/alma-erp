@@ -353,6 +353,12 @@ async function buildPreview(
   const pageRef = normalizePageRef(input.pageRef)
   const caption = normalizeCaption(input.caption, platform)
   const scheduledFor = normalizeScheduledFor(input.scheduledFor)
+  // Fingerprint the owner's canonical request, not the moving execution-time
+  // clamp. Otherwise two retries of the same past/immediate request produce
+  // different `now` values and falsely trip the idempotency conflict gate.
+  const fingerprintScheduledFor = input.scheduledFor
+    ? new Date(String(input.scheduledFor))
+    : new Date(0)
   const idempotencyKey = normalizePublishIdempotencyKey(input.idempotencyKey)
   const adId = normalizeAdId(input.adId)
   const requestFingerprint = publishRequestFingerprint({
@@ -361,7 +367,7 @@ async function buildPreview(
     platform,
     pageRef,
     caption,
-    scheduledFor,
+    scheduledFor: fingerprintScheduledFor,
     adId,
   })
   return {

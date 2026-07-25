@@ -483,6 +483,14 @@ export function GalleryView() {
                           ? 'FAL FASHN'
                           : item.engine === 'fal_flux_fill'
                             ? 'FLUX FILL'
+                            : item.engine === 'grok-imagine-image-quality'
+                              ? 'GROK IMAGINE'
+                              : item.engine === 'gpt-image-2'
+                                ? 'GPT IMAGE 2'
+                                : item.engine === 'seedream-5.0-pro'
+                                  ? 'SEEDREAM 5'
+                                  : item.engine?.startsWith('gemini-')
+                                    ? 'GEMINI IMAGE'
                             : item.provider === 'family_composite'
                               ? '🛡 COMPOSITE'
                               : item.provider}
@@ -614,6 +622,20 @@ export function GalleryView() {
                 )}
                 {selected.qc?.flagged && (
                   <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-amber-300">{selected.qc.flagged}</span>
+                )}
+                {selected.referenceReceipt && (
+                  <span
+                    className={cn(
+                      'rounded-full px-2 py-1 text-[10px] font-bold',
+                      selected.referenceReceipt.allRequiredSent
+                        && selected.referenceReceipt.sentCount === selected.referenceReceipt.expectedCount
+                        ? 'bg-emerald-500/80 text-white'
+                        : 'bg-red-500/90 text-white',
+                    )}
+                  >
+                    refs {selected.referenceReceipt.sentCount}/{selected.referenceReceipt.expectedCount}
+                    {selected.referenceReceipt.roles.length ? ` · ${selected.referenceReceipt.roles.join(' + ')}` : ''}
+                  </span>
                 )}
                 {/* CS10 — plain-Bangla QC/protection summary */}
                 {selected.qcDetailsBn && (

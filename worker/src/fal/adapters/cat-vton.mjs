@@ -15,6 +15,7 @@ import {
   storagePathToNormalizedDataUri,
 } from '../client.mjs'
 import { falInputFingerprint } from '../fingerprint.mjs'
+import { makeContractReferenceReceipt } from '../../image/reference-contract.mjs'
 
 export const CAT_VTON_ENDPOINT = 'fal-ai/cat-vton'
 
@@ -141,6 +142,7 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
         initialPath: first.storagePath,
         productType: null,
         productImagePath,
+        personImagePath: rawModelImagePath,
         regenerate: async (_fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum)
           paths.push(retry.storagePath)
@@ -167,6 +169,7 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
     seed: lastMeta.seed,
     latencyMs: lastMeta.latencyMs,
     costUsd: totalCostUsd,
+    referenceReceipt: makeContractReferenceReceipt(payload.referenceContract, 2, 2),
     researchOnly: true,
     qc,
   }

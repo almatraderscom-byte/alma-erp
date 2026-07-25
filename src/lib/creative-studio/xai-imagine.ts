@@ -55,7 +55,7 @@ const GARMENT_EXACTNESS =
 
 const MODE_SCAFFOLDS: Record<Exclude<StudioModeId, 'generate' | 'image_to_video'>, string> = {
   product_to_model:
-    `Reference image 1 is a clothing product photo. Create a professional fashion photoshoot of a Bangladeshi model wearing EXACTLY this product. ${GARMENT_EXACTNESS} Natural pose, modest styling, clean commercial lighting.`,
+    `Reference image 1 is the clothing PRODUCT being sold. Create a professional fashion photoshoot of a Bangladeshi model wearing EXACTLY this product. ${GARMENT_EXACTNESS} Natural pose, modest styling, clean commercial lighting.`,
   try_on:
     `Reference image 1 shows a person; reference image 2 is the clothing product photo. Dress the person from image 1 in EXACTLY the outfit from image 2 — keep the person's face, body and identity unchanged. ${GARMENT_EXACTNESS} Photorealistic virtual try-on.`,
   model_swap:
@@ -160,7 +160,7 @@ export function buildXaiRunBrief(input: {
     case 'product_to_model': {
       if (!input.productImagePath) throw new Error('product_image_required')
       refs.push(input.productImagePath); roles.push('garment')
-      // optional model reference: scaffold stays valid — extra image only helps
+      // A selected person is a contract, not an anonymous "extra image".
       if (input.modelImagePath) { refs.push(input.modelImagePath); roles.push('person') }
       break
     }
@@ -209,11 +209,15 @@ export function buildXaiRunBrief(input: {
   }
 
   const scaffold = MODE_SCAFFOLDS[input.mode]
+  const selectedPersonLine =
+    input.mode === 'product_to_model' && input.modelImagePath
+      ? " Reference image 2 is the OWNER-SELECTED PERSON for this shoot. Preserve that person's face, age, skin tone, hair and identity faithfully in the newly composed shot; do not substitute a different model."
+      : ''
   return {
     op: 'edit',
     referenceImagePaths: refs,
     referenceRoles: roles,
-    prompt: [scaffold, ownerText].filter(Boolean).join(' ') + sheetLine,
+    prompt: [scaffold + selectedPersonLine, ownerText].filter(Boolean).join(' ') + sheetLine,
   }
 }
 

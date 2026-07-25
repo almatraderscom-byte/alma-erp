@@ -68,8 +68,10 @@ async function runOrResumeFashn(supabase, pendingActionId, fashnModel, inputs, f
 
   const run = await fashnRun(fashnModel, inputs, {
     prompt: fashnOptions?.prompt,
+    aspectRatio: fashnOptions?.aspectRatio,
     resolution: fashnOptions?.resolution ?? '2k',
     generationMode: fashnOptions?.generationMode ?? 'balanced',
+    seed: fashnOptions?.seed,
     numImages: 1,
     outputFormat: fashnOptions?.outputFormat ?? 'png',
   })
@@ -110,18 +112,62 @@ function pickGarmentPath(rawInputs) {
   return null
 }
 
+const FASHN_IMAGE_INPUT_KEYS = new Set([
+  'product_image',
+  'model_image',
+  'face_reference',
+  'face_image',
+  'image',
+  'image_context',
+  'mask',
+])
+
+export function validateFashnReferenceContract(rawInputs, contract) {
+  if (!Array.isArray(contract?.bindings)) return
+  const queuedPaths = Object.entries(rawInputs ?? {})
+    .filter(([key, value]) => FASHN_IMAGE_INPUT_KEYS.has(key) && typeof value === 'string' && value)
+    .map(([, value]) => value)
+  const boundPaths = contract.bindings.map((binding) => binding.path)
+  if (queuedPaths.length !== boundPaths.length) {
+    throw new Error(`fashn reference contract mismatch: expected ${boundPaths.length}, queued ${queuedPaths.length}`)
+  }
+  for (const path of boundPaths) {
+    if (!queuedPaths.includes(path)) throw new Error(`fashn reference contract missing: ${path}`)
+  }
+}
+
+export function calculateFashnCredits(fashnOptions, rawInputs) {
+  const resolution = ['1k', '2k', '4k'].includes(fashnOptions?.resolution) ? fashnOptions.resolution : '2k'
+  const mode = ['fast', 'balanced', 'quality'].includes(fashnOptions?.generationMode)
+    ? fashnOptions.generationMode
+    : 'balanced'
+  const credits = {
+    fast: { '1k': 1, '2k': 2, '4k': 3 },
+    balanced: { '1k': 2, '2k': 3, '4k': 4 },
+    quality: { '1k': 3, '2k': 4, '4k': 5 },
+  }[mode][resolution]
+  return credits + (rawInputs?.face_reference ? 3 : 0)
+}
+
+export function extractFashnOutputs(output) {
+  if (Array.isArray(output)) return output.filter((value) => typeof value === 'string' && value)
+  if (Array.isArray(output?.images)) return output.images.filter((value) => typeof value === 'string' && value)
+  return []
+}
+
 export async function processFashnImageGen({ supabase, pendingActionId, payload, logCost }) {
   const { fashnModel, fashnInputs, fashnOptions } = payload
   if (!fashnModel) throw new Error('fashnModel missing')
 
+  validateFashnReferenceContract(fashnInputs, payload.referenceContract)
   const inputs = await resolveFashnImageInputs(supabase, fashnInputs)
   const done = await runOrResumeFashn(supabase, pendingActionId, fashnModel, inputs, fashnOptions)
-  const outputs = done.output ?? []
+  const outputs = extractFashnOutputs(done.output)
   if (!outputs.length) throw new Error('FASHN empty output')
 
   let paths = await uploadFashnOutputs(supabase, outputs, pendingActionId)
 
-  const credits = fashnOptions?.resolution === '4k' ? 4 : fashnOptions?.resolution === '2k' ? 3 : 2
+  const credits = calculateFashnCredits(fashnOptions, fashnInputs)
   void logCost({
     provider: 'fashn',
     kind: 'image',
@@ -140,6 +186,7 @@ export async function processFashnImageGen({ supabase, pendingActionId, payload,
     if (qcLevel !== 'off') {
       const productType = payload.contentPipeline?.productCode ?? null
       const productImagePath = pickGarmentPath(fashnInputs)
+      const personImagePath = payload.referenceContract?.bindings?.find((binding) => binding.role === 'person')?.path ?? null
       let regenAttempt = 0
       const qcResult = await runImageQcLoop({
         supabase,
@@ -149,12 +196,13 @@ export async function processFashnImageGen({ supabase, pendingActionId, payload,
         initialPath: paths[0],
         productType,
         productImagePath,
+        personImagePath,
         regenerate: async (_fixHint, attemptNum) => {
           regenAttempt = attemptNum
           // fresh prediction for the retry (don't resume the old one)
           await clearPredictionId(supabase, pendingActionId)
           const retry = await runOrResumeFashn(supabase, pendingActionId, fashnModel, inputs, fashnOptions)
-          const retryOutputs = retry.output ?? []
+          const retryOutputs = extractFashnOutputs(retry.output)
           if (!retryOutputs.length) throw new Error('FASHN empty retry output')
           const retryPaths = await uploadFashnOutputs(supabase, retryOutputs, pendingActionId, `qc${attemptNum}`)
           return retryPaths[0]
@@ -181,5 +229,23 @@ export async function processFashnImageGen({ supabase, pendingActionId, payload,
   }
 
   await clearPredictionId(supabase, pendingActionId)
-  return { storagePath: paths[0], allPaths: paths, provider: 'fashn', qc }
+  const referenceReceipt = payload.referenceContract
+    ? {
+        version: 1,
+        expectedCount: payload.referenceContract.bindings?.length ?? 0,
+        sentCount: Object.keys(inputs).filter((key) =>
+          ['product_image', 'model_image', 'face_reference', 'face_image', 'image', 'image_context', 'mask'].includes(key),
+        ).length,
+        roles: (payload.referenceContract.bindings ?? []).map((binding) => binding.role),
+        allRequiredSent: true,
+      }
+    : undefined
+  return {
+    storagePath: paths[0],
+    allPaths: paths,
+    provider: 'fashn',
+    imageModel: fashnModel,
+    referenceReceipt,
+    qc,
+  }
 }

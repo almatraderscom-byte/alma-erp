@@ -238,7 +238,20 @@ export async function GET(req: NextRequest) {
       // CS6 — engine lineage metadata (fal VTON): engine id, request id, seed,
       // latency and actual cost, straight from the worker's result.
       engine: (result.falEngine as string | undefined) ?? (payload.falEngine as string | undefined)
-        ?? (result.xaiEngine as string | undefined) ?? (payload.xaiEngine as string | undefined) ?? null,
+        ?? (result.xaiEngine as string | undefined) ?? (payload.xaiEngine as string | undefined)
+        ?? (result.imageModel as string | undefined) ?? (payload.imageModel as string | undefined) ?? null,
+      imageModel: (result.imageModel as string | undefined) ?? (result.xaiModel as string | undefined)
+        ?? (payload.imageModel as string | undefined) ?? (payload.xaiModel as string | undefined) ?? null,
+      referenceReceipt: result.referenceReceipt && typeof result.referenceReceipt === 'object'
+        ? {
+            expectedCount: Number((result.referenceReceipt as Record<string, unknown>).expectedCount ?? 0),
+            sentCount: Number((result.referenceReceipt as Record<string, unknown>).sentCount ?? 0),
+            roles: Array.isArray((result.referenceReceipt as Record<string, unknown>).roles)
+              ? ((result.referenceReceipt as Record<string, unknown>).roles as unknown[]).map(String).slice(0, 3)
+              : [],
+            allRequiredSent: Boolean((result.referenceReceipt as Record<string, unknown>).allRequiredSent),
+          }
+        : null,
       endpointId: (result.falEndpointId as string | undefined) ?? null,
       requestId: (result.requestId as string | undefined) ?? null,
       seed: (result.seed as number | undefined) ?? null,

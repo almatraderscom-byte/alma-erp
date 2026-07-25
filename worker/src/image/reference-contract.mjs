@@ -1,0 +1,76 @@
+export const ALLOWED_GENERIC_IMAGE_MODELS = [
+  'gemini-3.1-flash-image',
+  'gemini-3-pro-image',
+  'gpt-image-2',
+  'seedream-5.0-pro',
+]
+
+export function assertGenericImageModel(model) {
+  if (!ALLOWED_GENERIC_IMAGE_MODELS.includes(model)) {
+    throw new Error(`generic image model not allowlisted: ${model}`)
+  }
+  return model
+}
+
+export function genericProviderForModel(model) {
+  assertGenericImageModel(model)
+  if (model.startsWith('gpt-image')) return 'openai'
+  if (model.startsWith('seedream')) return 'fal'
+  return 'gemini'
+}
+
+export function requiredReferencePaths(payload) {
+  const paths = [payload?.referenceImageId, payload?.secondReferenceImageId]
+    .filter((path) => typeof path === 'string' && path.trim())
+  const bindings = Array.isArray(payload?.referenceContract?.bindings)
+    ? payload.referenceContract.bindings
+    : null
+  if (bindings) {
+    if (bindings.length !== paths.length) {
+      throw new Error(`reference contract mismatch: expected ${bindings.length}, queued ${paths.length}`)
+    }
+    for (let i = 0; i < bindings.length; i++) {
+      if (bindings[i]?.path !== paths[i]) {
+        throw new Error(`reference contract order mismatch at ${i + 1}`)
+      }
+    }
+  }
+  return paths
+}
+
+export async function loadRequiredReferenceParts(paths, loader) {
+  const parts = []
+  for (const path of paths) {
+    const part = await loader(path)
+    if (!part) throw new Error(`required reference unavailable: ${path}`)
+    parts.push(part)
+  }
+  if (parts.length !== paths.length) {
+    throw new Error(`required reference transport mismatch: expected ${paths.length}, sent ${parts.length}`)
+  }
+  return parts
+}
+
+export function makeContractReferenceReceipt(contract, sentCount, fallbackCount = 0) {
+  const bindings = Array.isArray(contract?.bindings) ? contract.bindings : []
+  const expectedCount = bindings.length || fallbackCount
+  if (sentCount !== expectedCount) {
+    throw new Error(`required reference transport mismatch: expected ${expectedCount}, sent ${sentCount}`)
+  }
+  return {
+    version: 1,
+    expectedCount,
+    sentCount,
+    roles: bindings.map((binding) => binding.role),
+    sources: bindings.map((binding) => binding.source),
+    allRequiredSent: bindings.every((binding) => !binding.required || Boolean(binding.path)),
+  }
+}
+
+export function makeReferenceReceipt(payload, sentCount) {
+  return makeContractReferenceReceipt(
+    payload?.referenceContract,
+    sentCount,
+    requiredReferencePaths(payload).length,
+  )
+}

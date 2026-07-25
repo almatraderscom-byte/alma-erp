@@ -42,7 +42,7 @@ export async function fetchPipelineMode(supabase) {
   }
 }
 
-export async function scoreImageViaApi({ appUrl, token, storagePath, productType, productImagePath, surface }) {
+export async function scoreImageViaApi({ appUrl, token, storagePath, productType, productImagePath, personImagePath, surface }) {
   const res = await fetch(`${appUrl}/api/assistant/internal/image-qc-score`, {
     method: 'POST',
     headers: {
@@ -50,7 +50,7 @@ export async function scoreImageViaApi({ appUrl, token, storagePath, productType
       'Content-Type': 'application/json',
     },
     // CS10 — surface selects mode-specific thresholds server-side
-    body: JSON.stringify({ storagePath, productType, productImagePath, surface }),
+    body: JSON.stringify({ storagePath, productType, productImagePath, personImagePath, surface }),
     signal: AbortSignal.timeout(30_000),
   })
   if (!res.ok) {
@@ -72,6 +72,7 @@ export async function runImageQcLoop({
   initialPath,
   productType,
   productImagePath,
+  personImagePath,
   regenerate,
   /** CS10 — surface-specific thresholds ('single_tryon' | 'family' | …) */
   surface,
@@ -104,6 +105,7 @@ export async function runImageQcLoop({
         storagePath: currentPath,
         productType,
         productImagePath,
+        personImagePath,
         surface,
       })
     } catch (err) {

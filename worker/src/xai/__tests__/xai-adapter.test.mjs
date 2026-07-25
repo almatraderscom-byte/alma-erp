@@ -4,7 +4,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildXaiRequest, extractXaiImage, XAI_ALLOWED_MODELS } from '../adapter.mjs'
+import { buildXaiRequest, extractXaiImage, validateXaiReferenceContract, XAI_ALLOWED_MODELS } from '../adapter.mjs'
 
 process.env.XAI_API_KEY = 'test-key'
 
@@ -66,4 +66,23 @@ test('response parsing: b64_json preferred, url fallback, null when empty', () =
   assert.deepEqual(extractXaiImage({ data: [{ url: 'https://x/img.png' }] }), { kind: 'url', value: 'https://x/img.png' })
   assert.equal(extractXaiImage({ data: [] }), null)
   assert.equal(extractXaiImage({}), null)
+})
+
+test('selected Product→Model product/person order is immutable before transport', () => {
+  const refs = ['products/p.jpg', 'models/m.jpg']
+  const contract = {
+    bindings: [
+      { role: 'product', path: refs[0], required: true },
+      { role: 'person', path: refs[1], required: true },
+    ],
+  }
+  assert.deepEqual(validateXaiReferenceContract(refs, contract), contract.bindings)
+  assert.throws(
+    () => validateXaiReferenceContract([...refs].reverse(), contract),
+    /order mismatch at 1/,
+  )
+  assert.throws(
+    () => validateXaiReferenceContract([refs[0]], contract),
+    /expected 2, queued 1/,
+  )
 })
