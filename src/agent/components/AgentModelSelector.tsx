@@ -9,7 +9,7 @@ const AUTO_MODEL_ID = 'auto'
 type ModelOption = {
   id: string
   label: string
-  provider: 'anthropic' | 'google' | 'openai' | 'openrouter'
+  provider: 'anthropic' | 'google' | 'openai' | 'openrouter' | 'xai'
   default?: boolean
 }
 
@@ -18,6 +18,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   google: 'Google',
   openai: 'OpenAI',
   openrouter: 'OpenRouter',
+  xai: 'xAI',
 }
 
 interface AgentModelSelectorProps {
@@ -119,7 +120,7 @@ export default function AgentModelSelector({
           >
             <span className="flex flex-col">
               <span>⚡ Auto (সিস্টেম বেছে নেবে)</span>
-              <span className="text-[10px] text-muted">রুটিন → সস্তা · sensitive → Sonnet</span>
+              <span className="text-[10px] text-muted">রুটিন → সস্তা · sensitive → Gemini Pro</span>
             </span>
             {isAuto && (
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>

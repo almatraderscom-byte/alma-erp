@@ -25,11 +25,14 @@ export async function GET(req: NextRequest) {
   }
   return Response.json({
     defaultModelId: DEFAULT_MODEL_ID,
-    models: pickable.map(({ id, label, provider, supportsCaching, default: isDefault }) => ({
+    models: pickable.map(({ id, label, provider, supportsCaching, contextWindow, inPerM, outPerM, default: isDefault }) => ({
       id,
       label,
       provider,
       supportsCaching,
+      contextWindow,
+      inPerM,
+      outPerM,
       default: isDefault ?? false,
       enabled: isModelEnabledSync(id, enabledMap),
     })),

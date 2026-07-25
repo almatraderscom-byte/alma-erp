@@ -78,7 +78,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'claude-sonnet-4-6',
     supportsTools: true,
     supportsCaching: true,
-    contextWindow: 200_000,
+    // Anthropic model overview: Claude Sonnet 4.6 supports a 1M-token window.
+    contextWindow: 1_000_000,
     inPerM: 3,
     outPerM: 15,
     thinking: 'adaptive',
@@ -91,7 +92,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'claude-opus-4-8',
     supportsTools: true,
     supportsCaching: true,
-    contextWindow: 200_000,
+    // Anthropic model overview: Claude Opus 4.8 supports a 1M-token window.
+    contextWindow: 1_000_000,
     // Corrected 2026-07: list price is $5/$25 (was written 3x high, which
     // inflated Opus escalation cost estimates and the opus-gate budget math).
     inPerM: 5,
@@ -129,7 +131,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'gemini-3.5-flash',
     supportsTools: true,
     supportsCaching: false,
-    contextWindow: 1_000_000,
+    contextWindow: 1_048_576,
     inPerM: 1.5,
     outPerM: 9,
     thinking: 'level',
@@ -153,7 +155,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'gpt-5.5',
     supportsTools: true,
     supportsCaching: false,
-    contextWindow: 400_000,
+    contextWindow: 1_050_000,
     inPerM: 5,
     outPerM: 30,
     thinking: 'none',
@@ -165,7 +167,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'gpt-5.4',
     supportsTools: true,
     supportsCaching: false,
-    contextWindow: 400_000,
+    contextWindow: 1_050_000,
     inPerM: 2.5,
     outPerM: 15,
     thinking: 'none',
@@ -202,7 +204,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'google/gemini-2.5-flash-lite',
     supportsTools: true,
     supportsCaching: false,
-    contextWindow: 1_000_000,
+    contextWindow: 1_048_576,
     inPerM: 0.1,
     outPerM: 0.4,
     thinking: 'none',
@@ -224,8 +226,9 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     supportsTools: true,
     supportsCaching: true,
     contextWindow: 1_000_000,
-    inPerM: 1.25,
-    outPerM: 3.75,
+    // OpenRouter live model catalog, verified 2026-07-25.
+    inPerM: 1.475,
+    outPerM: 4.425,
     // 'level' asks OpenRouter for reasoning tokens so the owner sees the same
     // live step-by-step thinking stream as the Gemini head. Models/providers
     // that can't reason simply return none — the adapter degrades gracefully.
@@ -238,9 +241,9 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'deepseek/deepseek-v4-flash',
     supportsTools: true,
     supportsCaching: true,
-    contextWindow: 1_000_000,
-    inPerM: 0.09,
-    outPerM: 0.18,
+    contextWindow: 1_048_576,
+    inPerM: 0.0938,
+    outPerM: 0.1876,
     // Same live-thinking request as the Qwen head (see note above).
     thinking: 'level',
   },
@@ -255,7 +258,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'gemini-2.5-flash',
     supportsTools: true,
     supportsCaching: false,
-    contextWindow: 1_000_000,
+    contextWindow: 1_048_576,
     inPerM: 0.3,
     outPerM: 2.5,
     thinking: 'level',
@@ -283,7 +286,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     // Same family as V4 Flash — the adapter's cache_control breakpoint on the
     // system prefix works here too (verified pricing lists cached-input rates).
     supportsCaching: true,
-    contextWindow: 1_000_000,
+    contextWindow: 1_048_576,
     inPerM: 0.435,
     outPerM: 0.87,
     thinking: 'level',
@@ -303,7 +306,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'grok-4.20',
     supportsTools: true,
     supportsCaching: false,
-    contextWindow: 2_000_000,
+    // xAI direct serves a 1M window; the OpenRouter route above is 2M.
+    contextWindow: 1_000_000,
     inPerM: 1.25,
     outPerM: 2.5,
     // xAI publishes $0.20/Mtok for cached input on grok-4.20
@@ -322,9 +326,9 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     // picking it gives a chat/vision-only head instead of a crash+fallback.
     supportsTools: false,
     supportsCaching: false,
-    contextWindow: 131_072,
-    inPerM: 0.25,
-    outPerM: 0.75,
+    contextWindow: 128_000,
+    inPerM: 0.8,
+    outPerM: 1,
     thinking: 'none',
   },
 ]

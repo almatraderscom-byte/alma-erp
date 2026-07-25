@@ -250,9 +250,9 @@ type LogRange = 'today' | '7d' | '30d' | 'custom'
 const PROVIDER_COLORS: Record<string, string> = {
   anthropic: '#E07A5F',
   openai: '#81B29A',
+  xai: '#22C55E',
   openrouter: '#A78BFA',
   gemini: '#3B82F6',
-  xai: '#64748B',
   google_tts: '#8B5CF6',
   twilio: '#D4A84B',
   elevenlabs: '#EC4899',
@@ -975,9 +975,9 @@ export default function AgentCostsDashboard() {
     date: String(d.date).slice(5),
     anthropic: Number(d.anthropic ?? 0),
     openai: Number(d.openai ?? 0),
+    xai: Number(d.xai ?? 0),
     openrouter: Number(d.openrouter ?? 0),
     gemini: Number(d.gemini ?? 0),
-    xai: Number(d.xai ?? 0),
     google_tts: Number(d.google_tts ?? 0),
     elevenlabs: Number(d.elevenlabs ?? 0),
     veo: Number(d.veo ?? 0),
@@ -1234,7 +1234,7 @@ export default function AgentCostsDashboard() {
                     <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-3">
                       <div>
                         <p className="text-[9px] text-muted">
-                          {row.id === 'vercel' ? 'Team billed MTD' : 'Provider published MTD'}
+                          {row.id === 'vercel' ? 'Current cycle billed' : 'Provider published MTD'}
                         </p>
                         <p className="mt-0.5 text-xs font-semibold text-cream">
                           {fmtSpendCell(row.providerMonthUsd)}
@@ -1625,6 +1625,7 @@ export default function AgentCostsDashboard() {
                 />
                 <Bar dataKey="anthropic" stackId="a" fill={PROVIDER_COLORS.anthropic} radius={[0, 0, 0, 0]} />
                 <Bar dataKey="openai" stackId="a" fill={PROVIDER_COLORS.openai} />
+                <Bar dataKey="xai" stackId="a" fill={PROVIDER_COLORS.xai} />
                 <Bar dataKey="openrouter" stackId="a" fill={PROVIDER_COLORS.openrouter} />
                 <Bar dataKey="gemini" stackId="a" fill={PROVIDER_COLORS.gemini} />
                 <Bar dataKey="xai" stackId="a" fill={PROVIDER_COLORS.xai} />

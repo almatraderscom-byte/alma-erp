@@ -225,7 +225,7 @@ const PROVIDER_META: Record<BalanceProviderId, {
   gemini: {
     label: 'Gemini',
     source: 'Cloud Billing + local delta',
-    dashboardUrl: 'https://aistudio.google.com/usage',
+    dashboardUrl: 'https://aistudio.google.com/billing',
     capabilities: ['cost'],
   },
   google_tts: {
@@ -361,6 +361,7 @@ export const EFFECTIVE_PROVIDER_SQL = Prisma.sql`CASE
   WHEN units->>'provider' = 'google' THEN 'gemini'
   WHEN units->>'provider' = 'xai' THEN 'xai'
   WHEN units->>'provider' = 'openai' THEN 'openai'
+  WHEN units->>'provider' = 'xai' THEN 'xai'
   WHEN units->>'provider' = 'anthropic' THEN 'anthropic'
   ELSE provider
 END`
@@ -1393,31 +1394,23 @@ export async function refreshApiBalanceCache(): Promise<{
       }
     } else if (id === 'xai') {
       if (xaiBilling.ok && xaiBilling.value) {
-        balanceKind = 'wallet'
-        balanceAmount = balanceUsd = roundUsd(xaiBilling.value.balanceUsd)
-        balanceCurrency = balanceUnit = 'USD'
+        if (xaiBilling.value.balanceUsd != null) {
+          balanceKind = 'wallet'
+          balanceAmount = balanceUsd = roundUsd(xaiBilling.value.balanceUsd)
+          balanceCurrency = balanceUnit = 'USD'
+          balanceAuthoritative = true
+        }
         invoice = xaiBilling.value.invoice
         sourceType = 'provider_api'
         status = 'live'
-        statusMessage = 'Prepaid balance, usage ও current invoice preview সরাসরি xAI Management API থেকে পাওয়া।'
-        balanceAuthoritative = true
+        statusMessage = xaiBilling.value.balanceUsd != null
+          ? 'Remaining prepaid credit ও usage সরাসরি xAI Management API ledger থেকে পাওয়া; prepaid credit দিয়ে cover হওয়া usage invoice due নয়।'
+          : 'xAI billing connected, কিন্তু response-এ prepaid-credit usage breakdown না থাকায় remaining wallet দেখানো হয়নি।'
         fetchedAt = xaiBilling.fetchedAt
         staleAt = staleAfter(fetchedAt, 20)
-      } else if (xaiBilling.configured && previous?.balanceKind === 'wallet') {
-        balanceKind = 'wallet'
-        balanceAmount = balanceUsd = previous.balanceAmount
-        balanceCurrency = previous.balanceCurrency
-        balanceUnit = previous.balanceUnit
-        invoice = previous.invoice ?? null
-        sourceType = 'provider_api'
-        status = 'stale'
-        statusMessage = xaiBilling.error ?? 'xAI refresh ব্যর্থ; শেষ সফল billing snapshot রাখা হয়েছে।'
-        balanceAuthoritative = previous.balanceAuthoritative
-        fetchedAt = previous.fetchedAt
-        staleAt = previous.staleAfter
       } else if (xaiBilling.configured) {
         status = 'error'
-        statusMessage = xaiBilling.error
+        statusMessage = xaiBilling.error ?? 'xAI refresh ব্যর্থ; unverified পুরনো wallet দেখানো হয়নি।'
       }
     }
 
@@ -1517,7 +1510,7 @@ export async function refreshApiBalanceCache(): Promise<{
     } else if (id === 'xai' && xaiBilling.ok && xaiBilling.value) {
       costSourceType = 'local_measured'
       status = 'partial'
-      statusMessage = 'xAI wallet/invoice connection আছে, কিন্তু usage API এই মাসে কোনো dated cost row দেয়নি। খরচ শুধু local estimate।'
+      statusMessage = 'xAI billing connection আছে, কিন্তু usage API এই মাসে কোনো dated cost row দেয়নি। খরচ শুধু local estimate।'
       fetchedAt = xaiBilling.fetchedAt
       staleAt = staleAfter(fetchedAt, 180)
     } else if (
@@ -1547,7 +1540,7 @@ export async function refreshApiBalanceCache(): Promise<{
     ) {
       costSourceType = 'local_measured'
       status = 'partial'
-      statusMessage = `Google Billing export connected, কিন্তু ${meta.label}-এর কোনো dated billing row এখনো আসেনি। নিচের খরচ শুধু local estimate; wallet API নেই।`
+      statusMessage = `Google Billing export connected, কিন্তু ${meta.label}-এর initial export/backfill row এখনো আসেনি। নিচের খরচ শুধু local estimate; Google AI Studio wallet-এর public API নেই।`
       fetchedAt = googleBilling.fetchedAt
       staleAt = staleAfter(fetchedAt, 180)
     } else if (
@@ -1563,7 +1556,7 @@ export async function refreshApiBalanceCache(): Promise<{
       costBreakdown = vercelBilling.value.breakdown ?? null
       sourceType = costSourceType = 'provider_export'
       status = 'live'
-      statusMessage = 'Vercel team-এর FOCUS billed charges connected। এটি পুরো team scope—ALMA ERP project-only due/invoice নয়; upcoming invoice/due public API-তে exposed নয়।'
+      statusMessage = `Vercel team-এর current billing cycle (${vercelBilling.value.billingPeriodStart?.slice(0, 10) ?? 'unknown'} → ${vercelBilling.value.billingPeriodEnd?.slice(0, 10) ?? 'unknown'}) FOCUS billed charges connected। এটি পুরো team scope; invoice/due public API-তে exposed নয়।`
       costAuthoritative = true
       fetchedAt = vercelBilling.fetchedAt
       staleAt = staleAfter(fetchedAt, 180)
@@ -1571,7 +1564,7 @@ export async function refreshApiBalanceCache(): Promise<{
       todayUsd = null
       monthUsd = null
       status = 'partial'
-      statusMessage = 'Vercel team billing endpoint connected, কিন্তু requested month-এ কোনো dated FOCUS charge row পাওয়া যায়নি। Due/invoice public API-তে exposed নয়।'
+      statusMessage = 'Vercel team billing endpoint connected, কিন্তু current billing cycle-এ কোনো dated FOCUS charge row পাওয়া যায়নি। Due/invoice public API-তে exposed নয়।'
       fetchedAt = vercelBilling.fetchedAt
       staleAt = staleAfter(fetchedAt, 180)
     } else if (id === 'supabase' && supabasePlan.ok && supabasePlan.value) {
@@ -1608,7 +1601,16 @@ export async function refreshApiBalanceCache(): Promise<{
             : id === 'supabase'
               ? supabasePlan.error
               : null
-    if (externalCostFailed && id === 'supabase' && previous?.plan) {
+    if (externalCostFailed && id === 'vercel') {
+      todayUsd = null
+      monthUsd = null
+      providerMonthUsd = null
+      localDeltaUsd = null
+      sourceType = costSourceType = 'provider_export'
+      status = 'error'
+      statusMessage = `Vercel current-cycle refresh ব্যর্থ${providerFailure ? `: ${providerFailure}` : ''}; আগের calendar-period total আর দেখানো হচ্ছে না।`
+      costAuthoritative = false
+    } else if (externalCostFailed && id === 'supabase' && previous?.plan) {
       plan = previous.plan
       sourceType = previous.sourceType
       costSourceType = previous.costSourceType

@@ -6,6 +6,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { impactLight, impactMedium } from '@/lib/haptics'
 import AgentModelSelector from './AgentModelSelector'
+import AgentUsagePopover from './AgentUsagePopover'
 import AgentModeSelector from './AgentModeSelector'
 import { DEFAULT_CHAT_MODE, type ChatMode } from '@/agent/lib/chat-mode'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
@@ -344,12 +345,19 @@ export default function AgentComposer({
 
           {/* Middle: tappable model/effort pill */}
           {activeModelId && onModelChange && (
-            <AgentModelSelector
-              conversationId={conversationId}
-              modelId={activeModelId}
-              onModelChange={onModelChange}
-              disabled={streaming}
-            />
+            <>
+              <AgentModelSelector
+                conversationId={conversationId}
+                modelId={activeModelId}
+                onModelChange={onModelChange}
+                disabled={streaming}
+              />
+              <AgentUsagePopover
+                conversationId={conversationId}
+                modelId={activeModelId}
+                streaming={streaming}
+              />
+            </>
           )}
 
           {/* How the work happens in this chat (auto / direct / plan / plan-drive) */}
