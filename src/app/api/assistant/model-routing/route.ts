@@ -268,6 +268,7 @@ export async function POST(req: NextRequest) {
 
   const patch: Partial<ModelRoutingConfig> = {}
   if (typeof body.opusEnabled === 'boolean') patch.opusEnabled = body.opusEnabled
+  if (typeof body.forceFullPrompt === 'boolean') patch.forceFullPrompt = body.forceFullPrompt
   if (Number.isFinite(body.opusDailyCap)) patch.opusDailyCap = Number(body.opusDailyCap)
   if (Number.isFinite(body.opusConfidenceThreshold)) patch.opusConfidenceThreshold = Number(body.opusConfidenceThreshold)
   if (Number.isFinite(body.opusCriticalTaka)) patch.opusCriticalTaka = Number(body.opusCriticalTaka)
