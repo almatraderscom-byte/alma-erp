@@ -17,9 +17,9 @@ const askUser = ASK_TOOLS.find((t) => t.name === 'ask_user')!
 describe('ask_user contract', () => {
   it('is registered with 2–4 tappable options', () => {
     expect(askUser).toBeDefined()
-    const options = askUser.input_schema.properties?.options as { minItems?: number; maxItems?: number }
-    expect(options.minItems).toBe(2)
-    expect(options.maxItems).toBe(4)
+    const properties = (askUser.input_schema.properties ?? {}) as Record<string, { minItems?: number; maxItems?: number }>
+    expect(properties.options.minItems).toBe(2)
+    expect(properties.options.maxItems).toBe(4)
   })
 
   it('requires the agent to put its OWN recommendation first', () => {
