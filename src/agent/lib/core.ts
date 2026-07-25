@@ -118,6 +118,14 @@ export type AgentEvent =
   // card into the reply flow and opens the artifacts panel on it.
   | { type: 'artifact_saved'; id: string; title: string; artifactType: string }
   | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
+  // Speak-first (owner rule 2026-07-25): the line the head wrote BEFORE it ran
+  // anything — "বস, … বুঝেছি — … দেখছি"। It is emitted as ordinary text_delta
+  // first (so every client streams it live), then this marker closes it. The
+  // marker exists because clients must be able to tell that opening line apart
+  // from mid-turn narration WITHOUT guessing: narration is deliberately cleared
+  // when a tool starts or a draft is rewritten, but this line is something Boss
+  // has already read and must survive both.
+  | { type: 'preamble'; text: string }
   | {
       type: 'verification_retry'
       attempt: number
