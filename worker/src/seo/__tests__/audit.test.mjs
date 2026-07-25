@@ -74,12 +74,24 @@ test('page-level scoring is a RATE, so a deep crawl is not punished for being de
   const big = scoreAudit({ siteChecks: site, pages: Array.from({ length: 80 }, badPage), pagesCrawled: 80 })
 
   // Same problem on every page ⇒ same score, whether we saw 5 pages or 80.
+  // (This fixture is broken in every way, so that score is 0 — correctly.)
   assert.equal(small.score, big.score)
   // …and the raw counts still grow, so nothing is hidden from the report.
   assert.ok(big.counts.medium > small.counts.medium)
-  // The old unbounded sum floored an 80-page crawl at 0; a real site must stay
-  // on a usable scale so before/after is meaningful.
-  assert.ok(big.score > 0, `expected a usable score, got ${big.score}`)
+})
+
+test('a real-world mix scores in a usable range, not 0 and not a flattering 95', () => {
+  // The shape of the live almatraders audit on 2026-07-26: 10 medium + 79 low
+  // findings over 80 crawled pages. The first normalisation scored this 95/100,
+  // which reads as "nothing to do" for 89 real issues; the unbounded sum before
+  // it scored 0. Both are useless to the owner.
+  const page = (severity) => ({ url: 'https://x.com/p', issues: [{ severity, code: 'c', detail: 'd' }] })
+  const scored = scoreAudit({
+    siteChecks: { issues: [] },
+    pages: [...Array.from({ length: 10 }, () => page('medium')), ...Array.from({ length: 70 }, () => page('low'))],
+    pagesCrawled: 80,
+  })
+  assert.ok(scored.score > 70 && scored.score < 92, `expected a usable middle score, got ${scored.score}`)
 })
 
 test('a mostly-clean deep crawl scores well above a broken one', () => {

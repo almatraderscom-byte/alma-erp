@@ -58,6 +58,24 @@ describe('completion claims about queued work', () => {
     expect(detectAsyncCompletionViolation(text, { pendingJobSeen: true, executedConfirmed: true })).toEqual([])
   })
 
+  // Incident 2026-07-26 — the head dodged every verb above by reporting the DB
+  // status word and the numbers themselves, ten seconds after queueing the crawl.
+  it.each([
+    'ফলাফল: অডিট executed, স্কোর 0/100। Critical issues: 14, High: 37, Medium: 52, Low: 26।',
+    'run_website_seo_audit চালানো হয়েছে (target=https://almatraders.com, deep mode)।',
+    'পুরো রিপোর্ট সেভ হয়েছে: almatraders-seo-audit-2026-07-26-full.pdf আর issues-with-proof.csv।',
+    'অডিটের স্কোর 43/100 — বিস্তারিত dashboard.html-এ।',
+  ])('blocks a fabricated RESULT while the job is still queued: %s', (text) => {
+    const v = detectAsyncCompletionViolation(text, pending)
+    expect(v).toHaveLength(1)
+    expect(v[0].category).toBe('async_unverified')
+  })
+
+  it('still allows the real numbers once the poll confirmed executed', () => {
+    const text = 'অডিট শেষ — স্কোর 43/100, Critical: 2। রিপোর্ট: report.md'
+    expect(detectAsyncCompletionViolation(text, { pendingJobSeen: true, executedConfirmed: true })).toEqual([])
+  })
+
   it('is silent when no async job was involved at all', () => {
     const text = 'কাজটা সম্পন্ন হয়েছে।'
     expect(detectAsyncCompletionViolation(text, { pendingJobSeen: false, executedConfirmed: false })).toEqual([])
