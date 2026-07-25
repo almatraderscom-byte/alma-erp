@@ -276,6 +276,10 @@ approved).
     before the firewall was in place. Real traffic writes almost nothing — measured 0 bytes in
     60 s on an idle line. Rotation is now daily + compressed + 500 MB per file, and the old
     files are gzipped: 21 GB → 537 MB.
+16. **A new music-on-hold class does not load on a reload.** `moh reload` and
+    `module reload res_musiconhold.so` both report success and both leave the class missing
+    from `moh show classes`. Only `module unload` + `module load` picks it up — do it while the
+    line is idle, since unloading MOH mid-call cuts the music a caller is listening to.
 15. **A dead second trunk was in `pjsip.conf` the whole time** — `amberit` (202.4.97.37, user
     1098173), pre-dating this work, retrying a REGISTER that never got an answer. Removed
     2026-07-25. It cost nothing but noise; it was not related to the outbound problem.
@@ -306,8 +310,11 @@ approved).
    `18x`, alert when the answer is silence. It would have caught this class of failure on day
    one, and it measures whether the provider ever fixes their side.
 3. `SIP_MAX_CONCURRENT_CALLS` is **2**, matching the trunk's call limit. Done.
-3. **Waiting on owner's file**: his recorded hold audio → drop into `/var/lib/asterisk/moh-alma`
-   on the VPS and set `SIP_MOH_CLASS=alma-hold`. (Bangla script already given to him.)
+3. ~~Waiting on owner's hold audio~~ — **done 2026-07-25.** His recording is live as
+   `alma-hold` (8 kHz mono `.wav` + `.sln`, 14.6 s, RMS 0.14), `SIP_MOH_CLASS=alma-hold`,
+   proven on the line: the ARI moh POST returns 204 and a recorded bridge shows sustained
+   audio through exactly that window. Config of record:
+   `worker/deploy/asterisk/alma-musiconhold.conf`.
 4. **Owner eye-check**: the new phone UI at `/agent/phone` (PR #572) — keypad, mute, speaker,
    screen-pop. Not yet visually verified by anyone.
 5. **Still owner-pending** from the checklist: a real mic-to-mic browser call, the

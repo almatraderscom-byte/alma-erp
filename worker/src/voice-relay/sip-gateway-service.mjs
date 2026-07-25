@@ -288,11 +288,28 @@ const VOICEMAIL_MAX_SECS = Number(process.env.SIP_VOICEMAIL_MAX_SECS || 120)
 // Length of the barge-in fade, in 20 ms frames. Two frames (40 ms) is long enough to be
 // click-free and short enough that the caller still experiences an immediate interruption.
 const FADE_FRAMES = Number(process.env.SIP_BARGE_FADE_FRAMES || 2)
-// How much audio to hold before playing, in 20 ms frames. Small enough not to add
-// noticeable delay, large enough to ride out the bot's event-loop stalls.
-const JITTER_FRAMES = Number(process.env.SIP_JITTER_FRAMES || 8)
 /**
- * The cushion GROWS when it proves too small, because a fixed 160 ms was not enough.
+ * How much audio to hold before playing, in 20 ms frames.
+ *
+ * 20 frames = 400 ms, and the number comes from comparing the two paths we actually run.
+ * The WhatsApp/Twilio path sounds perfect to the owner, and looking at why is instructive:
+ * `/glive` in worker/src/voice-relay/server.mjs is a bare pass-through —
+ *
+ *     ws.on('message', (raw) => up.send(raw))
+ *     up.on('message', (raw) => ws.send(raw))
+ *
+ * no pacing, no cushion, no frame slicing. It sounds clean because TWILIO's media server
+ * does the buffering for us: we hand it gusts and it plays them out smoothly.
+ *
+ * On our own line there is no Twilio — AudioSocket wants a frame every 20 ms and WE are the
+ * media server. So we have to hold what Twilio would have held. At 160 ms we did not, and the
+ * owner heard it: `underruns=5, 5, 4` on his three calls, each one ~200 ms of dead air
+ * dropped inside a word. 400 ms costs a barely perceptible beat before the first syllable and
+ * buys the headroom that made the other path sound right.
+ */
+const JITTER_FRAMES = Number(process.env.SIP_JITTER_FRAMES || 20)
+/**
+ * The cushion GROWS when it proves too small — a fixed depth cannot fit every call.
  *
  * Measured on the owner's own calls (2026-07-25, from the per-call line this file logs):
  * `underruns=5`, `underruns=5`, `underruns=4` — five times in ~80 s the queue ran dry mid
@@ -308,7 +325,7 @@ const JITTER_FRAMES = Number(process.env.SIP_JITTER_FRAMES || 8)
  * conversational, and nothing else about the audio is touched: no filtering, no resampling,
  * no level changes. Only WHEN we start playing.
  */
-const JITTER_MAX_FRAMES = Number(process.env.SIP_JITTER_MAX_FRAMES || 25)   // 500 ms ceiling
+const JITTER_MAX_FRAMES = Number(process.env.SIP_JITTER_MAX_FRAMES || 35)   // 700 ms ceiling
 const JITTER_GROW_FRAMES = Number(process.env.SIP_JITTER_GROW_FRAMES || 4)  // +80 ms per dry-out
 
 /** Ease a frame up from digital zero, for the first audio after a silent gap. */
