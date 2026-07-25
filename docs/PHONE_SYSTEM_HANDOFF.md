@@ -25,9 +25,10 @@ layer on top. Everything below is built, merged to `main`, and running.
 - Registration watchdog, per-call CDR, outcome sweep, concurrency + hourly caps, BD-only
   destination allowlist, SIP port firewall.
 
-**BLOCKED — the one open problem**
-Outbound calls fail roughly half the time, and it is **provider-side**. Proven by packet
-capture, not inference (see §5).
+**Outbound — was failing ~half the time; root cause found 2026-07-25 (see §5).**
+The provider's switch needs ~100 s after each REGISTER before it routes our outbound calls,
+and we were re-registering every 5 minutes. `expiration` is now 3600, which cuts the exposure
+from ~45% of calls to ~2.8%. The residual window is the provider's to explain.
 
 ---
 
@@ -112,7 +113,50 @@ Gemini's audio arrived late.
 
 ---
 
-## 5. THE OPEN PROBLEM — outbound, provider-side (evidence, not opinion)
+## 5. OUTBOUND — root cause found 2026-07-25 (supersedes the "provider-side, nothing we can
+## do" reading below, which was half right)
+
+**The failure is time-windowed, and the window is created by OUR registration cycle.**
+
+Twenty identical test calls to unassigned numbers (nobody's phone rings), each with a full
+packet capture, sorted by how long ago the trunk had re-registered:
+
+| time since REGISTER | result |
+|---|---|
+| 0–80 s | **8 of 8 calls died** — `100 Trying`, then silence; `CANCEL` → `481` |
+| 100 s+ | **12 of 12 reached `183 Session Progress`** |
+
+The provider's switch needs about **100 seconds after each REGISTER** before it will route our
+outbound calls. Inside that window their edge still answers `100 Trying` and then swallows the
+INVITE — the call is never created on their core, which is why it appears in **no CDR** and the
+callee's phone never rings. That part is genuinely theirs to fix.
+
+Our half: `expiration=300` meant we re-registered **every 5 minutes**, so ~100 s in every 300
+was dead — about **one call in two**, matching the owner's own count (18 of 35). Raising it to
+`expiration=3600` (the provider grants 3600 — verified in their `200 OK`) leaves one dead
+window per hour: **~2.8%**. Live on the VPS and in `worker/deploy/asterisk/alma-trunk.conf`.
+
+Two things follow that are easy to trip over:
+- **A reload of `res_pjsip_outbound_registration` re-registers, and so opens a fresh ~100 s
+  hole.** Never do it during business hours as a casual "let me refresh things".
+- `pjsip send register <name>` sends **`Expires: 0` first** — it de-registers, then registers.
+  Running it "to check" takes the line down for a moment; the trunk was left `Unregistered`
+  that way during this very investigation.
+
+Hypotheses that were tested and are NOT the cause: destination number format (`01…` vs `880…`
+vs `+880…` — all four operator prefixes behave identically), on-net vs off-net, an
+`"Anonymous"` display name in `From`, call spacing (three calls 40 s apart all failed inside a
+bad window), and the call-limit-of-2 theory. The INVITEs that fail and the INVITEs that succeed
+are byte-for-byte identical apart from the dialled number — only the *timing* differs.
+
+**What to tell the provider** (precise, not "outbound sometimes fails"): *for roughly 100
+seconds after each successful REGISTER, INVITEs from 31.97.237.40:5062 are answered `100
+Trying` and then dropped; a CANCEL is answered `481 Call/Transaction Does Not Exist`. Captures
+available. Why does the binding take ~100 s to become routable?*
+
+---
+
+## 5b. Earlier reading of the same problem (kept for the packet evidence)
 
 Packet capture on 2026-07-25 12:38:54 Dhaka, `tcpdump host 103.170.231.10`:
 
@@ -196,6 +240,19 @@ approved).
     and every call went silent. One config change per live call.
 12. **qualify OFF for WebRTC AORs** — a browser that misses an OPTIONS poll is marked
     Unavailable and Asterisk then refuses to dial it.
+13. **An unattended apt upgrade will restart Asterisk mid-day** — on 2026-07-25 an rsyslog +
+    libpam upgrade (not Asterisk itself) restarted it at 12:26 Dhaka, dropping calls and
+    reloading `modules.conf`. `needrestart` is now told never to restart `asterisk.service`
+    (`/etc/needrestart/conf.d/50-alma-phone.conf`) and the apt timers were moved to ~03:00
+    Dhaka. A library fix therefore needs a human restart at a quiet hour.
+14. **The log directory reached 21 GB, and 99% of it was one SIP brute-force flood** on
+    2026-07-24 (39,605 failed REGISTERs from 163.172.111.53 alone) that hammered UDP 5060
+    before the firewall was in place. Real traffic writes almost nothing — measured 0 bytes in
+    60 s on an idle line. Rotation is now daily + compressed + 500 MB per file, and the old
+    files are gzipped: 21 GB → 537 MB.
+15. **A dead second trunk was in `pjsip.conf` the whole time** — `amberit` (202.4.97.37, user
+    1098173), pre-dating this work, retrying a REGISTER that never got an answer. Removed
+    2026-07-25. It cost nothing but noise; it was not related to the outbound problem.
 
 ---
 
@@ -217,9 +274,12 @@ approved).
 
 ## 8. Next steps, in order
 
-1. **Owner + provider**: the outbound problem (§5). Ask them to raise CALL LIMIT from 2, and
-   to explain why authenticated INVITEs are accepted and then dropped without a CDR entry.
-2. **Waiting on owner's approval**: lower `SIP_MAX_CONCURRENT_CALLS` 4 → 2 to match the trunk.
+1. **Owner + provider**: one precise question now, not a vague complaint — why does a fresh
+   REGISTER take ~100 s to become routable? (§5 has the wording and the numbers.)
+2. **Worth building**: an outbound canary — dial an unassigned number on a schedule, expect a
+   `18x`, alert when the answer is silence. It would have caught this class of failure on day
+   one, and it measures whether the provider ever fixes their side.
+3. `SIP_MAX_CONCURRENT_CALLS` is **2**, matching the trunk's call limit. Done.
 3. **Waiting on owner's file**: his recorded hold audio → drop into `/var/lib/asterisk/moh-alma`
    on the VPS and set `SIP_MOH_CLASS=alma-hold`. (Bangla script already given to him.)
 4. **Owner eye-check**: the new phone UI at `/agent/phone` (PR #572) — keypad, mute, speaker,
