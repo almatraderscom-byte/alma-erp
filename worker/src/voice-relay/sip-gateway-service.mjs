@@ -291,6 +291,25 @@ const FADE_FRAMES = Number(process.env.SIP_BARGE_FADE_FRAMES || 2)
 // How much audio to hold before playing, in 20 ms frames. Small enough not to add
 // noticeable delay, large enough to ride out the bot's event-loop stalls.
 const JITTER_FRAMES = Number(process.env.SIP_JITTER_FRAMES || 8)
+/**
+ * The cushion GROWS when it proves too small, because a fixed 160 ms was not enough.
+ *
+ * Measured on the owner's own calls (2026-07-25, from the per-call line this file logs):
+ * `underruns=5`, `underruns=5`, `underruns=4` — five times in ~80 s the queue ran dry mid
+ * sentence. Each dry-out costs more than the gap itself: playout eases to zero, then waits to
+ * rebuild the whole cushion before speaking again, so one underrun is ~200 ms of dead air
+ * dropped into the middle of a word. That is exactly what he described — "কথার মাঝখানে কেটে
+ * যাচ্ছে, একটা ফিসফিস শব্দ, তারপর শব্দটা বোঝা যায় না".
+ *
+ * Gemini's audio arrives in gusts (the bot's event loop stalls on model events and ERP tool
+ * calls), and gust size varies per call, so one fixed number cannot be right for all of them.
+ * Start where we are, and after each dry-out hold a little more — the call heals itself
+ * instead of stuttering the same way for its whole length. Growth is capped so latency stays
+ * conversational, and nothing else about the audio is touched: no filtering, no resampling,
+ * no level changes. Only WHEN we start playing.
+ */
+const JITTER_MAX_FRAMES = Number(process.env.SIP_JITTER_MAX_FRAMES || 25)   // 500 ms ceiling
+const JITTER_GROW_FRAMES = Number(process.env.SIP_JITTER_GROW_FRAMES || 4)  // +80 ms per dry-out
 
 /** Ease a frame up from digital zero, for the first audio after a silent gap. */
 function fadeInFrame(f) {
@@ -345,6 +364,7 @@ class Call {
     this.bot = null                     // ws to the Gemini Live bot
     this.botReady = false
     this.playQueue = []                 // 320-byte slin frames -> Asterisk, drained at 20ms
+    this.cushion = JITTER_FRAMES        // frames to hold before playing; grows on dry-outs
     this.playTimer = null
     this.slinResidual = Buffer.alloc(0) // partial slin frame from the bot side
     this.answered = false
@@ -459,7 +479,7 @@ class Call {
         // and the caller heard the voice stall and then click back in. Hold a small buffer
         // before starting, and rebuild it after a dry spell, exactly as the bot does.
         if (this.rebuffering) {
-          if (this.playQueue.length >= JITTER_FRAMES) this.rebuffering = false
+          if (this.playQueue.length >= this.cushion) this.rebuffering = false
           else { this.rawWriteAudio(SILENCE_FRAME); this.silenceFrames = (this.silenceFrames || 0) + 1; this.nextFrameAt += 20; guard++; continue }
         }
         const frame = this.playQueue.shift()
@@ -473,6 +493,9 @@ class Call {
           if (this.lastWasAudio) {
             this.underruns = (this.underruns || 0) + 1
             this.rawWriteAudio(rampToZero(this.lastSample))
+            // This cushion was too small for this call's gusts — hold more before resuming, so
+            // the same sentence does not break again 20 seconds later.
+            this.cushion = Math.min(this.cushion + JITTER_GROW_FRAMES, JITTER_MAX_FRAMES)
             this.rebuffering = true // wait for the cushion again instead of stuttering
           } else {
             this.rawWriteAudio(SILENCE_FRAME)
@@ -740,7 +763,7 @@ class Call {
     if (this.closed) return
     this.closed = true
     log(this.channelId, 'hangup', reason ? `(${reason})` : '',
-      `| audio frames=${this.framesOut || 0} silence=${this.silenceFrames || 0} underruns=${this.underruns || 0} barge-ins=${this.barges || 0} dropped=${this.dropped || 0}`)
+      `| audio frames=${this.framesOut || 0} silence=${this.silenceFrames || 0} underruns=${this.underruns || 0} cushion=${this.cushion || JITTER_FRAMES}f barge-ins=${this.barges || 0} dropped=${this.dropped || 0}`)
     if (this.playTimer) { clearInterval(this.playTimer); this.playTimer = null }
     try { this.txFd?.end(); this.rxFd?.end() } catch { /* */ }
     if (this.digitTimer) { clearTimeout(this.digitTimer); this.digitTimer = null }

@@ -143,14 +143,30 @@ const SYS_INBOUND = `তুমি ALMA-র (একটি বাংলাদে�
 - কাজ শেষ হলে ভদ্রভাবে ধন্যবাদ দিয়ে বিদায় নাও। কল শেষে মালিক গ্রাহকের দরকারের একটা সারাংশ পাবেন।
 ${SYS_COMMON}`
 
+/**
+ * Facts the ERP measured and sent WITH the call, pinned into the system prompt.
+ *
+ * Names are the one thing that must never be improvised, and a mid-call tool round-trip
+ * cannot carry them reliably: Gemini Live drops a functionResponse that arrives while it is
+ * speaking, so on 2026-07-25 the model answered "who is in today" with two invented staff
+ * names and only corrected itself after the owner pushed back. The tools remain — this is
+ * what the model starts from.
+ */
+function factsBlock(params) {
+  const facts = String(params?.facts || '').trim()
+  if (!facts) return ''
+  return `\n\nআজকের যাচাই করা তথ্য (ERP থেকে, কল শুরুর সময়ের) — নাম ও সংখ্যা এখান থেকেই বলবে, কখনো মুখস্থ বা আন্দাজ করে নয়:\n${facts}\nএখানে যে নাম নেই, সে নাম বলবে না। আরও নতুন তথ্য লাগলে টুল ব্যবহার করো, এবং টুলের উত্তর হাতে আসার আগে কোনো নাম বা সংখ্যা বলবে না।`
+}
+
 function sysFor(params) {
   const who = params?.recipientName || ''
   const purpose = params?.purpose || ''
+  const facts = factsBlock(params)
   switch (params?.callType) {
-    case 'staff': return sysStaff(who, purpose)
-    case 'contact': return sysContact(who, purpose)
-    case 'inbound': return SYS_INBOUND
-    default: return SYS_OWNER
+    case 'staff': return sysStaff(who, purpose) + facts
+    case 'contact': return sysContact(who, purpose) + facts
+    case 'inbound': return SYS_INBOUND + facts
+    default: return SYS_OWNER + facts
   }
 }
 
