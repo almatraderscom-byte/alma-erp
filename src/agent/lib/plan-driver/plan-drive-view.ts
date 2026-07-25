@@ -117,6 +117,24 @@ export interface PlanDriveHistoryView {
   costTaka: number
 }
 
+/**
+ * G4 (owner ruling 2026-07-26) — queued worker work must be VISIBLE as work.
+ *
+ * A crawl/audit/long task lives in agent_pending_actions while the worker runs
+ * it. Nothing on screen said so, so an 8-minute crawl looked like the agent had
+ * gone quiet. One row per job, with how long it has been running.
+ */
+export interface LiveJobView {
+  actionId: string
+  /** 'seo_audit' | 'long_agent_task' | … */
+  type: string
+  /** Owner-facing one-liner ("SEO audit: almatraders.com"). */
+  summary: string
+  startedAt: string
+  runningMs: number
+  conversationId: string | null
+}
+
 export interface PlanDrivePanelData {
   /** Master kill-switch echo — UI shows "চালু/বন্ধ". */
   enabled: boolean
@@ -129,9 +147,44 @@ export interface PlanDrivePanelData {
   finished: PlanDriveHistoryView[]
   activeCount: number
   needsDecisionCount: number
+  /** G4: worker jobs running RIGHT NOW — the live chip reads this. */
+  runningJobs: LiveJobView[]
   /** Whole-taka spent vs the daily cap, for the panel header. */
   dailyCapTaka: number
   perPlanCapTaka: number
+}
+
+/** Job types whose run is long enough that silence looks like a hang. */
+const LIVE_JOB_TYPES = ['seo_audit', 'long_agent_task', 'workbench_run', 'browser_action', 'agent_graph_run'] as const
+/** Older than this and it is a stuck row, not live work — don't claim it is running. */
+const LIVE_JOB_MAX_AGE_MS = 60 * 60_000
+
+export async function loadRunningJobs(now = new Date()): Promise<LiveJobView[]> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = prisma as any
+    const rows = await db.agentPendingAction.findMany({
+      where: {
+        type: { in: [...LIVE_JOB_TYPES] },
+        status: 'approved', // approved = handed to the worker, not yet executed
+        createdAt: { gte: new Date(now.getTime() - LIVE_JOB_MAX_AGE_MS) },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      select: { id: true, type: true, summary: true, createdAt: true, conversationId: true },
+    })
+    return rows.map((r: { id: string; type: string; summary: string; createdAt: Date; conversationId: string | null }) => ({
+      actionId: r.id,
+      type: r.type,
+      summary: (r.summary ?? r.type).slice(0, 120),
+      startedAt: new Date(r.createdAt).toISOString(),
+      runningMs: now.getTime() - new Date(r.createdAt).getTime(),
+      conversationId: r.conversationId ?? null,
+    }))
+  } catch (err) {
+    console.warn('[plan-drive-view] running jobs failed open:', err instanceof Error ? err.message : err)
+    return []
+  }
 }
 
 /** Owner-readable state. Printed as-is by web and native. */
@@ -325,10 +378,11 @@ function toHistoryView(plan: Plan): PlanDriveHistoryView {
  * the things needing the owner's attention float to the top.
  */
 export async function getPlanDrivePanel(): Promise<PlanDrivePanelData> {
-  const [config, plans, finishedPlans] = await Promise.all([
+  const [config, plans, finishedPlans, runningJobs] = await Promise.all([
     getAutodriveConfig(),
     loadVisiblePlanDrives(),
     loadFinishedPlanDrives({ limit: 20 }),
+    loadRunningJobs(),
   ])
   const drives = await Promise.all(plans.map(toView))
   const finished = finishedPlans.map(toHistoryView)
@@ -350,6 +404,7 @@ export async function getPlanDrivePanel(): Promise<PlanDrivePanelData> {
     runningCount: drives.filter((d) => d.isRunning).length,
     waitingApprovalCount: drives.filter((d) => d.phase === 'waiting-approval').length,
     needsDecisionCount: drives.filter((d) => d.phase === 'needs-decision').length,
+    runningJobs,
     dailyCapTaka: config.dailyCapTaka,
     perPlanCapTaka: config.planCapTaka,
   }
