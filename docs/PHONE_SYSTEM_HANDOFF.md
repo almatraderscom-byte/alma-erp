@@ -25,11 +25,11 @@ layer on top. Everything below is built, merged to `main`, and running.
 - Registration watchdog, per-call CDR, outcome sweep, concurrency + hourly caps, BD-only
   destination allowlist, SIP port firewall.
 
-**Outbound — fails intermittently, and the provider's own CDR names the reason (see §5).**
-`rate_plan_no_match` on numbers their rate plan clearly covers, `no_route`, `stale_timeout`,
-and `client_concurrent_limit_cancelled` (their CALL LIMIT is 2). Nothing about the SIP we send
-differs between the calls that work and the calls that die. This is theirs to fix, and §5 has
-the dated rows to show them.
+**Outbound — root cause found 2026-07-25, and it was ours (see §5).** The provider holds ONE
+registration binding per account and the last registrant wins it. NGS re-registers every ~60 s;
+we were doing it every 300 s, so the line usually belonged to NGS and our INVITEs went out from
+an address that was not the current binding — about half of them died. `expiration` is now 60,
+and no second PBX may register this account.
 
 ---
 
