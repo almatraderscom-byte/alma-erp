@@ -2076,6 +2076,14 @@ async function* runAlternateProviderTurn(
         break
       }
 
+      // A QUESTION ENDS THE TURN (owner rule 2026-07-25). Staging an ask card
+      // used to only strip the tools for the remaining rounds — the model still
+      // got one more text round and wrote a closing answer under its own
+      // unanswered question, so the owner saw the agent "finish" without him.
+      // The question IS the turn's output; anything after it is the agent
+      // talking past Boss. Work resumes when he taps an option.
+      if (emittedAskCards.length > 0) break
+
       // Delegation pending approval → end the head's turn now. The owner picks
       // Worker (cheap) or Sonnet (direct) on the card; we must not generate the
       // answer here or the cost doubles. Mirrors the native-path gate in core.ts.

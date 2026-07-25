@@ -2521,5 +2521,7 @@ async function enqueueApprovalContinuation(actionId: string, reuseTurnId: string
     '। এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও, অথবা সব শেষ হলে সংক্ষেপে Boss-কে জানাও। ' +
     'যে কাজটা এইমাত্র approve হয়ে সম্পন্ন হয়েছে সেটা আর নতুন করে কোরো না।'
 
-  await enqueueAgentContinuation({ conversationId, message, turnId: reuseTurnId })
+  // Boss tapping Approve is Boss acting — it resumes even if some other card is
+  // still open; the awaiting-answer gate exists for BACKGROUND resumes only.
+  await enqueueAgentContinuation({ conversationId, message, turnId: reuseTurnId, ignoreAwaitingOwner: true })
 }

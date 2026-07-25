@@ -150,6 +150,27 @@ export function isProgressPlaceholder(text: string): boolean {
   return /বাধ্যতামূলক\s*ধাপ[^\n]{0,60}সফল\s*হয়নি|সম্পন্ন\s*বলছি\s*না/i.test(t)
 }
 
+/**
+ * The agent asked Boss a question and is waiting for his answer.
+ *
+ * Owner rule 2026-07-25: an unanswered question BLOCKS the agent — nothing
+ * server-side may quietly restart it and talk past him (he watched a whole new
+ * turn run under a card he had not touched). The finished work still reaches
+ * him: the delivery path posts the result as a plain message and leaves the
+ * question standing.
+ */
+export async function hasUnansweredAskCard(conversationId: string): Promise<boolean> {
+  try {
+    const pending = await db.agentAskCard.findFirst({
+      where: { conversationId, status: 'pending' },
+      select: { id: true },
+    })
+    return Boolean(pending)
+  } catch {
+    return false // fail-open: never block delivery on a bookkeeping read
+  }
+}
+
 /** Did the conversation actually receive the result after the job resolved? */
 export async function conversationSawDelivery(conversationId: string, after: Date): Promise<boolean> {
   const rows = await db.agentMessage.findMany({
@@ -220,7 +241,7 @@ export function buildFallbackDeliveryMessage(action: {
   return `${head}${body}${tail}\n\n_(রিপোর্টটা আমি নিজে সময়মতো তুলে ধরতে পারিনি — তাই সিস্টেম থেকেই পাঠালাম।)_`
 }
 
-async function postFallbackMessage(conversationId: string, text: string): Promise<void> {
+export async function postAssistantMessage(conversationId: string, text: string): Promise<void> {
   await db.agentMessage.create({
     data: {
       conversationId,
@@ -293,8 +314,14 @@ export async function runJobDeliverySweep(): Promise<JobDeliverySweepResult> {
       continue
     }
 
+    // Boss is being asked something. Resuming the head here would talk straight
+    // past his open question, so the SERVER delivers the result as a plain
+    // message and the card keeps waiting for him (owner ruling 2026-07-25:
+    // "report দিক, প্রশ্নটা থাকুক").
+    const awaitingOwner = await hasUnansweredAskCard(conversationId)
+
     const attempts = state?.attempts ?? 0
-    if (attempts < MAX_CONTINUATION_RETRIES) {
+    if (!awaitingOwner && attempts < MAX_CONTINUATION_RETRIES) {
       await writeDeliveryState(row.id, {
         state: 'pending',
         attempts: attempts + 1,
@@ -318,9 +345,9 @@ export async function runJobDeliverySweep(): Promise<JobDeliverySweepResult> {
       continue
     }
 
-    // The head had its chances — the server delivers.
+    // The head had its chances (or is blocked on Boss) — the server delivers.
     try {
-      await postFallbackMessage(conversationId, buildFallbackDeliveryMessage(row))
+      await postAssistantMessage(conversationId, buildFallbackDeliveryMessage(row))
       out.forced++
       await markDelivered(row.id, 'server_fallback')
       const { sendOwnerText } = await import('@/agent/lib/telegram-owner-notify')

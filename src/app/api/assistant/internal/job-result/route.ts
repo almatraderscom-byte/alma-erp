@@ -9,7 +9,14 @@ import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildOutboundDialMessage } from '@/agent/lib/outbound-call-tracking'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { shouldEmitGenericJobSuccess, shouldResumeAgentAfterJob } from '@/agent/lib/job-result-message-policy'
-import { isDeliverableJobType, markDeliveryPending } from '@/agent/lib/job-delivery'
+import {
+  buildFallbackDeliveryMessage,
+  hasUnansweredAskCard,
+  isDeliverableJobType,
+  markDelivered,
+  markDeliveryPending,
+  postAssistantMessage,
+} from '@/agent/lib/job-delivery'
 import { prisma } from '@/lib/prisma'
 
 const IMAGE_SIGNED_URL_TTL_SEC = 3600
@@ -392,6 +399,20 @@ export async function POST(req: NextRequest) {
   // in the worker while the owner conversation stayed permanently stranded.
   if (resumeAgentAfterSeo && convId) {
     try {
+      // Boss has an open question: resuming the head would answer over it. He
+      // still gets the finished report — the server posts it and the card keeps
+      // waiting (owner ruling 2026-07-25).
+      if (await hasUnansweredAskCard(convId)) {
+        const fresh = await db.agentPendingAction.findUnique({
+          where: { id: pendingActionId },
+          select: { type: true, summary: true, result: true },
+        })
+        if (fresh) {
+          await postAssistantMessage(convId, buildFallbackDeliveryMessage(fresh))
+          await markDelivered(pendingActionId, 'server_fallback')
+        }
+        return Response.json({ success: true, deliveredWhileAwaitingOwner: true })
+      }
       await enqueueAgentContinuation({
         conversationId: convId,
         // Presenting a finished deliverable is correctness, not an

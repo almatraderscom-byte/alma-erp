@@ -19,7 +19,9 @@ type ActionRow = {
   resolvedAt: Date | null
 }
 type MessageRow = { conversationId: string; role: string; content: unknown; createdAt: Date }
+type AskCardRow = { id: string; conversationId: string; status: string }
 
+const askCards: AskCardRow[] = []
 const actions: ActionRow[] = []
 const messages: MessageRow[] = []
 const continuations: Array<{ conversationId: string; force?: boolean; message: string }> = []
@@ -62,6 +64,10 @@ vi.mock('@/lib/prisma', () => ({
       },
     },
     agentConversation: { update: async () => ({}) },
+    agentAskCard: {
+      findFirst: async ({ where }: { where: { conversationId: string; status: string } }) =>
+        askCards.find((c) => c.conversationId === where.conversationId && c.status === where.status) ?? null,
+    },
   },
 }))
 
@@ -114,6 +120,7 @@ beforeEach(() => {
   messages.length = 0
   continuations.length = 0
   telegram.length = 0
+  askCards.length = 0
 })
 
 describe('job delivery sweep', () => {
@@ -184,6 +191,33 @@ describe('job delivery sweep', () => {
     })
     const out = await runJobDeliverySweep()
     expect(out.scanned).toBe(0)
+    expect(messages).toHaveLength(0)
+  })
+})
+
+// Owner-caught 2026-07-25: he watched a brand-new turn run underneath an ask
+// card he had never touched — a background resume talking straight past his
+// open question. His ruling: deliver the report, keep the question waiting.
+describe('an unanswered question blocks the agent, not the report', () => {
+  it('skips the continuation and posts the result itself', async () => {
+    const row = seedAudit()
+    askCards.push({ id: 'ask-1', conversationId: 'conv-1', status: 'pending' })
+
+    const out = await runJobDeliverySweep()
+    expect(continuations).toHaveLength(0)
+    expect(out.forced).toBe(1)
+    const text = (messages[0].content as Array<{ text: string }>)[0].text
+    expect(text).toContain('24/100')
+    expect(readDeliveryState(row.result)).toMatchObject({ state: 'delivered', via: 'server_fallback' })
+  })
+
+  it('resumes the head normally once the question is answered', async () => {
+    seedAudit()
+    askCards.push({ id: 'ask-1', conversationId: 'conv-1', status: 'answered' })
+
+    const out = await runJobDeliverySweep()
+    expect(out.retried).toBe(1)
+    expect(continuations).toHaveLength(1)
     expect(messages).toHaveLength(0)
   })
 })
