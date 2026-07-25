@@ -39,7 +39,7 @@ import net from 'node:net'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
-import { unlink, writeFile } from 'node:fs/promises'
+import { readFile, unlink, writeFile } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { WebSocket } from 'ws'
@@ -60,6 +60,9 @@ const KEY = process.env.SIP_GATEWAY_KEY || ''
 const SECRET = process.env.SIP_GATEWAY_SECRET || ''
 
 const ARI_BASE = (process.env.ARI_BASE || 'http://127.0.0.1:8088').replace(/\/$/, '')
+// Where Asterisk's HTTP server lives (ARI + the SIP-over-WebSocket endpoint). Loopback only.
+const ASTERISK_HTTP_HOST = process.env.ASTERISK_HTTP_HOST || '127.0.0.1'
+const ASTERISK_HTTP_PORT = Number(process.env.ASTERISK_HTTP_PORT || 8088)
 const ARI_USER = process.env.ARI_USER || ''
 const ARI_PASS = process.env.ARI_PASS || ''
 const ARI_APP = process.env.ARI_APP || 'alma-sip'
@@ -141,18 +144,50 @@ function putCdr(id, patch) {
 async function persistCdr(id) {
   const rec = cdr.get(id)
   if (!rec || !APP_URL || !INTERNAL_TOKEN || rec._persisted) return
+  // Wait for the recording upload; finishRecording() calls back here when it is done.
+  if (rec._pendingRecording) return
   rec._persisted = true
   try {
     const res = await fetch(`${APP_URL}/api/assistant/voice-call/sip-cdr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INTERNAL_TOKEN}` },
-      body: JSON.stringify(rec),
+      body: JSON.stringify({ ...rec, _pendingRecording: undefined, _persisted: undefined }),
       signal: AbortSignal.timeout(10_000),
     })
     // Log non-2xx too: a call record that silently fails to persist looks identical to one
     // that was never attempted, and this is the only copy of a transferred call's outcome.
     if (!res.ok) log(id, `cdr persist HTTP ${res.status}`)
   } catch (err) { log(id, 'cdr persist failed:', err?.message) }
+}
+
+/**
+ * Put a finished recording in Supabase and return a URL the owner can open.
+ * Signed for a long window rather than made public: a phone call is private business
+ * content, so the link should be shareable with him without making the bucket readable.
+ */
+async function uploadRecording(name, buf) {
+  const url = process.env.SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) { log('recording upload skipped: Supabase env missing'); return null }
+  const path = `calls/recordings/${name}.wav`
+  try {
+    const put = await fetch(`${url.replace(/\/$/, '')}/storage/v1/object/agent-files/${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, apikey: key, 'Content-Type': 'audio/wav', 'x-upsert': 'true' },
+      body: buf,
+      signal: AbortSignal.timeout(60_000),
+    })
+    if (!put.ok) { log(`recording upload HTTP ${put.status}`); return null }
+    const signed = await fetch(`${url.replace(/\/$/, '')}/storage/v1/object/sign/agent-files/${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, apikey: key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expiresIn: Number(process.env.SIP_RECORDING_LINK_DAYS || 30) * 86400 }),
+      signal: AbortSignal.timeout(20_000),
+    })
+    const data = await signed.json().catch(() => ({}))
+    if (!data?.signedURL) { log('recording sign failed'); return null }
+    return `${url.replace(/\/$/, '')}/storage/v1${data.signedURL}`
+  } catch (err) { log('recording upload failed:', err?.message); return null }
 }
 
 /**
@@ -189,6 +224,20 @@ const SILENCE_FRAME = Buffer.alloc(320)
 // it isolates OUR pipeline, so a reported glitch can be shown to be present (our fault) or
 // absent (introduced downstream on the PSTN leg) instead of argued about.
 const DEBUG_RECORD = process.env.SIP_DEBUG_RECORD === '1'
+
+// Call recording (owner requirement 2026-07-25). On by default so nothing is silently
+// missed; SIP_RECORD_CALLS=0 turns it off. Bounded so a stuck call cannot fill the disk.
+const RECORD_CALLS = process.env.SIP_RECORD_CALLS !== '0'
+const RECORD_MAX_SECS = Number(process.env.SIP_RECORD_MAX_SECS || 1800)
+const RECORD_DIR = process.env.SIP_RECORD_DIR || '/var/spool/asterisk/recording'
+
+// Voicemail safety net. If the AI cannot take an inbound call — Gemini session refused, the
+// bot process down, the kill switch off — the caller would otherwise get an answered line and
+// dead air. Instead we play a Bangla prompt, record what they say and tell the owner.
+const VOICEMAIL_ENABLED = process.env.SIP_VOICEMAIL_ENABLED !== '0'
+const VOICEMAIL_PROMPT = process.env.SIP_VOICEMAIL_PROMPT || '/var/lib/asterisk/sounds/alma-voicemail'
+const VOICEMAIL_AFTER_SECS = Number(process.env.SIP_VOICEMAIL_AFTER_SECS || 8)
+const VOICEMAIL_MAX_SECS = Number(process.env.SIP_VOICEMAIL_MAX_SECS || 120)
 
 // Length of the barge-in fade, in 20 ms frames. Two frames (40 ms) is long enough to be
 // click-free and short enough that the caller still experiences an immediate interruption.
@@ -255,9 +304,15 @@ class Call {
     this.answered = false
     this.closed = false
     this.transferring = false
+    this.ringGroup = null               // remaining transfer targets to try, in order
+    this.ringIndex = 0
     this.playOnly = false               // one-way message call: play a file, then hang up
     this.playUrl = ''
     this.playFile = ''
+    this.voicemail = false              // AI unavailable -> taking a message instead
+    this.vmTimer = null
+    this.vmName = null
+    this.vmPromptTimer = null
     this.collectDigits = false          // wait for a keypress after the message (confirmation)
     this.digit = null                   // what the receiver actually pressed
     this.digitTimer = null
@@ -280,7 +335,16 @@ class Call {
       log(this.channelId, 'bot ws open -> start sent')
     })
     ws.on('message', (raw) => this.onBot(raw))
-    ws.on('close', () => { this.botReady = false; if (!this.closed && !this.transferring) this.hangup('bot ws closed') })
+    ws.on('close', () => {
+      this.botReady = false
+      if (this.closed || this.transferring || this.voicemail) return
+      // An INBOUND caller must never be hung up on because our AI is unavailable — that is
+      // precisely when a message should be taken instead. (Live self-test 2026-07-25: with the
+      // bot stopped, the ws closed immediately and the call was dropped before the voicemail
+      // watchdog could even fire.) Outbound calls we placed simply end.
+      if (VOICEMAIL_ENABLED && this.inbound) { void this.startVoicemail(); return }
+      this.hangup('bot ws closed')
+    })
     ws.on('error', (e) => log(this.channelId, 'bot ws err', e?.message))
   }
 
@@ -427,6 +491,137 @@ class Call {
     try { this.asSocket.write(Buffer.concat([hdr, payload])) } catch { /* */ }
   }
 
+  /**
+   * Stop the recording, hand the audio to Supabase and put the URL on the call record.
+   * Runs before the CDR is persisted so the owner's report carries the link.
+   */
+  async finishRecording() {
+    const name = this.recordingName
+    this.recordingName = null
+    // Asterisk finalises the file when the recording stops; the bridge usually dies first,
+    // which stops it anyway, so a 404 here is normal rather than an error.
+    await ari('POST', `/recordings/live/${encodeURIComponent(name)}/stop`).catch(() => {})
+    const file = `${RECORD_DIR}/${name}.wav`
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const buf = await readFile(file)
+        // A near-empty WAV is a call where nothing was ever said — not worth storing.
+        if (buf.length > 8000) {
+          const url = await uploadRecording(name, buf)
+          if (url) {
+            const secs = Math.max(0, Math.round((buf.length - 44) / (8000 * 2)))
+            putCdr(this.channelId, { recordingUrl: url, recordingSecs: secs })
+            log(this.channelId, `recording stored (${secs}s)`)
+          }
+        }
+        await unlink(file).catch(() => {})
+        putCdr(this.channelId, { _pendingRecording: false })
+        await persistCdr(this.channelId)
+        return
+      } catch {
+        await new Promise((r) => setTimeout(r, 400)) // still being flushed
+      }
+    }
+    log(this.channelId, 'recording file never appeared:', file)
+    putCdr(this.channelId, { _pendingRecording: false })
+    await persistCdr(this.channelId)
+  }
+
+  /**
+   * A caller must never sit on an answered line hearing nothing. If no audio has come back
+   * from the bot within VOICEMAIL_AFTER_SECS, treat the AI as unavailable and take a message
+   * instead — dead air loses a customer, a recorded message does not.
+   */
+  armVoicemailFallback() {
+    if (!VOICEMAIL_ENABLED) return
+    this.vmTimer = setTimeout(() => {
+      if (this.closed || this.voicemail) return
+      if ((this.framesOut || 0) > 25) return // the bot is talking; nothing is wrong
+      log(this.channelId, `no bot audio in ${VOICEMAIL_AFTER_SECS}s — falling back to voicemail`)
+      void this.startVoicemail()
+    }, VOICEMAIL_AFTER_SECS * 1000)
+  }
+
+  /** Take the AI off the line and play the prompt; recording starts on PlaybackFinished. */
+  async startVoicemail() {
+    if (this.voicemail || this.closed) return
+    this.voicemail = true
+    try { this.bot?.close() } catch { /* */ }
+    this.botReady = false
+    this.playQueue.length = 0
+    if (this.playTimer) { clearInterval(this.playTimer); this.playTimer = null }
+    try {
+      // Drop the media leg first, or our silence fill would play over the prompt.
+      if (this.extChannelId) await ari('DELETE', `/channels/${this.extChannelId}`).catch(() => {})
+      this.extChannelId = null
+      // Everything stays BRIDGE-scoped from here. Taking the caller out of the bridge was
+      // tried first and does not work: both destroying the bridge and removeChannel eject the
+      // channel out of Stasis into the dialplan's Hangup, after which play returns "Channel
+      // not found" (live self-test 2026-07-25). Playing and recording on the bridge is the
+      // same path the call recording already proved.
+      await ari('POST', `/bridges/${this.bridgeId}/play`, { media: `sound:${VOICEMAIL_PROMPT}` })
+      log(this.channelId, 'voicemail prompt playing')
+      // Backstop: a missing event must never leave the caller sitting in silence. If the
+      // recording has not started by the time the prompt could possibly have ended, start it.
+      this.vmPromptTimer = setTimeout(() => {
+        if (!this.closed && !this.vmName) {
+          log(this.channelId, 'PlaybackFinished never arrived — starting recording anyway')
+          void this.recordVoicemail()
+        }
+      }, Number(process.env.SIP_VOICEMAIL_PROMPT_SECS || 20) * 1000)
+    } catch (err) {
+      log(this.channelId, 'voicemail prompt failed:', err?.message)
+      void this.hangup('voicemail prompt failed')
+    }
+  }
+
+  /** Record the caller's message; RecordingFinished delivers it. */
+  async recordVoicemail() {
+    this.vmName = `vm-${this.channelId}`
+    try {
+      await ari('POST', `/bridges/${this.bridgeId}/record`, {
+        name: this.vmName, format: 'wav', maxDurationSeconds: String(VOICEMAIL_MAX_SECS),
+        maxSilenceSeconds: '5', ifExists: 'overwrite', beep: 'false',
+      })
+      log(this.channelId, 'voicemail recording')
+    } catch (err) {
+      log(this.channelId, 'voicemail record failed:', err?.message)
+      void this.hangup('voicemail record failed')
+    }
+  }
+
+  /** Upload the message and tell the owner who called. */
+  async deliverVoicemail() {
+    const name = this.vmName
+    this.vmName = null
+    if (!name) return
+    const file = `${RECORD_DIR}/${name}.wav`
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const buf = await readFile(file)
+        const secs = Math.max(0, Math.round((buf.length - 44) / (8000 * 2)))
+        // Under ~2 s is someone hanging up on the beep, not a message worth forwarding.
+        if (buf.length > 32000) {
+          const url = await uploadRecording(name, buf)
+          if (url && APP_URL && INTERNAL_TOKEN) {
+            await fetch(`${APP_URL}/api/assistant/voice-call/sip-voicemail`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INTERNAL_TOKEN}` },
+              body: JSON.stringify({ caller: this.params?.caller || '', did: this.params?.did || '', url, secs }),
+              signal: AbortSignal.timeout(15_000),
+            }).catch((err) => log(this.channelId, 'voicemail notify failed:', err?.message))
+            log(this.channelId, `voicemail delivered (${secs}s)`)
+          }
+        } else {
+          log(this.channelId, 'voicemail too short — discarded')
+        }
+        await unlink(file).catch(() => {})
+        return
+      } catch { await new Promise((r) => setTimeout(r, 400)) }
+    }
+    log(this.channelId, 'voicemail file never appeared:', file)
+  }
+
   // ── keypress confirmation (one-way calls) ──────────────────────────────────
   /**
    * The message has finished playing and we asked the receiver to press a key. Stay on the
@@ -485,13 +680,19 @@ class Call {
     if (this.playTimer) { clearInterval(this.playTimer); this.playTimer = null }
     try { this.txFd?.end(); this.rxFd?.end() } catch { /* */ }
     if (this.digitTimer) { clearTimeout(this.digitTimer); this.digitTimer = null }
-    try { this.bot?.close() } catch { /* */ }
+    if (this.vmTimer) { clearTimeout(this.vmTimer); this.vmTimer = null }
+    if (this.vmPromptTimer) { clearTimeout(this.vmPromptTimer); this.vmPromptTimer = null }
     try { this.asSocket?.end() } catch { /* */ }
     // End the PSTN leg + tidy the bridge/externalMedia via ARI.
     try { if (this.extChannelId) await ari('DELETE', `/channels/${this.extChannelId}`).catch(() => {}) } catch { /* */ }
     try { await ari('DELETE', `/channels/${this.channelId}`).catch(() => {}) } catch { /* */ }
     try { if (this.bridgeId) await ari('DELETE', `/bridges/${this.bridgeId}`).catch(() => {}) } catch { /* */ }
     if (this.playFile) await unlink(this.playFile).catch(() => {})
+    if (this.vmName) await this.deliverVoicemail()
+    if (this.recordingName) await this.finishRecording()
+    // Closed LAST: closing it is what makes the bot send its post-call report, and by now the
+    // recording is already on the record, so that report can carry the link.
+    try { this.bot?.close() } catch { /* */ }
     calls.delete(this.channelId)
     byUuid.delete(this.audioUuid)
   }
@@ -525,14 +726,20 @@ const audioServer = net.createServer((socket) => {
       } else if (type === AS_TYPE_AUDIO) {
         if (call) call.onAsteriskAudio(Buffer.from(payload)) // slin8k
       } else if (type === AS_TYPE_TERMINATE) {
-        if (call) void call.hangup('audiosocket terminate')
+        if (call && !call.voicemail && !call.transferring) void call.hangup('audiosocket terminate')
         socket.end()
       } else if (type === AS_TYPE_ERROR) {
         log(call?.channelId || '?', 'AudioSocket error frame')
       }
     }
   })
-  socket.on('close', () => { if (call && !call.closed) void call.hangup('audiosocket closed') })
+  socket.on('close', () => {
+    // Voicemail AND transfer both deliberately delete the externalMedia channel, which closes
+    // this socket. Hanging up here would end the call at the worst moment — mid-prompt, or the
+    // instant a human is being dialled. Both cases killed a live path before this guard
+    // existed (2026-07-25); the caller's own hangup still arrives via ARI.
+    if (call && !call.closed && !call.voicemail && !call.transferring) void call.hangup('audiosocket closed')
+  })
   socket.on('error', (e) => log('audiosocket err', e?.message))
 })
 
@@ -578,6 +785,25 @@ async function bridgeAndStartBot(call) {
   // Asterisk played toward the caller (our side) or only reaches the caller's ear (the PSTN
   // leg). Off by default; recordings stay on the VPS.
   if (DEBUG_RECORD) call.openCapture()
+  // Record the BRIDGE, not our media leg: the bridge keeps recording after a transfer, when
+  // the AI has stepped off the audio path — the one stretch of a call nobody could account
+  // for before. Asterisk writes to /var/spool/asterisk/recording (created 2026-07-25; its
+  // absence was why ARI recording returned 500).
+  if (RECORD_CALLS) {
+    call.recordingName = `alma-${call.channelId}`
+    // The channel dies before the upload finishes, so without this the record would be
+    // persisted first and the recording link would never reach the owner's report.
+    putCdr(call.channelId, { _pendingRecording: true })
+    ari('POST', `/bridges/${call.bridgeId}/record`, {
+      name: call.recordingName, format: 'wav', ifExists: 'overwrite', beep: 'false',
+      maxDurationSeconds: String(RECORD_MAX_SECS),
+    }).then(() => log(call.channelId, 'recording started'))
+      .catch((err) => {
+        call.recordingName = null
+        putCdr(call.channelId, { _pendingRecording: false })
+        log(call.channelId, 'recording failed:', err?.message)
+      })
+  }
   log(call.channelId, 'bridged externalMedia', call.extChannelId)
 }
 
@@ -623,7 +849,24 @@ async function onInboundCall(e) {
   const caller = normalizeCaller(e.channel?.caller?.number || args[1] || '')
   const did = String(args[2] || e.channel?.dialplan?.exten || '').trim()
   log(chanId, `INBOUND from=${caller || 'unknown'} did=${did || '-'}`)
+  // Local blocklist, checked BEFORE we ask the app anything. Blocking a nuisance caller must
+  // not depend on Vercel being reachable — and refusing before answering means the call costs
+  // nothing at all. The app keeps its own list (KV `blocked_callers`) for the owner to edit.
+  if (isBlockedLocally(caller)) {
+    log(chanId, 'INBOUND refused (local blocklist) — not answering')
+    await ari('DELETE', `/channels/${chanId}`).catch(() => {})
+    putCdr(chanId, { direction: 'inbound', from: caller, did, startedAt: Date.now(), answered: false, status: 'blocked', endedAt: Date.now() })
+    void persistCdr(chanId)
+    return
+  }
   let params = await fetchInboundParams(caller, did)
+  if (params?.reject) {
+    log(chanId, `INBOUND refused (${params.reason}) — not answering`)
+    await ari('DELETE', `/channels/${chanId}`).catch(() => {})
+    putCdr(chanId, { direction: 'inbound', from: caller, did, startedAt: Date.now(), answered: false, status: 'blocked', endedAt: Date.now() })
+    void persistCdr(chanId)
+    return
+  }
   if (!params) {
     // Fail-safe persona: answer with a locally-signed token so the bot accepts the media
     // session. No DB row -> the post-call report has no target, which is a far smaller loss
@@ -658,6 +901,7 @@ async function onInboundCall(e) {
     putCdr(chanId, { direction: 'inbound', from: caller, did, startedAt: Date.now(), answered: true, answeredAt: call.answeredAt, status: 'answered' })
     await bridgeAndStartBot(call)
     log(chanId, `inbound answered as callType=${params.callType}`)
+    call.armVoicemailFallback()
   } catch (err) {
     log(chanId, 'inbound wiring failed:', err?.message)
     void call.hangup('inbound wiring failed')
@@ -676,6 +920,15 @@ function isOwnerCaller(number) {
   return (process.env.OWNER_PHONE_NUMBERS || '')
     .split(',').map(tail).filter(Boolean)
     .some((n) => n === target)
+}
+
+/** Is this caller on the gateway's own blocklist (SIP_BLOCKLIST, last 9 digits)? */
+function isBlockedLocally(number) {
+  const tail = (n) => String(n || '').replace(/\D/g, '').slice(-9)
+  const target = tail(number)
+  if (!target) return false
+  return (process.env.SIP_BLOCKLIST || '')
+    .split(',').map(tail).filter(Boolean).includes(target)
 }
 
 /** BD numbers arrive as +8801… or 8801… or 01… — normalise to +E.164 for owner matching. */
@@ -702,6 +955,8 @@ async function fetchInboundParams(caller, did) {
       signal: AbortSignal.timeout(8_000),
     })
     const data = await res.json().catch(() => null)
+    // A blocked caller: refuse without answering, so a nuisance number costs us nothing.
+    if (data?.reject) return { reject: true, reason: String(data.reason || 'blocked') }
     if (!res.ok || !data?.ok || !data.params?.id) { log('sip-inbound route said', res.status, JSON.stringify(data).slice(0, 120)); return null }
     return data.params
   } catch (err) { log('sip-inbound fetch failed:', err?.message); return null }
@@ -730,6 +985,9 @@ async function onAriEvent(e) {
       if (call._bridgeInto) {
         call.answered = true
         call.answeredAt = Date.now()
+        // Somebody picked up: stop walking the ring group.
+        const parent = call._transferParent && calls.get(call._transferParent)
+        if (parent) parent.ringGroup = null
         try { await ari('POST', `/bridges/${call._bridgeInto}/addChannel`, { channel: call.channelId }) }
         catch (err) { log(call.channelId, 'forward bridge failed', err?.message) }
         return
@@ -756,6 +1014,14 @@ async function onAriEvent(e) {
       // A forward leg dying tells us how the human-to-human half went; fold it into the
       // ORIGINAL call's record, which is the row the owner actually reads.
       const fwdParent = call?._transferParent
+      if (fwdParent) {
+        const parent = calls.get(fwdParent)
+        // Nobody picked up this member of the ring group — move on to the next one.
+        if (parent && !call.answered && !parent.closed && parent.ringGroup) {
+          calls.delete(chanId)
+          void dialNextInGroup(parent)
+        }
+      }
       if (fwdParent && cdr.has(fwdParent)) {
         const answered = Boolean(call.answered)
         putCdr(fwdParent, {
@@ -777,17 +1043,43 @@ async function onAriEvent(e) {
       break
     }
     case 'PlaybackFinished': {
-      const target = String(e.playback?.target_uri || '').replace(/^channel:/, '')
-      const call = target && calls.get(target)
-      if (!call || call.closed || !call.playOnly) break
+      // target_uri is channel:<id> for one-way message calls and bridge:<id> for the
+      // voicemail prompt, so resolve both shapes.
+      const target = String(e.playback?.target_uri || '')
+      const id = target.replace(/^(channel|bridge):/, '')
+      const call = calls.get(id) || [...calls.values()].find((c) => c.bridgeId === id)
+      if (!call || call.closed) break
+      // The voicemail prompt just finished — now capture what the caller says.
+      if (call.voicemail) { await call.recordVoicemail(); break }
+      if (!call.playOnly) break
       // Confirmation calls stay on the line waiting for a keypress; plain message calls end.
       if (call.collectDigits) call.awaitDigit()
       else void call.hangup('playback finished')
       break
     }
+    case 'RecordingFinished': {
+      const name = String(e.recording?.name || '')
+      const vmCall = [...calls.values()].find((c) => c.vmName === name)
+      if (vmCall) { await vmCall.deliverVoicemail(); void vmCall.hangup('voicemail complete') }
+      break
+    }
     case 'ChannelDtmfReceived': {
       const call = chanId && calls.get(chanId)
-      if (call && call.collectDigits && !call.digit) void call.onDigit(String(e.digit ?? ''))
+      if (!call) break
+      const digit = String(e.digit ?? '')
+      if (call.collectDigits && !call.digit) { void call.onDigit(digit); break }
+      // Press 0 for a human. Speech recognition on a noisy Bangla phone line is not perfect,
+      // and a caller who cannot make the AI understand them needs an escape that does not
+      // depend on being understood at all.
+      if (digit === '0' && call.inbound && !call.transferring && !call.voicemail) {
+        const dest = call.params?.forwardSupport || call.params?.forwardBoss || ''
+        if (dest) {
+          log(call.channelId, 'caller pressed 0 — transferring to a human')
+          void transferCall(call, localDial(dest))
+        } else {
+          log(call.channelId, 'caller pressed 0 but no forward number is configured')
+        }
+      }
       break
     }
     case 'StasisEnd':
@@ -798,6 +1090,82 @@ async function onAriEvent(e) {
     }
     default: break
   }
+}
+
+// ── browser softphone provisioning ───────────────────────────────────────────
+/**
+ * Each staff member gets a SIP extension the ERP can register from their browser.
+ *
+ * The password is generated and kept HERE, on the VPS, in a 0600 file — not in the
+ * application database. The ERP asks for it over an authenticated call and hands it to one
+ * logged-in browser session; that is the minimum exposure a WebRTC softphone can have, since
+ * the browser must authenticate to Asterisk itself.
+ */
+const WEBRTC_STORE = process.env.SIP_WEBRTC_STORE || '/opt/alma-erp/worker/.sip-webrtc.json'
+const WEBRTC_CONF = process.env.SIP_WEBRTC_CONF || '/etc/asterisk/pjsip-webrtc-staff.conf'
+const WEBRTC_EXT_BASE = Number(process.env.SIP_WEBRTC_EXT_BASE || 1001)
+const WEBRTC_REALM = process.env.SIP_WEBRTC_REALM || 'sip.31-97-237-40.sslip.io'
+
+async function readWebrtcStore() {
+  try { return JSON.parse(await readFile(WEBRTC_STORE, 'utf8')) } catch { return {} }
+}
+async function writeWebrtcStore(store) {
+  await writeFile(WEBRTC_STORE, JSON.stringify(store, null, 2), { mode: 0o600 })
+}
+
+/** Rewrite the pjsip include file from the store and reload, so config always matches state. */
+async function renderWebrtcConfig(store) {
+  const blocks = Object.values(store).map((s) => `
+[${s.ext}]
+type=endpoint
+transport=transport-ws
+context=from-staff
+disallow=all
+allow=ulaw,alaw
+auth=${s.ext}-auth
+aors=${s.ext}
+webrtc=yes
+dtls_auto_generate_cert=yes
+direct_media=no
+callerid=${(s.name || 'ALMA Staff').replace(/[<>\n]/g, '')} <${s.ext}>
+
+[${s.ext}-auth]
+type=auth
+auth_type=userpass
+username=${s.ext}
+password=${s.password}
+
+;; The AOR is named EXACTLY as the extension on purpose: pjsip's registrar matches the
+;; To-header user against the AOR NAME, so an "<ext>-aor" naming scheme registers with a
+;; 404 Not Found even though the AOR plainly exists (found live 2026-07-25).
+[${s.ext}]
+type=aor
+max_contacts=2
+remove_existing=yes
+qualify_frequency=30
+`).join('')
+  await writeFile(WEBRTC_CONF, `;; GENERATED by sip-gateway-service — do not edit by hand.\n${blocks}`, { mode: 0o640 })
+  try { await execFileAsync('chown', ['asterisk:asterisk', WEBRTC_CONF]) } catch { /* best effort */ }
+  await asteriskCli('module reload res_pjsip')
+}
+
+/** Get (or create) the extension + password for one staff member. */
+async function provisionStaffExtension(staffId, name) {
+  const store = await readWebrtcStore()
+  if (!store[staffId]) {
+    const used = new Set(Object.values(store).map((s) => Number(s.ext)))
+    let ext = WEBRTC_EXT_BASE
+    while (used.has(ext)) ext++
+    store[staffId] = { ext: String(ext), password: randomUUID().replace(/-/g, ''), name: name || '' }
+    await writeWebrtcStore(store)
+    await renderWebrtcConfig(store)
+    log(`provisioned softphone extension ${ext} for staff ${staffId}`)
+  } else if (name && store[staffId].name !== name) {
+    store[staffId].name = name
+    await writeWebrtcStore(store)
+    await renderWebrtcConfig(store)
+  }
+  return store[staffId]
 }
 
 // ── control API (HTTP) — NGS-shaped ──────────────────────────────────────────
@@ -841,6 +1209,59 @@ function localDial(n) {
 const ctrlServer = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost')
   const m = url.pathname.match(/^\/api\/v1\/call(?:\/([^/]+))?$/)
+  if (url.pathname === '/api/v1/webrtc/provision' && req.method === 'POST') {
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const body = await readBody(req)
+    let parsed = {}
+    try { parsed = JSON.parse(body || '{}') } catch { /* */ }
+    const staffId = String(parsed.staffId || '').trim()
+    if (!staffId) return json(res, 400, { error: 'missing staffId' })
+    try {
+      const cred = await provisionStaffExtension(staffId, String(parsed.name || ''))
+      return json(res, 200, { ok: true, extension: cred.ext, password: cred.password, realm: WEBRTC_REALM })
+    } catch (err) { return json(res, 500, { error: err?.message || String(err) }) }
+  }
+  if (url.pathname === '/api/v1/webrtc/list' && req.method === 'GET') {
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const store = await readWebrtcStore()
+    // Extensions and names only — passwords never leave this process.
+    return json(res, 200, {
+      ok: true,
+      staff: Object.entries(store).map(([staffId, s]) => ({ staffId, ext: s.ext, name: s.name || '' })),
+    })
+  }
+  if (url.pathname === '/api/v1/click2call' && req.method === 'POST') {
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const body = await readBody(req)
+    let parsed = {}
+    try { parsed = JSON.parse(body || '{}') } catch { /* */ }
+    const ext = String(parsed.ext || '').trim()
+    const to = localDial(parsed.to)
+    if (!ext || !to) return json(res, 400, { error: 'need ext and to' })
+    if (!DEST_ALLOW.test(to)) return json(res, 403, { error: 'destination not allowed' })
+    try {
+      // If their browser is not registered there is nothing to ring, and ARI would answer
+      // with an opaque "Allocation failed". Say so plainly instead.
+      const aor = await ari('GET', `/endpoints/PJSIP/${ext}`).catch(() => null)
+      if (!aor || String(aor.state || '').toLowerCase() === 'offline') {
+        return json(res, 409, { error: 'staff phone is not connected — open the phone page first' })
+      }
+      // Ring the staff member's own browser FIRST, then let the from-staff dialplan dial the
+      // customer when they pick up. Doing it this way round means the customer's phone only
+      // rings once a human is actually on the line — the opposite order makes the customer
+      // answer to silence while we chase the staff member.
+      const chan = await ari('POST', '/channels', {
+        endpoint: `PJSIP/${ext}`,
+        context: 'from-staff',
+        extension: to,
+        priority: '1',
+        timeout: String(RING_TIMEOUT),
+        callerId: `ALMA <${ext}>`,
+      })
+      log(`click2call: ringing ${ext} then dialling ${to}`)
+      return json(res, 200, { ok: true, channelId: chan.id })
+    } catch (err) { return json(res, 502, { error: err?.message || String(err) }) }
+  }
   if (url.pathname === '/health') {
     return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size, registration: { registered: regState.registered, status: regState.lastStatus, failures: regState.consecutiveFailures } })
   }
@@ -980,12 +1401,34 @@ const ctrlServer = http.createServer(async (req, res) => {
 
 // Phase 2 transfer: dial the forward number and bridge it in; drop the AI media leg
 // so the two humans hear each other cleanly (mirrors the NGS <Dial> behaviour).
+/**
+ * Transfer the caller to a human. `forwardTo` may be a COMMA-SEPARATED ring group: the
+ * numbers are tried in order, because one person not picking up should not cost the business
+ * a customer. If nobody answers, the caller goes back to the AI rather than being abandoned
+ * on a dead line (see returnToAi).
+ */
 async function transferCall(call, forwardTo) {
   if (call.transferring) return { ok: true, status: 'already' }
+  const group = String(forwardTo).split(',').map((n) => localDial(n.trim())).filter(Boolean)
+  if (!group.length) return { ok: false, error: 'no forward destination' }
+  call.ringGroup = group
+  call.ringIndex = 0
+  return dialNextInGroup(call)
+}
+
+/** Dial the next member of the ring group; falls back to the AI when the list is exhausted. */
+async function dialNextInGroup(call) {
+  const dest = call.ringGroup?.[call.ringIndex]
+  if (!dest) {
+    log(call.channelId, 'ring group exhausted — returning the caller to the AI')
+    await returnToAi(call, 'কাউকেই লাইনে পাওয়া যায়নি')
+    return { ok: false, error: 'nobody answered' }
+  }
+  call.ringIndex++
   call.transferring = true
   const fwdId = 'sipfwd-' + randomUUID()
   await ari('POST', '/channels', {
-    endpoint: `PJSIP/${forwardTo}@${TRUNK_ENDPOINT}`,
+    endpoint: `PJSIP/${dest}@${TRUNK_ENDPOINT}`,
     app: ARI_APP,
     channelId: fwdId,
     // Shorter than a normal call: the caller is on hold listening to ringback, so a long
@@ -998,13 +1441,39 @@ async function transferCall(call, forwardTo) {
   fwd._bridgeInto = call.bridgeId
   fwd._transferParent = call.channelId   // so the forward leg's outcome lands on the real call
   calls.set(fwdId, fwd)
-  putCdr(call.channelId, { transferredTo: forwardTo, transferredAt: Date.now() })
+  putCdr(call.channelId, { transferredTo: dest, transferredAt: Date.now() })
   // when the forward answers, its StasisStart handler bridges it in; drop AI media.
   try { if (call.extChannelId) await ari('DELETE', `/channels/${call.extChannelId}`).catch(() => {}) } catch { /* */ }
   try { call.bot?.close() } catch { /* */ }
   call.botReady = false
-  log(call.channelId, `transfer -> ${forwardTo} (fwd ${fwdId})`)
+  log(call.channelId, `transfer -> ${dest} (fwd ${fwdId}, ${call.ringIndex}/${call.ringGroup.length})`)
   return { ok: true, status: 'connecting' }
+}
+
+/**
+ * Put the AI back on a call whose transfer failed. Without this the caller is left holding a
+ * line with nobody on it: the media leg was torn down for the transfer and the bot's socket
+ * was closed. Rebuilding both is cheap and is the difference between "sorry, let me take your
+ * details" and a customer hanging up on silence.
+ */
+async function returnToAi(call, reason) {
+  if (call.closed) return
+  call.transferring = false
+  call.ringGroup = null
+  try {
+    call.params = {
+      ...call.params,
+      purpose: `${reason} — কলদাতা আবার তোমার লাইনে ফিরে এসেছে। বিনয়ের সাথে বলো এই মুহূর্তে কাউকে যুক্ত করা গেল না, তারপর তার নাম, নম্বর ও প্রয়োজনটা নিশ্চিত করে নাও যাতে টিম পরে কল করতে পারে — অথবা নিজে যতটা পারো সাহায্য করো।`,
+    }
+    // A fresh audio path and a fresh bot session; the old ones are gone.
+    call.audioUuid = randomUUID()
+    byUuid.set(call.audioUuid, call)
+    await bridgeAndStartBot(call)
+    log(call.channelId, 'AI re-attached after a failed transfer')
+  } catch (err) {
+    log(call.channelId, 'could not re-attach the AI:', err?.message)
+    void call.hangup('return-to-ai failed')
+  }
 }
 
 // ── per-call token (owner rule: only our backend opens the media path) ────────
@@ -1101,10 +1570,36 @@ async function checkRegistration() {
 
 // ── boot ─────────────────────────────────────────────────────────────────────
 audioServer.listen(AS_PORT, AS_BIND, () => log(`AudioSocket TCP listening ${AS_BIND}:${AS_PORT} (advertise ${AS_ADVERTISE})`))
+/**
+ * WebSocket passthrough for the browser softphone: wss://<host>/ws -> Asterisk's SIP-over-WS.
+ *
+ * Why route it through this process instead of exposing Asterisk directly: Asterisk's HTTP
+ * server serves /ari on the SAME port as /ws, so publishing that port would hand the internet
+ * full call control. Here only the /ws path is proxied and nothing else can be reached, while
+ * Asterisk keeps listening on loopback only. TLS is terminated by Traefik in front.
+ */
+function attachWsProxy(server) {
+  server.on('upgrade', (req, socket, head) => {
+    if (!String(req.url || '').startsWith('/ws')) { socket.destroy(); return }
+    const upstream = net.connect(ASTERISK_HTTP_PORT, ASTERISK_HTTP_HOST, () => {
+      // Replay the handshake verbatim, then let the two sockets talk directly.
+      const lines = [`${req.method} ${req.url} HTTP/1.1`]
+      for (let i = 0; i < req.rawHeaders.length; i += 2) lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`)
+      upstream.write(lines.join('\r\n') + '\r\n\r\n')
+      if (head?.length) upstream.write(head)
+      socket.pipe(upstream)
+      upstream.pipe(socket)
+    })
+    upstream.on('error', (err) => { log('ws proxy upstream error:', err?.message); socket.destroy() })
+    socket.on('error', () => upstream.destroy())
+  })
+}
+
 for (const addr of CTRL_BIND) {
   // One server per address. A missing Docker bridge must not stop the loopback listener,
   // so a failed bind is logged and skipped rather than crashing the gateway.
   const srv = addr === CTRL_BIND[0] ? ctrlServer : http.createServer(ctrlServer.listeners('request')[0])
+  attachWsProxy(srv)
   srv.on('error', (err) => log(`control API bind ${addr}:${CTRL_PORT} failed: ${err.message}`))
   srv.listen(CTRL_PORT, addr, () => log(`control API listening ${addr}:${CTRL_PORT}`))
 }
