@@ -690,12 +690,17 @@ export async function POST(req: NextRequest) {
     let newConversationId: string | null = null
     let compactedFromCost: number | null = null
     let continuationNeeded = false
+    /** The spoken first line, so a verify retry cannot erase it (see below). */
+    let preambleText = ''
     try {
       for await (const event of runTurn()) {
         if (event.type === 'text_delta') finalText += event.delta
+        else if (event.type === 'preamble') preambleText = event.text
         else if (event.type === 'verification_retry') {
-          // Drop the unverified draft so the final telegram reply is the truthful retry only.
-          finalText = ''
+          // Drop the unverified draft so the final telegram reply is the truthful
+          // retry only — but KEEP the spoken first line: Boss already read it and
+          // the rewrite is not replacing it (owner rule 2026-07-25).
+          finalText = preambleText ? `${preambleText}\n\n` : ''
           console.warn(
             `[assistant/chat] verification retry ${event.attempt}/${event.maxAttempts}`,
             { conversationId, categories: event.categories },
