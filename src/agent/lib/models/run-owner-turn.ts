@@ -749,7 +749,29 @@ async function* runAlternateProviderTurn(
   // Skill Engine V2 (gated OFF by default) — pick ≤3 on-demand skill procedures for
   // this turn from the message text; '' when disabled or nothing matches (fail-open).
   const activeSkillsBlock = suppressWork ? '' : await buildActiveSkillsBlock(lastUserText)
-  const ownerIntentTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
+  let ownerIntentTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
+  // A CONTRACT MUST NEVER DEMAND A TOOL THE HEAD DOES NOT HAVE (live prod run
+  // 2026-07-25). The state router is only shadow-logging in production, so the
+  // legacy selector picked the tools — and for "Do a Deep SEO Audit -
+  // almatraders.com" it loads no SEO audit tools at all. The contract then
+  // demanded run_website_seo_audit, the head could not call it, and Boss got a
+  // progress line instead of an audit. Whatever the selector decides, a derived
+  // requirement brings its own tools.
+  if (!listenMode && (ownerRequirements.clientSeo || driveClientSeoBatch)) {
+    const present = new Set(ownerIntentTools.map((t) => t.name))
+    const needed = ['run_website_seo_audit', 'check_website_seo_audit', 'save_artifact'].filter((n) => !present.has(n))
+    if (needed.length) {
+      try {
+        const extra = await resolveToolsByName(needed)
+        ownerIntentTools = [
+          ...ownerIntentTools,
+          ...extra.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema })),
+        ]
+      } catch (err) {
+        console.warn('[run-owner-turn] requirement tool injection failed:', err instanceof Error ? err.message : err)
+      }
+    }
+  }
   const forceFullPrompt = await promptGatingForceFull()
 
   const promptArgs = {
