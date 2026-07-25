@@ -39,6 +39,7 @@ export type UsageIntelligenceSnapshot = {
   model: {
     id: string | null
     label: string
+    resolvedLabel: string | null
     provider: Provider | null
     contextWindow: number | null
     inPerM: number | null
@@ -416,9 +417,8 @@ export async function getUsageIntelligence(input: {
     resolvedModelId,
     model: {
       id: model?.id ?? null,
-      label: selectedModelId === AUTO_MODEL_ID
-        ? model ? `Auto → ${model.label}` : 'Auto · waiting for first turn'
-        : model?.label ?? selectedModelId,
+      label: selectedModelId === AUTO_MODEL_ID ? 'Auto · Dynamic routing' : model?.label ?? selectedModelId,
+      resolvedLabel: model?.label ?? null,
       provider: model?.provider ?? null,
       contextWindow: model?.contextWindow ?? null,
       inPerM: model?.inPerM ?? null,

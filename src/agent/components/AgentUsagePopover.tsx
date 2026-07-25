@@ -206,9 +206,9 @@ export default function AgentUsagePopover({
     if (!open) return
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') void refresh()
-    }, 15_000)
+    }, streaming ? 4_000 : 15_000)
     return () => window.clearInterval(interval)
-  }, [open, refresh])
+  }, [open, refresh, streaming])
 
   useEffect(() => {
     const justFinished = previousStreaming.current && !streaming
@@ -229,6 +229,9 @@ export default function AgentUsagePopover({
   const contextPercent = snapshot?.context.percentage ?? 0
   const activeColor = contextPercent > 85 ? '#F07F8D' : contextPercent > 65 ? '#F6B85A' : '#9B8AFB'
   const weeklyTop = snapshot?.weekly.models.slice(0, 4) ?? []
+  const walletStale = snapshot?.wallet.staleAfter
+    ? new Date(snapshot.wallet.staleAfter).getTime() <= Date.now()
+    : false
 
   return (
     <div ref={rootRef} className="relative shrink-0">
@@ -343,6 +346,15 @@ export default function AgentUsagePopover({
                           <div>
                             <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/38">Context window</p>
                             <p className="mt-1 truncate text-[13px] font-semibold text-white/88">{snapshot.model.label}</p>
+                            {snapshot.model.auto && (
+                              <p className={cn('mt-0.5 truncate text-[9px]', streaming ? 'text-[#7ED6FF]' : 'text-white/36')}>
+                                {streaming
+                                  ? 'Routing current turn…'
+                                  : snapshot.model.resolvedLabel
+                                    ? `Last turn: ${snapshot.model.resolvedLabel}`
+                                    : 'Waiting for first routed turn'}
+                              </p>
+                            )}
                           </div>
                           <div className="flex items-center gap-2 text-right">
                             <div>
@@ -351,7 +363,13 @@ export default function AgentUsagePopover({
                                 <span className="font-normal text-white/32"> / {compactNumber(snapshot.model.contextWindow)}</span>
                               </p>
                               <p className={cn('mt-0.5 text-[8px] font-semibold uppercase tracking-[0.1em]', snapshot.context.exact ? 'text-[#62D9A7]' : 'text-[#F6B85A]')}>
-                                {snapshot.context.exact ? 'Provider measured' : snapshot.context.source === 'awaiting_provider' ? 'Next turn will measure' : 'Historical estimate'}
+                                {snapshot.model.auto && streaming
+                                  ? 'Routing live'
+                                  : snapshot.context.exact
+                                    ? snapshot.model.auto ? 'Last model · provider measured' : 'Provider measured'
+                                    : snapshot.context.source === 'awaiting_provider'
+                                      ? 'Next turn will measure'
+                                      : snapshot.model.auto ? 'Last model · historical estimate' : 'Historical estimate'}
                               </p>
                             </div>
                             <motion.svg
@@ -465,17 +483,24 @@ export default function AgentUsagePopover({
                   />
                   <div className="relative flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/38">Selected model API balance</p>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/38">
+                        {snapshot.model.auto ? 'Last routed model API balance' : 'Selected model API balance'}
+                      </p>
                       <p className="mt-1 truncate text-[12px] font-semibold text-white/82">
                         {snapshot.wallet.providerLabel ?? snapshot.model.label}
+                      </p>
+                      <p className={cn('mt-0.5 text-[8px]', walletStale ? 'text-[#F6B85A]' : 'text-white/30')}>
+                        Provider snapshot · <RelativeSync value={snapshot.wallet.fetchedAt} />
                       </p>
                     </div>
                     <div className="text-right">
                       <p className="text-[17px] font-semibold tracking-[-0.02em] tabular-nums">
                         {usd(snapshot.wallet.balanceUsd)}
                       </p>
-                      <p className={cn('text-[8px] font-semibold uppercase tracking-[0.1em]', snapshot.wallet.authoritative ? 'text-[#62D9A7]' : 'text-white/30')}>
-                        {snapshot.wallet.authoritative ? 'Live wallet' : snapshot.wallet.status}
+                      <p className={cn('text-[8px] font-semibold uppercase tracking-[0.1em]', snapshot.wallet.authoritative && !walletStale ? 'text-[#62D9A7]' : walletStale ? 'text-[#F6B85A]' : 'text-white/30')}>
+                        {snapshot.wallet.authoritative
+                          ? walletStale ? 'Snapshot stale' : 'Provider verified'
+                          : snapshot.wallet.status}
                       </p>
                     </div>
                   </div>
