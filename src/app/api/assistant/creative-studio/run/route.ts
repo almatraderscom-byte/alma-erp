@@ -37,6 +37,22 @@ const ROLE_BN: Record<string, string> = {
 
 /** family accuracy chain needs saved role models — turn missing_models:son,... into a clear Bangla instruction */
 function mapRunError(msg: string): string {
+  if (msg.startsWith('resolution_unsupported:')) {
+    const [, engine, tier, ...aspectParts] = msg.split(':')
+    const aspect = aspectParts.join(':')
+    const ratio = aspect ? ` (${aspect})` : ''
+    return `${engine} ইঞ্জিনে ${tier?.toUpperCase() ?? 'এই'}${ratio} রেজোলিউশন সমর্থিত নয়। সমর্থিত অপশন বেছে নিন।`
+  }
+  if (msg.startsWith('aspect_ratio_unsupported:')) {
+    const [, engine] = msg.split(':')
+    return `${engine} ইঞ্জিনে এই aspect ratio সমর্থিত নয়। তালিকা থেকে সমর্থিত ratio বেছে নিন।`
+  }
+  if (msg.startsWith('resolution_not_applicable:')) {
+    return 'এই ইঞ্জিনে 1K/2K/4K প্রযোজ্য নয়—এটি নেটিভ বা সোর্স ছবির পিক্সেল রাখে।'
+  }
+  if (msg === 'resolution_required') {
+    return 'একটি সমর্থিত image resolution বেছে নিন।'
+  }
   if (msg.startsWith('missing_models:')) {
     const roles = msg.slice('missing_models:'.length).split(',').filter(Boolean)
     const bn = roles.map((r) => ROLE_BN[r] ?? r).join(', ')

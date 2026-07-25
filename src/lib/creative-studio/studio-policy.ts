@@ -28,11 +28,24 @@ export function hasExplicitQcPass(result: Record<string, unknown> | null | undef
   return passValue(result.qc) === true || passValue(result.videoQc) === true
 }
 
+export function hasResolutionIntegrityFailure(
+  result: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!result) return false
+  const value = result.resolutionIntegrity
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const integrity = value as Record<string, unknown>
+  if (integrity.valid === false || integrity.verified === false) return true
+  return ['mismatch', 'failed', 'invalid', 'unsupported'].includes(
+    String(integrity.status ?? integrity.validation ?? '').toLowerCase(),
+  )
+}
+
 export function classifyStudioAsset(asset: StudioAssetLike): StudioAssetState {
   const status = asset.status ?? ''
   if (PENDING.has(status)) return 'processing'
   if (FAILED.has(status)) return 'failed'
-  if (hasExplicitQcFailure(asset.result)) return 'qc_failed'
+  if (hasExplicitQcFailure(asset.result) || hasResolutionIntegrityFailure(asset.result)) return 'qc_failed'
   if (status === 'executed' && asset.hasArtifact !== false) return 'ready'
   return 'draft'
 }
@@ -44,6 +57,9 @@ export function studioActionBlockReason(
   if (!asset) return 'Creative-টি খুঁজে পাওয়া যায়নি।'
   if (hasExplicitQcFailure(asset.result)) {
     return 'এই Creative-টির QC ফেল করেছে। আগে Repair বা Retry করে QC পাস করান।'
+  }
+  if (hasResolutionIntegrityFailure(asset.result)) {
+    return 'ছবিটির আসল পিক্সেল নির্বাচিত রেজোলিউশনের সাথে মেলেনি। Verified original ছাড়া Finish, Reel বা Publish করা যাবে না।'
   }
   if (asset.status !== 'executed') return 'Creative-টি তৈরি শেষ না হওয়া পর্যন্ত এই কাজ করা যাবে না।'
   if (asset.hasArtifact === false) return 'Creative file প্রস্তুত নেই। আবার চালিয়ে দেখুন।'

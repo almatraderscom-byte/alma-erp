@@ -8,10 +8,12 @@
  * cleanly. Result URLs from xAI are temporary — we download to agent-files
  * storage immediately, or use b64_json when returned.
  */
+import { storagePathToNormalizedDataUri } from '../fal/client.mjs'
 import {
-  downloadFalOutputToStorage,
-  storagePathToNormalizedDataUri,
-} from '../fal/client.mjs'
+  downloadImageArtifactToStorage,
+  uploadImageArtifact,
+} from '../image-artifact.mjs'
+import { resolveXaiImageRequest } from '../image-resolution-contract.mjs'
 
 const XAI_BASE = 'https://api.x.ai/v1'
 
@@ -31,6 +33,9 @@ function isTransientStatus(httpStatus) {
 export function buildXaiRequest({ op, model, prompt, referenceDataUris = [], aspectRatio, resolution, n = 1 }) {
   if (!XAI_ALLOWED_MODELS.includes(model)) throw new Error(`xai model not allowlisted: ${model}`)
   if (!prompt?.trim()) throw new Error('xai: prompt required')
+  if (resolution != null || aspectRatio != null) {
+    resolveXaiImageRequest({ resolution, aspectRatio })
+  }
   const base = {
     model,
     prompt,
@@ -89,18 +94,41 @@ async function callXai(path, body, { fetchImpl = fetch, maxRetries = 3, sleep = 
   throw lastErr
 }
 
-async function saveXaiImage(supabase, image, pendingActionId, suffix = '') {
+export async function saveXaiImage(supabase, image, pendingActionId, {
+  suffix = '',
+  model,
+  requestedTier,
+  requestedAspectRatio,
+  validationContract,
+  fetchImpl = fetch,
+} = {}) {
+  const storageBasePath = `generated/studio-${pendingActionId}${suffix ? `-${suffix}` : ''}`
   if (image.kind === 'url') {
-    return downloadFalOutputToStorage(supabase, image.value, pendingActionId, suffix)
+    return downloadImageArtifactToStorage({
+      supabase,
+      outputUrl: image.value,
+      storageBasePath,
+      fetchImpl,
+      kind: 'original',
+      requestedTier,
+      requestedAspectRatio,
+      provider: 'xai',
+      model,
+      contract: validationContract,
+    })
   }
   const buf = Buffer.from(image.value, 'base64')
-  const storagePath = `generated/studio-${pendingActionId}${suffix ? `-${suffix}` : ''}.png`
-  const { error } = await supabase.storage.from('agent-files').upload(storagePath, buf, {
-    contentType: 'image/png',
-    upsert: true,
+  return uploadImageArtifact({
+    supabase,
+    buffer: buf,
+    storageBasePath,
+    kind: 'original',
+    requestedTier,
+    requestedAspectRatio,
+    provider: 'xai',
+    model,
+    contract: validationContract,
   })
-  if (error) throw new Error(`upload failed: ${error.message}`)
-  return storagePath
 }
 
 /**
@@ -134,6 +162,12 @@ async function prepareReferencePath({ supabase, path, role, isFamilyPair, pendin
 export async function processXaiImagine({ supabase, pendingActionId, payload, logCost }) {
   const model = XAI_ALLOWED_MODELS.includes(payload.xaiModel) ? payload.xaiModel : 'grok-imagine-image-quality'
   const op = payload.xaiOp === 'generate' ? 'generate' : 'edit'
+  // Fail unsupported tier/aspect combinations before reference processing or
+  // the synchronous paid request. There is no silent 4K→2K or 4:5→3:4 clamp.
+  const imageRequest = resolveXaiImageRequest({
+    resolution: payload.resolution,
+    aspectRatio: payload.aspectRatio,
+  })
   const refPaths = Array.isArray(payload.referenceImagePaths) ? payload.referenceImagePaths.slice(0, 3) : []
   if (op === 'edit' && refPaths.length === 0) throw new Error('xai edit job has no reference images')
   const refRoles = Array.isArray(payload.referenceRoles) ? payload.referenceRoles : []
@@ -152,7 +186,7 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
     referenceDataUris.push(await storagePathToNormalizedDataUri(supabase, prepared))
   }
 
-  const resolution = payload.resolution === '1k' ? '1k' : '2k'
+  const resolution = imageRequest.providerImageSize
   const costUsd = resolution === '2k' ? 0.07 : 0.05
   let totalCostUsd = 0
 
@@ -165,7 +199,7 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
       model,
       prompt,
       referenceDataUris,
-      aspectRatio: payload.aspectRatio,
+      aspectRatio: imageRequest.requestedAspectRatio,
       resolution,
       n: 1,
     })
@@ -174,7 +208,13 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
     const image = extractXaiImage(result)
     if (!image) throw new Error('xai: no image in response')
     const suffix = qcAttempt && qcAttempt > 1 ? `qc${qcAttempt}` : ''
-    const storagePath = await saveXaiImage(supabase, image, pendingActionId, suffix)
+    const original = await saveXaiImage(supabase, image, pendingActionId, {
+      suffix,
+      model,
+      requestedTier: imageRequest.requestedTier,
+      requestedAspectRatio: imageRequest.requestedAspectRatio,
+      validationContract: imageRequest.validationContract,
+    })
     totalCostUsd += costUsd
     void logCost({
       provider: 'xai',
@@ -184,7 +224,7 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
         model,
         op,
         resolution,
-        aspectRatio: payload.aspectRatio ?? null,
+        aspectRatio: imageRequest.requestedAspectRatio,
         referenceCount: referenceDataUris.length,
         qcAttempt: qcAttempt ?? 1,
       },
@@ -192,12 +232,13 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
       jobId: pendingActionId,
       dedupKey: `xai:${pendingActionId}:${qcAttempt ?? 1}`,
     })
-    return { storagePath, latencyMs: Date.now() - started }
+    return { storagePath: original.storagePath, original, latencyMs: Date.now() - started }
   }
 
   const first = await runOnce(1)
   let paths = [first.storagePath]
   let lastMeta = first
+  const artifactsByPath = new Map([[first.storagePath, first.original]])
 
   let qc = null
   try {
@@ -216,6 +257,7 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
         regenerate: async (fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum, fixHint)
           paths.push(retry.storagePath)
+          artifactsByPath.set(retry.storagePath, retry.original)
           lastMeta = retry
           return retry.storagePath
         },
@@ -239,5 +281,6 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
     latencyMs: lastMeta.latencyMs,
     costUsd: totalCostUsd,
     qc,
+    original: artifactsByPath.get(paths[0]) ?? lastMeta.original,
   }
 }

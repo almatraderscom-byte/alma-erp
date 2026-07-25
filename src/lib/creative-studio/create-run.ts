@@ -11,7 +11,6 @@ import {
   FamilyChainModelError,
   type FamilyChainVariant,
 } from '@/lib/tryon/family-chain'
-import { pickScene } from '@/lib/tryon/scene-pool'
 import {
   getOrClassifyGarment,
   mapGarmentToVtonClothType,
@@ -49,9 +48,36 @@ import {
 import { pickSceneDiverse, toSceneRef } from '@/lib/tryon/scene-pool'
 import { readKv, readSceneWeights } from '@/lib/creative-studio/taste'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
+import {
+  assertResolutionRequest,
+  type StudioImageEngine,
+} from '@/lib/creative-studio/resolution-contract'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
+
+async function configuredGenericImageEngine(): Promise<Extract<StudioImageEngine, 'gemini' | 'gpt' | 'seedream'>> {
+  const raw = await readKv('cs_image_models')
+  try {
+    const model = raw ? (JSON.parse(raw) as { pro?: string }).pro?.trim() : ''
+    if (model?.startsWith('gpt-image')) return 'gpt'
+    if (model?.startsWith('seedream')) return 'seedream'
+  } catch {
+    // Malformed owner setting falls back to the worker's Gemini defaults.
+  }
+  return 'gemini'
+}
+
+function assertTieredResolution(
+  engine: StudioImageEngine,
+  input: CreativeStudioRunInput,
+  defaults: { aspectRatio?: string; resolution?: FashnResolution } = {},
+): { aspectRatio: string; resolution: FashnResolution } {
+  const aspectRatio = input.aspectRatio ?? defaults.aspectRatio ?? '4:5'
+  const resolution = input.resolution ?? defaults.resolution ?? '2k'
+  assertResolutionRequest({ engine, aspectRatio, resolution })
+  return { aspectRatio, resolution }
+}
 
 export type CreativeStudioRunInput = {
   mode: StudioModeId
@@ -200,6 +226,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     if (input.vtonEngine === 'xai_imagine') {
       if (!process.env.XAI_API_KEY?.trim()) throw new Error('xai_not_configured')
       if ((await readKv(CS_XAI_ENABLED_KEY)) !== '1') throw new Error('xai_engine_disabled')
+      const truthful = assertTieredResolution('xai_imagine', input, { aspectRatio: '3:4' })
       const { buildXaiFamilyMergeBrief } = await import('@/lib/creative-studio/xai-imagine')
       const brief = buildXaiFamilyMergeBrief({
         sourceImagePath: input.sourceImagePath,
@@ -207,7 +234,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
         prompt: input.prompt,
         backgroundPrompt: input.backgroundPrompt,
       })
-      const xaiResolution = toXaiResolution(input.resolution)
+      const xaiResolution = toXaiResolution(truthful.resolution)
       const id = await createApprovedAction({
         type: 'image_gen',
         payload: {
@@ -218,8 +245,10 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           referenceImagePaths: brief.referenceImagePaths,
           referenceRoles: brief.referenceRoles,
           prompt: brief.prompt,
-          aspectRatio: toXaiAspectRatio(input.aspectRatio ?? '4:5'),
+          aspectRatio: toXaiAspectRatio(truthful.aspectRatio),
           resolution: xaiResolution,
+          requestedResolution: truthful.resolution,
+          requestedAspectRatio: truthful.aspectRatio,
           creativeStudio: true,
           studioMode: input.mode,
           familyPreset: 'full_family',
@@ -241,6 +270,8 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
       input.backgroundPrompt,
     ].filter(Boolean).join(' ')
 
+    const genericEngine = await configuredGenericImageEngine()
+    const truthful = assertTieredResolution(genericEngine, input)
     const id = await createApprovedAction({
       type: 'image_gen',
       payload: {
@@ -249,8 +280,10 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
         quality: input.generationMode === 'quality' ? 'pro' : 'standard',
         referenceImageId: input.sourceImagePath,
         secondReferenceImageId: input.secondSourceImagePath,
-        aspectRatio: input.aspectRatio ?? '4:5',
-        imageSize: input.resolution ? input.resolution.toUpperCase() : '2K',
+        aspectRatio: truthful.aspectRatio,
+        imageSize: truthful.resolution.toUpperCase(),
+        requestedResolution: truthful.resolution,
+        requestedAspectRatio: truthful.aspectRatio,
         creativeStudio: true,
         studioMode: input.mode,
         familyPreset: 'full_family',
@@ -347,7 +380,8 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
       : [{}, [] as string[]]
 
     const engine = getEngine('xai_imagine')
-    const xaiResolution = toXaiResolution(input.resolution)
+    const truthful = assertTieredResolution('xai_imagine', input, { aspectRatio: '3:4' })
+    const xaiResolution = toXaiResolution(truthful.resolution)
     const count = Math.min(Math.max(input.numImages ?? 1, 1), 4)
     for (let i = 0; i < count; i++) {
       const picked = injectScene ? pickSceneDiverse(sceneWeights, recentScenes) : null
@@ -366,8 +400,10 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           referenceImagePaths: brief.referenceImagePaths,
           referenceRoles: brief.referenceRoles,
           prompt: `${brief.prompt}${clothHint}${sceneLine}`,
-          aspectRatio: toXaiAspectRatio(input.aspectRatio ?? '4:5'),
+          aspectRatio: toXaiAspectRatio(truthful.aspectRatio),
           resolution: xaiResolution,
+          requestedResolution: truthful.resolution,
+          requestedAspectRatio: truthful.aspectRatio,
           creativeStudio: true,
           studioMode: input.mode,
           familyPreset: input.familyPreset ?? 'single',
@@ -404,11 +440,31 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     && input.familyPreset !== 'single'
     && (input.mode === 'try_on' || input.mode === 'product_to_model')
   ) {
+    let chainAspect = input.aspectRatio ?? '4:5'
+    let chainResolution: string = input.resolution ?? '2k'
+    if (input.protectedComposite && chainVtonEngine === 'fal_fashn_v16') {
+      assertResolutionRequest({
+        engine: 'fal_fashn_v16',
+        resolution: input.resolution,
+        aspectRatio: input.aspectRatio,
+      })
+      chainAspect = 'source'
+      chainResolution = 'native'
+    } else if (input.protectedComposite) {
+      const truthful = assertTieredResolution('fashn', input)
+      chainAspect = truthful.aspectRatio
+      chainResolution = truthful.resolution
+    } else {
+      const genericEngine = await configuredGenericImageEngine()
+      const truthful = assertTieredResolution(genericEngine, input)
+      chainAspect = truthful.aspectRatio
+      chainResolution = truthful.resolution
+    }
     const chain = await startFamilyChain({
       variant: input.familyPreset as FamilyChainVariant,
       productImagePath: input.productImagePath,
-      aspectRatio: input.aspectRatio,
-      resolution: input.resolution,
+      aspectRatio: chainAspect,
+      resolution: chainResolution,
       generationMode: input.generationMode,
       extraPrompt: [input.prompt, input.backgroundPrompt].filter(Boolean).join('. ') || undefined,
       // CS9 — owner opt-in: deterministic protected composite instead of the
@@ -485,6 +541,8 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     && input.familyPreset !== 'single'
     && (input.mode === 'try_on' || input.mode === 'product_to_model')
   ) {
+    const genericEngine = await configuredGenericImageEngine()
+    const truthful = assertTieredResolution(genericEngine, input)
     const variants = [input.familyPreset] as ChatTryOnVariant[]
     const batch = await queueTryOnBatch({
       productImagePath: input.productImagePath,
@@ -492,6 +550,8 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
       variants,
       extra: extraPrompt,
       conversationId: null,
+      aspectRatio: truthful.aspectRatio,
+      resolution: truthful.resolution,
     })
     for (const item of batch.items) {
       await mergeApprovedPayload(item.pendingActionId, {
@@ -513,6 +573,11 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     if (!basePath) throw new Error('source_image_required')
     if (!process.env.FAL_KEY?.trim()) throw new Error('fal_not_configured')
     if ((await readKv(CS_FLUX_FILL_ENABLED_KEY)) !== '1') throw new Error('flux_fill_disabled')
+    assertResolutionRequest({
+      engine: 'fal_flux_fill',
+      resolution: input.resolution,
+      aspectRatio: input.aspectRatio,
+    })
 
     const engine = getEngine('fal_flux_fill')
     // Throws custom_prompt_required when the custom preset has no text.
@@ -555,6 +620,11 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     const vtonModelPath = input.modelImagePath ?? input.sourceImagePath
     if (!vtonModelPath) throw new Error('model_image_required')
     if (!process.env.FAL_KEY?.trim()) throw new Error('fal_not_configured')
+    assertResolutionRequest({
+      engine: input.vtonEngine,
+      resolution: input.resolution,
+      aspectRatio: input.aspectRatio,
+    })
 
     // CS8 — readiness gate: stop unusable inputs BEFORE any paid call.
     const readiness = await checkSingleInputReadiness({
@@ -604,7 +674,9 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           prompt: extraPrompt || undefined,
           // CS8 — preview mode renders economical; production keeps owner choice
           generationMode: plan.economical ? 'performance' : (input.generationMode ?? 'balanced'),
-          aspectRatio: input.aspectRatio ?? '4:5',
+          resolutionContract: input.vtonEngine === 'fal_fashn_v16'
+            ? { kind: 'fixed', width: 864, height: 1296 }
+            : { kind: 'provider_native' },
           // CS8 — bounded-spend plan travels with the job (worker QC honours it)
           pipelineMode: plan.mode,
           maxPaidGenerations: plan.maxPaidGenerations,
@@ -626,6 +698,21 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     if (!input.sourceImagePath && modeDef.needsSource) throw new Error('source_image_required')
 
     const count = Math.min(Math.max(input.numImages ?? 1, 1), 4)
+    let truthful: { resolution: FashnResolution; aspectRatio?: string }
+    if (input.mode === 'try_on') {
+      truthful = assertTieredResolution(await configuredGenericImageEngine(), input)
+    } else {
+      const resolution = input.resolution ?? '2k'
+      const sourceDerivedAspect = input.mode === 'model_swap' || input.mode === 'edit'
+      const aspectRatio = sourceDerivedAspect ? undefined : input.aspectRatio ?? '4:5'
+      assertResolutionRequest({ engine: 'fashn', resolution, aspectRatio })
+      if (input.mode === 'face_to_model'
+        && aspectRatio
+        && !['1:1', '4:5', '3:4', '9:16'].includes(aspectRatio)) {
+        throw new Error(`aspect_ratio_unsupported:fashn:${aspectRatio}`)
+      }
+      truthful = { resolution, aspectRatio }
+    }
 
     // Try-on with a model photo: run the 2-step chain (FASHN garment accuracy →
     // Bangladeshi background swap). Each image picks its own random scene + pose,
@@ -645,8 +732,8 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
         const job = await startSingleRescueChain({
           productImagePath: input.productImagePath,
           modelImagePath: tryOnModelPath,
-          aspectRatio: input.aspectRatio,
-          resolution: input.resolution,
+          aspectRatio: truthful.aspectRatio ?? '4:5',
+          resolution: truthful.resolution,
           generationMode: input.generationMode,
           extraPrompt: extraPrompt || undefined,
           vtonEngine: chainVtonEngine,
@@ -687,12 +774,15 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           fashnInputs,
           fashnOptions: {
             prompt: [extraPrompt, sceneLine].filter(Boolean).join(' ') || undefined,
-            resolution: input.resolution ?? '2k',
+            resolution: truthful.resolution,
+            aspectRatio: truthful.aspectRatio,
             generationMode: input.generationMode ?? 'balanced',
             numImages: 1,
             outputFormat: 'png',
           },
-          aspectRatio: input.aspectRatio ?? '4:5',
+          aspectRatio: truthful.aspectRatio,
+          requestedResolution: truthful.resolution,
+          requestedAspectRatio: truthful.aspectRatio,
           creativeStudio: true,
           studioMode: input.mode,
           familyPreset: input.familyPreset,
@@ -713,12 +803,16 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
   if (!input.productImagePath) throw new Error('product_image_required')
 
   if (input.familyPreset && input.familyPreset !== 'single') {
+    const genericEngine = await configuredGenericImageEngine()
+    const truthful = assertTieredResolution(genericEngine, input)
     const batch = await queueTryOnBatch({
       productImagePath: input.productImagePath,
       modelId: input.modelId,
       variants: [input.familyPreset],
       extra: extraPrompt,
       conversationId: null,
+      aspectRatio: truthful.aspectRatio,
+      resolution: truthful.resolution,
     })
     for (const item of batch.items) {
       await mergeApprovedPayload(item.pendingActionId, {
@@ -731,12 +825,16 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     return { jobs, provider: 'gemini', fashnReady }
   }
 
+  const genericEngine = await configuredGenericImageEngine()
+  const truthful = assertTieredResolution(genericEngine, input)
   const batch = await queueTryOnBatch({
     productImagePath: input.productImagePath,
     modelId: input.modelId,
     variants: ['single'],
     extra: extraPrompt,
     conversationId: null,
+    aspectRatio: truthful.aspectRatio,
+    resolution: truthful.resolution,
   })
   await mergeApprovedPayload(batch.items[0].pendingActionId, {
     studioMode: input.mode,

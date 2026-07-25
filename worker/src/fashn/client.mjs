@@ -1,6 +1,8 @@
 /**
  * FASHN API — VPS worker (mirrors src/lib/fashn/client.ts)
  */
+import { downloadImageArtifactToStorage } from '../image-artifact.mjs'
+
 const FASHN_BASE = 'https://api.fashn.ai/v1'
 
 function getApiKey() {
@@ -16,6 +18,7 @@ export async function fashnRun(modelName, inputs, opts = {}) {
       ...inputs,
       ...(opts.prompt ? { prompt: opts.prompt } : {}),
       ...(opts.resolution ? { resolution: opts.resolution } : {}),
+      ...(opts.aspectRatio ? { aspect_ratio: opts.aspectRatio } : {}),
       ...(opts.generationMode ? { generation_mode: opts.generationMode } : {}),
       ...(opts.numImages ? { num_images: opts.numImages } : {}),
       ...(opts.outputFormat ? { output_format: opts.outputFormat } : {}),
@@ -93,16 +96,34 @@ export async function resolveFashnImageInputs(supabase, rawInputs) {
 }
 
 export async function downloadFashnOutputToStorage(supabase, outputUrl, pendingActionId, index = 0) {
-  const res = await fetch(outputUrl, { signal: AbortSignal.timeout(60_000) })
-  if (!res.ok) throw new Error(`FASHN output download HTTP ${res.status}`)
-  const buf = Buffer.from(await res.arrayBuffer())
-  const contentType = res.headers.get('content-type') ?? 'image/png'
-  const ext = contentType.includes('jpeg') ? 'jpg' : 'png'
-  const storagePath = `generated/studio-${pendingActionId}${index ? `-${index}` : ''}.${ext}`
-  const { error } = await supabase.storage.from('agent-files').upload(storagePath, buf, {
-    contentType,
-    upsert: true,
-  })
-  if (error) throw new Error(`upload failed: ${error.message}`)
-  return storagePath
+  const artifact = await downloadFashnOutputArtifactToStorage(
+    supabase,
+    outputUrl,
+    pendingActionId,
+    index,
+  )
+  return artifact.storagePath
+}
+
+export async function downloadFashnOutputArtifactToStorage(
+  supabase,
+  outputUrl,
+  pendingActionId,
+  index = 0,
+  inspectOptions = {},
+) {
+  try {
+    return await downloadImageArtifactToStorage({
+      supabase,
+      outputUrl,
+      storageBasePath: `generated/studio-${pendingActionId}${index ? `-${index}` : ''}`,
+      timeoutMs: 60_000,
+      ...inspectOptions,
+    })
+  } catch (error) {
+    if (error.message.startsWith('image output download HTTP')) {
+      throw new Error(error.message.replace('image output download', 'FASHN output download'))
+    }
+    throw error
+  }
 }

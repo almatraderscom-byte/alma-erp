@@ -6,6 +6,23 @@ export function isCapacitorNative(): boolean {
 }
 
 /**
+ * Fetch a signed Studio object into a File without decoding or re-encoding it.
+ * Kept separate from the platform share/download UI so byte identity is
+ * testable and the same invariant applies in Chrome and Capacitor.
+ */
+export async function fetchStudioDownloadFile(
+  url: string,
+  filename: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<File> {
+  const res = await fetchImpl(url)
+  if (!res.ok) throw new Error(`fetch ${res.status}`)
+  const blob = await res.blob()
+  const type = blob.type || 'application/octet-stream'
+  return new File([blob], filename, { type })
+}
+
+/**
  * Save an image to the device. A plain `<a download>` does NOT work inside the iOS
  * WKWebView shell — it just navigates to the URL in the browser, so the owner can
  * never actually save the file. Instead we fetch the image as a blob and hand it to
@@ -21,11 +38,8 @@ export async function saveImageToDevice(
 ): Promise<'shared' | 'downloaded' | 'opened'> {
   if (typeof window === 'undefined') return 'opened'
   try {
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`fetch ${res.status}`)
-    const blob = await res.blob()
-    const type = blob.type || 'image/jpeg'
-    const file = new File([blob], filename, { type })
+    const file = await fetchStudioDownloadFile(url, filename)
+    const blob = file.slice(0, file.size, file.type)
 
     const nav = navigator as Navigator & {
       canShare?: (data?: { files?: File[] }) => boolean

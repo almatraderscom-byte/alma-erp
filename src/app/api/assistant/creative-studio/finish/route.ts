@@ -14,10 +14,18 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { applyBrandFrame } from '@/lib/content-engine/brand-frame'
+import {
+  applyBrandFrameArtifact,
+  type BrandFrameArtifact,
+} from '@/lib/content-engine/brand-frame'
 import type { LifestyleLayoutOverrides } from '@/lib/content-engine/lifestyle-layout'
 import { THEME_ACCENT, type BrandTheme } from '@/lib/content-engine/brand-identity'
 import { agentStorageSignedUrl } from '@/agent/lib/storage'
+import {
+  mergeArtifactVersionMetadata,
+  mergeBrandedVariant,
+  type StudioArtifactDescriptor,
+} from '@/lib/creative-studio/artifact-metadata'
 import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
 import { studioActionBlockReason } from '@/lib/creative-studio/studio-policy'
 
@@ -105,9 +113,9 @@ export async function POST(req: NextRequest) {
     : 'model_overlay'
   const theme: BrandTheme = isTheme(body.theme) ? body.theme : 'default'
 
-  let framedPath: string
+  let framedArtifact: BrandFrameArtifact
   try {
-    framedPath = await applyBrandFrame(storagePath, {
+    framedArtifact = await applyBrandFrameArtifact(storagePath, {
       mode,
       // For 'lifestyle' the hook is the headline; eyebrow/offer are the other two
       // editable lines (blank → brand defaults). The same hook drives other modes.
@@ -131,6 +139,30 @@ export async function POST(req: NextRequest) {
     })
   } catch (err) {
     return Response.json({ error: 'finish_failed', message: sanitizeStudioError(err) }, { status: 422 })
+  }
+  const framedPath = framedArtifact.storagePath
+  const brandedVariant: StudioArtifactDescriptor = {
+    kind: 'branded',
+    ...framedArtifact,
+    requestedTier: null,
+    requestedAspectRatio: framedArtifact.width === framedArtifact.height ? '1:1' : '4:5',
+    actualTier: 'social-1080',
+    validation: 'verified',
+    validationErrors: [],
+    expected: {
+      width: framedArtifact.width,
+      height: framedArtifact.height,
+    },
+    provider: 'alma_brand_frame',
+    model: 'deterministic-v1',
+    sourceKind: 'original',
+    transformVersion: 'cse8-brand-frame-v1',
+    transform: {
+      name: 'brand-frame',
+      version: '1',
+      mode,
+      sourceStoragePath: storagePath,
+    },
   }
 
   // Persist the framed copy back onto the gallery item so it shows the "Branded"
@@ -156,10 +188,32 @@ export async function POST(req: NextRequest) {
               ? body.layout
               : null,
         }
+        const mergedResult = {
+          ...mergeBrandedVariant(result, brandedVariant),
+          finishParams,
+        }
         await db.agentPendingAction.update({
           where: { id: pendingActionId },
-          data: { result: { ...result, brandedPath: framedPath, finishParams } },
+          data: { result: mergedResult },
         })
+
+        // CSE3 versions are linked by the immutable job id. Keep their JSON
+        // evidence in sync immediately; do not wait for a future library read.
+        const versions = await db.creativeAssetVersion.findMany({
+          where: { jobId: pendingActionId },
+          select: { id: true, metadata: true },
+        })
+        if (versions.length) {
+          await db.$transaction(versions.map((version: {
+            id: string
+            metadata: unknown
+          }) => db.creativeAssetVersion.update({
+            where: { id: version.id },
+            data: {
+              metadata: mergeArtifactVersionMetadata(version.metadata, mergedResult),
+            },
+          })))
+        }
       }
     } catch (err) {
       console.warn('[finish] persist brandedPath failed:', err instanceof Error ? err.message : err)
@@ -173,5 +227,5 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'sign_failed', message: sanitizeStudioError(err) }, { status: 500 })
   }
 
-  return Response.json({ framedPath, framedUrl })
+  return Response.json({ framedPath, framedUrl, brandedVariant })
 }

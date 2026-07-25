@@ -20,9 +20,8 @@ export const XAI_MAX_EDIT_REFERENCES = 3
 
 export type XaiImagineOp = 'generate' | 'edit'
 
-/** Studio aspect values the UI offers → nearest xAI-supported ratio. */
+/** Studio aspect values that xAI supports without changing the owner's choice. */
 const XAI_ASPECT_MAP: Record<string, string> = {
-  '4:5': '3:4', // studio portrait default — xAI has no 4:5; 3:4 is the closest portrait
   '1:1': '1:1',
   '9:16': '9:16',
   '16:9': '16:9',
@@ -33,12 +32,19 @@ const XAI_ASPECT_MAP: Record<string, string> = {
 }
 
 export function toXaiAspectRatio(studioAspect: string | undefined): string {
-  return XAI_ASPECT_MAP[studioAspect ?? ''] ?? 'auto'
+  const requested = studioAspect ?? '3:4'
+  const mapped = XAI_ASPECT_MAP[requested]
+  if (!mapped) throw new Error(`aspect_ratio_unsupported:xai_imagine:${requested}`)
+  return mapped
 }
 
-/** xAI tops out at 2k — the studio's 4k choice degrades honestly to 2k. */
+/** xAI tops out at 2K. Never relabel a 2K request as a successful 4K render. */
 export function toXaiResolution(studioResolution: string | undefined): '1k' | '2k' {
-  return studioResolution === '1k' ? '1k' : '2k'
+  const requested = studioResolution ?? '2k'
+  if (requested !== '1k' && requested !== '2k') {
+    throw new Error(`resolution_unsupported:xai_imagine:${requested}`)
+  }
+  return requested
 }
 
 export function estimateXaiImageCostUsd(resolution: '1k' | '2k', n = 1): number {
@@ -268,7 +274,7 @@ export const XAI_TEMPLATES: XaiTemplate[] = [
     mode: 'generate',
     prompt:
       'Premium product launch campaign visual for a Bangladeshi clothing brand: elegant fabric draping, soft studio light, festive yet modest aesthetic, no people, space for headline text.',
-    aspectRatio: '4:5',
+    aspectRatio: '3:4',
     resolution: '2k',
   },
   {
@@ -297,7 +303,7 @@ export const XAI_TEMPLATES: XaiTemplate[] = [
     hintBn: 'মডেল + পোশাক → পরানো ছবি (২ রেফারেন্স)',
     mode: 'try_on',
     prompt: '',
-    aspectRatio: '4:5',
+    aspectRatio: '3:4',
     resolution: '2k',
   },
   {
@@ -306,7 +312,7 @@ export const XAI_TEMPLATES: XaiTemplate[] = [
     hintBn: 'পোশাকের ছবি → মডেলের গায়ে ফটোশুট',
     mode: 'product_to_model',
     prompt: '',
-    aspectRatio: '4:5',
+    aspectRatio: '3:4',
     resolution: '2k',
   },
   {

@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { agentStorageDownload, agentStorageUpload } from '@/agent/lib/storage'
 import {
   BRAND,
@@ -25,6 +25,39 @@ export type { LifestyleLayoutOverrides }
 
 const PRODUCT_CARD_SIZE = 1080
 const MODEL_CANVAS = { width: 1080, height: 1350 } as const
+
+export type BrandFrameOptions = {
+  mode: 'product_card' | 'model_overlay' | 'lifestyle'
+  productName?: string
+  productCode?: string
+  price?: string
+  hook: string
+  eyebrow?: string
+  offer?: string
+  theme?: BrandTheme
+  footer?: boolean
+  layout?: LifestyleLayoutOverrides | null
+  fit?: 'cover' | 'contain'
+}
+
+export type BrandFrameArtifact = {
+  storagePath: string
+  width: number
+  height: number
+  pixelCount: number
+  format: 'jpeg'
+  mimeType: 'image/jpeg'
+  byteSize: number
+  sha256: string
+}
+
+export function brandFrameDimensions(mode: BrandFrameOptions['mode']): {
+  width: number
+  height: number
+} {
+  if (mode === 'model_overlay') return MODEL_CANVAS
+  return { width: PRODUCT_CARD_SIZE, height: PRODUCT_CARD_SIZE }
+}
 
 export function escapeXml(text: string): string {
   return text
@@ -375,24 +408,10 @@ async function renderLifestylePoster(imagePath: string, opts: {
 /**
  * Deterministic brand frame — logo, typography, hook via code (never AI-rendered text).
  */
-export async function applyBrandFrame(
+export async function applyBrandFrameArtifact(
   imagePath: string,
-  opts: {
-    mode: 'product_card' | 'model_overlay' | 'lifestyle'
-    productName?: string
-    productCode?: string
-    price?: string
-    hook: string
-    eyebrow?: string
-    offer?: string
-    theme?: BrandTheme
-    footer?: boolean
-    /** lifestyle only: geometry tweaks from the drag/resize editor */
-    layout?: LifestyleLayoutOverrides | null
-    /** lifestyle only: 'contain' keeps the whole photo (no crop); default 'cover' */
-    fit?: 'cover' | 'contain'
-  },
-): Promise<string> {
+  opts: BrandFrameOptions,
+): Promise<BrandFrameArtifact> {
   // Register bundled fonts with fontconfig BEFORE any librsvg text render — without
   // this, text is blank on Vercel/Lambda (no system fonts) and tofu on bare Linux.
   ensureBrandFonts()
@@ -436,5 +455,23 @@ export async function applyBrandFrame(
   const safeCode = code.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'alma'
   const outPath = `content/framed/${safeCode}-${Date.now()}-${randomUUID().slice(0, 8)}.jpg`
   await agentStorageUpload(outPath, framed, 'image/jpeg')
-  return outPath
+  const { width, height } = brandFrameDimensions(opts.mode)
+  return {
+    storagePath: outPath,
+    width,
+    height,
+    pixelCount: width * height,
+    format: 'jpeg',
+    mimeType: 'image/jpeg',
+    byteSize: framed.byteLength,
+    sha256: createHash('sha256').update(framed).digest('hex'),
+  }
+}
+
+/** Backwards-compatible path-only helper used by the scheduled content pipeline. */
+export async function applyBrandFrame(
+  imagePath: string,
+  opts: BrandFrameOptions,
+): Promise<string> {
+  return (await applyBrandFrameArtifact(imagePath, opts)).storagePath
 }

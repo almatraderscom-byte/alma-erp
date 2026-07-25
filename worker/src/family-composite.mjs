@@ -19,6 +19,7 @@ import {
   runFalQueueJob,
 } from './fal/client.mjs'
 import { falInputFingerprint } from './fal/fingerprint.mjs'
+import { uploadImageArtifact } from './image-artifact.mjs'
 
 export const FLUX_FILL_ENDPOINT = 'fal-ai/flux-pro/v1/fill'
 
@@ -284,16 +285,33 @@ export async function processFamilyComposite({ supabase, pendingActionId, payloa
     throw new Error(`ফ্যামিলি সদস্য সংখ্যা মেলেনি — দরকার ${expected} জন, ছবিতে ${counted} জন। আবার চালান বা সোর্স ছবি বদলান।`)
   }
 
-  const storagePath = `generated/studio-${pendingActionId}.png`
-  const { error: upErr } = await supabase.storage.from('agent-files').upload(storagePath, composited, {
-    contentType: 'image/png',
-    upsert: true,
+  const familyChain = payload.familyChain && typeof payload.familyChain === 'object'
+    ? payload.familyChain
+    : {}
+  const requestedTier = ['1k', '2k', '4k'].includes(familyChain.resolution)
+    ? familyChain.resolution
+    : null
+  const requestedAspectRatio =
+    typeof familyChain.aspectRatio === 'string' && familyChain.aspectRatio !== 'source'
+      ? familyChain.aspectRatio
+      : 'source'
+  const original = await uploadImageArtifact({
+    supabase,
+    buffer: composited,
+    storageBasePath: `generated/studio-${pendingActionId}`,
+    kind: 'original',
+    requestedTier,
+    requestedAspectRatio,
+    provider: 'family_composite',
+    model: 'cse-protected-composite-v1',
+    contract: requestedTier
+      ? { mode: 'tier-long-edge', tier: requestedTier }
+      : { mode: 'exact', width: W, height: H, tolerance: 0 },
   })
-  if (upErr) throw new Error(`upload failed: ${upErr.message}`)
 
   return {
-    storagePath,
-    allPaths: [storagePath],
+    storagePath: original.storagePath,
+    allPaths: [original.storagePath],
     provider: 'family_composite',
     protectedComposite: true,
     variant,
@@ -304,5 +322,6 @@ export async function processFamilyComposite({ supabase, pendingActionId, payloa
     harmonize,
     baseImagePath,
     insertImagePath,
+    original,
   }
 }

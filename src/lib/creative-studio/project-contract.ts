@@ -1,4 +1,5 @@
 import { roundMoney } from '@/lib/money'
+import type { StudioArtifactDescriptor } from '@/lib/creative-studio/artifact-metadata'
 
 export const LEGACY_PROJECT_ID = 'legacy'
 export const DEFAULT_PROJECT_FOLDER = 'Unsorted'
@@ -126,6 +127,8 @@ export type StudioAssetVersion = {
   costBdt: number
   costUsd: number | null
   qc: Record<string, unknown> | null
+  resolutionIntegrity: Record<string, unknown> | null
+  variants: StudioArtifactDescriptor[]
   createdById: string
   createdAt: string
   sources: Array<{

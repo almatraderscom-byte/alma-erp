@@ -280,6 +280,23 @@ describe('single rescene chain', () => {
     const done = await completeStep(rescene, 'generated/final.png')
     expect(done).toBeNull()
   })
+
+  it('carries the selected tier and aspect into the final rescene instead of hard-coding 2K', async () => {
+    const { pendingActionId } = await startSingleRescueChain({
+      productImagePath: 'uploads/panjabi.jpg',
+      modelImagePath: 'models/owner.jpg',
+      aspectRatio: '16:9',
+      resolution: '4k',
+    })
+    const first = actions.find((a) => a.id === pendingActionId)!
+    const nextId = await completeStep(first, 'generated/tryon.png')
+    const rescene = actions.find((a) => a.id === nextId)!
+
+    expect(rescene.payload.aspectRatio).toBe('16:9')
+    expect(rescene.payload.imageSize).toBe('4K')
+    expect(rescene.payload.requestedResolution).toBe('4k')
+    expect(rescene.payload.requestedAspectRatio).toBe('16:9')
+  })
 })
 
 describe('getChainProgress', () => {

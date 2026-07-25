@@ -163,6 +163,10 @@ test('processFluxFill end to end: durable submit → composite → truthful meta
   assert.equal(result.protectedDiff.maxKeepDelta, 0)
   assert.equal(result.costUsd, 0.05, '100x100 → 1MP floor × $0.05')
   assert.ok(supabase.uploaded.has(result.storagePath))
+  assert.equal(result.original.width, W)
+  assert.equal(result.original.height, H)
+  assert.equal(result.original.validation, 'verified')
+  assert.equal(result.original.requestedAspectRatio, 'source')
   assert.equal(supabase.kv.has('fal_request:pa-fill-1'), false, 'state cleared after artifact landed')
 
   // verify composited output: left = base grey, right = fill green

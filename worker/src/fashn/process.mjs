@@ -13,8 +13,10 @@ import {
   fashnPollUntilDone,
   fashnStatus,
   resolveFashnImageInputs,
-  downloadFashnOutputToStorage,
+  downloadFashnOutputArtifactToStorage,
 } from './client.mjs'
+import { uploadImageArtifact } from '../image-artifact.mjs'
+import { resolveDirectFashnImageRequest } from '../image-resolution-contract.mjs'
 
 const PRED_KEY = (id) => `cs_fashn_pred:${id}`
 
@@ -69,6 +71,7 @@ async function runOrResumeFashn(supabase, pendingActionId, fashnModel, inputs, f
   const run = await fashnRun(fashnModel, inputs, {
     prompt: fashnOptions?.prompt,
     resolution: fashnOptions?.resolution ?? '2k',
+    aspectRatio: fashnOptions?.aspectRatio,
     generationMode: fashnOptions?.generationMode ?? 'balanced',
     numImages: 1,
     outputFormat: fashnOptions?.outputFormat ?? 'png',
@@ -78,8 +81,15 @@ async function runOrResumeFashn(supabase, pendingActionId, fashnModel, inputs, f
   return fashnPollUntilDone(run.id)
 }
 
-async function uploadFashnOutputs(supabase, outputs, pendingActionId, suffix = '') {
-  const paths = []
+async function uploadFashnOutputs(
+  supabase,
+  outputs,
+  pendingActionId,
+  imageRequest,
+  fashnModel,
+  suffix = '',
+) {
+  const artifacts = []
   for (let i = 0; i < outputs.length; i++) {
     const url = outputs[i]
     const idxSuffix = `${suffix}${i ? `-${i}` : ''}`
@@ -87,18 +97,35 @@ async function uploadFashnOutputs(supabase, outputs, pendingActionId, suffix = '
       const match = url.match(/^data:([^;]+);base64,(.+)$/)
       if (!match) continue
       const buf = Buffer.from(match[2], 'base64')
-      const ext = match[1].includes('jpeg') ? 'jpg' : 'png'
-      const storagePath = `generated/studio-${pendingActionId}${idxSuffix ? `-${idxSuffix}` : ''}.${ext}`
-      await supabase.storage.from('agent-files').upload(storagePath, buf, {
-        contentType: match[1],
-        upsert: true,
-      })
-      paths.push(storagePath)
+      artifacts.push(await uploadImageArtifact({
+        supabase,
+        buffer: buf,
+        storageBasePath: `generated/studio-${pendingActionId}${idxSuffix ? `-${idxSuffix}` : ''}`,
+        kind: 'original',
+        requestedTier: imageRequest.requestedTier,
+        requestedAspectRatio: imageRequest.requestedAspectRatio,
+        provider: 'fashn',
+        model: fashnModel,
+        contract: imageRequest.validationContract,
+      }))
     } else {
-      paths.push(await downloadFashnOutputToStorage(supabase, url, pendingActionId, suffix ? `${suffix}-${i}` : i))
+      artifacts.push(await downloadFashnOutputArtifactToStorage(
+        supabase,
+        url,
+        pendingActionId,
+        suffix ? `${suffix}-${i}` : i,
+        {
+          kind: 'original',
+          requestedTier: imageRequest.requestedTier,
+          requestedAspectRatio: imageRequest.requestedAspectRatio,
+          provider: 'fashn',
+          model: fashnModel,
+          contract: imageRequest.validationContract,
+        },
+      ))
     }
   }
-  return paths
+  return artifacts
 }
 
 function pickGarmentPath(rawInputs) {
@@ -113,19 +140,41 @@ function pickGarmentPath(rawInputs) {
 export async function processFashnImageGen({ supabase, pendingActionId, payload, logCost }) {
   const { fashnModel, fashnInputs, fashnOptions } = payload
   if (!fashnModel) throw new Error('fashnModel missing')
+  const imageRequest = resolveDirectFashnImageRequest(fashnOptions?.resolution, {
+    model: fashnModel,
+    aspectRatio: fashnOptions?.aspectRatio,
+  })
+  const resolvedFashnOptions = {
+    ...fashnOptions,
+    resolution: imageRequest.providerImageSize,
+    aspectRatio: imageRequest.providerAspectRatio,
+  }
 
   const inputs = await resolveFashnImageInputs(supabase, fashnInputs)
-  const done = await runOrResumeFashn(supabase, pendingActionId, fashnModel, inputs, fashnOptions)
+  const done = await runOrResumeFashn(supabase, pendingActionId, fashnModel, inputs, resolvedFashnOptions)
   const outputs = done.output ?? []
   if (!outputs.length) throw new Error('FASHN empty output')
 
-  let paths = await uploadFashnOutputs(supabase, outputs, pendingActionId)
+  const firstArtifacts = await uploadFashnOutputs(
+    supabase,
+    outputs,
+    pendingActionId,
+    imageRequest,
+    fashnModel,
+  )
+  let paths = firstArtifacts.map((artifact) => artifact.storagePath)
+  const artifactsByPath = new Map(firstArtifacts.map((artifact) => [artifact.storagePath, artifact]))
 
-  const credits = fashnOptions?.resolution === '4k' ? 4 : fashnOptions?.resolution === '2k' ? 3 : 2
+  const credits = imageRequest.requestedTier === '4k' ? 4 : imageRequest.requestedTier === '2k' ? 3 : 2
   void logCost({
     provider: 'fashn',
     kind: 'image',
-    units: { model: fashnModel, resolution: fashnOptions?.resolution, credits },
+    units: {
+      model: fashnModel,
+      resolution: imageRequest.requestedTier,
+      aspectRatio: imageRequest.requestedAspectRatio,
+      credits,
+    },
     costUsd: credits * 0.075,
     jobId: pendingActionId,
     dedupKey: `fashn:${pendingActionId}`,
@@ -153,11 +202,22 @@ export async function processFashnImageGen({ supabase, pendingActionId, payload,
           regenAttempt = attemptNum
           // fresh prediction for the retry (don't resume the old one)
           await clearPredictionId(supabase, pendingActionId)
-          const retry = await runOrResumeFashn(supabase, pendingActionId, fashnModel, inputs, fashnOptions)
+          const retry = await runOrResumeFashn(supabase, pendingActionId, fashnModel, inputs, resolvedFashnOptions)
           const retryOutputs = retry.output ?? []
           if (!retryOutputs.length) throw new Error('FASHN empty retry output')
-          const retryPaths = await uploadFashnOutputs(supabase, retryOutputs, pendingActionId, `qc${attemptNum}`)
-          return retryPaths[0]
+          const retryArtifacts = await uploadFashnOutputs(
+            supabase,
+            retryOutputs,
+            pendingActionId,
+            imageRequest,
+            fashnModel,
+            `qc${attemptNum}`,
+          )
+          for (const artifact of retryArtifacts) {
+            artifactsByPath.set(artifact.storagePath, artifact)
+            if (!paths.includes(artifact.storagePath)) paths.push(artifact.storagePath)
+          }
+          return retryArtifacts[0].storagePath
         },
       })
       qc = qcResult.qc
@@ -169,7 +229,13 @@ export async function processFashnImageGen({ supabase, pendingActionId, payload,
         void logCost({
           provider: 'fashn',
           kind: 'image',
-          units: { model: fashnModel, resolution: fashnOptions?.resolution, credits, qcRegens: regenAttempt },
+          units: {
+            model: fashnModel,
+            resolution: imageRequest.requestedTier,
+            aspectRatio: imageRequest.requestedAspectRatio,
+            credits,
+            qcRegens: regenAttempt,
+          },
           costUsd: credits * 0.075 * regenAttempt,
           jobId: pendingActionId,
           dedupKey: `fashn:${pendingActionId}:qc`,
@@ -181,5 +247,11 @@ export async function processFashnImageGen({ supabase, pendingActionId, payload,
   }
 
   await clearPredictionId(supabase, pendingActionId)
-  return { storagePath: paths[0], allPaths: paths, provider: 'fashn', qc }
+  return {
+    storagePath: paths[0],
+    allPaths: paths,
+    provider: 'fashn',
+    qc,
+    original: artifactsByPath.get(paths[0]),
+  }
 }

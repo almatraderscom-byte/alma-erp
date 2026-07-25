@@ -13,6 +13,10 @@ import {
   runVideoRecipe,
   studioRequest,
 } from '@/agent/components/creative-studio/studio-api'
+import {
+  buildStudioResolutionUiState,
+  resolutionFieldsForRun,
+} from '@/agent/components/creative-studio/resolution-ui'
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -93,7 +97,7 @@ describe('typed Studio client errors', () => {
 })
 
 describe('Creative Studio request payload contract', () => {
-  it('preserves the Advanced generation payload exactly', async () => {
+  it('omits inapplicable aspect and resolution from fixed-size Fal VTON payloads', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({
         jobs: [],
@@ -102,6 +106,18 @@ describe('Creative Studio request payload contract', () => {
       }),
     )
     vi.stubGlobal('fetch', fetchMock)
+
+    const resolutionState = buildStudioResolutionUiState(
+      {
+        mode: 'try_on',
+        provider: 'fashn',
+        vtonEngine: 'fal_fashn_v16',
+        familyPreset: 'single',
+        protectedComposite: false,
+        imageEngine: 'gemini',
+      },
+      { aspectRatio: '4:5', resolution: '2k' },
+    )
 
     await runStudioJob({
       mode: 'try_on',
@@ -114,8 +130,7 @@ describe('Creative Studio request payload contract', () => {
       familyPreset: 'single',
       prompt: 'keep garment exact',
       backgroundPrompt: 'clean studio',
-      aspectRatio: '4:5',
-      resolution: '2k',
+      ...resolutionFieldsForRun(resolutionState),
       generationMode: 'balanced',
       numImages: 1,
       durationSec: 6,
@@ -125,7 +140,6 @@ describe('Creative Studio request payload contract', () => {
     expect(lastRequest(fetchMock)).toMatchInlineSnapshot(`
       {
         "body": {
-          "aspectRatio": "4:5",
           "backgroundPrompt": "clean studio",
           "clothType": "upper",
           "durationSec": 6,
@@ -138,7 +152,6 @@ describe('Creative Studio request payload contract', () => {
           "productImagePath": "studio/product.jpg",
           "prompt": "keep garment exact",
           "provider": "fashn",
-          "resolution": "2k",
           "vibe": "premium",
           "vtonEngine": "fal_fashn_v16",
         },
@@ -149,6 +162,49 @@ describe('Creative Studio request payload contract', () => {
         "url": "/api/assistant/creative-studio/run",
       }
     `)
+  })
+
+  it('serializes the visible native xAI selection instead of hidden 4K/4:5 values', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        jobs: [],
+        provider: 'xai_imagine',
+        message: 'queued',
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const resolutionState = buildStudioResolutionUiState(
+      {
+        mode: 'generate',
+        provider: 'xai_imagine',
+        vtonEngine: 'xai_imagine',
+        familyPreset: 'single',
+        protectedComposite: false,
+        imageEngine: 'gemini',
+      },
+      { aspectRatio: '4:5', resolution: '4k' },
+    )
+
+    await runStudioJob({
+      mode: 'generate',
+      provider: 'fashn',
+      vtonEngine: 'xai_imagine',
+      prompt: 'Eid campaign',
+      ...resolutionFieldsForRun(resolutionState),
+    })
+
+    expect(lastRequest(fetchMock).body).toMatchObject({
+      mode: 'generate',
+      provider: 'fashn',
+      vtonEngine: 'xai_imagine',
+      aspectRatio: '3:4',
+      resolution: '2k',
+    })
+    expect(lastRequest(fetchMock).body).not.toMatchObject({
+      aspectRatio: '4:5',
+      resolution: '4k',
+    })
   })
 
   it('preserves Auto, audio estimate/queue, finishing, and video bodies', async () => {

@@ -22,6 +22,19 @@ describe('Studio asset action policy', () => {
     expect(studioActionBlockReason(video, 'video_finish')).toContain('QC ফেল')
     expect(isStudioAssetPublishable({ status: 'executed', result: {} })).toBe(true)
   })
+
+  it('blocks every publish-like action when decoded pixels miss the requested contract', () => {
+    const mismatch = {
+      status: 'executed',
+      result: {
+        storagePath: 'creative-studio/original.png',
+        resolutionIntegrity: { status: 'mismatch', verified: false },
+      },
+    }
+    expect(classifyStudioAsset(mismatch)).toBe('qc_failed')
+    expect(isStudioAssetPublishable(mismatch)).toBe(false)
+    expect(studioActionBlockReason(mismatch, 'finish')).toContain('আসল পিক্সেল')
+  })
 })
 
 describe('Studio pre-run cost gate', () => {
