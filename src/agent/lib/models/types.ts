@@ -69,5 +69,13 @@ export interface ProviderAdapter {
      * stage/write capability gets false (multi-card / tool-spree class fix).
      */
     parallelToolCalls?: boolean
+    /**
+     * Stable per-conversation key for provider prompt-cache routing (cost audit
+     * Phase 8). xAI stores cache entries per server and documents `x-grok-conv-id`
+     * as the way to keep one conversation on the server holding its prefix.
+     * Optional everywhere: adapters that don't do sticky routing ignore it, so no
+     * existing call site changes behaviour.
+     */
+    cacheKey?: string
   }): AsyncGenerator<TurnEvent>
 }
