@@ -608,6 +608,9 @@ export async function* runAgentTurn(
   let totalOutputTokens = 0
   let totalCacheCreationTokens = 0
   let totalCacheReadTokens = 0
+  // Provider-reported prompt size for the latest API round. This is current
+  // context occupancy; totalInputTokens is cumulative billing across rounds.
+  let lastContextTokens: number | null = null
 
   let messages: ApiMessage[] = await loadHistory(conversationId)
 
@@ -1201,8 +1204,11 @@ export async function* runAgentTurn(
           const u = event.message.usage
           totalInputTokens += u.input_tokens
           totalOutputTokens += u.output_tokens
-          totalCacheCreationTokens += (u as { cache_creation_input_tokens?: number }).cache_creation_input_tokens ?? 0
-          totalCacheReadTokens += (u as { cache_read_input_tokens?: number }).cache_read_input_tokens ?? 0
+          const cacheWrite = (u as { cache_creation_input_tokens?: number }).cache_creation_input_tokens ?? 0
+          const cacheRead = (u as { cache_read_input_tokens?: number }).cache_read_input_tokens ?? 0
+          totalCacheCreationTokens += cacheWrite
+          totalCacheReadTokens += cacheRead
+          lastContextTokens = u.input_tokens + cacheWrite + cacheRead
         } else if (event.type === 'message_delta') {
           if (event.usage) totalOutputTokens += event.usage.output_tokens
         } else if (event.type === 'content_block_start') {
@@ -1871,7 +1877,7 @@ export async function* runAgentTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload; the GET route surfaces it as
         // `thinking`/`thinkingMs` and history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: chatModel.id, apiModel, provider: chatModel.provider, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
       },
     })
 
@@ -1896,6 +1902,10 @@ export async function* runAgentTurn(
         output_tokens: totalOutputTokens,
         cache_creation_input_tokens: totalCacheCreationTokens,
         cache_read_input_tokens: totalCacheReadTokens,
+        ...(lastContextTokens != null ? {
+          context_tokens: lastContextTokens,
+          context_source: 'provider_last_round',
+        } : {}),
         model: chatModel.id,
         apiModel,
         provider: chatModel.provider,

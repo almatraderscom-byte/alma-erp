@@ -336,6 +336,10 @@ async function* runAlternateProviderTurn(
   let totalOutputTokens = 0
   let totalCacheCreationTokens = 0
   let totalCacheReadTokens = 0
+  // Context occupancy is the provider-reported prompt size for the LAST API
+  // round, not the sum billed across every tool round. Cached prompt portions
+  // are reported separately by Anthropic/OpenRouter, so add them back.
+  let lastContextTokens: number | null = null
   // Reasoning tokens (cost audit Phase 7) — observability only; recorded in units
   // to diagnose the xai under-estimate, does not change billing.
   let totalReasoningTokens = 0
@@ -1342,6 +1346,7 @@ async function* runAlternateProviderTurn(
     apiRounds += 1
     totalInputTokens += g.usage.inputTokens
     totalOutputTokens += g.usage.outputTokens
+    lastContextTokens = g.usage.inputTokens
     const record = g.toolRecord!
     const preview = toolResultPreview(record.output ?? {})
     toolRecords.push(record)
@@ -1527,6 +1532,10 @@ async function* runAlternateProviderTurn(
           totalOutputTokens += ev.outputTokens
           totalCacheCreationTokens += ev.cacheWrite ?? 0
           totalCacheReadTokens += ev.cacheRead ?? 0
+          const roundContextTokens = ev.inputTokens + (ev.cacheRead ?? 0) + (ev.cacheWrite ?? 0)
+          // Anthropic emits a second output-only usage event at message_delta.
+          // Never let that zero-input event erase the message_start measurement.
+          if (roundContextTokens > 0) lastContextTokens = roundContextTokens
           totalReasoningTokens += ev.reasoningTokens ?? 0
           apiRounds++
           if (ev.costUsd != null) {
@@ -2289,7 +2298,7 @@ async function* runAlternateProviderTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload. The GET messages route surfaces
         // it as `thinking`/`thinkingMs`; history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: model.id, apiModel: model.apiModel, provider: model.provider, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
@@ -2450,6 +2459,10 @@ async function* runAlternateProviderTurn(
         // the head's biggest cost lever was invisible.
         cache_read_input_tokens: totalCacheReadTokens,
         cache_creation_input_tokens: totalCacheCreationTokens,
+        ...(lastContextTokens != null ? {
+          context_tokens: lastContextTokens,
+          context_source: 'provider_last_round',
+        } : {}),
         // Phase 7 observability: reasoning tokens the provider reported separately.
         // Non-zero here on xai/Grok would mean completion_tokens excludes reasoning
         // and we under-bill output — the diagnosis for the xai drift.

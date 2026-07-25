@@ -253,7 +253,6 @@ const PROVIDER_COLORS: Record<string, string> = {
   xai: '#22C55E',
   openrouter: '#A78BFA',
   gemini: '#3B82F6',
-  xai: '#64748B',
   google_tts: '#8B5CF6',
   twilio: '#D4A84B',
   elevenlabs: '#EC4899',
@@ -263,7 +262,6 @@ const PROVIDER_COLORS: Record<string, string> = {
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
-  xai: 'xAI',
   openrouter: 'OpenRouter',
   gemini: 'Gemini',
   xai: 'xAI (Grok)',
@@ -980,7 +978,6 @@ export default function AgentCostsDashboard() {
     xai: Number(d.xai ?? 0),
     openrouter: Number(d.openrouter ?? 0),
     gemini: Number(d.gemini ?? 0),
-    xai: Number(d.xai ?? 0),
     google_tts: Number(d.google_tts ?? 0),
     elevenlabs: Number(d.elevenlabs ?? 0),
     veo: Number(d.veo ?? 0),
