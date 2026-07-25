@@ -16,7 +16,7 @@
 import http from 'http'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { WebSocketServer } from 'ws'
-import { GoogleGenAI, Modality, Type } from '@google/genai'
+import { GoogleGenAI, Modality, Type, EndSensitivity } from '@google/genai'
 import { muLawToPcm16, pcm16ToMuLaw } from '../src/voice-relay/sarvam-media.mjs'
 import { createDecimator, createInterpolator } from '../src/voice-relay/resample.mjs'
 import { drainCallReportOutbox, persistCallReport, queueAndDeliverCallReport } from '../src/voice-call-report-outbox.mjs'
@@ -158,6 +158,42 @@ function factsBlock(params) {
   return `\n\nআজকের যাচাই করা তথ্য (ERP থেকে, কল শুরুর সময়ের) — নাম ও সংখ্যা এখান থেকেই বলবে, কখনো মুখস্থ বা আন্দাজ করে নয়:\n${facts}\nএখানে যে নাম নেই, সে নাম বলবে না। আরও নতুন তথ্য লাগলে টুল ব্যবহার করো, এবং টুলের উত্তর হাতে আসার আগে কোনো নাম বা সংখ্যা বলবে না।`
 }
 
+/**
+ * Turn detection — how fast the model decides Boss has finished speaking.
+ *
+ * We never configured this, so the API's conservative default applied and he sat through
+ * "3/5 second" silences after every question: "ami live api model use kori jate instant
+ * native audio feel pai, but eta hocche na" (2026-07-25). Tool latency is not the cause —
+ * measured 0.3–1.4 s from the VPS — and neither is the jitter buffer at 240 ms.
+ *
+ * Google's Live API guide puts the trade-off precisely: silenceDurationMs "directly affects
+ * the size and completeness of audio chunks the model receives", recommends **500–800 ms**,
+ * and warns that below 500 ms transcription degrades on fragmented audio. So: 500 ms, the
+ * fast end of the documented band, plus END_SENSITIVITY_HIGH so end-of-speech is called as
+ * soon as it is credible.
+ *
+ * startOfSpeechSensitivity is deliberately LEFT ALONE. HIGH would make barge-in snappier but
+ * also makes line noise look like speech on a telephony channel, and the agent interrupting
+ * itself over background noise is a worse bug than the one being fixed.
+ *
+ * TRAP #11 applies: one unsupported field in connect() kills the whole session and every call
+ * goes silent. That is why this is a separate, env-killable block — GLIVE_VAD=off drops it
+ * entirely with no code change — and why it ships alone, verified on a live session first.
+ */
+function vadCfg() {
+  if (process.env.GLIVE_VAD === 'off') return {}
+  const silenceMs = Number(process.env.GLIVE_VAD_SILENCE_MS || 500)
+  return {
+    realtimeInputConfig: {
+      automaticActivityDetection: {
+        disabled: false,
+        endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
+        silenceDurationMs: silenceMs,
+      },
+    },
+  }
+}
+
 function sysFor(params) {
   const who = params?.recipientName || ''
   const purpose = params?.purpose || ''
@@ -200,6 +236,11 @@ const ERP_FN_DECLS = [
   { name: 'get_staff_tasks', description: 'স্টাফদের কাজের তালিকা ও অবস্থা (pending/চলছে/শেষ)।',
     parameters: { type: Type.OBJECT, properties: { staffName: { type: Type.STRING, description: 'নির্দিষ্ট স্টাফের নাম (ঐচ্ছিক)' } } } },
   { name: 'get_lunch_status', description: 'আজকের লাঞ্চ অর্ডার/স্ট্যাটাস।',
+    parameters: { type: Type.OBJECT, properties: {} } },
+  // Boss's OWN todo list. Without this the model reached for get_staff_tasks when he asked
+  // for his todos on a live call (2026-07-25) — staff work, not his list, so the answer was
+  // wrong before it started. get_staff_tasks stays for "স্টাফের কাজ কী", this is "আমার কাজ".
+  { name: 'list_owner_todos', description: 'Boss-এর নিজের todo/কাজের তালিকা — "আমার কী কাজ আছে / todo দেখাও" জিজ্ঞেস করলে এটাই, get_staff_tasks নয় (ওটা স্টাফের কাজ)।',
     parameters: { type: Type.OBJECT, properties: {} } },
   { name: 'get_pending_approvals', description: 'Boss-এর অনুমোদনের অপেক্ষায় থাকা কাজের তালিকা।',
     parameters: { type: Type.OBJECT, properties: {} } },
@@ -349,6 +390,7 @@ class Call {
           // a hint, so this steers detection without hard-failing on a stray English word.
           inputAudioTranscription: sttCfg(),
           outputAudioTranscription: sttCfg(),
+          ...vadCfg(),
           contextWindowCompression: { slidingWindow: {} }, // keep long calls cheap
           // Tools by call type: owner → ERP read tools; inbound → forward_call (transfer
           // to the boss/team) when a forward number is configured. Never expose ERP data
