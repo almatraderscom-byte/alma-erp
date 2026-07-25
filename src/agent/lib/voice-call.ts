@@ -17,6 +17,7 @@
 import { createHmac } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { normalizeOutboundPhone } from '@/lib/twilio/phone'
+import { buildOwnerCallFacts } from '@/agent/lib/call-facts'
 import { sarvamVoiceFor } from '@/agent/lib/voice-provider-intent'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -919,6 +920,13 @@ async function placeSipLiveCall(
     const exp = Date.now() + 15 * 60_000
     const t = createHmac('sha256', config.internalToken).update(`relay:${callRecordId}:${exp}`).digest('hex')
     const voice = voiceGender === 'female' ? 'Aoede' : 'Charon'
+    // Staff names travel WITH an owner call. A mid-call tool round-trip is not reliable for a
+    // name — Gemini Live drops a functionResponse that arrives while it is speaking, and on
+    // 2026-07-25 it answered "who is in today" with two invented names before the real answer
+    // landed. Best-effort: a call must never fail because this could not be read.
+    const facts = (callType ?? 'owner') === 'owner'
+      ? await buildOwnerCallFacts().catch(() => '')
+      : ''
     // The gateway normalises to the local 01XXXXXXXXX form itself; pass +E.164 as-is.
     const body = JSON.stringify({
       to: toNumber,
@@ -927,6 +935,7 @@ async function placeSipLiveCall(
         id: callRecordId, exp, t,
         purpose, recipientName: recipientName ?? '', voice,
         callType: callType ?? 'owner',
+        ...(facts ? { facts } : {}),
       },
     })
     const res = await fetch(`${config.sipGatewayBase}/api/v1/call`, {

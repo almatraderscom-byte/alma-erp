@@ -21,6 +21,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
 import { isOwnerNumber } from '@/agent/lib/voice-call'
+import { buildOwnerCallFacts } from '@/agent/lib/call-facts'
 import { dhakaHour } from '@/agent/lib/quiet-hours'
 
 export const runtime = 'nodejs'
@@ -180,6 +181,12 @@ export async function POST(req: NextRequest) {
       ? `ইনকামিং কল${cfg.label ? ` (${cfg.label} লাইন)` : ''} — ALMA-র সাপোর্ট সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও।`
       : 'ইনকামিং কল — ব্যবসার সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও'
 
+  // The owner asks about his staff on these calls, and a name must never be improvised: a
+  // mid-call tool round-trip is unreliable (Gemini Live drops a functionResponse that lands
+  // while it is speaking, and on 2026-07-25 it answered with two invented names). So the real
+  // names ride along with the call. Best-effort — an inbound call must never fail for this.
+  const facts = ownerCalling ? await buildOwnerCallFacts().catch(() => '') : ''
+
   return NextResponse.json({
     ok: true,
     params: {
@@ -187,6 +194,7 @@ export async function POST(req: NextRequest) {
       exp,
       t,
       purpose,
+      ...(facts ? { facts } : {}),
       recipientName: ownerCalling ? 'Boss' : caller,
       voice: process.env.SIP_INBOUND_VOICE ?? process.env.NGS_INBOUND_VOICE ?? 'Charon',
       callType: ownerCalling ? 'owner' : 'inbound',
