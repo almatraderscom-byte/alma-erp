@@ -47,6 +47,15 @@ import { muLawToPcm16, pcm16ToMuLaw } from './sarvam-media.mjs'
 
 // ── config (VPS .env only — secrets never in git) ────────────────────────────
 const CTRL_PORT = Number(process.env.SIP_GATEWAY_PORT || 8770)
+// Bind LOCALHOST by default. This API can originate PSTN calls and hang them up, so it must
+// not sit open on the public internet — it was, until 2026-07-25, protected only by a shared
+// secret travelling in plaintext HTTP. Everything that uses it today (the worker's one-way
+// calls, the bot's hangup/transfer) runs on this same box. Exposing it for Vercel is a
+// separate decision that needs TLS in front (see docs/SELF_HOSTED_SIP_ROADMAP.md).
+// Comma-separated list. Default = loopback plus the Docker bridge gateway, so the TLS
+// reverse proxy (a socat container fronted by Traefik, mirroring the existing relay-bridge)
+// can reach it while the public internet still cannot: we never bind 0.0.0.0.
+const CTRL_BIND = (process.env.SIP_GATEWAY_BIND || '127.0.0.1,172.16.0.1').split(',').map((x) => x.trim()).filter(Boolean)
 const KEY = process.env.SIP_GATEWAY_KEY || ''
 const SECRET = process.env.SIP_GATEWAY_SECRET || ''
 
@@ -177,6 +186,18 @@ const DEBUG_RECORD = process.env.SIP_DEBUG_RECORD === '1'
 // Length of the barge-in fade, in 20 ms frames. Two frames (40 ms) is long enough to be
 // click-free and short enough that the caller still experiences an immediate interruption.
 const FADE_FRAMES = Number(process.env.SIP_BARGE_FADE_FRAMES || 2)
+// How much audio to hold before playing, in 20 ms frames. Small enough not to add
+// noticeable delay, large enough to ride out the bot's event-loop stalls.
+const JITTER_FRAMES = Number(process.env.SIP_JITTER_FRAMES || 8)
+
+/** Ease a frame up from digital zero, for the first audio after a silent gap. */
+function fadeInFrame(f) {
+  const n = f.length >> 1
+  const out = Buffer.allocUnsafe(f.length)
+  for (let i = 0; i < n; i++) out.writeInt16LE(Math.round(f.readInt16LE(i * 2) * ((i + 1) / n)), i * 2)
+  return out
+}
+
 /** One frame that eases from `from` down to digital zero, so audio never stops on a step. */
 function rampToZero(from) {
   if (!from) return SILENCE_FRAME
@@ -306,14 +327,24 @@ class Call {
   startPlayout() {
     if (this.playTimer) return
     this.nextFrameAt = Date.now()
+    this.rebuffering = true
     this.playTimer = setInterval(() => {
       if (this.closed || !this.asSocket || this.asSocket.destroyed) return
       const now = Date.now()
       // Catch up if we fell behind (event-loop stall), but never run away.
       let guard = 0
       while (now >= this.nextFrameAt && guard < 50) {
+        // Jitter cushion: the bot paces its own output, but its event loop stalls whenever
+        // it is busy (model events, ERP tool calls), so frames arrive in gusts. With no
+        // cushion this queue ran dry mid-sentence — measured 8 times in one 109 s call —
+        // and the caller heard the voice stall and then click back in. Hold a small buffer
+        // before starting, and rebuild it after a dry spell, exactly as the bot does.
+        if (this.rebuffering) {
+          if (this.playQueue.length >= JITTER_FRAMES) this.rebuffering = false
+          else { this.rawWriteAudio(SILENCE_FRAME); this.silenceFrames = (this.silenceFrames || 0) + 1; this.nextFrameAt += 20; guard++; continue }
+        }
         const frame = this.playQueue.shift()
-        if (frame) this.rawWriteAudio(frame)
+        if (frame) this.rawWriteAudio(this.fadeIn ? fadeInFrame(frame) : frame)
         else {
           // Silence between turns is expected; silence RIGHT AFTER audio means the queue ran
           // dry mid-utterance, which is exactly what a listener hears as the voice breaking.
@@ -323,11 +354,15 @@ class Call {
           if (this.lastWasAudio) {
             this.underruns = (this.underruns || 0) + 1
             this.rawWriteAudio(rampToZero(this.lastSample))
+            this.rebuffering = true // wait for the cushion again instead of stuttering
           } else {
             this.rawWriteAudio(SILENCE_FRAME)
           }
           this.silenceFrames = (this.silenceFrames || 0) + 1
         }
+        // Coming back from silence, starting mid-waveform is the same step discontinuity in
+        // reverse — so the first frame after a gap eases in.
+        this.fadeIn = !frame
         if (frame) this.lastSample = frame.readInt16LE(frame.length - 2)
         this.lastWasAudio = Boolean(frame)
         this.nextFrameAt += 20
@@ -1019,7 +1054,13 @@ async function checkRegistration() {
 
 // ── boot ─────────────────────────────────────────────────────────────────────
 audioServer.listen(AS_PORT, AS_BIND, () => log(`AudioSocket TCP listening ${AS_BIND}:${AS_PORT} (advertise ${AS_ADVERTISE})`))
-ctrlServer.listen(CTRL_PORT, '0.0.0.0', () => log(`control API listening :${CTRL_PORT}`))
+for (const addr of CTRL_BIND) {
+  // One server per address. A missing Docker bridge must not stop the loopback listener,
+  // so a failed bind is logged and skipped rather than crashing the gateway.
+  const srv = addr === CTRL_BIND[0] ? ctrlServer : http.createServer(ctrlServer.listeners('request')[0])
+  srv.on('error', (err) => log(`control API bind ${addr}:${CTRL_PORT} failed: ${err.message}`))
+  srv.listen(CTRL_PORT, addr, () => log(`control API listening ${addr}:${CTRL_PORT}`))
+}
 startAri()
 if (ARI_READY) {
   void checkRegistration()
