@@ -167,7 +167,8 @@ interface AgentThreadProps {
   /** Open the artifacts panel; pass an artifact id to focus that file. */
   onArtifactOpen: (id?: string) => void
   onActionApproved?: () => void
-  onQuickSend?: (text: string) => void
+  /** `askCardId` marks the message as the ANSWER to that card (web parity with native). */
+  onQuickSend?: (text: string, askCardId?: string) => void
   /** Owner answered a model-upgrade approval card → rerun the paused turn. */
   onModelSwitchResolve?: (opts: { approve: boolean; rememberChoice?: boolean; fallbackModelId?: string }) => void
   onStartVoiceSession?: () => void
@@ -1568,21 +1569,28 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     <AgentAskCard
                       card={msg.askCard}
                       onSelect={(opt) => {
-                        void fetch(`/api/assistant/ask-cards/${msg.askCard!.id}/answer`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ option: opt }),
-                        }).then((res) => {
-                          // Non-silent failure: the answer still reaches the agent via
-                          // onQuickSend below, but a failed record means the durable
-                          // card row stays 'pending' — log it so it's diagnosable.
-                          if (!res.ok) {
-                            console.warn(`[ask-card] answer POST failed (HTTP ${res.status}) for card ${msg.askCard!.id}`)
+                        const cardId = msg.askCard!.id
+                        // ORDER MATTERS (owner report 2026-07-26): record the answer
+                        // FIRST, then send it. The old code fired both at once, so the
+                        // turn could start while the row still read 'pending' and the
+                        // head re-asked the identical question the moment he tapped —
+                        // "instantly same abr card ta ashe". The message also carries
+                        // the card id now, so the server resolves it either way.
+                        void (async () => {
+                          try {
+                            const res = await fetch(`/api/assistant/ask-cards/${cardId}/answer`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ option: opt }),
+                            })
+                            if (!res.ok) {
+                              console.warn(`[ask-card] answer POST failed (HTTP ${res.status}) for card ${cardId}`)
+                            }
+                          } catch (err) {
+                            console.warn('[ask-card] answer POST failed:', err)
                           }
-                        }).catch((err) => {
-                          console.warn('[ask-card] answer POST failed:', err)
-                        })
-                        onQuickSend(opt)
+                          onQuickSend(opt, cardId)
+                        })()
                       }}
                     />
                   )}

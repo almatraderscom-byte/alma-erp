@@ -396,6 +396,17 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
    * if the latest row is still the owner's question we poll briefly until the
    * assistant reply lands. Bails out the moment a new stream starts.
    */
+  /**
+   * Replace the thread from a server payload — but NEVER blank a thread that has
+   * messages. Owner report 2026-07-26: answering an ask card emptied the whole
+   * chat until a reload. A poll that briefly returns nothing (or races the new
+   * turn) must not wipe what he is looking at.
+   */
+  const applyServerMessages = useCallback((rows: MessageRow[]) => {
+    const mapped = mapMessageRows(rows)
+    setMessages((prev) => (mapped.length === 0 && prev.length > 0 ? prev : mapped))
+  }, [])
+
   const resyncActiveConversation = useCallback(async (convId: string | null) => {
     if (!convId) return
 
@@ -404,7 +415,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         const res = await fetch(`/api/assistant/conversations/${convId}/messages`)
         if (res.ok) {
           const rows: MessageRow[] = await res.json()
-          if (!streamingRef.current) setMessages(mapMessageRows(rows))
+          if (!streamingRef.current) applyServerMessages(rows)
           return rows
         }
       } catch { /* offline / transient */ }
@@ -704,7 +715,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
     if (msgRes.ok) {
       const rows: MessageRow[] = await msgRes.json()
-      setMessages(mapMessageRows(rows))
+      applyServerMessages(rows)
     }
 
     if (artRes.ok) setArtifacts(await artRes.json())
@@ -758,6 +769,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     pendingFiles: PendingFile[],
     resumeOpts?: { approve: boolean; rememberChoice?: boolean; fallbackModelId?: string },
     autoContinueFromTurnId?: string,
+    /**
+     * The ask card this message ANSWERS. The web client used to omit it (only the
+     * native app sent it), so the turn ran with the card row still looking
+     * unanswered and the head re-asked the same question the instant Boss tapped
+     * an option — his 2026-07-26 report. The server resolves the card from this id.
+     */
+    askCardId?: string,
   ) => {
     if (streaming) {
       // `setStreaming(true)` can render the queue-capable composer a few frames
@@ -935,6 +953,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         body.resume = resumeOpts
       } else {
         body.message = text
+        // The card this message answers — without it the turn ran against a row
+        // that still looked pending and the head re-asked immediately.
+        if (askCardId) body.askCardId = askCardId
         if (clientRequestId) body.clientRequestId = clientRequestId
         if (finalConvId) body.conversationId = finalConvId
         else {
@@ -1345,7 +1366,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             const msgRes = await fetch(`/api/assistant/conversations/${finalConvId}/messages`).catch(() => null)
             if (msgRes?.ok) {
               const rows: MessageRow[] = await msgRes.json()
-              setMessages(mapMessageRows(rows))
+              applyServerMessages(rows)
             }
             return true
           }
@@ -1398,7 +1419,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           const msgRes = await fetch(`/api/assistant/conversations/${finalConvId}/messages`)
           if (msgRes.ok) {
             const rows: MessageRow[] = await msgRes.json()
-            setMessages(mapMessageRows(rows))
+            applyServerMessages(rows)
           }
         } catch { /* ignore */ }
       }
@@ -1881,7 +1902,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             conversationId={activeConvId}
             onArtifactOpen={(id) => { if (id) setArtifactFocus((f) => ({ id, n: (f?.n ?? 0) + 1 })); setArtifactsOpen(true) }}
             onActionApproved={() => { if (activeConvId) startResultPolling(activeConvId) }}
-            onQuickSend={(text) => { if (!streaming) void handleSend(text, []) }}
+            onQuickSend={(text, askCardId) => { if (!streaming) void handleSend(text, [], undefined, undefined, askCardId) }}
             onModelSwitchResolve={(opts) => { if (!streaming) void handleSend('', [], opts) }}
             onStartVoiceSession={() => setVoiceOpen(true)}
             streamMode={streamMode}
