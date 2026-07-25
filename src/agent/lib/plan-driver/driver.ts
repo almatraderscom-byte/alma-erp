@@ -53,6 +53,12 @@ import {
   grindCompletionForPlan,
   preflightGrindStep,
 } from '@/agent/lib/grind/driver-hooks'
+import {
+  deliverPlanOutcome,
+  elapsedBn,
+  isOverBudget,
+  planBudgetMs,
+} from '@/agent/lib/plan-driver/plan-delivery'
 import { runCompletionGate } from '@/agent/lib/plan-driver/completion-gate'
 import { completeSourceTodoForPlan } from '@/agent/lib/plan-driver/promote'
 import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
@@ -167,6 +173,9 @@ async function escalate(
     message: `"${plan.goal}" — ${reason}`,
     category: 'task',
   }).catch(() => {})
+  // G5 — the outcome goes to Boss's own chat, not only into a panel he has to
+  // open. A push only fires when he is away; this always lands.
+  await deliverPlanOutcome(plan, 'stopped', reason).catch(() => {})
   return { planId: plan.id, goal: plan.goal, outcome, detail: reason, costTaka: 0 }
 }
 
@@ -268,6 +277,18 @@ export async function drivePlan(planIn: Plan, config: AutodriveConfig): Promise<
       )
     }
 
+    // 2b. G6 — the time budget. Ordinary work finishes inside it; work that
+    //     cannot must SAY so rather than sitting silently for hours (owner
+    //     ruling 2026-07-26 — he watched two plans go quiet for an hour).
+    if (isOverBudget(plan, await planBudgetMs(), now)) {
+      return await escalate(
+        plan,
+        'escalated-attempts',
+        `${elapsedBn(plan, now)} ধরে চলছে কিন্তু শেষ হয়নি — এখানে আমার নিজের চেষ্টায় হচ্ছে না। ` +
+          `যা হয়েছে: ${plan.steps.filter((s) => s.status === 'done').length}/${plan.steps.length} ধাপ। কীভাবে এগোবো বলুন।`,
+      )
+    }
+
     // 3. Blocked plan — resume only when the owner approval cleared.
     if (plan.autodriveState === 'blocked') {
       if (await hasOpenApproval(plan.conversationId)) {
@@ -300,6 +321,7 @@ export async function drivePlan(planIn: Plan, config: AutodriveConfig): Promise<
             message: `"${plan.goal}" — ${grind.reason}`,
             category: 'report',
           }).catch(() => {})
+          await deliverPlanOutcome(plan, 'done', grind.reason).catch(() => {})
           return { planId: plan.id, goal: plan.goal, outcome: 'plan-done', detail: grind.reason, costTaka: 0 }
         }
         // Steps are done but the measurement disagrees — that IS the signal to
@@ -323,6 +345,7 @@ export async function drivePlan(planIn: Plan, config: AutodriveConfig): Promise<
           message: `"${plan.goal}" শেষ হয়েছে। ${verdict.reason}`,
           category: 'report',
         }).catch(() => {})
+        await deliverPlanOutcome(plan, 'done', verdict.reason).catch(() => {})
         return { planId: plan.id, goal: plan.goal, outcome: 'plan-done', detail: verdict.reason, costTaka: gateTaka }
       }
       // Steps ran but the goal is not truly met. Two paths:

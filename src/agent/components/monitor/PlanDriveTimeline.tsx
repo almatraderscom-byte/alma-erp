@@ -66,11 +66,22 @@ export interface GrindDriveView {
   families: Array<{ family: string; total: number; fixed: number; open: number; mode: 'proposal' | 'apply' }>
 }
 
+export interface LiveJobView {
+  actionId: string
+  type: string
+  summary: string
+  startedAt: string
+  runningMs: number
+  conversationId: string | null
+}
+
 export interface PlanDrivePanelData {
   enabled: boolean
   drives: PlanDriveView[]
   runningCount?: number
   waitingApprovalCount?: number
+  /** G4 — worker jobs running right now (crawl/audit/long task). */
+  runningJobs?: LiveJobView[]
   activeCount: number
   needsDecisionCount: number
   dailyCapTaka: number
@@ -78,6 +89,14 @@ export interface PlanDrivePanelData {
 }
 
 export type PlanDriveAction = 'resume' | 'add-budget' | 'abandon' | 'family-auto' | 'family-stop'
+
+/** "২ মিনিট ধরে" — how long a worker job has been running. */
+function runningFor(ms: number): string {
+  const min = Math.floor(ms / 60_000)
+  if (min < 1) return 'এইমাত্র শুরু'
+  if (min < 60) return `${min} মিনিট ধরে`
+  return `${Math.round(min / 60)} ঘণ্টা ধরে`
+}
 
 /** "৪২ মিনিট" / "১ ঘণ্টা" — how long this plan has been silent. */
 function idleFor(ms: number | null | undefined): string {
@@ -401,7 +420,9 @@ export function PlanDriveTimeline({ data, onOpenConversation, onAction }: {
   onAction?: (planId: string, action: PlanDriveAction, family?: string) => void | Promise<void>
 }) {
   const drives = data?.drives ?? []
-  if (drives.length === 0) return null
+  // G4 — a running worker job is reason enough to show the desk, even with no
+  // plan in flight. Otherwise a live crawl stays invisible.
+  if (drives.length === 0 && (data?.runningJobs?.length ?? 0) === 0) return null
 
   const attention = drives.filter((d) => d.phase === 'needs-decision' || d.phase === 'waiting-approval')
   // G1 — "N চলছে" counts plans that are genuinely moving, not every non-parked
@@ -416,6 +437,24 @@ export function PlanDriveTimeline({ data, onOpenConversation, onAction }: {
       transition={{ duration: 0.3 }}
       className="overflow-hidden rounded-3xl border border-[#E07A5F]/20 bg-gradient-to-b from-card/90 to-card/60 shadow-[0_2px_24px_rgba(224,122,95,0.06)]"
     >
+      {/* G4 — queued worker work, visible AS work. An 8-minute crawl used to look
+          like the agent had gone quiet; now it says what is running and for how
+          long, every poll. */}
+      {(data.runningJobs?.length ?? 0) > 0 && (
+        <div className="border-b border-border-subtle bg-emerald-500/[0.05] px-4 py-2.5">
+          {data.runningJobs!.map((job) => (
+            <div key={job.actionId} className="flex items-center gap-2 py-0.5">
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[11px] text-cream/85">{job.summary}</span>
+              <span className="shrink-0 text-[9.5px] tabular-nums text-muted">{runningFor(job.runningMs)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Live-desk header */}
       <div className="flex items-center gap-2.5 border-b border-border-subtle px-4 py-3">
         <span className="relative flex h-2.5 w-2.5">
