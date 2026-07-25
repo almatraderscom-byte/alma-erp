@@ -7,6 +7,7 @@ import type {
   ContextBreakdownItem,
   UsageIntelligenceSnapshot,
 } from '@/agent/lib/usage-intelligence'
+import { getUsageThreshold } from '@/agent/lib/usage-threshold'
 
 type AgentUsagePopoverProps = {
   conversationId: string | null
@@ -29,6 +30,24 @@ function usd(value: number | null, digits = 2): string {
 
 function percent(value: number | null): string {
   return value == null ? '—' : `${Math.round(value)}%`
+}
+
+function quotaColor(value: number | null, defaultColor: string): string {
+  const threshold = getUsageThreshold(value)
+  if (threshold === 'critical') return '#F07F8D'
+  if (threshold === 'warning') return '#F6B85A'
+  return defaultColor
+}
+
+function quotaAccent(value: number | null): string {
+  const threshold = getUsageThreshold(value)
+  if (threshold === 'critical') {
+    return 'border-[#F07F8D]/25 bg-[#F07F8D]/[0.045] shadow-[inset_0_0_28px_rgba(240,127,141,.035)]'
+  }
+  if (threshold === 'warning') {
+    return 'border-[#F6B85A]/25 bg-[#F6B85A]/[0.04] shadow-[inset_0_0_28px_rgba(246,184,90,.03)]'
+  }
+  return 'border-white/[0.065] bg-white/[0.025]'
 }
 
 function RelativeSync({ value }: { value: string | null }) {
@@ -227,7 +246,9 @@ export default function AgentUsagePopover({
   }, [])
 
   const contextPercent = snapshot?.context.percentage ?? 0
-  const activeColor = contextPercent > 85 ? '#F07F8D' : contextPercent > 65 ? '#F6B85A' : '#9B8AFB'
+  const activeColor = quotaColor(contextPercent, '#9B8AFB')
+  const dailyPercent = snapshot?.daily.percentage ?? null
+  const dailyColor = quotaColor(dailyPercent, '#57C7FF')
   const weeklyTop = snapshot?.weekly.models.slice(0, 4) ?? []
   const walletStale = snapshot?.wallet.staleAfter
     ? new Date(snapshot.wallet.staleAfter).getTime() <= Date.now()
@@ -332,7 +353,7 @@ export default function AgentUsagePopover({
 
             {snapshot && (
               <div className="relative max-h-[min(650px,calc(100vh-125px))] overflow-y-auto p-2.5">
-                <section className="overflow-hidden rounded-2xl border border-white/[0.065] bg-white/[0.025]">
+                <section className={cn('overflow-hidden rounded-2xl border transition-colors', quotaAccent(contextPercent))}>
                   <button
                     type="button"
                     className="w-full p-3.5 text-left"
@@ -412,7 +433,7 @@ export default function AgentUsagePopover({
                   </AnimatePresence>
                 </section>
 
-                <section className="mt-2.5 rounded-2xl border border-white/[0.065] bg-white/[0.025] p-3.5">
+                <section className={cn('mt-2.5 rounded-2xl border p-3.5 transition-colors', quotaAccent(dailyPercent))}>
                   <div className="flex items-end justify-between gap-3">
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/38">Daily budget</p>
@@ -423,12 +444,18 @@ export default function AgentUsagePopover({
                         </span>
                       </p>
                     </div>
-                    <span className="rounded-full bg-[#57C7FF]/9 px-2 py-1 text-[9px] font-semibold text-[#7ED6FF]">
+                    <span
+                      className="rounded-full px-2 py-1 text-[9px] font-semibold"
+                      style={{ backgroundColor: `${dailyColor}17`, color: dailyColor }}
+                    >
                       {snapshot.daily.percentage == null ? 'Live spend' : `${percent(snapshot.daily.percentage)} used`}
                     </span>
                   </div>
                   <div className="mt-3">
-                    <LiveRail value={snapshot.daily.percentage ?? Math.min(100, snapshot.daily.spentUsd > 0 ? 9 : 1)} color="#57C7FF" />
+                    <LiveRail
+                      value={snapshot.daily.percentage ?? Math.min(100, snapshot.daily.spentUsd > 0 ? 9 : 1)}
+                      color={dailyColor}
+                    />
                   </div>
                 </section>
 
