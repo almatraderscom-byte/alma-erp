@@ -12,8 +12,12 @@
  * to "who is in today" is already in front of it, before the first sentence.
  *
  * Read-only, best-effort: a call must never fail because this could not be built.
+ *
+ * The tool registry is imported LAZILY, inside the function. Importing it at module load
+ * pulled the whole registry into voice-call.ts's import graph, and the agent behaviour-gate
+ * suite died on it (`registry.ts:427 Cannot read properties of undefined`) before a single
+ * test ran — a call-path helper must not drag that much module init behind it.
  */
-import { executeTool } from '@/agent/tools/registry'
 
 interface StaffRow { name?: string; role?: string }
 interface AttendanceRow { name?: string; checkIn?: string; lateMinutes?: number }
@@ -40,6 +44,7 @@ const names = (rows?: AttendanceRow[]) => (rows ?? []).map((r) => String(r?.name
  */
 export async function buildOwnerCallFacts(businessId = 'ALMA_LIFESTYLE'): Promise<string> {
   const ctx = { businessId }
+  const { executeTool } = await import('@/agent/tools/registry')
   const [staffRes, attRes] = await Promise.all([
     executeTool('get_all_staff', {}, ctx).catch(() => null),
     executeTool('get_attendance', {}, ctx).catch(() => null),
