@@ -63,6 +63,42 @@ interface CdrBody {
   transferCauseTxt?: string
   recordingUrl?: string
   recordingSecs?: number
+  /** Playout counters for this call — see `audio` in the gateway's Call.hangup(). */
+  audio?: {
+    underruns?: number
+    dropped?: number
+    cushionFrames?: number
+    framesOut?: number
+    silenceFrames?: number
+    bargeIns?: number
+  }
+}
+
+/**
+ * The facts the phone console needs, mapped onto the columns added for it. Every one of
+ * these except `audio` was already arriving on this request and being discarded, which is
+ * why "why did that call fail" could only be answered by reading the VPS log.
+ *
+ * Written on both the update and the create path, and never allowed to overwrite a value
+ * that is already there with a blank one — a late CDR must not erase a better record.
+ */
+function callFacts(c: CdrBody) {
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : undefined)
+  return {
+    ...(c.direction ? { direction: String(c.direction).slice(0, 16) } : {}),
+    ...(c.from ? { fromNumber: String(c.from).slice(0, 32) } : {}),
+    ...(c.did ? { did: String(c.did).slice(0, 32) } : {}),
+    ...(n(c.cause) != null ? { hangupCause: n(c.cause) } : {}),
+    ...(c.causeTxt ? { hangupCauseTxt: String(c.causeTxt).slice(0, 120) } : {}),
+    ...(c.transferredTo ? { transferredTo: String(c.transferredTo).slice(0, 32) } : {}),
+    ...(n(c.transferTalkSecs) != null ? { transferTalkSecs: n(c.transferTalkSecs) } : {}),
+    ...(n(c.audio?.underruns) != null ? { audioUnderruns: n(c.audio?.underruns) } : {}),
+    ...(n(c.audio?.dropped) != null ? { audioDropped: n(c.audio?.dropped) } : {}),
+    ...(n(c.audio?.cushionFrames) != null ? { audioCushionFrames: n(c.audio?.cushionFrames) } : {}),
+    ...(n(c.audio?.framesOut) != null ? { audioFramesOut: n(c.audio?.framesOut) } : {}),
+    ...(n(c.audio?.silenceFrames) != null ? { audioSilenceFrames: n(c.audio?.silenceFrames) } : {}),
+    ...(n(c.audio?.bargeIns) != null ? { audioBargeIns: n(c.audio?.bargeIns) } : {}),
+  }
 }
 
 /** Human-readable Bangla note about a transfer, so the owner learns what happened after the AI left. */
@@ -139,6 +175,7 @@ export async function POST(req: NextRequest) {
           // only the part it witnessed, and the human half is exactly what was missing.
           ...(note ? { summary: existing.summary ? `${existing.summary} ${note}` : note } : {}),
           ...(c.recordingUrl ? { recordingUrl: c.recordingUrl, recordingSecs: c.recordingSecs ?? null } : {}),
+          ...callFacts(c),
         },
       })
       if (lateRecording) void sendRecordingLink(existing.id, c)
@@ -163,6 +200,7 @@ export async function POST(req: NextRequest) {
         ...(durationSecs != null ? { durationSecs } : {}),
         ...(note ? { summary: note } : {}),
         ...(c.recordingUrl ? { recordingUrl: c.recordingUrl, recordingSecs: c.recordingSecs ?? null } : {}),
+        ...callFacts(c),
       },
     })
     return NextResponse.json({ ok: true, callRecordId: created.id, created: true })

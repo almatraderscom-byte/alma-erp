@@ -1,7 +1,9 @@
+import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { isAgentEnabled } from '@/agent/config'
+import { isSystemOwner } from '@/lib/roles'
 import { AgentSubHeader } from '@/agent/components/AgentSubHeader'
 import SoftphonePanel from '@/agent/components/phone/SoftphonePanel'
 
@@ -26,6 +28,16 @@ export default async function PhonePage() {
         title="ব্রাউজার"
         accent="ফোন"
         subtitle="সিম ছাড়াই কল ধরুন • কলদাতার তথ্য পর্দায় • সহকর্মীকে ফ্রি কল"
+        // The console is the owner's view OF the phone system; this page is the phone
+        // itself. Only he sees the door, so staff are never shown a screen they cannot open.
+        actions={isSystemOwner(session) ? (
+          <Link
+            href="/agent/phone-console"
+            className="rounded-full border border-border-subtle bg-card/60 px-3 py-1.5 text-[11px] text-muted transition-colors hover:border-[#E07A5F]/40 hover:text-cream"
+          >
+            কনসোল
+          </Link>
+        ) : undefined}
       />
       <div className="mx-auto max-w-2xl px-4 pt-4 pb-10">
         <SoftphonePanel />

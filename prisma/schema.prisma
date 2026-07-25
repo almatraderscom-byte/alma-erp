@@ -4374,6 +4374,32 @@ model AgentVoiceCall {
   /// Listenable copy of the call (Supabase). Covers the post-transfer human conversation too.
   recordingUrl     String?                  @map("recording_url")
   recordingSecs    Int?                     @map("recording_secs")
+  /// 'inbound' | 'outbound'. The SIP gateway has always sent this on the CDR; until the
+  /// phone console there was nowhere to put it, so direction had to be guessed from
+  /// `purpose`. Guessing is wrong for one-way message calls, hence a real column.
+  direction        String?
+  /// Caller's number on an inbound call, and the DID they dialled. `toNumber` holds the
+  /// far end either way, so these two are what make an inbound row readable.
+  fromNumber       String?                  @map("from_number")
+  did              String?
+  /// ISDN hangup cause as the switch reported it (16 = normal, 17 = busy, 19 = no answer,
+  /// 34 = no circuit …). "Why did this call fail" is unanswerable without it.
+  hangupCause      Int?                     @map("hangup_cause")
+  hangupCauseTxt   String?                  @map("hangup_cause_txt")
+  /// Where a transferred call went and how long the two humans then spoke — the AI steps
+  /// off the audio path at transfer, so this is the only record of that half.
+  transferredTo    String?                  @map("transferred_to")
+  transferTalkSecs Int?                     @map("transfer_talk_secs")
+  /// Objective audio-quality counters from the gateway's playout, per call. An underrun is
+  /// the queue running dry mid-sentence (~200 ms of dead air inside a word); `dropped` is
+  /// the opposite — frames skipped to catch up. Previously these existed only in one log
+  /// line on the VPS, so an audio regression could only be caught by the owner's ear.
+  audioUnderruns   Int?                     @map("audio_underruns")
+  audioDropped     Int?                     @map("audio_dropped")
+  audioCushionFrames Int?                   @map("audio_cushion_frames")
+  audioFramesOut   Int?                     @map("audio_frames_out")
+  audioSilenceFrames Int?                   @map("audio_silence_frames")
+  audioBargeIns    Int?                     @map("audio_barge_ins")
   createdAt        DateTime                 @default(now()) @map("created_at")
   endedAt          DateTime?                @map("ended_at")
   deliveries       AgentVoiceCallDelivery[]
@@ -4381,6 +4407,7 @@ model AgentVoiceCall {
   @@index([status, createdAt])
   @@index([conversationId])
   @@index([pendingActionId])
+  @@index([createdAt])
   @@map("agent_voice_calls")
 }
 
