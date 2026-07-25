@@ -172,6 +172,13 @@ function outcomeFromCause(answered, cause) {
 // Cost + abuse guard: a runaway loop (or a stolen control-API key) must not be able to
 // dial dozens of PSTN legs. Owner-tunable; refuses politely past the cap.
 const MAX_CONCURRENT = Number(process.env.SIP_MAX_CONCURRENT_CALLS || 4)
+// Only these destinations may be dialled (BD mobile/landline in local or +880 form).
+const DEST_ALLOW = new RegExp(process.env.SIP_DEST_ALLOW || '^(0\\d{9,10}|880\\d{9,10})$')
+// Hourly originate ceiling across the whole gateway.
+const MAX_PER_HOUR = Number(process.env.SIP_MAX_CALLS_PER_HOUR || 30)
+const recentOriginates = []
+let authFailures = 0
+let lastAuthAlert = 0
 // Where one-way message audio is staged for Asterisk to play (must be readable by Asterisk).
 const PLAY_DIR = process.env.SIP_PLAY_DIR || tmpdir()
 // One 20 ms slin frame of silence, used to keep the AudioSocket stream continuous while
@@ -825,7 +832,16 @@ const ctrlServer = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size, registration: { registered: regState.registered, status: regState.lastStatus, failures: regState.consecutiveFailures } })
   }
   if (!m) return json(res, 404, { error: 'not found' })
-  if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+  if (!authOk(req)) {
+    // Somebody is trying keys against a call-control API. Worth knowing about, but alert at
+    // most once an hour so a scanner cannot turn this into its own notification flood.
+    authFailures++
+    if (authFailures >= 5 && Date.now() - lastAuthAlert > 3_600_000) {
+      lastAuthAlert = Date.now(); authFailures = 0
+      void alertOwner('ফোন সিস্টেমে অননুমোদিত চেষ্টা', 'কল-কন্ট্রোলে ভুল পাসওয়ার্ড দিয়ে বারবার ঢোকার চেষ্টা হচ্ছে।')
+    }
+    return json(res, 401, { error: 'unauthorized' })
+  }
   if (!ARI_READY) return json(res, 503, { error: 'ARI not configured on this gateway' })
   const id = m[1]
 
@@ -842,12 +858,30 @@ const ctrlServer = http.createServer(async (req, res) => {
       const params = body.params || {}
       // One-way message call: no bot, just speak this audio and hang up (NGS <Play> parity).
       const playUrl = String(body.playUrl || '').trim()
-      // Optional: verify the per-call token so only OUR backend can originate. One-way
-      // calls carry no bot session, so they are authorised by the control-API key alone.
-      if (!playUrl) {
-        const fail = authFailReason(params)
-        if (fail) return json(res, 401, { error: `token: ${fail}` })
+      // Per-call HMAC is required for EVERY originate, one-way included. Previously one-way
+      // calls were authorised by the control-API key alone, so a single leaked secret was
+      // enough to dial arbitrary numbers on our trunk — the classic toll-fraud setup. Now an
+      // attacker also needs AGENT_INTERNAL_TOKEN, which never travels in a request.
+      const fail = authFailReason(params)
+      if (fail) { log(`REFUSED originate: token ${fail}`); return json(res, 401, { error: `token: ${fail}` }) }
+      // Destination allowlist. Toll fraud is only profitable against expensive international
+      // destinations; this business only ever calls Bangladeshi numbers, so anything else is
+      // refused outright rather than rate-limited.
+      if (!DEST_ALLOW.test(to)) {
+        log(`REFUSED originate -> ${to}: destination not allowed`)
+        void alertOwner('ফোন লাইনে সন্দেহজনক কল আটকানো হয়েছে', `অনুমোদিত নয় এমন নম্বরে কল দেওয়ার চেষ্টা হয়েছিল: ${to}`)
+        return json(res, 403, { error: 'destination not allowed' })
       }
+      // Hourly ceiling on top of the concurrency cap: a stolen key cannot burn the balance
+      // slowly either. Legitimate volume is a handful of calls an hour.
+      const nowMs = Date.now()
+      while (recentOriginates.length && nowMs - recentOriginates[0] > 3_600_000) recentOriginates.shift()
+      if (recentOriginates.length >= MAX_PER_HOUR) {
+        log(`REFUSED originate -> ${to}: hourly cap ${MAX_PER_HOUR} reached`)
+        void alertOwner('ফোন কলের ঘণ্টা-সীমা শেষ', `গত এক ঘণ্টায় ${MAX_PER_HOUR}টি কল হয়েছে — নতুন কল আটকানো হচ্ছে। অপ্রত্যাশিত হলে দ্রুত দেখুন।`)
+        return json(res, 429, { error: `hourly cap reached (${MAX_PER_HOUR})` })
+      }
+      recentOriginates.push(nowMs)
       if (calls.size >= MAX_CONCURRENT) {
         log(`REFUSED originate -> ${to}: ${calls.size}/${MAX_CONCURRENT} concurrent`)
         return json(res, 429, { error: `concurrency cap reached (${MAX_CONCURRENT})` })

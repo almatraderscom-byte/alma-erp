@@ -9,6 +9,7 @@
  * Salah calls use a separate retry policy: 3m / 5m / 5m retries, cooldown bypassed.
  */
 
+import { createHmac } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { synthesizeSpeech, mp3ToTelephonyWav } from '../tts.mjs'
 import { logCost, calcTwilioCostUsd } from '../cost-log.mjs'
@@ -422,6 +423,14 @@ export async function makeNgsCall(text, opts = {}) {
  *
  * @returns {Promise<{ok:boolean, callSid?:string, error?:string}>}
  */
+/** Per-call signature the SIP gateway checks: HMAC(AGENT_INTERNAL_TOKEN, `relay:<id>:<exp>`). */
+function sipCallToken() {
+  const id = `oneway-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const exp = Date.now() + 15 * 60_000
+  const token = process.env.AGENT_INTERNAL_TOKEN || ''
+  return { id, exp, t: createHmac('sha256', token).update(`relay:${id}:${exp}`).digest('hex') }
+}
+
 export async function makeSipCall(text, opts = {}) {
   const base = (process.env.SIP_GATEWAY_BASE || '').replace(/\/$/, '')
   const key = process.env.SIP_GATEWAY_KEY
@@ -457,6 +466,9 @@ export async function makeSipCall(text, opts = {}) {
       body: JSON.stringify({
         to: String(toNumber),
         playUrl: signed.signedUrl,
+        // The gateway requires a per-call HMAC on every originate (not just two-way calls),
+        // so a leaked control-API key alone cannot dial our trunk. Same scheme the bot uses.
+        params: sipCallToken(),
         ...(opts.confirm
           ? {
               collectDigits: true,
