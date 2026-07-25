@@ -302,12 +302,17 @@ const FADE_FRAMES = Number(process.env.SIP_BARGE_FADE_FRAMES || 2)
  * does the buffering for us: we hand it gusts and it plays them out smoothly.
  *
  * On our own line there is no Twilio — AudioSocket wants a frame every 20 ms and WE are the
- * media server. So we have to hold what Twilio would have held. At 160 ms we did not, and the
- * owner heard it: `underruns=5, 5, 4` on his three calls, each one ~200 ms of dead air
- * dropped inside a word. 400 ms costs a barely perceptible beat before the first syllable and
- * buys the headroom that made the other path sound right.
+ * media server. So THIS is the single jitter buffer in the pipeline: the bot now frame-aligns
+ * and forwards immediately (see startDrain in gemini-live-bot.mjs), exactly as Google's
+ * reference does towards Twilio, so nothing upstream paces or re-buffers any more.
+ *
+ * 12 frames = 240 ms. 160 ms was too thin — the owner heard `underruns=5, 5, 4`, each one
+ * ~200 ms of dead air inside a word. 400 ms fixed the breaking but he felt the latency
+ * ("ager moto fast na"), and with the bot no longer holding its own 120 ms cushion this side
+ * does not need to be that deep. It still grows on demand, so a call with unusually bursty
+ * generation ends up where it needs to be without charging every call for it.
  */
-const JITTER_FRAMES = Number(process.env.SIP_JITTER_FRAMES || 20)
+const JITTER_FRAMES = Number(process.env.SIP_JITTER_FRAMES || 12)
 /**
  * The cushion GROWS when it proves too small — a fixed depth cannot fit every call.
  *
