@@ -110,11 +110,29 @@ export async function enqueueAgentContinuation(opts: {
    * one coherent "active" span from the owner's tap to the final reply
    * (owner ask 2026-07-13: Claude-Code-like live progress). */
   turnId?: string | null
+  /**
+   * Resume even while an ask card is unanswered. Only for a continuation that
+   * IS the owner's answer being applied (the ask-card answer route) — never for
+   * background work.
+   */
+  ignoreAwaitingOwner?: boolean
 }): Promise<void> {
   if (!opts.conversationId) return
   if (!opts.force && !(await autoContinueEnabled())) {
     if (opts.turnId) await finalizeTurnIfRunning(opts.turnId, 'done')
     return
+  }
+  // An unanswered question BLOCKS the agent (owner rule 2026-07-25). Boss
+  // watched a whole new turn start under a card he had not touched — a
+  // server-side resume must never talk past his open question. Callers that
+  // still owe him a result (job delivery) post it as a plain message instead.
+  if (!opts.ignoreAwaitingOwner) {
+    const { hasUnansweredAskCard } = await import('@/agent/lib/job-delivery')
+    if (await hasUnansweredAskCard(opts.conversationId)) {
+      console.log('[approval-continuation] skipped — Boss has an unanswered question in this conversation')
+      if (opts.turnId) await finalizeTurnIfRunning(opts.turnId, 'done')
+      return
+    }
   }
 
   const turnId = opts.turnId ?? (await createTurn(opts.conversationId))

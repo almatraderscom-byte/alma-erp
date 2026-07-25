@@ -37,6 +37,18 @@ export const BROWSER_TURN_MAX_ITERATIONS = Math.max(
 )
 
 /**
+ * DEEP-work turns (Boss asked for a deep/full/end-to-end job, or the server is
+ * driving a delivery contract) also need more rounds than a chat reply: queue
+ * the crawl → poll → read the report → read the links → present. At the plain
+ * 8-round cap the turn could die mid-contract, and the owner got a progress
+ * placeholder instead of the report (incident 2026-07-25). Env-tunable.
+ */
+export const DEEP_TURN_MAX_ITERATIONS = Math.max(
+  Number(process.env.DEEP_TURN_MAX_ITERATIONS) || 20,
+  Number(process.env.MAX_TOOL_ITERATIONS) || 8,
+)
+
+/**
  * HARD tool-round budget for EXPENSIVE heads (Sonnet, and the Qwen marketing
  * head). After this many tool ROUNDS (model re-invocations that requested tools)
  * the head is forced to stop spree-calling tools and may ONLY hand the rest of

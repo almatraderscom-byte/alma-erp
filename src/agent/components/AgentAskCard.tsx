@@ -106,8 +106,12 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
 
       {/* Options — divider-separated list rows with a radio dot (Claude-app feel) */}
       <div className="mt-1 flex flex-col">
-        {card.options.map((opt) => {
+        {card.options.map((opt, i) => {
           const active = !otherActive && chosen === opt
+          // Boss must never have to guess what the agent itself would pick
+          // (owner rule 2026-07-25). ask_user requires the FIRST option to be
+          // the agent's own recommendation, so it wears the badge.
+          const recommended = i === 0 && card.options.length > 1
           return (
             <button
               key={opt}
@@ -131,6 +135,11 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
                 )}
               </span>
               <span className="text-[14px] font-medium text-cream">{opt}</span>
+              {recommended && (
+                <span className="ml-auto shrink-0 rounded-full border border-[#E07A5F]/40 bg-[#E07A5F]/10 px-2 py-0.5 text-[11px] font-semibold text-[#E07A5F]">
+                  প্রস্তাবিত
+                </span>
+              )}
             </button>
           )
         })}
