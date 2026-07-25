@@ -1263,10 +1263,12 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                           onChange={(e) => setVtonEngine(e.target.value as StudioEngineId)}
                           className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
                         >
-                          <option value="fal_fashn_v16" disabled={!engineSelectable('fal_fashn_v16')}>
-                            Fal FASHN v1.6 · কমার্শিয়াল
-                            {engineSelectable('fal_fashn_v16') ? '' : ' — বন্ধ'}
-                          </option>
+                          {(mode === 'try_on' || isMultiPersonFamily) && (
+                            <option value="fal_fashn_v16" disabled={!engineSelectable('fal_fashn_v16')}>
+                              Fal FASHN v1.6 · কমার্শিয়াল
+                              {engineSelectable('fal_fashn_v16') ? '' : ' — বন্ধ'}
+                            </option>
+                          )}
                           <option value="fashn" disabled={!config?.fashnConfigured}>
                             FASHN Pro (direct)
                           </option>
