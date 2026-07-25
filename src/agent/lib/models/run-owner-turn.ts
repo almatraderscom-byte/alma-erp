@@ -1375,7 +1375,10 @@ async function* runAlternateProviderTurn(
   // in usage.timeline; never replayed to the model, so it adds zero token cost.
   type TimelineEntry =
     | { t: 'think'; text: string }
-    | { t: 'text'; text: string; state?: 'superseded' }
+    // `lead: true` marks the spoken FIRST line (speak-first, owner rule
+    // 2026-07-25). Position is not a safe signal — a progress draft can also be
+    // the first text entry — so the flag is what the presentation builder reads.
+    | { t: 'text'; text: string; state?: 'superseded'; lead?: true }
     | { t: 'verify'; attempt: number; max: number }
     | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; shot?: string }
     | { t: 'file'; id: string; name: string; kind?: string }
@@ -1526,7 +1529,7 @@ async function* runAlternateProviderTurn(
         preambleText = line
         finalText = line
         preambleTimelineIndex = timeline.length
-        timeline.push({ t: 'text', text: line })
+        timeline.push({ t: 'text', text: line, lead: true })
         // Explicit marker so a client never has to GUESS which prose was the
         // opening line (iOS clears narration on tool_start and on a verify
         // rewrite — this line must survive both).
