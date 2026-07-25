@@ -54,6 +54,7 @@ import {
   preflightGrindStep,
 } from '@/agent/lib/grind/driver-hooks'
 import {
+  budgetStartedAt,
   deliverPlanOutcome,
   elapsedBn,
   isOverBudget,
@@ -280,11 +281,12 @@ export async function drivePlan(planIn: Plan, config: AutodriveConfig): Promise<
     // 2b. G6 — the time budget. Ordinary work finishes inside it; work that
     //     cannot must SAY so rather than sitting silently for hours (owner
     //     ruling 2026-07-26 — he watched two plans go quiet for an hour).
-    if (isOverBudget(plan, await planBudgetMs(), now)) {
+    const attemptStartedAt = await budgetStartedAt(plan)
+    if (isOverBudget(attemptStartedAt, await planBudgetMs(), now)) {
       return await escalate(
         plan,
         'escalated-attempts',
-        `${elapsedBn(plan, now)} ধরে চলছে কিন্তু শেষ হয়নি — এখানে আমার নিজের চেষ্টায় হচ্ছে না। ` +
+        `${elapsedBn(attemptStartedAt, now)} ধরে চলছে কিন্তু শেষ হয়নি — এখানে আমার নিজের চেষ্টায় হচ্ছে না। ` +
           `যা হয়েছে: ${plan.steps.filter((s) => s.status === 'done').length}/${plan.steps.length} ধাপ। কীভাবে এগোবো বলুন।`,
       )
     }

@@ -354,6 +354,13 @@ export async function enrollPlanForAutodrive(
  * override (if the owner granted more budget) is set separately in autodrive-config.
  */
 export async function resumeAutodrive(planId: string): Promise<void> {
+  // "আবার চালাও" restarts the time budget too — otherwise an old plan escalates
+  // again on its first tick and the button does nothing (owner-visible bug the
+  // day G6 shipped).
+  try {
+    const { markBudgetRestart } = await import('@/agent/lib/plan-driver/plan-delivery')
+    await markBudgetRestart(planId)
+  } catch { /* budget bookkeeping must never block a resume */ }
   await db.agentPlan.update({
     where: { id: planId },
     data: {
