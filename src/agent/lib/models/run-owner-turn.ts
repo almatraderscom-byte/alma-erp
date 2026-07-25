@@ -1774,7 +1774,7 @@ async function* runAlternateProviderTurn(
           && iterationText.trim()
           && shouldNudgeAdapterIntent({
             text: iterationText,
-            toolRecords,
+            toolRecords: toolRecords.map((r) => ({ status: r.status, toolName: r.toolName })),
             hasAskCard: emittedAskCards.length > 0,
             ownerRequestedAction: turnAuthorization.allowMutations,
           })

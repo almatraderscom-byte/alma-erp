@@ -8,6 +8,9 @@
 
 export interface TurnLoopToolRecord {
   status: 'success' | 'error'
+  /** Name of the tool, when the caller has it — lets the failure guard tell a
+   *  concrete recovery ("now get_staff_tasks") from hammering the same call. */
+  toolName?: string
 }
 
 // A permission question may be followed by a parenthetical detail, as in the
@@ -28,14 +31,36 @@ const ADAPTER_INTENT_RE =
 const ZERO_TOOL_INTENT_RE =
   /(দিয়ে\s*দেখি|করে\s*দেখি|চেক\s*কর(ি|ছি)|দেখে\s*নিই|দেখে\s*নি|বের\s*কর(ি|ছি)|চালাই|চালাচ্ছি|টান(ি|ছি)|আনছি|আগে.*দেখি|let me (check|look|see|pull|run|fetch)|i('|’)?ll (check|look|see|pull|run|fetch|grab)|i will (check|look|see|pull|run|fetch)|going to (check|look|run|pull|fetch)|let's (check|look|run|see))/i
 
-function isTerminalReply(text: string): boolean {
+/**
+ * A failure report that names a DIFFERENT, CONCRETE tool as the next step is a
+ * recovery in progress, not a stop: "প্রস্তাব টুল ব্যর্থ — আগে get_staff_tasks
+ * দিয়ে দেখে নিচ্ছি।" Ending the turn there means the head promised a recovery
+ * and never ran it (found 2026-07-25 by testing a staff-dispatch request
+ * instead of repeating the same ads question).
+ *
+ * The test is deliberately NARROW — a literal snake_case tool name that isn't
+ * the one that just failed. Vague promises ("আবার চেষ্টা করব", "অন্যভাবে দেখব")
+ * stay terminal: those are how a head hammers a broken call, which is exactly
+ * what the failure guard exists to prevent.
+ */
+const TOOL_NAME_RE = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g
+
+function namesDifferentTool(text: string, failedTool?: string): boolean {
+  const tail = text.trim().slice(-300)
+  for (const m of tail.match(TOOL_NAME_RE) ?? []) {
+    if (m !== failedTool) return true
+  }
+  return false
+}
+
+function isTerminalReply(text: string, failedTool?: string, lastFailed = false): boolean {
   const normalized = text.trim()
   if (!normalized) return true
-  return (
-    OWNER_QUESTION_TAIL_RE.test(normalized)
-    || OWNER_PERMISSION_QUESTION_RE.test(normalized.slice(-800))
-    || BLOCKED_OR_FAILED_RE.test(normalized)
-  )
+  if (OWNER_QUESTION_TAIL_RE.test(normalized)) return true
+  if (OWNER_PERMISSION_QUESTION_RE.test(normalized.slice(-800))) return true
+  if (!BLOCKED_OR_FAILED_RE.test(normalized)) return false
+  // Blocked/failed report → terminal unless a concrete different tool follows it.
+  return !(lastFailed && namesDifferentTool(normalized, failedTool))
 }
 
 export function shouldNudgeAdapterIntent(input: {
@@ -51,9 +76,14 @@ export function shouldNudgeAdapterIntent(input: {
   // this live 2026-07-25: "list_family_contacts চালাচ্ছি।" and nothing else).
   const noToolRan = input.toolRecords.length === 0
   if (!input.ownerRequestedAction && !noToolRan) return false
-  if (input.hasAskCard || isTerminalReply(input.text)) return false
   const latestTool = input.toolRecords.at(-1)
-  if (latestTool?.status === 'error') return false
+  const lastFailed = latestTool?.status === 'error'
+  if (input.hasAskCard || isTerminalReply(input.text, latestTool?.toolName, lastFailed)) return false
+  // A failed last tool normally ends the turn — we must not hammer a broken
+  // call. But when the head has just named a DIFFERENT concrete tool as its next
+  // step, stopping is the bug: it promised a recovery and never ran it. The
+  // caller bounds this to one nudge per turn, so it cannot become a retry loop.
+  if (lastFailed && !namesDifferentTool(input.text, latestTool?.toolName)) return false
   return ADAPTER_INTENT_RE.test(input.text.trim().slice(-600))
 }
 

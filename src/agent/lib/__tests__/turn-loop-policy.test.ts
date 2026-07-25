@@ -136,3 +136,32 @@ describe('a read-only turn that ran NO tool must not end on an announcement', ()
     })).toBe(false)
   })
 })
+
+describe('a failure REPORT that also names the next attempt is not terminal', () => {
+  // Found 2026-07-25 by testing a staff-dispatch request instead of repeating
+  // the same ads question: prepare_staff_task_proposal failed, the head said
+  // "…ব্যর্থ — আগে get_staff_tasks দিয়ে দেখে নিচ্ছি।" and the turn ended on it.
+  it('nudges when the head reports a failure AND announces a different next step', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, প্রস্তাব টুল ব্যর্থ হয়েছে invalid task type — আগে get_staff_tasks দিয়ে কালকের carried tasks দেখে নিচ্ছি।',
+      toolRecords: [{ status: 'error' }],
+      ownerRequestedAction: true,
+    })).toBe(true)
+  })
+
+  it('still stops on a bare failure report with no next step', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, পারিনি — সংযোগ নেই, অনুমতি লাগবে।',
+      toolRecords: [{ status: 'error' }],
+      ownerRequestedAction: true,
+    })).toBe(false)
+  })
+
+  it('still stops when the failure report ends by asking Boss', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, টুল ব্যর্থ — আবার চেষ্টা করব কি?',
+      toolRecords: [{ status: 'error' }],
+      ownerRequestedAction: true,
+    })).toBe(false)
+  })
+})
