@@ -6,6 +6,7 @@ import Link from 'next/link'
 import AgentSidebar, { type Conversation } from './AgentSidebar'
 import AgentThread, { type ChatMessage, type TimelineEntry } from './AgentThread'
 import AgentComposer, { type PendingFile } from './AgentComposer'
+import { DEFAULT_CHAT_MODE, normalizeChatMode, type ChatMode } from '@/agent/lib/chat-mode'
 import AgentArtifactsPanel, { type Artifact } from './AgentArtifactsPanel'
 import { notifyTodosChanged } from './AgentTodoContext'
 const VoiceConsole = dynamic(() => import('./voice/VoiceConsole'), { ssr: false })
@@ -297,6 +298,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   // 'auto' = let the per-turn router pick the head model (current cost-optimized
   // routing); a concrete id pins that exact model for the conversation.
   const [activeModelId, setActiveModelId] = useState('auto')
+  // Chat mode picker (auto | direct | plan | plan_drive) — per conversation, so a
+  // "plan only" chat stays plan-only after reload.
+  const [chatMode, setChatMode] = useState<ChatMode>(DEFAULT_CHAT_MODE)
   const [compacting, setCompacting] = useState(false)
   const [dayShift, setDayShift] = useState<{
     conversationId: string | null
@@ -670,6 +674,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setActiveConvId(conv.id)
     setActiveConvProjectId(conv.projectId)
     setActiveModelId(conv.modelId ?? 'auto')
+    setChatMode(normalizeChatMode(conv.chatMode))
     setActivePersonalMode(
       !!personalProjectId && conv.projectId === personalProjectId,
     )
@@ -716,6 +721,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setMessages([])
     setArtifacts([])
     setActiveModelId('claude-sonnet-4-6')
+    setChatMode(DEFAULT_CHAT_MODE)
     pendingProjectIdRef.current = projectId ?? null
     setActiveConvProjectId(projectId ?? null)
     setActivePersonalMode(!!personalProjectId && projectId === personalProjectId)
@@ -922,8 +928,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         if (finalConvId) body.conversationId = finalConvId
         else {
           if (pendingProjectIdRef.current) body.projectId = pendingProjectIdRef.current
-          // New conversation: persist the owner's model choice ('auto' or a pinned model).
+          // New conversation: persist the owner's model choice ('auto' or a pinned model)
+          // and the mode chip he is looking at right now.
           body.modelId = activeModelId
+          body.chatMode = chatMode
         }
         if (fileRefs.length > 0) body.files = fileRefs
       }
@@ -1896,6 +1904,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           isMobile={isMobile}
           activeModelId={activeModelId}
           onModelChange={setActiveModelId}
+          chatMode={chatMode}
+          onChatModeChange={setChatMode}
           onVoiceStart={() => setVoiceOpen(true)}
           seedText={composerSeed}
         />

@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { isSelectableModelId } from '@/agent/lib/models/registry'
+import { isChatMode } from '@/agent/lib/chat-mode'
 import { prisma } from '@/lib/prisma'
 
 export async function PATCH(
@@ -34,10 +35,20 @@ export async function PATCH(
     data.modelId = id
   }
 
+  // Owner's chat mode picker: auto | direct | plan | plan_drive. Rejected rather
+  // than defaulted on a bad value — a silently ignored mode change would be worse
+  // than an error, because the owner would believe the agent is restrained.
+  if (body.chatMode !== undefined) {
+    if (!isChatMode(body.chatMode)) {
+      return Response.json({ error: 'invalid_chat_mode' }, { status: 400 })
+    }
+    data.chatMode = body.chatMode
+  }
+
   const updated = await prisma.agentConversation.update({
     where: { id },
     data,
-    select: { id: true, title: true, projectId: true, archived: true, pinned: true, modelId: true, updatedAt: true },
+    select: { id: true, title: true, projectId: true, archived: true, pinned: true, modelId: true, chatMode: true, updatedAt: true },
   })
 
   return Response.json(updated)

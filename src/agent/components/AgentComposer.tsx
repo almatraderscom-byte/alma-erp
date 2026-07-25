@@ -6,6 +6,8 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { impactLight, impactMedium } from '@/lib/haptics'
 import AgentModelSelector from './AgentModelSelector'
+import AgentModeSelector from './AgentModeSelector'
+import { DEFAULT_CHAT_MODE, type ChatMode } from '@/agent/lib/chat-mode'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 
 export interface PendingFile {
@@ -29,6 +31,9 @@ interface AgentComposerProps {
   isMobile?: boolean
   activeModelId?: string
   onModelChange?: (modelId: string) => void
+  /** Chat mode picker (auto | direct | plan | plan_drive). */
+  chatMode?: ChatMode
+  onChatModeChange?: (mode: ChatMode) => void
   onVoiceStart?: () => void
   /** Pre-fills the input once (e.g. a staff quick-action deep-link). Not auto-sent. */
   seedText?: string
@@ -43,6 +48,8 @@ export default function AgentComposer({
   conversationId,
   isMobile = false,
   activeModelId,
+  chatMode = DEFAULT_CHAT_MODE,
+  onChatModeChange,
   onModelChange,
   onVoiceStart,
   seedText,
@@ -341,6 +348,16 @@ export default function AgentComposer({
               conversationId={conversationId}
               modelId={activeModelId}
               onModelChange={onModelChange}
+              disabled={streaming}
+            />
+          )}
+
+          {/* How the work happens in this chat (auto / direct / plan / plan-drive) */}
+          {onChatModeChange && (
+            <AgentModeSelector
+              conversationId={conversationId}
+              mode={chatMode}
+              onModeChange={onChatModeChange}
               disabled={streaming}
             />
           )}

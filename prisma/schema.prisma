@@ -2022,6 +2022,9 @@ model AgentConversation {
   project            AgentProject?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
   title              String?
   modelId            String          @default("claude-sonnet-4-6") @map("model")
+  /// How the agent may work in this chat: auto | direct | plan | plan_drive.
+  /// NULL = auto. Enforced by withholding tools, not by prompt text.
+  chatMode           String?         @map("chat_mode")
   source             String          @default("web")
   archived           Boolean         @default(false)
   pinned             Boolean         @default(false)
