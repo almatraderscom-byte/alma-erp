@@ -140,6 +140,13 @@ export const DOMAIN_PACKS = {
     'audit_product_seo', 'draft_seo_fixes', 'run_website_seo_audit', 'check_website_seo_audit',
     'track_keyword', 'list_tracked_keywords', 'untrack_keyword', 'submit_to_indexnow',
     'get_search_console_performance', 'get_indexing_status', 'get_ga4_report',
+    // The client_seo batch contract ENDS on complete_skill_pack_run; without it
+    // in the pack the contract could never be satisfied, and the owner's final
+    // message was overwritten with a progress placeholder forever (2026-07-25).
+    'start_skill_pack', 'complete_skill_pack_run',
+    // A deliverable is the required end state of any audit — the head must be
+    // able to file the live dashboard as a chat artifact.
+    'save_artifact',
   ],
   creative: [
     'generate_image', 'run_creative_studio', 'check_studio_job', 'make_ad_creatives',

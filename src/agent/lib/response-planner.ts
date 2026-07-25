@@ -63,7 +63,14 @@ export function buildResponseDirective(state: InteractionState, policy: Interact
   const lines: string[] = [
     `[INTERACTION CONTRACT — mode: ${policy.mode}]`,
     `• সম্বোধন: শুধুই "${OWNER_ADDRESS}"। ${NON_DECEPTION_NOTE}`,
-    `• উত্তরের কাঠামো (ক্রম ধরে, অপ্রয়োজনীয় অংশ বাদ): ${plan.sections.join(' → ')}। সর্বোচ্চ ~${plan.maxLines} লাইন।`,
+    state.deliveryTurn
+      // A finished deliverable is presented in FULL — the brevity default is
+      // what turned a 40-page audit into the word "done" (owner incident
+      // 2026-07-25). No cap language here, on purpose.
+      ? `• এই টার্নে শেষ হওয়া কাজের পুরো ফলাফল Boss-কে দিতে হবে: ${plan.sections.join(' → ')}। `
+        + 'যত লাইন লাগে নাও — সংক্ষেপ করা বা "রিপোর্ট রেডি" বলে থেমে যাওয়া নিষেধ। '
+        + 'ফলাফলের সংখ্যা, প্রতিটা বড় সমস্যা + তার সমাধান, কোনটা আগে করতে হবে, আর ফাইল/লিংক — সবই এই উত্তরেই।'
+      : `• উত্তরের কাঠামো (ক্রম ধরে, অপ্রয়োজনীয় অংশ বাদ): ${plan.sections.join(' → ')}। সর্বোচ্চ ~${plan.maxLines} লাইন।`,
     `• শুরুর ধরন (হুবহু নয়, এই আবহে): "${openerFor(plan)}" — আগের টার্নের শুরুর বাক্য হুবহু আবার ব্যবহার নিষেধ।`,
   ]
   if (state.repairNeeded) {

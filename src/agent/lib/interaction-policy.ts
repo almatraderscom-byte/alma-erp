@@ -25,7 +25,25 @@ export interface InteractionPolicy {
   mustAcknowledgeFeeling: boolean
 }
 
+/**
+ * Presenting a finished deliverable has no useful line cap — the report is the
+ * point. Kept as a number (not Infinity) so the directive text stays readable.
+ */
+export const DELIVERY_MAX_LINES = 120
+
 export function policyForState(state: InteractionState): InteractionPolicy {
+  // A delivery turn overrides every mode's brevity: Boss is owed the whole
+  // result, in full, in this reply (owner incident 2026-07-25).
+  if (state.deliveryTurn) {
+    return {
+      mode: 'work',
+      allowTools: true,
+      allowWorkPivot: true,
+      tone: 'direct_work',
+      maxLines: DELIVERY_MAX_LINES,
+      mustAcknowledgeFeeling: false,
+    }
+  }
   switch (state.mode) {
     case 'crisis_safety':
       return { mode: state.mode, allowTools: false, allowWorkPivot: false, tone: 'calm_support', maxLines: 8, mustAcknowledgeFeeling: true }
@@ -43,7 +61,7 @@ export function policyForState(state: InteractionState): InteractionPolicy {
     default:
       return {
         mode: 'work', allowTools: true, allowWorkPivot: true, tone: state.detail === 'short' ? 'brief' : 'direct_work',
-        maxLines: state.detail === 'short' ? 4 : state.detail === 'detailed' ? 20 : 10,
+        maxLines: state.detail === 'short' ? 4 : state.detail === 'detailed' ? 30 : 10,
         mustAcknowledgeFeeling: state.emotion === 'low' || state.emotion === 'anxious',
       }
   }

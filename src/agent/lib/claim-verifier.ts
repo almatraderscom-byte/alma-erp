@@ -29,6 +29,7 @@ export type ClaimViolationCategory =
   | 'instruction_mismatch'
   | 'fabricated_stat'
   | 'robotic_style'
+  | 'async_unverified'
 
 export interface ClaimViolation {
   category: ClaimViolationCategory
@@ -167,9 +168,21 @@ const RULES: ClaimRule[] = [
 type ToolActionCategory =
   | 'write' | 'send' | 'mark' | 'post' | 'update'
   | 'save' | 'delete' | 'approve' | 'set' | 'log'
-  | 'create' | 'dispatch' | 'generic'
+  | 'create' | 'dispatch' | 'queue' | 'generic'
 
-export const TOOL_CATEGORY: Record<string, ToolActionCategory> = {}
+/**
+ * Tools that only QUEUE work for the VPS worker. They succeed in ~200 ms by
+ * inserting one row, so counting them as a completed write let the head say
+ * "৪০ পেজের অডিট সম্পন্ন" five seconds after asking for a crawl that had not
+ * even started (owner incident 2026-07-25). `queue` is deliberately absent from
+ * the write categories below: only the matching check_* tool can back a
+ * completion claim.
+ */
+export const TOOL_CATEGORY: Record<string, ToolActionCategory> = {
+  run_website_seo_audit: 'queue',
+  run_workbench_task: 'queue',
+  run_browser_task: 'queue',
+}
 
 // Auto-classify by prefix
 const CATEGORY_PREFIXES: [string, ToolActionCategory][] = [
@@ -235,6 +248,7 @@ const CATEGORY_CLAIM_KEYWORDS: Record<ToolActionCategory, RegExp | null> = {
   approve: /approve|অনুমোদন|reject/i,
   dispatch: /dispatch|পাঠিয়ে|ডিসপ্যাচ/i,
   write: null,
+  queue: null,
   generic: null,
 }
 
@@ -357,6 +371,93 @@ export function detectLedgerViolations(
     }]
   }
 
+  return []
+}
+
+// ── Async/queued-job completion (owner incident 2026-07-25) ──────────────────
+//
+// The head queued a 40-page crawl, got a 200 ms "queued" success back, and told
+// the owner the audit was DONE — five seconds after starting it. Nothing caught
+// it: `run_website_seo_audit` counted as a successful write, so the ledger check
+// treated every "সম্পন্ন" as backed. Now a completion claim about long-running
+// work needs EVIDENCE that the job reached `executed`.
+//
+// Honest progress language ("queued/চলছে/শুরু করেছি/crawl হচ্ছে") is never a
+// violation — that is exactly what the agent should say while it waits.
+
+/** Nouns for work that runs on the worker, not in the reply. */
+const ASYNC_WORK_NOUN =
+  /(?:audit|অডিট|crawl|ক্রল|scan|স্ক্যান|report|রিপোর্ট|workbench|browser\s*task|job|কাজ(?:টা|টি)?)/i
+
+/** "It is finished" — past-tense completion, not progress. */
+const ASYNC_DONE_CLAIM =
+  /(?:সম্পন্ন\s*হয়েছে|শেষ\s*হয়েছে|শেষ\s*করেছি|করে\s*ফেলেছি|complete[ds]?\b|finished\b|done\b|হয়ে\s*গেছে|রেডি\s*হয়ে\s*গেছে|তৈরি\s*হয়ে\s*গেছে)/i
+
+/** Progress/queued language that must stay allowed. */
+const ASYNC_PROGRESS_OK =
+  /(?:queued|কিউ(?:তে)?|চলছে|চলমান|শুরু\s*(?:করেছি|হয়েছে)|হচ্ছে|অপেক্ষা|waiting|running|in\s*progress|এখনো\s*(?:শেষ|হয়)নি|পাচ্ছি\s*না)/i
+
+export interface AsyncJobEvidence {
+  /** Work was handed to the worker, or a poll showed it is not finished yet. */
+  pendingJobSeen: boolean
+  /** A check_* tool confirmed the job reached status "executed". */
+  executedConfirmed: boolean
+}
+
+/**
+ * Derive the evidence from this turn's tool records. `output` is the tool's
+ * `{ data }` envelope as run-owner-turn stores it.
+ */
+export function summarizeAsyncJobEvidence(
+  records: ReadonlyArray<{
+    toolName: string
+    status: 'success' | 'error'
+    output?: Record<string, unknown> | null
+  }>,
+): AsyncJobEvidence {
+  let pendingJobSeen = false
+  let executedConfirmed = false
+  for (const r of records) {
+    if (r.status !== 'success') continue
+    if (classifyTool(r.toolName) === 'queue') pendingJobSeen = true
+    if (!r.toolName.startsWith('check_')) continue
+    const data = (r.output?.data ?? null) as Record<string, unknown> | null
+    const jobStatus = typeof data?.status === 'string' ? data.status : null
+    if (jobStatus === 'executed') executedConfirmed = true
+    else if (jobStatus) pendingJobSeen = true
+  }
+  return { pendingJobSeen, executedConfirmed }
+}
+
+/**
+ * Blocks "the audit is done" when nothing confirmed the job actually finished.
+ * The fix the head is told to apply is honest progress language — not silence.
+ */
+export function detectAsyncCompletionViolation(
+  replyText: string,
+  evidence: AsyncJobEvidence,
+): ClaimViolation[] {
+  if (evidence.executedConfirmed || !evidence.pendingJobSeen) return []
+  const text = replyText.trim()
+  if (text.length < 12) return []
+  if (FUTURE_INTENT.test(text)) return []
+
+  // Sentence-level: a reply may honestly say "crawl চলছে" in one line and must
+  // not be punished for the word "done" appearing in an unrelated one.
+  for (const sentence of text.split(/[।.!?\n]+/)) {
+    const s = sentence.trim()
+    if (s.length < 8) continue
+    if (!ASYNC_WORK_NOUN.test(s)) continue
+    if (ASYNC_PROGRESS_OK.test(s)) continue
+    const m = ASYNC_DONE_CLAIM.exec(s)
+    if (!m) continue
+    return [{
+      category: 'async_unverified',
+      ruleId: 'async_job_claimed_done_without_executed_status',
+      matchedSnippet: stripWhitespace(s).slice(0, 120),
+      requiredTools: ['check_website_seo_audit', 'check_workbench_task'],
+    }]
+  }
   return []
 }
 
@@ -663,6 +764,11 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
   fb_post:
     'Facebook পোস্ট করার দাবি দিয়েছেন কিন্তু এই turn-এ post_to_facebook tool call হয়নি। ' +
     'এখনই post_to_facebook call করুন বা confirm card-এর জন্য অপেক্ষা করতে বলুন — পাঠানোর আগে "পোস্ট হয়েছে" বলবেন না।',
+  async_unverified:
+    'আপনি একটা long-running কাজ (audit/crawl/workbench/browser task) "সম্পন্ন" বলেছেন, কিন্তু কাজটা শুধু worker-এর কিউতে দেওয়া হয়েছে — ' +
+    'কোনো check_* tool এখনো status "executed" দেখায়নি। কিউ করা মানে শেষ হওয়া নয়। ' +
+    'হয় check tool দিয়ে executed status আনুন, তারপর আসল ফলাফল (স্কোর/ফাইন্ডিংস/লিংক) সহ রিপোর্ট দিন; ' +
+    'নয়তো সৎভাবে চলমান অবস্থা বলুন — "crawl চলছে, শেষ হলেই নিজে থেকেই পুরো রিপোর্ট দেবো"। কখনো আগেভাগে "শেষ" বলবেন না।',
   general_write:
     'আপনি কাজ সম্পন্ন হওয়ার দাবি করেছেন কিন্তু এই turn-এ কোনো সফল write/action tool call হয়নি। ' +
     'এখনই প্রয়োজনীয় tool call করুন এবং success result পেলে তবেই confirm দিন। ' +

@@ -78,7 +78,12 @@ const ask_user: AgentTool = {
   name: 'ask_user',
   description:
     'When a request is ambiguous and the answer materially changes the work, ask ONE clarifying question with 2–4 specific tappable options. ' +
-    'Never open-ended questions. At most one ask per request.',
+    'Never open-ended questions. At most one ask per request.\n' +
+    'RECOMMEND FIRST (owner rule): options[0] MUST be the option YOU would choose — it is shown to Boss with a ' +
+    '"প্রস্তাবিত" badge. Never hand him a flat list of equal choices and make him decide alone; you have the ' +
+    'context, so take a position and put it first.\n' +
+    'Asking ENDS your turn — the question is your reply. Do not write an answer or keep working underneath it; ' +
+    'Boss taps an option and the work resumes from there.',
   input_schema: {
     type: 'object' as const,
     properties: {

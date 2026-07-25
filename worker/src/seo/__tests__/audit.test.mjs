@@ -6,7 +6,14 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { analyzeHtml, scoreAudit, buildReportMarkdown, unsafeAuditUrlReason } from '../audit.mjs'
+import {
+  analyzeHtml,
+  scoreAudit,
+  buildReportMarkdown,
+  unsafeAuditUrlReason,
+  extractSitemapLocs,
+  buildCrawlFrontier,
+} from '../audit.mjs'
 
 const GOOD = `<!doctype html><html lang="en"><head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -81,4 +88,47 @@ test('SSRF guard blocks private/loopback/metadata and bad schemes', () => {
   for (const u of ['https://almatraders.com/', 'http://example.com/page', 'https://sub.shop.com:443/x']) {
     assert.equal(unsafeAuditUrlReason(u), null, `should allow ${u}`)
   }
+})
+
+// Owner incident 2026-07-25 — almatraders.com has an 86-URL sitemap but a
+// link-poor homepage, so link-following alone crawled 12 pages while the job
+// summary still advertised "40 pages". The sitemap the crawler already parsed
+// is now the crawl frontier.
+test('sitemap <loc> entries are parsed, index sitemaps are recognised', () => {
+  const plain = `<?xml version="1.0"?><urlset>
+    <url><loc>https://shop.example.com/</loc></url>
+    <url><loc> https://shop.example.com/panjabi </loc></url>
+  </urlset>`
+  const parsed = extractSitemapLocs(plain)
+  assert.equal(parsed.isIndex, false)
+  assert.deepEqual(parsed.locs, ['https://shop.example.com/', 'https://shop.example.com/panjabi'])
+
+  const index = `<sitemapindex><sitemap><loc>https://shop.example.com/sitemap_products_1.xml</loc></sitemap></sitemapindex>`
+  assert.equal(extractSitemapLocs(index).isIndex, true)
+})
+
+test('crawl frontier seeds from the sitemap, same-origin only, homepage first', () => {
+  const { queue } = buildCrawlFrontier(
+    'https://shop.example.com/',
+    [
+      'https://shop.example.com/panjabi',
+      'https://shop.example.com/',            // duplicate of the seed
+      'https://other-site.com/spam',          // cross-origin
+      'not a url',                            // malformed
+      'https://shop.example.com/about',
+    ],
+    40,
+  )
+  assert.deepEqual(queue, [
+    'https://shop.example.com/',
+    'https://shop.example.com/panjabi',
+    'https://shop.example.com/about',
+  ])
+})
+
+test('crawl frontier stays bounded for a huge sitemap', () => {
+  const locs = Array.from({ length: 500 }, (_, i) => `https://shop.example.com/p/${i}`)
+  const { queue } = buildCrawlFrontier('https://shop.example.com/', locs, 40)
+  assert.ok(queue.length <= 81, `frontier should stay bounded, got ${queue.length}`)
+  assert.ok(queue.length > 40, 'frontier should still hold more than one page of work')
 })

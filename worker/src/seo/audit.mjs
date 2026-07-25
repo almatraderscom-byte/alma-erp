@@ -220,6 +220,44 @@ export function analyzeHtml(html, pageUrl) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+/**
+ * Pull <loc> entries out of a sitemap (or sitemap index) body. These are the
+ * site's OWN declaration of what it wants indexed, so they make the best crawl
+ * frontier — link-following alone missed most of a JS-rendered shop.
+ */
+export function extractSitemapLocs(xml) {
+  const body = String(xml ?? '')
+  return {
+    locs: [...body.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => m[1]),
+    isIndex: /<sitemapindex/i.test(body),
+  }
+}
+
+/**
+ * Build the crawl frontier: homepage first, then same-origin sitemap URLs
+ * (deduped, capped). Exported so the seeding contract is unit-testable without
+ * a live crawl (the SSRF guard blocks fixture servers by design).
+ */
+export function buildCrawlFrontier(seedUrl, sitemapLocs, maxPages) {
+  const queue = [seedUrl]
+  const seen = new Set([seedUrl])
+  let originStr
+  try { originStr = new URL(seedUrl).origin } catch { return { queue, seen } }
+  for (const loc of sitemapLocs) {
+    if (queue.length >= maxPages * 2) break
+    let normalized
+    try {
+      const u = new URL(loc)
+      if (u.origin !== originStr) continue
+      normalized = u.toString()
+    } catch { continue }
+    if (seen.has(normalized)) continue
+    seen.add(normalized)
+    queue.push(normalized)
+  }
+  return { queue, seen }
+}
+
 export async function crawlSite({ url, maxPages = 40 }) {
   const startedAt = Date.now()
   maxPages = Math.min(Math.max(Number(maxPages) || 40, 5), MAX_PAGES_HARD)
@@ -256,21 +294,44 @@ export async function crawlSite({ url, maxPages = 40 }) {
     sitemapUrls = [...robots.bodyText.matchAll(/^sitemap:\s*(\S+)/gim)].map((m) => m[1])
   }
 
-  // sitemap
+  // sitemap — parsed for coverage AND used as crawl seeds. Index sitemaps
+  // (<sitemapindex>) are followed one level so a shop whose products live in
+  // sitemap_products_1.xml is actually audited.
   if (sitemapUrls.length === 0) sitemapUrls = [`${origin.origin}/sitemap.xml`]
   let sitemapCount = 0
   let sitemapOk = false
-  const sm = await guardedFetch(sitemapUrls[0])
-  if (sm.ok && sm.status === 200 && sm.bodyText.includes('<')) {
-    sitemapOk = true
-    sitemapCount = (sm.bodyText.match(/<loc>/g) ?? []).length
-  } else {
-    addSite('medium', 'missing_sitemap', 'sitemap.xml নেই/পড়া যায়নি')
+  const sitemapLocs = []
+  const readSitemap = async (target, depth = 0) => {
+    const res = await guardedFetch(target)
+    if (!res.ok || res.status !== 200 || !res.bodyText.includes('<')) return false
+    const { locs, isIndex } = extractSitemapLocs(res.bodyText)
+    if (isIndex && depth === 0) {
+      let any = false
+      for (const child of locs.slice(0, 10)) {
+        if (await readSitemap(child, depth + 1)) any = true
+      }
+      return any
+    }
+    sitemapCount += locs.length
+    for (const loc of locs) {
+      try {
+        const u = new URL(loc)
+        if (u.origin === origin.origin) sitemapLocs.push(u.toString())
+      } catch { /* skip malformed <loc> */ }
+    }
+    return true
   }
+  for (const candidate of sitemapUrls.slice(0, 3)) {
+    if (await readSitemap(candidate)) sitemapOk = true
+  }
+  if (!sitemapOk) addSite('medium', 'missing_sitemap', 'sitemap.xml নেই/পড়া যায়নি')
 
-  // BFS crawl (same-origin)
-  const queue = [seed.url]
-  const seen = new Set([seed.url])
+  // BFS crawl (same-origin). The frontier is seeded with the homepage AND the
+  // sitemap's own URLs: a JS-rendered menu or a link-poor homepage used to
+  // collapse the whole "40-page audit" to a couple of pages while the summary
+  // still advertised the cap (owner incident 2026-07-25 — 12 pages crawled
+  // against an 86-URL sitemap, reported as 40).
+  const { queue, seen } = buildCrawlFrontier(seed.url, sitemapLocs, maxPages)
   const pages = []
   const fetchErrors = []
   while (queue.length > 0 && pages.length < maxPages && Date.now() - startedAt < TOTAL_TIME_CAP_MS) {
@@ -356,7 +417,9 @@ export function buildReportMarkdown({ url, crawl, scored, keywordsNote }) {
   const lines = [
     `# SEO অডিট রিপোর্ট — ${url}`,
     '',
-    `**স্কোর: ${scored.score}/100** · পেজ দেখা হয়েছে: ${crawl.pagesCrawled} · গড় TTFB: ${crawl.avgTtfbMs}ms`,
+    `**স্কোর: ${scored.score}/100** · পেজ দেখা হয়েছে: ${crawl.pagesCrawled}`
+      + (crawl.sitemap.count ? ` / sitemap-এ ${crawl.sitemap.count}` : '')
+      + ` · গড় TTFB: ${crawl.avgTtfbMs}ms · ক্রল সময়: ${Math.round((crawl.elapsedMs ?? 0) / 1000)}s`,
     `সমস্যা: 🔴 critical ${scored.counts.critical} · 🟠 high ${scored.counts.high} · 🟡 medium ${scored.counts.medium} · ⚪ low ${scored.counts.low}`,
     '',
     '## সাইট-লেভেল সমস্যা',
@@ -410,7 +473,24 @@ export async function runSeoAudit(payload) {
     counts: scored.counts,
     pagesCrawled: crawl.pagesCrawled,
     avgTtfbMs: crawl.avgTtfbMs,
+    // Honesty of coverage: how long the crawl really took and how much of the
+    // site it really saw. Both were dropped before, which is what made a
+    // 1-page/5-second run indistinguishable from a 40-page audit.
+    elapsedMs: crawl.elapsedMs,
+    sitemapCount: crawl.sitemap.count,
+    maxPages: Math.min(Math.max(Number(payload.maxPages) || 40, 5), MAX_PAGES_HARD),
     reportMarkdown: report,
-    auditJson: { url, crawledAt: new Date().toISOString(), score: scored.score, counts: scored.counts, siteChecks: crawl.siteChecks, sitemap: crawl.sitemap, pages: crawl.pages.map(({ internalLinks, ...p }) => p) },
+    auditJson: {
+      url,
+      crawledAt: new Date().toISOString(),
+      score: scored.score,
+      counts: scored.counts,
+      pagesCrawled: crawl.pagesCrawled,
+      elapsedMs: crawl.elapsedMs,
+      avgTtfbMs: crawl.avgTtfbMs,
+      siteChecks: crawl.siteChecks,
+      sitemap: crawl.sitemap,
+      pages: crawl.pages.map(({ internalLinks, ...p }) => p),
+    },
   }
 }
