@@ -39,7 +39,7 @@ import net from 'node:net'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
-import { readFile, unlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { WebSocket } from 'ws'
@@ -274,7 +274,10 @@ function outcomeFromCause(answered, cause) {
 
 // Cost + abuse guard: a runaway loop (or a stolen control-API key) must not be able to
 // dial dozens of PSTN legs. Owner-tunable; refuses politely past the cap.
-const MAX_CONCURRENT = Number(process.env.SIP_MAX_CONCURRENT_CALLS || 4)
+// `let`, not `const`, from the console's step 2 on: the ERP owns this value now and pushes
+// it down through pullOwnerConfig(). The env stays the fallback, so a gateway that cannot
+// reach the app behaves exactly as it did before.
+let MAX_CONCURRENT = Number(process.env.SIP_MAX_CONCURRENT_CALLS || 4)
 // Only these destinations may be dialled (BD mobile/landline in local or +880 form).
 const DEST_ALLOW = new RegExp(process.env.SIP_DEST_ALLOW || '^(0\\d{9,10}|880\\d{9,10})$')
 // Hourly originate ceiling across the whole gateway.
@@ -305,7 +308,7 @@ const RECORD_DIR = process.env.SIP_RECORD_DIR || '/var/spool/asterisk/recording'
 const VOICEMAIL_ENABLED = process.env.SIP_VOICEMAIL_ENABLED !== '0'
 const VOICEMAIL_PROMPT = process.env.SIP_VOICEMAIL_PROMPT || '/var/lib/asterisk/sounds/alma-voicemail'
 const VOICEMAIL_AFTER_SECS = Number(process.env.SIP_VOICEMAIL_AFTER_SECS || 8)
-const VOICEMAIL_MAX_SECS = Number(process.env.SIP_VOICEMAIL_MAX_SECS || 120)
+let VOICEMAIL_MAX_SECS = Number(process.env.SIP_VOICEMAIL_MAX_SECS || 120)
 
 // Length of the barge-in fade, in 20 ms frames. Two frames (40 ms) is long enough to be
 // click-free and short enough that the caller still experiences an immediate interruption.
@@ -407,7 +410,7 @@ function fadeOutFrames(frames) {
  * and cut. Both failed calls ended at exactly 30.000s with hangup cause 0 (our own cancel),
  * which is what identified it. 45s matches the Twilio path's Timeout.
  */
-const RING_TIMEOUT = Number(process.env.SIP_RING_TIMEOUT || 45)
+let RING_TIMEOUT = Number(process.env.SIP_RING_TIMEOUT || 45)
 // How long to stay on the line waiting for a keypress after a confirmation message.
 const CONFIRM_WAIT_SECS = Number(process.env.SIP_CONFIRM_WAIT_SECS || 12)
 
@@ -1101,13 +1104,19 @@ function isOwnerCaller(number) {
     .some((n) => n === target)
 }
 
-/** Is this caller on the gateway's own blocklist (SIP_BLOCKLIST, last 9 digits)? */
+/**
+ * Is this caller on the gateway's own blocklist (last 9 digits)?
+ *
+ * The list comes from the owner's console (KV `blocked_callers`, pulled with the rest of the
+ * config) and falls back to `SIP_BLOCKLIST`. It is checked here, on our own box, BEFORE we
+ * ask the app anything — blocking a nuisance caller must not depend on Vercel being
+ * reachable, and refusing before answering means the call costs nothing at all.
+ */
 function isBlockedLocally(number) {
   const tail = (n) => String(n || '').replace(/\D/g, '').slice(-9)
   const target = tail(number)
   if (!target) return false
-  return (process.env.SIP_BLOCKLIST || '')
-    .split(',').map(tail).filter(Boolean).includes(target)
+  return LOCAL_BLOCKLIST.split(',').map(tail).filter(Boolean).includes(target)
 }
 
 /** BD numbers arrive as +8801… or 8801… or 01… — normalise to +E.164 for owner matching. */
@@ -1498,8 +1507,23 @@ const ctrlServer = http.createServer(async (req, res) => {
       softphone: { healthy: wsState.healthy, status: wsState.lastStatus, repairs: wsState.repairs },
     })
   }
+  if (url.pathname === '/api/v1/moh' && req.method === 'GET') {
+    // What the hold audio actually IS right now, read out of Asterisk rather than assumed.
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    return json(res, 200, { ok: true, ...(await mohState()) })
+  }
+  if (url.pathname === '/api/v1/moh' && req.method === 'POST') {
+    // Raw audio bytes in the body; the class name rides in a header so the body stays a file.
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const bytes = await readBinaryBody(req, MOH_MAX_BYTES)
+    if (!bytes) return json(res, 413, { error: 'upload too large' })
+    const result = await installMohAudio(bytes, req.headers['x-moh-class'])
+    return json(res, result.ok ? 200 : 409, result)
+  }
   if (url.pathname === '/health') {
-    return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size, registration: { registered: regState.registered, status: regState.lastStatus, failures: regState.consecutiveFailures }, softphone: { healthy: wsState.healthy, status: wsState.lastStatus, repairs: wsState.repairs } })
+    // `config` says whether the owner's settings are actually reaching this box. Without it,
+    // "I changed it and nothing happened" has no answer that is not an SSH session.
+    return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size, registration: { registered: regState.registered, status: regState.lastStatus, failures: regState.consecutiveFailures }, softphone: { healthy: wsState.healthy, status: wsState.lastStatus, repairs: wsState.repairs }, config: { pulledAt: configState.at || null, ok: configState.ok, error: configState.error } })
   }
   if (!m) return json(res, 404, { error: 'not found' })
   if (!authOk(req)) {
@@ -1669,9 +1693,13 @@ async function transferCall(call, forwardTo) {
 }
 
 /** How many times to walk the whole ring group before handing the caller back to the AI. */
-const TRANSFER_ROUNDS = Number(process.env.SIP_TRANSFER_ROUNDS || 2)
+let TRANSFER_ROUNDS = Number(process.env.SIP_TRANSFER_ROUNDS || 2)
 /** Music-on-hold class played while hunting for a human. Empty = Asterisk's default. */
-const MOH_CLASS = process.env.SIP_MOH_CLASS || ''
+let MOH_CLASS = process.env.SIP_MOH_CLASS || ''
+/** How long each member of the ring group is given before we move to the next one. */
+let TRANSFER_RING_TIMEOUT = Number(process.env.SIP_TRANSFER_RING_TIMEOUT || 30)
+/** Numbers refused before we answer, so a nuisance caller costs nothing. */
+let LOCAL_BLOCKLIST = process.env.SIP_BLOCKLIST || ''
 
 /** Stop hold music (safe to call when it was never started). */
 async function stopMoh(call) {
@@ -1706,7 +1734,7 @@ async function dialNextInGroup(call) {
     channelId: fwdId,
     // Shorter than a normal call: the caller is on hold listening to ringback, so a long
     // unanswered transfer is worse than falling back to the AI quickly.
-    timeout: Number(process.env.SIP_TRANSFER_RING_TIMEOUT || 30),
+    timeout: TRANSFER_RING_TIMEOUT,
     ...(CALLER_ID ? { callerId: CALLER_ID } : {}),
   })
   // register a minimal Call so its StasisStart bridges into the SAME bridge
@@ -2050,6 +2078,202 @@ function attachWsProxy(server) {
   })
 }
 
+// ── owner-editable settings, pulled from the ERP ─────────────────────────────
+/*
+ * Half the phone system's settings are read HERE, on the VPS, not on Vercel — ring rounds,
+ * ring timeouts, the concurrency cap, voicemail length, the hold-music class and the
+ * pre-answer blocklist. Every one of them used to be an env var behind SSH, which made the
+ * console's promise ("change settings without SSH") only half true.
+ *
+ * A PULL, deliberately, not a push: it needs no inbound port, it re-syncs by itself after a
+ * restart or a network blip, and a failure leaves the last known-good values in place rather
+ * than a half-applied config. On any error we simply keep what we have — which on a fresh
+ * boot is the env, i.e. exactly the behaviour that shipped before this existed.
+ *
+ * The call-audio tuning is NOT pulled and must never be. Those values are code defaults in
+ * git with no remote override precisely so the voice the owner approved on 2026-07-26 cannot
+ * be changed by anything reachable over the network (CLAUDE.md hard rule #1).
+ */
+const CONFIG_PULL_SECS = Number(process.env.SIP_CONFIG_PULL_SECS || 60)
+let configState = { at: 0, ok: false, error: null }
+
+async function pullOwnerConfig() {
+  if (!APP_URL || !INTERNAL_TOKEN) return
+  try {
+    const res = await fetch(`${APP_URL}/api/assistant/internal/phone-config`, {
+      headers: { Authorization: `Bearer ${INTERNAL_TOKEN}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const body = await res.json()
+    const c = body?.config
+    if (!c || typeof c !== 'object') throw new Error('no config in response')
+
+    // Each value is range-checked here as well as in the ERP. A bad number reaching the
+    // playout side of this process is not a screen bug, it is a dead line — and this file
+    // is the last thing standing between the two.
+    const clamp = (v, lo, hi, current) => {
+      const n = Number(v)
+      return Number.isFinite(n) && n >= lo && n <= hi ? Math.round(n) : current
+    }
+    const before = `${TRANSFER_ROUNDS}/${TRANSFER_RING_TIMEOUT}/${RING_TIMEOUT}/${MAX_CONCURRENT}/${VOICEMAIL_MAX_SECS}/${MOH_CLASS}/${LOCAL_BLOCKLIST}`
+
+    TRANSFER_ROUNDS = clamp(c.transferRounds, 1, 4, TRANSFER_ROUNDS)
+    TRANSFER_RING_TIMEOUT = clamp(c.transferRingTimeout, 10, 60, TRANSFER_RING_TIMEOUT)
+    RING_TIMEOUT = clamp(c.ringTimeout, 20, 90, RING_TIMEOUT)
+    MAX_CONCURRENT = clamp(c.maxConcurrent, 1, 8, MAX_CONCURRENT)
+    VOICEMAIL_MAX_SECS = clamp(c.voicemailMaxSecs, 30, 300, VOICEMAIL_MAX_SECS)
+    if (typeof c.mohClass === 'string' && /^[A-Za-z0-9_-]{0,40}$/.test(c.mohClass)) MOH_CLASS = c.mohClass
+    if (typeof c.blocklist === 'string') LOCAL_BLOCKLIST = c.blocklist
+
+    const after = `${TRANSFER_ROUNDS}/${TRANSFER_RING_TIMEOUT}/${RING_TIMEOUT}/${MAX_CONCURRENT}/${VOICEMAIL_MAX_SECS}/${MOH_CLASS}/${LOCAL_BLOCKLIST}`
+    // Only log a CHANGE. A line a minute, forever, is how a log directory reaches 21 GB.
+    if (after !== before) log(`config pulled: ${after}`)
+    configState = { at: Date.now(), ok: true, error: null }
+  } catch (err) {
+    configState = { at: configState.at, ok: false, error: err?.message || String(err) }
+  }
+}
+
+// ── hold audio: the one config write this gateway performs ───────────────────
+/*
+ * Roadmap §3.1 — a screen must never write Asterisk config directly; it calls a control-plane
+ * endpoint that validates, backs up, writes, reloads the right module, VERIFIES and rolls
+ * back. This is that endpoint, and hold audio is a good first citizen for it because the
+ * failure mode is already documented (trap #16): `moh reload` and `module reload` both report
+ * success and both leave a new class missing. Only a full unload + load picks it up, and the
+ * only honest proof is `moh show classes` afterwards.
+ *
+ * It refuses while any call is up. Unloading res_musiconhold mid-call cuts the music out from
+ * under whoever is on hold, and "the owner changed the hold tune and a customer's line went
+ * quiet" is not a trade worth making for a setting nobody needs to change urgently.
+ */
+const MOH_DIR_BASE = process.env.SIP_MOH_DIR || '/var/lib/asterisk/moh-alma'
+const MOH_CONF = process.env.SIP_MOH_CONF || '/etc/asterisk/musiconhold.conf'
+const MOH_MAX_BYTES = 8 * 1024 * 1024
+
+function mohClassName(raw) {
+  const name = String(raw || MOH_CLASS || 'alma-hold').trim()
+  return /^[A-Za-z0-9_-]{1,40}$/.test(name) ? name : null
+}
+
+/** What Asterisk itself says is loaded — not what we believe we wrote. */
+async function mohState() {
+  const out = { configured: Boolean(MOH_CLASS), liveClass: null, files: [], busy: calls.size > 0, error: null }
+  try {
+    const classes = await asteriskCli('moh show classes')
+    const wanted = MOH_CLASS || 'alma-hold'
+    out.liveClass = new RegExp(`Class:\\s*${wanted}\\b`, 'i').test(classes) ? wanted : null
+  } catch (err) {
+    out.error = err?.message || String(err)
+  }
+  try {
+    for (const name of await readdir(MOH_DIR_BASE)) {
+      const info = await stat(`${MOH_DIR_BASE}/${name}`).catch(() => null)
+      if (!info?.isFile()) continue
+      // .sln is raw 8 kHz signed-linear: two bytes per sample, so the duration is arithmetic.
+      out.files.push({ name, bytes: info.size, seconds: name.endsWith('.sln') ? Math.round(info.size / 16000) : null })
+    }
+  } catch { /* the directory not existing yet is a normal first-run state, not an error */ }
+  return out
+}
+
+/**
+ * Install an uploaded recording as the hold audio and prove it took.
+ * Returns { ok, steps } — the steps are shown on screen, because "it worked" about an
+ * Asterisk reload has been wrong here before.
+ */
+async function installMohAudio(bytes, rawClass) {
+  const steps = []
+  const cls = mohClassName(rawClass)
+  if (!cls) return { ok: false, error: 'class name must be letters, numbers, - or _', steps }
+  if (calls.size > 0) return { ok: false, error: `line is busy (${calls.size} call(s)) — a swap would cut the audio`, steps }
+  if (!bytes?.length) return { ok: false, error: 'empty upload', steps }
+  if (bytes.length > MOH_MAX_BYTES) return { ok: false, error: 'file too large', steps }
+
+  const src = `${tmpdir()}/moh-upload-${randomUUID()}`
+  const wav = `${MOH_DIR_BASE}/${cls}.wav`
+  const sln = `${MOH_DIR_BASE}/${cls}.sln`
+  const backup = `${tmpdir()}/moh-backup-${randomUUID()}`
+  let confBackup = null
+
+  try {
+    await writeFile(src, bytes)
+    await mkdir(MOH_DIR_BASE, { recursive: true })
+
+    // Back up whatever is live, so a failed install can put the owner's previous recording
+    // back rather than leaving the class pointing at nothing.
+    await mkdir(backup, { recursive: true })
+    for (const [path, name] of [[wav, `${cls}.wav`], [sln, `${cls}.sln`]]) {
+      await copyFile(path, `${backup}/${name}`).catch(() => {})
+    }
+
+    // 8 kHz mono, both extensions off one basename: Asterisk picks the best match for the
+    // channel and treats them as ONE file, so the loop does not play the recording twice.
+    await execFileAsync('ffmpeg', ['-y', '-nostdin', '-loglevel', 'error', '-i', src,
+      '-ac', '1', '-ar', '8000', '-acodec', 'pcm_s16le', wav], { timeout: 120_000 })
+    await execFileAsync('ffmpeg', ['-y', '-nostdin', '-loglevel', 'error', '-i', src,
+      '-ac', '1', '-ar', '8000', '-f', 's16le', '-acodec', 'pcm_s16le', sln], { timeout: 120_000 })
+    await execFileAsync('chown', ['-R', 'asterisk:asterisk', MOH_DIR_BASE]).catch(() => {})
+    const info = await stat(sln).catch(() => null)
+    steps.push({ step: 'convert', ok: true, detail: `${cls}.wav + ${cls}.sln · ~${info ? Math.round(info.size / 16000) : '?'}s` })
+
+    // Declare the class if it is not already in the file. Backed up first — this is a live
+    // PBX's config, and an unparseable musiconhold.conf takes hold music out entirely.
+    const conf = await readFile(MOH_CONF, 'utf8').catch(() => '')
+    if (!new RegExp(`^\\[${cls}\\]`, 'm').test(conf)) {
+      confBackup = `${MOH_CONF}.alma-bak-${Date.now()}`
+      await copyFile(MOH_CONF, confBackup).catch(() => { confBackup = null })
+      await writeFile(MOH_CONF, `${conf.replace(/\s*$/, '')}\n\n[${cls}]\nmode=files\ndirectory=${MOH_DIR_BASE}\nsort=random\n`)
+      steps.push({ step: 'declare-class', ok: true, detail: `[${cls}] added to musiconhold.conf` })
+    } else {
+      steps.push({ step: 'declare-class', ok: true, detail: 'already declared' })
+    }
+
+    // The whole reason this is an endpoint and not a text editor: a reload lies here.
+    await asteriskCli('module unload res_musiconhold.so').catch(() => {})
+    await asteriskCli('module load res_musiconhold.so')
+    const classes = await asteriskCli('moh show classes')
+    const loaded = new RegExp(`Class:\\s*${cls}\\b`, 'i').test(classes)
+    steps.push({ step: 'reload', ok: loaded, detail: loaded ? `${cls} is loaded` : 'class did not appear in `moh show classes`' })
+
+    if (!loaded) throw new Error('module reloaded but the class did not appear')
+
+    MOH_CLASS = cls
+    log(`hold audio installed: ${cls} (${bytes.length} bytes)`)
+    return { ok: true, steps, liveClass: cls }
+  } catch (err) {
+    // Roll back both halves: the audio files and, if we touched it, the config.
+    for (const name of [`${cls}.wav`, `${cls}.sln`]) {
+      await copyFile(`${backup}/${name}`, `${MOH_DIR_BASE}/${name}`).catch(() => {})
+    }
+    if (confBackup) await copyFile(confBackup, MOH_CONF).catch(() => {})
+    await asteriskCli('module unload res_musiconhold.so').catch(() => {})
+    await asteriskCli('module load res_musiconhold.so').catch(() => {})
+    steps.push({ step: 'rollback', ok: true, detail: 'previous hold audio and config restored' })
+    log('hold audio install FAILED, rolled back:', err?.message)
+    return { ok: false, error: err?.message || String(err), steps }
+  } finally {
+    await unlink(src).catch(() => {})
+    await rm(backup, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+/** Binary request body. `readBody` returns a string and would corrupt audio bytes. */
+function readBinaryBody(req, maxBytes) {
+  return new Promise((resolve) => {
+    const chunks = []
+    let size = 0
+    req.on('data', (c) => {
+      size += c.length
+      if (size > maxBytes) { req.destroy(); resolve(null); return }
+      chunks.push(c)
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks)))
+    req.on('error', () => resolve(null))
+  })
+}
+
 for (const addr of CTRL_BIND) {
   // One server per address. A missing Docker bridge must not stop the loopback listener,
   // so a failed bind is logged and skipped rather than crashing the gateway.
@@ -2058,6 +2282,10 @@ for (const addr of CTRL_BIND) {
   srv.on('error', (err) => log(`control API bind ${addr}:${CTRL_PORT} failed: ${err.message}`))
   srv.listen(CTRL_PORT, addr, () => log(`control API listening ${addr}:${CTRL_PORT}`))
 }
+// Pull the owner's settings once at boot and then on a timer. Before the first pull returns,
+// every value is the env — i.e. the system behaves exactly as it did before this existed.
+void pullOwnerConfig()
+setInterval(() => { void pullOwnerConfig() }, CONFIG_PULL_SECS * 1000).unref()
 startAri()
 if (ARI_READY) {
   void checkRegistration()

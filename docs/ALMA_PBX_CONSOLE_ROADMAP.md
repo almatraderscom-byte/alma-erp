@@ -182,25 +182,83 @@ the worker files, on a `vps-gateway-only` branch, so the box never takes unrelat
 hosted panel exposes no media settings to a client, so the answer to an audio question is not
 in there — it is in our own packets and counters.
 
-### Phase 2 — Change settings without SSH  ·  NEXT
+### Phase 2 — Change settings without SSH  ·  ✅ BUILT 2026-07-26
 
-A `/agent/phone-console/settings` page — the navigation entry already exists, disabled. This
-is the first phase that WRITES, so §3's four rules start applying here in earnest.
+Not one page — a **settings GROUP** in the section nav, one page per job, because eight
+unrelated things on a single scroll is the shape the owner rejected in Phase 1:
 
-Add to the original list: **the provider's own registration table**, carried over from Phase 1.
-It needs an amarip.net credential the owner supplies himself (never typed by an engineer), so
-it is a settings-shaped problem rather than a read-only one.
+    /agent/phone-console/settings             ফরওয়ার্ড ও ট্রান্সফার  numbers, ring group, mode, rounds
+                                 /hours       অফিস সময়              window + holidays
+                                 /blocklist   ব্লকলিস্ট               refuse before answering
+                                 /limits      সীমা ও ক্যাপ           concurrency, caps, voicemail
+                                 /hold        হোল্ড অডিও             upload → live, verified
+                                 /provider    প্রোভাইডার              amarip's own registration table
+                                 /history     পরিবর্তনের ইতিহাস       who/what/when + revert
 
-Each row moves from env/KV to a KV-backed screen:
+**Where the settings actually lived, which is the thing that shaped the work.** They were not
+all in one place, and only half were reachable from Vercel:
 
-- forward targets (support / boss), and which one the AI may use for what
-- office hours + holidays; after-hours behaviour
-- transfer mode (direct vs ask-first)
-- blocklist / DNC, with "block this caller" straight from the call log
-- ring group members, rounds, per-member timeout
-- concurrency cap, daily call cap
-- voice (male/female, provider), turn-detection speed
-- hold audio: upload a file, hear it, make it live (today: SSH + `ffmpeg` + a module reload)
+- **App-scoped** (read by `sip-inbound` while a call is being set up, so a change applies to
+  the very next call): forward targets, office hours, holidays, transfer mode, blocklist,
+  daily call cap. The inbound route already sent a per-call `params` object to the gateway,
+  so these needed no VPS work at all.
+- **Gateway-scoped** (read on the VPS): ring rounds, per-member ring timeout, outbound ring
+  timeout, concurrency cap, voicemail length, hold-music class, the pre-answer blocklist.
+  These were env vars behind SSH, so "settings without SSH" would have been half true. The
+  gateway now **pulls** `GET /api/assistant/internal/phone-config` once a minute and falls
+  back to its env on any failure. A pull, not a push: no inbound port, it re-syncs itself
+  after a restart, and a failure leaves the last known-good values rather than half a config.
+- **Locked** — the roadmap's original list had "voice (male/female)" and "turn-detection
+  speed" in this phase. Both are frozen by CLAUDE.md hard rule #1. They ship **read-only**,
+  on the limits page, with the reason. The roadmap does not outrank the lock.
+
+Everything falls back to the env var that used to control it, so an empty settings table
+behaves exactly like the system did before — the migration is the absence of a change.
+
+**Hold audio** is the one config WRITE that reaches the VPS, and it is the first citizen of
+§3.1's verifying control plane: upload → `ffmpeg` to 8 kHz mono (`.wav` + `.sln` off one
+basename) → declare the class if absent (config backed up first) → `module unload` + `module
+load` → **verify with `moh show classes`** → roll both halves back on failure. It refuses
+while any call is up, because unloading MOH cuts the music out from under whoever is on hold.
+
+**The provider's registration table** (carried over from Phase 1) is on its own page. The
+owner types the amarip.net password himself; it is stored AES-256-GCM encrypted in its own
+table — deliberately not in `agent_kv_settings`, whose whole contents the agent's own
+`get_settings` tool can read — and is never returned by any route. We have no documentation
+for their panel, so both URLs are editable on the page and an unparseable response shows the
+first 400 characters of what actually came back instead of an empty table.
+
+**Audit** is `agent_audit_logs`, one row per change with the previous value and who made it.
+Only the newest change per key can be reverted: putting back a value something newer already
+replaced would silently undo the newer change too.
+
+Migration `20260923000000_phone_provider_credential` (additive: one new table).
+
+### What Phase 2 changed for everything after it
+
+**1. There are two config planes, not one, and a screen must say which it is on.** An
+app-scoped change applies to the next call; a gateway-scoped one waits up to a minute. The
+settings screen labels gateway rows and shows when the gateway last pulled, so a change can
+be seen to have LANDED rather than merely been saved. Phases 3–5 write to the VPS far more
+than this one does — build on the pull, not on a new push path.
+
+**2. The gateway now trusts the ERP for values, so the gateway re-validates them.** Every
+pulled number is range-checked again on the VPS. A bad number reaching the playout side is
+not a screen bug, it is a dead line, and that file is the last thing standing between the two.
+
+**3. Nothing audio-shaped goes through the pull, and a test enforces it.** The gateway config
+payload is asserted as an exact key set, so a later phase cannot quietly add a jitter value or
+the voice name to something reachable over the network.
+
+**4. `/api/assistant/internal/` was the right home for the pull endpoint.** Middleware exempts
+that whole prefix from the session check; a new voice route elsewhere 401s until someone
+remembers to list it by exact pathname (trap #8). Later phases should put machine-to-machine
+endpoints there for the same reason.
+
+**5. Deploy order again, and it is worse for writes than for reads.** The gateway pulls from
+`APP_URL`, which is PRODUCTION. Gateway-scoped settings therefore cannot be proven on a
+preview at all — only the app-scoped half can. The honest sequence is: merge, deploy the
+worker, then verify on a real call.
 
 ### Phase 3 — Extensions
 

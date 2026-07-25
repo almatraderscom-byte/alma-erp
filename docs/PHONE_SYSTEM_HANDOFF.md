@@ -24,10 +24,24 @@ layer on top. Everything below is built, merged to `main`, and running.
   click-to-call. Registration proven end-to-end.
 - Registration watchdog, per-call CDR, outcome sweep, concurrency + hourly caps, BD-only
   destination allowlist, SIP port firewall.
-- **The PBX console at `/agent/phone-console`** (owner-only, read-only, shipped 2026-07-26 in
-  PR #585): dashboard, live channels, call log with hangup causes and recordings, audio
-  quality including per-call packet loss and jitter, and the line/trunk view. Plan and status:
+- **The PBX console at `/agent/phone-console`** (owner-only, shipped 2026-07-26 in PR #585):
+  dashboard, live channels, call log with hangup causes and recordings, audio quality
+  including per-call packet loss and jitter, and the line/trunk view. Plan and status:
   `ALMA_PBX_CONSOLE_ROADMAP.md`; what ships vs what has a screen: `PHONE_FEATURES_IN_MAIN.md`.
+- **Its settings section** (step 2, same day): forward numbers and ring group, office hours
+  and holidays, transfer mode, blocklist, caps, hold-audio upload, the provider's own
+  registration table, and an audited history with revert. **Two config planes, and they
+  behave differently — know which one you are on:**
+  - *App-scoped* values are read by `sip-inbound` while a call is being set up and apply to
+    the very next call.
+  - *Gateway-scoped* values are read on the VPS. The gateway PULLS
+    `GET /api/assistant/internal/phone-config` every `SIP_CONFIG_PULL_SECS` (60) with the
+    shared `AGENT_INTERNAL_TOKEN`, and falls back to its own env on any failure — so the
+    endpoint being down changes nothing about how calls behave. **It pulls from `APP_URL`,
+    which is PRODUCTION**, so gateway-scoped settings cannot be tested on a preview.
+  - The call-audio tuning is in NEITHER plane and must stay that way: those values are code
+    defaults in git with no remote override, so the approved voice cannot be changed by
+    anything reachable over the network. A unit test asserts the pull payload's exact key set.
 - **The call audio the owner approved on 2026-07-26 is LOCKED — CLAUDE.md hard rule #1.** Read
   it before touching anything near the playout, the jitter cushion or the VAD.
 
@@ -332,11 +346,20 @@ approved).
 
 ## 8. Next steps, in order
 
-**0. (2026-07-26) The console's Phase 2 — settings without SSH — is the next piece of work.**
-See `ALMA_PBX_CONSOLE_ROADMAP.md`. It is the first phase that writes, so §3's rules there
-(one writer for config, secrets never leave the VPS, KV not env, every change audited and
-reversible) start applying in earnest. The provider's own registration table moves into it,
-because reading it needs an amarip.net credential the owner supplies himself.
+**0. (2026-07-26) The console's Phase 2 — settings without SSH — is BUILT.** Two things are
+owner-pending before it is fully live, and neither is optional:
+
+  a. **Deploy the worker** (manual dispatch: `gh workflow run deploy-worker.yml`). Until the
+     gateway on the VPS runs the new code, gateway-scoped settings save in the ERP and never
+     arrive — the settings screen will show "এখনো একবারও নেয়নি", which is the truth.
+  b. **Verify on a real call after the merge.** Change one gateway-scoped value (ring rounds
+     is the safest), wait a minute, place a PSTN loopback to our own DID `09649777738`, and
+     confirm the hangup counters still match the locked baseline: `underruns ≤ 1 · cushion ≤
+     16f · dropped = 0`. Nothing in step 2 touches the playout or the VAD, so those numbers
+     must be unchanged; if they are not, something else moved and it needs finding.
+
+  Phase 3 (extensions) is next. It writes to the VPS far more than step 2 does — build on the
+  config pull rather than adding a push path.
 
 1. **Owner + provider**: one precise question now, not a vague complaint — why does a fresh
    REGISTER take ~100 s to become routable? (§5 has the wording and the numbers.)
