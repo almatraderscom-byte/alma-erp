@@ -54,6 +54,8 @@ export function formatVoiceCallReport(record: {
   costCredits?: number | null
   transcript?: unknown
   status?: string | null
+  recordingUrl?: string | null
+  recordingSecs?: number | null
 }): { title: string; telegram: string; chat: string } {
   const who = record.recipientName || record.toNumber || 'কল'
   const mins = record.durationSecs != null
@@ -76,16 +78,21 @@ export function formatVoiceCallReport(record: {
     ? `${fullTranscript.slice(0, 12_000)}\n…(পূর্ণ transcript database-এ সংরক্ষিত)`
     : fullTranscript
   const costLine = record.costCredits != null ? `আনুমানিক খরচ: ৳${record.costCredits}\n` : ''
+  // Owner requirement 2026-07-25: he wants to HEAR the call, not only read a summary of it.
+  // The link rides with the report so listening is one tap away from the same message.
+  const recLine = record.recordingUrl
+    ? `🎧 রেকর্ডিং${record.recordingSecs ? ` (${banglaNumber(record.recordingSecs)} সেকেন্ড)` : ''}: ${record.recordingUrl}\n`
+    : ''
   const summaryLine = record.summary ? `সারাংশ: ${record.summary}\n\n` : ''
   const body = transcript ? `কথোপকথন:\n${transcript}` : 'কথোপকথনের transcript পাওয়া যায়নি।'
   return {
     title: prefix,
-    telegram: `${prefix}\n${costLine}\n${summaryLine}${body}`.trim(),
+    telegram: `${prefix}\n${costLine}${recLine}\n${summaryLine}${body}`.trim(),
     chat: `${prefix}।${record.summary
       ? ` সারাংশ: ${record.summary}`
       : transcript
         ? ` কথোপকথন: ${transcript.slice(0, 2000)}`
-        : ' কোনো কথোপকথন পাওয়া যায়নি।'}`,
+        : ' কোনো কথোপকথন পাওয়া যায়নি।'}${record.recordingUrl ? ` রেকর্ডিং: ${record.recordingUrl}` : ''}`,
   }
 }
 

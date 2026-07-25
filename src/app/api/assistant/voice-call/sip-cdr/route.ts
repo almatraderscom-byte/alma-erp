@@ -61,6 +61,8 @@ interface CdrBody {
   transferAnswered?: boolean
   transferTalkSecs?: number
   transferCauseTxt?: string
+  recordingUrl?: string
+  recordingSecs?: number
 }
 
 /** Human-readable Bangla note about a transfer, so the owner learns what happened after the AI left. */
@@ -73,6 +75,30 @@ function transferNote(c: CdrBody): string | null {
   const mins = Math.floor(secs / 60)
   const dur = mins > 0 ? `${mins} মিনিট ${secs % 60} সেকেন্ড` : `${secs} সেকেন্ড`
   return `কলটি ${c.transferredTo} নম্বরে যুক্ত করা হয়েছিল; দুজনে ${dur} কথা বলেছেন।`
+}
+
+/** Send the owner just the recording link for a call whose report already went out. */
+async function sendRecordingLink(callRecordId: string, c: CdrBody) {
+  const appUrl = (process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+  const token = process.env.AGENT_INTERNAL_TOKEN ?? ''
+  if (!appUrl || !token) return
+  const row = await db.agentVoiceCall.findUnique({
+    where: { id: callRecordId }, select: { recipientName: true, toNumber: true },
+  }).catch(() => null)
+  const who = row?.recipientName || row?.toNumber || 'কল'
+  const secs = c.recordingSecs ? ` (${c.recordingSecs} সেকেন্ড)` : ''
+  await fetch(`${appUrl}/api/assistant/internal/urgent-alert`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      tier: 2,
+      title: 'কল রেকর্ডিং',
+      message: `${who}-এর কলের রেকর্ডিং${secs}: ${c.recordingUrl}`,
+      voice: false,
+      category: 'call_recording',
+    }),
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => {})
 }
 
 export async function POST(req: NextRequest) {
@@ -96,6 +122,10 @@ export async function POST(req: NextRequest) {
 
     if (existing) {
       const reported = Boolean(existing.reportReceivedAt)
+      // The recording is uploaded after the call ends, so the bot's report often reaches the
+      // owner first and without the link. When that happens, follow up with just the link
+      // rather than leaving him a summary he cannot listen to.
+      const lateRecording = Boolean(c.recordingUrl) && reported
       await db.agentVoiceCall.update({
         where: { id: existing.id },
         data: {
@@ -108,8 +138,10 @@ export async function POST(req: NextRequest) {
           // A transfer note is appended even to a reported row: the bot's summary describes
           // only the part it witnessed, and the human half is exactly what was missing.
           ...(note ? { summary: existing.summary ? `${existing.summary} ${note}` : note } : {}),
+          ...(c.recordingUrl ? { recordingUrl: c.recordingUrl, recordingSecs: c.recordingSecs ?? null } : {}),
         },
       })
+      if (lateRecording) void sendRecordingLink(existing.id, c)
       return NextResponse.json({ ok: true, callRecordId: existing.id, updated: true })
     }
 
@@ -130,6 +162,7 @@ export async function POST(req: NextRequest) {
         endedAt: c.endedAt ? new Date(c.endedAt) : new Date(),
         ...(durationSecs != null ? { durationSecs } : {}),
         ...(note ? { summary: note } : {}),
+        ...(c.recordingUrl ? { recordingUrl: c.recordingUrl, recordingSecs: c.recordingSecs ?? null } : {}),
       },
     })
     return NextResponse.json({ ok: true, callRecordId: created.id, created: true })

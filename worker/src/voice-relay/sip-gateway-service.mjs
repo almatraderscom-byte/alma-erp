@@ -39,7 +39,7 @@ import net from 'node:net'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
-import { unlink, writeFile } from 'node:fs/promises'
+import { readFile, unlink, writeFile } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { WebSocket } from 'ws'
@@ -141,18 +141,50 @@ function putCdr(id, patch) {
 async function persistCdr(id) {
   const rec = cdr.get(id)
   if (!rec || !APP_URL || !INTERNAL_TOKEN || rec._persisted) return
+  // Wait for the recording upload; finishRecording() calls back here when it is done.
+  if (rec._pendingRecording) return
   rec._persisted = true
   try {
     const res = await fetch(`${APP_URL}/api/assistant/voice-call/sip-cdr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INTERNAL_TOKEN}` },
-      body: JSON.stringify(rec),
+      body: JSON.stringify({ ...rec, _pendingRecording: undefined, _persisted: undefined }),
       signal: AbortSignal.timeout(10_000),
     })
     // Log non-2xx too: a call record that silently fails to persist looks identical to one
     // that was never attempted, and this is the only copy of a transferred call's outcome.
     if (!res.ok) log(id, `cdr persist HTTP ${res.status}`)
   } catch (err) { log(id, 'cdr persist failed:', err?.message) }
+}
+
+/**
+ * Put a finished recording in Supabase and return a URL the owner can open.
+ * Signed for a long window rather than made public: a phone call is private business
+ * content, so the link should be shareable with him without making the bucket readable.
+ */
+async function uploadRecording(name, buf) {
+  const url = process.env.SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) { log('recording upload skipped: Supabase env missing'); return null }
+  const path = `calls/recordings/${name}.wav`
+  try {
+    const put = await fetch(`${url.replace(/\/$/, '')}/storage/v1/object/agent-files/${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, apikey: key, 'Content-Type': 'audio/wav', 'x-upsert': 'true' },
+      body: buf,
+      signal: AbortSignal.timeout(60_000),
+    })
+    if (!put.ok) { log(`recording upload HTTP ${put.status}`); return null }
+    const signed = await fetch(`${url.replace(/\/$/, '')}/storage/v1/object/sign/agent-files/${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, apikey: key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expiresIn: Number(process.env.SIP_RECORDING_LINK_DAYS || 30) * 86400 }),
+      signal: AbortSignal.timeout(20_000),
+    })
+    const data = await signed.json().catch(() => ({}))
+    if (!data?.signedURL) { log('recording sign failed'); return null }
+    return `${url.replace(/\/$/, '')}/storage/v1${data.signedURL}`
+  } catch (err) { log('recording upload failed:', err?.message); return null }
 }
 
 /**
@@ -189,6 +221,12 @@ const SILENCE_FRAME = Buffer.alloc(320)
 // it isolates OUR pipeline, so a reported glitch can be shown to be present (our fault) or
 // absent (introduced downstream on the PSTN leg) instead of argued about.
 const DEBUG_RECORD = process.env.SIP_DEBUG_RECORD === '1'
+
+// Call recording (owner requirement 2026-07-25). On by default so nothing is silently
+// missed; SIP_RECORD_CALLS=0 turns it off. Bounded so a stuck call cannot fill the disk.
+const RECORD_CALLS = process.env.SIP_RECORD_CALLS !== '0'
+const RECORD_MAX_SECS = Number(process.env.SIP_RECORD_MAX_SECS || 1800)
+const RECORD_DIR = process.env.SIP_RECORD_DIR || '/var/spool/asterisk/recording'
 
 // Length of the barge-in fade, in 20 ms frames. Two frames (40 ms) is long enough to be
 // click-free and short enough that the caller still experiences an immediate interruption.
@@ -427,6 +465,42 @@ class Call {
     try { this.asSocket.write(Buffer.concat([hdr, payload])) } catch { /* */ }
   }
 
+  /**
+   * Stop the recording, hand the audio to Supabase and put the URL on the call record.
+   * Runs before the CDR is persisted so the owner's report carries the link.
+   */
+  async finishRecording() {
+    const name = this.recordingName
+    this.recordingName = null
+    // Asterisk finalises the file when the recording stops; the bridge usually dies first,
+    // which stops it anyway, so a 404 here is normal rather than an error.
+    await ari('POST', `/recordings/live/${encodeURIComponent(name)}/stop`).catch(() => {})
+    const file = `${RECORD_DIR}/${name}.wav`
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const buf = await readFile(file)
+        // A near-empty WAV is a call where nothing was ever said — not worth storing.
+        if (buf.length > 8000) {
+          const url = await uploadRecording(name, buf)
+          if (url) {
+            const secs = Math.max(0, Math.round((buf.length - 44) / (8000 * 2)))
+            putCdr(this.channelId, { recordingUrl: url, recordingSecs: secs })
+            log(this.channelId, `recording stored (${secs}s)`)
+          }
+        }
+        await unlink(file).catch(() => {})
+        putCdr(this.channelId, { _pendingRecording: false })
+        await persistCdr(this.channelId)
+        return
+      } catch {
+        await new Promise((r) => setTimeout(r, 400)) // still being flushed
+      }
+    }
+    log(this.channelId, 'recording file never appeared:', file)
+    putCdr(this.channelId, { _pendingRecording: false })
+    await persistCdr(this.channelId)
+  }
+
   // ── keypress confirmation (one-way calls) ──────────────────────────────────
   /**
    * The message has finished playing and we asked the receiver to press a key. Stay on the
@@ -485,13 +559,16 @@ class Call {
     if (this.playTimer) { clearInterval(this.playTimer); this.playTimer = null }
     try { this.txFd?.end(); this.rxFd?.end() } catch { /* */ }
     if (this.digitTimer) { clearTimeout(this.digitTimer); this.digitTimer = null }
-    try { this.bot?.close() } catch { /* */ }
     try { this.asSocket?.end() } catch { /* */ }
     // End the PSTN leg + tidy the bridge/externalMedia via ARI.
     try { if (this.extChannelId) await ari('DELETE', `/channels/${this.extChannelId}`).catch(() => {}) } catch { /* */ }
     try { await ari('DELETE', `/channels/${this.channelId}`).catch(() => {}) } catch { /* */ }
     try { if (this.bridgeId) await ari('DELETE', `/bridges/${this.bridgeId}`).catch(() => {}) } catch { /* */ }
     if (this.playFile) await unlink(this.playFile).catch(() => {})
+    if (this.recordingName) await this.finishRecording()
+    // Closed LAST: closing it is what makes the bot send its post-call report, and by now the
+    // recording is already on the record, so that report can carry the link.
+    try { this.bot?.close() } catch { /* */ }
     calls.delete(this.channelId)
     byUuid.delete(this.audioUuid)
   }
@@ -578,6 +655,25 @@ async function bridgeAndStartBot(call) {
   // Asterisk played toward the caller (our side) or only reaches the caller's ear (the PSTN
   // leg). Off by default; recordings stay on the VPS.
   if (DEBUG_RECORD) call.openCapture()
+  // Record the BRIDGE, not our media leg: the bridge keeps recording after a transfer, when
+  // the AI has stepped off the audio path — the one stretch of a call nobody could account
+  // for before. Asterisk writes to /var/spool/asterisk/recording (created 2026-07-25; its
+  // absence was why ARI recording returned 500).
+  if (RECORD_CALLS) {
+    call.recordingName = `alma-${call.channelId}`
+    // The channel dies before the upload finishes, so without this the record would be
+    // persisted first and the recording link would never reach the owner's report.
+    putCdr(call.channelId, { _pendingRecording: true })
+    ari('POST', `/bridges/${call.bridgeId}/record`, {
+      name: call.recordingName, format: 'wav', ifExists: 'overwrite', beep: 'false',
+      maxDurationSeconds: String(RECORD_MAX_SECS),
+    }).then(() => log(call.channelId, 'recording started'))
+      .catch((err) => {
+        call.recordingName = null
+        putCdr(call.channelId, { _pendingRecording: false })
+        log(call.channelId, 'recording failed:', err?.message)
+      })
+  }
   log(call.channelId, 'bridged externalMedia', call.extChannelId)
 }
 
