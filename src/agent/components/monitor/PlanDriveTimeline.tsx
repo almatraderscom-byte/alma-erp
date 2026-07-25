@@ -48,6 +48,8 @@ export interface PlanDriveView {
   statusLabel?: string
   runningStep?: string | null
   idleMs?: number | null
+  /** Agent-started work — belongs to no owner chat, so show it in any chat. */
+  isAutonomous?: boolean
   /** Present only for a "fix everything" campaign — every number here is measured. */
   grind?: GrindDriveView
 }

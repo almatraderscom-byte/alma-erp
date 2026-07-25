@@ -8,7 +8,11 @@
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
-const mockPrisma = vi.hoisted(() => ({ agentFindingSet: { findFirst: vi.fn().mockResolvedValue(null) } }))
+const mockPrisma = vi.hoisted(() => ({
+  agentFindingSet: { findFirst: vi.fn().mockResolvedValue(null) },
+  agentConversation: { findMany: vi.fn().mockResolvedValue([]) },
+  agentPendingAction: { findMany: vi.fn().mockResolvedValue([]) },
+}))
 vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
 
 const planner = vi.hoisted(() => ({
@@ -84,6 +88,24 @@ describe('Plan-Drive panel honesty', () => {
     ])
     const panel = await getPlanDrivePanel()
     expect(panel.drives[0].isRunning).toBe(true)
+  })
+
+  // Owner report 2026-07-26: iOS listed these plans, web showed nothing. S0 gave
+  // agent-started plans their own thread, and the web filter matched on chat id.
+  it('marks agent-started plans autonomous so any chat can show them', async () => {
+    mockPrisma.agentConversation.findMany.mockResolvedValue([{ id: 'c1' }]) // a drive thread
+    planner.loadVisiblePlanDrives.mockResolvedValue([plan({ conversationId: 'c1' })])
+
+    const panel = await getPlanDrivePanel()
+    expect(panel.drives[0].isAutonomous).toBe(true)
+  })
+
+  it('a plan started from Boss own chat is NOT autonomous', async () => {
+    mockPrisma.agentConversation.findMany.mockResolvedValue([]) // not a drive thread
+    planner.loadVisiblePlanDrives.mockResolvedValue([plan({ conversationId: 'owner-chat' })])
+
+    const panel = await getPlanDrivePanel()
+    expect(panel.drives[0].isAutonomous).toBe(false)
   })
 
   it('a plan waiting on an approval is counted separately, not as running', async () => {
