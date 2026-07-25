@@ -328,7 +328,14 @@ private struct AgentNewSessionWord: View {
 }
 
 @available(iOS 17.0, *)
-private struct AgentCodexSpriteRobot: View {
+struct AgentCodexSpriteRobot: View {
+    /// `.idle` = the new-chat hero (breathes, blinks, jumps when touched).
+    /// `.loading` = the session loader (owner rule 2026-07-26): the same
+    /// character in a continuous movement cycle, so the app has ONE robot.
+    /// `.still` = Reduce Motion / Low Power — one frame, no animation.
+    enum Mode { case idle, loading, still }
+    var mode: Mode = .idle
+
     private struct SpriteBeat {
         let row: Int
         let column: Int
@@ -347,6 +354,11 @@ private struct AgentCodexSpriteRobot: View {
     ]
     private static let jumpBeats = (0..<5).map {
         SpriteBeat(row: 4, column: $0, milliseconds: $0 == 4 ? 280 : 140)
+    }
+    /// Continuous movement for the loader — the jump run, looped, so the robot
+    /// is visibly WORKING rather than posing.
+    private static let loadingBeats = (0..<5).map {
+        SpriteBeat(row: 4, column: $0, milliseconds: 150)
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -376,25 +388,29 @@ private struct AgentCodexSpriteRobot: View {
         }
         .frame(width: 112, height: 128)
         .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 0).onEnded { _ in playJump() })
+        .gesture(DragGesture(minimumDistance: 0).onEnded { _ in
+            guard mode == .idle else { return }   // the loader is not a toy
+            playJump()
+        })
         .accessibilityLabel("ALMA robot")
         .accessibilityHint("ছুঁলে লাফ দেয়")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { playJump() }
-        .onAppear { startIdle() }
+        .onAppear { start() }
         .onDisappear { playbackTask?.cancel() }
     }
 
-    private func startIdle() {
+    private func start() {
         playbackTask?.cancel()
-        guard motionEnabled else {
+        guard motionEnabled, mode != .still else {
             row = 0
             column = 0
             return
         }
+        let beats = mode == .loading ? Self.loadingBeats : Self.idleBeats
         playbackTask = Task { @MainActor in
             while !Task.isCancelled {
-                for beat in Self.idleBeats {
+                for beat in beats {
                     guard !Task.isCancelled else { return }
                     row = beat.row
                     column = beat.column
@@ -432,7 +448,7 @@ private struct AgentCodexSpriteRobot: View {
             guard !Task.isCancelled else { return }
             AlmaAgentHaptics.rigid()
             jumping = false
-            startIdle()
+            start()
         }
     }
 }
@@ -811,51 +827,34 @@ final class AgentAwakeningModel {
         }
     }
 
+    /// Owner rule 2026-07-26: NO scripted performance. The overlay is a loading
+    /// indicator, so it lives exactly as long as the load — it appears, the ALMA
+    /// robot moves, and it leaves the moment content is ready.
+    ///
+    /// The old version played ~6.7s of fixed beats and then sat in
+    /// `while !ready` forever. If `markReady` never arrived — a failed restore,
+    /// or any path that does not report — the robot stuck on screen with no way
+    /// out. Owner hit that in the simulator AND occasionally in production.
+    /// A hard ceiling now guarantees it always leaves.
+    private static let hardCeilingNs: UInt64 = 12_000_000_000
+
     private func run() async {
-        let reduceMotion = UIAccessibility.isReduceMotionEnabled
-        // Reduce Motion: skip the theatrical dialogue — calm fade in, wait for
-        // readiness, calm fade out (haptics preserved at success).
-        if reduceMotion {
-            set(.finalizing)
-            while !ready, !Task.isCancelled { try? await Task.sleep(nanoseconds: 120_000_000) }
-            guard !Task.isCancelled else { return }
-            set(.success)
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            set(.dismissing)
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            set(.hidden); runner = nil
-            return
-        }
-        // Deterministic presentation beats (spec §2 timing); real readiness can
-        // accelerate any post-greeting beat straight to success.
-        let beats: [(AgentAwakeningPhase, UInt64)] = [
-            (.arriving, 850_000_000), (.greeting, 1_450_000_000), (.searching, 1_550_000_000),
-            (.apologetic, 1_550_000_000), (.discovered, 1_350_000_000),
-        ]
-        for (p, ns) in beats {
-            guard !Task.isCancelled else { return }
-            set(p)
-            try? await Task.sleep(nanoseconds: ns)
-            // Early real readiness → accelerate (but always let arrival+greeting land).
-            if let jump = AgentAwakeningReducer.accelerated(from: p, ready: ready), p != .arriving {
-                set(jump); await finishFromSuccess(); return
+        set(.finalizing)                       // the single "working" state
+        let started = DispatchTime.now().uptimeNanoseconds
+        while !ready, !Task.isCancelled {
+            if DispatchTime.now().uptimeNanoseconds - started > Self.hardCeilingNs {
+                AlmaPerfLog.event("agentAwakening.ceiling")
+                break                          // never stick, whatever happened upstream
             }
+            try? await Task.sleep(nanoseconds: 100_000_000)
         }
         guard !Task.isCancelled else { return }
-        set(.finalizing)
-        while !ready, !Task.isCancelled {   // loop the focus state only
-            try? await Task.sleep(nanoseconds: 150_000_000)
-        }
-        guard !Task.isCancelled else { return }
-        set(.success)
         await finishFromSuccess()
     }
 
     private func finishFromSuccess() async {
-        try? await Task.sleep(nanoseconds: 1_100_000_000)
-        guard !Task.isCancelled else { return }
         set(.dismissing)
-        try? await Task.sleep(nanoseconds: 320_000_000)
+        try? await Task.sleep(nanoseconds: 260_000_000)
         set(.hidden)
         AlmaPerfLog.event("agentAwakening.done")
         runner = nil
@@ -867,91 +866,25 @@ struct AgentAwakeningOverlay: View {
     let model: AgentAwakeningModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var bubbleText: String? {
-        switch model.phase {
-        case .greeting:   return "Shhh… boss আসছে!"
-        case .searching:  return "Boss! একটু wait… 👀"
-        case .apologetic: return "Oops, boss sorry! অনেক কাজ 😅"
-        case .discovered: return "YES! সব পেয়ে গেছি!"
-        case .finalizing: return "Last touch, boss… magic চলছে ✦"
-        case .success:    return "Happy boss? DONE! ✦"
-        default: return nil
-        }
-    }
-
-    private var pose: AgentCharacterPose {
-        var p = AgentCharacterPose()
-        switch model.phase {
-        case .arriving:  p.scale = 0.9; p.mouth = .smile
-        case .greeting:  p.scale = 0.86; p.eyeLook = 0.7; p.armLift = 0.25
-        case .searching: p.scale = 1.0; p.auraSpeed = 1.5; p.mouth = .smile
-        case .apologetic: p.eyeWorried = true; p.mouth = .oh; p.armLift = 0.55; p.auraColor = AgentMotionColor.gold
-        case .discovered: p.pointUp = true; p.winkRight = true; p.auraSpeed = 2.4; p.glowBoost = 0.5; p.mouth = .grin
-        case .finalizing: p.mouth = .focused; p.auraSpeed = 1.8; p.glowBoost = 0.3; p.auraColor = AgentMotionColor.gold
-        case .success:   p.scale = 1.14; p.eyeHappy = true; p.mouth = .grin; p.armLift = 1
-                         p.auraColor = AgentMotionColor.success; p.glowBoost = 0.7; p.auraSpeed = 2.0
-        case .dismissing: p.scale = 0.94; p.eyeHappy = true
-        default: break
-        }
-        return p
-    }
-
+    /// Owner rule 2026-07-26: this is a LOADING indicator, not a performance.
+    /// It shows Boss's own ALMA robot — the same sprite the new-chat hero uses,
+    /// so the app has one character — moving while the session restores, and it
+    /// disappears the moment the content arrives. The old version played a
+    /// scripted arrival/greeting/searching/apologetic/discovered story with a
+    /// "READY" reveal, which was both slower than the load and prone to
+    /// sticking on screen when readiness never reported.
     var body: some View {
         if model.isActive {
             GeometryReader { geo in
-                ZStack {
-                    // Searching eyes scan; implemented as a slow autonomous look.
-                    let scanning = model.phase == .searching
-                    TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 0.15, paused: !scanning)) { ctx in
-                        var p = pose
-                        let t = ctx.date.timeIntervalSince(model.clockStart)
-                        if scanning { p.eyeLook = CGFloat(sin(t * 2.2)) }
-                        return ZStack {
-                            // finalizing scan-line + converging particles
-                            AgentParticleField(converge: model.phase == .finalizing ? 0.9 : 0.15,
-                                               color: pose.auraColor, count: 10,
-                                               clockStart: model.clockStart)
-                                .frame(width: 220, height: 220)
-
-                            if model.phase == .success {
-                                AgentSuccessBurst(clockStart: model.clockStart)
-                            }
-
-                            LivingAgentCharacter(pose: p, size: 96, clockStart: model.clockStart)
-                                .modifier(AgentArrivalModifier(phase: model.phase, reduceMotion: reduceMotion))
-                                .modifier(AgentShakeModifier(active: model.phase == .apologetic && !reduceMotion))
-                        }
-                    }
-
-                    // Dialogue bubble (spring, no typing indicator)
-                    if let text = bubbleText {
-                        Text(text)
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.95))
-                            .padding(.horizontal, 16).padding(.vertical, 9)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            .overlay(Capsule().strokeBorder(pose.auraColor.opacity(0.45), lineWidth: 1))
-                            .offset(y: -92)
-                            .transition(.scale(scale: 0.7).combined(with: .opacity))
-                            .id(text)
-                    }
-
-                    // READY reveal
-                    if model.phase == .success {
-                        Text("READY")
-                            .font(.system(size: 13, weight: .black, design: .rounded))
-                            .kerning(4)
-                            .foregroundStyle(AgentMotionColor.success)
-                            .shadow(color: AgentMotionColor.success.opacity(0.9), radius: 8)
-                            .offset(y: 84)
-                            .transition(.asymmetric(
-                                insertion: .opacity.combined(with: .offset(y: 14)),
-                                removal: .opacity.combined(with: .offset(y: -18))))
-                    }
+                VStack(spacing: 14) {
+                    AgentCodexSpriteRobot(mode: reduceMotion ? .still : .loading)
+                    Text("সেশন খুলছি…")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.72))
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
                 .opacity(model.phase == .dismissing ? 0 : 1)
-                .blur(radius: model.phase == .dismissing ? 4 : 0)
+                .animation(.easeOut(duration: 0.26), value: model.phase == .dismissing)
             }
             .transition(.opacity)
             .allowsHitTesting(false)   // never intercept composer/header taps
