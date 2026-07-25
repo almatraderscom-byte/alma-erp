@@ -15,6 +15,7 @@
  *  - callers clear the state row ONLY after the artifact has landed in
  *    agent-files storage.
  */
+import { downloadImageArtifactToStorage } from '../image-artifact.mjs'
 
 const QUEUE_BASE = 'https://queue.fal.run'
 
@@ -165,18 +166,36 @@ export async function storagePathToBuffer(supabase, path) {
 
 /** Download a finished Fal output URL into agent-files storage. */
 export async function downloadFalOutputToStorage(supabase, outputUrl, pendingActionId, suffix = '') {
-  const res = await fetch(outputUrl, { signal: AbortSignal.timeout(120_000) })
-  if (!res.ok) throw new Error(`fal output download HTTP ${res.status}`)
-  const buf = Buffer.from(await res.arrayBuffer())
-  const contentType = res.headers.get('content-type') ?? 'image/png'
-  const ext = contentType.includes('jpeg') ? 'jpg' : contentType.includes('webp') ? 'webp' : 'png'
-  const storagePath = `generated/studio-${pendingActionId}${suffix ? `-${suffix}` : ''}.${ext}`
-  const { error } = await supabase.storage.from('agent-files').upload(storagePath, buf, {
-    contentType,
-    upsert: true,
-  })
-  if (error) throw new Error(`upload failed: ${error.message}`)
-  return storagePath
+  const artifact = await downloadFalOutputArtifactToStorage(
+    supabase,
+    outputUrl,
+    pendingActionId,
+    suffix,
+  )
+  return artifact.storagePath
+}
+
+export async function downloadFalOutputArtifactToStorage(
+  supabase,
+  outputUrl,
+  pendingActionId,
+  suffix = '',
+  inspectOptions = {},
+) {
+  try {
+    return await downloadImageArtifactToStorage({
+      supabase,
+      outputUrl,
+      storageBasePath: `generated/studio-${pendingActionId}${suffix ? `-${suffix}` : ''}`,
+      timeoutMs: 120_000,
+      ...inspectOptions,
+    })
+  } catch (error) {
+    if (error.message.startsWith('image output download HTTP')) {
+      throw new Error(error.message.replace('image output download', 'fal output download'))
+    }
+    throw error
+  }
 }
 
 /** First image URL out of the differing Fal result shapes ({image} vs {images:[]}). */

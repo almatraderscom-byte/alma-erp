@@ -5,13 +5,17 @@
  */
 import {
   clearFalRequestState,
-  downloadFalOutputToStorage,
+  downloadFalOutputArtifactToStorage,
   extractFalImageUrl,
   runFalQueueJob,
   storagePathToNormalizedDataUri,
 } from '../client.mjs'
 import { falInputFingerprint } from '../fingerprint.mjs'
-import { makeContractReferenceReceipt } from '../../image/reference-contract.mjs'
+import {
+  makeContractReferenceReceipt,
+  validateOrderedReferenceContract,
+} from '../../image/reference-contract.mjs'
+import { FAL_FASHN_V16_CONTRACT } from '../../image-resolution-contract.mjs'
 
 export const FASHN_V16_ENDPOINT = 'fal-ai/fashn/tryon/v1.6'
 
@@ -50,6 +54,13 @@ export function buildFashnV16Input({ modelDataUri, garmentDataUri, category, mod
 export async function processFashnV16({ supabase, pendingActionId, payload, logCost }) {
   const { productImagePath, modelImagePath: rawModelImagePath } = payload
   if (!productImagePath || !rawModelImagePath) throw new Error('fashn-v16 needs productImagePath + modelImagePath')
+  validateOrderedReferenceContract(payload.referenceContract, {
+    actualModel: FASHN_V16_ENDPOINT,
+    bindings: [
+      { role: 'person', path: rawModelImagePath },
+      { role: 'product', path: productImagePath },
+    ],
+  })
 
   // reseller model photos may carry a dark marketing plate — FASHN keeps the
   // model background, so scrub it first (free, kv-cached, fail-open)
@@ -97,7 +108,19 @@ export async function processFashnV16({ supabase, pendingActionId, payload, logC
     const url = extractFalImageUrl(out.payload)
     if (!url) throw new Error('fashn-v16: no image in fal result')
     const suffix = qcAttempt && qcAttempt > 1 ? `qc${qcAttempt}` : ''
-    const storagePath = await downloadFalOutputToStorage(supabase, url, pendingActionId, suffix)
+    const original = await downloadFalOutputArtifactToStorage(
+      supabase,
+      url,
+      pendingActionId,
+      suffix,
+      {
+        kind: 'original',
+        requestedAspectRatio: '2:3',
+        provider: 'fal',
+        model: FASHN_V16_ENDPOINT,
+        contract: FAL_FASHN_V16_CONTRACT,
+      },
+    )
     await clearFalRequestState(supabase, pendingActionId)
     totalCostUsd += costUsd
     void logCost({
@@ -117,7 +140,8 @@ export async function processFashnV16({ supabase, pendingActionId, payload, logC
       dedupKey: `fal:${pendingActionId}:${qcAttempt ?? 1}`,
     })
     return {
-      storagePath,
+      storagePath: original.storagePath,
+      original,
       requestId: out.requestId,
       latencyMs: out.latencyMs,
       seed: out.payload?.seed ?? payload.seed ?? null,
@@ -127,6 +151,7 @@ export async function processFashnV16({ supabase, pendingActionId, payload, logC
   const first = await runOnce(1)
   let paths = [first.storagePath]
   let lastMeta = first
+  const artifactsByPath = new Map([[first.storagePath, first.original]])
 
   let qc = null
   try {
@@ -146,6 +171,7 @@ export async function processFashnV16({ supabase, pendingActionId, payload, logC
         regenerate: async (_fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum)
           paths.push(retry.storagePath)
+          artifactsByPath.set(retry.storagePath, retry.original)
           lastMeta = retry
           return retry.storagePath
         },
@@ -171,5 +197,6 @@ export async function processFashnV16({ supabase, pendingActionId, payload, logC
     costUsd: totalCostUsd,
     referenceReceipt: makeContractReferenceReceipt(payload.referenceContract, 2, 2),
     qc,
+    original: artifactsByPath.get(paths[0]) ?? lastMeta.original,
   }
 }

@@ -18,6 +18,10 @@ import {
 } from '@/lib/creative-studio/gallery-query'
 import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
 import { classifyStudioAsset, isStudioAssetPublishable } from '@/lib/creative-studio/studio-policy'
+import {
+  artifactFieldsFromResult,
+  type StudioArtifactDescriptor,
+} from '@/lib/creative-studio/artifact-metadata'
 
 export const runtime = 'nodejs'
 
@@ -37,6 +41,10 @@ type Meta = {
   storagePath: string | null
   brandedPath: string | null
   thumbPath: string | null
+  resolutionIntegrity: Record<string, unknown> | null
+  variants: StudioArtifactDescriptor[]
+  originalVariant: StudioArtifactDescriptor | null
+  brandedVariant: StudioArtifactDescriptor | null
 }
 
 /** CS10 — one plain-Bangla line summarizing QC + protection metadata. */
@@ -178,11 +186,16 @@ export async function GET(req: NextRequest) {
   const pathsToSign = new Set<string>()
   const meta: Meta[] = slice.map((row: Row): Meta => {
     const result = (row.result ?? {}) as Record<string, unknown>
+    const artifactFields = artifactFieldsFromResult(result)
     const storagePath =
-      (result.storagePath as string | undefined)
+      artifactFields.original?.storagePath
+      ?? (result.storagePath as string | undefined)
       ?? (result.videoPath as string | undefined)
       ?? null
-    const brandedPath = (result.brandedPath as string | undefined) ?? null
+    const brandedPath =
+      artifactFields.branded?.storagePath
+      ?? (result.brandedPath as string | undefined)
+      ?? null
     // Prefer the (small) thumbnail for the grid; branded thumb if it exists.
     const thumbPath =
       (result.brandedThumbPath as string | undefined)
@@ -195,7 +208,17 @@ export async function GET(req: NextRequest) {
     for (const c of Array.isArray(result.coverCandidates) ? (result.coverCandidates as string[]) : []) {
       pathsToSign.add(c)
     }
-    return { row, result, storagePath, brandedPath, thumbPath }
+    return {
+      row,
+      result,
+      storagePath,
+      brandedPath,
+      thumbPath,
+      resolutionIntegrity: artifactFields.resolutionIntegrity,
+      variants: artifactFields.variants,
+      originalVariant: artifactFields.original,
+      brandedVariant: artifactFields.branded,
+    }
   })
 
   let signed: Record<string, string> = {}
@@ -205,7 +228,17 @@ export async function GET(req: NextRequest) {
     signed = {}
   }
 
-  const items = meta.map(({ row, result, storagePath, brandedPath, thumbPath }) => {
+  const items = meta.map(({
+    row,
+    result,
+    storagePath,
+    brandedPath,
+    thumbPath,
+    resolutionIntegrity,
+    variants,
+    originalVariant,
+    brandedVariant,
+  }) => {
     const payload = row.payload ?? {}
     // When the big Supabase original has been archived to Drive and cleaned up,
     // the signed URL is gone — serve the full-res original through the Drive
@@ -217,6 +250,13 @@ export async function GET(req: NextRequest) {
     const previewUrl =
       signedPreview
       ?? (driveAvailable ? `/api/assistant/creative-studio/drive-file?id=${encodeURIComponent(row.id)}` : null)
+    const signedBranded = brandedPath ? signed[brandedPath] ?? null : null
+    const brandedDriveAvailable = brandedPath ? Boolean(driveFiles[brandedPath]?.fileId) : false
+    const brandedUrl =
+      signedBranded
+      ?? (brandedDriveAvailable
+        ? `/api/assistant/creative-studio/drive-file?id=${encodeURIComponent(row.id)}&path=${encodeURIComponent(brandedPath!)}`
+        : null)
     const policyInput = {
       status: row.status,
       result,
@@ -269,7 +309,11 @@ export async function GET(req: NextRequest) {
       // small image for the grid tile — falls back to the full preview
       thumbUrl: (thumbPath && signed[thumbPath]) || previewUrl,
       // branded (logo + code + hook) variant, when the worker produced one
-      brandedUrl: brandedPath ? signed[brandedPath] ?? null : null,
+      brandedUrl,
+      resolutionIntegrity,
+      variants,
+      originalVariant,
+      brandedVariant,
       storagePath,
       // true once the original lives only on Google Drive (UI can show a badge)
       archivedToDrive,

@@ -160,8 +160,8 @@ describe('CSE-A — exact generic model snapshot allowlist', () => {
 })
 
 describe('CSE-A — Advanced control guards', () => {
-  it('accepts every current UI aspect/resolution/mode/count value', () => {
-    for (const aspectRatio of ['4:5', '1:1', '9:16', '16:9']) {
+  it('accepts syntactically valid controls before the provider-specific capability gate', () => {
+    for (const aspectRatio of ['4:5', '3:4', '1:1', '9:16', '16:9']) {
       for (const resolution of ['1k', '2k', '4k']) {
         for (const generationMode of ['fast', 'balanced', 'quality']) {
           expect(() => validateAdvancedControlValues({

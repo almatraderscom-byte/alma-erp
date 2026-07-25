@@ -46,11 +46,19 @@ test('archive path collection excludes thumbnails and deduplicates originals', (
       videoPath: 'generated/reel.mp4',
       thumbPath: 'generated/hero-thumb.webp',
       allPaths: ['generated/hero.png', 'generated/story.png'],
+      variants: {
+        original: { kind: 'original', storagePath: 'generated/hero.png' },
+        branded: { kind: 'branded', storagePath: 'generated/social.jpg' },
+        upscaled: { kind: 'upscaled', storagePath: 'generated/hero-4k.png' },
+        thumbnail: { kind: 'thumbnail', storagePath: 'generated/thumb-v2.webp' },
+      },
     }),
     [
       'generated/hero.png',
       'generated/reel.mp4',
       'generated/story.png',
+      'generated/social.jpg',
+      'generated/hero-4k.png',
     ],
   )
 })

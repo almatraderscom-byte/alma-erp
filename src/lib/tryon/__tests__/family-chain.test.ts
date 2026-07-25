@@ -280,6 +280,35 @@ describe('single rescene chain', () => {
     const done = await completeStep(rescene, 'generated/final.png')
     expect(done).toBeNull()
   })
+
+  it('carries the selected tier and aspect into the final rescene instead of hard-coding 2K', async () => {
+    const { pendingActionId } = await startSingleRescueChain({
+      productImagePath: 'uploads/panjabi.jpg',
+      modelImagePath: 'models/owner.jpg',
+      aspectRatio: '16:9',
+      resolution: '4k',
+      imageModel: 'gpt-image-2',
+    })
+    const first = actions.find((a) => a.id === pendingActionId)!
+    expect((first.payload.referenceContract as Record<string, unknown>).actualModel).toBe('tryon-max')
+    const nextId = await completeStep(first, 'generated/tryon.png')
+    const rescene = actions.find((a) => a.id === nextId)!
+
+    expect(rescene.payload.provider).toBe('generic_image')
+    expect(rescene.payload.imageModel).toBe('gpt-image-2')
+    expect(rescene.payload.aspectRatio).toBe('16:9')
+    expect(rescene.payload.imageSize).toBe('4K')
+    expect(rescene.payload.requestedResolution).toBe('4k')
+    expect(rescene.payload.requestedAspectRatio).toBe('16:9')
+    expect((rescene.payload.referenceContract as Record<string, unknown>).actualModel).toBe('gpt-image-2')
+    expect((rescene.payload.controlContract as {
+      applied: Record<string, unknown>
+    }).applied).toMatchObject({
+      model: 'gpt-image-2',
+      aspectRatio: '16:9',
+      resolution: '4k',
+    })
+  })
 })
 
 describe('getChainProgress', () => {

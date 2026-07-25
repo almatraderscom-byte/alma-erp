@@ -40,6 +40,8 @@ import {
   makeReferenceReceipt,
   requiredReferencePaths,
 } from './image/reference-contract.mjs'
+import { uploadImageArtifact } from './image-artifact.mjs'
+import { resolveGenericImageRequest } from './image-resolution-contract.mjs'
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -417,9 +419,40 @@ async function generateImageToStorage({
 }) {
   const resolvedModels = models ?? DEFAULT_IMAGE_MODELS
   const modelName = assertGenericImageModel(quality === 'standard' ? resolvedModels.standard : resolvedModels.pro)
+  // Resolve capability and exact dimensions before references are loaded and,
+  // critically, before any paid provider request can be made.
+  const imageRequest = resolveGenericImageRequest({ modelName, imageSize, aspectRatio })
+  const resolvedAspectRatio = imageRequest.requestedAspectRatio
+  const resolvedImageSize = imageRequest.requestedTier.toUpperCase()
+  if (referenceContract?.actualModel && referenceContract.actualModel !== modelName) {
+    throw new Error(`generic image model snapshot mismatch: expected ${referenceContract.actualModel}, queued ${modelName}`)
+  }
 
-  const resolvedAspectRatio = aspectRatio ?? '4:5'
-  const resolvedImageSize = imageSize ?? '2K'
+  async function storeOriginal(buffer) {
+    const storageBasePath = suffix
+      ? `generated/${pendingActionId}-${suffix}`
+      : `generated/${pendingActionId}`
+    const original = await uploadImageArtifact({
+      supabase,
+      buffer,
+      storageBasePath,
+      kind: 'original',
+      requestedTier: imageRequest.requestedTier,
+      requestedAspectRatio: imageRequest.requestedAspectRatio,
+      provider: imageRequest.provider,
+      model: modelName,
+      contract: imageRequest.validationContract,
+    })
+    return {
+      storagePath: original.storagePath,
+      original,
+      modelName,
+      quality,
+      resolvedAspectRatio,
+      resolvedImageSize,
+      sentReferenceCount: imageParts.length,
+    }
+  }
 
   async function toInlinePart(path) {
     const { data: fileData, error: dlErr } = await supabase.storage.from('agent-files').download(path)
@@ -442,13 +475,7 @@ async function generateImageToStorage({
   if (modelName.startsWith('seedream')) {
     const key = process.env.FAL_KEY
     if (!key) throw new Error('FAL_KEY missing on worker — Seedream engine unavailable (env-set it, or switch cs_image_models back to Gemini)')
-    const ratio = /^\d+:\d+$/.test(resolvedAspectRatio) ? resolvedAspectRatio : '4:5'
-    const [rw, rh] = ratio.split(':').map(Number)
-    // standard stays in fal's cheaper ≤1536px band; pro renders the 2K tier.
-    const maxSide = quality === 'standard' ? 1536 : 2048
-    const scale = maxSide / Math.max(rw, rh)
-    const width = Math.max(512, Math.round((rw * scale) / 32) * 32)
-    const height = Math.max(512, Math.round((rh * scale) / 32) * 32)
+    const { width, height } = imageRequest.dimensions
     const endpoint = imageParts.length
       ? 'https://fal.run/bytedance/seedream/v5/pro/edit'
       : 'https://fal.run/bytedance/seedream/v5/pro/text-to-image'
@@ -474,17 +501,7 @@ async function generateImageToStorage({
     const imgRes = await fetch(url)
     if (!imgRes.ok) throw new Error(`Seedream image download ${imgRes.status}`)
     const buf = Buffer.from(await imgRes.arrayBuffer())
-    const contentType = imgRes.headers.get('content-type') || 'image/png'
-    const ext = contentType.includes('jpeg') ? 'jpg' : 'png'
-    const storagePath = suffix
-      ? `generated/${pendingActionId}-${suffix}.${ext}`
-      : `generated/${pendingActionId}.${ext}`
-    const { error: uploadErr } = await supabase
-      .storage
-      .from('agent-files')
-      .upload(storagePath, buf, { contentType, upsert: true })
-    if (uploadErr) throw new Error(`Supabase upload failed: ${uploadErr.message}`)
-    return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize, sentReferenceCount: imageParts.length }
+    return storeOriginal(buf)
   }
 
   // ── OpenAI engine (owner-switchable via cs_image_models → "gpt-image-2") ──
@@ -495,9 +512,7 @@ async function generateImageToStorage({
   if (modelName.startsWith('gpt-image')) {
     const key = process.env.OPENAI_API_KEY
     if (!key) throw new Error('OPENAI_API_KEY missing on worker — GPT image engine unavailable (env-set it, or switch cs_image_models back to Gemini)')
-    const portrait = ['9:16', '3:4', '4:5', '2:3'].includes(resolvedAspectRatio)
-    const landscape = ['16:9', '4:3', '5:4', '3:2'].includes(resolvedAspectRatio)
-    const size = portrait ? '1024x1536' : landscape ? '1536x1024' : '1024x1024'
+    const size = imageRequest.providerImageSize
     const gptQuality = quality === 'standard' ? 'medium' : 'high'
     let res
     if (imageParts.length) {
@@ -529,15 +544,7 @@ async function generateImageToStorage({
     const json = await res.json()
     const b64 = json?.data?.[0]?.b64_json
     if (!b64) throw new Error('No image in OpenAI response')
-    const storagePath = suffix
-      ? `generated/${pendingActionId}-${suffix}.png`
-      : `generated/${pendingActionId}.png`
-    const { error: uploadErr } = await supabase
-      .storage
-      .from('agent-files')
-      .upload(storagePath, Buffer.from(b64, 'base64'), { contentType: 'image/png', upsert: true })
-    if (uploadErr) throw new Error(`Supabase upload failed: ${uploadErr.message}`)
-    return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize, sentReferenceCount: imageParts.length }
+    return storeOriginal(Buffer.from(b64, 'base64'))
   }
 
   const contents = imageParts.length ? [...imageParts, { text: prompt }] : [{ text: prompt }]
@@ -549,39 +556,25 @@ async function generateImageToStorage({
       responseModalities: ['IMAGE', 'TEXT'],
       imageConfig: {
         aspectRatio: resolvedAspectRatio,
-        imageSize: resolvedImageSize,
+        imageSize: imageRequest.providerImageSize,
       },
     },
   })
 
   const parts = response?.candidates?.[0]?.content?.parts ?? []
   let imageBase64 = null
-  let imageMimeType = 'image/png'
 
   for (const part of parts) {
     if (part.inlineData?.data) {
       imageBase64 = part.inlineData.data
-      imageMimeType = part.inlineData.mimeType || 'image/png'
       break
     }
   }
 
   if (!imageBase64) throw new Error('No image in Gemini response')
 
-  const ext = imageMimeType.split('/')[1] || 'png'
-  const storagePath = suffix
-    ? `generated/${pendingActionId}-${suffix}.${ext}`
-    : `generated/${pendingActionId}.${ext}`
   const imageBuffer = Buffer.from(imageBase64, 'base64')
-
-  const { error: uploadErr } = await supabase
-    .storage
-    .from('agent-files')
-    .upload(storagePath, imageBuffer, { contentType: imageMimeType, upsert: true })
-
-  if (uploadErr) throw new Error(`Supabase upload failed: ${uploadErr.message}`)
-
-  return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize, sentReferenceCount: imageParts.length }
+  return storeOriginal(imageBuffer)
 }
 
 async function processImageGen(job) {
@@ -670,7 +663,9 @@ async function processImageGen(job) {
       const { logCost } = await import('./cost-log.mjs')
       const result = await processFamilyComposite({ supabase, pendingActionId, payload, logCost })
       const { postProcessImage } = await import('./cs/branding.mjs')
-      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath)
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
+        original: result.original,
+      })
       await callJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
@@ -720,7 +715,9 @@ async function processImageGen(job) {
       const { logCost } = await import('./cost-log.mjs')
       const result = await process({ supabase, pendingActionId, payload, logCost })
       const { postProcessImage } = await import('./cs/branding.mjs')
-      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath)
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
+        original: result.original,
+      })
       await callJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
@@ -799,7 +796,9 @@ async function processImageGen(job) {
       const { logCost } = await import('./cost-log.mjs')
       const result = await processXaiImagine({ supabase, pendingActionId, payload, logCost })
       const { postProcessImage } = await import('./cs/branding.mjs')
-      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath)
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
+        original: result.original,
+      })
       await callJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
@@ -837,7 +836,9 @@ async function processImageGen(job) {
       const { postProcessImage } = await import('./cs/branding.mjs')
       // Only a fast gallery thumbnail here — branding (logo + code + hook) is an
       // on-demand, per-image step the owner runs from the Studio, not auto-stamped.
-      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath)
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
+        original: result.original,
+      })
       await callJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
@@ -916,7 +917,7 @@ async function processImageGen(job) {
     const engineCostUsd = engine === 'openai'
       ? (quality === 'standard' ? 0.05 : 0.19)     // gpt-image-2 medium / high (approx list)
       : engine === 'fal'
-        ? (quality === 'standard' ? 0.0675 : 0.135) // Seedream 5.0 Pro ≤1536px / 2K (fal list)
+        ? (resolvedImageSize === '1K' ? 0.0675 : 0.135) // Seedream 5.0 Pro 1K / 2K (fal list)
         : calcGeminiImageCostUsd(quality === 'standard' ? 'standard' : 'pro', resolvedImageSize)
     void logCost({
       provider: engine,
@@ -937,6 +938,7 @@ async function processImageGen(job) {
   }
 
   const first = await generateImageToStorage({ ...genOpts, prompt: basePrompt })
+  const artifactsByPath = new Map([[first.storagePath, first.original]])
   await logImageCost(first.storagePath, first.modelName, first.resolvedAspectRatio, first.resolvedImageSize, 1)
   console.log(`[worker] image-gen ${pendingActionId} — gen attempt 1 → ${first.storagePath}`)
 
@@ -963,6 +965,7 @@ async function processImageGen(job) {
         prompt: regenPrompt,
         suffix: `qc${attemptNum}`,
       })
+      artifactsByPath.set(regen.storagePath, regen.original)
       await logImageCost(regen.storagePath, regen.modelName, regen.resolvedAspectRatio, regen.resolvedImageSize, attemptNum)
       console.log(`[worker] image-gen ${pendingActionId} — QC regen ${attemptNum} → ${regen.storagePath}`)
       return regen.storagePath
@@ -976,12 +979,29 @@ async function processImageGen(job) {
   const { postProcessImage } = await import('./cs/branding.mjs')
   // Only a fast gallery thumbnail here — branding (logo + code + hook) is an
   // on-demand, per-image step the owner runs from the Studio, not auto-stamped.
-  const finishing = await postProcessImage(supabase, pendingActionId, qcResult.storagePath)
+  const finishing = await postProcessImage(supabase, pendingActionId, qcResult.storagePath, {
+    original: artifactsByPath.get(qcResult.storagePath),
+    inspectOptions: {
+      kind: 'original',
+      requestedTier: first.original.requestedTier,
+      requestedAspectRatio: first.original.requestedAspectRatio,
+      provider: first.original.provider,
+      model: first.original.model,
+      contract: {
+        mode: 'exact',
+        width: first.original.expected?.width,
+        height: first.original.expected?.height,
+        tolerance: first.original.expected?.tolerance ?? 0,
+      },
+    },
+  })
 
   await callJobResult(pendingActionId, 'success', {
     storagePath: qcResult.storagePath,
+    allPaths: [...artifactsByPath.keys()],
     conversationId,
     provider: genericProviderForModel(first.modelName),
+    model: first.modelName,
     imageModel: first.modelName,
     referenceReceipt: makeReferenceReceipt(payload, first.sentReferenceCount),
     controlReceipt: {

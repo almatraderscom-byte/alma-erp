@@ -11,21 +11,21 @@ import {
   uploadFillMask,
   uploadStudioFile,
   type StudioConfig,
+  type StudioSettings,
 } from '@/agent/components/creative-studio/studio-api'
 import {
-  ASPECT_RATIOS,
   BACKGROUND_PRESETS,
   FAMILY_PRESETS,
   GEN_MODES,
-  RESOLUTIONS,
   STUDIO_MODES,
   VIDEO_VIBES,
   type FamilyPresetId,
   type StudioModeId,
   type StudioProvider,
 } from '@/lib/creative-studio/constants'
-import { FAMILY_CHAIN_LABEL_BN, type StudioEngineId } from '@/lib/creative-studio/provider-registry'
+import { type StudioEngineId } from '@/lib/creative-studio/provider-registry'
 import { getAdvancedModeCapability } from '@/lib/creative-studio/advanced-image-capabilities'
+import { getResolutionContract } from '@/lib/creative-studio/resolution-contract'
 import { XAI_TEMPLATES, type XaiTemplate } from '@/lib/creative-studio/xai-imagine'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 import { cn } from '@/lib/utils'
@@ -35,6 +35,11 @@ import { toast } from 'react-hot-toast'
 
 import { UserSvg } from '@/agent/components/creative-studio/StudioUi'
 import { CampaignPackPanel } from '@/agent/components/creative-studio/CampaignPackPanel'
+import {
+  buildStudioResolutionUiState,
+  resolutionEngineForGenericModel,
+  resolutionFieldsForRun,
+} from '@/agent/components/creative-studio/resolution-ui'
 
 export type StudioModel = {
   id: string
@@ -567,7 +572,11 @@ export const ENGINE_LABELS_BN: Record<string, string> = {
   fashn: 'FASHN Pro',
   fal_fashn_v16: 'Fal FASHN v1.6',
   fal_idm_vton: 'IDM-VTON ⚠',
+  fal_flux_fill: 'FLUX Fill',
   gemini: 'Gemini',
+  gpt: 'GPT Image 2',
+  seedream: 'Seedream 5.0 Pro',
+  family_composite: 'প্রোটেক্টেড কম্পোজিট',
   xai_imagine: 'Grok Imagine (xAI)',
 }
 
@@ -585,7 +594,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
   const [protectedComposite, setProtectedComposite] = useState(false)
   // CS8 — pipeline mode (bounded spend, shown under Run)
   const [pipelineMode, setPipelineMode] = useState<'preview' | 'production'>('preview')
-  const [imageEngine, setImageEngine] = useState<'gemini' | 'gpt' | 'seedream'>('gemini')
+  const [imageEngine, setImageEngine] = useState<StudioSettings['imageEngine']>('gemini')
   useEffect(() => {
     void fetchStudioSettings()
       .then((s) => {
@@ -638,12 +647,20 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
   // which role's add-model sheet is open (from the family checklist)
   const [addRoleSheet, setAddRoleSheet] = useState<FamilyRole | null>(null)
 
-  // Any multi-person family preset (baba+chele, ma+meye, full family) must render on
-  // Gemini — FASHN tryon-max is single-person only and can't place 2+ people. The
-  // backend already forces this; mirror it in the UI so the Run button / provider
-  // label is honest instead of saying "FASHN Pro" while Gemini actually runs.
+  // Any multi-person family preset (baba+chele, ma+meye, full family) uses a
+  // multi-stage chain; the final-output engine is resolved below.
   const isMultiPersonFamily = familyPreset !== 'single' && (mode === 'product_to_model' || mode === 'try_on')
-  const effectiveProvider: StudioProvider | 'xai_imagine' = isMultiPersonFamily && provider !== 'xai_imagine' ? 'gemini' : provider
+  // A snapshots the exact generic model at queue time. Choose B's resolution
+  // contract from that same standard/pro slot so a mixed owner configuration
+  // cannot advertise Gemini 4K and then queue a 2K-only Seedream job.
+  const finalGenericQuality =
+    (isMultiPersonFamily && !isFamilyMerge) || (mode === 'try_on' && vtonEngine === 'fashn')
+      ? 'pro'
+      : genMode === 'fast'
+        ? 'standard'
+        : 'pro'
+  const finalGenericModel = config?.genericImageModels?.[finalGenericQuality]
+  const resolutionImageEngine = resolutionEngineForGenericModel(finalGenericModel, imageEngine)
 
   // CS6 — engine picker applies ONLY to single-person Try-On. IDM/Fal engines
   // are hidden everywhere else (family, swap, face, edit, video) by design.
@@ -655,6 +672,45 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
     (mode === 'generate' ||
       (mode === 'product_to_model' || mode === 'try_on' ? vtonEngine === 'xai_imagine' : provider === 'xai_imagine')) &&
     !(familyPreset === 'full_family' && !isFamilyMerge && (mode === 'product_to_model' || mode === 'try_on'))
+  const resolutionUiState = useMemo(
+    () => buildStudioResolutionUiState(
+      {
+        mode,
+        provider,
+        vtonEngine,
+        familyPreset,
+        protectedComposite,
+        imageEngine: resolutionImageEngine,
+        xaiWillRun,
+      },
+      { aspectRatio, resolution },
+    ),
+    [
+      aspectRatio,
+      familyPreset,
+      mode,
+      protectedComposite,
+      provider,
+      resolution,
+      resolutionImageEngine,
+      vtonEngine,
+      xaiWillRun,
+    ],
+  )
+  useEffect(() => {
+    if (resolutionUiState.kind !== 'tiered') return
+    if (resolutionUiState.aspectRatio && resolutionUiState.aspectRatio !== aspectRatio) {
+      setAspectRatio(resolutionUiState.aspectRatio)
+    }
+    if (resolutionUiState.resolution && resolutionUiState.resolution !== resolution) {
+      setResolution(resolutionUiState.resolution)
+    }
+  }, [aspectRatio, resolution, resolutionUiState])
+  const finalOutputEngineLabel = mode === 'image_to_video'
+    ? 'Veo 3.1'
+    : resolutionUiState.engine
+      ? ENGINE_LABELS_BN[resolutionUiState.engine] ?? resolutionUiState.labelBn
+      : resolutionUiState.labelBn
   const engineAvail = useMemo(() => {
     const m = new Map<string, StudioConfig['engines'][number]>()
     for (const e of config?.engines ?? []) m.set(e.id, e)
@@ -675,9 +731,12 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
     setVtonEngine(def === 'fashn' || def === 'gemini' || engineSelectable(def) ? def : 'fashn')
   }, [config, engineSelectable])
   const idmWarning = engineAvail.get('fal_idm_vton')?.warningBn ?? null
-  const VTON_ENGINE_LABELS = ENGINE_LABELS_BN
-  const genericEngineLabel = config?.genericImageModels?.pro
-    ?? (imageEngine === 'gpt' ? 'GPT Image 2' : imageEngine === 'seedream' ? 'Seedream 5 Pro' : 'Gemini 3 Image')
+  const genericEngineLabel = finalGenericModel
+    ?? (resolutionImageEngine === 'gpt'
+      ? 'GPT Image 2'
+      : resolutionImageEngine === 'seedream'
+        ? 'Seedream 5 Pro'
+        : 'Gemini 3 Image')
 
   // CSE-A — Fal VTON endpoints cannot serve a single Product→Model request.
   // Reset a stale Try-On selection instead of letting it silently fall through.
@@ -705,7 +764,6 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
       setAspectRatio('4:5')
     }
   }, [mode, selectedAdvancedEngine, aspectRatio])
-
   const defaultModel = useMemo(() => models.find((m) => m.isDefault) ?? models[0] ?? null, [models])
   const familyAvailable = useMemo(() => {
     const roles = new Set(models.map((m) => m.role))
@@ -845,13 +903,24 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
       }
       setProvider('xai_imagine')
       setPrompt(t.prompt)
-      setAspectRatio(t.aspectRatio)
-      setResolution(t.resolution as FashnResolution)
+      const templateResolution = buildStudioResolutionUiState(
+        {
+          mode: t.mode,
+          provider: 'xai_imagine',
+          vtonEngine: 'xai_imagine',
+          familyPreset: 'single',
+          protectedComposite: false,
+          imageEngine: resolutionImageEngine,
+        },
+        { aspectRatio: t.aspectRatio, resolution: t.resolution },
+      )
+      if (templateResolution.aspectRatio) setAspectRatio(templateResolution.aspectRatio)
+      if (templateResolution.resolution) setResolution(templateResolution.resolution)
       setNumImages(1)
       setPanelOpen(true)
       toast.success(`টেমপ্লেট: ${t.labelBn} — ছবি দিয়ে Run চাপুন`)
     },
-    [xaiUsable, mode, clearUploads],
+    [xaiUsable, mode, clearUploads, resolutionImageEngine],
   )
 
   const upload = async (file: File, kind: 'product' | 'model' | 'source' | 'source2') => {
@@ -975,8 +1044,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
         familyPreset: mode === 'product_to_model' || mode === 'try_on' ? familyPreset : undefined,
         prompt,
         backgroundPrompt: backgroundId !== 'custom' ? bgPrompt : prompt,
-        aspectRatio,
-        resolution,
+        ...resolutionFieldsForRun(resolutionUiState),
         generationMode: genMode,
         numImages,
         durationSec,
@@ -1107,13 +1175,19 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
               )}
               {/* CS7 — masked precision edit (FLUX Fill): Edit mode + uploaded source */}
               {mode === 'edit' && sourcePath && sourcePreview && engineSelectable('fal_flux_fill') && (
-                <button
-                  type="button"
-                  onClick={() => setMaskEditorOpen(true)}
-                  className="mx-auto flex items-center gap-2 rounded-2xl border border-[#E07A5F]/40 bg-[#E07A5F]/10 px-4 py-2.5 text-[12.5px] font-bold text-[#E07A5F]"
-                >
-                  🎯 Precision Edit — মাস্ক এঁকে শুধু সেই জায়গা বদলান (FLUX Fill)
-                </button>
+                <div className="mx-auto flex max-w-lg flex-col items-center gap-1.5 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setMaskEditorOpen(true)}
+                    className="flex items-center gap-2 rounded-2xl border border-[#E07A5F]/40 bg-[#E07A5F]/10 px-4 py-2.5 text-[12.5px] font-bold text-[#E07A5F]"
+                  >
+                    🎯 Precision Edit — মাস্ক এঁকে শুধু সেই জায়গা বদলান (FLUX Fill)
+                  </button>
+                  <p className="text-[10px] leading-snug text-muted" role="status">
+                    {getResolutionContract('fal_flux_fill').labelBn} · {getResolutionContract('fal_flux_fill').detailBn}
+                    {' '}2K/4K নির্বাচন প্রযোজ্য নয়।
+                  </p>
+                </div>
               )}
             </div>
           </div>
@@ -1324,35 +1398,56 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                           </option>
                         ))}
                       </select>
-                      <select
-                        value={aspectRatio}
-                        onChange={(e) => setAspectRatio(e.target.value)}
-                        className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
-                      >
-                        {ASPECT_RATIOS.map((a) => (
-                          <option
-                            key={a}
-                            value={a}
-                            disabled={mode === 'face_to_model' && selectedAdvancedEngine === 'fashn' && a === '16:9'}
+                      {resolutionUiState.kind === 'tiered' ? (
+                        <>
+                          {resolutionUiState.supportedAspects.length ? (
+                            <select
+                              aria-label="আউটপুট অনুপাত"
+                              value={resolutionUiState.aspectRatio ?? ''}
+                              onChange={(e) => setAspectRatio(e.target.value)}
+                              className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
+                            >
+                              {resolutionUiState.supportedAspects.map((aspect) => (
+                                <option key={aspect} value={aspect}>
+                                  {aspect}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[10px] text-muted">
+                              অনুপাত: সোর্স ছবির মতো
+                            </span>
+                          )}
+                          <select
+                            aria-label="আউটপুট রেজোলিউশন"
+                            value={resolutionUiState.resolution ?? ''}
+                            onChange={(e) => setResolution(e.target.value as FashnResolution)}
+                            className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
                           >
-                            {a}
-                            {mode === 'face_to_model' && selectedAdvancedEngine === 'fashn' && a === '16:9'
-                              ? ' — N/A'
-                              : ''}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        value={resolution}
-                        onChange={(e) => setResolution(e.target.value as FashnResolution)}
-                        className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
-                      >
-                        {RESOLUTIONS.map((r) => (
-                          <option key={r} value={r}>
-                            {r.toUpperCase()}
-                          </option>
-                        ))}
-                      </select>
+                            {resolutionUiState.resolutionOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </>
+                      ) : (
+                        <div
+                          role="status"
+                          className={cn(
+                            'min-w-[15rem] rounded-lg border px-2.5 py-1.5 text-[10px] leading-snug',
+                            resolutionUiState.kind === 'unsupported'
+                              ? 'border-amber-400/50 bg-amber-50/10 text-amber-700'
+                              : 'border-border bg-card/80 text-muted',
+                          )}
+                        >
+                          <span className="font-bold text-cream">{resolutionUiState.labelBn}</span>
+                          <span className="block">
+                            {resolutionUiState.detailBn}
+                            {resolutionUiState.kind === 'fixed' ? ' 2K/4K নির্বাচন প্রযোজ্য নয়।' : ''}
+                          </span>
+                        </div>
+                      )}
                       <select
                         value={genMode}
                         onChange={(e) => setGenMode(e.target.value as FashnGenerationMode)}
@@ -1402,6 +1497,13 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                     </>
                   )}
                 </div>
+                {mode !== 'image_to_video' && resolutionUiState.kind === 'tiered' && (
+                  <p className="mb-2 rounded-lg border border-border bg-card/50 px-2.5 py-1.5 text-[10px] leading-snug text-muted" role="status">
+                    <span className="font-bold text-cream">ফাইনাল আউটপুট: {resolutionUiState.labelBn}</span>
+                    {' · '}
+                    {resolutionUiState.detailBn}
+                  </p>
+                )}
 
                 {/* CS9 — protected composite opt-in for multi-person family runs */}
                 {/* CS13.3 — composite is chain machinery; hidden when Grok runs the family shot */}
@@ -1440,7 +1542,6 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                       modelPath || modelId ? 'বাছাই করা person পাঠানো হবে' : null,
                     ].filter(Boolean).join(' · ') || 'text-only'}
                     {fidelityCapability.limitationBn ? ` — ${fidelityCapability.limitationBn}` : ''}
-                    {selectedAdvancedEngine === 'xai_imagine' && resolution === '4k' ? ' — 4K অনুরোধ xAI-তে 2K হবে।' : ''}
                     {selectedAdvancedEngine === 'xai_imagine' ? ' — generation mode xAI ব্যবহার করে না।' : ''}
                   </div>
                 )}
@@ -1460,22 +1561,8 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                       Generating…
                     </>
                   ) : (
-                    // CS5: multi-person family actually runs the accuracy chain
-                    // (per-person FASHN try-on → Gemini merge) — label it honestly
-                    // instead of claiming the whole job is Gemini.
-                    // CS6: single Try-On names the exact engine the owner picked.
-                    // CS13.3: the engine pick WINS everywhere xAI actually runs.
                     <>
-                      Run —{' '}
-                      {xaiWillRun
-                        ? ENGINE_LABELS_BN.xai_imagine
-                        : isMultiPersonFamily
-                          ? FAMILY_CHAIN_LABEL_BN
-                          : isSingleTryOn
-                            ? (VTON_ENGINE_LABELS[vtonEngine] ?? vtonEngine)
-                            : effectiveProvider === 'fashn'
-                              ? 'FASHN Pro'
-                              : 'Gemini'}
+                      Run — {finalOutputEngineLabel}
                     </>
                   )}
                 </motion.button>
@@ -1487,7 +1574,9 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                         ? 'Grok Imagine multi-reference: দুজনের মডেল ছবি + প্রোডাক্ট এক কলে'
                         : 'Grok Imagine — product/person reference দুটিই পাঠাবে; ফল identity-guided, dedicated VTON নয়'
                     : isMultiPersonFamily
-                      ? 'ফ্যামিলি ছবি: প্রতি জনের FASHN try-on, তারপর Gemini দিয়ে এক ফ্রেমে merge'
+                      ? protectedComposite
+                        ? 'ফ্যামিলি ছবি: প্রতি জনের try-on, তারপর অনুমোদিত পিক্সেল দিয়ে প্রোটেক্টেড কম্পোজিট'
+                        : `ফ্যামিলি ছবি: প্রতি জনের try-on, তারপর ${ENGINE_LABELS_BN[resolutionImageEngine]} দিয়ে এক ফ্রেমে merge`
                       : isSingleTryOn
                         ? pipelineMode === 'production'
                           ? 'প্রোডাকশন মোড — কড়া QC (প্রতিটা ≥৪/৫), সর্বোচ্চ ৩টি পেইড রান'

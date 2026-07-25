@@ -60,6 +60,13 @@ All campaign work follows this order:
 | [CSE6](creative-studio-enterprise/CSE6-review-and-multibrand.md) | Creator/reviewer workflow, comments, approval, audit, multi-brand | role-bound draft → approval → publish-ready | $0 |
 | [CSE7](creative-studio-enterprise/CSE7-distribution-and-hardening.md) | Meta scheduling, performance loop, E2E/load/retention/recovery | scheduled dry run + performance attribution + final regression | $1 |
 | [CSE-A](creative-studio-enterprise/CSE-A-advanced-model-fidelity.md) | Advanced single-image product/person fidelity contracts across every reachable provider model | capability matrix + fail-closed reference transport + truthful result lineage | $0 contract tests; paid calls require separate approval |
+| [CSE8](creative-studio-enterprise/CSE8-resolution-integrity.md) | Truthful provider-aware 2K/4K output and verified artifact variants | exact payload + decoded-byte + persistence + download proof | $0 |
+
+The consolidation contract for these two independent workstreams is recorded
+in [CSE-A+B integration](creative-studio-enterprise/CSE-A-B-integration.md).
+Where the earlier CSE-A control table described xAI 4K as an explicit 2K
+mapping, the integrated contract adopts CSE8's stricter rule: unsupported xAI
+4K and 4:5 requests are rejected before queueing or provider spend.
 
 ## Final integration rule
 
@@ -77,3 +84,5 @@ After CSE7 passes its final preview and Chrome proof, the latest stacked branch 
 | Multi-brand controls | CSE6 |
 | Distribution and measurable winner feedback | CSE7 |
 | Operational health, retention, recovery, regression | CSE1/CSE7 |
+| Advanced product/person reference fidelity and provider lineage | CSE-A |
+| Truthful provider output size and original/derivative integrity | CSE8 |

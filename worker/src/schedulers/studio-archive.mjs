@@ -94,6 +94,16 @@ export function collectBigPaths(result) {
   add(result.videoPath)
   add(result.brandedPath)
   if (Array.isArray(result.allPaths)) result.allPaths.forEach(add)
+  const variants = Array.isArray(result.variants)
+    ? result.variants
+    : result.variants && typeof result.variants === 'object'
+      ? Object.values(result.variants)
+      : []
+  for (const variant of variants) {
+    if (!variant || typeof variant !== 'object') continue
+    if (variant.kind === 'thumbnail') continue
+    add(variant.storagePath ?? variant.path)
+  }
   return [...paths]
 }
 

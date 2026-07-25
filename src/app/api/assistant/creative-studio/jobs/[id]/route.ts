@@ -4,6 +4,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { agentStorageDelete, agentStorageSignedUrl } from '@/agent/lib/storage'
+import { normalizeArtifactVariants } from '@/lib/creative-studio/artifact-metadata'
 
 export const runtime = 'nodejs'
 
@@ -33,13 +34,15 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   }
 
   const result = (row.result ?? {}) as Record<string, unknown>
-  const objectPaths = [
+  const objectPaths = [...new Set([
     result.storagePath,
     result.videoPath,
     result.brandedPath,
     result.thumbPath,
     result.brandedThumbPath,
-  ].filter((p): p is string => typeof p === 'string' && p.length > 0)
+    ...(Array.isArray(result.allPaths) ? result.allPaths : []),
+    ...normalizeArtifactVariants(result.variants).map((variant) => variant.storagePath),
+  ].filter((p): p is string => typeof p === 'string' && p.length > 0))]
   try {
     await agentStorageDelete(objectPaths)
   } catch (err) {

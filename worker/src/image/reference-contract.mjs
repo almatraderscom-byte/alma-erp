@@ -19,6 +19,37 @@ export function genericProviderForModel(model) {
   return 'gemini'
 }
 
+/**
+ * Validate an adapter's immutable model + ordered role/path bindings before it
+ * loads references or submits a paid request. Adapters that use named,
+ * unordered provider fields (direct FASHN) keep their field-aware validator.
+ */
+export function validateOrderedReferenceContract(contract, {
+  actualModel,
+  bindings,
+} = {}) {
+  if (!contract) return []
+  if (contract.actualModel && actualModel && contract.actualModel !== actualModel) {
+    throw new Error(`reference model snapshot mismatch: expected ${contract.actualModel}, queued ${actualModel}`)
+  }
+  const contractBindings = Array.isArray(contract.bindings) ? contract.bindings : []
+  const expectedBindings = Array.isArray(bindings) ? bindings : []
+  if (contractBindings.length !== expectedBindings.length) {
+    throw new Error(`reference contract mismatch: expected ${contractBindings.length}, queued ${expectedBindings.length}`)
+  }
+  for (let i = 0; i < contractBindings.length; i++) {
+    const contractBinding = contractBindings[i]
+    const expectedBinding = expectedBindings[i]
+    if (contractBinding?.role !== expectedBinding?.role || contractBinding?.path !== expectedBinding?.path) {
+      throw new Error(`reference contract order mismatch at ${i + 1}`)
+    }
+    if (contractBinding.required && !contractBinding.path) {
+      throw new Error(`required reference unavailable: ${contractBinding.role}`)
+    }
+  }
+  return contractBindings
+}
+
 export function requiredReferencePaths(payload) {
   const paths = [payload?.referenceImageId, payload?.secondReferenceImageId]
     .filter((path) => typeof path === 'string' && path.trim())

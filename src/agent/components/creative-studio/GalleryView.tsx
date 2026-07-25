@@ -21,6 +21,11 @@ import {
 } from '@/agent/components/creative-studio/studio-api'
 import { DEFAULT_OFFER, LIFESTYLE_EST, LIFESTYLE_THEME_TOKENS, type LifestyleLayoutOverrides } from '@/lib/content-engine/lifestyle-layout'
 import type { GalleryMediaFilter, GalleryQcFilter, GalleryStateFilter } from '@/lib/creative-studio/gallery-query'
+import {
+  artifactDimensionLabel,
+  artifactFileExtension,
+  type StudioArtifactDescriptor,
+} from '@/lib/creative-studio/artifact-metadata'
 import { reelCostBdt } from '@/lib/creative-studio/video-recipes'
 import { cn } from '@/lib/utils'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -113,8 +118,9 @@ export function GalleryView() {
   const [searchQuery, setSearchQuery] = useState('')
   // Full-screen lightbox (complaint: clicking an image opened nothing).
   const [selected, setSelected] = useState<GalleryItem | null>(null)
-  // When a branded variant exists, show it by default in the viewer.
-  const [showBranded, setShowBranded] = useState(true)
+  // The verified provider original is the truthful lightbox/download default.
+  // Branded output is an explicitly selected fixed-size social derivative.
+  const [showBranded, setShowBranded] = useState(false)
   // Per-image finishing panel (logo + code + hook) inside the lightbox.
   const [showFinish, setShowFinish] = useState(false)
   const [themes, setThemes] = useState<string[]>(['default'])
@@ -156,7 +162,7 @@ export function GalleryView() {
     [rescueItem],
   )
   const openItem = useCallback((item: GalleryItem) => {
-    setShowBranded(Boolean(item.brandedUrl))
+    setShowBranded(false)
     setShowFinish(false)
     setSelected(item)
   }, [])
@@ -181,10 +187,23 @@ export function GalleryView() {
 
   // After finishing: attach the framed copy to the selected item + the grid so the
   // "Logo সহ" toggle appears and survives a reload.
-  const applyFinished = useCallback((itemId: string, framedUrl: string) => {
-    setSelected((s) => (s && s.id === itemId ? { ...s, brandedUrl: framedUrl } : s))
-    setItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, brandedUrl: framedUrl } : it)))
-    setShowBranded(true)
+  const applyFinished = useCallback((
+    itemId: string,
+    framedUrl: string,
+    brandedVariant: StudioArtifactDescriptor,
+  ) => {
+    const withBranded = (item: GalleryItem): GalleryItem => ({
+      ...item,
+      brandedUrl: framedUrl,
+      brandedVariant,
+      variants: [
+        ...(item.variants ?? []).filter((variant) => variant.kind !== 'branded'),
+        brandedVariant,
+      ],
+    })
+    setSelected((item) => (item?.id === itemId ? withBranded(item) : item))
+    setItems((previous) => previous.map((item) => (item.id === itemId ? withBranded(item) : item)))
+    setShowBranded(false)
     setShowFinish(false)
   }, [])
 
@@ -261,6 +280,20 @@ export function GalleryView() {
     const t = window.setInterval(() => void loadFirstPage(true), 4000)
     return () => window.clearInterval(t)
   }, [pendingCount, loadFirstPage])
+
+  const selectedVariant = showBranded
+    ? selected?.brandedVariant ?? null
+    : selected?.originalVariant ?? null
+  const selectedVariantPath = showBranded
+    ? selected?.brandedVariant?.storagePath ?? (selected?.brandedUrl ? 'legacy-social.jpg' : null)
+    : selected?.originalVariant?.storagePath ?? selected?.storagePath ?? null
+  const originalDimensionLabel = artifactDimensionLabel(selected?.originalVariant)
+  const brandedDimensionLabel =
+    artifactDimensionLabel(selected?.brandedVariant)
+    ?? (selected?.finishParams?.mode === 'model_overlay' ? '1080×1350 · JPEG' : '1080×1080 · JPEG')
+  const displayedDimensionLabel = showBranded
+    ? brandedDimensionLabel
+    : originalDimensionLabel
 
   return (
     <div className="px-3 py-3 pb-28">
@@ -497,7 +530,7 @@ export function GalleryView() {
                     </span>
                     {item.brandedUrl && (
                       <span className="absolute right-1.5 top-1.5 rounded-md bg-[#E07A5F]/90 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
-                        Branded
+                        Social {artifactDimensionLabel(item.brandedVariant) ?? '1080px'}
                       </span>
                     )}
                     <StudioStatusBadge {...getStudioStatusMeta(item.assetState)} className="absolute bottom-1.5 right-1.5" />
@@ -651,6 +684,16 @@ export function GalleryView() {
                 <span className="rounded-lg bg-black/50 px-2.5 py-1 text-[10px] leading-snug text-white/85">{selected.qcDetailsBn}</span>
               </div>
             )}
+            {displayedDimensionLabel
+              && !(selected.storagePath?.endsWith('.mp4') || selected.type === 'video_gen')
+              && (
+                <div
+                  onClick={(event) => event.stopPropagation()}
+                  className="absolute right-4 top-[calc(4rem+env(safe-area-inset-top))] rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-bold text-white ring-1 ring-white/20"
+                >
+                  {showBranded ? 'Social derivative' : 'Verified original'} · {displayedDimensionLabel}
+                </div>
+              )}
             {selected.assetState === 'qc_failed' && (
               <div
                 onClick={(event) => event.stopPropagation()}
@@ -660,7 +703,7 @@ export function GalleryView() {
               </div>
             )}
 
-            {/* Original ↔ Branded toggle (only when a branded variant exists) */}
+            {/* Full original ↔ fixed-size social derivative (explicit opt-in). */}
             {selected.brandedUrl && !(selected.storagePath?.endsWith('.mp4') || selected.type === 'video_gen') && (
               <div
                 onClick={(e) => e.stopPropagation()}
@@ -668,17 +711,17 @@ export function GalleryView() {
               >
                 <button
                   type="button"
-                  onClick={() => setShowBranded(true)}
-                  className={cn('px-4 py-1.5 text-[12px] font-semibold', showBranded ? 'bg-[#E07A5F] text-white' : 'text-white/80')}
+                  onClick={() => setShowBranded(false)}
+                  className={cn('px-4 py-1.5 text-[11px] font-semibold', !showBranded ? 'bg-[#E07A5F] text-white' : 'text-white/80')}
                 >
-                  Logo সহ
+                  আসল{originalDimensionLabel ? ` · ${originalDimensionLabel}` : ''}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowBranded(false)}
-                  className={cn('px-4 py-1.5 text-[12px] font-semibold', !showBranded ? 'bg-[#E07A5F] text-white' : 'text-white/80')}
+                  onClick={() => setShowBranded(true)}
+                  className={cn('px-4 py-1.5 text-[11px] font-semibold', showBranded ? 'bg-[#E07A5F] text-white' : 'text-white/80')}
                 >
-                  আসল
+                  Social derivative · {brandedDimensionLabel}
                 </button>
               </div>
             )}
@@ -701,7 +744,10 @@ export function GalleryView() {
                 <button
                   type="button"
                   onClick={() =>
-                    downloadStudioAsset((showBranded && selected.brandedUrl) || selected.previewUrl, `alma-${selected.id}.jpg`)
+                    downloadStudioAsset(
+                      (showBranded && selected.brandedUrl) || selected.previewUrl,
+                      `alma-${selected.id}.${artifactFileExtension(selectedVariant, selectedVariantPath)}`,
+                    )
                   }
                   className="rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
                 >
@@ -881,7 +927,9 @@ export function GalleryView() {
                   imageUrl={selected.previewUrl}
                   pendingActionId={selected.id}
                   themes={themes}
-                  onDone={(framedUrl) => applyFinished(selected.id, framedUrl)}
+                  onDone={(framedUrl, _framedPath, brandedVariant) =>
+                    applyFinished(selected.id, framedUrl, brandedVariant)
+                  }
                 />
               </div>
             )}
@@ -922,7 +970,11 @@ export function FinishPanel({
   imageUrl?: string | null
   pendingActionId?: string
   themes: string[]
-  onDone: (framedUrl: string, framedPath: string) => void
+  onDone: (
+    framedUrl: string,
+    framedPath: string,
+    brandedVariant: StudioArtifactDescriptor,
+  ) => void
   dark?: boolean
 }) {
   const [hook, setHook] = useState('')
@@ -954,7 +1006,7 @@ export function FinishPanel({
     }
     setBusy(true)
     try {
-      const { framedUrl, framedPath } = await finishImage({
+      const { framedUrl, framedPath, brandedVariant } = await finishImage({
         storagePath,
         pendingActionId,
         hook: hook.trim(),
@@ -969,7 +1021,7 @@ export function FinishPanel({
       })
       toast.success('ফিনিশিং হয়ে গেছে বস ✅')
       setEditorOpen(false)
-      onDone(framedUrl, framedPath)
+      onDone(framedUrl, framedPath, brandedVariant)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'ফিনিশিং ব্যর্থ')
     } finally {

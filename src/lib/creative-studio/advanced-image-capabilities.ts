@@ -313,7 +313,7 @@ export function validateAdvancedControlValues(input: {
   generationMode?: string
   numImages?: number
 }): void {
-  if (input.aspectRatio && !['4:5', '1:1', '9:16', '16:9'].includes(input.aspectRatio)) {
+  if (input.aspectRatio && !['4:5', '3:4', '1:1', '9:16', '16:9'].includes(input.aspectRatio)) {
     throw new Error(`aspect_ratio_unsupported:${input.aspectRatio}`)
   }
   if (input.resolution && !['1k', '2k', '4k'].includes(input.resolution)) {

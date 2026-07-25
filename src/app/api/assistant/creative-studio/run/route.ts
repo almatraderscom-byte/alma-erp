@@ -44,13 +44,27 @@ function mapRunError(msg: string): string {
   if (msg.startsWith('reference_limit_exceeded:')) {
     return 'এই ইঞ্জিনে বাছাই করা সব reference পাঠানোর জায়গা নেই। কম reference দিন বা অন্য ইঞ্জিন বাছুন।'
   }
+  if (msg.startsWith('resolution_unsupported:')) {
+    const [, engine, tier, ...aspectParts] = msg.split(':')
+    const aspect = aspectParts.join(':')
+    const ratio = aspect ? ` (${aspect})` : ''
+    return `${engine} ইঞ্জিনে ${tier?.toUpperCase() ?? 'এই'}${ratio} রেজোলিউশন সমর্থিত নয়। সমর্থিত অপশন বেছে নিন।`
+  }
+  if (msg.startsWith('aspect_ratio_unsupported:')) {
+    const [, engine] = msg.split(':')
+    return `${engine} ইঞ্জিনে এই aspect ratio সমর্থিত নয়। তালিকা থেকে সমর্থিত ratio বেছে নিন।`
+  }
+  if (msg.startsWith('resolution_not_applicable:')) {
+    return 'এই ইঞ্জিনে 1K/2K/4K প্রযোজ্য নয়—এটি নেটিভ বা সোর্স ছবির পিক্সেল রাখে।'
+  }
+  if (msg === 'resolution_required') {
+    return 'একটি সমর্থিত image resolution বেছে নিন।'
+  }
   if (
-    msg.startsWith('aspect_ratio_unsupported:')
-    || msg.startsWith('resolution_unsupported:')
-    || msg.startsWith('generation_mode_unsupported:')
+    msg.startsWith('generation_mode_unsupported:')
     || msg.startsWith('num_images_unsupported:')
   ) {
-    return 'এই ইঞ্জিনে বাছাই করা aspect/resolution/mode/count সমর্থিত নয়। দেখানো সমর্থিত option থেকে বাছুন।'
+    return 'এই ইঞ্জিনে বাছাই করা mode/count সমর্থিত নয়। দেখানো সমর্থিত option থেকে বাছুন।'
   }
   if (msg.startsWith('missing_models:')) {
     const roles = msg.slice('missing_models:'.length).split(',').filter(Boolean)

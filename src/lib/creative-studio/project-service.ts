@@ -25,6 +25,10 @@ import {
   normalizeBrandRecipeInput,
   recipeKeyFor,
 } from '@/lib/creative-studio/brand-recipe'
+import {
+  artifactFieldsFromResult,
+  artifactVersionMetadata,
+} from '@/lib/creative-studio/artifact-metadata'
 
 // The generated Prisma client is refreshed by `prisma generate` in build and
 // postinstall. Keeping this boundary structural lets targeted contract tests run
@@ -112,7 +116,7 @@ function resultQc(result: AnyRecord): AnyRecord | null {
   return qc && typeof qc === 'object' && !Array.isArray(qc) ? qc as AnyRecord : null
 }
 
-function safeVersionMetadata(action: {
+export function buildStudioVersionMetadata(action: {
   status?: unknown
   summary?: unknown
   payload?: unknown
@@ -127,6 +131,7 @@ function safeVersionMetadata(action: {
     productCode: typeof payload.productCode === 'string' ? payload.productCode : null,
     familyPreset: typeof payload.familyPreset === 'string' ? payload.familyPreset : null,
     requestId: typeof result.requestId === 'string' ? result.requestId.slice(0, 160) : null,
+    ...artifactVersionMetadata(result),
   }
 }
 
@@ -560,7 +565,7 @@ function versionDataFromAction(
     costUsd: costUsd === null ? null : Math.max(0, costUsd),
     qc: resultQc(result),
     metadata: {
-      ...safeVersionMetadata(action),
+      ...buildStudioVersionMetadata(action),
       recipe: recipe ? buildRecipeSnapshot(recipe as Parameters<typeof buildRecipeSnapshot>[0]) : null,
     },
     createdById: ownerId,
@@ -720,6 +725,7 @@ function serializeProjectAsset(row: AnyRecord, action?: AnyRecord | null): Studi
     versions: versions.map((version: AnyRecord) => {
       const recipe = version.recipe ? object(version.recipe) : null
       const lineage = Array.isArray(version.lineage) ? version.lineage : []
+      const artifactFields = artifactFieldsFromResult(version.metadata)
       return {
         id: String(version.id),
         version: Number(version.version),
@@ -734,6 +740,8 @@ function serializeProjectAsset(row: AnyRecord, action?: AnyRecord | null): Studi
         costBdt: safeCostBdt(version.costBdt),
         costUsd: numberOrNull(version.costUsd),
         qc: version.qc && typeof version.qc === 'object' ? version.qc as AnyRecord : null,
+        resolutionIntegrity: artifactFields.resolutionIntegrity,
+        variants: artifactFields.variants,
         createdById: String(version.createdById),
         createdAt: dateIso(version.createdAt),
         sources: lineage.map((edge: AnyRecord) => {
@@ -831,6 +839,7 @@ export async function listLegacyAssets(ownerId: string): Promise<StudioProjectAs
     const result = object(row.result)
     const storagePath = resultStoragePath(result)
     const version = versionDataFromAction(ownerId, row, null)
+    const artifactFields = artifactFieldsFromResult(result)
     return {
       id: `legacy:${row.id}`,
       projectId: LEGACY_PROJECT_ID,
@@ -856,6 +865,8 @@ export async function listLegacyAssets(ownerId: string): Promise<StudioProjectAs
         costBdt: version.costBdt,
         costUsd: numberOrNull(version.costUsd),
         qc: resultQc(result),
+        resolutionIntegrity: artifactFields.resolutionIntegrity,
+        variants: artifactFields.variants,
         createdById: ownerId,
         createdAt: dateIso(row.createdAt),
         sources: [],

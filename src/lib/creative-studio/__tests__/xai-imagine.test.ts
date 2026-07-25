@@ -9,19 +9,21 @@ import {
   toXaiAspectRatio,
   toXaiResolution,
 } from '../xai-imagine'
-import { STUDIO_MODES, ASPECT_RATIOS } from '../constants'
+import { STUDIO_MODES } from '../constants'
 import { getEngine } from '../provider-registry'
+import { getResolutionContract } from '../resolution-contract'
 
 describe('CS13 — xAI aspect/resolution mapping', () => {
-  it('maps the studio 4:5 portrait to the nearest xAI ratio (3:4)', () => {
-    expect(toXaiAspectRatio('4:5')).toBe('3:4')
+  it('accepts only xAI-native aspect ratios', () => {
+    expect(toXaiAspectRatio('3:4')).toBe('3:4')
     expect(toXaiAspectRatio('1:1')).toBe('1:1')
     expect(toXaiAspectRatio('9:16')).toBe('9:16')
-    expect(toXaiAspectRatio('weird')).toBe('auto')
+    expect(() => toXaiAspectRatio('4:5')).toThrow('aspect_ratio_unsupported:xai_imagine:4:5')
+    expect(() => toXaiAspectRatio('weird')).toThrow('aspect_ratio_unsupported:xai_imagine:weird')
   })
 
-  it('clamps 4k down to 2k honestly', () => {
-    expect(toXaiResolution('4k')).toBe('2k')
+  it('rejects 4K instead of silently relabeling a 2K request', () => {
+    expect(() => toXaiResolution('4k')).toThrow('resolution_unsupported:xai_imagine:4k')
     expect(toXaiResolution('2k')).toBe('2k')
     expect(toXaiResolution('1k')).toBe('1k')
   })
@@ -189,11 +191,12 @@ describe('CS13 — registry + templates coherence', () => {
     expect(gen.needsSource ?? false).toBe(false)
   })
 
-  it('every template points at a real mode and a UI-offered aspect ratio', () => {
+  it('every template points at a real mode and an xAI-native aspect ratio', () => {
     const modeIds = new Set(STUDIO_MODES.map((m) => m.id))
+    const xaiAspects = getResolutionContract('xai_imagine').supportedAspects
     for (const t of XAI_TEMPLATES) {
       expect(modeIds.has(t.mode)).toBe(true)
-      expect([...ASPECT_RATIOS]).toContain(t.aspectRatio)
+      expect(xaiAspects).toContain(t.aspectRatio)
       expect(['1k', '2k']).toContain(t.resolution)
     }
   })

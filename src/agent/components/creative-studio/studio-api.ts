@@ -4,6 +4,7 @@ import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 import type { LifestyleLayoutOverrides } from '@/lib/content-engine/lifestyle-layout'
 import type { GalleryMediaFilter, GalleryQcFilter, GalleryStateFilter } from '@/lib/creative-studio/gallery-query'
 import type { StudioAssetState } from '@/lib/creative-studio/studio-policy'
+import type { StudioArtifactDescriptor } from '@/lib/creative-studio/artifact-metadata'
 import type {
   StudioBrandRecipe,
   StudioProductOption,
@@ -692,6 +693,12 @@ export type GalleryItem = {
   thumbUrl?: string | null
   /** branded variant (logo + code + hook), when produced */
   brandedUrl?: string | null
+  /** Immutable decoded-byte evidence from the provider callback. */
+  resolutionIntegrity?: Record<string, unknown> | null
+  variants?: StudioArtifactDescriptor[]
+  originalVariant?: StudioArtifactDescriptor | null
+  /** Fixed-size social derivative; never presented as the full-resolution original. */
+  brandedVariant?: StudioArtifactDescriptor | null
   storagePath: string | null
   /** V2: reel cover picker options (video_edit items) */
   coverOptions?: Array<{ path: string; url: string }>
@@ -749,8 +756,16 @@ export async function saveBrandLogo(logo: File, transparent = true): Promise<Bra
 }
 
 /** Apply the deterministic brand frame (logo + this image's code + hook). */
-export async function finishImage(opts: FinishOptions): Promise<{ framedPath: string; framedUrl: string }> {
-  return studioRequest<{ framedPath: string; framedUrl: string }>(
+export async function finishImage(opts: FinishOptions): Promise<{
+  framedPath: string
+  framedUrl: string
+  brandedVariant: StudioArtifactDescriptor
+}> {
+  return studioRequest<{
+    framedPath: string
+    framedUrl: string
+    brandedVariant: StudioArtifactDescriptor
+  }>(
     '/api/assistant/creative-studio/finish',
     {
       method: 'POST',
@@ -799,30 +814,35 @@ export async function fetchStudioConfig(): Promise<StudioConfig> {
 }
 
 /**
- * iPhone photos are usually HEIC and often >10 MB — the upload route rejects
- * anything over its limit. Convert + downscale in the browser before upload:
- * iOS WKWebView decodes HEIC natively, so drawing to a canvas and exporting
- * JPEG fixes both the format and the size in one step (server still transcodes
- * as a backstop). PDFs / non-images pass through untouched; on any failure we
- * send the original and let the server handle it.
+ * Preserve reference pixels whenever the server can accept the original.
+ * HEIC/oversize files are converted only as much as the 10 MB upload boundary
+ * requires; unlike the former implementation this does not cap every image at
+ * 2048 px or recompress ordinary PNG/JPEG/WebP references.
  */
 async function prepareImageForUpload(file: File): Promise<File> {
   const looksImage = file.type.startsWith('image/') || /\.(heic|heif|jpe?g|png|webp)$/i.test(file.name)
   if (!looksImage || typeof document === 'undefined') return file
+  const heic = /image\/hei[cf]/i.test(file.type) || /\.(heic|heif)$/i.test(file.name)
+  const TARGET_BYTES = 9.5 * 1024 * 1024
+  if (!heic && file.size <= TARGET_BYTES) return file
   try {
     const bitmap = await createImageBitmap(file)
-    const MAX = 2048
-    const scale = Math.min(1, MAX / Math.max(bitmap.width, bitmap.height))
-    const width = Math.max(1, Math.round(bitmap.width * scale))
-    const height = Math.max(1, Math.round(bitmap.height * scale))
     const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
     const ctx = canvas.getContext('2d')
     if (!ctx) return file
-    ctx.drawImage(bitmap, 0, 0, width, height)
+    let scale = 1
+    let blob: Blob | null = null
+    for (let attempt = 0; attempt < 6; attempt++) {
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+      const quality = Math.max(0.82, 0.95 - attempt * 0.025)
+      blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), 'image/jpeg', quality))
+      if (blob && blob.size <= TARGET_BYTES) break
+      scale *= 0.88
+    }
     bitmap.close?.()
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.9))
     if (!blob) return file
     const baseName = file.name.replace(/\.[^.]+$/, '') || 'image'
     return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' })

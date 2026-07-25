@@ -155,6 +155,9 @@ export async function queueTryOnBatch(opts: {
   garmentType?: string
   extra?: string
   conversationId?: string | null
+  /** CSE8 — final generic image contract; defaults preserve non-Studio callers. */
+  aspectRatio?: string
+  resolution?: '1k' | '2k' | '4k'
 }): Promise<{ items: TryOnQueueItem[]; model: SavedModel }> {
   const productImagePath = opts.productImagePath.trim()
   if (!productImagePath) throw new Error('productImagePath_required')
@@ -221,6 +224,10 @@ export async function queueTryOnBatch(opts: {
           quality: 'pro',
           referenceImageId: primary.imagePath,
           secondReferenceImageId: productImagePath,
+          aspectRatio: opts.aspectRatio ?? '4:5',
+          imageSize: (opts.resolution ?? '2k').toUpperCase(),
+          requestedResolution: opts.resolution ?? '2k',
+          requestedAspectRatio: opts.aspectRatio ?? '4:5',
           tryOn: true,
           tryOnVariant: variant,
           conversationId: opts.conversationId ?? null,
