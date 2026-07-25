@@ -107,6 +107,27 @@ describe('Creative Agent adversarial boundaries', () => {
     expect(result).toMatchObject({ ok: false, code: 'role_forbidden' })
   })
 
+  it('rejects creator apply with a forged owner acknowledgement or role-drifted plan', async () => {
+    const base = planningContext()
+    const creator = { userId: 'creator-1', name: 'Creator', role: 'creator' } as const
+    const proposal = await compileCreativeAgentInstruction(
+      'Move caption to first beat.',
+      { ...base, actor: creator },
+    )
+    const port = createInMemoryCompositionCommandPort(base.snapshot)
+
+    await expect(port.validateLocal({
+      proposal,
+      actor: creator,
+      acknowledgement: acknowledgement(proposal),
+    })).resolves.toMatchObject({ ok: false, code: 'role_forbidden' })
+    await expect(port.validateLocal({
+      proposal,
+      actor: OWNER,
+      acknowledgement: acknowledgement(proposal),
+    })).resolves.toMatchObject({ ok: false, code: 'role_forbidden' })
+  })
+
   it('invalidates an acknowledged plan after composition version drift', async () => {
     const base = planningContext()
     const port = createInMemoryCompositionCommandPort(base.snapshot)
@@ -197,6 +218,103 @@ describe('Creative Agent adversarial boundaries', () => {
     expect(voice.operations).toHaveLength(0)
   })
 
+  it('fails closed when provider or voice context is unavailable', async () => {
+    const generation = await compileCreativeAgentInstruction(
+      'Generate a new video clip.',
+      planningContext({ generationProvider: null }),
+    )
+    const voice = await compileCreativeAgentInstruction(
+      'Generate owner voice narration.',
+      planningContext({ voice: null }),
+    )
+
+    for (const proposal of [generation, voice]) {
+      expect(proposal.pendingActions[0]).toMatchObject({
+        state: 'blocked',
+        blockedReason: 'provider_unavailable',
+      })
+      expect(proposal.warnings.map((warning) => warning.code)).toContain(
+        'provider_unavailable',
+      )
+      expect(proposal.warnings.map((warning) => warning.code)).not.toContain(
+        'paid_generation_separated',
+      )
+    }
+  })
+
+  it('blocks invalid costs, exceeded caps, and inactive voice versions', async () => {
+    const invalidCost = await compileCreativeAgentInstruction(
+      'Generate a new video clip.',
+      planningContext({
+        generationProvider: {
+          engineId: 'xai_imagine',
+          model: 'grok-imagine-image-quality',
+          enabled: true,
+          estimatedCostBdt: Number.NaN,
+          maxCostBdt: 100,
+          payloadDigest: 'payload-video-invalid-cost',
+        },
+      }),
+    )
+    const overCap = await compileCreativeAgentInstruction(
+      'Generate a new video clip.',
+      planningContext({
+        generationProvider: {
+          engineId: 'xai_imagine',
+          model: 'grok-imagine-image-quality',
+          enabled: true,
+          estimatedCostBdt: 101,
+          maxCostBdt: 100,
+          payloadDigest: 'payload-video-over-cap',
+        },
+      }),
+    )
+    const context = planningContext()
+    const inactiveVoice = await compileCreativeAgentInstruction(
+      'Generate owner voice narration.',
+      planningContext({
+        voice: {
+          ...context.voice!,
+          active: false,
+          revoked: false,
+          consented: true,
+        },
+      }),
+    )
+    const invalidVoiceCost = await compileCreativeAgentInstruction(
+      'Generate owner voice narration.',
+      planningContext({
+        voice: {
+          ...context.voice!,
+          estimatedCostBdt: Number.POSITIVE_INFINITY,
+        },
+      }),
+    )
+
+    expect(invalidCost.pendingActions[0]).toMatchObject({
+      state: 'blocked',
+      blockedReason: 'invalid_cost',
+      estimatedCostBdt: 0,
+    })
+    expect(overCap.pendingActions[0]).toMatchObject({
+      state: 'blocked',
+      blockedReason: 'cost_cap_exceeded',
+    })
+    expect(inactiveVoice.pendingActions[0]).toMatchObject({
+      state: 'blocked',
+      blockedReason: 'voice_inactive',
+    })
+    expect(invalidVoiceCost.pendingActions[0]).toMatchObject({
+      state: 'blocked',
+      blockedReason: 'invalid_cost',
+      estimatedCostBdt: 0,
+    })
+    expect(invalidCost.warnings.map((warning) => warning.code)).toContain('invalid_cost')
+    expect(overCap.warnings.map((warning) => warning.code)).toContain('cost_cap_exceeded')
+    expect(inactiveVoice.warnings.map((warning) => warning.code)).toContain('voice_inactive')
+    expect(invalidVoiceCost.warnings.map((warning) => warning.code)).toContain('invalid_cost')
+  })
+
   it('never reports queued, ambiguous, failed, or artifact-less results as complete', () => {
     expect(verifyEditorJobObservation({
       status: 'queued',
@@ -221,7 +339,11 @@ describe('Creative Agent adversarial boundaries', () => {
       artifact: null,
       providerRequestId: 'req-4',
       errorCode: null,
-    })).toMatchObject({ complete: false, reason: 'artifact_missing' })
+    })).toMatchObject({
+      complete: false,
+      status: 'needs_review',
+      reason: 'artifact_missing',
+    })
   })
 
   it('requires a verified artifact before claiming an executed job is complete', () => {
@@ -233,5 +355,36 @@ describe('Creative Agent adversarial boundaries', () => {
       providerRequestId: 'req-ok',
       errorCode: null,
     })).toEqual({ complete: true, status: 'executed', artifact })
+  })
+
+  it('keeps unverified, dimension-mismatched, and lineage-less artifacts in review', () => {
+    const artifact = createEditorFixtureSnapshot().assets[0]
+      .artifact as StudioArtifactDescriptor
+    const unverified = { ...artifact, validation: 'pending' }
+    const mismatched = { ...artifact, pixelCount: artifact.pixelCount! + 1 }
+    const expectedMismatch = {
+      ...artifact,
+      expected: { width: artifact.width! + 1, height: artifact.height },
+    }
+    const missingLineage = { ...artifact, provider: null }
+
+    for (const candidate of [
+      unverified,
+      mismatched,
+      expectedMismatch,
+      missingLineage,
+    ]) {
+      expect(verifyEditorJobObservation({
+        status: 'executed',
+        artifact: candidate,
+        providerRequestId: 'req-invalid',
+        errorCode: null,
+      })).toEqual({
+        complete: false,
+        artifact: null,
+        status: 'needs_review',
+        reason: 'artifact_invalid',
+      })
+    }
   })
 })

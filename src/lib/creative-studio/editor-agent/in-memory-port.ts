@@ -110,13 +110,18 @@ export class InMemoryCompositionCommandPort implements CompositionCommandPort {
     }
 
     if (proposal.origin === 'agent') {
+      if (
+        request.actor.role !== 'owner'
+        || proposal.actorRoleAtPlan !== request.actor.role
+      ) {
+        return validation(this.current, false, 'role_forbidden')
+      }
       if (!acknowledgementMatchesProposal(request.acknowledgement, proposal)) {
         return validation(this.current, false, 'approval_required')
       }
       if (
         request.acknowledgement?.acknowledgedByRole !== 'owner'
-        || (request.actor.role === 'owner'
-          && request.acknowledgement.acknowledgedByUserId !== request.actor.userId)
+        || request.acknowledgement.acknowledgedByUserId !== request.actor.userId
       ) {
         return validation(this.current, false, 'role_forbidden')
       }

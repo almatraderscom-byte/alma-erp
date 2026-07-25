@@ -9,6 +9,7 @@ import type {
   EditorTrack,
   EditorVerifiedOutcome,
 } from '@/lib/creative-studio/editor-agent/contracts'
+import type { StudioArtifactDescriptor } from '@/lib/creative-studio/artifact-metadata'
 import {
   createOperationProposal,
   findEditorClip,
@@ -61,13 +62,6 @@ function isNegated(value: string, token: string): boolean {
   )
 }
 
-function firstTrack(
-  context: AgentPlanningContext,
-  kinds: EditorTrack['kind'][],
-): EditorTrack | null {
-  return context.snapshot.tracks.find((track) => kinds.includes(track.kind)) ?? null
-}
-
 function selectedOrFirstClip(
   context: AgentPlanningContext,
   kinds: EditorClip['kind'][],
@@ -116,20 +110,58 @@ function pendingProviderAction(
   label: string,
 ): EditorPendingAction {
   const voice = kind === 'voice_generation' ? context.voice : null
-  const provider = voice?.provider ?? context.generationProvider
+  const provider = kind === 'voice_generation'
+    ? voice?.provider ?? null
+    : context.generationProvider
   const voiceBlockedReason = voice?.revoked
     ? 'voice_revoked'
     : voice && !voice.consented
       ? 'voice_not_consented'
+      : voice && !voice.active
+        ? 'voice_inactive'
+        : null
+  const providerBlockedReason = !provider
+    ? 'provider_unavailable'
+    : !provider.enabled
+      ? 'provider_disabled'
       : null
-  const providerBlockedReason = provider && !provider.enabled
-    ? 'provider_disabled'
-    : null
-  const blockedReason = voiceBlockedReason ?? providerBlockedReason
-  const estimatedCostBdt = Math.max(
-    0,
-    Math.round(voice?.estimatedCostBdt ?? provider?.estimatedCostBdt ?? 0),
+  const costs = provider
+    ? [
+        provider.estimatedCostBdt,
+        provider.maxCostBdt,
+        ...(voice ? [voice.estimatedCostBdt, voice.maxCostBdt] : []),
+      ]
+    : []
+  const invalidCost = costs.some(
+    (cost) => !Number.isFinite(cost) || cost < 0,
   )
+  const costCapExceeded = !invalidCost && Boolean(
+    provider
+    && (
+      provider.estimatedCostBdt > provider.maxCostBdt
+      || (
+        voice
+        && voice.estimatedCostBdt > voice.maxCostBdt
+      )
+    ),
+  )
+  const costBlockedReason = invalidCost
+    ? 'invalid_cost'
+    : costCapExceeded
+      ? 'cost_cap_exceeded'
+      : null
+  const blockedReason =
+    voiceBlockedReason
+    ?? providerBlockedReason
+    ?? costBlockedReason
+  const estimatedCost = voice?.estimatedCostBdt ?? provider?.estimatedCostBdt ?? 0
+  const maxCost = voice?.maxCostBdt ?? provider?.maxCostBdt ?? 0
+  const estimatedCostBdt = Number.isFinite(estimatedCost) && estimatedCost >= 0
+    ? Math.round(estimatedCost)
+    : 0
+  const maxCostBdt = Number.isFinite(maxCost) && maxCost >= 0
+    ? Math.round(maxCost)
+    : 0
   return {
     id: '',
     kind,
@@ -159,8 +191,61 @@ function pendingProviderAction(
       : null,
     destination: null,
     estimatedCostBdt,
-    maxCostBdt: Math.max(0, Math.round(voice?.maxCostBdt ?? provider?.maxCostBdt ?? 0)),
+    maxCostBdt,
   }
+}
+
+function addPendingProviderWarning(
+  warnings: EditorPlanWarning[],
+  action: EditorPendingAction,
+  fallback: {
+    code: 'paid_generation_separated'
+    message: string
+  },
+): void {
+  const blockedWarnings: Partial<
+    Record<
+      NonNullable<EditorPendingAction['blockedReason']>,
+      { code: EditorPlanWarningCode; message: string }
+    >
+  > = {
+    provider_unavailable: {
+      code: 'provider_unavailable',
+      message: 'No authoritative provider context is available; no job can be queued.',
+    },
+    provider_disabled: {
+      code: 'provider_disabled',
+      message: 'The selected provider is disabled; no job can be queued.',
+    },
+    invalid_cost: {
+      code: 'invalid_cost',
+      message: 'Provider or voice cost data is invalid; no job can be queued.',
+    },
+    cost_cap_exceeded: {
+      code: 'cost_cap_exceeded',
+      message: 'The estimated provider cost exceeds its owner-approved cap.',
+    },
+    voice_inactive: {
+      code: 'voice_inactive',
+      message: 'The referenced voice version is inactive.',
+    },
+    voice_revoked: {
+      code: 'voice_revoked',
+      message: 'The referenced voice version is revoked.',
+    },
+    voice_not_consented: {
+      code: 'voice_not_consented',
+      message: 'The voice version has no active consent.',
+    },
+  }
+  const blocked = action.blockedReason
+    ? blockedWarnings[action.blockedReason]
+    : null
+  addWarning(
+    warnings,
+    blocked?.code ?? fallback.code,
+    blocked?.message ?? fallback.message,
+  )
 }
 
 function parseCaptionText(value: string): string | null {
@@ -519,14 +604,13 @@ export async function compileCreativeAgentInstruction(
       'Generate media for the composition',
     )
     pendingActions.push(action)
-    addWarning(
+    addPendingProviderWarning(
       warnings,
-      action.blockedReason === 'provider_disabled'
-        ? 'provider_disabled'
-        : 'paid_generation_separated',
-      action.blockedReason === 'provider_disabled'
-        ? 'The selected provider is disabled; no job can be queued.'
-        : 'Paid generation was separated from reversible local apply.',
+      action,
+      {
+        code: 'paid_generation_separated',
+        message: 'Paid generation was separated from reversible local apply.',
+      },
     )
   }
 
@@ -546,19 +630,14 @@ export async function compileCreativeAgentInstruction(
       'Generate owner voice audio',
     )
     pendingActions.push(action)
-    if (action.blockedReason === 'voice_revoked') {
-      addWarning(warnings, 'voice_revoked', 'The referenced voice version is revoked.')
-    } else if (action.blockedReason === 'voice_not_consented') {
-      addWarning(warnings, 'voice_not_consented', 'The voice version has no active consent.')
-    } else if (action.blockedReason === 'provider_disabled') {
-      addWarning(warnings, 'provider_disabled', 'The selected voice provider is disabled.')
-    } else {
-      addWarning(
-        warnings,
-        'paid_generation_separated',
-        'Voice generation requires a separate owner confirmation.',
-      )
-    }
+    addPendingProviderWarning(
+      warnings,
+      action,
+      {
+        code: 'paid_generation_separated',
+        message: 'Voice generation requires a separate owner confirmation.',
+      },
+    )
   }
 
   const renderRequested = includesAny(normalized, [
@@ -648,6 +727,94 @@ export async function compileCreativeAgentInstruction(
   })
 }
 
+function nonEmptyText(value: string | null): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function positiveSafeInteger(value: number | null): value is number {
+  return Number.isSafeInteger(value) && (value ?? 0) > 0
+}
+
+function expectedNumberMatches(
+  expected: Record<string, unknown> | null,
+  keys: string[],
+  actual: number,
+): boolean {
+  if (!expected) return true
+  const key = keys.find((candidate) => expected[candidate] !== undefined)
+  if (!key) return true
+  const value = expected[key]
+  return typeof value === 'number'
+    && Number.isSafeInteger(value)
+    && value === actual
+}
+
+function aspectRatioMatches(
+  requestedAspectRatio: string,
+  width: number,
+  height: number,
+): boolean {
+  const match = requestedAspectRatio.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/)
+  if (!match) return false
+  const aspectWidth = Number(match[1])
+  const aspectHeight = Number(match[2])
+  if (
+    !Number.isFinite(aspectWidth)
+    || !Number.isFinite(aspectHeight)
+    || aspectWidth <= 0
+    || aspectHeight <= 0
+  ) {
+    return false
+  }
+  return Math.abs((width / height) - (aspectWidth / aspectHeight)) <= 0.02
+}
+
+/**
+ * Completion is derived from A+B evidence, never the provider job label alone.
+ * The descriptor must carry verified resolution, integrity, and lineage truth.
+ */
+function isAuthoritativeArtifact(
+  artifact: StudioArtifactDescriptor,
+): boolean {
+  if (
+    artifact.validation !== 'verified'
+    || artifact.validationErrors.length > 0
+    || !nonEmptyText(artifact.kind)
+    || !nonEmptyText(artifact.storagePath)
+    || !positiveSafeInteger(artifact.width)
+    || !positiveSafeInteger(artifact.height)
+    || !positiveSafeInteger(artifact.pixelCount)
+    || artifact.pixelCount !== artifact.width * artifact.height
+    || !positiveSafeInteger(artifact.byteSize)
+    || !nonEmptyText(artifact.sha256)
+    || !nonEmptyText(artifact.format)
+    || !nonEmptyText(artifact.mimeType)
+    || !nonEmptyText(artifact.requestedTier)
+    || !nonEmptyText(artifact.requestedAspectRatio)
+    || !nonEmptyText(artifact.actualTier)
+    || !nonEmptyText(artifact.provider)
+    || !nonEmptyText(artifact.model)
+    || !nonEmptyText(artifact.sourceKind)
+  ) {
+    return false
+  }
+
+  return (
+    aspectRatioMatches(
+      artifact.requestedAspectRatio,
+      artifact.width,
+      artifact.height,
+    )
+    && expectedNumberMatches(artifact.expected, ['width', 'widthPx'], artifact.width)
+    && expectedNumberMatches(artifact.expected, ['height', 'heightPx'], artifact.height)
+    && expectedNumberMatches(
+      artifact.expected,
+      ['pixelCount'],
+      artifact.pixelCount,
+    )
+  )
+}
+
 export function verifyEditorJobObservation(
   observation: EditorJobObservation,
 ): EditorVerifiedOutcome {
@@ -681,6 +848,14 @@ export function verifyEditorJobObservation(
       artifact: null,
       status: 'needs_review',
       reason: 'artifact_missing',
+    }
+  }
+  if (!isAuthoritativeArtifact(observation.artifact)) {
+    return {
+      complete: false,
+      artifact: null,
+      status: 'needs_review',
+      reason: 'artifact_invalid',
     }
   }
   return {

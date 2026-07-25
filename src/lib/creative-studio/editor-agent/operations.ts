@@ -112,6 +112,12 @@ function assertBefore(actual: unknown, expected: unknown): void {
   }
 }
 
+function assertFiniteNumbers(values: number[]): void {
+  if (values.some((value) => !Number.isFinite(value))) {
+    throw new Error('operation_value_invalid')
+  }
+}
+
 function replaceClip(
   snapshot: EditorCompositionSnapshot,
   target: EditorOperationTarget,
@@ -149,6 +155,7 @@ export function applyEditorOperation(
         { startSec: clip.startSec, endSec: clip.endSec },
         operation.before,
       )
+      assertFiniteNumbers([operation.after.startSec, operation.after.endSec])
       const startSec = round(clamp(operation.after.startSec, 0, snapshot.canvas.durationSec))
       const endSec = round(clamp(operation.after.endSec, 0, snapshot.canvas.durationSec))
       if (endSec - startSec < 0.1) throw new Error('caption_timing_invalid')
@@ -169,6 +176,12 @@ export function applyEditorOperation(
         },
         operation.before,
       )
+      assertFiniteNumbers([
+        operation.after.startSec,
+        operation.after.endSec,
+        operation.after.sourceStartSec,
+        operation.after.sourceEndSec,
+      ])
       const next = {
         startSec: round(clamp(operation.after.startSec, 0, snapshot.canvas.durationSec)),
         endSec: round(clamp(operation.after.endSec, 0, snapshot.canvas.durationSec)),
@@ -185,18 +198,32 @@ export function applyEditorOperation(
   }
 
   if (operation.kind === 'clip.split') {
-    replaceClip(snapshot, operation.target, (clip) => {
+    replaceClip(snapshot, operation.target, (clip, _index, track) => {
       assertClipKind(clip, ['video', 'image'])
       assertBefore(
         { clipId: clip.id, startSec: clip.startSec, endSec: clip.endSec },
         operation.before,
       )
+      assertFiniteNumbers([operation.after.splitAtSec])
       const splitAtSec = round(operation.after.splitAtSec)
       if (
         splitAtSec - clip.startSec < 0.2
         || clip.endSec - splitAtSec < 0.2
       ) {
         throw new Error('split_outside_clip')
+      }
+      if (
+        !operation.after.leftClipId.trim()
+        || !operation.after.rightClipId.trim()
+        || track.clips.some((candidate) => (
+          candidate.id !== clip.id
+          && (
+            candidate.id === operation.after.leftClipId
+            || candidate.id === operation.after.rightClipId
+          )
+        ))
+      ) {
+        throw new Error('duplicate_split_clip_id')
       }
       const sourceSplitSec = round(
         clip.sourceStartSec + (splitAtSec - clip.startSec),
@@ -225,6 +252,7 @@ export function applyEditorOperation(
     const found = findEditorClip(snapshot, operation.target)
     if (!found) throw new Error('operation_target_missing')
     assertBefore({ index: found.index }, operation.before)
+    assertFiniteNumbers([operation.after.index])
     const nextIndex = Math.round(
       clamp(operation.after.index, 0, found.track.clips.length - 1),
     )
@@ -238,6 +266,13 @@ export function applyEditorOperation(
       assertClipKind(clip, ['video', 'image', 'caption'])
       assertBefore(clip.transform, operation.before)
       const after = operation.after
+      assertFiniteNumbers([
+        after.x,
+        after.y,
+        after.scale,
+        after.rotation,
+        after.opacity,
+      ])
       const transform = {
         x: round(clamp(after.x, -2, 2)),
         y: round(clamp(after.y, -2, 2)),
@@ -254,6 +289,7 @@ export function applyEditorOperation(
     replaceClip(snapshot, operation.target, (clip) => {
       assertClipKind(clip, ['video', 'voice', 'music', 'sfx'])
       assertBefore(clip.volume, operation.before)
+      assertFiniteNumbers([operation.after])
       return [{ ...clip, volume: round(clamp(operation.after, 0, 1)) }]
     })
     return

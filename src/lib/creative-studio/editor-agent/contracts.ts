@@ -223,7 +223,11 @@ export type EditorPendingAction = {
   requiredRole: 'owner'
   state: 'requires_separate_confirmation' | 'blocked'
   blockedReason:
+    | 'provider_unavailable'
     | 'provider_disabled'
+    | 'invalid_cost'
+    | 'cost_cap_exceeded'
+    | 'voice_inactive'
     | 'voice_revoked'
     | 'voice_not_consented'
     | 'external_effect_not_allowed'
@@ -251,7 +255,11 @@ export type EditorPlanWarningCode =
   | 'role_claim_ignored'
   | 'ambiguous_target'
   | 'unsupported_instruction'
+  | 'provider_unavailable'
   | 'provider_disabled'
+  | 'invalid_cost'
+  | 'cost_cap_exceeded'
+  | 'voice_inactive'
   | 'voice_revoked'
   | 'voice_not_consented'
   | 'external_publish_separated'
@@ -387,7 +395,12 @@ export type EditorVerifiedOutcome =
       complete: false
       artifact: null
       status: 'queued' | 'running' | 'failed' | 'needs_review'
-      reason: 'not_finished' | 'failed' | 'ambiguous_result' | 'artifact_missing'
+      reason:
+        | 'not_finished'
+        | 'failed'
+        | 'ambiguous_result'
+        | 'artifact_missing'
+        | 'artifact_invalid'
     }
 
 export class CompositionCommandError extends Error {
