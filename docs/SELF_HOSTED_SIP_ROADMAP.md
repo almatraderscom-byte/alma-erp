@@ -38,6 +38,15 @@ Trunk id31: register+peer 103.170.231.10:5060 udp, user 09649777738, unlimited. 
 route patterns 01*/880* -> trunk. Inbound route: DID -> CUSTOM FUNCTION "Answer URL"
 (.../ngs-inbound?k=SECRET, no caller var = the bug). License: 100 calls.
 
+> **CURRENT STATE 2026-07-25 — read `docs/PHONE_SYSTEM_HANDOFF.md` first.** All phases below
+> are built, live-proven and merged (PRs #563, #566, #569, #572), and the cutover is done
+> (Vercel runs `VOICE_CALL_PROVIDER=sip`). Part 1 and Part 2 feature work is finished too.
+> ONE thing is blocked and it is provider-side: outbound INVITEs are accepted with
+> `100 Trying` and then silently dropped — a CANCEL comes back
+> `481 Call/Transaction Does Not Exist`, so the call never exists on their switch and never
+> reaches their CDR. Proven by packet capture; our config, caller-ID, late delivery and the
+> port were each ruled out by experiment. The owner is with provider support.
+
 # BUILD PHASES (feasibility proven; now engineering)
 
 ## Phase 1 — Outbound via SIP behind VOICE_CALL_PROVIDER='sip'  ✅ BUILT + LIVE-PROVEN 2026-07-25
