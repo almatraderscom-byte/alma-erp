@@ -97,6 +97,10 @@ export const ADVANCED_ENGINE_CAPABILITIES: readonly AdvancedEngineCapability[] =
   {
     engine: 'gemini',
     actualModels: GENERIC_IMAGE_MODELS,
+    // Keep the owner-selected Gemini/GPT Image/Seedream lane narrower than
+    // upstream model capability: Advanced exposes it only for the two
+    // reference-guided modes below; Generate/swap/face/edit stay on their
+    // explicitly modelled xAI/FASHN lanes instead of being inferred here.
     modes: {
       product_to_model: GENERAL_TWO_REF,
       try_on: { ...GENERAL_TWO_REF, required: ['person', 'product'], optional: undefined },
