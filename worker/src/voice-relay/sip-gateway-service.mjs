@@ -161,6 +161,52 @@ async function persistCdr(id) {
 }
 
 /**
+ * Send a call recording to Telegram as PLAYABLE audio.
+ *
+ * A link is not good enough: the owner asked to hear the call from inside Telegram without
+ * opening a browser and signing in. Converted to a small mono mp3 first — an 8 kHz WAV is
+ * ~16 KB/s and Telegram renders mp3 with a proper player.
+ *
+ * Sent from the gateway rather than the app because the audio already lives here: no upload,
+ * no round trip, and it still works if Vercel is unreachable.
+ */
+async function sendRecordingToTelegram(wavPath, { title, seconds, caption }) {
+  const token = process.env.ASSISTANT_BOT_TOKEN
+  const chatId = process.env.TELEGRAM_OWNER_CHAT_ID
+  if (!token || !chatId) { log('telegram recording skipped: bot token / chat id missing'); return false }
+  const mp3Path = `${wavPath.replace(/\.wav$/, '')}.mp3`
+  try {
+    // Resample to 44.1 kHz. Encoding telephony audio straight to an 8 kHz mp3 produces a
+    // technically valid MPEG-2.5 file that many players — Telegram's included — show with the
+    // right duration and then play as SILENCE (owner hit exactly that). 44.1 kHz is
+    // universally decodable; 48 kbps mono keeps a long call to about a megabyte.
+    // -nostdin so ffmpeg never blocks waiting on a console.
+    await execFileAsync('ffmpeg', ['-y', '-nostdin', '-loglevel', 'error', '-i', wavPath,
+      '-ar', '44100', '-ac', '1', '-codec:a', 'libmp3lame', '-b:a', '48k', mp3Path], { timeout: 120_000 })
+    const audio = await readFile(mp3Path)
+    const form = new FormData()
+    form.append('chat_id', String(chatId))
+    form.append('title', title || 'ALMA কল')
+    form.append('performer', 'ALMA')
+    if (seconds) form.append('duration', String(seconds))
+    if (caption) form.append('caption', String(caption).slice(0, 1000))
+    form.append('audio', new Blob([audio], { type: 'audio/mpeg' }), `${(title || 'call').replace(/[^\w.-]/g, '_')}.mp3`)
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendAudio`, {
+      method: 'POST', body: form, signal: AbortSignal.timeout(120_000),
+    })
+    const ok = res.ok
+    if (!ok) log(`telegram sendAudio HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 120)}`)
+    else log('recording sent to Telegram as audio')
+    return ok
+  } catch (err) {
+    log('telegram recording failed:', err?.message)
+    return false
+  } finally {
+    await unlink(mp3Path).catch(() => {})
+  }
+}
+
+/**
  * Put a finished recording in Supabase and return a URL the owner can open.
  * Signed for a long window rather than made public: a phone call is private business
  * content, so the link should be shareable with him without making the bucket readable.
@@ -306,6 +352,8 @@ class Call {
     this.transferring = false
     this.ringGroup = null               // remaining transfer targets to try, in order
     this.ringIndex = 0
+    this.ringRound = 1                  // which pass over the group we are on
+    this.moh = false                    // hold music playing while we hunt for a human
     this.playOnly = false               // one-way message call: play a file, then hang up
     this.playUrl = ''
     this.playFile = ''
@@ -507,12 +555,21 @@ class Call {
         const buf = await readFile(file)
         // A near-empty WAV is a call where nothing was ever said — not worth storing.
         if (buf.length > 8000) {
+          const secs = Math.max(0, Math.round((buf.length - 44) / (8000 * 2)))
           const url = await uploadRecording(name, buf)
           if (url) {
-            const secs = Math.max(0, Math.round((buf.length - 44) / (8000 * 2)))
             putCdr(this.channelId, { recordingUrl: url, recordingSecs: secs })
             log(this.channelId, `recording stored (${secs}s)`)
           }
+          // Deliver the audio itself, whether or not the upload worked — hearing the call is
+          // the point, and a failed upload should not also cost the owner the recording.
+          const who = this.params?.caller || this.params?.recipientName || cdr.get(this.channelId)?.to || 'কল'
+          const mins = Math.floor(secs / 60)
+          await sendRecordingToTelegram(file, {
+            title: `${who} — ${mins ? `${mins}ম ` : ''}${secs % 60}সে`,
+            seconds: secs,
+            caption: `${this.inbound ? 'ইনকামিং' : 'আউটগোয়িং'} কল • ${who} • ${secs} সেকেন্ড`,
+          })
         }
         await unlink(file).catch(() => {})
         putCdr(this.channelId, { _pendingRecording: false })
@@ -612,6 +669,13 @@ class Call {
             }).catch((err) => log(this.channelId, 'voicemail notify failed:', err?.message))
             log(this.channelId, `voicemail delivered (${secs}s)`)
           }
+          // The message itself, playable in Telegram — a voicemail the owner has to go and
+          // fetch from a link is a voicemail he will hear late.
+          await sendRecordingToTelegram(file, {
+            title: `ভয়েসমেইল — ${this.params?.caller || 'অজানা'}`,
+            seconds: secs,
+            caption: `ভয়েসমেইল • ${this.params?.caller || 'অজানা নম্বর'} • ${secs} সেকেন্ড — সহকারী কলটি ধরতে পারেনি`,
+          })
         } else {
           log(this.channelId, 'voicemail too short — discarded')
         }
@@ -682,6 +746,7 @@ class Call {
     if (this.digitTimer) { clearTimeout(this.digitTimer); this.digitTimer = null }
     if (this.vmTimer) { clearTimeout(this.vmTimer); this.vmTimer = null }
     if (this.vmPromptTimer) { clearTimeout(this.vmPromptTimer); this.vmPromptTimer = null }
+    if (this.moh) await stopMoh(this)
     try { this.asSocket?.end() } catch { /* */ }
     // End the PSTN leg + tidy the bridge/externalMedia via ARI.
     try { if (this.extChannelId) await ari('DELETE', `/channels/${this.extChannelId}`).catch(() => {}) } catch { /* */ }
@@ -986,8 +1051,10 @@ async function onAriEvent(e) {
         call.answered = true
         call.answeredAt = Date.now()
         // Somebody picked up: stop walking the ring group.
+        // Somebody picked up: stop walking the group and drop the hold music, so the two
+        // humans hear each other rather than the music.
         const parent = call._transferParent && calls.get(call._transferParent)
-        if (parent) parent.ringGroup = null
+        if (parent) { parent.ringGroup = null; await stopMoh(parent) }
         try { await ari('POST', `/bridges/${call._bridgeInto}/addChannel`, { channel: call.channelId }) }
         catch (err) { log(call.channelId, 'forward bridge failed', err?.message) }
         return
@@ -1142,7 +1209,11 @@ password=${s.password}
 type=aor
 max_contacts=2
 remove_existing=yes
-qualify_frequency=30
+;; qualify OFF for browsers. A WebRTC contact that fails to answer OPTIONS gets marked
+;; Unavailable, and Asterisk then refuses to dial it — the same trap that made the trunk
+;; refuse originations in Phase 1. A browser tab either has a live websocket or it does not,
+;; so polling it adds nothing and can only take the phone away from a staff member.
+qualify_frequency=0
 `).join('')
   await writeFile(WEBRTC_CONF, `;; GENERATED by sip-gateway-service — do not edit by hand.\n${blocks}`, { mode: 0o640 })
   try { await execFileAsync('chown', ['asterisk:asterisk', WEBRTC_CONF]) } catch { /* best effort */ }
@@ -1267,12 +1338,20 @@ const ctrlServer = http.createServer(async (req, res) => {
   }
   if (!m) return json(res, 404, { error: 'not found' })
   if (!authOk(req)) {
-    // Somebody is trying keys against a call-control API. Worth knowing about, but alert at
-    // most once an hour so a scanner cannot turn this into its own notification flood.
+    // Log WHO, always: without a source there is no way to tell a background scanner from
+    // our own app failing to authenticate, and those need opposite responses.
+    const src = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '?'
+    log(`unauthorized ${req.method} ${url.pathname} from ${src} ua=${String(req.headers['user-agent'] || '-').slice(0, 60)}`)
     authFailures++
-    if (authFailures >= 5 && Date.now() - lastAuthAlert > 3_600_000) {
-      lastAuthAlert = Date.now(); authFailures = 0
-      void alertOwner('ফোন সিস্টেমে অননুমোদিত চেষ্টা', 'কল-কন্ট্রোলে ভুল পাসওয়ার্ড দিয়ে বারবার ঢোকার চেষ্টা হচ্ছে।')
+    // This endpoint is on the public internet, so it WILL be probed. Alerting on that spends
+    // the owner's notification budget — his tier-2 limit was actually exhausted by this alarm
+    // (6/5 used), which could have suppressed a real business alert. So: a much higher bar,
+    // and at most once every six hours.
+    if (authFailures >= 50 && Date.now() - lastAuthAlert > 6 * 3_600_000) {
+      lastAuthAlert = Date.now()
+      const count = authFailures
+      authFailures = 0
+      void alertOwner('ফোন সিস্টেমে বারবার অননুমোদিত চেষ্টা', `কল-কন্ট্রোলে ${count} বার ভুল পরিচয় দিয়ে ঢোকার চেষ্টা হয়েছে। সিস্টেম প্রতিবার আটকে দিয়েছে — কিছু ভাঙেনি।`)
     }
     return json(res, 401, { error: 'unauthorized' })
   }
@@ -1413,14 +1492,43 @@ async function transferCall(call, forwardTo) {
   if (!group.length) return { ok: false, error: 'no forward destination' }
   call.ringGroup = group
   call.ringIndex = 0
+  call.ringRound = 1
+  // Hold music while we look for a human. Silence is the worst thing to give a caller who was
+  // just told "connecting you" — they assume the line died and hang up.
+  // SIP_MOH_CLASS lets the owner swap in his own recorded hold message without touching code
+  // (drop the audio into a musiconhold class on the VPS and set the name here).
+  await ari('POST', `/bridges/${call.bridgeId}/moh`, MOH_CLASS ? { mohClass: MOH_CLASS } : undefined)
+    .catch((err) => log(call.channelId, 'moh failed:', err?.message))
+  call.moh = true
   return dialNextInGroup(call)
+}
+
+/** How many times to walk the whole ring group before handing the caller back to the AI. */
+const TRANSFER_ROUNDS = Number(process.env.SIP_TRANSFER_ROUNDS || 2)
+/** Music-on-hold class played while hunting for a human. Empty = Asterisk's default. */
+const MOH_CLASS = process.env.SIP_MOH_CLASS || ''
+
+/** Stop hold music (safe to call when it was never started). */
+async function stopMoh(call) {
+  if (!call?.moh || !call.bridgeId) return
+  call.moh = false
+  await ari('DELETE', `/bridges/${call.bridgeId}/moh`).catch(() => {})
 }
 
 /** Dial the next member of the ring group; falls back to the AI when the list is exhausted. */
 async function dialNextInGroup(call) {
   const dest = call.ringGroup?.[call.ringIndex]
   if (!dest) {
+    // One pass is not a serious attempt — people miss the first ring while putting down what
+    // they were doing. Go round the group again before giving up on the caller.
+    if ((call.ringRound || 1) < TRANSFER_ROUNDS) {
+      call.ringRound = (call.ringRound || 1) + 1
+      call.ringIndex = 0
+      log(call.channelId, `ring group round ${call.ringRound}/${TRANSFER_ROUNDS}`)
+      return dialNextInGroup(call)
+    }
     log(call.channelId, 'ring group exhausted — returning the caller to the AI')
+    await stopMoh(call)
     await returnToAi(call, 'কাউকেই লাইনে পাওয়া যায়নি')
     return { ok: false, error: 'nobody answered' }
   }
@@ -1580,6 +1688,9 @@ audioServer.listen(AS_PORT, AS_BIND, () => log(`AudioSocket TCP listening ${AS_B
  */
 function attachWsProxy(server) {
   server.on('upgrade', (req, socket, head) => {
+    // Logged unconditionally: when a browser reports a bare "closed (code 1006)" the only way
+    // to know whether the attempt even arrived is to record every one that does.
+    log(`ws upgrade ${req.method} ${req.url} HTTP/${req.httpVersion} proto=${req.headers['sec-websocket-protocol'] || '-'} from=${req.socket.remoteAddress}`)
     if (!String(req.url || '').startsWith('/ws')) { socket.destroy(); return }
     const upstream = net.connect(ASTERISK_HTTP_PORT, ASTERISK_HTTP_HOST, () => {
       // Replay the handshake verbatim, then let the two sockets talk directly.

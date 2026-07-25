@@ -161,6 +161,13 @@ export default function AgentSidebar({
             ALMA Agent
           </span>
           <a
+            href="/agent/phone"
+            className="rounded-full border border-border-subtle bg-white/[0.04] px-2 py-0.5 text-[9px] text-muted transition-all hover:border-[#E07A5F]/25 hover:bg-[#E07A5F]/5 hover:text-[#E07A5F]"
+            title="ব্রাউজার ফোন — সিম ছাড়াই কল"
+          >
+            ☎
+          </a>
+          <a
             href="/agent/costs"
             className="rounded-full border border-border-subtle bg-white/[0.04] px-2 py-0.5 text-[9px] text-muted transition-all hover:border-[#E07A5F]/25 hover:bg-[#E07A5F]/5 hover:text-[#E07A5F]"
             title="খরচ ড্যাশবোর্ড"
