@@ -163,3 +163,22 @@ export function parseVideoEditContract(input: unknown, fallbackDurationSec = 15)
 export function isTrackOnlyRerender(contract: VideoEditContract): boolean {
   return !contract.rerender.includes('visual')
 }
+
+/**
+ * Visual rerenders always derive from the immutable first render. Track-only
+ * rerenders instead preserve the latest visible edit, where brandedPath is
+ * newer than a prior editedPath.
+ */
+export function selectVideoEditSourcePath(
+  result: Record<string, unknown>,
+  preferLatestVisible: boolean,
+): string | undefined {
+  const keys = preferLatestVisible
+    ? ['brandedPath', 'editedPath', 'storagePath']
+    : ['storagePath', 'editedPath', 'brandedPath']
+  for (const key of keys) {
+    const path = result[key]
+    if (typeof path === 'string' && path.length > 0) return path
+  }
+  return undefined
+}

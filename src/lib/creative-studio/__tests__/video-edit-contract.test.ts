@@ -4,6 +4,7 @@ import {
   editedDurationSec,
   isTrackOnlyRerender,
   parseVideoEditContract,
+  selectVideoEditSourcePath,
 } from '@/lib/creative-studio/video-edit-contract'
 
 describe('CSE5 video edit contract', () => {
@@ -52,5 +53,15 @@ describe('CSE5 video edit contract', () => {
       ...createDefaultVideoEditContract(8),
       segments: [{ id: 'bad', startSec: 2, endSec: 2.01, order: 0 }],
     })).toThrow('segment_too_short')
+  })
+
+  it('preserves the newest visible edit for track-only rerenders', () => {
+    const result = {
+      storagePath: 'generated/source.mp4',
+      editedPath: 'generated/timeline.mp4',
+      brandedPath: 'generated/finished.mp4',
+    }
+    expect(selectVideoEditSourcePath(result, false)).toBe('generated/source.mp4')
+    expect(selectVideoEditSourcePath(result, true)).toBe('generated/finished.mp4')
   })
 })

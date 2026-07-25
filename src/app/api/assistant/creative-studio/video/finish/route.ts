@@ -10,7 +10,10 @@ import { prisma } from '@/lib/prisma'
 import { buildOverlayPlan, type FinishTemplateInput } from '@/lib/creative-studio/video-finish'
 import { VIDEO_ASPECTS } from '@/lib/creative-studio/video-recipes'
 import { studioActionBlockReason } from '@/lib/creative-studio/studio-policy'
-import { parseVideoEditContract } from '@/lib/creative-studio/video-edit-contract'
+import {
+  parseVideoEditContract,
+  selectVideoEditSourcePath,
+} from '@/lib/creative-studio/video-edit-contract'
 
 export const runtime = 'nodejs'
 
@@ -29,13 +32,11 @@ async function ownerAllowed(req: NextRequest): Promise<Response | null> {
 function sourceStoragePath(result: Record<string, unknown>): string | undefined {
   // Always derive from the immutable first render. Prior edited/branded
   // variants remain outputs, never the next generation's source.
-  return [result.storagePath, result.editedPath, result.brandedPath]
-    .find((path): path is string => typeof path === 'string' && path.length > 0)
+  return selectVideoEditSourcePath(result, false)
 }
 
 function latestRenderedPath(result: Record<string, unknown>): string | undefined {
-  return [result.editedPath, result.brandedPath, result.storagePath]
-    .find((path): path is string => typeof path === 'string' && path.length > 0)
+  return selectVideoEditSourcePath(result, true)
 }
 
 export async function GET(req: NextRequest) {
