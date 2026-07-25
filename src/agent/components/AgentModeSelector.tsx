@@ -92,7 +92,7 @@ export default function AgentModeSelector({
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-50 mb-1.5 w-64 overflow-hidden rounded-xl border border-border bg-card/90 shadow-[0_-8px_30px_rgba(0,0,0,0.12)]">
+        <div className="absolute bottom-full left-0 z-50 mb-1.5 w-64 overflow-hidden rounded-xl border border-border bg-card shadow-[0_-8px_30px_rgba(0,0,0,0.18)] backdrop-blur-xl">
           <div className="border-b border-border-subtle px-3 py-2 text-[10px] text-muted">
             কাজটা কীভাবে হবে — যেকোনো সময় বদলাতে পারবেন
           </div>

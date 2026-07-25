@@ -6,6 +6,31 @@ import { isSelectableModelId } from '@/agent/lib/models/registry'
 import { isChatMode } from '@/agent/lib/chat-mode'
 import { prisma } from '@/lib/prisma'
 
+/**
+ * One conversation's settings. The web app reads this when a deep link handed it
+ * only an id — without it a 'plan' chat would silently reopen as 'auto', with
+ * every withheld tool re-armed.
+ */
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { id: string } },
+) {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
+
+  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+
+  const { id } = await Promise.resolve(params)
+  const conv = await prisma.agentConversation.findUnique({
+    where: { id },
+    select: { id: true, title: true, projectId: true, archived: true, pinned: true, modelId: true, chatMode: true, updatedAt: true },
+  })
+  if (!conv) return Response.json({ error: 'not_found' }, { status: 404 })
+  return Response.json(conv)
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } },

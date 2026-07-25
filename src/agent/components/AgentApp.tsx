@@ -515,6 +515,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           conversationId: string | null
           projectId: string | null
           modelId: string | null
+          chatMode: string | null
         }
         if (!data.conversationId) return
         if (streamingRef.current || activeConvIdRef.current) return
@@ -523,6 +524,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           title: null,
           projectId: data.projectId,
           modelId: data.modelId ?? undefined,
+          chatMode: data.chatMode,
           archived: false,
           updatedAt: '',
         })
@@ -674,7 +676,16 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setActiveConvId(conv.id)
     setActiveConvProjectId(conv.projectId)
     setActiveModelId(conv.modelId ?? 'auto')
+    // Deep links and panel buttons hand us a PARTIAL conversation row, so an
+    // absent chatMode means "unknown", not "auto" — read the real one rather
+    // than silently dropping the owner back into full-tool mode.
     setChatMode(normalizeChatMode(conv.chatMode))
+    if (conv.chatMode === undefined) {
+      void fetch(`/api/assistant/conversations/${conv.id}`)
+        .then(async (r) => (r.ok ? (await r.json()) as { chatMode?: string | null } : null))
+        .then((row) => { if (row) setChatMode(normalizeChatMode(row.chatMode)) })
+        .catch(() => { /* offline — the chip stays on auto, which withholds nothing */ })
+    }
     setActivePersonalMode(
       !!personalProjectId && conv.projectId === personalProjectId,
     )
