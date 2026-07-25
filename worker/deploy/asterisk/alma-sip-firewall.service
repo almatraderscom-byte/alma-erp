@@ -1,0 +1,28 @@
+# systemd unit — re-applies the SIP port allowlist on every boot.
+#
+# WHY: plain iptables rules vanish on reboot. That fails OPEN (calls keep working, the
+# hardening silently disappears), so it can never cause an outage — but it also means the
+# scanner flood quietly comes back. This oneshot runs the same idempotent script we run by
+# hand, once the network is up.
+#
+# Install (as root on the VPS):
+#   cp worker/deploy/asterisk/sip-firewall.sh /usr/local/sbin/ && chmod +x /usr/local/sbin/sip-firewall.sh
+#   cp worker/deploy/asterisk/alma-sip-firewall.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now alma-sip-firewall.service
+#   systemctl status alma-sip-firewall.service     # expect: active (exited)
+#
+# Deliberately NOT using iptables-persistent: no package install on a live VPS, and a script
+# keeps one source of truth for the rules (sip-firewall.sh, in this repo).
+
+[Unit]
+Description=ALMA SIP port allowlist (5060/5062 -> trunk only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/sip-firewall.sh
+
+[Install]
+WantedBy=multi-user.target

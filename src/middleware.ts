@@ -38,6 +38,12 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/assistant/voice-call/ngs-inbound') return true
   // NGS outbound call-status callback (no session) — self-protects via ?k=NGS_INBOUND_SECRET.
   if (pathname === '/api/assistant/voice-call/ngs-status') return true
+  // Self-hosted SIP gateway on the VPS (no session, no cookie). Each self-protects in its
+  // own handler: sip-inbound via ?k=SIP_INBOUND_SECRET, the other two via an
+  // AGENT_INTERNAL_TOKEN Bearer — all three additionally behind requireAgentEnabled.
+  if (pathname === '/api/assistant/voice-call/sip-inbound') return true
+  if (pathname === '/api/assistant/voice-call/sip-confirm') return true
+  if (pathname === '/api/assistant/voice-call/sip-cdr') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   if (pathname === '/api/build-info') return true

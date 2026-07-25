@@ -9,6 +9,7 @@
  * Salah calls use a separate retry policy: 3m / 5m / 5m retries, cooldown bypassed.
  */
 
+import { createHmac } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { synthesizeSpeech, mp3ToTelephonyWav } from '../tts.mjs'
 import { logCost, calcTwilioCostUsd } from '../cost-log.mjs'
@@ -414,6 +415,84 @@ export async function makeNgsCall(text, opts = {}) {
 }
 
 /**
+ * One-way message call over our SELF-HOSTED SIP gateway (Phase 3) — the NGS <Play>
+ * replacement, same BD caller-ID, no middleman fee. Identical audio pipeline to
+ * makeNgsCall (Sarvam/Google TTS → 8 kHz WAV → Supabase signed URL); the difference is
+ * the destination: our gateway originates through the trunk via ARI, plays the file and
+ * hangs up when playback finishes. No bot, so no Gemini spend on a notification.
+ *
+ * @returns {Promise<{ok:boolean, callSid?:string, error?:string}>}
+ */
+/** Per-call signature the SIP gateway checks: HMAC(AGENT_INTERNAL_TOKEN, `relay:<id>:<exp>`). */
+function sipCallToken() {
+  const id = `oneway-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const exp = Date.now() + 15 * 60_000
+  const token = process.env.AGENT_INTERNAL_TOKEN || ''
+  return { id, exp, t: createHmac('sha256', token).update(`relay:${id}:${exp}`).digest('hex') }
+}
+
+export async function makeSipCall(text, opts = {}) {
+  const base = (process.env.SIP_GATEWAY_BASE || '').replace(/\/$/, '')
+  const key = process.env.SIP_GATEWAY_KEY
+  const secret = process.env.SIP_GATEWAY_SECRET
+  const toNumber = opts.toNumber ?? process.env.NGS_TO ?? process.env.TWILIO_TO_NUMBER
+  if (!base || !key || !secret || !toNumber) {
+    return { ok: false, error: 'SIP one-way env missing (SIP_GATEWAY_BASE/KEY/SECRET + destination)' }
+  }
+  try {
+    // Confirmation calls end with a spoken instruction, then the gateway stays on the line
+    // for the keypress. Appending it here (rather than at the call site) guarantees the
+    // receiver is ALWAYS told what to press whenever confirmation is requested.
+    const spoken = opts.confirm
+      ? `${text} ${opts.confirmPrompt ?? 'বুঝেছেন এবং কাজটি করবেন — নিশ্চিত করতে ১ চাপুন। না পারলে বা পরে জানাতে চাইলে ২ চাপুন।'}`
+      : text
+    const mp3Buffer = await synthesizeCallAudio(spoken.slice(0, MESSAGE_CALL_TEXT_LIMIT), opts)
+    const wavBuffer = await mp3ToTelephonyWav(mp3Buffer)
+    const supabase = getSupabase()
+    const storagePath = `calls/sip_${Date.now()}.wav`
+    const { error: uploadErr } = await supabase.storage
+      .from('agent-files')
+      .upload(storagePath, wavBuffer, { contentType: 'audio/wav', upsert: true })
+    if (uploadErr) throw new Error(`Supabase upload: ${uploadErr.message}`)
+    const { data: signed, error: signErr } = await supabase.storage
+      .from('agent-files')
+      .createSignedUrl(storagePath, 3600)
+    if (signErr || !signed?.signedUrl) throw new Error(`signed url: ${signErr?.message ?? 'none'}`)
+
+    const appUrl = (process.env.APP_URL || '').replace(/\/$/, '')
+    const res = await fetch(`${base}/api/v1/call`, {
+      method: 'POST',
+      headers: { 'X-Authorization': key, 'X-Authorization-Secret': secret, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: String(toNumber),
+        playUrl: signed.signedUrl,
+        // The gateway requires a per-call HMAC on every originate (not just two-way calls),
+        // so a leaked control-API key alone cannot dial our trunk. Same scheme the bot uses.
+        params: sipCallToken(),
+        ...(opts.confirm
+          ? {
+              collectDigits: true,
+              ref: opts.ref ?? '',
+              // Where the keypress lands. Default: our own app, so the result is recorded
+              // and the owner can be told whether the staff member actually acknowledged.
+              confirmCallbackUrl: opts.confirmCallbackUrl ?? (appUrl ? `${appUrl}/api/assistant/voice-call/sip-confirm` : ''),
+            }
+          : {}),
+      }),
+      signal: AbortSignal.timeout(30_000),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.call_id) {
+      return { ok: false, error: `SIP gateway ${res.status}: ${JSON.stringify(data).slice(0, 160)}` }
+    }
+    console.log(`[sip] one-way call placed ${data.call_id} → ${toNumber}`)
+    return { ok: true, callSid: data.call_id }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+}
+
+/**
  * @param {string} text
  * @param {{ force?: boolean, salah?: boolean, purpose?: 'salah', skipAutoRetry?: boolean, playOnce?: boolean, toNumber?: string, salahDate?: string, salahWaqt?: string }} opts
  *   - playOnce: message-delivery call — speak the FULL message exactly once, then hang up.
@@ -439,7 +518,13 @@ export async function makeTwilioCall(text, opts = {}) {
   // number when ONE_WAY_CALL_PROVIDER=ngs. Salah stays on Twilio (its 3m/5m/5m retry +
   // confirm-block logic is Twilio-specific). Owner-call-lock above is already honoured.
   // Default OFF → unchanged Twilio behaviour.
-  if (process.env.ONE_WAY_CALL_PROVIDER === 'ngs' && !salah) {
+  // 'sip' = our self-hosted Asterisk (no NGS fee), 'ngs' = the legacy middleman. Either
+  // way Twilio remains the fallback if the BD path fails, so a message always gets out.
+  if (process.env.ONE_WAY_CALL_PROVIDER === 'sip' && !salah) {
+    const sip = await makeSipCall(text, opts)
+    if (sip.ok) return sip
+    console.warn('[sip] one-way failed → falling back to Twilio:', sip.error)
+  } else if (process.env.ONE_WAY_CALL_PROVIDER === 'ngs' && !salah) {
     const ngs = await makeNgsCall(text, opts)
     if (ngs.ok) return ngs
     console.warn('[ngs] one-way failed → falling back to Twilio:', ngs.error)
