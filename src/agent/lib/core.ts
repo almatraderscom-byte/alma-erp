@@ -1,3 +1,20 @@
+/**
+ * NATIVE Claude turn loop (legacy path).
+ *
+ * @deprecated Universal pipeline Phase 8 — this loop is a SECOND implementation
+ * of the owner turn. It predates run-owner-turn.ts and does NOT participate in
+ * the universal tool pipeline: no state router, no relevance-aware provider cap,
+ * no prompt/tool-truth guarantee, no membership gate, no find_tool dynamic load.
+ * It is reached only when the head model is native Anthropic (today: an explicit
+ * Claude pick with ANTHROPIC_HEAD_DOWN off and the Monitor toggle on), which is
+ * rare — the house head is Gemini/Grok via run-owner-turn.ts.
+ *
+ * DO NOT add behaviour here. New harness work lands in run-owner-turn.ts, which
+ * every non-Anthropic head already uses. Retiring this loop (routing the native
+ * Claude head through the adapter path too) is its own effort: the route span
+ * emitted by run-owner-turn.ts is the usage signal — if native turns stop
+ * appearing, this file can go.
+ */
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, HEAD_TOOL_BUDGET } from '@/agent/config'
@@ -101,6 +118,14 @@ export type AgentEvent =
   // card into the reply flow and opens the artifacts panel on it.
   | { type: 'artifact_saved'; id: string; title: string; artifactType: string }
   | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
+  // Speak-first (owner rule 2026-07-25): the line the head wrote BEFORE it ran
+  // anything — "বস, … বুঝেছি — … দেখছি"। It is emitted as ordinary text_delta
+  // first (so every client streams it live), then this marker closes it. The
+  // marker exists because clients must be able to tell that opening line apart
+  // from mid-turn narration WITHOUT guessing: narration is deliberately cleared
+  // when a tool starts or a draft is rewritten, but this line is something Boss
+  // has already read and must survive both.
+  | { type: 'preamble'; text: string }
   | {
       type: 'verification_retry'
       attempt: number

@@ -144,6 +144,102 @@ export const AGENT_STYLE = parityFlagOn(process.env.AGENT_STYLE)
 // enforced, not hoped for. OFF in prod unless AGENT_STYLE_GATE=on; auto-ON preview.
 export const AGENT_STYLE_GATE = parityFlagOn(process.env.AGENT_STYLE_GATE)
 
+/**
+ * ─── UNIVERSAL SERVER-SIDE TOOL SELECTION ───────────────────────────────────
+ * One pipeline decides the tool set for EVERY head model (Grok / Gemini / Qwen /
+ * DeepSeek / Claude): the model choice changes WHO thinks, never WHICH tools
+ * exist. Industry shape (Anthropic Tool Search / Tool RAG): a small relevant
+ * pack + a runtime search hop for the long tail.
+ * Each flag is an independent kill switch; every one fails back to the exact
+ * behaviour that shipped before it.
+ */
+
+// Phase 2 — the system prompt is built from the FINAL shipped tool list instead
+// of the pre-filter/pre-cap list. Before this, the prompt taught tools the model
+// never received (`unknown_tool` calls). ON by default; AGENT_PROMPT_TOOL_TRUTH=off
+// restores the old ordering (prompt from the pre-filter list).
+export function promptToolTruthEnabled(flag = process.env.AGENT_PROMPT_TOOL_TRUTH): boolean {
+  return flag !== 'off'
+}
+
+// Phase 3 — refuse to EXECUTE a tool that was not shipped to the model this
+// round; answer with a find_tool redirect instead. 'on' enforces, 'shadow' only
+// logs the would-be block, 'off' disables. Default: enforce on preview, shadow
+// in production until the owner canaries it.
+export type ToolMembershipGateMode = 'on' | 'shadow' | 'off'
+export function toolMembershipGateMode(
+  flag = process.env.AGENT_TOOL_MEMBERSHIP_GATE,
+  vercelEnv = process.env.VERCEL_ENV,
+): ToolMembershipGateMode {
+  if (flag === 'on') return 'on'
+  if (flag === 'off') return 'off'
+  if (flag === 'shadow') return 'shadow'
+  return vercelEnv === 'production' ? 'shadow' : 'on'
+}
+
+// Phase 4 — when a provider cap (xAI's 200) forces a trim, keep the RELEVANT
+// tools (core + find_tool + the turn's intent packs) instead of blindly slicing
+// the array tail, and reserve headroom for find_tool's dynamic loads. ON by
+// default (correctness fix); AGENT_RELEVANCE_CAP=off restores the blind slice.
+export function relevanceCapEnabled(flag = process.env.AGENT_RELEVANCE_CAP): boolean {
+  return flag !== 'off'
+}
+
+// Phase 5 — portable JSON-Schema sanitisation on the OpenAI/xAI/OpenRouter path
+// (the Gemini path has always sanitised; this one passed raw schemas through).
+// OFF in prod unless AGENT_OPENAI_SCHEMA_SANITIZE=on; auto-ON on preview.
+export function openAiSchemaSanitizeEnabled(
+  flag = process.env.AGENT_OPENAI_SCHEMA_SANITIZE,
+  vercelEnv = process.env.VERCEL_ENV,
+): boolean {
+  return flag === 'on' || (vercelEnv === 'preview' && flag !== 'off')
+}
+
+// Phase 6 — route EVERY head tier (including the Qwen marketing head) through
+// the one state router, and make the per-round tool budget a registry property
+// instead of a provider check. OFF in prod unless AGENT_UNIVERSAL_TOOL_PIPELINE=on;
+// auto-ON on preview.
+export function universalToolPipelineEnabled(
+  flag = process.env.AGENT_UNIVERSAL_TOOL_PIPELINE,
+  vercelEnv = process.env.VERCEL_ENV,
+): boolean {
+  return flag === 'on' || (vercelEnv === 'preview' && flag !== 'off')
+}
+
+// Phase 7 — specialist sub-agents get a trimmed, role-scoped pack + find_tool
+// instead of whole tool groups (base alone is ~103 schemas). OFF in prod unless
+// AGENT_SUBAGENT_TOOL_TRIM=on; auto-ON on preview.
+export function subagentToolTrimEnabled(
+  flag = process.env.AGENT_SUBAGENT_TOOL_TRIM,
+  vercelEnv = process.env.VERCEL_ENV,
+): boolean {
+  return flag === 'on' || (vercelEnv === 'preview' && flag !== 'off')
+}
+
+/**
+ * Owner rule 2026-07-25 — SPEAK FIRST, then work (the Claude-app shape).
+ * The head must write one spoken line (what it understood + where it will look)
+ * BEFORE its first tool call. The blocker was mechanical, not stylistic: the
+ * grounding gate set `tool_choice: 'required'` on round 0, which forces the
+ * provider to emit a tool call and therefore NO text. With this on, round 0 is
+ * left on 'auto' and grounding is enforced AFTER the round instead (one nudge),
+ * so the guarantee survives and Boss still gets an instant reply.
+ * ON by default; AGENT_SPEAK_FIRST=off restores the forced-tool round 0.
+ */
+export function speakFirstEnabled(flag = process.env.AGENT_SPEAK_FIRST): boolean {
+  return flag !== 'off'
+}
+
+/** Hard ceiling on a trimmed specialist sub-agent's tool count. */
+export const SUBAGENT_TOOL_CAP = Number(process.env.SUBAGENT_TOOL_CAP) || 40
+
+/**
+ * Phase 6 — tool-round budget for a 'standard' (cheap, worker-grade) head. Only
+ * applied when AGENT_UNIVERSAL_TOOL_PIPELINE is on; before it, only the Claude
+ * head had a budget and Grok/DeepSeek heads could spree unbounded.
+ */
+export const STANDARD_HEAD_TOOL_BUDGET = Number(process.env.STANDARD_HEAD_TOOL_BUDGET) || 8
+
 // Phase prompt specifies budget_tokens values for reference.
 // budget_tokens is deprecated on claude-sonnet-4-6; we use thinking: {type:'adaptive'}
 // and map to output_config.effort levels instead (off → no thinking param, low → medium, high → high).

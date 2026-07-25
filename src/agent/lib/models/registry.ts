@@ -34,6 +34,20 @@ export interface ModelEntry {
    * prompt. Omitted = true (pickable).
    */
   headPickable?: boolean
+  /**
+   * Universal pipeline Phase 6 — how expensive a tool ROUND is on this model,
+   * which decides the head's per-turn tool-round budget. Before this, the budget
+   * was a `provider === 'anthropic'` check, so a Claude head was throttled after
+   * HEAD_TOOL_BUDGET rounds while an equally-billed Grok/DeepSeek head ran
+   * unbounded — a model-dependent behaviour difference with no principle behind
+   * it. Omitted = 'standard' semantics for the head budget only when the
+   * universal pipeline flag is on; otherwise the legacy provider check applies,
+   * so an unset field changes nothing.
+   *   'premium'   — expensive head: hand off to a worker early (HEAD_TOOL_BUDGET)
+   *   'marketing' — Qwen's own specialty: larger budget, no hand-off
+   *   'standard'  — cheap worker-grade head: STANDARD_HEAD_TOOL_BUDGET rounds
+   */
+  costTier?: 'premium' | 'marketing' | 'standard'
 }
 
 export const DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
@@ -327,6 +341,18 @@ export function getModel(id?: string | null): ModelEntry {
 
 export function isKnownModelId(id: string): boolean {
   return MODEL_REGISTRY.some((m) => m.id === id)
+}
+
+/**
+ * Universal pipeline Phase 6 — the head's tool-round budget class.
+ * Explicit `costTier` wins; otherwise it is DERIVED so the field stays purely
+ * additive (no model row has to be touched for the default to be sane):
+ * Anthropic heads are 'premium' (the historical behaviour — the only heads that
+ * ever had a budget), everything else is 'standard'.
+ */
+export function resolveHeadCostTier(model: Pick<ModelEntry, 'provider' | 'costTier'>): 'premium' | 'marketing' | 'standard' {
+  if (model.costTier) return model.costTier
+  return model.provider === 'anthropic' ? 'premium' : 'standard'
 }
 
 export function modelsByProvider(): Record<Provider, ModelEntry[]> {

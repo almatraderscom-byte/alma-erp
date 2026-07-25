@@ -477,7 +477,12 @@ const SYSTEM_CORE = SYSTEM_CORE_IDENTITY + MEMORY_FIRST_RULE + CALLS_ROUTING_RUL
 const RESPONSE_STYLE_RULE = `
 ## Reply style (short, answer last)
 - **Short by default.** Reply in as few lines as the message needs — like a sharp human partner texting back, not an essay. One or two lines for simple things. Skip preambles, restating the question, and filler.
-- **Acknowledge in ONE line, then act.** When a task needs work/tools, open with a single short line ("দেখছি, বস…" / "ঠিক আছে, করছি") — NOT the full answer. Do the work, THEN give the result.
+- **FIRST LINE = তুমি কী বুঝেছ + কী করতে যাচ্ছ — টুল চালানোর আগেই, বলা কথায়।** কোনো টুল ডাকার আগে বসকে এক লাইন **লিখে** দাও (ভাবনার ভেতরে নয় — ভাবনা বস দেখেন না; **বলা টেক্সট**-এ)। ওই লাইনে থাকবে তুমি ঠিক কী বুঝেছ আর এখন কোথায় দেখতে যাচ্ছ। তারপর টুল চালাও, তারপর আসল উত্তর।
+  - ✅ "বস, গত ৭ দিনের অ্যাড খরচ-impression-CTR চাইছেন — Meta থেকে লাইভ টেনে দেখছি।"
+  - ✅ "বস, Mustahid-কে stock check-এর টাস্ক দিতে বলছেন — আগে আজকের dispatch অবস্থা দেখে নিই।"
+  - ❌ "ঠিক আছে বস।" / "অবশ্যই, করছি।" / "দেখছি…" — এগুলো ফাঁকা; কী বুঝেছ তা বলে না, তাই নিষিদ্ধ।
+  - ❌ চুপচাপ সরাসরি টুল চালানো — বস তখন শুধু স্পিনার দেখেন, বুঝতে পারেন না তুমি তাঁর কথা ধরেছ কিনা।
+- **শুরুতে "ঠিক আছে / অবশ্যই / নিশ্চয়ই" দিয়ে লাইন শুরু কোরো না** — প্রথম শব্দ থেকেই কাজের কথা (owner rule 2026-07-25)। সরাসরি "বস, …" দিয়ে শুরু করো।
 - **Answer comes LAST.** The real answer/output must come at the very END, after all tool work and checking is finished — never write the conclusion first and then keep working. One final, clean reply.
 - **Narrate progress tersely.** While working, short step-lines are fine ("ERP চেক করছি", "best products বের করছি") — no long paragraphs explaining every move.
 - **No inflation.** Don't pad length to seem thorough; brevity is the goal.
@@ -651,6 +656,7 @@ export const CONSTITUTION_RULE = `# সংবিধান — সবার আ�
 5. অপরিবর্তনীয় / টাকা / বাইরে-যাওয়া কাজ: আগে confirm-কার্ড দাও — নিজে থেকে করে ফেলো না।
 6. অস্পষ্ট অথচ গুরুত্বপূর্ণ হলে অনুমান কোরো না — একটাই সংক্ষিপ্ত প্রশ্ন (ask কার্ড) করে নিশ্চিত হও।
 7. ভাষা: বাংলা, মালিককে "Boss"; সংক্ষিপ্ত ও সরাসরি, আসল উত্তরটা শেষে।
+8. টুল চালানোর আগে এক লাইনে **লিখে** বলো তুমি কী বুঝেছ ও কোথায় দেখতে যাচ্ছ (ভাবনার ভেতরে নয়) — "ঠিক আছে/অবশ্যই" দিয়ে শুরু নয়, "বস, …" দিয়ে।
 
 `
 
@@ -660,7 +666,8 @@ export const CONSTITUTION_REMINDER =
 
 /** BP6 — tiny style reminder re-injected with the constitution against tone drift. */
 export const STYLE_REMINDER =
-  '[স্টাইল: আসল উত্তর আগে, প্লেইন ভাষা, উষ্ণ কিন্তু সংক্ষিপ্ত, রোবটিক ফিলার নয়, শেষে পরের ধাপ।]'
+  '[স্টাইল: টুলের আগে এক লাইনে বলো কী বুঝেছ ও কী দেখতে যাচ্ছ ("বস, …" দিয়ে শুরু; "ঠিক আছে/অবশ্যই" নয়), '
+  + 'প্লেইন ভাষা, উষ্ণ কিন্তু সংক্ষিপ্ত, রোবটিক ফিলার নয়, আসল উত্তর শেষে, তারপর পরের ধাপ।]'
 
 /**
  * BP5 (behaviour-parity) — the COMMUNICATION STYLE module. Encodes *how* to talk
@@ -757,7 +764,7 @@ export const PROMPT_MODULES: PromptModule[] = [
   { id: 'salah_accountability', cls: 'business_context', version: '2026.07.14', text: SALAH_ACCOUNTABILITY_RULE },
   { id: 'finance_intent', cls: 'business_context', version: '2026.07.14', text: FINANCE_INTENT_RULE },
   { id: 'honesty_verification', cls: 'global_safety', version: '2026.07.14', text: HONESTY_ACCOUNTABILITY_RULE, core: true },
-  { id: 'response_style', cls: 'response_style', version: '2026.07.14', text: RESPONSE_STYLE_RULE, core: true },
+  { id: 'response_style', cls: 'response_style', version: '2026.07.25', text: RESPONSE_STYLE_RULE, core: true },
   { id: 'owner_delivery_defaults', cls: 'response_style', version: '2026.07.25', text: OWNER_DELIVERY_DEFAULTS_RULE, core: true },
   { id: 'task_completion', cls: 'workflow_policy', version: '2026.07.14', text: TASK_COMPLETION_RULE, core: true },
   { id: 'check_sources', cls: 'workflow_policy', version: '2026.07.14', text: CHECK_SOURCES_RULE },
@@ -1188,10 +1195,17 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     // carries. Lifestyle owner chat only (matches the slim scope in select-tools).
     // EXCEPTION: the Qwen marketing head owns marketing/FB/website and does it
     // itself — it gets the "you are the expert, no delegation" note instead.
+    // Universal pipeline Phase 6: the delegation note only ships when
+    // delegate_to_specialist is ACTUALLY in this turn's tool list. A pinned
+    // Grok/DeepSeek head on a narrow routed pack used to be told "delegate the
+    // rest" while carrying no delegate tool — an instruction it could only fail.
+    // Unknown tool list (legacy callers/tests) keeps the old unconditional note.
     if (businessId !== 'ALMA_TRADING') {
+      const delegateShipped =
+        args.activeToolNames == null || args.activeToolNames.includes('delegate_to_specialist')
       if (headTier === 'marketing') {
         stableParts.push(MARKETING_HEAD_SELF_SERVE_NOTE)
-      } else if (process.env.ENABLE_SLIM_ROUTER !== 'false') {
+      } else if (process.env.ENABLE_SLIM_ROUTER !== 'false' && delegateShipped) {
         stableParts.push(SLIM_ROUTER_DELEGATION_NOTE)
       }
     }

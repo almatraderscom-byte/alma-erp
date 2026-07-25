@@ -21,6 +21,7 @@
  */
 import type Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
+import { universalToolPipelineEnabled } from '@/agent/config'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 import type { HeadTier } from '@/agent/lib/models/head-router'
 import type { ToolGroupName } from './tool-groups'
@@ -91,6 +92,13 @@ export const CORE_PACK = [
   'save_task_checkpoint',
   'get_pending_approvals',
   'delegate_to_specialist',
+  // Universal pipeline Phase 1: the ESCAPE HATCH. A routed turn ships ≤24 tools,
+  // so a request the packs didn't anticipate used to leave the head with no way
+  // to reach the other ~300 registry tools — it could only say "tool নেই" (the
+  // exact 2026-07-22 live incident, one pack narrower). find_tool searches the
+  // FULL registry and loads matched schemas for the rest of the turn, so the
+  // whole registry stays ONE hop away from every routed turn. ~60 tokens.
+  'find_tool',
 ] as const
 
 export const DOMAIN_PACKS = {
@@ -175,6 +183,17 @@ export const DOMAIN_PACKS = {
 } as const
 
 export type PackKey = keyof typeof DOMAIN_PACKS
+
+// ── Phase 6 — the marketing head profile ─────────────────────────────────────
+// The Qwen marketing head used to bypass the router entirely and carry SIX whole
+// groups (~150 schemas, ~30k tokens/request, no diet, no delegation). It also
+// produced the "ads tool nai" incident when it was pinned explicitly and landed
+// on the slim generic profile instead. Under the router it gets a real profile:
+// the same core MINUS delegation (owner rule: Qwen does marketing ITSELF), with
+// the marketing packs PRE-SEEDED so the ads/social/creative tools are present
+// whatever the message says.
+export const MARKETING_CORE_PACK = CORE_PACK.filter((n) => n !== 'delegate_to_specialist')
+export const MARKETING_SEED_PACKS: PackKey[] = ['ads', 'social', 'creative']
 
 /**
  * Pack → the TOOL_GROUPS name whose prompt documentation/snapshot gating fits it.
@@ -298,24 +317,56 @@ export interface StateRoutedSelection {
 /**
  * Pure pack→tools assembly with the hard cap (exported for CI gates).
  * Priority: CORE first, then Phase 5 workflow step tools (the template's EXACT
- * legal next tools — they must survive any trim), then packs in the order
- * given; first HEAD_TOOL_HARD_LIMIT names survive, the rest are reported as
- * trimmed.
+ * legal next tools — they must survive any trim), then the matched packs.
+ *
+ * Universal pipeline Phase 1: the packs are drained ROUND-ROBIN, not
+ * concatenated. Straight concatenation spent the whole budget on the
+ * first-matched pack and starved the last one — "almatraders এ প্রোডাক্টটা
+ * publish করো" matches erp+website, and `publish_product` (the tool the message
+ * literally asks for) fell off the end of the 24 cap while erp's 11th read
+ * survived. Round-robin gives every matched pack its front tools (each pack
+ * lists its highest-value tools first), so the trim never removes the intent's
+ * own tool while a lower-value one from another pack stays.
  */
-export function assemblePack(packs: PackKey[], workflowTools: string[] = []): { names: string[]; trimmed: string[] } {
-  const ordered: string[] = [...CORE_PACK]
-  for (const name of workflowTools) {
+export function assemblePack(
+  packs: PackKey[],
+  workflowTools: string[] = [],
+  /**
+   * Core override. Phase 6: the marketing head must NOT carry
+   * delegate_to_specialist (owner rule — Qwen does marketing itself), so it
+   * passes MARKETING_CORE_PACK here instead of the default core.
+   */
+  core: readonly string[] = CORE_PACK,
+): { names: string[]; trimmed: string[] } {
+  return assemblePackWithLimit(packs, { workflowTools, core, limit: HEAD_TOOL_HARD_LIMIT })
+}
+
+/**
+ * The same assembly with a caller-chosen ceiling. Phase 7 uses it for specialist
+ * sub-agents (SUBAGENT_TOOL_CAP), which are allowed a wider pack than a head
+ * turn because they run once and hold no conversation.
+ */
+export function assemblePackWithLimit(
+  packs: PackKey[],
+  opts: { workflowTools?: string[]; core?: readonly string[]; limit?: number } = {},
+): { names: string[]; trimmed: string[] } {
+  const limit = opts.limit ?? HEAD_TOOL_HARD_LIMIT
+  const ordered: string[] = [...(opts.core ?? CORE_PACK)]
+  for (const name of opts.workflowTools ?? []) {
     if (!ordered.includes(name)) ordered.push(name)
   }
-  for (const p of packs) {
-    for (const name of DOMAIN_PACKS[p]) {
-      if (!ordered.includes(name)) ordered.push(name)
+  const seen = new Set(ordered)
+  const queues = packs.map((p) => [...DOMAIN_PACKS[p]] as string[])
+  const maxLen = queues.reduce((m, q) => Math.max(m, q.length), 0)
+  for (let i = 0; i < maxLen; i++) {
+    for (const q of queues) {
+      const name = q[i]
+      if (!name || seen.has(name)) continue
+      seen.add(name)
+      ordered.push(name)
     }
   }
-  return {
-    names: ordered.slice(0, HEAD_TOOL_HARD_LIMIT),
-    trimmed: ordered.slice(HEAD_TOOL_HARD_LIMIT),
-  }
+  return { names: ordered.slice(0, limit), trimmed: ordered.slice(limit) }
 }
 
 /** DB state signals — each read fails open (a DB blip must never block routing). */
@@ -402,8 +453,12 @@ export async function selectStateRoutedTools(opts: {
   headTier?: HeadTier
 }): Promise<StateRoutedSelection | null> {
   // Narrow modes keep their proven paths: personal + Trading have small stable
-  // sets already; the Qwen marketing head runs its own full-marketing profile.
-  if (opts.personalMode || opts.businessId === 'ALMA_TRADING' || opts.headTier === 'marketing') return null
+  // sets already.
+  if (opts.personalMode || opts.businessId === 'ALMA_TRADING') return null
+  // Phase 6: the Qwen marketing head joins the pipeline, flag-gated. Off → it
+  // keeps its legacy 6-group full-marketing profile from select-tools.
+  const marketing = opts.headTier === 'marketing'
+  if (marketing && !universalToolPipelineEnabled()) return null
 
   const state = await readStateSignals(opts.conversationId)
   const intentPacks = matchIntentPacks(opts.text)
@@ -411,19 +466,26 @@ export async function selectStateRoutedTools(opts: {
 
   // Structured state precedes text: on a continuation reply, state alone decides.
   // With no state and no keyword hit, we have no confident basis → fall back.
-  const packs: PackKey[] = continuation && state.packs.length > 0
+  const basePacks: PackKey[] = continuation && state.packs.length > 0
     ? state.packs
     : [...state.packs, ...intentPacks.filter((p) => !state.packs.includes(p))]
+  // Marketing: whatever the message matched comes FIRST (round-robin gives the
+  // leading queues their slots first), then the seed packs fill in — so the
+  // marketing head can never truthfully say "ads tool nai".
+  const packs: PackKey[] = marketing
+    ? [...basePacks, ...MARKETING_SEED_PACKS.filter((p) => !basePacks.includes(p))]
+    : basePacks
   if (packs.length === 0 && state.workflowTools.length === 0) return null
 
+  const core = marketing ? MARKETING_CORE_PACK : CORE_PACK
   // Phase 5 narrowing: a continuation reply inside a template-driven workflow
   // exposes ONLY the step's legal tools (+ core) — the smallest legal pack the
   // roadmap asks for. Any new-intent text keeps the pack union so the owner can
   // always pivot mid-job.
   const narrowToWorkflow = continuation && state.workflowTools.length > 0
   const { names, trimmed } = narrowToWorkflow
-    ? assemblePack([], state.workflowTools)
-    : assemblePack(packs, state.workflowTools)
+    ? assemblePack([], state.workflowTools, core)
+    : assemblePack(packs, state.workflowTools, core)
   const byName = new Map(TOOLS.map((t) => [t.name, t]))
   const selected = names.map((n) => byName.get(n)).filter((t): t is NonNullable<typeof t> => Boolean(t))
   if (selected.length === 0) return null

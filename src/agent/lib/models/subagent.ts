@@ -14,10 +14,14 @@ import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { roundUsd } from '@/agent/lib/pricing'
 import { logCost } from '@/agent/lib/cost-events'
 import { assembleSelectedTools, toolsToDefinitions } from '@/agent/tools/select-tools'
-import { executeTool } from '@/agent/tools/registry'
+import { TOOL_GROUP_NAMES } from '@/agent/tools/tool-groups'
+import { assemblePackWithLimit, MARKETING_CORE_PACK } from '@/agent/tools/state-router'
+import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
+import { subagentToolTrimEnabled, SUBAGENT_TOOL_CAP } from '@/agent/config'
+import { executeTool, type AgentTool } from '@/agent/tools/registry'
 import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
 import { captureAgentError } from '@/agent/lib/sentry'
-import { SPECIALIST_ROLES, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
+import { SPECIALIST_ROLES, type SpecialistRole, type SpecialistRoleDef } from '@/agent/lib/models/specialist-roles'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 import {
   resolveSubagentModel,
@@ -34,6 +38,35 @@ import { anthropicToolsToNeutral } from '@/agent/lib/models/neutral'
 
 const SUBAGENT_MAX_ITERATIONS = 4
 const SUBAGENT_MAX_TOKENS = 2048
+
+/**
+ * Universal pipeline Phase 7 — the specialist's tool set.
+ *
+ * The legacy path assembled whole tool GROUPS: `base` alone is ~103 schemas, so
+ * a `researcher` hop shipped ~140 schemas (~20k tokens) to answer one scoped
+ * question, and the sub-agents were the only place in the system with neither a
+ * diet nor a cap. With the flag on, the role's declared packs assemble the same
+ * way a head turn does — CORE minus delegation, plus find_tool so the rest of
+ * the registry stays one hop away — capped at SUBAGENT_TOOL_CAP.
+ * Flag off, or a role with no declared packs → the exact legacy behaviour.
+ */
+export function assembleRoleTools(def: SpecialistRoleDef): AgentTool[] {
+  const legacy = () =>
+    assembleSelectedTools(def.toolGroups).filter((t) => t.name !== 'delegate_to_specialist')
+  if (!subagentToolTrimEnabled() || !def.toolPacks?.length) return legacy()
+
+  const { names } = assemblePackWithLimit(def.toolPacks, {
+    core: [...MARKETING_CORE_PACK, FIND_TOOL_NAME].filter((n, i, a) => a.indexOf(n) === i),
+    limit: SUBAGENT_TOOL_CAP,
+  })
+  const byName = new Map(assembleSelectedTools([...TOOL_GROUP_NAMES]).map((t) => [t.name, t]))
+  const picked = names
+    .map((n) => byName.get(n))
+    .filter((t): t is AgentTool => Boolean(t) && t!.name !== 'delegate_to_specialist')
+  // Never hand a specialist an empty toolbox — a pack rename must degrade to the
+  // legacy set, not to a worker that can do nothing.
+  return picked.length > 0 ? picked : legacy()
+}
 
 class SubAgentIncompleteError extends Error {
   constructor(role: SpecialistRole) {
@@ -126,6 +159,10 @@ async function runAnthropicSubAgent(args: {
   let outputTokens = 0
   let finalText = ''
   let completed = false
+  // Phase 7 parity with the adapter loop: a trimmed specialist can discover the
+  // rest of the registry with find_tool and call it in a later round.
+  let liveTools = [...args.tools]
+  let dynamicLoaded = 0
 
   for (let i = 0; i < SUBAGENT_MAX_ITERATIONS; i++) {
     if (args.signal?.aborted) break
@@ -135,7 +172,7 @@ async function runAnthropicSubAgent(args: {
         model: args.model.apiModel,
         max_tokens: SUBAGENT_MAX_TOKENS,
         system: args.system,
-        tools: args.tools,
+        tools: liveTools,
         messages,
       },
       { signal: args.signal },
@@ -169,6 +206,16 @@ async function runAnthropicSubAgent(args: {
         businessId: args.businessId,
       })
       toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(annotateEmptyResult(result)) })
+      if (tu.name === FIND_TOOL_NAME && result.success) {
+        const matches = (result.data as { matches?: Array<{ name?: unknown }> } | undefined)?.matches ?? []
+        const known = new Set(liveTools.map((t) => t.name))
+        const wanted = matches.map((m) => String(m?.name ?? '')).filter((n) => n && !known.has(n))
+        for (const tool of await resolveToolsByName(wanted)) {
+          if (dynamicLoaded >= MAX_DYNAMIC_TOOLS_PER_TURN) break
+          dynamicLoaded++
+          liveTools = [...liveTools, { name: tool.name, description: tool.description, input_schema: tool.input_schema }]
+        }
+      }
     }
     messages = [...messages, { role: 'user', content: toolResults }]
   }
@@ -233,7 +280,7 @@ async function runWithModel(
   actualCostUsd: number | null
 }> {
   const system = buildSystemPrompt(def)
-  let rawTools = assembleSelectedTools(def.toolGroups).filter((t) => t.name !== 'delegate_to_specialist')
+  let rawTools = assembleRoleTools(def)
   if (params.readOnly) rawTools = filterToolsReadOnly(rawTools)
 
   if (model.provider === 'anthropic') {

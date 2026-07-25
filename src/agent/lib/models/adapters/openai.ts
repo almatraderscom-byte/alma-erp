@@ -7,7 +7,8 @@ import type {
 import type { NeutralMsg, NeutralTool, NeutralToolChoice, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
 import { resolveGenerationParams, toOpenAiGenerationParams } from '@/agent/lib/models/generation-params'
 import { repairToolArgs } from '@/agent/lib/models/tool-arg-repair'
-import { AGENT_UNIFORM_SAMPLING } from '@/agent/config'
+import { AGENT_UNIFORM_SAMPLING, openAiSchemaSanitizeEnabled } from '@/agent/config'
+import { sanitizeSchemaPortable } from '@/agent/lib/models/adapters/portable-schema'
 
 /** P9 — honest marker appended when a reply is cut at max_tokens (finish_reason
  * 'length'), so the owner never sees a silent mid-sentence stop. */
@@ -131,7 +132,14 @@ function toOpenAiTools(tools: NeutralTool[]): ChatCompletionTool[] {
     function: {
       name: t.name,
       description: t.description,
-      parameters: t.schema as Record<string, unknown>,
+      // Universal pipeline Phase 5 (Bug C): the Gemini path has always sanitised
+      // its declarations; this one shipped raw registry schemas, so "the same
+      // tool" was a different tool per provider. Light, non-lossy normalisation
+      // (see portable-schema.ts) — constraints preserved, structural/vendor keys
+      // dropped, deterministic key order for prefix-cache byte stability.
+      parameters: openAiSchemaSanitizeEnabled()
+        ? sanitizeSchemaPortable(t.schema)
+        : (t.schema as Record<string, unknown>),
     },
   }))
 }
