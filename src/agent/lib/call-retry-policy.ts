@@ -72,7 +72,8 @@ export async function applyCallRetryPolicy(record: {
           purpose: `${basePurpose} [পুনঃচেষ্টা ${next}/2]`,
           firstMessage: record.firstMessage,
           callType: 'contact',
-          voiceGender: 'female',
+          // Male is the house voice; a retry must not switch the speaker mid-conversation.
+          voiceGender: 'male',
           dueAt: new Date(Date.now() + RETRY_DELAY_MIN * 60_000),
           conversationId: record.conversationId,
         },

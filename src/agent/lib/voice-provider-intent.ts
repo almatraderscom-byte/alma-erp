@@ -46,12 +46,8 @@ const FEMALE_RE = new RegExp(
   'i',
 )
 
-/** Explicit male-voice request, so Boss can flip Sarvam to the male speaker (abhilash).
- * `\bmale\b` deliberately does NOT match inside "female" (no word boundary there). */
-const MALE_RE = new RegExp(
-  `\\bmale\\b|\\bman\\b|abhilash|hitesh|(?<!${B_L})(?:ছেলে|পুরুষ(?:ালি)?|অভিলাষ)(?!${B_R})`,
-  'i',
-)
+// There is deliberately no MALE_RE any more: male IS the default, so "ছেলে কণ্ঠে কল করো"
+// needs no pattern to match. Only a woman's voice has to be asked for.
 
 export type VoiceProvider = 'google' | 'elevenlabs' | 'sarvam'
 
@@ -68,9 +64,9 @@ export const SARVAM_VOICE: Record<'male' | 'female', { speaker: string; model: s
   male: { speaker: 'ashutosh', model: 'bulbul:v3' },
 }
 
-/** Resolve the Sarvam speaker+model for a gender (defaults to female/anushka). */
+/** Resolve the Sarvam speaker+model for a gender. Unspecified means male — the house voice. */
 export function sarvamVoiceFor(gender: 'male' | 'female' | undefined): { speaker: string; model: string } {
-  return SARVAM_VOICE[gender === 'male' ? 'male' : 'female']
+  return SARVAM_VOICE[gender === 'female' ? 'female' : 'male']
 }
 
 export interface OwnerVoicePref {
@@ -85,13 +81,13 @@ export interface OwnerVoicePref {
  * last) — the call flow is routinely two messages ("ElevenLabs ভয়েসে কল করবে…" then
  * the number), so a pref stated one message earlier must still count.
  *
- * Default is Sarvam Bulbul (owner decision 2026-07-18 — best Bangla): its default
- * voice is anushka (female). ElevenLabs still needs an explicit name (it is ~18× the
- * cost), and Google/Charon stays reachable when Boss asks for "আগের ভয়েস".
+ * Default is Sarvam Bulbul (owner decision 2026-07-18 — best Bangla), spoken by the MALE
+ * voice ashutosh unless Boss asks for a woman's. ElevenLabs still needs an explicit name
+ * (it is ~18× the cost), and Google/Charon stays reachable when Boss asks for "আগের ভয়েস".
  */
 export function detectVoiceProviderRequest(texts: string | string[]): OwnerVoicePref {
   const all = (Array.isArray(texts) ? texts : [texts]).filter(Boolean).join('\n')
-  if (!all.trim()) return { provider: 'sarvam', gender: 'female', explicit: false }
+  if (!all.trim()) return { provider: 'sarvam', gender: 'male', explicit: false }
 
   let provider: VoiceProvider
   let explicit: boolean
@@ -101,12 +97,13 @@ export function detectVoiceProviderRequest(texts: string | string[]): OwnerVoice
   else { provider = 'sarvam'; explicit = false }
 
   // Female is checked first so "female" never trips the MALE match hiding inside it.
-  // Sarvam's silent default is anushka (female); every other provider defaults male.
-  const gender: 'male' | 'female' = FEMALE_RE.test(all)
-    ? 'female'
-    : MALE_RE.test(all)
-      ? 'male'
-      : provider === 'sarvam' ? 'female' : 'male'
+  //
+  // Silence means MALE, on every provider. This used to follow Sarvam's own silent default
+  // (anushka, female), and on 2026-07-25 the owner took a live call in a woman's voice when
+  // he had asked for nothing — the assistant speaks for him, so male is the house voice
+  // (Sarvam ashutosh, matching the Google Charon male the project has always specified).
+  // A woman's voice now requires him to ask for one.
+  const gender: 'male' | 'female' = FEMALE_RE.test(all) ? 'female' : 'male'
 
   return { provider, gender, explicit }
 }
