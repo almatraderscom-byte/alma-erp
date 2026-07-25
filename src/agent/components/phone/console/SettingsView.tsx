@@ -26,6 +26,7 @@ import {
   type SettingView,
   type SettingsPayload,
 } from '@/agent/lib/phone-settings-types'
+import { WEEKDAYS } from '@/agent/lib/phone-routing-types'
 import { useJson } from './useJson'
 import { EmptyState, ErrorNote, PageHead, Panel } from './ui'
 
@@ -119,7 +120,40 @@ function Field({
     >
       <p className="mb-3 text-[12px] leading-relaxed text-muted">{def.help}</p>
 
-      {def.kind === 'enum' ? (
+      {def.kind === 'weekdays' ? (
+        <div className="flex flex-wrap gap-1.5">
+          {WEEKDAYS.map((d) => {
+            const picked = value.split(',').map((x) => x.trim()).filter(Boolean)
+            const on = picked.includes(d.value)
+            return (
+              <button
+                key={d.value}
+                type="button"
+                onClick={() => {
+                  const next = on ? picked.filter((x) => x !== d.value) : [...picked, d.value]
+                  setDraft(next.join(','))
+                  setDone(null)
+                }}
+                className={cn(
+                  'rounded-full border px-3 py-1.5 text-[12px] transition-colors',
+                  on ? 'border-[#E07A5F]/50 bg-[#E07A5F]/[0.16] font-semibold text-cream' : 'border-border-subtle bg-card/60 text-muted hover:text-cream',
+                )}
+              >
+                {d.label}
+              </button>
+            )
+          })}
+        </div>
+      ) : def.kind === 'ranges' ? (
+        <textarea
+          value={value}
+          onChange={(e) => { setDraft(e.target.value); setDone(null) }}
+          rows={3}
+          placeholder={def.placeholder}
+          spellCheck={false}
+          className="w-full rounded-xl border border-border-subtle bg-card/60 px-3 py-2 font-mono text-[12px] text-cream placeholder:text-muted focus:border-[#E07A5F]/40 focus:outline-none"
+        />
+      ) : def.kind === 'enum' ? (
         <div className="inline-flex flex-wrap gap-1 rounded-full border border-border-subtle bg-card/60 p-1">
           {(def.options ?? []).map((o) => (
             <button

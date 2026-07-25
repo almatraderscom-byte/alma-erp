@@ -22,8 +22,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
 import { isOwnerNumber } from '@/agent/lib/voice-call'
 import { buildOwnerCallFacts } from '@/agent/lib/call-facts'
-import { dhakaHour } from '@/agent/lib/quiet-hours'
-import { readSettingMap } from '@/agent/lib/phone-settings'
+import { decideInbound, readDidRoutes, readInboundSettings } from '@/agent/lib/phone-routing'
 
 export const runtime = 'nodejs'
 export const maxDuration = 20
@@ -46,72 +45,14 @@ function secretOk(provided: string): boolean {
   }
 }
 
-/**
- * Multi-DID (owner ask): each incoming DID can answer with its own persona and its own
- * forward number — the boss line runs the full assistant, a support/staff line answers as
- * the shop and forwards elsewhere. Configured without a redeploy via SIP_DID_MAP, e.g.
- *   SIP_DID_MAP={"09649777738":{"line":"boss"},"09649777739":{"line":"support","forward":"01XXXXXXXXX"}}
- * Unknown/absent DIDs fall back to the default assistant behaviour.
+/*
+ * Multi-DID and the time rules used to live here as three private helpers. They moved to
+ * `phone-routing.ts` in the console's step 4 for one reason: the ROUTING PREVIEW screen has
+ * to answer "a call from 01712345678 at 21:30 would reach …", and a preview that
+ * re-implements the rules is a second set of rules. The moment the two disagree the screen
+ * is lying — about the one thing (routing) whose bugs are invisible until a customer hits
+ * them. So the preview and this route now call the same `decideInbound()`.
  */
-type DidConfig = { line?: string; forward?: string; forwardBoss?: string; forwardSupport?: string; label?: string }
-function didConfig(did: string): DidConfig {
-  try {
-    const map = JSON.parse(process.env.SIP_DID_MAP ?? '{}') as Record<string, DidConfig>
-    const tail = (n: string) => n.replace(/\D/g, '').slice(-9)
-    if (map[did]) return map[did]
-    const hit = Object.entries(map).find(([k]) => tail(k) === tail(did))
-    return hit?.[1] ?? {}
-  } catch {
-    return {}
-  }
-}
-
-/**
- * Is the shop open right now (Asia/Dhaka)? Outside these hours the AI still answers — a
- * caller should never hear a dead line — but it says the office is closed and takes a
- * message instead of ringing staff who are not there.
- *
- * Both the window and the holiday list come from the phone console's settings screen, which
- * falls back to `SIP_OFFICE_HOURS` when no row has been saved — so this behaves exactly as it
- * did before the screen existed until the owner actually changes something.
- */
-async function officeOpenNow(settings: Record<string, string>): Promise<{ open: boolean; window: string; holiday: boolean }> {
-  const raw = settings.office_hours_dhaka?.trim() || process.env.SIP_OFFICE_HOURS?.trim()
-  const window = raw && /^\d{1,2}-\d{1,2}$/.test(raw) ? raw : '10-21'
-
-  // A declared holiday closes the whole day regardless of the hour. Compared as a Dhaka
-  // calendar date (UTC+6) rather than with a timezone library, for the same reason the quiet
-  // hours are: fewer moving parts on a path an inbound call waits on.
-  const today = new Date(Date.now() + 6 * 3_600_000).toISOString().slice(0, 10)
-  const holiday = (settings.phone_holidays ?? '')
-    .split(',')
-    .map((d) => d.trim())
-    .filter(Boolean)
-    .includes(today)
-  if (holiday) return { open: false, window, holiday: true }
-
-  const [fromRaw, toRaw] = window.split('-').map((x) => Number(x))
-  const from = Number.isFinite(fromRaw) ? fromRaw : 10
-  const to = Number.isFinite(toRaw) ? toRaw : 21
-  const h = dhakaHour()
-  // A window that wraps midnight (e.g. 22-6) is still handled correctly.
-  const open = from <= to ? h >= from && h < to : h >= from || h < to
-  return { open, window, holiday: false }
-}
-
-/**
- * Numbers we refuse outright. Nuisance callers should not reach the assistant at all —
- * every answered call costs Gemini minutes and, for a repeat caller, the owner's attention.
- * Matched on the last 9 digits, so prefixes and formatting cannot be used to slip past it.
- * The gateway keeps the same list and checks it BEFORE answering; this is the second gate,
- * for the case where the gateway's copy is a minute stale.
- */
-function isBlockedCaller(caller: string, list: string): boolean {
-  const tail = (n: string) => n.replace(/\D/g, '').slice(-9)
-  const target = tail(caller)
-  if (!target) return false
-  return list.split(',').map((n) => tail(n)).filter(Boolean).includes(target)
-}
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -134,39 +75,29 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as { caller?: string; did?: string }
   const caller = String(body.caller ?? '').trim() || 'unknown'
   const did = String(body.did ?? '').trim()
-  const cfg = didConfig(did)
-
-  // Everything the owner can change from the phone console, in one query rather than four on
-  // a path an inbound caller is waiting on. Each falls back to the env var that used to
-  // control it, so an untouched settings table answers calls exactly as before.
-  const settings = await readSettingMap([
-    'office_hours_dhaka',
-    'phone_holidays',
-    'blocked_callers',
-    'inbound_transfer_mode',
-    'phone_forward_support',
-    'phone_forward_boss',
-  ]).catch(() => ({}) as Record<string, string>)
 
   // The whole reason for self-hosting: a REAL caller number, so the boss calling his own
   // line gets the full assistant (ERP tools + submit_boss_instruction), not the receptionist.
   const ownerCalling = caller !== 'unknown' && isOwnerNumber(caller)
 
+  // One decision, made by the same function the console's preview screen calls. Both reads
+  // are best-effort: an inbound call must never fail because a settings or routing lookup
+  // did, and every value falls back to the env var that used to control it.
+  const [settings, routes] = await Promise.all([
+    readInboundSettings(),
+    readDidRoutes().catch(() => []),
+  ])
+  const decision = decideInbound({ caller, did, at: new Date(), owner: ownerCalling, settings, routes })
+  const cfg = decision.route
+
   // Blocked numbers are refused before anything is answered, so they cost nothing.
-  if (!ownerCalling && isBlockedCaller(caller, settings.blocked_callers ?? '')) {
+  if (decision.blocked) {
     console.warn('[sip-inbound] blocked caller refused:', caller)
     return NextResponse.json({ ok: true, reject: true, reason: 'blocked' })
   }
 
-  // Human-PA point 7: transfer policy. 'direct' dials the team number; 'ask_first' makes
-  // the bot take a message + ping the boss instead of blind-transferring.
-  let transferMode = settings.inbound_transfer_mode === 'ask_first' ? 'ask_first' : 'direct'
-
-  // Outside office hours nobody is at the support line, so a blind transfer would ring an
-  // empty desk and drop the customer. Take the message instead — the boss himself is always
-  // allowed through, since he is calling his own assistant.
-  const office = await officeOpenNow(settings)
-  if (!office.open && !ownerCalling) transferMode = 'ask_first'
+  const transferMode = decision.transferMode
+  const office = decision.time
 
   // Pre-create the row so the bot's post-call report has a target + the owner gets a summary.
   let recordId: string
@@ -190,15 +121,16 @@ export async function POST(req: NextRequest) {
   const exp = Date.now() + 15 * 60_000
   const t = createHmac('sha256', internalToken).update(`relay:${recordId}:${exp}`).digest('hex')
 
+  const lineLabel = cfg?.label ? ` (${cfg.label} লাইন)` : ''
   const purpose = ownerCalling
     ? 'Boss নিজে ফোন করেছেন — পূর্ণ সহকারী মোডে সালাম দিয়ে জিজ্ঞেস করো কী লাগবে; তথ্য চাইলে টুল দিয়ে দাও, কাজের নির্দেশ দিলে submit_boss_instruction-এ পাঠাও।'
     : !office.open
-      ? office.holiday
-        ? 'ইনকামিং কল — আজ অফিস ছুটি। বিনয়ের সাথে সালাম দিয়ে বলো আজ অফিস বন্ধ, তারপর গ্রাহকের নাম, নম্বর ও প্রয়োজনটা মন দিয়ে জেনে নাও এবং আশ্বস্ত করো অফিস খুললেই টিম যোগাযোগ করবে। কাউকে ফোন যুক্ত করার প্রতিশ্রুতি দেবে না।'
-        : `ইনকামিং কল — এখন অফিস সময়ের বাইরে (অফিস সময় প্রতিদিন ${office.window} টা)। বিনয়ের সাথে সালাম দিয়ে বলো এখন অফিস বন্ধ, তারপর গ্রাহকের নাম, নম্বর ও প্রয়োজনটা মন দিয়ে জেনে নাও এবং আশ্বস্ত করো অফিস খুললেই টিম যোগাযোগ করবে। কাউকে ফোন যুক্ত করার প্রতিশ্রুতি দেবে না।`
-    : cfg.line === 'support'
-      ? `ইনকামিং কল${cfg.label ? ` (${cfg.label} লাইন)` : ''} — ALMA-র সাপোর্ট সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও।`
-      : 'ইনকামিং কল — ব্যবসার সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও'
+      // The AI now says WHY it is closed — "আজ ছুটির দিন" reads very differently from
+      // "এখন অফিস সময়ের বাইরে" to a customer, and the routing rules already know which.
+      ? `ইনকামিং কল${lineLabel} — এখন অফিস বন্ধ (${office.reason})। বিনয়ের সাথে সালাম দিয়ে সেটা জানাও, তারপর গ্রাহকের নাম, নম্বর ও প্রয়োজনটা মন দিয়ে জেনে নাও এবং আশ্বস্ত করো অফিস খুললেই টিম যোগাযোগ করবে। কাউকে ফোন যুক্ত করার প্রতিশ্রুতি দেবে না।`
+      : cfg?.line === 'support'
+        ? `ইনকামিং কল${lineLabel} — ALMA-র সাপোর্ট সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও।`
+        : 'ইনকামিং কল — ব্যবসার সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও'
 
   // The owner asks about his staff on these calls, and a name must never be improvised: a
   // mid-call tool round-trip is unreliable (Gemini Live drops a functionResponse that lands
@@ -225,10 +157,12 @@ export async function POST(req: NextRequest) {
       // 2026-07-25 — a routine order question must never ring the boss's phone).
       // A DID-specific override still wins; otherwise the console's setting, which itself
       // falls back to the env vars these used to read directly.
-      forwardSupport: cfg.forwardSupport ?? settings.phone_forward_support ?? '',
-      forwardBoss: cfg.forwardBoss ?? settings.phone_forward_boss ?? process.env.NGS_FORWARD_NUMBER ?? '',
+      // Resolved by decideInbound(): a DID-specific override wins, otherwise the console's
+      // setting, which itself falls back to the env vars these used to read directly.
+      forwardSupport: decision.forwardSupport,
+      forwardBoss: decision.forwardBoss,
       // Legacy single-target field, still honoured as a fallback by the bot.
-      ...(cfg.forward ? { forwardNumber: cfg.forward } : {}),
+      ...(cfg?.forward ? { forwardNumber: cfg.forward } : {}),
     },
   })
 }

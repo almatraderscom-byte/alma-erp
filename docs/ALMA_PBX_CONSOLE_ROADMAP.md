@@ -260,21 +260,91 @@ endpoints there for the same reason.
 preview at all — only the app-scoped half can. The honest sequence is: merge, deploy the
 worker, then verify on a real call.
 
-### Phase 3 — Extensions
+### Phase 3 — Extensions  ·  ✅ BUILT 2026-07-26
 
-- list staff extensions, registration state, last seen, current call
-- create / disable / rotate password (writes to the VPS, secret never returned)
-- a provisioning link so a staff member sets up their browser phone themselves
-- per-extension: allowed to dial out, allowed destinations, DND, forward-to-mobile
-- per-extension call history + recordings
+`/agent/phone-console/extensions`. Before this, extensions existed only as an API: a staff
+member got one by opening the phone page, and no screen anywhere could answer "who has a
+phone", "is Karim's connected right now", or "stop this person dialling out".
 
-### Phase 4 — Routing
+- **List + live state**: registration read from `pjsip show contacts` (WebRTC AORs run with
+  qualify off, so a contact exists exactly while a browser holds the websocket — that is the
+  honest source), and who is on a call right now from ARI's channel list.
+- **Per-extension policy**: dial-out level (all BD / mobiles only / internal only), DND, and
+  forward-to-mobile when the browser does not answer. Enforced in **generated dialplan
+  contexts**, not by a runtime check someone can forget to write.
+- **Disable** leaves the endpoint out of the generated pjsip config entirely, so a disabled
+  extension cannot register at all — a much stronger statement than refusing its calls.
+- **Rotate / remove**, and the secret never comes back. Not on create, not on rotate, not
+  ever: their browser fetches it when they open the phone page, which is the only place it
+  is needed. "Reveal password" is a feature of the old panel we deliberately did not copy.
+- **Who has no phone yet** is listed too, with the link to send them — the absence is the
+  thing a screen of existing extensions can never show.
+- **Per-extension history** comes from Asterisk's own CDR CSV on the VPS, because a staff
+  member's calls never pass through the gateway: their browser registers straight to Asterisk
+  and the dialplan dials out, so `agent_voice_calls` has no row for any of them. When that
+  log is unavailable the screen says so rather than showing an empty list, which would read
+  as "this person has made no calls".
 
-- **Inbound**: DID → what answers it (AI persona, staff, voicemail, hours-dependent)
-- **Outbound**: which trunk, dial patterns, prefix rules, per-destination allow/deny
-- **Time conditions**: office hours, Friday, holidays, Ramadan hours
-- Preview before save: "a call from 01712345678 at 21:30 would reach …" — routing bugs are
-  invisible until a customer hits them
+**Not delivered, and why:** recordings per extension. We record the AI's bridge, not
+staff-to-customer calls, so there is nothing to play. The screen says that instead of showing
+a dead player.
+
+**One-time VPS step** (with the worker deploy): `extensions.conf` gets
+`#include "extensions-alma-staff.conf"` and its hand-written `[from-staff]` block is deleted.
+Full instructions and a rollback copy: `worker/deploy/asterisk/alma-staff-dialplan.conf`.
+
+### Phase 4 — Routing  ·  ✅ BUILT 2026-07-26
+
+`/agent/phone-console/routing` — ইনবাউন্ড লাইন · আউটবাউন্ড নিয়ম · রাউটিং পরীক্ষা.
+
+- **Inbound** needs no VPS change at all, which is the safest possible shape for it:
+  `from-alma` already forwards the dialled DID to the gateway, which passes it to the inbound
+  route, so per-DID routing is decided entirely in the app. The `SIP_DID_MAP` env JSON moves
+  to KV and is edited as a table (label, boss/support line, per-line forward overrides, and
+  an allow-transfer switch for a line that should only ever reach the AI). The env is still
+  the fallback, in the same shape.
+- **Outbound**: destination policy (all BD / mobiles only / internal only) plus strip and
+  prefix rules, pulled by the gateway. These sit IN FRONT of the env-pinned `DEST_ALLOW`
+  backstop and never replace it — if a pulled policy were ever wrong the worst it can do is
+  refuse calls, never permit an international one. Toll fraud is the expensive direction, so
+  the guard that cannot be changed remotely stays the ceiling.
+- **Time conditions**: holidays and the daily window (step 2), plus weekly off-days and
+  date-ranged special hours (`2027-02-18..2027-03-19=10-16`) which covers Ramadan without a
+  Ramadan-shaped feature. Ranked holiday → weekly off-day → special hours → ordinary hours,
+  and the winning rule travels with the verdict — so the AI can now say *why* it is closed
+  ("আজ ছুটির দিন" reads very differently to a customer from "অফিস সময়ের বাইরে").
+- **Preview**: "a call from 01712345678 at 21:30 would reach …", plus what an outbound number
+  would actually be dialled as. **It calls the same `decideInbound()` and
+  `applyOutboundRules()` the live call path calls** — nothing on that page re-derives a rule.
+  This is why the routing logic moved out of the inbound handler in the first place: a
+  preview with its own copy of the rules is the most confident liar you can put in front of
+  someone, about the one thing whose bugs stay invisible until a customer hits them.
+
+### What Phases 3 and 4 changed for everything after them
+
+**1. The gateway is now a config WRITER, with a verify step, twice over.** Hold audio (step
+2) and the staff dialplan (step 3) both follow the same shape: back up → write → reload →
+prove with a `show` command → restore on failure. Phase 5 writes trunks; use this shape, and
+keep the proof a `show`, never an exit code.
+
+**2. A generated file must have exactly one definition.** The staff dialplan's one-time
+migration deletes the hand-written `[from-staff]` before adding the `#include`. Leaving both
+means the last definition wins, which one that is depends on include order, and the console
+would appear to change nothing. Any future generated context inherits this hazard.
+
+**3. Config rendering must not be able to break provisioning.** `renderWebrtcConfig()` is
+called when a staff member opens the phone page for the first time, so a dialplan-render
+failure there is logged, not thrown — otherwise a CLI blip means nobody can get a phone. The
+console's own policy endpoints pass `strict: true`, because there the dialplan IS the
+request and a silent failure would show a saved setting that never took effect.
+
+**4. The preview pattern is the deliverable, not the screen.** Moving the routing rules into
+one function that both the live path and the preview call is what makes the preview true.
+Phase 5's "would this trunk change break inbound" belongs in the same shape.
+
+**5. Permission checks live on the box, not in the app.** The gateway re-runs the outbound
+rules itself rather than trusting the ERP's answer. A gateway that trusted the network for a
+toll-fraud check would be one leaked token away from an expensive night.
 
 ### Phase 5 — Trunks
 

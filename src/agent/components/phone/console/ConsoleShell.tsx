@@ -42,9 +42,19 @@ const GROUPS: Array<{ title: string; items: Item[] }> = [
     title: 'সিস্টেম',
     items: [
       { href: `${BASE}/line`, label: 'লাইন ও ট্রাঙ্ক', icon: IconLink },
-      { href: `${BASE}/extensions`, label: 'এক্সটেনশন', icon: IconUsers, soon: 'ধাপ ৩' },
-      { href: `${BASE}/routing`, label: 'রাউটিং', icon: IconRoute, soon: 'ধাপ ৪' },
+      { href: `${BASE}/extensions`, label: 'এক্সটেনশন', icon: IconUsers },
       { href: `${BASE}/cost`, label: 'খরচ', icon: IconCoin, soon: 'ধাপ ৬' },
+    ],
+  },
+  // Step 4. The preview is a peer of the tables it tests, not a button hidden inside one:
+  // it is the only place that answers "what would actually happen", and it should be as
+  // easy to reach as the settings that make it necessary.
+  {
+    title: 'রাউটিং',
+    items: [
+      { href: `${BASE}/routing`, label: 'ইনবাউন্ড লাইন', icon: IconRoute, exact: true },
+      { href: `${BASE}/routing/outbound`, label: 'আউটবাউন্ড নিয়ম', icon: IconOut },
+      { href: `${BASE}/routing/preview`, label: 'রাউটিং পরীক্ষা', icon: IconBeaker },
     ],
   },
   // Step 2. Settings is a GROUP, not one page: eight unrelated things stacked on a single
@@ -203,6 +213,12 @@ function IconMusic(p: SVGProps<SVGSVGElement>) {
 }
 function IconCloud(p: SVGProps<SVGSVGElement>) {
   return <svg viewBox="0 0 24 24" {...stroke} {...p}><path d="M7 18a4 4 0 01-.4-8A5.5 5.5 0 0117.6 10 3.9 3.9 0 0117 18z" /></svg>
+}
+function IconOut(p: SVGProps<SVGSVGElement>) {
+  return <svg viewBox="0 0 24 24" {...stroke} {...p}><path d="M5 12h12" /><path d="M13 7l5 5-5 5" /><path d="M20 4v16" /></svg>
+}
+function IconBeaker(p: SVGProps<SVGSVGElement>) {
+  return <svg viewBox="0 0 24 24" {...stroke} {...p}><path d="M9 3h6M10 3v6L5 18a2 2 0 001.8 3h10.4A2 2 0 0019 18l-5-9V3" /><path d="M7.5 14h9" /></svg>
 }
 function IconHistory(p: SVGProps<SVGSVGElement>) {
   return <svg viewBox="0 0 24 24" {...stroke} {...p}><path d="M3.5 12a8.5 8.5 0 103-6.5" /><path d="M3 3v4h4" /><path d="M12 8v4.5l3 1.8" /></svg>

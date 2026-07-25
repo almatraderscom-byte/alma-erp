@@ -85,8 +85,11 @@ describe('gatewayConfigPayload', () => {
     // cannot quietly add SIP_JITTER_FRAMES or the voice name to the pull.
     expect(Object.keys(await gatewayConfigPayload()).sort()).toEqual([
       'blocklist',
+      'destPolicy',
       'maxConcurrent',
       'mohClass',
+      'outboundPrefix',
+      'outboundStrip',
       'ringTimeout',
       'transferRingTimeout',
       'transferRounds',

@@ -31,14 +31,16 @@
 export type SettingScope = 'app' | 'gateway' | 'both'
 
 export type SettingKind =
-  | 'phones'  // comma-separated BD phone numbers, in ring order
+  | 'phones'    // comma-separated BD phone numbers, in ring order
   | 'number'
   | 'enum'
-  | 'hours'   // "10-21", Dhaka, may wrap midnight
-  | 'dates'   // comma-separated YYYY-MM-DD
+  | 'hours'     // "10-21", Dhaka, may wrap midnight
+  | 'dates'     // comma-separated YYYY-MM-DD
+  | 'weekdays'  // comma-separated sun..sat, rendered as toggles
+  | 'ranges'    // "2027-02-18..2027-03-19=10-16", one per line
   | 'text'
 
-export type SettingGroup = 'forward' | 'hours' | 'blocklist' | 'limits' | 'hold'
+export type SettingGroup = 'forward' | 'hours' | 'blocklist' | 'limits' | 'hold' | 'outbound'
 
 export type SettingDef = {
   key: string
@@ -66,6 +68,7 @@ export const SETTING_GROUPS: ReadonlyArray<{ id: SettingGroup; title: string; bl
   { id: 'blocklist', title: 'ব্লকলিস্ট', blurb: 'যেসব নম্বরের কল ধরাই হবে না।' },
   { id: 'limits', title: 'সীমা ও ক্যাপ', blurb: 'একসাথে কয়টা কল, দিনে কয়টা, ভয়েসমেইল কত লম্বা।' },
   { id: 'hold', title: 'হোল্ড অডিও', blurb: 'মানুষ খোঁজার সময় কলদাতা কী শোনে।' },
+  { id: 'outbound', title: 'আউটবাউন্ড নিয়ম', blurb: 'আমাদের দিক থেকে কোন নম্বরে কল যেতে পারবে।' },
 ]
 
 /**
@@ -161,6 +164,26 @@ export const PHONE_SETTINGS: ReadonlyArray<SettingDef> = [
     placeholder: '2026-08-15, 2026-09-05',
   },
 
+  {
+    key: 'phone_weekly_offdays',
+    group: 'hours',
+    label: 'সাপ্তাহিক বন্ধ',
+    help: 'যেসব বারে সারাদিন অফিস-বন্ধের নিয়ম চলবে। কিছু না বাছলে সপ্তাহের সাতদিনই অফিস সময় অনুযায়ী চলবে।',
+    kind: 'weekdays',
+    scope: 'app',
+    fallback: '',
+  },
+  {
+    key: 'phone_special_hours',
+    group: 'hours',
+    label: 'বিশেষ সময় (রমজান, মৌসুম)',
+    help: 'নির্দিষ্ট তারিখের মধ্যে অন্য অফিস সময়। প্রতি লাইনে একটা: 2027-02-18..2027-03-19=10-16। এই তারিখগুলোতে উপরের সাধারণ সময়ের বদলে এটাই চলবে; সাপ্তাহিক বন্ধ ও ছুটির দিন তবুও আগে বসে।',
+    kind: 'ranges',
+    scope: 'app',
+    fallback: '',
+    placeholder: '2027-02-18..2027-03-19=10-16',
+  },
+
   // ── blocklist ──────────────────────────────────────────────────────────────
   {
     key: 'blocked_callers',
@@ -237,6 +260,42 @@ export const PHONE_SETTINGS: ReadonlyArray<SettingDef> = [
     envName: 'SIP_MOH_CLASS',
     fallback: 'alma-hold',
     placeholder: 'alma-hold',
+  },
+
+  // ── outbound rules ─────────────────────────────────────────────────────────
+  {
+    key: 'phone_dest_policy',
+    group: 'outbound',
+    label: 'কোথায় কল যেতে পারবে',
+    help: 'আমাদের লাইন থেকে কোন ধরনের নম্বরে কল যাওয়া বৈধ। আন্তর্জাতিক কল কোনো অবস্থাতেই নয় — চুরি যাওয়া একটা পাসওয়ার্ড দিয়ে বিদেশে কল করে বিল তোলা টোল-ফ্রড-এর সবচেয়ে সাধারণ রূপ।',
+    kind: 'enum',
+    scope: 'gateway',
+    fallback: 'bd_all',
+    options: [
+      { value: 'bd_all', label: 'দেশের মোবাইল ও ল্যান্ডলাইন' },
+      { value: 'bd_mobile', label: 'শুধু মোবাইল' },
+      { value: 'internal_only', label: 'শুধু ভেতরের এক্সটেনশন' },
+    ],
+  },
+  {
+    key: 'phone_outbound_strip',
+    group: 'outbound',
+    label: 'সামনের যে অংশ কেটে যাবে',
+    help: 'ডায়াল করার আগে নম্বরের শুরু থেকে এই অংশটা বাদ যাবে। খালি রাখাই স্বাভাবিক — আমাদের একটাই ট্রাঙ্ক, তাই কিছু কাটার দরকার নেই। বদলানোর আগে নিচের “পরীক্ষা” দিয়ে দেখে নিন আসলে কোন নম্বরে যাচ্ছে।',
+    kind: 'text',
+    scope: 'gateway',
+    fallback: '',
+    placeholder: '(খালি)',
+  },
+  {
+    key: 'phone_outbound_prefix',
+    group: 'outbound',
+    label: 'সামনে যে অংশ যোগ হবে',
+    help: 'কাটার পর নম্বরের শুরুতে এটা যোগ হবে। খালি রাখাই স্বাভাবিক। কিছু বসানোর আগে অবশ্যই “পরীক্ষা” দিয়ে দেখুন — ভুল প্রিফিক্স মানে প্রতিটা আউটবাউন্ড কল ভুল নম্বরে যাওয়া।',
+    kind: 'text',
+    scope: 'gateway',
+    fallback: '',
+    placeholder: '(খালি)',
   },
 ]
 

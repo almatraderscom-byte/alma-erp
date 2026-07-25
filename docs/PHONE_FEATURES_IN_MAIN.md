@@ -32,7 +32,7 @@ gateway's config pull; the rest apply to the very next call.
 | Voice: male Charon default, female only on request | ✅ | `voice-provider-intent.ts` | **LOCKED** — code default, shown read-only in the UI |
 | Daily call cap (outbound that actually connected) | ✅ | `callsPlacedToday()` | **UI²** — সীমা ও ক্যাপ |
 | Runaway-loop backstop (3× the cap in attempts) | ✅ | `callAttemptsToday()` | none |
-| BD-only destinations, no international | ✅ | `from-staff` dialplan | **conf** |
+| BD-only destinations, no international | ✅ | generated dialplan + gateway rules | **UI²** — আউটবাউন্ড নিয়ম (env backstop stays) |
 | Concurrency cap (matches the trunk's limit of 2) | ✅ | gateway | **UI² (gw)** — সীমা ও ক্যাপ |
 
 ## B. What happens during a call
@@ -44,7 +44,7 @@ gateway's config pull; the rest apply to the very next call.
 | Ring group, 2 rounds, then back to the AI | ✅ | `dialNextInGroup()` | **UI² (gw)** — ফরওয়ার্ড ও ট্রান্সফার |
 | **Hold audio — the owner's own recording** | ✅ | `alma-hold` MOH class | **UI² (gw)** — হোল্ড অডিও (আপলোড + যাচাই) |
 | Voicemail when the AI cannot speak | ✅ | `sip-voicemail/route.ts` | **UI² (gw)** — সীমা ও ক্যাপ |
-| Office-hours routing, + holidays (new) | ✅ | `sip-inbound` | **UI²** — অফিস সময় |
+| Office-hours routing + holidays, weekly off-days, Ramadan-style special hours | ✅ | `decideInbound()` | **UI²** — অফিস সময় |
 | Ask-first vs direct transfer | ✅ | bot `requestForward()` | **UI²** — ফরওয়ার্ড ও ট্রান্সফার |
 | Spam/blocked callers refused before answering | ✅ | `isBlockedCaller()` | **UI²** — ব্লকলিস্ট (দুই দিকেই এক তালিকা) |
 | Barge-in (interrupt the AI mid-sentence) | ✅ | gateway fade + bot | env `SIP_BARGE_FADE_FRAMES` |
@@ -76,7 +76,10 @@ gateway's config pull; the rest apply to the very next call.
 | Screen-pop: caller's orders, dues, recent calls | ✅ built, 👤 unproven live | `phone/caller/route.ts` | UI |
 | Colleague directory + free staff-to-staff calls | ✅ | `phone/dial/route.ts` | UI |
 | Click-to-call from the ERP | ✅ | gateway `click2call` | UI |
-| Staff extension provisioning (create/rotate) | ✅ API only | `phone/credentials/route.ts` | **none — no screen** (Phase 3) |
+| Staff extension provisioning (create/rotate/disable) | ✅ | `phone/credentials/route.ts` + gateway | **UI²** — এক্সটেনশন |
+| Per-extension dial-out limit, DND, forward-to-mobile | ✅ new | generated dialplan contexts | **UI²** — এক্সটেনশন |
+| Who is registered right now / on a call | ✅ new | `pjsip show contacts` + ARI channels | **UI²** — এক্সটেনশন |
+| Per-extension call history | ✅ new | Asterisk's own CDR CSV on the VPS | **UI²** — এক্সটেনশন |
 | Softphone stack watchdog + self-heal | ✅ | gateway `checkSoftphoneStack()` | env `SIP_WS_CHECK_SECS` |
 
 ## E. The line itself
@@ -117,6 +120,15 @@ gateway's config pull; the rest apply to the very next call.
 | প্রোভাইডার | amarip.net's own registration table — who holds the binding | `…/settings/provider` |
 | পরিবর্তনের ইতিহাস | who changed what, from what, and one-click revert | `…/settings/history` |
 
+### Extensions and routing (added 2026-07-26, steps 3 + 4)
+
+| Screen | What it changes | Where |
+|---|---|---|
+| এক্সটেনশন | who has a phone, is it connected/on a call, dial-out limit, DND, forward-to-mobile, disable, rotate | `…/extensions` |
+| ইনবাউন্ড লাইন | which DID answers as which persona, per-line forward overrides, never-transfer lines | `…/routing` |
+| আউটবাউন্ড নিয়ম | what may be dialled, strip/prefix rewriting | `…/routing/outbound` |
+| রাউটিং পরীক্ষা | "a call from X at 21:30 would reach …" — run by the code that actually decides | `…/routing/preview` |
+
 Owner-only, enforced in the section layout AND re-checked in every route. The staff softphone
 at `/agent/phone` is unchanged.
 
@@ -131,10 +143,11 @@ SSH. From the original list:
 - ~~read call logs, listen to recordings, or see why a call failed~~ — ✅ done
 - ~~change the forward numbers, office hours, blocklist, hold audio, caps~~ — ✅ done
 - ~~see who actually holds the registration binding, on the provider's own side~~ — ✅ done
+- ~~add, disable or limit a staff extension; see who is connected right now~~ — ✅ done
+- ~~decide which incoming number answers as what, and test it before a customer does~~ — ✅ done
 - the AI's voice and how fast it replies — **deliberately not editable**; the tuning the
   owner approved on 2026-07-26 is locked in code (CLAUDE.md hard rule #1) and shown read-only
 - see what a call cost, or what is left with the provider — Phase 6
-- add or disable a staff extension — Phase 3
 - add, edit or check a trunk — Phase 5
 
 One more thing that was never on the list and now is: **an audio regression shows up as a

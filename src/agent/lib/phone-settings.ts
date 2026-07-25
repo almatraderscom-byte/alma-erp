@@ -142,6 +142,28 @@ export function validateSetting(def: SettingDef, raw: string): string | null {
     return null
   }
 
+  if (def.kind === 'weekdays') {
+    if (!value) return null
+    const allowed = new Set(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'])
+    for (const d of value.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean)) {
+      if (!allowed.has(d)) return `“${d}” বারটা চেনা গেল না।`
+    }
+    return null
+  }
+
+  if (def.kind === 'ranges') {
+    if (!value) return null
+    for (const line of value.split(/[\n,]/).map((x) => x.trim()).filter(Boolean)) {
+      const m = line.match(/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})=(\d{1,2}-\d{1,2})$/)
+      if (!m) return `“${line}” লাইনটা এই ছাঁচে নেই: 2027-02-18..2027-03-19=10-16`
+      if (m[1] > m[2]) return `“${line}” — শুরুর তারিখ শেষের পরে।`
+      const [from, to] = m[3].split('-').map(Number)
+      if (from > 23 || to > 23) return `“${line}” — ঘণ্টা ০ থেকে ২৩-এর মধ্যে হতে হবে।`
+      if (from === to) return `“${line}” — শুরু আর শেষ এক হলে ওই দিনগুলো কখনো খোলে না।`
+    }
+    return null
+  }
+
   if (def.kind === 'phones') {
     if (!value) return null
     const parts = value.split(',').map((x) => x.trim()).filter(Boolean)
@@ -166,6 +188,11 @@ export function validateSetting(def: SettingDef, raw: string): string | null {
   // text
   if (def.key === 'phone_moh_class' && value && !/^[A-Za-z0-9_-]{1,40}$/.test(value)) {
     return 'ক্লাসের নামে শুধু ইংরেজি অক্ষর, সংখ্যা, - আর _ চলবে।'
+  }
+  if ((def.key === 'phone_outbound_strip' || def.key === 'phone_outbound_prefix') && value) {
+    // Digits (and a leading +) only. Anything else would be pasted straight into a dial
+    // string, and a dial string is not a place to find out what a stray character does.
+    if (!/^\+?\d{1,6}$/.test(value)) return 'শুধু সংখ্যা (দরকারে শুরুতে +), সর্বোচ্চ ৬ সংখ্যা।'
   }
   if (value.length > 300) return 'অনেক লম্বা হয়ে গেছে।'
   return null
@@ -306,6 +333,10 @@ export type GatewayConfig = {
   mohClass: string
   /** Comma-separated. The gateway refuses these BEFORE answering, so they cost nothing. */
   blocklist: string
+  /** Step 4. What may be dialled, and how the number is rewritten before it is. */
+  destPolicy: string
+  outboundStrip: string
+  outboundPrefix: string
 }
 
 /**
@@ -324,6 +355,9 @@ export async function gatewayConfigPayload(): Promise<GatewayConfig> {
     'phone_voicemail_max_secs',
     'phone_moh_class',
     'blocked_callers',
+    'phone_dest_policy',
+    'phone_outbound_strip',
+    'phone_outbound_prefix',
   ])
   const num = (key: string, fallback: number) => {
     const n = Number(m[key])
@@ -337,6 +371,53 @@ export async function gatewayConfigPayload(): Promise<GatewayConfig> {
     voicemailMaxSecs: num('phone_voicemail_max_secs', 120),
     mohClass: m.phone_moh_class ?? '',
     blocklist: m.blocked_callers ?? '',
+    destPolicy: m.phone_dest_policy || 'bd_all',
+    outboundStrip: m.phone_outbound_strip ?? '',
+    outboundPrefix: m.phone_outbound_prefix ?? '',
+  }
+}
+
+/**
+ * What a number becomes on the wire, and whether it may go there at all.
+ *
+ * Lives here rather than only in the gateway so the OUTBOUND PREVIEW runs the identical
+ * rules — the same reason `decideInbound()` is shared. A preview that re-implements the
+ * rules is a second set of rules, and the moment they disagree the screen is lying.
+ *
+ * The gateway applies this again on its own side: a screen is a convenience, not a guard.
+ */
+export function applyOutboundRules(
+  raw: string,
+  rules: { destPolicy: string; outboundStrip: string; outboundPrefix: string },
+): { allowed: boolean; dialled: string; reason: string } {
+  // Normalise the way the gateway's localDial() does: BD numbers terminate as 01XXXXXXXXX.
+  let n = String(raw ?? '').trim()
+  if (n.startsWith('+880')) n = '0' + n.slice(4)
+  else if (n.startsWith('880')) n = '0' + n.slice(3)
+  n = n.replace(/^\+/, '').replace(/[^\d]/g, '')
+  if (!n) return { allowed: false, dialled: '', reason: 'নম্বর নেই।' }
+
+  const strip = rules.outboundStrip.replace(/\D/g, '')
+  if (strip && n.startsWith(strip)) n = n.slice(strip.length)
+  if (rules.outboundPrefix) n = rules.outboundPrefix.replace(/[^\d+]/g, '') + n
+
+  const internal = /^1\d{3}$/.test(n)
+  const mobile = /^01\d{9}$/.test(n)
+  const landline = /^0[2-9]\d{7,9}$/.test(n)
+
+  if (internal) return { allowed: true, dialled: n, reason: 'ভেতরের এক্সটেনশন — ফ্রি।' }
+
+  switch (rules.destPolicy) {
+    case 'internal_only':
+      return { allowed: false, dialled: n, reason: 'এখন শুধু ভেতরের এক্সটেনশনে কল করা যায়।' }
+    case 'bd_mobile':
+      return mobile
+        ? { allowed: true, dialled: n, reason: 'দেশের মোবাইল।' }
+        : { allowed: false, dialled: n, reason: 'এখন শুধু দেশের মোবাইলে কল করা যায়।' }
+    default:
+      if (mobile) return { allowed: true, dialled: n, reason: 'দেশের মোবাইল।' }
+      if (landline) return { allowed: true, dialled: n, reason: 'দেশের ল্যান্ডলাইন।' }
+      return { allowed: false, dialled: n, reason: 'দেশের বাইরের বা অচেনা ছাঁচের নম্বর — অনুমতি নেই।' }
   }
 }
 
