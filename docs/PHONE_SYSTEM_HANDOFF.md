@@ -1,4 +1,4 @@
-# ALMA phone system — handoff (state as of 2026-07-25)
+# ALMA phone system — handoff (state as of 2026-07-26)
 
 Single source of truth for anyone picking this up in a fresh session. Read this first, then
 `SELF_HOSTED_SIP_ROADMAP.md` (build history) and `PHONE_VERIFICATION_CHECKLIST.md` (what was
@@ -24,6 +24,12 @@ layer on top. Everything below is built, merged to `main`, and running.
   click-to-call. Registration proven end-to-end.
 - Registration watchdog, per-call CDR, outcome sweep, concurrency + hourly caps, BD-only
   destination allowlist, SIP port firewall.
+- **The PBX console at `/agent/phone-console`** (owner-only, read-only, shipped 2026-07-26 in
+  PR #585): dashboard, live channels, call log with hangup causes and recordings, audio
+  quality including per-call packet loss and jitter, and the line/trunk view. Plan and status:
+  `ALMA_PBX_CONSOLE_ROADMAP.md`; what ships vs what has a screen: `PHONE_FEATURES_IN_MAIN.md`.
+- **The call audio the owner approved on 2026-07-26 is LOCKED — CLAUDE.md hard rule #1.** Read
+  it before touching anything near the playout, the jitter cushion or the VAD.
 
 **Outbound — root cause found 2026-07-25, and it was ours (see §5).** The provider holds ONE
 registration binding per account and the last registrant wins it. NGS re-registers every ~60 s;
@@ -280,6 +286,28 @@ approved).
     `module reload res_musiconhold.so` both report success and both leave the class missing
     from `moh show classes`. Only `module unload` + `module load` picks it up — do it while the
     line is idle, since unloading MOH mid-call cuts the music a caller is listening to.
+17. **`Local/<did>@from-alma` is NOT a PSTN loopback.** `from-alma` is the INBOUND context, so
+    the call is answered inside our own Asterisk and never touches the provider — a 70-second
+    "loopback" produced ZERO RTP packets on eth0. It is a simulated inbound caller, useful for
+    that and nothing else. A real loopback is placed through the gateway's
+    `POST /api/v1/call` to our own DID `09649777738`, and it occupies BOTH channels of a
+    two-channel trunk, so loss/jitter figures from one are not an ordinary call's figures.
+18. **A recording can never contain what the network did.** ARI records the BRIDGE, inside
+    Asterisk, before the audio goes on the wire. That is why a recording can sound clean while
+    the call did not, and why handing the file to a model to "listen for the problem" cannot
+    locate a cause. The numbers that do contain it are Asterisk's own RTP counters
+    (`pjsip show channelstats`), now sampled every 10 s per call and stored on the CDR.
+19. **The end of a sentence is not an underrun.** The bot delivers audio every 21 ms while the
+    model speaks (p99 24 ms) and then stops for 1.7–2.5 s between turns, so the playout queue
+    empties at the end of EVERY turn. Counting that as a dry-out ratcheted the jitter cushion
+    12 → 32 frames and never released it, adding ~0.5 s of delay to every later reply.
+    `SIP_TURN_END_MS` (60 ms) tells the two apart. Do not remove it.
+20. **The agent must not hang up on the boss.** The goodbye detector fired on
+    "আর কিছু লাগবে বস, নাকি কলটা রাখব? আল্লাহ হাফেজ।" — a question with a farewell attached.
+    A farewell inside a question is now ignored on every call, and on an owner call nothing
+    arms the hang-up until the caller has asked to finish. The prompt had forbidden this since
+    2026-07-24 and the model did it anyway: for this class of failure the guarantee belongs in
+    code, not in an instruction.
 15. **A dead second trunk was in `pjsip.conf` the whole time** — `amberit` (202.4.97.37, user
     1098173), pre-dating this work, retrying a REGISTER that never got an answer. Removed
     2026-07-25. It cost nothing but noise; it was not related to the outbound problem.
@@ -303,6 +331,12 @@ approved).
 ---
 
 ## 8. Next steps, in order
+
+**0. (2026-07-26) The console's Phase 2 — settings without SSH — is the next piece of work.**
+See `ALMA_PBX_CONSOLE_ROADMAP.md`. It is the first phase that writes, so §3's rules there
+(one writer for config, secrets never leave the VPS, KV not env, every change audited and
+reversible) start applying in earnest. The provider's own registration table moves into it,
+because reading it needs an amarip.net credential the owner supplies himself.
 
 1. **Owner + provider**: one precise question now, not a vague complaint — why does a fresh
    REGISTER take ~100 s to become routable? (§5 has the wording and the numbers.)
