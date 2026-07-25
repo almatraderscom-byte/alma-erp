@@ -140,15 +140,15 @@ export default function SoftphonePanel() {
             {caller?.found ? (
               <div className="mt-4 grid grid-cols-3 gap-2 text-center">
                 <div className="rounded-xl bg-bg-2 py-2">
-                  <p className="text-[10px] uppercase tracking-wide text-muted">অর্ডার</p>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-hi">অর্ডার</p>
                   <p className="text-base font-semibold text-cream">{caller.totalOrders ?? 0}</p>
                 </div>
                 <div className="rounded-xl bg-bg-2 py-2">
-                  <p className="text-[10px] uppercase tracking-wide text-muted">বাকি</p>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-hi">বাকি</p>
                   <p className="text-base font-semibold text-cream">৳{caller.dueAmount ?? 0}</p>
                 </div>
                 <div className="rounded-xl bg-bg-2 py-2">
-                  <p className="text-[10px] uppercase tracking-wide text-muted">আগের কল</p>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-hi">আগের কল</p>
                   <p className="text-base font-semibold text-cream">{caller.recentCalls ?? 0}</p>
                 </div>
               </div>
