@@ -130,7 +130,7 @@ export default function SoftphonePanel() {
                 {state.incoming ? 'ইনকামিং কল' : 'কল যাচ্ছে'}
               </p>
               <p className="mt-1 text-2xl font-semibold text-cream">{caller?.name || state.peer}</p>
-              {caller?.name ? <p className="text-sm text-muted">{state.peer}</p> : null}
+              {caller?.name ? <p className="text-sm text-muted-hi">{state.peer}</p> : null}
               <p className="txt-pos mt-1 font-mono text-sm">
                 {state.status === 'in-call' ? mmss(state.seconds) : 'সংযোগ হচ্ছে…'}
               </p>
@@ -153,7 +153,7 @@ export default function SoftphonePanel() {
                 </div>
               </div>
             ) : caller && !caller.found ? (
-              <p className="mt-4 text-center text-sm text-muted">নতুন নম্বর — আগের রেকর্ড নেই</p>
+              <p className="mt-4 text-center text-sm text-muted-hi">নতুন নম্বর — আগের রেকর্ড নেই</p>
             ) : null}
 
             {caller?.lastOrder?.number ? (
@@ -276,7 +276,7 @@ export default function SoftphonePanel() {
             ) : null}
           </>
         ) : (
-          <p className="py-6 text-center text-sm text-muted">
+          <p className="py-6 text-center text-sm text-muted-hi">
             {state.status === 'connecting' ? 'ফোনের সাথে যুক্ত হচ্ছে…' : 'কল ধরতে বা করতে ফোনটি চালু করুন।'}
           </p>
         )}
