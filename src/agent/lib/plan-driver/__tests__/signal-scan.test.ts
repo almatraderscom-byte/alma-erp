@@ -18,6 +18,14 @@ vi.mock('@/agent/lib/planner', () => mockPlanner)
 const mockBriefing = vi.hoisted(() => ({ buildOwnerBriefingData: vi.fn() }))
 vi.mock('@/agent/lib/owner-briefing-data', () => mockBriefing)
 
+// Every self-created plan now gets its own drive conversation (without one the
+// executor cannot run a head turn at all) — stub the creation here.
+const mockDriveConv = vi.hoisted(() => ({
+  ensureDriveConversation: vi.fn().mockResolvedValue('conv-drive-1'),
+  getDriveConversationId: vi.fn().mockResolvedValue(null),
+}))
+vi.mock('@/agent/lib/plan-driver/drive-conversation', () => mockDriveConv)
+
 // notify-owner is fire-and-forget — stub it so no real push happens.
 vi.mock('@/agent/lib/notify-owner', () => ({ notifyOwnerIfAway: vi.fn().mockResolvedValue({ skipped: true }) }))
 

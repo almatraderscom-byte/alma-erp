@@ -398,17 +398,51 @@ export async function crawlSite({ url, maxPages = 40 }) {
 
 const WEIGHT = { critical: 15, high: 6, medium: 2, low: 0.5 }
 
+/**
+ * Page-level issues are scored by RATE, not by raw count (owner incident
+ * 2026-07-25: an 80-page crawl of a 91-URL sitemap scored 0/100 because the old
+ * penalty was an unbounded sum — every extra page crawled made the site look
+ * worse, so a deep audit was punished for being deep and 0 told Boss nothing).
+ *
+ * The rule now:
+ *   - a SITE-level issue (no https, sitemap missing, broken pages) keeps its flat
+ *     weight — there is one site, so one penalty;
+ *   - a PAGE-level issue costs `weight × (how many pages carry it / pages
+ *     crawled)`, scaled by PAGE_RATE_MULT. "every page misses an H1" now costs the
+ *     same whether we crawled 10 pages or 80, which is what makes a before/after
+ *     comparison honest;
+ *   - each severity's page contribution is capped so one noisy family can never
+ *     floor the score on its own and hide everything else.
+ *
+ * Raw counts are unchanged and still reported next to the score.
+ */
+const PAGE_RATE_MULT = 3
+const PAGE_PENALTY_CAP = { critical: 40, high: 25, medium: 15, low: 8 }
+
 export function scoreAudit(crawl) {
-  const all = [
-    ...crawl.siteChecks.issues.map((i) => ({ ...i, scope: 'site' })),
-    ...crawl.pages.flatMap((p) => p.issues.map((i) => ({ ...i, scope: p.url }))),
-  ]
+  const siteIssues = crawl.siteChecks.issues.map((i) => ({ ...i, scope: 'site' }))
+  const pageIssues = crawl.pages.flatMap((p) => p.issues.map((i) => ({ ...i, scope: p.url })))
+  const all = [...siteIssues, ...pageIssues]
+
   const counts = { critical: 0, high: 0, medium: 0, low: 0 }
+  for (const i of all) counts[i.severity] = (counts[i.severity] ?? 0) + 1
+
   let penalty = 0
-  for (const i of all) {
-    counts[i.severity] = (counts[i.severity] ?? 0) + 1
-    penalty += WEIGHT[i.severity] ?? 1
+  for (const i of siteIssues) penalty += WEIGHT[i.severity] ?? 1
+
+  const pagesCrawled = crawl.pagesCrawled ?? crawl.pages.length ?? 0
+  if (pagesCrawled > 0) {
+    const perSeverity = {}
+    for (const i of pageIssues) perSeverity[i.severity] = (perSeverity[i.severity] ?? 0) + 1
+    for (const [severity, n] of Object.entries(perSeverity)) {
+      const raw = (WEIGHT[severity] ?? 1) * (n / pagesCrawled) * PAGE_RATE_MULT
+      penalty += Math.min(raw, PAGE_PENALTY_CAP[severity] ?? 10)
+    }
+  } else {
+    // No page was crawled — nothing to normalise against; fall back to flat sums.
+    for (const i of pageIssues) penalty += WEIGHT[i.severity] ?? 1
   }
+
   const score = Math.max(0, Math.round(100 - penalty))
   return { score, counts, issues: all }
 }

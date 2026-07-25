@@ -413,6 +413,28 @@ export async function POST(req: NextRequest) {
         }
         return Response.json({ success: true, deliveredWhileAwaitingOwner: true })
       }
+      // DELIVERY SPINE (owner incident 2026-07-25, second half): the head used to
+      // be the ONLY writer of the report message, so a long reply that ran into
+      // the serverless deadline reached Boss cut mid-sentence ("**বাকি মূল সম").
+      // The server-built summary is complete, bounded and already computed at
+      // deliverable-build time — post THAT first, mark the job delivered, and let
+      // the head add only the extra it verified. A deadline can now truncate the
+      // commentary, never the report.
+      const freshForSpine = await db.agentPendingAction.findUnique({
+        where: { id: pendingActionId },
+        select: { type: true, summary: true, result: true },
+      })
+      let spinePosted = false
+      if (freshForSpine) {
+        try {
+          await postAssistantMessage(convId, buildFallbackDeliveryMessage(freshForSpine))
+          await markDelivered(pendingActionId, 'server_spine')
+          spinePosted = true
+        } catch (err) {
+          console.warn('[job-result] delivery spine post failed:', err instanceof Error ? err.message : err)
+        }
+      }
+
       await enqueueAgentContinuation({
         conversationId: convId,
         // Presenting a finished deliverable is correctness, not an
@@ -423,9 +445,15 @@ export async function POST(req: NextRequest) {
         turnId: progressTurnId,
         message:
           `[INTERNAL SEO JOB RESULT] Audit action ${pendingActionId} is now executed. ` +
-          'Resume the canonical client_seo_batch at its exact next tool. Read the full report (read:"report") ' +
-          'and the links (read:"links"), then PRESENT them in this reply: score, every critical/high issue with ' +
-          'its fix, what to do first, and the download links. Never rerun a completed audit, never ask Boss ' +
+          (spinePosted
+            ? 'The score, coverage, severity counts and every download link have ALREADY been posted to Boss ' +
+              'by the server — do NOT repeat them. Add only what you can verify yourself on top of that: the ' +
+              'critical/high issues with their concrete fix, and what to do first. Keep it under ~15 lines so ' +
+              'the turn finishes inside its deadline. Then resume the canonical client_seo_batch at its exact next tool. '
+            : 'Resume the canonical client_seo_batch at its exact next tool. Read the full report (read:"report") ' +
+              'and the links (read:"links"), then PRESENT them in this reply: score, every critical/high issue with ' +
+              'its fix, what to do first, and the download links. ') +
+          'Never rerun a completed audit, never ask Boss ' +
           'whether he wants the report, and never end this turn with only a progress line.',
       })
     } catch (err) {

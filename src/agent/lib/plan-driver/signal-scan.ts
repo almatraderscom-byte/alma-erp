@@ -33,6 +33,7 @@ import {
   TERMINAL_AUTODRIVE_STATES,
   type AutodriveState,
 } from '@/agent/lib/planner'
+import { ensureDriveConversation } from '@/agent/lib/plan-driver/drive-conversation'
 import { buildOwnerBriefingData, type OwnerBriefingData } from '@/agent/lib/owner-briefing-data'
 import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
 
@@ -235,6 +236,11 @@ export async function scanSignalsToPlanDrive(
         steps: [{ action: sig.goal }],
         businessId,
       })
+      // A plan with no conversation is DEAD ON ARRIVAL — the executor cannot run
+      // a head turn without one, so every self-created plan used to hard-fail on
+      // its first step. Give it its own drive conversation (which also keeps N
+      // synthetic step messages out of Boss's chat).
+      await ensureDriveConversation({ id: plan.id, goal: sig.goal, businessId })
       await enrollPlanForAutodrive(plan.id, { doneCriteria: sig.doneCriteria })
 
       await prisma.agentKvSetting.upsert({

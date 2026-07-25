@@ -54,7 +54,7 @@ import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { logCost } from '@/agent/lib/cost-events'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
-import { isTurnCancelRequested } from '@/agent/lib/turn-status'
+import { isTurnCancelRequested, getTurnInstructionOrigin } from '@/agent/lib/turn-status'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import {
@@ -1422,6 +1422,11 @@ async function* runAlternateProviderTurn(
   let budgetNudgeSent = false
   let cardStagedNudgeSent = false
   let deadlineNudgeSent = false
+  // S0 — whose instruction this turn executes. An unattended Plan-Driver step
+  // stamps 'owner_policy' on its turn row, so every tool call in this loop meets
+  // the autonomy ladder + money cap instead of inheriting Boss's own authority.
+  // One read per turn; null (the normal chat case) changes nothing.
+  const turnInstructionOrigin = await getTurnInstructionOrigin(turnId)
   let canceled = false
   /// Confirm cards yielded this turn — precondition for the card-shape
   /// verifiers (an emitted card legitimately carries the ask).
@@ -2092,6 +2097,7 @@ async function* runAlternateProviderTurn(
               model: model.id,
               toolName: call.name,
               attributes: call.input as Record<string, unknown>,
+              ...(turnInstructionOrigin ? { instructionOrigin: turnInstructionOrigin } : {}),
             })
           : null
         // Harness Gap 2 — generic pre-tool hooks (deterministic, fail-open),
@@ -2135,6 +2141,9 @@ async function* runAlternateProviderTurn(
             ownerVoicePref,
             voiceCallInstruction,
             callbackRequested,
+            // Unattended Plan-Driver step → 'owner_policy', so the autonomy
+            // ladder and the money cap apply to work Boss is not watching.
+            ...(turnInstructionOrigin ? { instructionOrigin: turnInstructionOrigin } : {}),
           })
         const durationMs = Date.now() - started
         // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).

@@ -27,6 +27,15 @@ import { promoteStuckTodosToPlanDrive } from '@/agent/lib/plan-driver/promote'
 import { scanSignalsToPlanDrive } from '@/agent/lib/plan-driver/signal-scan'
 
 export const runtime = 'nodejs'
+/**
+ * The tick itself is now cheap — steps are DISPATCHED to the worker queue and
+ * reaped on a later tick (executor.ts / reap.ts), so this function no longer
+ * carries the work it starts. The generous cap is headroom for the inline
+ * fallback (no worker queue configured), where one step turn can still take
+ * ~110s; the old default cap could kill the function mid-step and leave the plan
+ * marked 'running' forever.
+ */
+export const maxDuration = 300
 
 function verifyToken(provided: string): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''

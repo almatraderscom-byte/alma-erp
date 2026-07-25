@@ -2290,6 +2290,10 @@ model AgentTurn {
   /// client's replay cursor and the "stream quiet but alive" liveness signal.
   lastSeq               Int       @default(-1) @map("last_seq")
   executionMode         String?   @map("execution_mode") // inline | worker
+  /// Whose instruction this turn executes — owner_direct (he typed it) vs
+  /// owner_policy (a standing policy / an unattended Plan-Driver step). The tool
+  /// guard reads it so unattended work meets the autonomy ladder + money cap.
+  instructionOrigin     String?   @map("instruction_origin")
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at")
 
   @@unique([conversationId, clientMessageId])
@@ -4166,11 +4170,18 @@ model AgentPlan {
   nextTickAt     DateTime?       @map("next_tick_at")
   lastDrivenAt   DateTime?       @map("last_driven_at")
   costTaka       Int             @default(0) @map("cost_taka")
+  /// S0 spend accounting: milli-taka so a sub-taka turn isn't rounded up to 1৳,
+  /// plus a per-DAY bucket so the daily cap stops summing lifetime plan cost.
+  costMilliTaka    Int    @default(0) @map("cost_milli_taka")
+  costMilliTakaDay Int    @default(0) @map("cost_milli_taka_day")
+  /// Asia/Dhaka calendar day (YYYY-MM-DD) the day-bucket above belongs to.
+  costDay          String? @map("cost_day")
   steps          AgentPlanStep[]
 
   @@index([conversationId])
   @@index([businessId, status])
   @@index([autodriveState, nextTickAt], map: "agent_plans_autodrive_idx")
+  @@index([costDay], map: "agent_plans_cost_day_idx")
   @@map("agent_plans")
 }
 
@@ -4187,8 +4198,17 @@ model AgentPlanStep {
   error     String?
   startedAt DateTime? @map("started_at")
   doneAt    DateTime? @map("done_at")
+  /// S0 retry state — a failed step is re-queued (with backoff) until its own
+  /// ceiling, instead of ending the whole plan on the first failure.
+  attemptCount  Int       @default(0) @map("attempt_count")
+  maxAttempts   Int       @default(3) @map("max_attempts")
+  nextAttemptAt DateTime? @map("next_attempt_at")
+  /// S0 queue mode — the worker turn this step is waiting on (reaped next tick).
+  turnId       String?   @map("turn_id")
+  dispatchedAt DateTime? @map("dispatched_at")
 
   @@index([planId, seq])
+  @@index([planId, status], map: "agent_plan_steps_plan_status_idx")
   @@map("agent_plan_steps")
 }
 

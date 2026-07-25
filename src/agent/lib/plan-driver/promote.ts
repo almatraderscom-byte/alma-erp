@@ -20,6 +20,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { createPlan, enrollPlanForAutodrive } from '@/agent/lib/planner'
+import { ensureDriveConversation } from '@/agent/lib/plan-driver/drive-conversation'
 import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -133,6 +134,10 @@ export async function promoteStuckTodosToPlanDrive(
         steps: [{ action }],
         businessId: todo.businessId,
       })
+      // Without a conversation the executor cannot run a head turn at all — every
+      // promoted todo used to fail on its first step. Its own drive conversation
+      // fixes that and keeps the synthetic step messages out of Boss's chat.
+      await ensureDriveConversation({ id: plan.id, goal, businessId: todo.businessId })
       await enrollPlanForAutodrive(plan.id, { doneCriteria })
 
       // Two-way KV link (no migration). promoted:<todoId> also acts as the dedupe flag.
