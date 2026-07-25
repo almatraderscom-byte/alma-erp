@@ -136,6 +136,24 @@ function putCdr(id, patch) {
   while (cdr.size > CDR_MAX) cdr.delete(cdr.keys().next().value)
 }
 /**
+ * Objective playout counters for one call. `underruns` is the queue running dry mid-sentence
+ * — the audible "কথার মাঝখানে কেটে যাচ্ছে" — and `dropped` is the opposite, frames skipped to
+ * catch up after a stall. Until the phone console these existed only in the hangup log line,
+ * so an audio regression could be noticed by the owner's ear and by nothing else. Riding them
+ * on the CDR makes a regression a number that moved rather than a complaint.
+ */
+function audioFacts(call) {
+  if (!call) return undefined
+  return {
+    underruns: call.underruns || 0,
+    dropped: call.dropped || 0,
+    cushionFrames: call.cushion || JITTER_FRAMES,
+    framesOut: call.framesOut || 0,
+    silenceFrames: call.silenceFrames || 0,
+    bargeIns: call.barges || 0,
+  }
+}
+/**
  * Push a finished call's record to the app so it survives this process. The in-memory ring
  * is lost on every restart, which would take call history, outcomes and cost with it — and
  * for a TRANSFERRED call this is the only trace that exists at all, because the bot steps
@@ -801,6 +819,10 @@ class Call {
     this.closed = true
     log(this.channelId, 'hangup', reason ? `(${reason})` : '',
       `| audio frames=${this.framesOut || 0} silence=${this.silenceFrames || 0} underruns=${this.underruns || 0} cushion=${this.cushion || JITTER_FRAMES}f barge-ins=${this.barges || 0} dropped=${this.dropped || 0}`)
+    // Put the same numbers on the CDR before anything else in this teardown can trigger the
+    // persist. StasisEnd persists BEFORE calling hangup(), so it stamps them too (below) —
+    // this covers the paths that hang up first, e.g. an AudioSocket terminate.
+    putCdr(this.channelId, { audio: audioFacts(this) })
     if (this.playTimer) { clearInterval(this.playTimer); this.playTimer = null }
     try { this.txFd?.end(); this.rxFd?.end() } catch { /* */ }
     if (this.digitTimer) { clearTimeout(this.digitTimer); this.digitTimer = null }
@@ -1163,6 +1185,9 @@ async function onAriEvent(e) {
           cause: e.cause ?? null,
           causeTxt: e.cause_txt ?? '',
           status: outcomeFromCause(Boolean(call?.answered ?? cdr.get(chanId)?.answered), e.cause),
+          // persistCdr runs on the next line, so the counters must be on the record NOW —
+          // hangup() stamps them again a moment later, and putCdr merges.
+          ...(call ? { audio: audioFacts(call) } : {}),
         })
         void persistCdr(chanId)
       }
@@ -1392,6 +1417,51 @@ const ctrlServer = http.createServer(async (req, res) => {
       log(`click2call: ringing ${ext} then dialling ${to}`)
       return json(res, 200, { ok: true, channelId: chan.id })
     } catch (err) { return json(res, 502, { error: err?.message || String(err) }) }
+  }
+  if (url.pathname === '/api/v1/active' && req.method === 'GET') {
+    // Read-only view of the line for the owner's phone console. Authenticated, because
+    // "who is on a call right now, with which number" is customer data — /health stays
+    // open but says nothing about people.
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const now = Date.now()
+    while (recentOriginates.length && now - recentOriginates[0] > 3_600_000) recentOriginates.shift()
+    const active = []
+    for (const [id, call] of calls) {
+      const rec = cdr.get(id) || {}
+      active.push({
+        id,
+        direction: rec.direction || (call.params?.callType === 'inbound' ? 'inbound' : 'outbound'),
+        from: rec.from || null,
+        to: rec.to || null,
+        did: rec.did || null,
+        name: call.params?.recipientName || call.params?.caller || null,
+        purpose: call.params?.purpose || null,
+        startedAt: rec.startedAt || null,
+        answeredAt: call.answeredAt || rec.answeredAt || null,
+        answered: Boolean(call.answered),
+        // What the caller is experiencing right now, which is the question a live view is
+        // actually asked. Order matters: a transferring call is also "answered".
+        state: call.voicemail ? 'voicemail'
+          : call.transferring ? 'transferring'
+            : call.moh ? 'hold'
+              : call.playOnly ? 'message'
+                : call.answered ? 'talking'
+                  : 'ringing',
+        botReady: Boolean(call.botReady),
+        transferredTo: rec.transferredTo || null,
+        ringRound: call.ringGroup ? call.ringRound : null,
+        audio: audioFacts(call),
+      })
+    }
+    return json(res, 200, {
+      ok: true,
+      now,
+      active,
+      counts: { active: calls.size, maxConcurrent: MAX_CONCURRENT, cdrRing: cdr.size },
+      hourly: { placed: recentOriginates.length, cap: MAX_PER_HOUR },
+      registration: await registrationView(),
+      softphone: { healthy: wsState.healthy, status: wsState.lastStatus, repairs: wsState.repairs },
+    })
   }
   if (url.pathname === '/health') {
     return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size, registration: { registered: regState.registered, status: regState.lastStatus, failures: regState.consecutiveFailures }, softphone: { healthy: wsState.healthy, status: wsState.lastStatus, repairs: wsState.repairs } })
@@ -1674,6 +1744,45 @@ const REG_CHECK_SECS = Number(process.env.SIP_REG_CHECK_SECS || 60)
 const REG_FAIL_ALERTS = Number(process.env.SIP_REG_FAIL_ALERTS || 2)
 const execFileAsync = promisify(execFile)
 const regState = { registered: null, consecutiveFailures: 0, alerted: false, lastCheck: 0, lastStatus: '' }
+
+/**
+ * Registration as OUR side sees it, for the console — status word plus the seconds left on
+ * the binding, which is the number that mattered: the provider keeps ONE binding per account
+ * and the last registrant owns it, so a long expiry means we hand the line to whoever else
+ * registers. `expiresIn` counting down from ~60 is the healthy shape.
+ *
+ * This is deliberately NOT proof. Asterisk has reported "Registered (exp. 3227s)" while the
+ * provider's own table did not list us at all, and that reading cost two sessions. The
+ * console labels it as our claim, not as truth.
+ *
+ * Cached for a few seconds because every call here spawns an `asterisk -rx` process and the
+ * console polls.
+ */
+const regViewCache = { at: 0, value: null }
+async function registrationView() {
+  if (regViewCache.value && Date.now() - regViewCache.at < 5_000) return regViewCache.value
+  let line = ''
+  let error = null
+  try {
+    const out = await asteriskCli('pjsip show registrations')
+    line = out.split('\n').find((l) => l.includes(REG_NAME)) || ''
+  } catch (err) { error = err?.message || String(err) }
+  const status = (line.match(/\b(Registered|Unregistered|Rejected|Auth\s*Sent|Sent)\b/i) || [])[1]
+    || (error ? 'check-failed' : 'missing')
+  const expMatch = line.match(/exp\.\s*(\d+)s/i)
+  const value = {
+    registered: /Registered/i.test(status),
+    status,
+    expiresIn: expMatch ? Number(expMatch[1]) : null,
+    lastWatchdogCheck: regState.lastCheck || null,
+    watchdogStatus: regState.lastStatus || null,
+    consecutiveFailures: regState.consecutiveFailures,
+    error,
+  }
+  regViewCache.at = Date.now()
+  regViewCache.value = value
+  return value
+}
 
 async function asteriskCli(command) {
   const { stdout } = await execFileAsync('asterisk', ['-rx', command], { timeout: 10_000 })
