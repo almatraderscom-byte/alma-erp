@@ -136,6 +136,28 @@ function putCdr(id, patch) {
   while (cdr.size > CDR_MAX) cdr.delete(cdr.keys().next().value)
 }
 /**
+ * Objective playout counters for one call. `underruns` is the queue running dry mid-sentence
+ * — the audible "কথার মাঝখানে কেটে যাচ্ছে" — and `dropped` is the opposite, frames skipped to
+ * catch up after a stall. Until the phone console these existed only in the hangup log line,
+ * so an audio regression could be noticed by the owner's ear and by nothing else. Riding them
+ * on the CDR makes a regression a number that moved rather than a complaint.
+ */
+function audioFacts(call) {
+  if (!call) return undefined
+  return {
+    underruns: call.underruns || 0,
+    dropped: call.dropped || 0,
+    cushionFrames: call.cushion || JITTER_FRAMES,
+    framesOut: call.framesOut || 0,
+    silenceFrames: call.silenceFrames || 0,
+    bargeIns: call.barges || 0,
+    turnEnds: call.turnEnds || 0,
+    // What the NETWORK did, which no recording taken on this box can contain: the recording
+    // is tapped inside Asterisk, before the audio goes on the wire.
+    ...(call.rtpStats ? { rtp: call.rtpStats } : {}),
+  }
+}
+/**
  * Push a finished call's record to the app so it survives this process. The in-memory ring
  * is lost on every restart, which would take call history, outcomes and cost with it — and
  * for a TRANSFERRED call this is the only trace that exists at all, because the bot steps
@@ -333,6 +355,13 @@ const JITTER_FRAMES = Number(process.env.SIP_JITTER_FRAMES || 12)
 const JITTER_MAX_FRAMES = Number(process.env.SIP_JITTER_MAX_FRAMES || 35)   // 700 ms ceiling
 const JITTER_GROW_FRAMES = Number(process.env.SIP_JITTER_GROW_FRAMES || 4)  // +80 ms per dry-out
 /**
+ * How long after the bot's last audio the queue emptying still counts as a real starve.
+ * Measured: while the model speaks the bot delivers every 21 ms (p99 24 ms), and between
+ * turns it stops for 1.7–2.5 s. Anything past this is the model having finished, not audio
+ * arriving late, and must not be allowed to grow the jitter cushion.
+ */
+const TURN_END_MS = Number(process.env.SIP_TURN_END_MS || 60)
+/**
  * Overrun watermarks, in 20 ms frames. HIGH is where we admit we are hopelessly behind
  * (10 s of unplayed speech); LOW is where one clean jump lands us (1 s), leaving a normal
  * working buffer instead of parking on the ceiling and dropping a frame per arrival.
@@ -520,11 +549,27 @@ class Call {
           // discontinuity — a click in the earpiece. Ease the first silent frame down from
           // wherever the audio stopped instead.
           if (this.lastWasAudio) {
-            this.underruns = (this.underruns || 0) + 1
+            // END OF A TURN IS NOT AN UNDERRUN. Measured 2026-07-26 by capturing the bot's
+            // websocket on loopback: it delivers every 21 ms (p99 24 ms) while the model
+            // speaks, then stops for 1.7–2.5 s between turns. The queue therefore empties at
+            // the end of EVERY sentence, and this branch used to treat that as a dry-out —
+            // so the cushion ratcheted up once per turn (12 → 24 → 32 frames) and never came
+            // back down, adding half a second of delay to every later reply. That is the
+            // "AI answers late / we talk over each other" feel, and 3 of the 3 "underruns"
+            // in the test call were turn ends, not broken sentences.
+            //
+            // A real starve looks different: the bot was still streaming a moment ago.
+            const sinceBotAudio = now - (this.lastEnqueueAt || 0)
+            const midSentence = sinceBotAudio <= TURN_END_MS
             this.rawWriteAudio(rampToZero(this.lastSample))
-            // This cushion was too small for this call's gusts — hold more before resuming, so
-            // the same sentence does not break again 20 seconds later.
-            this.cushion = Math.min(this.cushion + JITTER_GROW_FRAMES, JITTER_MAX_FRAMES)
+            if (midSentence) {
+              this.underruns = (this.underruns || 0) + 1
+              // This cushion was too small for this call's gusts — hold more before resuming,
+              // so the same sentence does not break again 20 seconds later.
+              this.cushion = Math.min(this.cushion + JITTER_GROW_FRAMES, JITTER_MAX_FRAMES)
+            } else {
+              this.turnEnds = (this.turnEnds || 0) + 1
+            }
             this.rebuffering = true // wait for the cushion again instead of stuttering
           } else {
             this.rawWriteAudio(SILENCE_FRAME)
@@ -554,6 +599,9 @@ class Call {
   enqueueAudio(slin) {
     const buf = Buffer.concat([this.slinResidual, slin])
     const FRAME = 320 // 20ms slin @ 8k
+    // When the bot last had something to say. The playout uses this to tell a sentence that
+    // broke apart from a sentence that simply ended.
+    this.lastEnqueueAt = Date.now()
     let off = 0
     for (; off + FRAME <= buf.length; off += FRAME) {
       this.framesOut = (this.framesOut || 0) + 1
@@ -800,7 +848,11 @@ class Call {
     if (this.closed) return
     this.closed = true
     log(this.channelId, 'hangup', reason ? `(${reason})` : '',
-      `| audio frames=${this.framesOut || 0} silence=${this.silenceFrames || 0} underruns=${this.underruns || 0} cushion=${this.cushion || JITTER_FRAMES}f barge-ins=${this.barges || 0} dropped=${this.dropped || 0}`)
+      `| audio frames=${this.framesOut || 0} silence=${this.silenceFrames || 0} underruns=${this.underruns || 0} turn-ends=${this.turnEnds || 0} cushion=${this.cushion || JITTER_FRAMES}f barge-ins=${this.barges || 0} dropped=${this.dropped || 0}`)
+    // Put the same numbers on the CDR before anything else in this teardown can trigger the
+    // persist. StasisEnd persists BEFORE calling hangup(), so it stamps them too (below) —
+    // this covers the paths that hang up first, e.g. an AudioSocket terminate.
+    putCdr(this.channelId, { audio: audioFacts(this) })
     if (this.playTimer) { clearInterval(this.playTimer); this.playTimer = null }
     try { this.txFd?.end(); this.rxFd?.end() } catch { /* */ }
     if (this.digitTimer) { clearTimeout(this.digitTimer); this.digitTimer = null }
@@ -1018,6 +1070,8 @@ async function onInboundCall(e) {
   }
   const call = new Call(chanId, { ...params, caller, did })
   call.inbound = true
+  // Asterisk's own channel name — the key its RTP counters are filed under.
+  if (e.channel?.name) call.chanName = e.channel.name
   calls.set(chanId, call)
   try {
     await ari('POST', `/channels/${chanId}/answer`)
@@ -1105,6 +1159,9 @@ async function onAriEvent(e) {
         }
         return
       }
+      // Asterisk's own name for this channel (PJSIP/alma-000000XX). The RTP counters are
+      // keyed by it, and it is only available here — by hangup the channel is gone.
+      if (e.channel?.name) call.chanName = e.channel.name
       if (call.answered) return
       // Transfer path: a forward leg answering just needs to join the existing bridge.
       if (call._bridgeInto) {
@@ -1163,6 +1220,9 @@ async function onAriEvent(e) {
           cause: e.cause ?? null,
           causeTxt: e.cause_txt ?? '',
           status: outcomeFromCause(Boolean(call?.answered ?? cdr.get(chanId)?.answered), e.cause),
+          // persistCdr runs on the next line, so the counters must be on the record NOW —
+          // hangup() stamps them again a moment later, and putCdr merges.
+          ...(call ? { audio: audioFacts(call) } : {}),
         })
         void persistCdr(chanId)
       }
@@ -1392,6 +1452,51 @@ const ctrlServer = http.createServer(async (req, res) => {
       log(`click2call: ringing ${ext} then dialling ${to}`)
       return json(res, 200, { ok: true, channelId: chan.id })
     } catch (err) { return json(res, 502, { error: err?.message || String(err) }) }
+  }
+  if (url.pathname === '/api/v1/active' && req.method === 'GET') {
+    // Read-only view of the line for the owner's phone console. Authenticated, because
+    // "who is on a call right now, with which number" is customer data — /health stays
+    // open but says nothing about people.
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const now = Date.now()
+    while (recentOriginates.length && now - recentOriginates[0] > 3_600_000) recentOriginates.shift()
+    const active = []
+    for (const [id, call] of calls) {
+      const rec = cdr.get(id) || {}
+      active.push({
+        id,
+        direction: rec.direction || (call.params?.callType === 'inbound' ? 'inbound' : 'outbound'),
+        from: rec.from || null,
+        to: rec.to || null,
+        did: rec.did || null,
+        name: call.params?.recipientName || call.params?.caller || null,
+        purpose: call.params?.purpose || null,
+        startedAt: rec.startedAt || null,
+        answeredAt: call.answeredAt || rec.answeredAt || null,
+        answered: Boolean(call.answered),
+        // What the caller is experiencing right now, which is the question a live view is
+        // actually asked. Order matters: a transferring call is also "answered".
+        state: call.voicemail ? 'voicemail'
+          : call.transferring ? 'transferring'
+            : call.moh ? 'hold'
+              : call.playOnly ? 'message'
+                : call.answered ? 'talking'
+                  : 'ringing',
+        botReady: Boolean(call.botReady),
+        transferredTo: rec.transferredTo || null,
+        ringRound: call.ringGroup ? call.ringRound : null,
+        audio: audioFacts(call),
+      })
+    }
+    return json(res, 200, {
+      ok: true,
+      now,
+      active,
+      counts: { active: calls.size, maxConcurrent: MAX_CONCURRENT, cdrRing: cdr.size },
+      hourly: { placed: recentOriginates.length, cap: MAX_PER_HOUR },
+      registration: await registrationView(),
+      softphone: { healthy: wsState.healthy, status: wsState.lastStatus, repairs: wsState.repairs },
+    })
   }
   if (url.pathname === '/health') {
     return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size, registration: { registered: regState.registered, status: regState.lastStatus, failures: regState.consecutiveFailures }, softphone: { healthy: wsState.healthy, status: wsState.lastStatus, repairs: wsState.repairs } })
@@ -1674,6 +1779,90 @@ const REG_CHECK_SECS = Number(process.env.SIP_REG_CHECK_SECS || 60)
 const REG_FAIL_ALERTS = Number(process.env.SIP_REG_FAIL_ALERTS || 2)
 const execFileAsync = promisify(execFile)
 const regState = { registered: null, consecutiveFailures: 0, alerted: false, lastCheck: 0, lastStatus: '' }
+
+/**
+ * Registration as OUR side sees it, for the console — status word plus the seconds left on
+ * the binding, which is the number that mattered: the provider keeps ONE binding per account
+ * and the last registrant owns it, so a long expiry means we hand the line to whoever else
+ * registers. `expiresIn` counting down from ~60 is the healthy shape.
+ *
+ * This is deliberately NOT proof. Asterisk has reported "Registered (exp. 3227s)" while the
+ * provider's own table did not list us at all, and that reading cost two sessions. The
+ * console labels it as our claim, not as truth.
+ *
+ * Cached for a few seconds because every call here spawns an `asterisk -rx` process and the
+ * console polls.
+ */
+/**
+ * Packet loss and jitter per live call, sampled from Asterisk itself.
+ *
+ * This is the one hop the owner could never see. A call's recording is tapped inside
+ * Asterisk, so by construction it cannot contain anything the network did to the audio
+ * afterwards — which is exactly why a recording can sound clean while the call did not.
+ * Asterisk's own RTP counters do contain it, so they ride on the CDR and end up on the
+ * console's quality page: an audio regression becomes a number that moved.
+ *
+ * Sampled on a timer rather than at hangup, because by hangup the channel is gone and
+ * Asterisk can no longer be asked anything about it. One `asterisk -rx` per interval covers
+ * every live channel at once.
+ */
+const RTP_STAT_SECS = Number(process.env.SIP_RTP_STAT_SECS || 10)
+
+function parseChannelStats(out) {
+  const rows = new Map()
+  for (const line of String(out).split('\n')) {
+    // BridgeId ChannelId Duration Codec | rxCount rxLost rxPct rxJitter | txCount txLost txPct txJitter | rtt
+    const f = line.trim().split(/\s+/)
+    if (f.length < 13 || !/^\d\d:\d\d:\d\d$/.test(f[2])) continue
+    const n = (i) => (Number.isFinite(Number(f[i])) ? Number(f[i]) : null)
+    rows.set(f[1], {
+      codec: f[3],
+      rxCount: n(4), rxLost: n(5), rxLostPct: n(6), rxJitterMs: n(7) != null ? n(7) * 1000 : null,
+      txCount: n(8), txLost: n(9), txLostPct: n(10), txJitterMs: n(11) != null ? n(11) * 1000 : null,
+      rttMs: n(12) != null ? n(12) * 1000 : null,
+    })
+  }
+  return rows
+}
+
+async function sampleRtpStats() {
+  if (!calls.size) return
+  let rows
+  try { rows = parseChannelStats(await asteriskCli('pjsip show channelstats')) }
+  catch { return }
+  for (const call of calls.values()) {
+    const suffix = String(call.chanName || '').replace(/^PJSIP\//, '')
+    const stat = suffix && rows.get(suffix)
+    if (stat) call.rtpStats = stat
+  }
+}
+setInterval(() => { void sampleRtpStats() }, RTP_STAT_SECS * 1000).unref?.()
+
+const regViewCache = { at: 0, value: null }
+async function registrationView() {
+  if (regViewCache.value && Date.now() - regViewCache.at < 5_000) return regViewCache.value
+  let line = ''
+  let error = null
+  try {
+    const out = await asteriskCli('pjsip show registrations')
+    line = out.split('\n').find((l) => l.includes(REG_NAME)) || ''
+  } catch (err) { error = err?.message || String(err) }
+  const status = (line.match(/\b(Registered|Unregistered|Rejected|Auth\s*Sent|Sent)\b/i) || [])[1]
+    || (error ? 'check-failed' : 'missing')
+  const expMatch = line.match(/exp\.\s*(\d+)s/i)
+  const value = {
+    registered: /Registered/i.test(status),
+    status,
+    expiresIn: expMatch ? Number(expMatch[1]) : null,
+    lastWatchdogCheck: regState.lastCheck || null,
+    watchdogStatus: regState.lastStatus || null,
+    consecutiveFailures: regState.consecutiveFailures,
+    error,
+  }
+  regViewCache.at = Date.now()
+  regViewCache.value = value
+  return value
+}
 
 async function asteriskCli(command) {
   const { stdout } = await execFileAsync('asterisk', ['-rx', command], { timeout: 10_000 })

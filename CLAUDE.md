@@ -8,6 +8,31 @@
 
 ## Hard Rules (never violate)
 
+1. **THE CALL AUDIO TUNING IS LOCKED. Do not change it, and do not let other work break it.**
+   The owner listened to a live call on 2026-07-26 and called the voice **perfect**. That is
+   the reference. Everything below is the exact state that produced it, and it is a *frozen
+   baseline*, not a starting point for improvement.
+   - **Locked values** (all are CODE DEFAULTS — there is deliberately NO env override for any
+     of them, so the tuning lives in git and cannot be quietly changed over SSH):
+     `SIP_JITTER_FRAMES=12` · `SIP_JITTER_GROW_FRAMES=4` · `SIP_JITTER_MAX_FRAMES=35` ·
+     `SIP_TURN_END_MS=60` · `SIP_QUEUE_HIGH_FRAMES=500` · `SIP_QUEUE_LOW_FRAMES=50` ·
+     `SIP_BARGE_FADE_FRAMES=2` · `GLIVE_VAD_SILENCE_MS=500` · voice `Charon` (male).
+     Locked files: the playout in `worker/src/voice-relay/sip-gateway-service.mjs` and the
+     forwarding/VAD in `worker/scripts/gemini-live-bot.mjs`.
+   - **What "good" measures as**, from that call — use these numbers to prove nothing broke:
+     `underruns ≤ 1 · turn-ends counted separately · cushion ≤ 16f · dropped = 0`.
+     Any call whose cushion climbs past 16 frames or whose underruns exceed 1 is a regression.
+   - **Never treat the end of a sentence as a dropout.** The queue empties at the end of every
+     turn because the model stops for 1.7–2.5 s between turns; counting that as a dry-out is
+     what ratcheted the cushion 12 → 32 frames and made the AI answer late. `TURN_END_MS`
+     exists solely to tell the two apart. Do not remove it.
+   - **Any change that touches voice — a new voice feature, a model swap, a refactor, a
+     "small cleanup" near the playout — must state up front that it does not alter the values
+     above, and must be proven on a real call before it ships**: place a loopback call to our
+     own DID `09649777738`, read the hangup counters, and confirm they still match the
+     baseline. Build/typecheck passing is NOT proof for audio.
+   - **Changing the audio still requires the owner's ear, one change at a time.** If he calls
+     a change worse, revert it immediately — do not iterate on the live line.
 1. NEVER modify existing ERP code outside the files listed in the current phase prompt. ERP is live production.
 1. NEVER touch `/api/agent/*` routes or their auth (X-ALMA-API-KEY, IP allowlist 31.97.237.40). The Hermes Telegram bot on the VPS depends on them during transition.
 1. New agent API routes live ONLY under `/api/assistant/*`.
