@@ -252,3 +252,46 @@ describe('buildAgentPresentationV1', () => {
     ])
   })
 })
+
+describe('speak-first: the spoken FIRST line leads the reply (owner rule 2026-07-25)', () => {
+  // Caught in the simulator: after two verify retries the canonical projection
+  // dropped the line Boss had already read live, because this builder had no
+  // concept of it. Position is not the signal — a progress draft can also be the
+  // first text entry — so the timeline entry carries `lead: true`.
+  const lead = 'বস, ক্রিয়েটিভ স্ট্যাটাস চেক করে সেরা আইডিয়া দিতে বলছেন — আগে সাম্প্রতিক পোস্ট দেখি।'
+  const answer = 'গত ৭ দিনে ৫টা পোস্ট — কোনো Reel নেই। ৩টা আইডিয়া দিলাম।'
+
+  it('projects the lead FIRST, above the activity rows, and the answer last', () => {
+    const p = buildAgentPresentationV1({
+      messageId: MSG,
+      content: `${lead}\n\n${answer}`,
+      timeline: [
+        { t: 'text', text: lead, lead: true },
+        { t: 'tool', name: 'get_fb_recent_posts', ok: true },
+        { t: 'verify', attempt: 1, max: 2 },
+        { t: 'text', text: answer },
+      ],
+    })
+    expect(p.blocks.map((b) => b.type)).toEqual(['prose', 'activity', 'activity', 'prose'])
+    expect(p.blocks[0]).toMatchObject({ type: 'prose', text: lead, state: 'final' })
+    expect(p.blocks[3]).toMatchObject({ type: 'prose', text: answer, state: 'final' })
+  })
+
+  it('a turn with ONLY the lead shows it once, not twice', () => {
+    const p = buildAgentPresentationV1({
+      messageId: MSG,
+      content: lead,
+      timeline: [{ t: 'text', text: lead, lead: true }],
+    })
+    expect(p.blocks.filter((b) => b.type === 'prose')).toHaveLength(1)
+  })
+
+  it('an unmarked first text entry stays audit-only (the old behaviour)', () => {
+    const p = buildAgentPresentationV1({
+      messageId: MSG,
+      content: answer,
+      timeline: [{ t: 'text', text: 'দেখছি…' }, { t: 'tool', name: 'x', ok: true }, { t: 'text', text: answer }],
+    })
+    expect(p.blocks.map((b) => b.type)).toEqual(['activity', 'prose'])
+  })
+})
