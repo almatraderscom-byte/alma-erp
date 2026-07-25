@@ -3,6 +3,7 @@
  * Anthropic models delegate to runAgentTurn (native Claude path).
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
+import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE } from '@/agent/config'
 import { computeHeadToolCap } from '@/agent/lib/models/head-tool-cap'
@@ -143,6 +144,11 @@ async function conversationAutoApprovesUpgrade(conversationId: string): Promise<
   } catch {
     return false
   }
+}
+
+/** Short content fingerprint for the prefix-stability probe (Phase 8b). */
+function shortHash(s: string): string {
+  return createHash('sha256').update(s).digest('hex').slice(0, 10)
 }
 
 function providerToCostProvider(provider: string): CostProvider {
@@ -296,6 +302,9 @@ async function* runAlternateProviderTurn(
   // Reasoning tokens (cost audit Phase 7) — observability only; recorded in units
   // to diagnose the xai under-estimate, does not change billing.
   let totalReasoningTokens = 0
+  // Phase 8b: the tool set sent on this turn's FIRST round, fingerprinted into the
+  // cost event so prefix drift between turns is measurable rather than inferred.
+  let turnToolNames: string[] = []
   // OpenRouter's ACTUAL billed cost, summed across every tool-loop turn. Stays
   // null for providers that don't report it (native Gemini/Anthropic) — those
   // keep the local token×rate estimate, which is accurate since we control the
@@ -1337,6 +1346,7 @@ async function* runAlternateProviderTurn(
             : dynamicNeutralTools.length > 0
               ? [...neutralTools, ...dynamicNeutralTools]
               : neutralTools
+      if (iteration === 0) turnToolNames = iterationTools.map((t) => t.name)
       const batchRequiredTool = driveClientSeoBatch ? await getClientSeoBatchRequiredTool(conversationId) : null
       const memoryRequiredTool = ownerRequirements.remember
         && !toolRecords.some((r) => r.toolName === 'save_memory' && r.status === 'success')
@@ -2354,6 +2364,18 @@ async function* runAlternateProviderTurn(
         apiModel: model.apiModel,
         provider: model.provider,
         cost_source: totalActualCostUsd != null ? 'openrouter_actual' : 'estimate',
+        // Phase 8b PREFIX-STABILITY probe (observe-only). A provider prompt cache
+        // only pays off when the leading bytes are IDENTICAL turn to turn. Live
+        // A/B after the sticky-routing fix showed ~0% reuse even for the same
+        // question in two fresh chats seconds apart, so something in the "stable"
+        // prefix is moving. These fingerprints make it visible instead of guessed:
+        // compare two turns and whichever hash differs is the culprit (the system
+        // text is built from activeToolNames + tail summary, both suspects).
+        // Cheap: two short hashes per turn, no extra queries.
+        prefix_system_chars: systemText.length,
+        prefix_system_sha: shortHash(systemText),
+        prefix_tool_count: turnToolNames.length,
+        prefix_tools_sha: shortHash(turnToolNames.join(',')),
       },
       costUsd,
       conversationId,
