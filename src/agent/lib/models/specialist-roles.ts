@@ -11,6 +11,7 @@
  * (registry, core, tools) without circular-dependency hazards.
  */
 import type { ToolGroupName } from '@/agent/tools/tool-groups'
+import type { PackKey } from '@/agent/tools/state-router'
 import { MARKETER_KNOWLEDGE_BRIEF, CONTENT_KNOWLEDGE_BRIEF } from '@/agent/lib/marketing/playbook-knowledge'
 
 export type SpecialistRole = 'researcher' | 'analyst' | 'marketer' | 'content' | 'ops' | 'cs' | 'seo'
@@ -24,6 +25,16 @@ export interface SpecialistRoleDef {
   icon: string
   /** Tool groups this specialist may use (delegate tool itself is always excluded). */
   toolGroups: ToolGroupName[]
+  /**
+   * Universal pipeline Phase 7 — the state-router packs this role actually
+   * works from. When set (and AGENT_SUBAGENT_TOOL_TRIM is on) the sub-agent
+   * carries CORE(−delegate) + these packs + find_tool, capped at
+   * SUBAGENT_TOOL_CAP, instead of whole tool GROUPS — `base` alone is ~103
+   * schemas, so every delegation hop was re-billing ~20k tokens of tools the
+   * worker never touches. Unset = the legacy whole-group assembly.
+   * Nothing is lost: find_tool reaches the rest of the registry in one hop.
+   */
+  toolPacks?: PackKey[]
   /** Role brief prepended to the sub-agent's system prompt. */
   instruction: string
   /**
@@ -42,6 +53,8 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     labelEn: 'Researcher',
     icon: '🔎',
     toolGroups: ['base', 'growth'],
+    // Phase 7: research + competitor + SEO reads. base+growth was ~140 schemas.
+    toolPacks: ['research', 'seo', 'ads'],
     instruction:
       'You are a market & competitor research specialist. Gather real signals using the available research/competitor/SEO tools, then return a concise, sourced Bangla summary of findings and one clear recommendation.',
     // Owner rule: Qwen orchestrates as head, DeepSeek does the sub-agent work
@@ -53,6 +66,7 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     labelEn: 'Analyst',
     icon: '📊',
     toolGroups: ['base', 'erp', 'finance'],
+    toolPacks: ['erp', 'finance'],
     instruction:
       'You are a business data analyst. Pull real numbers (orders, stock, sales, ledger) with the ERP/finance tools, never guess. Return a concise Bangla summary with the key figures and what they imply.',
   },
@@ -65,6 +79,7 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     // Posting, ad-spend and staff dispatch all stay behind their own owner-approval
     // gates — the marketer drafts/proposes, the owner confirms the spend/dispatch.
     toolGroups: ['base', 'growth', 'content', 'staff'],
+    toolPacks: ['ads', 'social', 'creative', 'staff_dispatch'],
     instruction:
       'You are ALMA Lifestyle\'s digital marketing lead (Facebook/ads focus) — and you OWN marketing end to end, ' +
       'not just planning. Use the marketing/ads/SEO tools to assess performance and plan; create and (where a tool ' +
@@ -86,6 +101,7 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     labelEn: 'Content',
     icon: '✍️',
     toolGroups: ['base', 'content'],
+    toolPacks: ['creative', 'social'],
     instruction:
       'You are a brand content & creative specialist. Draft on-brand, halal-compliant copy/ideas using the content tools. Return a concise Bangla draft or set of options.' +
       CONTENT_KNOWLEDGE_BRIEF,
@@ -97,6 +113,7 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     labelEn: 'Operations',
     icon: '🗂️',
     toolGroups: ['base', 'staff'],
+    toolPacks: ['staff_read', 'staff_dispatch'],
     instruction:
       'You are an operations specialist for staff/task coordination. Use the staff tools to check presence, tasks and dispatch state, then return a concise Bangla status with any issues that need the owner.',
     // Owner decision: staff dispatch/coordination is a small job — run it on cheap DeepSeek,
@@ -108,6 +125,7 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     labelEn: 'Customer Service',
     icon: '💬',
     toolGroups: ['base', 'cs'],
+    toolPacks: ['cs', 'erp'],
     instruction:
       'You are a customer-service specialist for ALMA Lifestyle. Use the CS tools to read the customer, order and product context, then return a concise, empathetic Bangla/Banglish reply or status. Never invent stock or price — verify with tools first.',
     // Owner decision: CS is customer-facing, so it runs on Qwen (stronger Bangla
@@ -125,6 +143,7 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     // fix proposals (update_product_web) + catalog reads. Every write (draft_seo_fixes,
     // update_product_web, paid keyword research) surfaces its own owner-approval card.
     toolGroups: ['base', 'growth', 'website'],
+    toolPacks: ['seo', 'website'],
     instruction:
       'You are ALMA Lifestyle\'s SEO specialist for almatraders.com. Run cost-free on-page audits with audit_product_seo ' +
       '(use scope="all_published" for a full-site scan), find the products with the weakest meta/description, then DRAFT ' +

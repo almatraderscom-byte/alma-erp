@@ -1,3 +1,20 @@
+/**
+ * NATIVE Claude turn loop (legacy path).
+ *
+ * @deprecated Universal pipeline Phase 8 — this loop is a SECOND implementation
+ * of the owner turn. It predates run-owner-turn.ts and does NOT participate in
+ * the universal tool pipeline: no state router, no relevance-aware provider cap,
+ * no prompt/tool-truth guarantee, no membership gate, no find_tool dynamic load.
+ * It is reached only when the head model is native Anthropic (today: an explicit
+ * Claude pick with ANTHROPIC_HEAD_DOWN off and the Monitor toggle on), which is
+ * rare — the house head is Gemini/Grok via run-owner-turn.ts.
+ *
+ * DO NOT add behaviour here. New harness work lands in run-owner-turn.ts, which
+ * every non-Anthropic head already uses. Retiring this loop (routing the native
+ * Claude head through the adapter path too) is its own effort: the route span
+ * emitted by run-owner-turn.ts is the usage signal — if native turns stop
+ * appearing, this file can go.
+ */
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, HEAD_TOOL_BUDGET } from '@/agent/config'

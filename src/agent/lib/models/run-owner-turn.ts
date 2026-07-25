@@ -5,8 +5,8 @@
  */
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE } from '@/agent/config'
-import { computeHeadToolCap } from '@/agent/lib/models/head-tool-cap'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET } from '@/agent/config'
+import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { buildActiveSkillsBlock } from '@/agent/lib/skill-engine/runtime'
@@ -25,7 +25,7 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectOwnerHeadTools, packsForPendingActionType, isContinuationText, matchIntentPacks } from '@/agent/tools/state-router'
+import { selectOwnerHeadTools, packsForPendingActionType, isContinuationText, matchIntentPacks, CORE_PACK, DOMAIN_PACKS } from '@/agent/tools/state-router'
 import { workflowToolBinding } from '@/agent/lib/workflow-templates'
 import {
   reconcileConversationWorkflows,
@@ -77,13 +77,13 @@ import {
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
-import { getModel, isKnownModelId } from '@/agent/lib/models/registry'
+import { getModel, isKnownModelId, resolveHeadCostTier } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
 import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { adapterFor } from '@/agent/lib/models/adapters'
-import { logRouteSpan } from '@/agent/lib/tool-telemetry'
+import { logRouteSpan, logToolEvent } from '@/agent/lib/tool-telemetry'
 import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
 import { isRoutineGraphEnabled, runRoutineTurnGraph, type RoutineGraphResult } from '@/agent/lib/graph/routine-turn-graph'
 import { isActionGraphEnabled, stageExpenseActionGraph, type StageExpenseResult } from '@/agent/lib/graph/action-turn-graph'
@@ -705,7 +705,7 @@ async function* runAlternateProviderTurn(
       || Boolean(projectSystemInstructions?.includes('[INTERNAL SEO JOB RESULT]'))
     )
 
-  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot, officePulse] = await Promise.all([
+  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot, officePulse, agentControls] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
@@ -732,6 +732,10 @@ async function* runAlternateProviderTurn(
     suppressWork || businessId === 'ALMA_TRADING'
       ? Promise.resolve(null)
       : getOfficePulse().catch(() => null),
+    // Universal pipeline Phase 2: the Owner Control Center gating must be known
+    // BEFORE the prompt is built (the prompt is now derived from the FINAL tool
+    // list). Batched here so moving it up costs no extra latency.
+    getAgentControls(),
   ])
 
   // Skill Engine V2 (gated OFF by default) — pick ≤3 on-demand skill procedures for
@@ -739,6 +743,54 @@ async function* runAlternateProviderTurn(
   const activeSkillsBlock = suppressWork ? '' : await buildActiveSkillsBlock(lastUserText)
   const ownerIntentTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
   const forceFullPrompt = await promptGatingForceFull()
+
+  // ── Universal pipeline Phase 2 — ONE tool list, decided before the prompt ───
+  // Bug A: the prompt's `activeToolNames` used to be the PRE-filter list while
+  // the model received the post-filter/post-cap list, so prompt modules taught
+  // tools that were never shipped → the head called them → `unknown_tool`.
+  // The whole filter → controls-gate → provider-cap pipeline now runs HERE, and
+  // both the prompt and the model read the SAME final list.
+  // Phase 7 kill switch: AGENT_OWNER_INTENT_GATE=false disables the owner-intent
+  // mutation filter (and its note) without a deploy.
+  const intentGateOn = process.env.AGENT_OWNER_INTENT_GATE !== 'false'
+  const selectedTools = filterToolDefsByControls(
+    intentGateOn ? filterToolsForOwnerTurn(ownerIntentTools, turnAuthorization) : [...ownerIntentTools],
+    agentControls,
+  )
+  // xAI hard-caps tool definitions at 200 per request — the owner head carried 201,
+  // so EVERY Grok-4.20 turn 400'd ("Maximum tools limit reached") and silently fell
+  // back to DeepSeek (2026-07-13 outage, diagnosed via error.metadata.raw).
+  // P10 — the cap must also cover the xAI-DIRECT head (provider 'xai', slug
+  // 'grok-4.20', which does NOT start with 'x-ai/'). Pure helper so parity is
+  // unit-testable (see head-tool-cap.ts).
+  // Phase 4 — the trim is RELEVANCE-aware (core + find_tool + this turn's routed
+  // packs survive first, never a blind tail slice) and reserves headroom for the
+  // schemas find_tool may load later in the turn (Bug B).
+  const toolCap = computeHeadToolCap(model)
+  const capKeepNames = [...CORE_PACK, FIND_TOOL_NAME]
+  const capRelevantNames = toolSelection.router === 'state'
+    ? toolSelection.tools.map((t) => t.name)
+    : matchIntentPacks(lastUserText).flatMap((p) => [...DOMAIN_PACKS[p]])
+  const narrowed = narrowToolsToCap(selectedTools, toolCap, {
+    keepNames: capKeepNames,
+    relevantNames: capRelevantNames,
+    dynamicHeadroom: MAX_DYNAMIC_TOOLS_PER_TURN,
+  })
+  const cappedTools = narrowed.tools
+  if (narrowed.trimmed.length > 0) {
+    console.warn(
+      `[run-owner-turn] ${model.apiModel} caps tools at ${toolCap} (static budget ${narrowed.effectiveCap}) — dropping ${narrowed.trimmed.length}: ${narrowed.trimmed.join(', ')}`,
+    )
+  }
+  /** The EXACT names shipped to the model this turn (before find_tool loads). */
+  const shippedToolNames = listenMode ? [] : cappedTools.map((t) => t.name)
+  // Phase 0 baseline telemetry: what the PROMPT was told about vs what the model
+  // actually got. With AGENT_PROMPT_TOOL_TRUTH on this is empty by construction;
+  // with the kill switch flipped it measures the real Bug-A drift in production.
+  const promptToolNames = promptToolTruthEnabled()
+    ? shippedToolNames
+    : (listenMode ? [] : ownerIntentTools.map((t) => t.name))
+  const promptToolMismatch = promptToolNames.filter((n) => !shippedToolNames.includes(n))
 
   const promptArgs = {
     projectInstructions: projectSystemInstructions,
@@ -765,7 +817,9 @@ async function* runAlternateProviderTurn(
     ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
     staffActiveTasksBlock: staffActiveTasksBlock || undefined,
     activeGroups: listenMode ? [] : toolSelection.groups,
-    activeToolNames: listenMode ? [] : ownerIntentTools.map((t) => t.name),
+    // Phase 2 (Bug A): the prompt is gated on the FINAL shipped list, so a
+    // module can never teach a tool the model does not have.
+    activeToolNames: promptToolNames,
     // Phase 8d: when on, ship every prompt module so the cached prefix is
     // byte-identical turn to turn (see promptGatingForceFull).
     forceFullPrompt: forceFullPrompt || undefined,
@@ -797,6 +851,16 @@ async function* runAlternateProviderTurn(
   // Rides high so the head always knows who it is; best-effort, never blocks the turn.
   const prevTurnModelId = await loadPreviousTurnModelId(conversationId)
   volatileSections.push(buildModelIdentityNote(model.id, prevTurnModelId))
+  // Universal pipeline Phase 6: a tool-incapable model (e.g. Qwen 2.5 VL 72B)
+  // gets ZERO tools by necessity. That used to be silent, so the head answered
+  // work questions from memory as if it had checked. Make it honest instead.
+  if (!listenMode && !model.supportsTools) {
+    volatileSections.push(
+      `[সীমাবদ্ধতা] এই মডেলটা (${model.label}) টুল চালাতে পারে না — এই টার্নে তোমার কোনো টুল নেই। ` +
+      'লাইভ ডেটা লাগলে বানিয়ে বোলো না; Boss-কে সোজাসুজি বলো যে এই মডেলে টুল চলে না, ' +
+      'অন্য মডেল বেছে নিলে আসল তথ্য এনে দিতে পারবে।',
+    )
+  }
   // Phase 36: the behaviour contract for THIS turn (mode/tone/structure/
   // repair/uncertainty/commitment rules) — live only when the layer is ON;
   // shadow derives + records without steering. Rides right after the listen
@@ -914,7 +978,6 @@ async function* runAlternateProviderTurn(
   // block, NOT the system prompt — appended to system it made the cached stable
   // prefix change whenever the owner toggled a capability, busting the provider
   // prompt cache for every conversation at once. Same text, cache-safe placement.
-  const agentControls = await getAgentControls()
   const controlsNote = controlsPromptNote(agentControls)
   if (controlsNote) volatileSections.push(controlsNote)
   // Scoped memory / business context (buildSystemPromptBlocks volatile) comes
@@ -965,30 +1028,6 @@ async function* runAlternateProviderTurn(
       },
     })
   })().catch((err) => console.warn('[context-compile-shadow] failed:', err instanceof Error ? err.message : err))
-  // Phase 7 kill switch: AGENT_OWNER_INTENT_GATE=false disables the owner-intent
-  // mutation filter (and its note) without a deploy.
-  const intentGateOn = process.env.AGENT_OWNER_INTENT_GATE !== 'false'
-  const selectedTools = filterToolDefsByControls(
-    intentGateOn ? filterToolsForOwnerTurn(ownerIntentTools, turnAuthorization) : [...ownerIntentTools],
-    agentControls,
-  )
-  // xAI hard-caps tool definitions at 200 per request — the owner head carries 201,
-  // so EVERY Grok-4.20 turn 400'd ("Maximum tools limit reached") and silently fell
-  // back to DeepSeek (2026-07-13 outage, diagnosed via error.metadata.raw). Keep the
-  // earliest tools (core ERP + confirm/ask flows sit at the front of the registry)
-  // and drop the tail with a visible note.
-  // P10 — the 200-tool cap must also cover the xAI-DIRECT head (provider 'xai',
-  // slug 'grok-4.20', which does NOT start with 'x-ai/'). Pure helper so parity
-  // is unit-testable (see head-tool-cap.ts).
-  const toolCap = computeHeadToolCap(model)
-  let cappedTools = selectedTools
-  if (selectedTools.length > toolCap) {
-    const dropped = selectedTools.slice(toolCap).map((t) => t.name)
-    console.warn(
-      `[run-owner-turn] ${model.apiModel} caps tools at ${toolCap} — dropping ${dropped.length}: ${dropped.join(', ')}`,
-    )
-    cappedTools = selectedTools.slice(0, toolCap)
-  }
   // Listen mode: withhold ALL business tools. This is the deterministic guarantee
   // (prompt rules alone don't hold the cheap heads back) that a feelings message
   // can't be answered with generate_image / ads / list_owner_todos etc. — the head
@@ -1189,6 +1228,19 @@ async function* runAlternateProviderTurn(
       packs: toolSelection.packs ?? null,
       signals: toolSelection.signals ?? null,
       trimmed: toolSelection.trimmed?.length ? toolSelection.trimmed : null,
+      // Universal pipeline Phase 0 — the measurement Bug A never had: what the
+      // PROMPT was told about vs what the model was actually SHIPPED. Any name
+      // in `promptToolMismatch` is a tool the prompt taught but the payload
+      // lacks — the exact recipe for an `unknown_tool` call.
+      promptToolCount: promptToolNames.length,
+      shippedToolCount: shippedToolNames.length,
+      promptToolMismatch: promptToolMismatch.length ? promptToolMismatch : null,
+      // Phase 4 — a provider-cap trim is now visible and relevance-ordered.
+      capTrimmed: narrowed.trimmed.length ? narrowed.trimmed : null,
+      capStaticBudget: Number.isFinite(narrowed.effectiveCap) ? narrowed.effectiveCap : null,
+      // Phase 6 — which universal-pipeline behaviours were live this turn.
+      universalPipeline: universalToolPipelineEnabled(),
+      membershipGate: toolMembershipGateMode(),
       parallelToolCalls: packParallelToolCalls,
       boundTool: boundToolName,
       turnAuthorization: turnAuthorization.reason,
@@ -1273,9 +1325,19 @@ async function* runAlternateProviderTurn(
   // Phase 6 (one engine): the PREMIUM Claude head keeps its core.ts "Option A"
   // cost guard here too — after HEAD_TOOL_BUDGET rounds only delegate remains,
   // so an expensive head hands the spree to a cheap worker instead of billing on.
-  const isPremiumHead = model.provider === 'anthropic'
+  // Universal pipeline Phase 6: the class comes from the REGISTRY, not a
+  // `provider === 'anthropic'` check — a Grok/DeepSeek head used to run with no
+  // round budget at all purely because it wasn't Claude.
+  const headCostTier = resolveHeadCostTier(model)
+  const isPremiumHead = headCostTier === 'premium'
+  // 'standard' heads get a budget only under the universal-pipeline flag, so
+  // production behaviour is unchanged until the owner turns it on.
+  const standardBudgetLive = universalToolPipelineEnabled() && headCostTier === 'standard' && !isMarketingHead
   const delegateOnlyNeutral = neutralTools.filter((t) => t.name === 'delegate_to_specialist')
   let headToolRounds = 0
+  // Phase 3 — resolved once per turn so the mode is stable across rounds and
+  // appears verbatim in the route span.
+  const membershipGateMode = toolMembershipGateMode()
   let budgetNudgeSent = false
   let cardStagedNudgeSent = false
   let deadlineNudgeSent = false
@@ -1381,6 +1443,11 @@ async function* runAlternateProviderTurn(
       // pack carries no delegate tool (narrow modes) — the normal caps apply.
       const premiumOverBudget =
         isPremiumHead && delegateOnlyNeutral.length > 0 && headToolRounds >= HEAD_TOOL_BUDGET
+      // Phase 6 — the same discipline for cheap 'standard' heads (Grok/DeepSeek),
+      // which previously ran unbounded. Delegate-only when a delegate tool is in
+      // the pack, otherwise tools are stripped and it must answer (same shape as
+      // the marketing wrap-up).
+      const standardOverBudget = standardBudgetLive && headToolRounds >= STANDARD_HEAD_TOOL_BUDGET
       // Models whose provider offers no tool-calling (e.g. Qwen 2.5 VL 72B on
       // OpenRouter) get a chat/vision-only turn — sending tool defs would 4xx
       // the request and bounce the owner to the cheap-head fallback.
@@ -1389,13 +1456,17 @@ async function* runAlternateProviderTurn(
       const cardStaged = confirmCardsEmitted > 0 || emittedAskCards.length > 0
       const iterationTools =
         nearDeadline || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
+        || (standardOverBudget && delegateOnlyNeutral.length === 0)
           ? []
-          : premiumOverBudget
+          : premiumOverBudget || standardOverBudget
             ? delegateOnlyNeutral
             : dynamicNeutralTools.length > 0
               ? [...neutralTools, ...dynamicNeutralTools]
               : neutralTools
       if (iteration === 0) turnToolNames = iterationTools.map((t) => t.name)
+      // Phase 3 — the EXACT set the provider was given this round; the
+      // membership gate below refuses anything outside it.
+      const roundToolNames = new Set(iterationTools.map((t) => t.name))
       const batchRequiredTool = driveClientSeoBatch ? await getClientSeoBatchRequiredTool(conversationId) : null
       const memoryRequiredTool = ownerRequirements.remember
         && !toolRecords.some((r) => r.toolName === 'save_memory' && r.status === 'success')
@@ -1434,6 +1505,10 @@ async function* runAlternateProviderTurn(
       if (cardStaged && !cardStagedNudgeSent) {
         cardStagedNudgeSent = true
         messages = [...messages, { role: 'user', content: CARD_STAGED_WRAPUP_NUDGE }]
+      }
+      if (!nearDeadline && standardOverBudget && !premiumOverBudget && !budgetNudgeSent) {
+        budgetNudgeSent = true
+        messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
       }
       if (!nearDeadline && premiumOverBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
@@ -1739,6 +1814,52 @@ async function* runAlternateProviderTurn(
           }
           continue
         }
+        // ── Universal pipeline Phase 3 — membership gate (Bug D) ──────────────
+        // Nothing between the provider response and executeTool ever checked
+        // that the model called a tool it was actually GIVEN. A hallucinated or
+        // stale name reached the registry and came back as a bare failure the
+        // head then reported to Boss as "this capability doesn't exist".
+        // Now: a name outside this round's shipped set is refused with a
+        // find_tool redirect — the whole registry is one hop away, so the honest
+        // answer is "let me look it up", never "we can't".
+        // find_tool itself always passes (it is the escape hatch).
+        if (
+          membershipGateMode !== 'off'
+          && roundToolNames.size > 0
+          && call.name !== FIND_TOOL_NAME
+          && !roundToolNames.has(call.name)
+        ) {
+          void logToolEvent({
+            surface: 'owner', toolName: call.name, success: false,
+            errorClass: 'membership_gate', errorCode: 'tool_not_shipped',
+            conversationId, turnId: turnId ?? undefined, phase: 'route',
+            detail: {
+              reason: 'membership_gate', mode: membershipGateMode,
+              modelId: model.id, headTier: headTier ?? null,
+              shippedCount: roundToolNames.size,
+            },
+          })
+          if (membershipGateMode === 'on') {
+            const blocked = {
+              success: false as const,
+              error:
+                `"${call.name}" এই টার্নে তোমার টুল-লিস্টে নেই। ` +
+                `আগে find_tool দিয়ে খুঁজে নাও (পুরো রেজিস্ট্রি এক হপ দূরে) — ` +
+                `Boss-কে "এই সক্ষমতা নেই" বলবে না।`,
+            }
+            toolRecords.push({
+              id: call.id, toolName: call.name, input: call.input,
+              output: null, status: 'error', durationMs: 0, error: blocked.error,
+            })
+            toolResults.push({ id: call.id, name: call.name, result: blocked })
+            yield {
+              type: 'tool_end', id: call.id, name: call.name,
+              success: false, error: blocked.error, resultPreview: blocked.error,
+            }
+            continue
+          }
+          // 'shadow' — logged above, execution proceeds unchanged.
+        }
         // Deadline check PER CALL, not just per round: one DeepSeek round can queue
         // 5-6 browser calls (~90s) that straddle the 45s wrap-up window, so the
         // wrap-up nudge never got a round to run in and the 280s abort killed the
@@ -2019,6 +2140,17 @@ async function* runAlternateProviderTurn(
             description: tool.description,
             schema: tool.input_schema as object,
           })
+        }
+        // Phase 4 (Bug B) — the provider cap was computed over the STATIC list
+        // only, so dynamic loads could push a capped head (xAI: 200) back over
+        // the limit and 400 the very next round. The static budget already
+        // reserves MAX_DYNAMIC_TOOLS_PER_TURN slots; this is the belt-and-braces
+        // re-check — drop the OLDEST dynamic entries if we somehow exceed.
+        if (Number.isFinite(toolCap)) {
+          while (neutralTools.length + dynamicNeutralTools.length > toolCap && dynamicNeutralTools.length > 0) {
+            const dropped = dynamicNeutralTools.shift()
+            console.warn(`[run-owner-turn] dynamic tool over provider cap — dropped ${dropped?.name}`)
+          }
         }
       }
 

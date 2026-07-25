@@ -1174,10 +1174,17 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     // carries. Lifestyle owner chat only (matches the slim scope in select-tools).
     // EXCEPTION: the Qwen marketing head owns marketing/FB/website and does it
     // itself — it gets the "you are the expert, no delegation" note instead.
+    // Universal pipeline Phase 6: the delegation note only ships when
+    // delegate_to_specialist is ACTUALLY in this turn's tool list. A pinned
+    // Grok/DeepSeek head on a narrow routed pack used to be told "delegate the
+    // rest" while carrying no delegate tool — an instruction it could only fail.
+    // Unknown tool list (legacy callers/tests) keeps the old unconditional note.
     if (businessId !== 'ALMA_TRADING') {
+      const delegateShipped =
+        args.activeToolNames == null || args.activeToolNames.includes('delegate_to_specialist')
       if (headTier === 'marketing') {
         stableParts.push(MARKETING_HEAD_SELF_SERVE_NOTE)
-      } else if (process.env.ENABLE_SLIM_ROUTER !== 'false') {
+      } else if (process.env.ENABLE_SLIM_ROUTER !== 'false' && delegateShipped) {
         stableParts.push(SLIM_ROUTER_DELEGATION_NOTE)
       }
     }
