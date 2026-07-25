@@ -30,6 +30,7 @@ vi.mock('@/agent/lib/plan-driver/drive-conversation', () => mockDriveConv)
 vi.mock('@/agent/lib/notify-owner', () => ({ notifyOwnerIfAway: vi.fn().mockResolvedValue({ skipped: true }) }))
 
 import {
+  buildSignalSteps,
   selectDrivableSignals,
   scanSignalsToPlanDrive,
   MAX_SIGNALS_PER_SCAN,
@@ -155,6 +156,35 @@ describe('selectDrivableSignals — turns business signals into drivable plans',
       briefing({ sales: { yesterdayTotal: 46_000, yesterdayOrders: 9, sevenDayAvg: 50_000, sevenDayOrderAvg: 10 } }),
     )
     expect(normal).toHaveLength(0)
+  })
+})
+
+// G3 (owner ruling 2026-07-26): he watched a one-step plan sit for an hour and
+// then fail the gate, because "find the cause" and "decide what to do" were the
+// same step. The step list is now the visible todo list.
+describe('buildSignalSteps — a real todo list, in order', () => {
+  const sig = {
+    area: 'business' as const,
+    urgency: 'high' as const,
+    signalKey: 'business:sales_drop',
+    goal: 'গতকালের সেল ৭ দিনের গড়ের চেয়ে ৬০% কম — কারণ খুঁজে বের করো',
+    doneCriteria: 'কারণ চিহ্নিত এবং করণীয় প্রস্তাব করা হয়েছে।',
+  }
+
+  it('produces diagnose → decide → report, chained in order', () => {
+    const steps = buildSignalSteps(sig)
+    expect(steps).toHaveLength(3)
+    expect(steps[0].dependsOn).toBeUndefined()
+    expect(steps[1].dependsOn).toEqual(['step-1'])
+    expect(steps[2].dependsOn).toEqual(['step-2'])
+  })
+
+  it('carries the goal into the first step and the done-criteria into the second', () => {
+    const steps = buildSignalSteps(sig)
+    expect(steps[0].action).toContain('কারণ বের করো')
+    expect(steps[0].action).toContain(sig.goal)
+    expect(steps[1].action).toContain(sig.doneCriteria)
+    expect(steps[2].action).toContain('approval card')
   })
 })
 

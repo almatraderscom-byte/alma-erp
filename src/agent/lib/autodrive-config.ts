@@ -13,8 +13,9 @@
  *
  * Live behaviour: with the kill-switch ON the driver actually advances plans —
  * real step execution (Qwen head turn) + the completion gate + bounded auto-repair.
- * Auto-repair (Phase C) is itself owner-tunable and defaults OFF, so by default a
- * not-done verdict still escalates to the owner rather than re-planning unattended.
+ * Auto-repair (Phase C) is owner-tunable and now defaults ON (owner ruling
+ * 2026-07-26) — a not-done verdict appends bounded corrective work instead of
+ * parking a small task the moment its first answer is imperfect.
  *
  * Owner decision (recorded): the completion gate starts on DeepSeek under a tight
  * cap so we can watch its judgement cheaply, then move it to Claude if its done/
@@ -33,10 +34,15 @@ export const AUTODRIVE_DRIVER_MODEL_KEY = 'autodrive_driver_model'
 /** Backoff (minutes) between drive ticks of the SAME plan. */
 export const AUTODRIVE_BACKOFF_MIN_KEY = 'autodrive_backoff_min'
 /**
- * Phase C auto-repair toggle. When ON, a not-done completion verdict appends ONE
- * corrective step and keeps driving (bounded by MAX_AUTOREPAIR_STEPS + the cost/stall
- * caps) instead of escalating on the first miss. Default OFF — the owner opts into the
- * more-autonomous behaviour; until then the driver escalates a not-done plan as before.
+ * Phase C auto-repair toggle: a not-done completion verdict appends ONE corrective
+ * step and keeps driving, instead of parking the plan on its first imperfect answer.
+ *
+ * DEFAULT ON since 2026-07-26 (owner ruling). It shipped OFF as "the owner opts
+ * into more autonomy", and what he watched was two trivial tasks each running ONE
+ * step, failing the gate, and parking with nothing scheduled — dead for an hour
+ * while his screen said "Running 2". Parking is for work that genuinely needs
+ * him. Still bounded by maxRepairSteps, the cost caps and the stall counter, and
+ * still tunable to 'false' with no redeploy.
  */
 export const AUTODRIVE_AUTO_REPAIR_KEY = 'autodrive_auto_repair'
 /**
@@ -199,7 +205,8 @@ export async function getAutodriveConfig(): Promise<AutodriveConfig> {
     gateModel: gateModel && gateModel.length > 0 ? gateModel : DEFAULT_AUTODRIVE_GATE_MODEL,
     driverModel: driverModel && driverModel.length > 0 ? driverModel : DEFAULT_AUTODRIVE_DRIVER_MODEL,
     backoffMin: parseIntSetting(byKey.get(AUTODRIVE_BACKOFF_MIN_KEY), DEFAULT_AUTODRIVE_BACKOFF_MIN, 1, 1440),
-    autoRepair: byKey.get(AUTODRIVE_AUTO_REPAIR_KEY)?.trim() === 'true',
+      // Default ON — only an explicit 'false' turns it off (see the key comment).
+    autoRepair: byKey.get(AUTODRIVE_AUTO_REPAIR_KEY)?.trim() !== 'false',
     maxRepairSteps: parseIntSetting(
       byKey.get(AUTODRIVE_MAX_REPAIR_STEPS_KEY),
       DEFAULT_AUTODRIVE_MAX_REPAIR_STEPS,
