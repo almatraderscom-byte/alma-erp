@@ -69,10 +69,10 @@ Legend:
 | Fal Cat-VTON / IDM | — | — | product + person **P** | — | — | — | `garment_image_url` + `human_image_url`; single-person research-only Try-On. Existing warning/owner opt-in remains mandatory. |
 | Fal FLUX Pro Fill | — | — | — | — | — | source + mask **P**, prompt | Masked precision edit only; no product/person identity contract unless the source already contains them. |
 | xAI `grok-imagine-image-quality` | text | product **G**, selected person **G** | product + person **G** | source + target person **G** | face/person **G** | source + optional guide **G** | Maximum 3 ordered edit references. Every image must be numbered and role-bound in the deterministic scaffold. xAI is general generation/editing, not a dedicated VTON guarantee. |
-| Gemini 3.1 Flash Image | text | product + person **G** | product + person **G** | source + person **G** | person **G** | source + guides **G** | Current app contract intentionally caps at 2 required references. Multi-image edit is general generation, not purpose-built VTON. |
-| Gemini 3 Pro Image | text | product + person **G** | product + person **G** | source + person **G** | person **G** | source + guides **G** | Current app contract caps at 2 despite a larger upstream allowance, for deterministic parity with GPT/Seedream. |
-| OpenAI GPT Image 2 | text | product + person **G** | product + person **G** | source + person **G** | person **G** | source + guides **G** | Multipart `image[]`; current app contract caps at 2 and requires all selected references to download. |
-| Seedream 5 Pro via Fal | text | product + person **G** | product + person **G** | source + person **G** | person **G** | source + guides **G** | `/edit` `image_urls`; current app contract caps at 2 and requires all selected references to download. |
+| Gemini 3.1 Flash Image | — | product + person **G** | product + person **G** | — | — | — | Current app contract intentionally caps at 2 required references and exposes this generic lane only for Product→Model/Try-On. Upstream support is broader, but unreachable combinations are blocked rather than inferred. |
+| Gemini 3 Pro Image | — | product + person **G** | product + person **G** | — | — | — | Current app contract caps at 2 despite a larger upstream allowance, for deterministic parity with GPT/Seedream. Advanced Generate remains xAI-only. |
+| OpenAI GPT Image 2 | — | product + person **G** | product + person **G** | — | — | — | Multipart `image[]`; current app contract caps at 2 and requires all selected references to download. Generic swap/face/edit are not currently exposed. |
+| Seedream 5 Pro via Fal | — | product + person **G** | product + person **G** | — | — | — | `/edit` `image_urls`; current app contract caps at 2 and requires all selected references to download. Generic swap/face/edit are not currently exposed. |
 | Veo 3.1 | — | — | — | — | — | — | Image→Video only: one source still image. It cannot consume an additional selected product/person fidelity pair in the current flow. |
 
 Primary provider references used for this matrix:
@@ -261,13 +261,13 @@ paid image generation is authorized by this document.
 - [x] Exact diff/scope gate passes; the final clean-worktree check follows the
       evidence commit.
 - [x] No paid provider call occurred.
-- [ ] Branch commit is pushed.
-- [ ] Exact-SHA Vercel preview reaches READY and stable branch alias resolves to
+- [x] Branch commit is pushed.
+- [x] Exact-SHA Vercel preview reaches READY and stable branch alias resolves to
       the same deployment.
-- [ ] Owner-authenticated Chrome $0 UI/API/runtime flow is verified without
+- [x] Owner-authenticated Chrome $0 UI/API/runtime flow is verified without
       touching the ElevenLabs audit tab; screenshots and console/network proof
       are captured.
-- [ ] Stop on this branch. Do not merge `main` and do not deploy production.
+- [x] Stop on this branch. Do not merge `main` and do not deploy production.
 
 ### Local verification record
 
