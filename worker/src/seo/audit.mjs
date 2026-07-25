@@ -416,8 +416,18 @@ const WEIGHT = { critical: 15, high: 6, medium: 2, low: 0.5 }
  *
  * Raw counts are unchanged and still reported next to the score.
  */
-const PAGE_RATE_MULT = 3
-const PAGE_PENALTY_CAP = { critical: 40, high: 25, medium: 15, low: 8 }
+/**
+ * Calibration (owner review 2026-07-26): the first version of this normalisation
+ * over-corrected. A real audit — 10 medium and 79 low findings spread over 80
+ * pages — scored 95/100, which flatters the site as badly as the old unbounded
+ * sum floored it at 0. The cause: a `low` issue on EVERY page cost 1.5 points.
+ *
+ * A problem present on every page is systematic, not cosmetic, so the cost is now
+ * expressed directly: FULL_RATE_COST is what a severity costs when it affects
+ * every crawled page, scaled linearly by how much of the site it actually
+ * touches. Rate still means the score is comparable across crawl sizes.
+ */
+const FULL_RATE_COST = { critical: 45, high: 30, medium: 18, low: 10 }
 
 export function scoreAudit(crawl) {
   const siteIssues = crawl.siteChecks.issues.map((i) => ({ ...i, scope: 'site' }))
@@ -435,8 +445,8 @@ export function scoreAudit(crawl) {
     const perSeverity = {}
     for (const i of pageIssues) perSeverity[i.severity] = (perSeverity[i.severity] ?? 0) + 1
     for (const [severity, n] of Object.entries(perSeverity)) {
-      const raw = (WEIGHT[severity] ?? 1) * (n / pagesCrawled) * PAGE_RATE_MULT
-      penalty += Math.min(raw, PAGE_PENALTY_CAP[severity] ?? 10)
+      const rate = Math.min(n / pagesCrawled, 1)
+      penalty += (FULL_RATE_COST[severity] ?? 10) * rate
     }
   } else {
     // No page was crawled — nothing to normalise against; fall back to flat sums.

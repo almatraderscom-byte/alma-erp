@@ -389,9 +389,32 @@ export function detectLedgerViolations(
 const ASYNC_WORK_NOUN =
   /(?:audit|অডিট|crawl|ক্রল|scan|স্ক্যান|report|রিপোর্ট|workbench|browser\s*task|job|কাজ(?:টা|টি)?)/i
 
-/** "It is finished" — past-tense completion, not progress. */
+/** "It is finished" — past-tense completion, not progress.
+ *  'executed' and 'চালানো হয়েছে' were added after the 2026-07-26 incident: the
+ *  head dodged every phrase in this list by reporting the DB status word itself
+ *  ("অডিট executed, স্কোর 0/100") five seconds after queueing the crawl. */
 const ASYNC_DONE_CLAIM =
-  /(?:সম্পন্ন\s*হয়েছে|শেষ\s*হয়েছে|শেষ\s*করেছি|করে\s*ফেলেছি|complete[ds]?\b|finished\b|done\b|হয়ে\s*গেছে|রেডি\s*হয়ে\s*গেছে|তৈরি\s*হয়ে\s*গেছে)/i
+  /(?:সম্পন্ন\s*হয়েছে|শেষ\s*হয়েছে|শেষ\s*করেছি|করে\s*ফেলেছি|complete[ds]?\b|finished\b|done\b|executed\b|হয়ে\s*গেছে|রেডি\s*হয়ে\s*গেছে|তৈরি\s*হয়ে\s*গেছে|চালানো\s*হয়েছে|চালিয়ে\s*ফেলেছি)/i
+
+/**
+ * RESULT DETAIL for work that is still queued — the fabrication itself, caught
+ * without depending on how the sentence is phrased.
+ *
+ * Incident 2026-07-26: within ten seconds of queueing an 80-page crawl the head
+ * wrote "স্কোর 0/100। Critical issues: 14, High: 37, Medium: 52, Low: 26" and
+ * three invented download links. Every number was invented; its own tool trace in
+ * the same turn said the crawl was still running. Rewording the verb would have
+ * slipped past ASYNC_DONE_CLAIM, so we also refuse the *shape* of a result:
+ * a score, a severity breakdown, or a report filename.
+ */
+const ASYNC_RESULT_DETAIL = [
+  // "স্কোর 0/100", "score: 43/100"
+  /(?:স্কোর|score)\s*[:=]?\s*(?:\d{1,3}|[০-৯]{1,3})\s*\/\s*100/i,
+  // "Critical issues: 14" / "High: 37" / "১৪টি critical"
+  /(?:critical|high|medium|low|জরুরি|গুরুতর|মাঝারি)\s*(?:issues?)?\s*[:=]\s*(?:\d+|[০-৯]+)/i,
+  // an invented artifact: "…-audit-2026-07-26-full.pdf", "issues-with-proof.csv"
+  /\b[\w-]+\.(?:pdf|csv|html|json|md)\b/i,
+]
 
 /** Progress/queued language that must stay allowed. */
 const ASYNC_PROGRESS_OK =
@@ -441,6 +464,19 @@ export function detectAsyncCompletionViolation(
   const text = replyText.trim()
   if (text.length < 12) return []
   if (FUTURE_INTENT.test(text)) return []
+
+  // Result DETAIL about work that never finished is fabrication whatever the
+  // verb is — check it before the phrasing rules.
+  for (const re of ASYNC_RESULT_DETAIL) {
+    const hit = re.exec(text)
+    if (!hit) continue
+    return [{
+      category: 'async_unverified',
+      ruleId: 'async_job_result_reported_before_executed',
+      matchedSnippet: stripWhitespace(hit[0]).slice(0, 120),
+      requiredTools: ['check_website_seo_audit', 'check_workbench_task'],
+    }]
+  }
 
   // Sentence-level: a reply may honestly say "crawl চলছে" in one line and must
   // not be punished for the word "done" appearing in an unrelated one.
