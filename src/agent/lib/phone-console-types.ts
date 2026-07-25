@@ -79,6 +79,25 @@ export interface CallAudio {
   framesOut: number
   silenceFrames: number
   bargeIns: number
+  turnEnds: number
+}
+
+/**
+ * What the network did to a call, from Asterisk's own RTP counters. Kept apart from
+ * `CallAudio` because they answer different questions: `CallAudio` is how well WE fed the
+ * line, this is what happened to the audio once it left. A recording is tapped inside our
+ * server, so it can never contain this half — which is why a call can sound broken while its
+ * recording sounds clean.
+ */
+export interface CallNetwork {
+  codec: string | null
+  rxLost: number | null
+  rxLostPct: number | null
+  rxJitterMs: number | null
+  txLost: number | null
+  txLostPct: number | null
+  txJitterMs: number | null
+  rttMs: number | null
 }
 
 export interface GatewayLiveCall {
@@ -151,6 +170,7 @@ export interface CallRow {
   summary: string | null
   transcript: Array<{ role: string; message: string }> | null
   audio: CallAudio | null
+  network: CallNetwork | null
 }
 
 export interface CallLogFilters {
@@ -212,6 +232,11 @@ export interface QualityDay {
   underruns: number
   dropped: number
   avgCushionFrames: number
+  /** Calls whose network numbers we have, and the average loss/jitter across them. */
+  measuredNetwork: number
+  avgRxLostPct: number
+  avgRxJitterMs: number
+  worstRxLostPct: number
 }
 
 export interface QualityWorst {
@@ -222,4 +247,6 @@ export interface QualityWorst {
   underruns: number
   dropped: number
   cushionFrames: number
+  rxLostPct: number | null
+  rxJitterMs: number | null
 }

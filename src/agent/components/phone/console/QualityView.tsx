@@ -27,6 +27,10 @@ export default function QualityView() {
       withUnderruns: d.reduce((s, x) => s + x.withUnderruns, 0),
       underruns: d.reduce((s, x) => s + x.underruns, 0),
       dropped: d.reduce((s, x) => s + x.dropped, 0),
+      measuredNetwork: d.reduce((s, x) => s + x.measuredNetwork, 0),
+      lostPct: d.reduce((s, x) => s + x.avgRxLostPct * x.measuredNetwork, 0),
+      jitter: d.reduce((s, x) => s + x.avgRxJitterMs * x.measuredNetwork, 0),
+      worstLostPct: d.reduce((s, x) => Math.max(s, x.worstRxLostPct), 0),
     }
   }, [data])
 
@@ -53,6 +57,35 @@ export default function QualityView() {
         <Kpi label="মোট কাটা" value={totals.underruns} sub="একটা কাটা ≈ ০.২ সেকেন্ড নীরবতা" tone={totals.underruns > 0 ? 'amber' : 'slate'} />
         <Kpi label="বাদ যাওয়া ফ্রেম" value={totals.dropped} sub="পিছিয়ে পড়া সামলাতে এগিয়ে যাওয়া" />
       </KpiRow>
+
+      {/* The network half, which no recording can contain: a call's audio is recorded inside
+          our own server, before it ever goes on the wire. */}
+      <div className="mt-3">
+        <KpiRow>
+          <Kpi
+            label="নেটওয়ার্ক মাপা কল"
+            value={totals.measuredNetwork}
+            sub="যেগুলোর প্যাকেটের হিসাব আছে"
+          />
+          <Kpi
+            label="গড়ে প্যাকেট হারানো"
+            value={totals.measuredNetwork ? `${(totals.lostPct / totals.measuredNetwork).toFixed(2)}%` : '—'}
+            sub="ওদের দিক থেকে আসা অডিওতে"
+            tone={totals.measuredNetwork && totals.lostPct / totals.measuredNetwork > 1 ? 'red' : 'slate'}
+          />
+          <Kpi
+            label="সবচেয়ে খারাপ কল"
+            value={totals.worstLostPct ? `${totals.worstLostPct.toFixed(2)}%` : '—'}
+            sub="এক কলে সর্বোচ্চ হারানো"
+            tone={totals.worstLostPct > 2 ? 'amber' : 'slate'}
+          />
+          <Kpi
+            label="গড় jitter"
+            value={totals.measuredNetwork ? `${(totals.jitter / totals.measuredNetwork).toFixed(1)}ms` : '—'}
+            sub="অডিও কতটা অসমান এসেছে"
+          />
+        </KpiRow>
+      </div>
 
       <div className="mt-4 grid gap-4">
         <Panel title="দিনে দিনে">
@@ -81,6 +114,7 @@ export default function QualityView() {
                   <Th>দৈর্ঘ্য</Th>
                   <Th>কেটেছে</Th>
                   <Th>ফ্রেম বাদ</Th>
+                  <Th>প্যাকেট হারানো</Th>
                   <Th>কুশন</Th>
                 </tr>
               </thead>
@@ -92,6 +126,7 @@ export default function QualityView() {
                     <Td className="tabular-nums">{secs(w.durationSecs)}</Td>
                     <Td className="tabular-nums text-danger">{w.underruns}</Td>
                     <Td className="tabular-nums">{w.dropped}</Td>
+                    <Td className="tabular-nums">{w.rxLostPct != null ? `${w.rxLostPct.toFixed(2)}%` : '—'}</Td>
                     <Td className="tabular-nums">{w.cushionFrames}f</Td>
                   </tr>
                 ))}
@@ -102,8 +137,10 @@ export default function QualityView() {
       </div>
 
       <p className="mt-3 text-[11px] leading-relaxed text-muted">
-        কুশন হলো কথা বলার আগে গেটওয়ে যত ফ্রেম জমিয়ে রাখে (১ ফ্রেম = ২০ মিলিসেকেন্ড)। কল চলাকালীন
-        বারবার কেটে গেলে কুশন নিজে থেকে বাড়ে — তাই বড় কুশন মানে ওই কলটা কঠিন ছিল।
+        উপরের সারির সংখ্যা <b>আমাদের নিজের</b> — গেটওয়ে ঠিকমতো অডিও দিতে পেরেছে কিনা। নিচের সারি
+        <b> নেটওয়ার্কের</b> — অডিও তারে ওঠার পর কী হয়েছে। এই দুটো আলাদা, কারণ রেকর্ডিং আমাদের
+        সার্ভারের ভেতরে নেওয়া হয়, তারে ওঠার আগেই — তাই নেটওয়ার্কের ক্ষতি রেকর্ডিংয়ে কখনো থাকে না।
+        সেজন্যই রেকর্ডিং পরিষ্কার শোনালেও কল খারাপ হতে পারে।
       </p>
     </>
   )

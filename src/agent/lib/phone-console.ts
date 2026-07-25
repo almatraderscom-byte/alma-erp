@@ -20,6 +20,7 @@ import {
   STATUS_LABEL_BN,
   type CallAudio,
   type CallLogFilters,
+  type CallNetwork,
   type CallPage,
   type CallRow,
   type GatewayLiveCall,
@@ -201,6 +202,7 @@ function toTranscript(raw: unknown): CallRow['transcript'] {
 function audioOf(row: {
   audioUnderruns?: number | null; audioDropped?: number | null; audioCushionFrames?: number | null
   audioFramesOut?: number | null; audioSilenceFrames?: number | null; audioBargeIns?: number | null
+  audioTurnEnds?: number | null
 }): CallAudio | null {
   if (row.audioFramesOut == null && row.audioUnderruns == null) return null
   return {
@@ -210,6 +212,23 @@ function audioOf(row: {
     framesOut: row.audioFramesOut ?? 0,
     silenceFrames: row.audioSilenceFrames ?? 0,
     bargeIns: row.audioBargeIns ?? 0,
+    turnEnds: row.audioTurnEnds ?? 0,
+  }
+}
+
+/** Asterisk's RTP counters for the call, when the gateway managed to sample them. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function networkOf(row: any): CallNetwork | null {
+  if (row.rtpRxLostPct == null && row.rtpRxLost == null && row.rtpCodec == null) return null
+  return {
+    codec: row.rtpCodec ?? null,
+    rxLost: row.rtpRxLost ?? null,
+    rxLostPct: row.rtpRxLostPct ?? null,
+    rxJitterMs: row.rtpRxJitterMs ?? null,
+    txLost: row.rtpTxLost ?? null,
+    txLostPct: row.rtpTxLostPct ?? null,
+    txJitterMs: row.rtpTxJitterMs ?? null,
+    rttMs: row.rtpRttMs ?? null,
   }
 }
 
@@ -220,7 +239,9 @@ const CALL_SELECT = {
   hangupCause: true, hangupCauseTxt: true, transferredTo: true, transferTalkSecs: true,
   recordingUrl: true, recordingSecs: true, summary: true, transcript: true,
   audioUnderruns: true, audioDropped: true, audioCushionFrames: true,
-  audioFramesOut: true, audioSilenceFrames: true, audioBargeIns: true,
+  audioFramesOut: true, audioSilenceFrames: true, audioBargeIns: true, audioTurnEnds: true,
+  rtpCodec: true, rtpRxLost: true, rtpRxLostPct: true, rtpRxJitterMs: true,
+  rtpTxLost: true, rtpTxLostPct: true, rtpTxJitterMs: true, rtpRttMs: true,
 } as const
 
 /**
@@ -310,6 +331,7 @@ export async function listCalls(f: CallLogFilters = {}): Promise<CallPage> {
         summary: r.summary ?? null,
         transcript: toTranscript(r.transcript),
         audio: audioOf(r),
+        network: networkOf(r),
       }
     }),
   }
@@ -401,19 +423,24 @@ export async function qualityReport(days: number): Promise<{ daily: QualityDay[]
   const d = Math.min(Math.max(Math.round(days), 1), 365)
   const start = windowStart(d)
   const rows = await db.agentVoiceCall.findMany({
-    where: { createdAt: { gte: start }, audioFramesOut: { not: null } },
+    where: { createdAt: { gte: start }, OR: [{ audioFramesOut: { not: null } }, { rtpRxLostPct: { not: null } }] },
     orderBy: { createdAt: 'desc' },
     select: {
       id: true, toNumber: true, fromNumber: true, direction: true, purpose: true,
       createdAt: true, dialedAt: true, durationSecs: true,
       audioUnderruns: true, audioDropped: true, audioCushionFrames: true,
+      rtpRxLostPct: true, rtpRxJitterMs: true,
     },
   })
 
-  const byDay = new Map<string, QualityDay & { cushionSum: number }>()
+  const byDay = new Map<string, QualityDay & { cushionSum: number; lostSum: number; jitterSum: number }>()
   for (let i = 0; i < d; i++) {
     const date = dhakaYmd(new Date(start.getTime() + i * 86_400_000))
-    byDay.set(date, { date, measured: 0, withUnderruns: 0, underruns: 0, dropped: 0, avgCushionFrames: 0, cushionSum: 0 })
+    byDay.set(date, {
+      date, measured: 0, withUnderruns: 0, underruns: 0, dropped: 0, avgCushionFrames: 0,
+      cushionSum: 0, measuredNetwork: 0, avgRxLostPct: 0, avgRxJitterMs: 0, worstRxLostPct: 0,
+      lostSum: 0, jitterSum: 0,
+    })
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   for (const r of rows as any[]) {
@@ -424,6 +451,12 @@ export async function qualityReport(days: number): Promise<{ daily: QualityDay[]
     day.dropped += r.audioDropped ?? 0
     day.cushionSum += r.audioCushionFrames ?? 0
     if ((r.audioUnderruns ?? 0) > 0) day.withUnderruns++
+    if (r.rtpRxLostPct != null) {
+      day.measuredNetwork++
+      day.lostSum += r.rtpRxLostPct
+      day.jitterSum += r.rtpRxJitterMs ?? 0
+      day.worstRxLostPct = Math.max(day.worstRxLostPct, r.rtpRxLostPct)
+    }
   }
   const daily: QualityDay[] = [...byDay.values()].map((x) => ({
     date: x.date,
@@ -432,13 +465,18 @@ export async function qualityReport(days: number): Promise<{ daily: QualityDay[]
     underruns: x.underruns,
     dropped: x.dropped,
     avgCushionFrames: x.measured ? Math.round(x.cushionSum / x.measured) : 0,
+    measuredNetwork: x.measuredNetwork,
+    avgRxLostPct: x.measuredNetwork ? Math.round((x.lostSum / x.measuredNetwork) * 100) / 100 : 0,
+    avgRxJitterMs: x.measuredNetwork ? Math.round((x.jitterSum / x.measuredNetwork) * 10) / 10 : 0,
+    worstRxLostPct: Math.round(x.worstRxLostPct * 100) / 100,
   }))
 
   const worst: QualityWorst[] = [...rows]
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .sort((a: any, b: any) => (b.audioUnderruns ?? 0) - (a.audioUnderruns ?? 0) || (b.audioDropped ?? 0) - (a.audioDropped ?? 0))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .filter((r: any) => (r.audioUnderruns ?? 0) > 0 || (r.audioDropped ?? 0) > 0)
+    // A call can be clean on our side and still arrive broken, so loss counts as "worst" too.
+    .filter((r: any) => (r.audioUnderruns ?? 0) > 0 || (r.audioDropped ?? 0) > 0 || (r.rtpRxLostPct ?? 0) > 0)
     .slice(0, 10)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .map((r: any) => ({
@@ -449,6 +487,8 @@ export async function qualityReport(days: number): Promise<{ daily: QualityDay[]
       underruns: r.audioUnderruns ?? 0,
       dropped: r.audioDropped ?? 0,
       cushionFrames: r.audioCushionFrames ?? 0,
+      rxLostPct: r.rtpRxLostPct ?? null,
+      rxJitterMs: r.rtpRxJitterMs ?? null,
     }))
 
   return { daily, worst }

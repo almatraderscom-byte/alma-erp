@@ -71,6 +71,18 @@ interface CdrBody {
     framesOut?: number
     silenceFrames?: number
     bargeIns?: number
+    turnEnds?: number
+    /** Asterisk's own RTP counters: what the network did, which no recording can contain. */
+    rtp?: {
+      codec?: string
+      rxLost?: number
+      rxLostPct?: number
+      rxJitterMs?: number
+      txLost?: number
+      txLostPct?: number
+      txJitterMs?: number
+      rttMs?: number
+    }
   }
 }
 
@@ -84,6 +96,9 @@ interface CdrBody {
  */
 function callFacts(c: CdrBody) {
   const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : undefined)
+  // Loss percentages and jitter are fractional; rounding them to whole numbers would turn
+  // every real-world value into 0 and make the column useless.
+  const f = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 1000) / 1000 : undefined)
   return {
     ...(c.direction ? { direction: String(c.direction).slice(0, 16) } : {}),
     ...(c.from ? { fromNumber: String(c.from).slice(0, 32) } : {}),
@@ -98,6 +113,15 @@ function callFacts(c: CdrBody) {
     ...(n(c.audio?.framesOut) != null ? { audioFramesOut: n(c.audio?.framesOut) } : {}),
     ...(n(c.audio?.silenceFrames) != null ? { audioSilenceFrames: n(c.audio?.silenceFrames) } : {}),
     ...(n(c.audio?.bargeIns) != null ? { audioBargeIns: n(c.audio?.bargeIns) } : {}),
+    ...(n(c.audio?.turnEnds) != null ? { audioTurnEnds: n(c.audio?.turnEnds) } : {}),
+    ...(c.audio?.rtp?.codec ? { rtpCodec: String(c.audio.rtp.codec).slice(0, 16) } : {}),
+    ...(n(c.audio?.rtp?.rxLost) != null ? { rtpRxLost: n(c.audio?.rtp?.rxLost) } : {}),
+    ...(f(c.audio?.rtp?.rxLostPct) != null ? { rtpRxLostPct: f(c.audio?.rtp?.rxLostPct) } : {}),
+    ...(f(c.audio?.rtp?.rxJitterMs) != null ? { rtpRxJitterMs: f(c.audio?.rtp?.rxJitterMs) } : {}),
+    ...(n(c.audio?.rtp?.txLost) != null ? { rtpTxLost: n(c.audio?.rtp?.txLost) } : {}),
+    ...(f(c.audio?.rtp?.txLostPct) != null ? { rtpTxLostPct: f(c.audio?.rtp?.txLostPct) } : {}),
+    ...(f(c.audio?.rtp?.txJitterMs) != null ? { rtpTxJitterMs: f(c.audio?.rtp?.txJitterMs) } : {}),
+    ...(f(c.audio?.rtp?.rttMs) != null ? { rtpRttMs: f(c.audio?.rtp?.rttMs) } : {}),
   }
 }
 

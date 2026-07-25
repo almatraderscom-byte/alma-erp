@@ -169,6 +169,16 @@ export function CallDetail({ call }: { call: CallRow }) {
             <Fact k="বাধা দেওয়া" v={String(call.audio.bargeIns)} />
           </>
         )}
+        {/* The network half. A recording is tapped inside our server, so packet loss on the
+            wire can never appear in it — these are the only numbers that show it. */}
+        {call.network && (
+          <>
+            <Fact k="প্যাকেট হারিয়েছে (আসা)" v={pctOrDash(call.network.rxLostPct, call.network.rxLost)} />
+            <Fact k="প্যাকেট হারিয়েছে (যাওয়া)" v={pctOrDash(call.network.txLostPct, call.network.txLost)} />
+            <Fact k="jitter (আসা)" v={call.network.rxJitterMs != null ? `${call.network.rxJitterMs.toFixed(1)}ms` : '—'} />
+            <Fact k="কোডেক" v={call.network.codec ?? '—'} />
+          </>
+        )}
       </dl>
 
       {!call.audio && (
@@ -196,6 +206,13 @@ export function CallDetail({ call }: { call: CallRow }) {
       )}
     </div>
   )
+}
+
+/** "0.56% (15টি)" — the percentage alone hides how much audio that actually was. */
+function pctOrDash(pct: number | null, count: number | null): string {
+  if (pct == null && count == null) return '—'
+  const p = pct != null ? `${pct.toFixed(2)}%` : '—'
+  return count != null ? `${p} (${count}টি)` : p
 }
 
 function Fact({ k, v }: { k: string; v: string }) {

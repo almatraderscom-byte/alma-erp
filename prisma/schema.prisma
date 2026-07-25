@@ -4400,6 +4400,21 @@ model AgentVoiceCall {
   audioFramesOut   Int?                     @map("audio_frames_out")
   audioSilenceFrames Int?                   @map("audio_silence_frames")
   audioBargeIns    Int?                     @map("audio_barge_ins")
+  /// Turn boundaries — the model finishing a sentence. Counted separately from underruns
+  /// because treating one as the other is what made the jitter cushion ratchet up all call.
+  audioTurnEnds    Int?                     @map("audio_turn_ends")
+  /// What the NETWORK did, sampled from Asterisk's own RTP counters while the call was up.
+  /// A call's recording is tapped inside Asterisk, so it can never contain packet loss that
+  /// happened afterwards on the wire — which is why a recording can sound clean while the
+  /// call did not. These are the numbers that close that blind spot.
+  rtpCodec         String?                  @map("rtp_codec")
+  rtpRxLost        Int?                     @map("rtp_rx_lost")
+  rtpRxLostPct     Float?                   @map("rtp_rx_lost_pct")
+  rtpRxJitterMs    Float?                   @map("rtp_rx_jitter_ms")
+  rtpTxLost        Int?                     @map("rtp_tx_lost")
+  rtpTxLostPct     Float?                   @map("rtp_tx_lost_pct")
+  rtpTxJitterMs    Float?                   @map("rtp_tx_jitter_ms")
+  rtpRttMs         Float?                   @map("rtp_rtt_ms")
   createdAt        DateTime                 @default(now()) @map("created_at")
   endedAt          DateTime?                @map("ended_at")
   deliveries       AgentVoiceCallDelivery[]
