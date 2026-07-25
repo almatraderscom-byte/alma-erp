@@ -231,10 +231,10 @@ export function MiniBars({
   return (
     <div>
       <p className="mb-2 text-[11px] text-muted">{label}</p>
+      {/* h-full on the column matters: a percentage height resolves against a parent with a
+          DEFINITE height, and without it every bar collapsed and the chart rendered empty. */}
       <div className="flex h-28 items-end gap-1">
         {data.map((d) => (
-          {/* h-full matters: a percentage height needs a parent with a DEFINITE height, and
-              without it every bar collapsed to nothing and the chart rendered empty. */}
           <div key={d.date} className="group relative flex h-full min-w-0 flex-1 flex-col items-center justify-end">
             {d.sub != null && d.sub > 0 && (
               <div
