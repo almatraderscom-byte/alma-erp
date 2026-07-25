@@ -29,6 +29,7 @@ import {
 } from '@/lib/creative-studio/video-recipes'
 import { cn } from '@/lib/utils'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { toast } from 'react-hot-toast'
 import {
   createDefaultVideoEditContract,
@@ -494,6 +495,7 @@ export function VideoStudioView({ onOpenGallery, onOpenStudio }: { onOpenGallery
  * with Remotion and the finished version lands on this same gallery item.
  */
 export function VideoFinishPanel({ pendingActionId, onDone }: { pendingActionId: string; onDone: () => void }) {
+  const [portalReady, setPortalReady] = useState(false)
   const [panelMode, setPanelMode] = useState<'templates' | 'timeline'>('timeline')
   const [price, setPrice] = useState('')
   const [code, setCode] = useState('')
@@ -506,6 +508,10 @@ export function VideoFinishPanel({ pendingActionId, onDone }: { pendingActionId:
   const [progress, setProgress] = useState('')
   const [editContract, setEditContract] = useState<VideoEditContract>(() => createDefaultVideoEditContract(15))
   const [editLoading, setEditLoading] = useState(true)
+
+  useEffect(() => {
+    setPortalReady(true)
+  }, [])
 
   useEffect(() => {
     let live = true
@@ -585,8 +591,10 @@ export function VideoFinishPanel({ pendingActionId, onDone }: { pendingActionId:
   }, [editContract, pendingActionId, pollQueuedJob])
 
   const inputCls = 'w-full rounded-lg border border-white/15 bg-black/40 px-2.5 py-2 text-[13px] text-white placeholder:text-white/40'
-  return (
-    <div className="relative z-20 max-h-[72vh] space-y-2 overflow-y-auto rounded-2xl bg-black/90 p-3 ring-1 ring-white/15 backdrop-blur-md">
+  if (!portalReady) return null
+  return createPortal(
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-[100] flex justify-center px-3 md:bottom-4">
+      <div className="pointer-events-auto max-h-[72vh] w-[min(92vw,420px)] space-y-2 overflow-y-auto overscroll-contain rounded-2xl bg-black/95 p-3 ring-1 ring-white/15 backdrop-blur-md">
       {state === 'working' ? (
         <div className="flex items-center gap-2.5 py-2">
           <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
@@ -679,7 +687,9 @@ export function VideoFinishPanel({ pendingActionId, onDone }: { pendingActionId:
           )}
         </>
       )}
-    </div>
+      </div>
+    </div>,
+    document.body,
   )
 }
 
