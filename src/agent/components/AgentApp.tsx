@@ -1174,7 +1174,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           setMessages((prev) => prev.map((m) => {
             if (m.id !== assistantMsgId) return m
             const timeline = [...(m.timeline ?? [])]
-            for (let i = timeline.length - 1; i >= 0; i--) {
+            // Never supersede the LEADING first line — it is what Boss already
+            // read before the work started, not a draft the rewrite replaces.
+            for (let i = timeline.length - 1; i >= 1; i--) {
               const e = timeline[i]
               if (e.t === 'text') { timeline[i] = { ...e, state: 'superseded' }; break }
             }

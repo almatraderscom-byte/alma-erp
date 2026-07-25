@@ -5,6 +5,7 @@ import type { ModelEntry } from '@/agent/lib/models/registry'
 import type { NeutralMsg, NeutralTool } from '@/agent/lib/models/types'
 import { adapterFor } from '@/agent/lib/models/adapters'
 import { executeTool } from '@/agent/tools/registry'
+import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
 export type AdapterTurnResult = {
@@ -46,6 +47,12 @@ export async function runAdapterToolLoop(args: {
   let finalText = ''
   let completed = false
   const adapter = adapterFor(args.model.provider)
+  // Universal pipeline Phase 7 — the head loop has always been able to load a
+  // schema mid-turn after a find_tool hit; this loop (specialist sub-agents)
+  // could not, so a trimmed worker that discovered the right tool still had no
+  // way to call it. Same cache-safe append, same execution guards.
+  let liveTools: NeutralTool[] = [...args.tools]
+  let dynamicLoaded = 0
 
   for (let i = 0; i < maxIterations; i++) {
     if (args.signal?.aborted) break
@@ -58,7 +65,7 @@ export async function runAdapterToolLoop(args: {
       apiModel: args.model.apiModel,
       system: args.system,
       messages,
-      tools: args.tools,
+      tools: liveTools,
       thinking: args.model.thinking,
       signal: args.signal,
     })) {
@@ -96,6 +103,18 @@ export async function runAdapterToolLoop(args: {
         ...messages,
         { role: 'tool', toolCallId: call.id, name: call.name, result },
       ]
+
+      // find_tool hit → expose the matched schemas for the remaining rounds.
+      if (call.name === FIND_TOOL_NAME && result.success) {
+        const matches = (result.data as { matches?: Array<{ name?: unknown }> } | undefined)?.matches ?? []
+        const known = new Set(liveTools.map((t) => t.name))
+        const wanted = matches.map((m) => String(m?.name ?? '')).filter((n) => n && !known.has(n))
+        for (const tool of await resolveToolsByName(wanted)) {
+          if (dynamicLoaded >= MAX_DYNAMIC_TOOLS_PER_TURN) break
+          dynamicLoaded++
+          liveTools = [...liveTools, { name: tool.name, description: tool.description, schema: tool.input_schema as object }]
+        }
+      }
     }
   }
 
