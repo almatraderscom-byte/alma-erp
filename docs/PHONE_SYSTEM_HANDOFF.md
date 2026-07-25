@@ -25,10 +25,11 @@ layer on top. Everything below is built, merged to `main`, and running.
 - Registration watchdog, per-call CDR, outcome sweep, concurrency + hourly caps, BD-only
   destination allowlist, SIP port firewall.
 
-**Outbound — was failing ~half the time; root cause found 2026-07-25 (see §5).**
-The provider's switch needs ~100 s after each REGISTER before it routes our outbound calls,
-and we were re-registering every 5 minutes. `expiration` is now 3600, which cuts the exposure
-from ~45% of calls to ~2.8%. The residual window is the provider's to explain.
+**Outbound — fails intermittently, and the provider's own CDR names the reason (see §5).**
+`rate_plan_no_match` on numbers their rate plan clearly covers, `no_route`, `stale_timeout`,
+and `client_concurrent_limit_cancelled` (their CALL LIMIT is 2). Nothing about the SIP we send
+differs between the calls that work and the calls that die. This is theirs to fix, and §5 has
+the dated rows to show them.
 
 ---
 
@@ -113,46 +114,58 @@ Gemini's audio arrived late.
 
 ---
 
-## 5. OUTBOUND — root cause found 2026-07-25 (supersedes the "provider-side, nothing we can
-## do" reading below, which was half right)
+## 5. OUTBOUND — what the provider's own CDR says (2026-07-25)
 
-**The failure is time-windowed, and the window is created by OUR registration cycle.**
+The old reading in §5b ("their switch swallows our INVITE and it appears in NO CDR") is
+**wrong on the second half**. Their panel at `amarip.net` records every one of our calls and
+names the reason. Today's causes, read from their CDR:
 
-Twenty identical test calls to unassigned numbers (nobody's phone rings), each with a full
-packet capture, sorted by how long ago the trunk had re-registered:
+| their hangup cause | count | what it means |
+|---|---|---|
+| `rate_plan_no_match` | 7 | their billing lookup found no rate for the number |
+| `client_concurrent_limit_cancelled` | 2 | our trunk's CALL LIMIT of **2** was hit |
+| `no_route` | 1 | no outbound route on their side |
+| `stale_timeout` / `setup_failure` | 1 / 3 | their switch never completed setup and never answered us |
 
-| time since REGISTER | result |
-|---|---|
-| 0–80 s | **8 of 8 calls died** — `100 Trying`, then silence; `CANCEL` → `481` |
-| 100 s+ | **12 of 12 reached `183 Session Progress`** |
+`rate_plan_no_match` is a **provider bug, and it is provable from their own screens**: their
+rate plan `SCL_Low` contains the prefix `01` at ৳0.30, yet these calls to plain `01…` numbers
+were failed for "no matching rate" — and the same numbers route fine minutes later:
 
-The provider's switch needs about **100 seconds after each REGISTER** before it will route our
-outbound calls. Inside that window their edge still answers `100 Trying` and then swallows the
-INVITE — the call is never created on their core, which is why it appears in **no CDR** and the
-callee's phone never rings. That part is genuinely theirs to fix.
+```
+25/07/2026 11:23:16  01779640373   GRAMEENPHONE  FAILED  rate_plan_no_match
+25/07/2026 12:11:50  01900000001   BANGLALINK    FAILED  rate_plan_no_match
+25/07/2026 12:12:34  01900000000   BANGLALINK    FAILED  rate_plan_no_match
+25/07/2026 13:57:51  01700000009   GRAMEENPHONE  FAILED  rate_plan_no_match
+```
 
-Our half: `expiration=300` meant we re-registered **every 5 minutes**, so ~100 s in every 300
-was dead — about **one call in two**, matching the owner's own count (18 of 35). Raising it to
-`expiration=3600` (the provider grants 3600 — verified in their `200 OK`) leaves one dead
-window per hour: **~2.8%**. Live on the VPS and in `worker/deploy/asterisk/alma-trunk.conf`.
+`stale_timeout` is the "100 seconds of silence" case in §5b, seen from their side:
 
-Two things follow that are easy to trip over:
-- **A reload of `res_pjsip_outbound_registration` re-registers, and so opens a fresh ~100 s
-  hole.** Never do it during business hours as a casual "let me refresh things".
-- `pjsip send register <name>` sends **`Expires: 0` first** — it de-registers, then registers.
-  Running it "to check" takes the line down for a moment; the trunk was left `Unregistered`
-  that way during this very investigation.
+```
+25/07/2026 12:29:47  01779640373   GRAMEENPHONE  NO ANSWER  stale_timeout   (PDD 0.05s)
+```
 
-Hypotheses that were tested and are NOT the cause: destination number format (`01…` vs `880…`
-vs `+880…` — all four operator prefixes behave identically), on-net vs off-net, an
-`"Anonymous"` display name in `From`, call spacing (three calls 40 s apart all failed inside a
-bad window), and the call-limit-of-2 theory. The INVITEs that fail and the INVITEs that succeed
-are byte-for-byte identical apart from the dialled number — only the *timing* differs.
+**Take to support, with dates:** (1) why does `rate_plan_no_match` fire for numbers that match
+the `01` prefix already in our own rate plan, (2) why does a failed setup return no SIP response
+at all — our PBX then waits out its full timeout on a call that is already dead on their side —
+and (3) raise CALL LIMIT from 2.
 
-**What to tell the provider** (precise, not "outbound sometimes fails"): *for roughly 100
-seconds after each successful REGISTER, INVITEs from 31.97.237.40:5062 are answered `100
-Trying` and then dropped; a CANCEL is answered `481 Call/Transaction Does Not Exist`. Captures
-available. Why does the binding take ~100 s to become routable?*
+### Tested and NOT the cause — do not spend a session on these again
+
+Destination format (`01…`, `880…`, `+880…`; their rate plan carries all of them), operator
+prefix (013/016/017/018/019 behave identically), on-net vs off-net, an `"Anonymous"` display
+name in `From`, and call spacing. Failing and succeeding INVITEs are byte-for-byte identical
+apart from the dialled number.
+
+**A correlation that looked certain and did not survive retesting:** an early run suggested
+every call within ~80 s of a re-registration died. A clean rerun with valid numbers and no
+concurrency contention had calls succeeding from 28 s onward. The first run was contaminated by
+a malformed 12-digit test number and by hitting the concurrency limit. `expiration` is now 3600
+anyway — fewer re-registrations is free hygiene and the provider grants it — but it is NOT the
+fix, and it was never proven to be.
+
+**Test outbound without dialling a human:** unassigned numbers (`01711100001`, `01700000001`, …)
+answer with `183 Session Progress` when routing works and cost nothing, and their CDR names the
+cause a few minutes later. That is the harness for any future outbound question.
 
 ---
 
