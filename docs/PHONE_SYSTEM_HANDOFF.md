@@ -143,9 +143,13 @@ these calls **do not appear in the provider's CDR** and why the owner's phone ne
   NGS to keep NGS disabled — never point our trunk at it.**
 
 **Suspicion still open:** the SIP user shows **CALL LIMIT = 2** on amarip.net, while the NGS
-trunk shows limit 0. A transfer alone consumes two legs. The gateway's own cap is
-`SIP_MAX_CONCURRENT_CALLS` (currently **4** — should be lowered to 2, owner has not yet
-approved).
+trunk shows limit 0. A transfer alone consumes two legs (the caller is held on one while the
+staff member is rung on the other), so two is not enough to run the business.
+
+`SIP_MAX_CONCURRENT_CALLS` is now **2**, matching the provider, so we can never overrun them.
+**When the owner gets the provider limit raised, raise this to match** — leaving it at 2 would
+then be our own artificial ceiling. Note the cap alone does not explain everything: the last
+failing test ran with no other call in progress.
 
 **What the owner is doing:** he has the packet trace and is with provider support.
 
@@ -203,7 +207,8 @@ approved).
 
 1. **Owner + provider**: the outbound problem (§5). Ask them to raise CALL LIMIT from 2, and
    to explain why authenticated INVITEs are accepted and then dropped without a CDR entry.
-2. **Waiting on owner's approval**: lower `SIP_MAX_CONCURRENT_CALLS` 4 → 2 to match the trunk.
+2. **Done** — `SIP_MAX_CONCURRENT_CALLS` lowered 4 → 2 to match the trunk. Raise it again once
+   the provider raises theirs.
 3. **Waiting on owner's file**: his recorded hold audio → drop into `/var/lib/asterisk/moh-alma`
    on the VPS and set `SIP_MOH_CLASS=alma-hold`. (Bangla script already given to him.)
 4. **Owner eye-check**: the new phone UI at `/agent/phone` (PR #572) — keypad, mute, speaker,
