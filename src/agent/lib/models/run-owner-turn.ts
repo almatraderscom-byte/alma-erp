@@ -1304,6 +1304,19 @@ async function* runAlternateProviderTurn(
   // tool-round prose existed yet) the line vanished from the finished message
   // even though Boss had already watched it stream (live-verified 2026-07-25).
   let preambleTimelineIndex = -1
+  /**
+   * finalText MINUS the spoken first line — i.e. "did this turn actually produce
+   * work output?". Every did-we-produce-anything guard must ask THIS, not
+   * finalText: seeding the preamble into finalText silently blinded them, and a
+   * round that returned only reasoning then ended the turn with the first line
+   * as the whole reply (owner hit it live 2026-07-25 on "creative-এ best idea দাও").
+   */
+  const answerBody = (): string => {
+    const t = finalText.trim()
+    const p = preambleText.trim()
+    if (!p) return t
+    return t.startsWith(p) ? t.slice(p.length).trim() : t
+  }
   // Speak-first: the ground-before-answer guarantee now runs AFTER round 0
   // instead of forcing a tool call that silences it. One retry per turn.
   let groundingNudgeSent = false
@@ -1734,7 +1747,7 @@ async function* runAlternateProviderTurn(
         if (
           !signal?.aborted
           && !iterationText.trim()
-          && !finalText.trim()
+          && !answerBody()
           && emptyRoundRetries < 2
         ) {
           emptyRoundRetries++
@@ -2428,7 +2441,7 @@ async function* runAlternateProviderTurn(
     // A turn that produced NOTHING (no text, no tool calls, no cards) must never
     // be saved as a blank owner reply — throw so the cheap-head fallback below
     // answers instead (2026-07-12: gemini-2.5-flash 60k-in/0-out empty turn).
-    if (!finalText.trim() && toolRecords.length === 0 && emittedAskCards.length === 0) {
+    if (!answerBody() && toolRecords.length === 0 && emittedAskCards.length === 0) {
       throw new Error(`empty_head_turn: ${model.id} produced no text, tools or cards`)
     }
 
@@ -2453,9 +2466,13 @@ async function* runAlternateProviderTurn(
           .join(' → ')
         return target ? `${action} "${target}"` : action
       })
-    if (!finalText.trim()) {
-      const lastTexts = timeline.filter((e) => e.t === 'text').map((e) => (e as { text: string }).text)
+    if (!answerBody()) {
+      const lastTexts = timeline
+        .filter((e) => e.t === 'text')
+        .map((e) => (e as { text: string }).text)
+        .filter((t) => t.trim() !== preambleText.trim())
       finalText = [
+        preambleText.trim(),
         lastTexts.length ? lastTexts[lastTexts.length - 1].slice(0, 600) : '',
         browserSteps.length
           ? `এই টার্নে ${browserSteps.length}টা ব্রাউজার ধাপ হয়েছে, তারপর সার্ভারের সময়সীমায় টার্ন শেষ হয়েছে।`
