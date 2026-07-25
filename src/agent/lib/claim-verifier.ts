@@ -30,6 +30,8 @@ export type ClaimViolationCategory =
   | 'fabricated_stat'
   | 'robotic_style'
   | 'async_unverified'
+  /** The reply named a tool and said it ran, but that tool never ran this turn. */
+  | 'tool_not_called'
 
 export interface ClaimViolation {
   category: ClaimViolationCategory
@@ -295,6 +297,57 @@ export function detectClaimViolations(
   }
 
   return violations
+}
+
+/**
+ * Named-tool execution claims (owner incident 2026-07-26, second fabrication).
+ *
+ * Told to call start_fix_campaign, the head ran only find_tool and then wrote
+ * "start_fix_campaign executed। Campaign ID: seo-fix-almatraders-20260726। মোট
+ * ৭টা ধাপ" — an id, a step count and a pipeline that never existed. The verb
+ * rules missed it (English "executed"), and the ledger rules key on generic
+ * completion language, not on a tool the reply NAMES.
+ *
+ * This check is the narrow, deterministic one that class deserves: if the reply
+ * says a specific registered tool ran, that tool must be in this turn's ledger.
+ * There is nothing to interpret — either the name is in the ledger or it is not.
+ */
+const TOOL_RAN_VERB =
+  /(?:executed|ran|called|invoked|চালানো\s*হয়েছে|চালিয়েছি|কল\s*কর(?:েছি|লাম|া\s*হয়েছে)|রান\s*কর(?:েছি|া\s*হয়েছে))/i
+
+/** A tool-name-shaped token: snake_case with at least one underscore. */
+const TOOL_NAME_TOKEN = /\b([a-z][a-z0-9]*(?:_[a-z0-9]+){1,5})\b/g
+
+export function detectToolExecutionClaims(
+  replyText: string,
+  toolsCalledThisTurn: string[],
+  isKnownTool: (name: string) => boolean,
+): ClaimViolation[] {
+  const text = replyText.trim()
+  if (!text) return []
+  const called = new Set(toolsCalledThisTurn)
+
+  for (const rawSentence of text.split(/[।.!?\n]+/)) {
+    const sentence = rawSentence.trim()
+    if (sentence.length < 8) continue
+    if (!TOOL_RAN_VERB.test(sentence)) continue
+    if (FUTURE_INTENT.test(sentence)) continue // "চালাবো" / "I'll run it"
+
+    TOOL_NAME_TOKEN.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = TOOL_NAME_TOKEN.exec(sentence)) !== null) {
+      const name = m[1]
+      if (!isKnownTool(name)) continue      // not a tool — just snake_case prose
+      if (called.has(name)) continue        // it really ran
+      return [{
+        category: 'tool_not_called',
+        ruleId: 'named_tool_claimed_without_call',
+        matchedSnippet: stripWhitespace(sentence).slice(0, 120),
+        requiredTools: [name],
+      }]
+    }
+  }
+  return []
 }
 
 /**
@@ -812,6 +865,11 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'কোনো check_* tool এখনো status "executed" দেখায়নি। কিউ করা মানে শেষ হওয়া নয়। ' +
     'হয় check tool দিয়ে executed status আনুন, তারপর আসল ফলাফল (স্কোর/ফাইন্ডিংস/লিংক) সহ রিপোর্ট দিন; ' +
     'নয়তো সৎভাবে চলমান অবস্থা বলুন — "crawl চলছে, শেষ হলেই নিজে থেকেই পুরো রিপোর্ট দেবো"। কখনো আগেভাগে "শেষ" বলবেন না।',
+  tool_not_called:
+    'আপনি একটা tool-এর নাম ধরে বলেছেন সেটা চলেছে, কিন্তু এই turn-এ ওই tool কল-ই হয়নি। ' +
+    'সাথে যে id / সংখ্যা / ধাপের তালিকা দিয়েছেন সেগুলোও তাহলে বানানো — এটা Boss-এর সবচেয়ে বড় আপত্তি। ' +
+    'এখনই আসল tool-টা কল করুন এবং তার আসল ফলাফল থেকে উত্তর দিন; tool না থাকলে find_tool দিয়ে লোড করুন। ' +
+    'কল করতে না পারলে সোজা বলুন "পারিনি" — বানানো id বা ধাপ কখনো নয়।',
   general_write:
     'আপনি কাজ সম্পন্ন হওয়ার দাবি করেছেন কিন্তু এই turn-এ কোনো সফল write/action tool call হয়নি। ' +
     'এখনই প্রয়োজনীয় tool call করুন এবং success result পেলে তবেই confirm দিন। ' +

@@ -77,6 +77,7 @@ import {
   detectFabricatedStatViolations,
   detectRoboticStyleViolations,
   detectAsyncCompletionViolation,
+  detectToolExecutionClaims,
   summarizeAsyncJobEvidence,
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
@@ -1906,6 +1907,18 @@ async function* runAlternateProviderTurn(
               ...detectAsyncCompletionViolation(
                 iterationText.trim(),
                 summarizeAsyncJobEvidence(toolRecords),
+              ),
+            )
+          }
+          // A reply that NAMES a tool and says it ran must have that tool in the
+          // ledger (owner incident 2026-07-26: "start_fix_campaign executed।
+          // Campaign ID: seo-fix-almatraders-20260726" — only find_tool had run).
+          if (violations.length === 0) {
+            violations.push(
+              ...detectToolExecutionClaims(
+                iterationText.trim(),
+                toolRecords.map((r) => r.toolName),
+                (name) => Boolean(getCapability(name)),
               ),
             )
           }
