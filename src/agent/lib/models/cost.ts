@@ -18,6 +18,18 @@ const ANTHROPIC_CACHE_READ_MULT = 0.1
  *   - OpenAI: cached prompt tokens billed at 0.5x input
  * Matched on the apiModel slug first (OpenRouter routes many vendors), then provider.
  */
+/**
+ * Price of ONE cached input token for this model, per Mtok — the single source of
+ * truth for both billing (below) and the cache-savings monitor (cost-dashboard).
+ * Prefers the provider's PUBLISHED rate (`cachedInPerM`); falls back to the
+ * per-vendor multiplier estimate when the provider doesn't publish one.
+ */
+export function cacheReadRatePerM(model: ModelEntry): number {
+  if (typeof model.cachedInPerM === 'number') return model.cachedInPerM
+  if (model.provider === 'anthropic') return model.inPerM * ANTHROPIC_CACHE_READ_MULT
+  return model.inPerM * nonAnthropicCacheReadMult(model)
+}
+
 function nonAnthropicCacheReadMult(model: ModelEntry): number {
   const slug = model.apiModel.toLowerCase()
   if (slug.includes('deepseek')) return 0.1
@@ -73,7 +85,9 @@ export function calcModelTurnCostUsd(
     // Alibaba/Qwen ~0.25x). We were re-adding cache reads at FULL input price,
     // inflating the displayed per-turn cost ~3-4x vs what OpenRouter actually
     // charges (the owner saw "$0.17" turns that really cost ~$0.05).
-    cache = ((usage.cacheRead ?? 0) / 1_000_000) * model.inPerM * nonAnthropicCacheReadMult(model)
+    // Phase 8: prefer the provider's PUBLISHED cached rate when the registry has
+    // one (xAI grok-4.20 = $0.20/Mtok); otherwise keep the multiplier estimate.
+    cache = ((usage.cacheRead ?? 0) / 1_000_000) * cacheReadRatePerM(model)
   }
 
   return roundUsd(input + output + cache)

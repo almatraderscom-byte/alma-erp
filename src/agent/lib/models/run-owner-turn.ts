@@ -1404,6 +1404,10 @@ async function* runAlternateProviderTurn(
         tools: iterationTools,
         thinking: model.thinking,
         signal,
+        // Sticky prompt-cache routing (Phase 8): keep every round of THIS
+        // conversation on the server that already holds its cached prefix.
+        // Ignored by adapters that don't do sticky routing.
+        cacheKey: conversationId,
         parallelToolCalls: iterationTools.length > 0 ? packParallelToolCalls : undefined,
         // Phase 5 §D: bind the FIRST round of a deterministic mutating step to
         // its named tool (sequential by policy above); every later round is

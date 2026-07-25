@@ -15,6 +15,14 @@ export interface ModelEntry {
   contextWindow: number
   inPerM: number
   outPerM: number
+  /**
+   * Provider's PUBLISHED price for a cached input token, per Mtok (cost audit
+   * Phase 8). When absent, cost.ts falls back to its per-vendor multiplier
+   * estimate. Set it whenever the provider publishes a real number: xAI lists
+   * $0.20 for grok-4.20 while our generic 0.25× multiplier guessed $0.3125, so
+   * the dashboard was over-stating cache cost by ~56%.
+   */
+  cachedInPerM?: number
   thinking?: 'adaptive' | 'level' | 'none'
   default?: boolean
   /**
@@ -284,6 +292,10 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     contextWindow: 2_000_000,
     inPerM: 1.25,
     outPerM: 2.5,
+    // xAI publishes $0.20/Mtok for cached input on grok-4.20
+    // (docs.x.ai/developers/models, verified 2026-07-25). Our generic
+    // non-Anthropic 0.25× multiplier guessed $0.3125 — 56% too high.
+    cachedInPerM: 0.2,
     thinking: 'level',
   },
   {

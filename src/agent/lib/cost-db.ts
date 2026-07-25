@@ -44,13 +44,25 @@ export async function queryConversationCostBetween(
   return Math.round(raw * 1_000_000) / 1_000_000
 }
 
-/** Anthropic chat token usage aggregated from cost-event units JSON. */
+/**
+ * Chat token usage aggregated from cost-event units JSON — ALL chat providers.
+ *
+ * Was `WHERE provider = 'anthropic'` until the Phase 8 audit: the production head
+ * is Grok, so the cache-hit ratio and the "caching broken" alarm never observed
+ * the model serving most traffic. `byModel` carries the per-model split so savings
+ * can be priced at each model's own rate instead of Sonnet's.
+ */
 export type PromptCacheUsageRow = {
   cacheReadTokens: number
   cacheCreationTokens: number
   inputTokens: number
   outputTokens: number
   chatTurns: number
+  byModel: Array<{
+    modelId: string
+    cacheReadTokens: number
+    inputTokens: number
+  }>
 }
 
 export async function queryPromptCacheUsageBetween(start: Date, end: Date): Promise<PromptCacheUsageRow> {
@@ -68,9 +80,24 @@ export async function queryPromptCacheUsageBetween(start: Date, end: Date): Prom
       COALESCE(SUM(COALESCE((units->>'output_tokens')::bigint, 0)), 0)::text AS output_tokens,
       COUNT(*)::text AS chat_turns
     FROM agent_cost_events
-    WHERE provider = 'anthropic'
-      AND kind = 'chat'
+    WHERE kind = 'chat'
       AND occurred_at >= ${start} AND occurred_at < ${end}`,
+  )
+  // Per-model split so savings are priced at each model's OWN cached rate.
+  const modelRows = await prisma.$queryRaw<Array<{
+    model_id: string | null
+    cache_read: string
+    input_tokens: string
+  }>>(
+    Prisma.sql`SELECT
+      units->>'model' AS model_id,
+      COALESCE(SUM(COALESCE((units->>'cache_read_input_tokens')::bigint, 0)), 0)::text AS cache_read,
+      COALESCE(SUM(COALESCE((units->>'input_tokens')::bigint, 0)), 0)::text AS input_tokens
+    FROM agent_cost_events
+    WHERE kind = 'chat'
+      AND occurred_at >= ${start} AND occurred_at < ${end}
+      AND units->>'model' IS NOT NULL
+    GROUP BY units->>'model'`,
   )
   const row = rows[0]
   return {
@@ -79,5 +106,10 @@ export async function queryPromptCacheUsageBetween(start: Date, end: Date): Prom
     inputTokens: parseInt(row?.input_tokens ?? '0', 10) || 0,
     outputTokens: parseInt(row?.output_tokens ?? '0', 10) || 0,
     chatTurns: parseInt(row?.chat_turns ?? '0', 10) || 0,
+    byModel: modelRows.map((m) => ({
+      modelId: m.model_id ?? '',
+      cacheReadTokens: parseInt(m.cache_read ?? '0', 10) || 0,
+      inputTokens: parseInt(m.input_tokens ?? '0', 10) || 0,
+    })),
   }
 }
