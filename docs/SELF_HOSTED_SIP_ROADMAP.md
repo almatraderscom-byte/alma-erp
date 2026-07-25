@@ -140,6 +140,24 @@ DONE:
   cleanly (`file convert` → ulaw, 8.7s), so format/path are correct; the owner did not pick up
   the two test calls, so **live one-way audio is still owner-pending**.
 
+### CUTOVER BLOCKER — how does Vercel reach the gateway? (owner decision, 2026-07-25)
+The control API can originate, transfer and hang up real PSTN calls, i.e. spend money. It
+was bound to 0.0.0.0 (world-reachable, plaintext HTTP, shared secret only) until this was
+found; it now binds loopback + the Docker bridge, which breaks nothing because every current
+caller is on the same host. Cutover needs Vercel to reach it, so pick one:
+- **(a) Expose over HTTPS.** The VPS already runs Traefik with Let's Encrypt and an
+  `alpine/socat` sidecar (`relay-bridge`) doing exactly this for the relay on :3100 — copy
+  that pattern with `Host(sip.31-97-237-40.sslip.io)` -> host:8770. sslip.io means no domain
+  purchase. Fast. Residual risk: a leaked key allows toll fraud (bounded by
+  SIP_MAX_CONCURRENT_CALLS). HARDENING TO DO FIRST: one-way `playUrl` calls currently need
+  only the key+secret — require the per-call HMAC there too.
+- **(b) Never expose it.** Vercel enqueues a job; the VPS worker (already local) places the
+  call. Zero public surface. The outcome sweep no longer needs to poll the gateway either,
+  since finished calls are already pushed to `sip-cdr`. ~half a day.
+- **(c) Defer cutover.** Keep testing as-is.
+Recommendation: (b) for a money-moving API; (a) is defensible since an equivalent door is
+already open on this box.
+
 ### Retirement checklist (do NOT rush — owner decision)
 1. Flip `VOICE_CALL_PROVIDER=sip` (+ SIP_GATEWAY_*) and `ONE_WAY_CALL_PROVIDER=sip` on Vercel.
 2. Deploy the sip-inbound route to prod (inbound DB rows/reports need it; until then the
