@@ -29,7 +29,7 @@ export default async function PhonePage() {
       />
       <div className="mx-auto max-w-2xl px-4 pt-4 pb-10">
         <SoftphonePanel />
-        <div className="mt-4 space-y-2 rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-sm text-white/55">
+        <div className="mt-4 space-y-2 rounded-2xl border border-border-subtle bg-card/60 p-4 text-sm text-muted-hi">
           <p>• &ldquo;ফোন চালু করো&rdquo; চাপলে ব্রাউজার মাইক্রোফোনের অনুমতি চাইবে — একবার দিলেই হবে।</p>
           <p>• কল এলে কলদাতার নাম, কত অর্ডার, বাকি কত আর আগে কতবার কল করেছেন — সব পর্দায় দেখাবে।</p>
           <p>• সহকর্মীকে কল করতে তার ৪ ডিজিটের এক্সটেনশন, কাস্টমারকে করতে 01… নম্বর লিখুন।</p>
