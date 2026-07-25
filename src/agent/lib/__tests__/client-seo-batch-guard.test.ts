@@ -106,6 +106,6 @@ describe('the contract never overwrites a delivered report', () => {
     f = reduceClientSeoBatch(f, { type: 'audit_finished', actionId: 'a1', ok: true })
     f = reduceClientSeoBatch(f, { type: 'report_read', actionId: 'a1' })
     f = reduceClientSeoBatch(f, { type: 'links_read', actionId: 'a1' })
-    expect(contractStatusOrDraft(f, '   ')).toContain('পরের ধাপ: complete_skill_pack_run')
+    expect(contractStatusOrDraft(f, '   ')).toContain('হয়ে গেছে')
   })
 })

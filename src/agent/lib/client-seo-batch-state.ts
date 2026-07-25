@@ -152,6 +152,15 @@ export function reduceClientSeoBatch(
   } else if (event.type === 'pack_completed') {
     next.packCompleted = true
   }
+  // The batch is finished when its OWN definition of finished is met: every
+  // target crawled, its report read and its links delivered. It used to hold
+  // itself open waiting for `complete_skill_pack_run`, a gate belonging to a
+  // separate skill-pack run that was never started — so that gate refused for
+  // "4 miss(es): required step not done: full-audit…" and the contract could
+  // never be satisfied (live run 2026-07-25). The client deliverables are now
+  // built server-side the moment the crawl succeeds, which is a stronger
+  // guarantee than asking the model to submit step evidence.
+  if (!next.packCompleted && clientSeoBatchIsReadyForPack(next)) next.packCompleted = true
   return next
 }
 

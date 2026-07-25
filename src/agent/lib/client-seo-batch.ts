@@ -116,7 +116,10 @@ export async function recordClientSeoBatchTool(
   const next = reduceClientSeoBatch(facts, event)
   const required = clientSeoBatchRequiredTool(next)
   const waitingWorker = event.type === 'audit_queued'
-  const done = event.type === 'pack_completed' && clientSeoBatchIsReadyForPack(facts)
+  // Close the run whenever the work is genuinely finished — not only when the
+  // model happens to call the pack gate (2026-07-25: it couldn't, and the run
+  // stayed open forever demanding a tool that always refused).
+  const done = next.packCompleted && clientSeoBatchIsReadyForPack(next)
   try {
     await transitionWorkflowRun({
       runId: run.id,
@@ -181,6 +184,7 @@ export async function recordClientSeoAuditResult(
 }
 
 export function clientSeoBatchProgressText(facts: ClientSeoBatchFacts): string {
+  if (facts.packCompleted) return '✅ সব target-এর crawl, রিপোর্ট আর ফাইল-লিংক দেওয়া হয়ে গেছে।'
   const target = facts.targets[facts.currentIndex]
   if (!target) return 'সব target-এর audit/report হয়েছে; এখন final client file completion gate বাকি।'
   if (target.auditStatus === 'queued') {
