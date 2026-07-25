@@ -64,7 +64,7 @@ export default function QualityView() {
           )}
           {totals.measured > 0 && (
             <MiniBars
-              label="প্রতিদিন কত কল কেটেছে (গাঢ় অংশ) বনাম মোট মাপা কল"
+              label="মোট মাপা কল — হালকা অংশ = যেগুলোর অডিও কেটেছে"
               data={(data?.daily ?? []).map((d) => ({ date: d.date, value: d.measured, sub: d.withUnderruns }))}
             />
           )}

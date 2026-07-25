@@ -45,9 +45,23 @@ export default function DashboardView() {
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
         <Panel title="দিনের ধারা" className="lg:col-span-2">
-          {data?.trend?.length
-            ? <MiniBars label="প্রতিদিনের কল (গাঢ় অংশ = পৌঁছায়নি)" data={data.trend.map((d) => ({ date: d.date, value: d.total, sub: d.unreached }))} />
-            : <p className="text-[12px] text-muted">এই সময়ে কোনো কল নেই।</p>}
+          {/* One day is not a trend, and a single full-width block reads as a rendering
+              fault rather than as data. Say the number instead. */}
+          {(data?.trend?.length ?? 0) > 1 && (
+            <MiniBars
+              label="প্রতিদিনের কল (হালকা অংশ = পৌঁছায়নি)"
+              data={(data?.trend ?? []).map((d) => ({ date: d.date, value: d.total, sub: d.unreached }))}
+            />
+          )}
+          {data?.trend?.length === 1 && (
+            <p className="text-[12px] leading-relaxed text-muted">
+              আজ <b className="text-cream">{data.trend[0].total}</b>টি কল — ধরা হয়েছে{' '}
+              <b className="text-cream">{data.trend[0].answered}</b>, পৌঁছায়নি{' '}
+              <b className="text-cream">{data.trend[0].unreached}</b>। কয়েক দিনের ধারা দেখতে উপরে
+              ৭ বা ৩০ দিন বেছে নিন।
+            </p>
+          )}
+          {!data?.trend?.length && <p className="text-[12px] text-muted">এই সময়ে কোনো কল নেই।</p>}
         </Panel>
 
         <Panel title="এখন লাইভ" badge={data?.line.counts.active ?? 0}>
