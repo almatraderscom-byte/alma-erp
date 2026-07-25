@@ -96,7 +96,7 @@ import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/
 import { isJobDeliveryDirective } from '@/agent/lib/job-delivery'
 import { contractToolFailureText, findContractToolFailure } from '@/agent/lib/contract-tool-failure'
 import {
-  clientSeoBatchProgressText,
+  contractStatusOrDraft,
   ensureClientSeoBatchWorkflow,
   getClientSeoBatchRequiredTool,
   getClientSeoBatchStatus,
@@ -1709,12 +1709,12 @@ async function* runAlternateProviderTurn(
             continue
           }
           iterationText = batchStatus
-            ? clientSeoBatchProgressText(batchStatus.facts)
+            ? contractStatusOrDraft(batchStatus.facts, iterationText)
             : '⚠️ Boss-এর explicit memory request এখনো save হয়নি; তাই সম্পন্ন বলছি না।'
         } else if (batchStatus && !batchStatus.requiredTool && !batchStatus.facts.packCompleted) {
           // No legal tool means the VPS worker owns the current step. Never let
           // the model fill that wait with unrelated prose.
-          iterationText = clientSeoBatchProgressText(batchStatus.facts)
+          iterationText = contractStatusOrDraft(batchStatus.facts, iterationText)
         }
         // The contract replaced the model's draft → keep the persisted timeline
         // truthful too: mark the draft superseded (same presentation as verify

@@ -25,7 +25,7 @@ vi.mock('@/agent/lib/workflow-run', () => ({
 }))
 vi.mock('@/agent/lib/graph/seo-batch-graph', () => ({ mirrorSeoBatchTransition: async () => {} }))
 
-const { guardClientSeoBatchTool } = await import('@/agent/lib/client-seo-batch')
+const { guardClientSeoBatchTool, contractStatusOrDraft } = await import('@/agent/lib/client-seo-batch')
 
 beforeEach(() => {
   facts = createClientSeoBatchFacts(['https://almatraders.com'], {
@@ -73,5 +73,39 @@ describe('check_website_seo_audit steering', () => {
     facts = two
     const block = await guardClientSeoBatchTool('conv-1', 'run_website_seo_audit', { url: 'https://two.com' })
     expect(block?.guard).toBe('client_seo_wrong_target_order')
+  })
+})
+
+// Live run 2026-07-25 — the audit finished, the report was read, the file card
+// landed, and the contract then replaced the head's written answer with
+// "⏳ Ordered SEO কাজ চলমান". A delivery must never be overwritten by a
+// progress line.
+describe('the contract never overwrites a delivered report', () => {
+  const REPORT = 'Boss, almatraders.com-এর অডিট শেষ — স্কোর ২৪/১০০, ২টা critical সমস্যা: robots.txt সব ব্লক করছে…'
+
+  it('keeps the draft once report AND links are delivered', () => {
+    let f = createClientSeoBatchFacts(['https://almatraders.com'], { requireLiveBrowser: false, requireArtifact: true })
+    f = reduceClientSeoBatch(f, { type: 'audit_queued', actionId: 'a1' })
+    f = reduceClientSeoBatch(f, { type: 'audit_finished', actionId: 'a1', ok: true })
+    f = reduceClientSeoBatch(f, { type: 'report_read', actionId: 'a1' })
+    f = reduceClientSeoBatch(f, { type: 'links_read', actionId: 'a1' })
+    expect(contractStatusOrDraft(f, REPORT)).toBe(REPORT)
+  })
+
+  it('still shows progress while the crawl is running', () => {
+    let f = createClientSeoBatchFacts(['https://almatraders.com'], { requireLiveBrowser: false, requireArtifact: true })
+    f = reduceClientSeoBatch(f, { type: 'audit_queued', actionId: 'a1' })
+    const out = contractStatusOrDraft(f, 'অডিট সম্পন্ন হয়ে গেছে!')
+    expect(out).not.toContain('সম্পন্ন হয়ে গেছে')
+    expect(out).toContain('worker-এ চলছে')
+  })
+
+  it('falls back to progress text when the model wrote nothing', () => {
+    let f = createClientSeoBatchFacts(['https://almatraders.com'], { requireLiveBrowser: false, requireArtifact: true })
+    f = reduceClientSeoBatch(f, { type: 'audit_queued', actionId: 'a1' })
+    f = reduceClientSeoBatch(f, { type: 'audit_finished', actionId: 'a1', ok: true })
+    f = reduceClientSeoBatch(f, { type: 'report_read', actionId: 'a1' })
+    f = reduceClientSeoBatch(f, { type: 'links_read', actionId: 'a1' })
+    expect(contractStatusOrDraft(f, '   ')).toContain('পরের ধাপ: complete_skill_pack_run')
   })
 })

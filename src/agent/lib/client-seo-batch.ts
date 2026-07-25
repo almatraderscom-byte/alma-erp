@@ -190,6 +190,28 @@ export function clientSeoBatchProgressText(facts: ClientSeoBatchFacts): string {
   return `⏳ Ordered SEO কাজ চলমান: target ${facts.currentIndex + 1}/${facts.targets.length} — ${target.url}; পরের ধাপ: ${clientSeoBatchRequiredTool(facts) ?? 'worker result'}.`
 }
 
+/**
+ * The contract's progress line must never DESTROY a delivery.
+ *
+ * Live run 2026-07-25: the audit finished, the head read the report, the file
+ * card landed — and then the contract replaced its written answer with
+ * "⏳ Ordered SEO কাজ চলমান … পরের ধাপ: complete_skill_pack_run", because one
+ * internal completion gate was still open. The owner was left with a progress
+ * line for work that was actually done and in front of him.
+ *
+ * So: once the current target's report AND links have been read, the model's
+ * draft IS the deliverable — keep it. The remaining gate is internal
+ * bookkeeping and is not worth overwriting the owner's report with. Only while
+ * there is genuinely nothing to present (crawl pending/queued, or an empty
+ * draft) does the progress text take over.
+ */
+export function contractStatusOrDraft(facts: ClientSeoBatchFacts, draft: string): string {
+  const target = facts.targets[facts.currentIndex]
+  const hasDelivery = Boolean(target?.reportDelivered && target?.linksDelivered)
+  if (hasDelivery && draft.trim()) return draft
+  return clientSeoBatchProgressText(facts)
+}
+
 export async function guardClientSeoBatchTool(
   conversationId: string,
   toolName: string,
