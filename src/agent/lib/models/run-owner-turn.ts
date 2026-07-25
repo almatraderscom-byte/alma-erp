@@ -151,6 +151,25 @@ function shortHash(s: string): string {
   return createHash('sha256').update(s).digest('hex').slice(0, 10)
 }
 
+/**
+ * Phase 8c — "heading:hash" per markdown section of the cached system prefix.
+ *
+ * The whole stable prefix is one joined block, so a single hash only says THAT it
+ * changed, never WHERE. Splitting on `## ` headings and hashing each section makes
+ * the unstable one self-identify when two turns are diffed. Truncated hard so a
+ * long prompt can't bloat the cost row.
+ */
+function sectionFingerprints(systemText: string): string {
+  return systemText
+    .split(/\n(?=#{2,3} )/)
+    .map((section, i) => {
+      const heading = (section.match(/^#{2,3} (.+)$/m)?.[1] ?? `part${i}`).slice(0, 40)
+      return `${heading}=${shortHash(section)}`
+    })
+    .join('|')
+    .slice(0, 4000)
+}
+
 function providerToCostProvider(provider: string): CostProvider {
   if (provider === 'google') return 'gemini'
   if (provider === 'openrouter') return 'openrouter'
@@ -2374,6 +2393,17 @@ async function* runAlternateProviderTurn(
         // Cheap: two short hashes per turn, no extra queries.
         prefix_system_chars: systemText.length,
         prefix_system_sha: shortHash(systemText),
+        // Phase 8c: per-SECTION fingerprints. The 8b probe proved the system text
+        // changes between turns at IDENTICAL length (69,044 chars both times) with
+        // an identical tool set — so the earlier "active tool names rewrite the
+        // core prompt" theory was wrong. Equal length + different bytes means
+        // either an embedded clock or the same items emitted in a different order.
+        //
+        // buildSystemPromptBlocks joins everything into ONE cached block, so a
+        // per-block hash would just restate prefix_system_sha. Split the text on
+        // its markdown section headings instead and hash each: diffing two turns
+        // then names the exact section that moved, with no change to the builder.
+        prefix_section_shas: sectionFingerprints(systemText),
         prefix_tool_count: turnToolNames.length,
         prefix_tools_sha: shortHash(turnToolNames.join(',')),
       },
