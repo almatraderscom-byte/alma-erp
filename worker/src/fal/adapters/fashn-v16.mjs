@@ -11,6 +11,7 @@ import {
   storagePathToNormalizedDataUri,
 } from '../client.mjs'
 import { falInputFingerprint } from '../fingerprint.mjs'
+import { makeContractReferenceReceipt } from '../../image/reference-contract.mjs'
 
 export const FASHN_V16_ENDPOINT = 'fal-ai/fashn/tryon/v1.6'
 
@@ -141,6 +142,7 @@ export async function processFashnV16({ supabase, pendingActionId, payload, logC
         initialPath: first.storagePath,
         productType: null,
         productImagePath,
+        personImagePath: rawModelImagePath,
         regenerate: async (_fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum)
           paths.push(retry.storagePath)
@@ -167,6 +169,7 @@ export async function processFashnV16({ supabase, pendingActionId, payload, logC
     seed: lastMeta.seed,
     latencyMs: lastMeta.latencyMs,
     costUsd: totalCostUsd,
+    referenceReceipt: makeContractReferenceReceipt(payload.referenceContract, 2, 2),
     qc,
   }
 }

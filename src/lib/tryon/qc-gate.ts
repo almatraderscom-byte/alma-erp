@@ -175,6 +175,8 @@ export async function scoreCreativeQC(args: {
   productType?: string | null
   productImageBase64?: string | null
   productMimeType?: string
+  personImageBase64?: string | null
+  personMimeType?: string
 }): Promise<QCScore> {
   const key = process.env.GEMINI_API_KEY
   if (!key) throw new Error('GEMINI_API_KEY not configured')
@@ -192,6 +194,17 @@ export async function scoreCreativeQC(args: {
       inline_data: {
         mime_type: args.productMimeType ?? 'image/jpeg',
         data: args.productImageBase64,
+      },
+    })
+  }
+  if (args.personImageBase64) {
+    parts.push({
+      text: 'Reference person/model selected by the owner (compare face, age, skin tone, hair and identity to this):',
+    })
+    parts.push({
+      inline_data: {
+        mime_type: args.personMimeType ?? 'image/jpeg',
+        data: args.personImageBase64,
       },
     })
   }
@@ -242,6 +255,7 @@ export async function scoreCreativeQCFromPath(args: {
   storagePath: string
   productType?: string | null
   productImagePath?: string | null
+  personImagePath?: string | null
 }): Promise<QCScore> {
   const buf = await agentStorageDownload(args.storagePath)
   const mime = args.storagePath.endsWith('.png') ? 'image/png' : 'image/jpeg'
@@ -257,6 +271,17 @@ export async function scoreCreativeQCFromPath(args: {
       console.warn('[qc-gate] product image download failed:', err instanceof Error ? err.message : err)
     }
   }
+  let personImageBase64: string | null = null
+  let personMimeType = 'image/jpeg'
+  if (args.personImagePath) {
+    try {
+      const personBuf = await agentStorageDownload(args.personImagePath)
+      personImageBase64 = personBuf.toString('base64')
+      personMimeType = args.personImagePath.endsWith('.png') ? 'image/png' : 'image/jpeg'
+    } catch (err) {
+      console.warn('[qc-gate] person image download failed:', err instanceof Error ? err.message : err)
+    }
+  }
 
   return scoreCreativeQC({
     imageBase64: buf.toString('base64'),
@@ -264,6 +289,8 @@ export async function scoreCreativeQCFromPath(args: {
     productType: args.productType,
     productImageBase64,
     productMimeType,
+    personImageBase64,
+    personMimeType,
   })
 }
 

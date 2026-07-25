@@ -25,6 +25,7 @@ import {
   type StudioProvider,
 } from '@/lib/creative-studio/constants'
 import { FAMILY_CHAIN_LABEL_BN, type StudioEngineId } from '@/lib/creative-studio/provider-registry'
+import { getAdvancedModeCapability } from '@/lib/creative-studio/advanced-image-capabilities'
 import { XAI_TEMPLATES, type XaiTemplate } from '@/lib/creative-studio/xai-imagine'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 import { cn } from '@/lib/utils'
@@ -584,9 +585,13 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
   const [protectedComposite, setProtectedComposite] = useState(false)
   // CS8 — pipeline mode (bounded spend, shown under Run)
   const [pipelineMode, setPipelineMode] = useState<'preview' | 'production'>('preview')
+  const [imageEngine, setImageEngine] = useState<'gemini' | 'gpt' | 'seedream'>('gemini')
   useEffect(() => {
     void fetchStudioSettings()
-      .then((s) => setPipelineMode(s.pipelineMode))
+      .then((s) => {
+        setPipelineMode(s.pipelineMode)
+        setImageEngine(s.imageEngine)
+      })
       .catch(() => {})
   }, [])
   const [familyPreset, setFamilyPreset] = useState<FamilyPresetId>('single')
@@ -662,6 +667,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
     },
     [engineAvail],
   )
+  const xaiUsable = engineSelectable('xai_imagine')
   // Owner default from settings; fall back to direct FASHN when it isn't selectable.
   useEffect(() => {
     if (!config) return
@@ -670,6 +676,35 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
   }, [config, engineSelectable])
   const idmWarning = engineAvail.get('fal_idm_vton')?.warningBn ?? null
   const VTON_ENGINE_LABELS = ENGINE_LABELS_BN
+  const genericEngineLabel = config?.genericImageModels?.pro
+    ?? (imageEngine === 'gpt' ? 'GPT Image 2' : imageEngine === 'seedream' ? 'Seedream 5 Pro' : 'Gemini 3 Image')
+
+  // CSE-A — Fal VTON endpoints cannot serve a single Product→Model request.
+  // Reset a stale Try-On selection instead of letting it silently fall through.
+  useEffect(() => {
+    if (
+      mode === 'product_to_model'
+      && familyPreset === 'single'
+      && (vtonEngine === 'fal_fashn_v16' || vtonEngine === 'fal_idm_vton')
+    ) {
+      setVtonEngine(config?.fashnConfigured ? 'fashn' : xaiUsable ? 'xai_imagine' : 'gemini')
+    }
+  }, [mode, familyPreset, vtonEngine, config?.fashnConfigured, xaiUsable])
+
+  const selectedAdvancedEngine: StudioEngineId =
+    mode === 'generate'
+      ? 'xai_imagine'
+      : mode === 'product_to_model' || mode === 'try_on'
+        ? vtonEngine
+        : provider === 'xai_imagine'
+          ? 'xai_imagine'
+          : provider
+  const fidelityCapability = getAdvancedModeCapability(selectedAdvancedEngine, mode)
+  useEffect(() => {
+    if (mode === 'face_to_model' && selectedAdvancedEngine === 'fashn' && aspectRatio === '16:9') {
+      setAspectRatio('4:5')
+    }
+  }, [mode, selectedAdvancedEngine, aspectRatio])
 
   const defaultModel = useMemo(() => models.find((m) => m.isDefault) ?? models[0] ?? null, [models])
   const familyAvailable = useMemo(() => {
@@ -732,8 +767,6 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
 
   const fashnOnly = FASHN_ONLY_MODES.includes(mode)
   // CS13 — Grok Imagine usable ⇒ generate mode works and fashn-only modes unlock
-  const xaiUsable = engineSelectable('xai_imagine')
-
   useEffect(() => {
     if (mode === 'image_to_video') {
       setProvider('gemini')
@@ -846,6 +879,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
   const canRun = useMemo(() => {
     // CS13 — generate is text-to-image: a prompt is the only requirement
     if (mode === 'generate') return prompt.trim().length > 0
+    if (mode === 'edit' && !prompt.trim()) return false
     if (mode === 'image_to_video') return Boolean(sourcePath || productPath || modelPath)
     // Family merge needs BOTH uploaded images (1st = baba+chele, 2nd = ma+meye).
     if (isFamilyMerge) return Boolean((sourcePath ?? productPath) && secondSourcePath)
@@ -1205,10 +1239,12 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                           <option value="fashn" disabled={!config?.fashnConfigured}>
                             FASHN Pro (direct)
                           </option>
-                          <option value="fal_fashn_v16" disabled={!engineSelectable('fal_fashn_v16')}>
-                            Fal FASHN v1.6 · কমার্শিয়াল
-                            {engineSelectable('fal_fashn_v16') ? '' : ' — বন্ধ'}
-                          </option>
+                          {(mode === 'try_on' || isMultiPersonFamily) && (
+                            <option value="fal_fashn_v16" disabled={!engineSelectable('fal_fashn_v16')}>
+                              Fal FASHN v1.6 · কমার্শিয়াল
+                              {engineSelectable('fal_fashn_v16') ? '' : ' — বন্ধ'}
+                            </option>
+                          )}
                           <option value="fal_idm_vton" disabled={!engineSelectable('fal_idm_vton')}>
                             IDM-VTON ⚠ পরীক্ষামূলক
                             {engineSelectable('fal_idm_vton') ? '' : ' — বন্ধ'}
@@ -1216,7 +1252,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                           <option value="xai_imagine" disabled={!xaiUsable}>
                             Grok Imagine (xAI){xaiUsable ? '' : ' — বন্ধ'}
                           </option>
-                          <option value="gemini">Draft (Gemini)</option>
+                          <option value="gemini">Guided draft ({genericEngineLabel})</option>
                         </select>
                       ) : mode === 'product_to_model' || mode === 'try_on' ? (
                         // Every VTON mode shows the REAL engine list (owner
@@ -1237,7 +1273,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                           <option value="xai_imagine" disabled={!xaiUsable}>
                             Grok Imagine (xAI){xaiUsable ? '' : ' — বন্ধ'}
                           </option>
-                          {!isMultiPersonFamily && <option value="gemini">Draft (Gemini)</option>}
+                          {!isMultiPersonFamily && <option value="gemini">Guided draft ({genericEngineLabel})</option>}
                         </select>
                       ) : mode === 'generate' ? (
                         // CS13 — generate has exactly one server: Grok Imagine
@@ -1257,7 +1293,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                             Grok Imagine (xAI){xaiUsable ? '' : ' — বন্ধ'}
                           </option>
                           <option value="gemini" disabled={fashnOnly}>
-                            Draft (Gemini){fashnOnly ? ' — N/A' : ''}
+                            Guided draft ({genericEngineLabel}){fashnOnly ? ' — N/A' : ''}
                           </option>
                         </select>
                       )}
@@ -1292,8 +1328,15 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                         className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
                       >
                         {ASPECT_RATIOS.map((a) => (
-                          <option key={a} value={a}>
+                          <option
+                            key={a}
+                            value={a}
+                            disabled={mode === 'face_to_model' && selectedAdvancedEngine === 'fashn' && a === '16:9'}
+                          >
                             {a}
+                            {mode === 'face_to_model' && selectedAdvancedEngine === 'fashn' && a === '16:9'
+                              ? ' — N/A'
+                              : ''}
                           </option>
                         ))}
                       </select>
@@ -1384,6 +1427,21 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                     ⚠ {idmWarning ?? 'পরীক্ষামূলক (research-only) ইঞ্জিন — ফলাফল নিজে যাচাই না করে পাবলিশ করবেন না।'}
                   </div>
                 )}
+                {fidelityCapability && mode !== 'image_to_video' && (
+                  <div className="mb-2 rounded-xl border border-border bg-card/60 px-3 py-2 text-[10.5px] leading-snug text-muted">
+                    <span className="font-bold text-cream">
+                      {fidelityCapability.fidelity === 'purpose_built' ? '✓ Purpose-built fidelity' : '◌ Identity-guided generation'}
+                    </span>
+                    {' · '}
+                    {[
+                      productPath ? 'product পাঠানো হবে' : null,
+                      modelPath || modelId ? 'বাছাই করা person পাঠানো হবে' : null,
+                    ].filter(Boolean).join(' · ') || 'text-only'}
+                    {fidelityCapability.limitationBn ? ` — ${fidelityCapability.limitationBn}` : ''}
+                    {selectedAdvancedEngine === 'xai_imagine' && resolution === '4k' ? ' — 4K অনুরোধ xAI-তে 2K হবে।' : ''}
+                    {selectedAdvancedEngine === 'xai_imagine' ? ' — generation mode xAI ব্যবহার করে না।' : ''}
+                  </div>
+                )}
                 <motion.button
                   type="button"
                   disabled={!canRun || running}
@@ -1425,7 +1483,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                       ? 'Grok Imagine: দুই ছবির সবাইকে এক ফ্রেমে — মুখ/পোশাক হুবহু রেখে'
                       : isMultiPersonFamily
                         ? 'Grok Imagine multi-reference: দুজনের মডেল ছবি + প্রোডাক্ট এক কলে'
-                        : 'Grok Imagine — reference থেকে মুখ/পোশাক হুবহু'
+                        : 'Grok Imagine — product/person reference দুটিই পাঠাবে; ফল identity-guided, dedicated VTON নয়'
                     : isMultiPersonFamily
                       ? 'ফ্যামিলি ছবি: প্রতি জনের FASHN try-on, তারপর Gemini দিয়ে এক ফ্রেমে merge'
                       : isSingleTryOn

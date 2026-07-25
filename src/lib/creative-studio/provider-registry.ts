@@ -43,7 +43,7 @@ export type StudioEngine = {
   label: string
   labelBn: string
   /** upstream vendor bucket for cost attribution ('fashn' | 'google' | 'fal' | 'xai') */
-  vendor: 'fashn' | 'google' | 'fal' | 'xai'
+  vendor: 'fashn' | 'google' | 'fal' | 'xai' | 'dynamic'
   /** exact Fal queue endpoint id — only for Fal-backed engines */
   falEndpointId?: string
   status: EngineCommercialStatus
@@ -75,9 +75,9 @@ export const STUDIO_ENGINES: StudioEngine[] = [
   },
   {
     id: 'gemini',
-    label: 'Gemini (draft/fallback)',
-    labelBn: 'Gemini (ড্রাফট)',
-    vendor: 'google',
+    label: 'Guided image (owner-selected)',
+    labelBn: 'Guided image (Gemini/GPT/Seedream)',
+    vendor: 'dynamic',
     status: 'production',
     modes: ['product_to_model', 'try_on', 'image_to_video'],
     singlePersonOnly: false,

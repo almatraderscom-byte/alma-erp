@@ -59,6 +59,7 @@ All campaign work follows this order:
 | [CSE5](creative-studio-enterprise/CSE5-editing-and-voice.md) | Transcript/timeline-lite, dubbing, voice lifecycle | edit a fixture video/audio and verify consent/version controls | $1 |
 | [CSE6](creative-studio-enterprise/CSE6-review-and-multibrand.md) | Creator/reviewer workflow, comments, approval, audit, multi-brand | role-bound draft → approval → publish-ready | $0 |
 | [CSE7](creative-studio-enterprise/CSE7-distribution-and-hardening.md) | Meta scheduling, performance loop, E2E/load/retention/recovery | scheduled dry run + performance attribution + final regression | $1 |
+| [CSE-A](creative-studio-enterprise/CSE-A-advanced-model-fidelity.md) | Advanced single-image product/person fidelity contracts across every reachable provider model | capability matrix + fail-closed reference transport + truthful result lineage | $0 contract tests; paid calls require separate approval |
 
 ## Final integration rule
 
@@ -76,4 +77,3 @@ After CSE7 passes its final preview and Chrome proof, the latest stacked branch 
 | Multi-brand controls | CSE6 |
 | Distribution and measurable winner feedback | CSE7 |
 | Operational health, retention, recovery, regression | CSE1/CSE7 |
-

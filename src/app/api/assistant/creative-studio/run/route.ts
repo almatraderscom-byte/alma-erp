@@ -37,6 +37,21 @@ const ROLE_BN: Record<string, string> = {
 
 /** family accuracy chain needs saved role models — turn missing_models:son,... into a clear Bangla instruction */
 function mapRunError(msg: string): string {
+  if (msg.startsWith('engine_mode_unsupported:')) {
+    const [, engine, mode] = msg.split(':')
+    return `${engine} ইঞ্জিন ${mode} মোডে দরকারি reference গ্রহণ করে না। অন্য সমর্থিত ইঞ্জিন বাছুন — reference বাদ দিয়ে চালানো হবে না।`
+  }
+  if (msg.startsWith('reference_limit_exceeded:')) {
+    return 'এই ইঞ্জিনে বাছাই করা সব reference পাঠানোর জায়গা নেই। কম reference দিন বা অন্য ইঞ্জিন বাছুন।'
+  }
+  if (
+    msg.startsWith('aspect_ratio_unsupported:')
+    || msg.startsWith('resolution_unsupported:')
+    || msg.startsWith('generation_mode_unsupported:')
+    || msg.startsWith('num_images_unsupported:')
+  ) {
+    return 'এই ইঞ্জিনে বাছাই করা aspect/resolution/mode/count সমর্থিত নয়। দেখানো সমর্থিত option থেকে বাছুন।'
+  }
   if (msg.startsWith('missing_models:')) {
     const roles = msg.slice('missing_models:'.length).split(',').filter(Boolean)
     const bn = roles.map((r) => ROLE_BN[r] ?? r).join(', ')
@@ -167,11 +182,12 @@ export async function POST(req: NextRequest) {
           ? 'Fal FASHN v1.6 render queued — Gallery-তে ফলাফল দেখুন।'
           : result.provider === 'fashn'
             ? 'FASHN render queued — Gallery-তে ফলাফল দেখুন।'
-            : 'Gemini render queued — FASHN_API_KEY add করলে Pro quality পাবেন।'
+            : `${result.actualModel ?? 'Configured image model'} render queued — সব নির্বাচিত reference বাধ্যতামূলকভাবে পাঠানো হবে।`
     return Response.json({
       ok: true,
       jobs: result.jobs,
       provider: result.provider,
+      actualModel: result.actualModel,
       fashnReady: result.fashnReady,
       message,
     })

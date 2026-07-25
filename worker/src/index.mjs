@@ -33,6 +33,13 @@ import { deliverAgentTurn } from './telegram/agent-turn.mjs'
 import { startDiagnosticHttpServer, setRetriggerHandler } from './diagnostic-http.mjs'
 import { processVideoGen } from './video-gen.mjs'
 import { processVideoEdit } from './video-edit.mjs'
+import {
+  assertGenericImageModel,
+  genericProviderForModel,
+  loadRequiredReferenceParts,
+  makeReferenceReceipt,
+  requiredReferencePaths,
+} from './image/reference-contract.mjs'
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -402,13 +409,14 @@ async function generateImageToStorage({
   quality,
   referenceImageId,
   secondReferenceImageId,
+  referenceContract,
   aspectRatio,
   imageSize,
   suffix = '',
   models,
 }) {
   const resolvedModels = models ?? DEFAULT_IMAGE_MODELS
-  const modelName = quality === 'standard' ? resolvedModels.standard : resolvedModels.pro
+  const modelName = assertGenericImageModel(quality === 'standard' ? resolvedModels.standard : resolvedModels.pro)
 
   const resolvedAspectRatio = aspectRatio ?? '4:5'
   const resolvedImageSize = imageSize ?? '2K'
@@ -421,15 +429,9 @@ async function generateImageToStorage({
     return { inlineData: { mimeType: fileData.type || 'image/jpeg', data: base64 } }
   }
 
-  const imageParts = []
-  if (referenceImageId) {
-    const p1 = await toInlinePart(referenceImageId)
-    if (p1) imageParts.push(p1)
-  }
-  if (secondReferenceImageId) {
-    const p2 = await toInlinePart(secondReferenceImageId)
-    if (p2) imageParts.push(p2)
-  }
+  const referencePayload = { referenceImageId, secondReferenceImageId, referenceContract }
+  const referencePaths = requiredReferencePaths(referencePayload)
+  const imageParts = await loadRequiredReferenceParts(referencePaths, toInlinePart)
 
   // ── Seedream engine (owner-switchable via cs_image_models → "seedream-5.0-pro") ──
   // ByteDance Seedream 5.0 Pro via fal.ai (verdict 2026-07-12: the only genuine
@@ -482,7 +484,7 @@ async function generateImageToStorage({
       .from('agent-files')
       .upload(storagePath, buf, { contentType, upsert: true })
     if (uploadErr) throw new Error(`Supabase upload failed: ${uploadErr.message}`)
-    return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize }
+    return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize, sentReferenceCount: imageParts.length }
   }
 
   // ── OpenAI engine (owner-switchable via cs_image_models → "gpt-image-2") ──
@@ -535,7 +537,7 @@ async function generateImageToStorage({
       .from('agent-files')
       .upload(storagePath, Buffer.from(b64, 'base64'), { contentType: 'image/png', upsert: true })
     if (uploadErr) throw new Error(`Supabase upload failed: ${uploadErr.message}`)
-    return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize }
+    return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize, sentReferenceCount: imageParts.length }
   }
 
   const contents = imageParts.length ? [...imageParts, { text: prompt }] : [{ text: prompt }]
@@ -579,7 +581,7 @@ async function generateImageToStorage({
 
   if (uploadErr) throw new Error(`Supabase upload failed: ${uploadErr.message}`)
 
-  return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize }
+  return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize, sentReferenceCount: imageParts.length }
 }
 
 async function processImageGen(job) {
@@ -729,6 +731,8 @@ async function processImageGen(job) {
         seed: result.seed ?? undefined,
         latencyMs: result.latencyMs,
         costUsd: result.costUsd,
+        referenceReceipt: result.referenceReceipt,
+        controlReceipt: payload.controlContract,
         researchOnly: result.researchOnly ?? undefined,
         // CS7 — precision-edit lineage: mask + protected-pixel proof
         maskPath: result.maskPath ?? undefined,
@@ -805,6 +809,8 @@ async function processImageGen(job) {
         xaiOp: result.xaiOp,
         latencyMs: result.latencyMs,
         costUsd: result.costUsd,
+        referenceReceipt: result.referenceReceipt,
+        controlReceipt: payload.controlContract,
         creativeStudio: true,
         studioMode: payload.studioMode,
         qc: result.qc ?? undefined,
@@ -836,6 +842,9 @@ async function processImageGen(job) {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
         provider: 'fashn',
+        imageModel: result.imageModel,
+        referenceReceipt: result.referenceReceipt,
+        controlReceipt: payload.controlContract,
         creativeStudio: true,
         studioMode: payload.studioMode,
         qc: result.qc ?? undefined,
@@ -849,6 +858,21 @@ async function processImageGen(job) {
     return
   }
 
+  // CSE-A — the owner-facing generic image lane (Gemini/GPT Image/Seedream)
+  // keeps the existing `gemini` kill switch as its umbrella control.
+  if (payload.creativeStudio) {
+    const { isEngineKilled } = await import('./fal/client.mjs')
+    if (await isEngineKilled(supabase, 'gemini')) {
+      await callJobResult(
+        pendingActionId,
+        'failed',
+        undefined,
+        'Guided image engine lane is disabled by the owner kill switch.',
+      )
+      return
+    }
+  }
+
   const {
     prompt: basePrompt,
     quality,
@@ -858,11 +882,17 @@ async function processImageGen(job) {
     aspectRatio,
     imageSize,
     contentPipeline,
+    referenceContract,
   } = payload
 
   const { fetchQcLevel, runImageQcLoop } = await import('./image-qc.mjs')
   const qcLevel = await fetchQcLevel(supabase)
-  const imageModels = await fetchImageModels()
+  const imageModels = payload.imageModel
+    ? {
+        standard: assertGenericImageModel(payload.imageModel),
+        pro: assertGenericImageModel(payload.imageModel),
+      }
+    : await fetchImageModels()
 
   const genOpts = {
     pendingActionId,
@@ -871,6 +901,7 @@ async function processImageGen(job) {
     secondReferenceImageId,
     aspectRatio,
     imageSize,
+    referenceContract,
     models: imageModels,
   }
 
@@ -921,6 +952,9 @@ async function processImageGen(job) {
     initialPath: first.storagePath,
     productType,
     productImagePath,
+    personImagePath: referenceContract?.bindings?.find((binding) => binding.role === 'person')?.path
+      ?? referenceImageId
+      ?? null,
     regenerate: async (fixHint, attemptNum) => {
       regenCount += 1
       const regenPrompt = `${basePrompt}\n\nQC FIX (regeneration attempt ${attemptNum}): ${fixHint}`
@@ -947,6 +981,20 @@ async function processImageGen(job) {
   await callJobResult(pendingActionId, 'success', {
     storagePath: qcResult.storagePath,
     conversationId,
+    provider: genericProviderForModel(first.modelName),
+    imageModel: first.modelName,
+    referenceReceipt: makeReferenceReceipt(payload, first.sentReferenceCount),
+    controlReceipt: {
+      ...(payload.controlContract ?? {}),
+      actual: {
+        model: first.modelName,
+        aspectRatio: first.resolvedAspectRatio,
+        imageSize: first.resolvedImageSize,
+        quality: first.quality,
+      },
+    },
+    creativeStudio: Boolean(payload.creativeStudio),
+    studioMode: payload.studioMode,
     qc: qcResult.qc,
     ...finishing,
   })

@@ -79,12 +79,17 @@ describe('CS13 — run brief per mode', () => {
   it('product_to_model: product first, optional model second', () => {
     const solo = buildXaiRunBrief({ mode: 'product_to_model', productImagePath: 'p/prod.jpg' })
     expect(solo.referenceImagePaths).toEqual(['p/prod.jpg'])
+    expect(solo.prompt).not.toContain('Reference image 2')
     const withModel = buildXaiRunBrief({
       mode: 'product_to_model',
       productImagePath: 'p/prod.jpg',
       modelImagePath: 'p/model.jpg',
     })
     expect(withModel.referenceImagePaths).toEqual(['p/prod.jpg', 'p/model.jpg'])
+    expect(withModel.referenceRoles).toEqual(['garment', 'person'])
+    expect(withModel.prompt).toContain('Reference image 2 is the OWNER-SELECTED PERSON')
+    expect(withModel.prompt).toContain('do not substitute a different model')
+    expect(withModel.prompt).toContain('face, age, skin tone, hair and identity')
   })
 
   it('edit: source required + prompt required, optional extra product ref', () => {

@@ -18,6 +18,7 @@ import {
   storagePathToBuffer,
 } from '../client.mjs'
 import { falInputFingerprint } from '../fingerprint.mjs'
+import { makeContractReferenceReceipt } from '../../image/reference-contract.mjs'
 
 export const FLUX_FILL_ENDPOINT = 'fal-ai/flux-pro/v1/fill'
 
@@ -186,6 +187,7 @@ export async function processFluxFill({ supabase, pendingActionId, payload, logC
     baseImagePath,
     maskPreset: payload.maskPreset ?? 'custom',
     protectedDiff: { maxKeepDelta, keepChangedPct: Math.round(keepChangedPct * 100) / 100 },
+    referenceReceipt: makeContractReferenceReceipt(payload.referenceContract, 2, 2),
     qc: null,
   }
 }

@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
     storagePath?: string
     productType?: string
     productImagePath?: string
+    personImagePath?: string
     /** CS10 — surface-specific thresholds (single_tryon/family/precision_edit/…) */
     surface?: string
   }
@@ -70,6 +71,7 @@ export async function POST(req: NextRequest) {
       storagePath,
       productType: body.productType ?? null,
       productImagePath: body.productImagePath ?? null,
+      personImagePath: body.personImagePath ?? null,
     })
     // CS10 — surface-specific thresholds when the caller names a surface;
     // legacy level-based pass otherwise (backward compatible).

@@ -15,8 +15,10 @@ export async function fashnRun(modelName, inputs, opts = {}) {
     inputs: {
       ...inputs,
       ...(opts.prompt ? { prompt: opts.prompt } : {}),
+      ...(opts.aspectRatio ? { aspect_ratio: opts.aspectRatio } : {}),
       ...(opts.resolution ? { resolution: opts.resolution } : {}),
       ...(opts.generationMode ? { generation_mode: opts.generationMode } : {}),
+      ...(Number.isFinite(opts.seed) ? { seed: Math.trunc(opts.seed) } : {}),
       ...(opts.numImages ? { num_images: opts.numImages } : {}),
       ...(opts.outputFormat ? { output_format: opts.outputFormat } : {}),
       ...(opts.returnBase64 ? { return_base64: true } : {}),
@@ -78,9 +80,14 @@ export async function resolveFashnImageInputs(supabase, rawInputs) {
   const out = {}
   for (const [key, val] of Object.entries(rawInputs ?? {})) {
     if (!val || typeof val !== 'string') continue
+    if (key === 'face_reference_mode') {
+      if (val !== 'match_base' && val !== 'match_reference') throw new Error('invalid face_reference_mode')
+      out[key] = val
+      continue
+    }
     if (val.startsWith('http') || val.startsWith('data:')) {
       out[key] = val
-    } else if (key === 'model_image') {
+    } else if (key === 'model_image' || key === 'face_reference' || key === 'face_image') {
       // reseller model photos may carry a dark marketing plate — scrub first
       // (free, kv-cached, fail-open)
       const { cleanModelPhoto } = await import('../photo-cleanup.mjs')
