@@ -822,10 +822,11 @@ function compileOrdered(
   order: Array<{ id: string; groups?: ToolGroupName[]; tools?: string[] }>,
   groups?: ToolGroupName[],
   toolNames?: string[],
+  forceFull?: boolean,
 ): string {
   // Phase 7 kill switch: AGENT_PROMPT_GATING=false ships every module every
   // turn (the pre-Phase-6 full prompt) without a deploy.
-  const gatingOff = process.env.AGENT_PROMPT_GATING === 'false'
+  const gatingOff = forceFull === true || process.env.AGENT_PROMPT_GATING === 'false'
   const all = gatingOff || !groups
   return order
     .filter((e) => {
@@ -869,14 +870,14 @@ function buildLifestyleRolePrompts(groups?: ToolGroupName[]): string {
   return parts.map((p) => `\n${p}\n`).join('')
 }
 
-function buildLifestyleStaticPrompt(groups?: ToolGroupName[], toolNames?: string[]): string {
+function buildLifestyleStaticPrompt(groups?: ToolGroupName[], toolNames?: string[], forceFull?: boolean): string {
   return (
     (AGENT_CONSTITUTION ? CONSTITUTION_RULE : '')
     + (AGENT_STYLE ? COMMUNICATION_STYLE_RULE + STYLE_EXEMPLARS : '')
-    + compileOrdered(LIFESTYLE_HEAD_ORDER, groups, toolNames)
-    + buildLifestyleRolePrompts(groups)
+    + compileOrdered(LIFESTYLE_HEAD_ORDER, groups, toolNames, forceFull)
+    + buildLifestyleRolePrompts(forceFull ? undefined : groups)
     + LIFESTYLE_PLANNING_BLOCK
-    + compileOrdered(LIFESTYLE_TAIL_ORDER, groups, toolNames)
+    + compileOrdered(LIFESTYLE_TAIL_ORDER, groups, toolNames, forceFull)
   )
 }
 
@@ -990,6 +991,20 @@ export type BuildSystemPromptArgs = {
    * Undefined (legacy callers / prod fixed set) keeps every module.
    */
   activeToolNames?: string[]
+  /**
+   * Cost audit Phase 8d — force the FULL prompt (every module, every turn).
+   *
+   * Prompt gating trims modules to the turn's tool selection, which saves tokens
+   * per turn but rewrites the cached prefix whenever the selection shifts: two
+   * turns of one conversation measured 65 vs 62 sections (VISION TOOLS / OUTCOME
+   * SIMULATION present in one, absent in the next), so every downstream byte
+   * moved and the provider cache missed. A constant prompt is bigger but bills
+   * cached — $0.20/Mtok instead of $1.25 on Grok, i.e. 6.25x cheaper per token.
+   *
+   * Undefined = keep the existing env behaviour. Owner-tunable at runtime via KV
+   * so the two modes can be A/B measured without a redeploy.
+   */
+  forceFullPrompt?: boolean
   /** Compact business-state snapshot from today's daily ERP tour (if any). */
   businessSnapshot?: { text: string; date: string; isToday: boolean } | null
   /**
@@ -1151,7 +1166,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
       volatileParts.push(intakeContextBlock)
     }
   } else {
-    const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : buildLifestyleStaticPrompt(activeGroups, args.activeToolNames)
+    const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : buildLifestyleStaticPrompt(activeGroups, args.activeToolNames, args.forceFullPrompt)
     stableParts.push(corePrompt)
     if (tailSummaryBlock) stableParts.push(tailSummaryBlock)
 

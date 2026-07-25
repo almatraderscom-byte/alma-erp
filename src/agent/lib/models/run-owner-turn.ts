@@ -146,6 +146,34 @@ async function conversationAutoApprovesUpgrade(conversationId: string): Promise<
   }
 }
 
+/**
+ * Cost audit Phase 8d — should this turn ship the FULL prompt (every module)?
+ *
+ * Prompt gating trims modules to the turn's tool selection. That saves tokens per
+ * turn but moves the cached prefix whenever the selection shifts: two turns of one
+ * conversation measured 65 vs 62 sections, so the provider cache missed and the
+ * whole ~46k prefix was re-billed at the FULL input rate. On Grok a cached token
+ * is $0.20/Mtok vs $1.25 uncached — 6.25x cheaper — so a bigger constant prompt
+ * can be far cheaper than a smaller shifting one.
+ *
+ * Owner-tunable at runtime (KV `prompt.forceFullPrompt`), matching every other
+ * owner setting in this repo, so both modes can be A/B measured without a
+ * redeploy. Default OFF = today's behaviour, unchanged. Fails open to OFF.
+ */
+async function promptGatingForceFull(): Promise<boolean> {
+  if (process.env.AGENT_FORCE_FULL_PROMPT === 'true') return true
+  try {
+    const row = await prisma.agentKvSetting.findUnique({
+      where: { key: 'prompt.forceFullPrompt' },
+      select: { value: true },
+    })
+    const v = (row?.value ?? '').trim().toLowerCase()
+    return v === 'on' || v === 'true' || v === '1'
+  } catch {
+    return false
+  }
+}
+
 /** Short content fingerprint for the prefix-stability probe (Phase 8b). */
 function shortHash(s: string): string {
   return createHash('sha256').update(s).digest('hex').slice(0, 10)
@@ -712,6 +740,7 @@ async function* runAlternateProviderTurn(
   // this turn from the message text; '' when disabled or nothing matches (fail-open).
   const activeSkillsBlock = suppressWork ? '' : await buildActiveSkillsBlock(lastUserText)
   const ownerIntentTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
+  const forceFullPrompt = await promptGatingForceFull()
 
   const promptArgs = {
     projectInstructions: projectSystemInstructions,
@@ -739,6 +768,9 @@ async function* runAlternateProviderTurn(
     staffActiveTasksBlock: staffActiveTasksBlock || undefined,
     activeGroups: listenMode ? [] : toolSelection.groups,
     activeToolNames: listenMode ? [] : ownerIntentTools.map((t) => t.name),
+    // Phase 8d: when on, ship every prompt module so the cached prefix is
+    // byte-identical turn to turn (see promptGatingForceFull).
+    forceFullPrompt: forceFullPrompt || undefined,
     businessSnapshot,
     officePulse,
     headTier,
@@ -2404,6 +2436,8 @@ async function* runAlternateProviderTurn(
         // its markdown section headings instead and hash each: diffing two turns
         // then names the exact section that moved, with no change to the builder.
         prefix_section_shas: sectionFingerprints(systemText),
+        // Which prompt mode produced this row, so the A/B can be split later.
+        prefix_mode: forceFullPrompt ? 'full' : 'gated',
         prefix_tool_count: turnToolNames.length,
         prefix_tools_sha: shortHash(turnToolNames.join(',')),
       },
