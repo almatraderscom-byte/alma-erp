@@ -82,6 +82,17 @@ export async function answerAskCard(cardId: string, option: string, cause = 'ans
     return { ok: false, alreadyAnswered: true, reason: 'different_answer_recorded', card: c2 }
   }
 
+  // A grind-campaign gate (family approval / "I've logged in") is resolved right
+  // here, so one tap in the app is the whole interaction: the grant is written
+  // and the parked plan starts driving again on the next tick. Fail-open — a
+  // gate bookkeeping problem must never break answering a question.
+  try {
+    const { resolveGrindGate } = await import('@/agent/lib/grind/owner-gate')
+    await resolveGrindGate(cardId, option)
+  } catch (err) {
+    console.warn('[ask-cards] grind gate resolve failed open:', err instanceof Error ? err.message : err)
+  }
+
   // The answer resumes the EXACT bound run (version-guarded inside; a repeat
   // call is a no-op there). Fail-open: run advance is an accelerator — the
   // turn-level advance uses the same idempotent helper.

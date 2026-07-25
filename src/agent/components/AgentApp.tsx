@@ -609,17 +609,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
   // One owner-action handler for the Plan-Drive in-chat list (resume / add-budget /
   // abandon), reused on both the home screen and inside the office-shift thread.
-  const handlePlanDriveAction = useCallback(async (planId: string, action: PlanDriveAction) => {
+  const handlePlanDriveAction = useCallback(async (planId: string, action: PlanDriveAction, family?: string) => {
     try {
       const res = await fetch('/api/assistant/plan-driver/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ planId, action }),
+        body: JSON.stringify({ planId, action, family }),
       })
       if (!res.ok) { toast.error('কাজটি করা গেল না'); return }
       toast.success(
         action === 'abandon' ? 'প্ল্যান বাদ দেওয়া হলো' :
         action === 'add-budget' ? 'বাজেট বাড়িয়ে আবার চালু করা হলো' :
+        action === 'family-auto' ? 'এই ধরনের কাজ এখন থেকে নিজেই করবে' :
+        action === 'family-stop' ? 'এই ধরনের কাজ আর নিজে করবে না' :
         'আবার চালু করা হলো',
       )
       const r = await fetch('/api/assistant/plan-driver')

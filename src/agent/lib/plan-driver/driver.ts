@@ -48,6 +48,11 @@ import {
 } from '@/agent/lib/autodrive-config'
 import { executeStep } from '@/agent/lib/plan-driver/executor'
 import { reapPlan } from '@/agent/lib/plan-driver/reap'
+import {
+  afterGrindStep,
+  grindCompletionForPlan,
+  preflightGrindStep,
+} from '@/agent/lib/grind/driver-hooks'
 import { runCompletionGate } from '@/agent/lib/plan-driver/completion-gate'
 import { completeSourceTodoForPlan } from '@/agent/lib/plan-driver/promote'
 import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
@@ -211,6 +216,22 @@ export async function drivePlan(planIn: Plan, config: AutodriveConfig): Promise<
         }
       }
 
+      // A reaped VERIFY step is where the model's claim meets a re-measurement,
+      // and a reaped REGRESSION step is where we find out whether our own fixes
+      // broke something. Both run deterministically, here, off the plan's own
+      // steps — never from the turn's narrative.
+      for (const r of reaped.filter((x) => x.outcome === 'done')) {
+        const s = plan.steps.find((x) => x.id === r.stepId)
+        if (!s) continue
+        const post = await afterGrindStep(plan.id, s).catch((err) => {
+          console.warn('[grind] post-step check failed:', err instanceof Error ? err.message : err)
+          return null
+        })
+        if (post?.halted) {
+          return await escalate(plan, 'escalated-gate', `ফিক্স করতে গিয়ে বারবার নতুন সমস্যা হচ্ছে — ${post.detail}`)
+        }
+      }
+
       const progressed = reaped.some((r) => r.outcome === 'done')
       await recordDriveTick(plan.id, {
         addCostMilliTaka: reapedMilli,
@@ -263,6 +284,30 @@ export async function drivePlan(planIn: Plan, config: AutodriveConfig): Promise<
     // 4. Every step done → completion gate decides true DONE.
     const check = selfCheck(plan)
     if (check.allDone) {
+      // A grind campaign is finished by ARITHMETIC, not by asking a model: open
+      // === 0 && claimedOnly === 0 && regressed === 0 && introduced === 0 and the
+      // last measurement is newer than the last fix. Zero tokens, nothing to talk
+      // past. Ordinary plans keep the existing (small) LLM gate.
+      const grind = await grindCompletionForPlan(plan.id)
+      if (grind) {
+        if (grind.done) {
+          await updatePlanStatus(plan.id, 'done', grind.reason)
+          await setAutodriveState(plan.id, 'done', { selfCheckNote: grind.reason })
+          await recordDriveTick(plan.id, { attempt: 'reset', now })
+          void notifyOwnerIfAway({
+            tier: 1,
+            title: 'সব ঠিক হয়েছে ✅',
+            message: `"${plan.goal}" — ${grind.reason}`,
+            category: 'report',
+          }).catch(() => {})
+          return { planId: plan.id, goal: plan.goal, outcome: 'plan-done', detail: grind.reason, costTaka: 0 }
+        }
+        // Steps are done but the measurement disagrees — that IS the signal to
+        // keep grinding, so escalate only after the normal stall budget.
+        await recordDriveTick(plan.id, { nextTickAt: backoffNextTick(config, now, 'retry'), attempt: 'increment', now })
+        return await escalate(plan, 'escalated-gate', `এখনো শেষ নয় — ${grind.reason}`)
+      }
+
       const verdict = await runCompletionGate(plan, config.gateModel, { conversationId: plan.conversationId })
       const gateMilli = usdToMilliTaka(verdict.costUsd)
       const gateTaka = milliTakaToTaka(gateMilli)
@@ -323,8 +368,27 @@ export async function drivePlan(planIn: Plan, config: AutodriveConfig): Promise<
     }
 
     const step = ready[0]
+
+    // 5a. Grind pre-flight — a fix step whose findings have no real root cause is
+    //     NOT dispatched (its family's diagnosis is re-queued instead), and an
+    //     unapproved family runs in proposal mode. Deterministic and fail-safe:
+    //     when the gate cannot confirm a cause, nothing is changed.
+    const preflight = await preflightGrindStep(plan.id, step)
+    if (!preflight.allow) {
+      await setAutodriveState(plan.id, 'driving', { nextTickAt: backoffNextTick(config, now, 'retry') })
+      await recordDriveTick(plan.id, { attempt: 'increment', now })
+      return {
+        planId: plan.id, goal: plan.goal, outcome: 'step-failed',
+        detail: preflight.reason ?? 'root-cause gate', costTaka: 0,
+      }
+    }
+
     await markStepRunning(step.id)
-    const res = await executeStep(plan, step, { businessId, driverModelId: config.driverModel })
+    const res = await executeStep(plan, step, {
+      businessId,
+      driverModelId: config.driverModel,
+      directiveSuffix: preflight.directiveSuffix,
+    })
     const stepMilli = usdToMilliTaka(res.costUsd)
     const stepTaka = milliTakaToTaka(stepMilli)
 
@@ -367,11 +431,23 @@ export async function drivePlan(planIn: Plan, config: AutodriveConfig): Promise<
       return { planId: plan.id, goal: plan.goal, outcome: 'step-failed', detail: res.error, costTaka: stepTaka }
     }
 
-    // 5d. Progress → mark the step done, reset the stall counter, keep driving.
+    // 5e. Progress → mark the step done, reset the stall counter, keep driving.
     await markStepDone(step.id, res.summary)
+    const post = await afterGrindStep(plan.id, step).catch((err) => {
+      console.warn('[grind] post-step check failed:', err instanceof Error ? err.message : err)
+      return null
+    })
+    if (post?.halted) {
+      await recordDriveTick(plan.id, { addCostMilliTaka: stepMilli, attempt: 'increment', now })
+      return await escalate(plan, 'escalated-gate', `ফিক্স করতে গিয়ে বারবার নতুন সমস্যা হচ্ছে — ${post.detail}`)
+    }
     await setAutodriveState(plan.id, 'driving', { nextTickAt: backoffNextTick(config, now) })
     await recordDriveTick(plan.id, { addCostMilliTaka: stepMilli, attempt: 'reset', now })
-    return { planId: plan.id, goal: plan.goal, outcome: 'step-done', detail: step.action, costTaka: stepTaka }
+    return {
+      planId: plan.id, goal: plan.goal, outcome: 'step-done',
+      detail: post?.detail ? `${step.action} — ${post.detail}` : step.action,
+      costTaka: stepTaka,
+    }
   } catch (err) {
     // Defensive: never let one plan break the whole tick. Park with a short backoff.
     const msg = err instanceof Error ? err.message : String(err)

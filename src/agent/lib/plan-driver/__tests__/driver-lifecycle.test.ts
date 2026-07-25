@@ -37,6 +37,15 @@ vi.mock('@/agent/lib/plan-driver/reap', () => reap)
 const gate = vi.hoisted(() => ({ runCompletionGate: vi.fn() }))
 vi.mock('@/agent/lib/plan-driver/completion-gate', () => gate)
 
+// Grind hooks are exercised by their own tests; here they are inert so these
+// cases pin the PLAIN plan lifecycle.
+const grind = vi.hoisted(() => ({
+  preflightGrindStep: vi.fn().mockResolvedValue({ allow: true }),
+  afterGrindStep: vi.fn().mockResolvedValue(null),
+  grindCompletionForPlan: vi.fn().mockResolvedValue(null),
+}))
+vi.mock('@/agent/lib/grind/driver-hooks', () => grind)
+
 vi.mock('@/agent/lib/plan-driver/promote', () => ({
   completeSourceTodoForPlan: vi.fn().mockResolvedValue(undefined),
 }))

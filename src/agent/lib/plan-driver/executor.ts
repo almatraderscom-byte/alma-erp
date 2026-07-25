@@ -96,7 +96,7 @@ const KIND_RULES: Record<StepKind, string> = {
  * Build the one-step directive the head sees. Bangla, owner-voice rules, and a
  * kind-appropriate fence.
  */
-export function buildDirective(plan: Pick<Plan, 'goal'>, step: PlanStep): string {
+export function buildDirective(plan: Pick<Plan, 'goal'>, step: PlanStep, suffix?: string): string {
   const toolHint = step.toolName && !step.toolName.startsWith('__') ? `\nসম্ভাব্য টুল: ${step.toolName}` : ''
   const kind = stepKindOf(step)
   const retryNote =
@@ -114,7 +114,8 @@ export function buildDirective(plan: Pick<Plan, 'goal'>, step: PlanStep): string
     KIND_RULES[kind] +
     `- "করছি / দেখি" বলে থেমে যেও না — দরকারি টুল আসলেই কল করো এবং ফল যাচাই করো।\n` +
     `- টাকা খরচ / পোস্ট / স্টাফ-মেসেজের মতো ধাপ হলে যথারীতি approval card দাও (আমি অনুমোদন না দিলে এগোবে না)।\n` +
-    `- শেষে ১–২ লাইনে বাংলায় সংক্ষেপে Boss-কে জানাও আসলে কী হলো।`
+    `- শেষে ১–২ লাইনে বাংলায় সংক্ষেপে Boss-কে জানাও আসলে কী হলো।` +
+    (suffix ?? '')
   )
 }
 
@@ -128,7 +129,13 @@ export function buildDirective(plan: Pick<Plan, 'goal'>, step: PlanStep): string
 export async function executeStep(
   plan: Pick<Plan, 'id' | 'goal' | 'conversationId' | 'businessId'> & { conversationId?: string | null },
   step: PlanStep,
-  opts: { businessId: AgentBusinessId; driverModelId: string; forceInline?: boolean },
+  opts: {
+    businessId: AgentBusinessId
+    driverModelId: string
+    forceInline?: boolean
+    /** Extra rules for THIS dispatch (e.g. grind proposal mode). */
+    directiveSuffix?: string
+  },
 ): Promise<StepExecResult> {
   let conversationId: string
   try {
@@ -143,7 +150,7 @@ export async function executeStep(
     }
   }
 
-  const directive = buildDirective(plan, step)
+  const directive = buildDirective(plan, step, opts.directiveSuffix)
 
   // ── Queue mode ────────────────────────────────────────────────────────────
   if (!opts.forceInline && isTurnHandoffConfigured()) {

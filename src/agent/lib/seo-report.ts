@@ -299,13 +299,50 @@ const mdCell = (s: string) => s.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ')
 
 const bnNum = (n: number) => String(n).replace(/\d/g, (d) => '০১২৩৪৫৬৭৮৯'[Number(d)])
 
-type FlatIssue = AuditIssue & { scope: string; page: AuditPage | null }
+export type FlatIssue = AuditIssue & { scope: string; page: AuditPage | null }
 
-function flattenIssues(audit: AuditJson): FlatIssue[] {
+/** Every issue in an audit, site-level and page-level, in one flat list. */
+export function flattenIssues(audit: AuditJson): FlatIssue[] {
   const out: FlatIssue[] = []
   for (const i of audit.siteChecks?.issues ?? []) out.push({ ...i, scope: 'site', page: null })
   for (const p of audit.pages ?? []) for (const i of p.issues ?? []) out.push({ ...i, scope: p.url, page: p })
   return out
+}
+
+/**
+ * The identity of one issue across two audits. The grind engine's finding
+ * fingerprint is this exact string (grind/finding-set.ts), so the store and this
+ * client-facing report can never disagree about what was fixed.
+ */
+export const issueKey = (i: FlatIssue) => `${i.scope}|${i.code}`
+
+export interface AuditDiff {
+  resolved: FlatIssue[]
+  /** Present after but NOT before — something we introduced. */
+  introduced: FlatIssue[]
+  remaining: FlatIssue[]
+  beforeIssues: FlatIssue[]
+  afterIssues: FlatIssue[]
+}
+
+/**
+ * Pure before/after set arithmetic. Extracted from buildCompareMarkdown so the
+ * regression guard can use the SAME computation as a control signal instead of
+ * re-deriving it (a second implementation would eventually disagree with the
+ * report the owner sends his client).
+ */
+export function diffAudits(before: AuditJson, after: AuditJson): AuditDiff {
+  const beforeIssues = flattenIssues(before)
+  const afterIssues = flattenIssues(after)
+  const afterKeys = new Set(afterIssues.map(issueKey))
+  const beforeKeys = new Set(beforeIssues.map(issueKey))
+  return {
+    resolved: beforeIssues.filter((i) => !afterKeys.has(issueKey(i))),
+    introduced: afterIssues.filter((i) => !beforeKeys.has(issueKey(i))),
+    remaining: afterIssues.filter((i) => beforeKeys.has(issueKey(i))),
+    beforeIssues,
+    afterIssues,
+  }
 }
 
 /** The client-deliverable audit report (Bangla markdown). */
@@ -680,14 +717,7 @@ export function buildIssuesCsv(audit: AuditJson): string {
 
 /** Before/after comparison report — the proof file the owner sends a client after fixes. */
 export function buildCompareMarkdown(before: AuditJson, after: AuditJson): string {
-  const key = (i: FlatIssue) => `${i.scope}|${i.code}`
-  const beforeIssues = flattenIssues(before)
-  const afterIssues = flattenIssues(after)
-  const afterKeys = new Set(afterIssues.map(key))
-  const beforeKeys = new Set(beforeIssues.map(key))
-  const resolved = beforeIssues.filter((i) => !afterKeys.has(key(i)))
-  const introduced = afterIssues.filter((i) => !beforeKeys.has(key(i)))
-  const remaining = afterIssues.filter((i) => beforeKeys.has(key(i)))
+  const { beforeIssues, afterIssues, resolved, introduced, remaining } = diffAudits(before, after)
   const delta = after.score - before.score
   const arrow = delta > 0 ? `📈 +${delta}` : delta < 0 ? `📉 ${delta}` : '➡️ অপরিবর্তিত'
 

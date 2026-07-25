@@ -402,6 +402,10 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   make_plan: write('plan'),
   execute_plan: write('plan', 'medium'),
   get_plan: read('plan'),
+  // Grind engine — a campaign only ever reads a measurement and writes plan rows.
+  start_fix_campaign: write('plan', 'medium'),
+  record_root_cause: write('plan'),
+  get_fix_campaign: read('plan'),
   get_workflow_history: read('plan'),
   get_duty_day: read('plan'),
   get_graph_health: read('plan'),
