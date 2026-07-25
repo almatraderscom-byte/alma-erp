@@ -1,0 +1,1494 @@
+'use client'
+
+import { useMemo, useState } from 'react'
+import styles from './CreativeStudioEnterpriseDemo.module.css'
+import { CreativeStudioWorkspaceShell } from './CreativeStudioWorkspaceShell'
+import { StudioV2Icon } from './StudioV2Icon'
+import type { StudioV3Navigate } from './studio-v3-navigation'
+import {
+  AVATARS,
+  BACKGROUNDS,
+  FAMILY_PRESETS,
+  GALLERY_ASSETS,
+  IMAGE_MODES,
+  IMAGE_PROVIDERS,
+  IMAGE_RECIPES,
+  IMAGE_TEMPLATES,
+  PRODUCTS,
+  VIDEO_MODELS,
+  VIDEO_TEMPLATES,
+  compatibleImageProviders,
+  imageProviderSupports,
+  videoModelSupports,
+  type AvatarFixture,
+  type GalleryAssetFixture,
+  type ImageModeId,
+} from './studio-v3-fixtures'
+
+type CreativeStudioCreateLabProps = {
+  kind: 'image' | 'video'
+  initialSourceAssetId?: string
+  initialAvatarId?: string
+  onNavigate: StudioV3Navigate
+}
+
+type LabTab = 'explore' | 'history'
+type ImageArchitecture = 'auto' | 'advanced'
+
+function AssetArtwork({
+  asset,
+  compact = false,
+}: {
+  asset: GalleryAssetFixture
+  compact?: boolean
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`${styles.v3AssetArtwork} ${styles[`v3Tone_${asset.tone}`]} ${
+        compact ? styles.v3AssetArtworkCompact : ''
+      }`}
+    >
+      <span className={styles.v3AssetMark}>ALMA</span>
+      <span className={styles.v3AssetFigure}>
+        <i />
+        <b />
+      </span>
+      {asset.type === 'video' && (
+        <span className={styles.v3AssetPlay}>
+          <StudioV2Icon name="play" size={13} />
+        </span>
+      )}
+    </span>
+  )
+}
+
+function AvatarRail({
+  selectedId,
+  onSelect,
+  onNavigate,
+}: {
+  selectedId: string
+  onSelect: (avatar: AvatarFixture) => void
+  onNavigate: StudioV3Navigate
+}) {
+  return (
+    <section aria-labelledby="avatar-rail-title" className={styles.v3AvatarRail}>
+      <div className={styles.v3RailHeading}>
+        <div>
+          <span className={styles.eyebrow}>IDENTITY LIBRARY</span>
+          <h2 id="avatar-rail-title">Avatars & saved models</h2>
+          <p>Brand-scoped identity references—not generic assets.</p>
+        </div>
+        <button
+          className={styles.textButton}
+          onClick={() => onNavigate({ id: 'gallery', initialType: 'avatar' })}
+          type="button"
+        >
+          View all
+          <StudioV2Icon name="chevron-right" size={15} />
+        </button>
+      </div>
+
+      <div className={styles.v3AvatarScroller}>
+        <button
+          className={styles.v3NewAvatar}
+          onClick={() => onNavigate({ id: 'desk', desk: 'systems' })}
+          type="button"
+        >
+          <span>
+            <StudioV2Icon name="plus" size={20} />
+          </span>
+          <strong>New</strong>
+          <small>Owner-gated</small>
+        </button>
+        {AVATARS.map((avatar) => (
+          <button
+            aria-pressed={selectedId === avatar.id}
+            className={`${styles.v3AvatarCard} ${
+              selectedId === avatar.id ? styles.v3AvatarCardSelected : ''
+            }`}
+            key={avatar.id}
+            onClick={() => onSelect(avatar)}
+            type="button"
+          >
+            <span
+              className={`${styles.v3AvatarPortrait} ${styles[`v3Tone_${avatar.tone}`]}`}
+            >
+              <i />
+              <b />
+              <em>{avatar.imageCount}</em>
+            </span>
+            <span>
+              <strong>{avatar.name}</strong>
+              <small>{avatar.role} · {avatar.version}</small>
+            </span>
+            <span
+              className={`${styles.v3AvatarStatus} ${
+                avatar.status === 'active'
+                  ? styles.v3AvatarStatusActive
+                  : avatar.status === 'building'
+                    ? styles.v3AvatarStatusBuilding
+                    : ''
+              }`}
+            >
+              {avatar.status}
+            </span>
+          </button>
+        ))}
+      </div>
+      <p className={styles.v3IdentityBoundary}>
+        <StudioV2Icon name="lock" size={13} />
+        ALMA Lifestyle only · identity source owner and version stay pinned in every request.
+      </p>
+    </section>
+  )
+}
+
+function HistoryLedger({ kind }: { kind: 'image' | 'video' }) {
+  const rows =
+    kind === 'image'
+      ? [
+          ['Coral hero refinement', 'Verified artifact', 'FASHN direct · 1K', '৳10.50'],
+          ['Family composite draft', 'Needs review', 'FASHN + Gemini chain', '৳24.20'],
+          ['Embroidery mask repair', 'QC failed', 'FLUX Fill · diagnostic kept', '৳14.75'],
+          ['Catalog exploration', 'Draft', 'Grok Imagine · 2K', '৳8.75'],
+        ]
+      : [
+          ['Fabric turn · clip 01', 'Verified artifact', 'Veo · 6 sec · 720p delivered', '৳112.50'],
+          ['24 sec reel chain', '2 / 3 clips verified', 'Veo · deterministic chain', '৳300 cap'],
+          ['Family Shoot · Cut 03', 'Caption review', 'ALMA local · 1080p preserved', '৳0'],
+          ['Offer Promo retry', 'Failed · safe retry', 'No artifact claimed', '৳0 retry'],
+        ]
+
+  return (
+    <section aria-label={`${kind} history`} className={styles.v3HistoryLedger}>
+      <header>
+        <div>
+          <span className={styles.eyebrow}>TRUTHFUL JOB HISTORY</span>
+          <h2>Requests, artifacts and failures stay distinct</h2>
+        </div>
+        <span>Safe fixtures · read-only</span>
+      </header>
+      <div>
+        {rows.map(([name, state, detail, cost], index) => (
+          <article key={name}>
+            <span className={styles.v3HistoryIndex}>{String(index + 1).padStart(2, '0')}</span>
+            <div>
+              <strong>{name}</strong>
+              <small>{detail}</small>
+            </div>
+            <span className={styles.v3HistoryState}>{state}</span>
+            <code>{cost}</code>
+            <button aria-label={`Inspect ${name}`} type="button">
+              <StudioV2Icon name="chevron-right" size={16} />
+            </button>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function ReferencePicker({
+  label,
+  requirement,
+  selectedId,
+  assets,
+  onSelect,
+  onClear,
+}: {
+  label: string
+  requirement: 'optional' | 'required'
+  selectedId: string
+  assets: readonly GalleryAssetFixture[]
+  onSelect: (id: string) => void
+  onClear: () => void
+}) {
+  const selected = assets.find((asset) => asset.id === selectedId)
+  return (
+    <div className={styles.v3ComposerField}>
+      <div className={styles.v3FieldLabel}>
+        <span>{label}</span>
+        <em>{requirement}</em>
+      </div>
+      <div className={styles.v3ReferencePicker}>
+        {selected ? (
+          <button
+            aria-label={`Clear ${label}`}
+            className={styles.v3SelectedReference}
+            onClick={onClear}
+            type="button"
+          >
+            <AssetArtwork asset={selected} compact />
+            <span>
+              <strong>{selected.title}</strong>
+              <small>{selected.resolution} · {selected.source}</small>
+            </span>
+            <StudioV2Icon name="close" size={15} />
+          </button>
+        ) : (
+          <div className={styles.v3ReferenceChoices}>
+            {assets.slice(0, 3).map((asset) => (
+              <button key={asset.id} onClick={() => onSelect(asset.id)} type="button">
+                <AssetArtwork asset={asset} compact />
+                <span>{asset.title}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ImageComposer({
+  initialTemplateId,
+  initialSourceAssetId,
+  selectedAvatarId,
+  onSelectAvatar,
+  onNavigate,
+}: {
+  initialTemplateId: string
+  initialSourceAssetId?: string
+  selectedAvatarId: string
+  onSelectAvatar: (id: string) => void
+  onNavigate: StudioV3Navigate
+}) {
+  const [architecture, setArchitecture] = useState<ImageArchitecture>('advanced')
+  const [mode, setMode] = useState<ImageModeId>('product_to_model')
+  const [productId, setProductId] = useState(PRODUCTS[0].id)
+  const [sourceId, setSourceId] = useState(initialSourceAssetId ?? '')
+  const [extraReferenceId, setExtraReferenceId] = useState('')
+  const [prompt, setPrompt] = useState(
+    'Warm editorial portrait, accurate coral embroidery, quiet Eid evening light.',
+  )
+  const initialRecipe =
+    initialTemplateId === 'family-story'
+      ? 'Combined listing'
+      : initialTemplateId === 'catalog-clean'
+        ? 'Product display image'
+        : initialTemplateId === 'offer-social'
+          ? 'Social media content'
+          : 'Product launch visual'
+  const [recipe, setRecipe] = useState<string>(initialRecipe)
+  const [providerId, setProviderId] = useState('fashn-direct')
+  const [background, setBackground] = useState<(typeof BACKGROUNDS)[number]>('Studio')
+  const [aspect, setAspect] = useState<'4:5' | '1:1' | '9:16' | '16:9'>('4:5')
+  const [resolution, setResolution] = useState<'1K' | '2K' | '4K'>('1K')
+  const [quality, setQuality] = useState<'Fast' | 'Balanced' | 'Quality'>('Balanced')
+  const [count, setCount] = useState(1)
+  const [family, setFamily] = useState<(typeof FAMILY_PRESETS)[number]>('Single')
+  const [placement, setPlacement] = useState('Auto')
+  const [autoFamily, setAutoFamily] = useState(false)
+  const [autoReel, setAutoReel] = useState(false)
+  const [localStatus, setLocalStatus] = useState(
+    'Configuration is local to this prototype. Nothing has been queued.',
+  )
+
+  const activeMode = IMAGE_MODES.find((item) => item.id === mode) ?? IMAGE_MODES[0]
+  const providers = compatibleImageProviders(mode)
+  const provider =
+    IMAGE_PROVIDERS.find((item) => item.id === providerId) ?? providers[0] ?? IMAGE_PROVIDERS[0]
+  const imageAssets = GALLERY_ASSETS.filter((asset) => asset.type === 'image')
+  const selectedAvatar = AVATARS.find((avatar) => avatar.id === selectedAvatarId)
+  const selectedProduct = PRODUCTS.find((product) => product.id === productId)
+
+  const missingRequirements = useMemo(() => {
+    const missing: string[] = []
+    if (activeMode.product === 'required' && !productId) missing.push('product reference')
+    if (activeMode.avatar === 'required' && !selectedAvatarId) missing.push('model / avatar')
+    if (activeMode.source === 'required' && !sourceId) missing.push('source image')
+    if (mode === 'generate' && !prompt.trim()) missing.push('prompt')
+    if (!imageProviderSupports(provider.id, mode, resolution)) {
+      missing.push(`${provider.label} does not support ${mode} at ${resolution}`)
+    }
+    if (provider.researchOnly) missing.push('commercial policy approval')
+    return missing
+  }, [activeMode, mode, productId, prompt, provider, resolution, selectedAvatarId, sourceId])
+
+  const estimatedBdt =
+    resolution === '4K'
+      ? null
+      : provider.estimate[resolution] === null
+        ? null
+        : (provider.estimate[resolution] ?? 0) * count
+
+  function chooseMode(nextMode: ImageModeId) {
+    const nextProvider = compatibleImageProviders(nextMode)[0]
+    setMode(nextMode)
+    if (nextProvider) {
+      setProviderId(nextProvider.id)
+      setResolution(nextProvider.resolutions[0])
+    }
+    setLocalStatus('Mode changed. Reference requirements and engine capabilities were recalculated.')
+  }
+
+  function chooseProvider(nextProviderId: string) {
+    const nextProvider = IMAGE_PROVIDERS.find((item) => item.id === nextProviderId)
+    setProviderId(nextProviderId)
+    if (
+      nextProvider &&
+      resolution !== '4K' &&
+      !nextProvider.resolutions.includes(resolution)
+    ) {
+      setResolution(nextProvider.resolutions[0])
+    }
+  }
+
+  if (architecture === 'auto') {
+    return (
+      <section aria-labelledby="image-composer-title" className={styles.v3Composer}>
+        <header className={styles.v3ComposerHeader}>
+          <div>
+            <span className={styles.eyebrow}>IMAGE COMPOSER</span>
+            <h2 id="image-composer-title">Production Auto</h2>
+            <p>Existing one-brief flow with the default model and hard safeguards.</p>
+          </div>
+          <span className={styles.v3NoRunBadge}>No API connected</span>
+        </header>
+
+        <div className={styles.v3ArchitectureSwitch} role="tablist" aria-label="Image workflow">
+          <button
+            aria-selected
+            className={styles.v3ArchitectureActive}
+            onClick={() => setArchitecture('auto')}
+            role="tab"
+            type="button"
+          >
+            Auto
+            <small>Fast product flow</small>
+          </button>
+          <button
+            aria-selected={false}
+            onClick={() => setArchitecture('advanced')}
+            role="tab"
+            type="button"
+          >
+            Advanced
+            <small>7 production modes</small>
+          </button>
+        </div>
+
+        <div className={styles.v3AutoSummary}>
+          <div>
+            <span className={styles.v3AutoStep}>01</span>
+            <div>
+              <strong>Product / mannequin</strong>
+              <small>Required · ERP provenance stays pinned</small>
+            </div>
+          </div>
+          <div className={styles.v3ProductMiniGrid}>
+            {PRODUCTS.map((product) => (
+              <button
+                aria-pressed={productId === product.id}
+                className={productId === product.id ? styles.v3MiniSelected : undefined}
+                key={product.id}
+                onClick={() => setProductId(product.id)}
+                type="button"
+              >
+                <span className={`${styles.v3ProductSwatch} ${styles[`v3Tone_${product.tone}`]}`} />
+                <span>
+                  <strong>{product.name}</strong>
+                  <small>{product.code} · {product.resolution}</small>
+                </span>
+                {product.status === 'needs_reference' && <em>Low source</em>}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className={styles.v3AutoSummary}>
+          <div>
+            <span className={styles.v3AutoStep}>02</span>
+            <div>
+              <strong>Saved model</strong>
+              <small>Default identity can be changed from the rail</small>
+            </div>
+          </div>
+          <div className={styles.v3AutoIdentity}>
+            <span className={`${styles.v3AvatarPortrait} ${styles.v3Tone_ink}`}>
+              <i />
+              <b />
+            </span>
+            <span>
+              <strong>{selectedAvatar?.name ?? 'Choose an avatar'}</strong>
+              <small>{selectedAvatar?.version ?? 'Identity is required'}</small>
+            </span>
+            <button
+              onClick={() => onNavigate({ id: 'gallery', initialType: 'avatar' })}
+              type="button"
+            >
+              Change
+            </button>
+          </div>
+        </div>
+
+        <label className={styles.v3PromptField}>
+          <span>Creative direction <em>optional in Auto</em></span>
+          <textarea onChange={(event) => setPrompt(event.target.value)} value={prompt} />
+        </label>
+
+        <div className={styles.v3AutoToggles}>
+          <label>
+            <input
+              checked={autoFamily}
+              onChange={(event) => setAutoFamily(event.target.checked)}
+              type="checkbox"
+            />
+            <span>
+              <strong>Family variant</strong>
+              <small>Deterministic preset chain</small>
+            </span>
+          </label>
+          <label>
+            <input
+              checked={autoReel}
+              onChange={(event) => setAutoReel(event.target.checked)}
+              type="checkbox"
+            />
+            <span>
+              <strong>Add 6 sec reel</strong>
+              <small>Separate Veo cost review</small>
+            </span>
+          </label>
+        </div>
+
+        <div className={styles.v3ComposerTrust}>
+          <div>
+            <span>ENGINE</span>
+            <strong>Fal · FASHN v1.6</strong>
+            <small>Commercial · 1K fixed delivery contract</small>
+          </div>
+          <div>
+            <span>ESTIMATE</span>
+            <strong>৳9.38 image only</strong>
+            <small>Reel estimate is never bundled silently</small>
+          </div>
+        </div>
+
+        <footer className={styles.v3ComposerFooter}>
+          <div>
+            <StudioV2Icon name="lock" size={15} />
+            <span>
+              <strong>{selectedProduct?.status === 'needs_reference' ? 'Source needs attention' : 'Ready for cost review'}</strong>
+              <small>{localStatus}</small>
+            </span>
+          </div>
+          <button
+            className={styles.secondaryButton}
+            onClick={() => setLocalStatus('Auto brief saved in local component state only.')}
+            type="button"
+          >
+            Save local brief
+          </button>
+          <button className={styles.v3DisconnectedButton} disabled type="button">
+            Generate disconnected
+          </button>
+        </footer>
+      </section>
+    )
+  }
+
+  return (
+    <section aria-labelledby="image-composer-title" className={styles.v3Composer}>
+      <header className={styles.v3ComposerHeader}>
+        <div>
+          <span className={styles.eyebrow}>IMAGE COMPOSER</span>
+          <h2 id="image-composer-title">Advanced control desk</h2>
+          <p>Mode-aware references, provider truth and owner-reviewed cost.</p>
+        </div>
+        <span className={styles.v3NoRunBadge}>No API connected</span>
+      </header>
+
+      <div className={styles.v3ArchitectureSwitch} role="tablist" aria-label="Image workflow">
+        <button
+          aria-selected={false}
+          onClick={() => setArchitecture('auto')}
+          role="tab"
+          type="button"
+        >
+          Auto
+          <small>Fast product flow</small>
+        </button>
+        <button
+          aria-selected
+          className={styles.v3ArchitectureActive}
+          onClick={() => setArchitecture('advanced')}
+          role="tab"
+          type="button"
+        >
+          Advanced
+          <small>7 production modes</small>
+        </button>
+      </div>
+
+      <div className={styles.v3ModeScroller} role="tablist" aria-label="Advanced image modes">
+        {IMAGE_MODES.map((item) => (
+          <button
+            aria-selected={mode === item.id}
+            className={mode === item.id ? styles.v3ModeActive : undefined}
+            key={item.id}
+            onClick={() => chooseMode(item.id)}
+            role="tab"
+            type="button"
+          >
+            <StudioV2Icon name={item.icon} size={16} />
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className={styles.v3ModeExplanation}>
+        <span>{activeMode.shortLabel}</span>
+        <p>{activeMode.description}</p>
+      </div>
+
+      <div className={styles.v3RecipeScroller} aria-label="Saved recipe templates">
+        {IMAGE_RECIPES.map((item) => (
+          <button
+            aria-pressed={recipe === item}
+            className={recipe === item ? styles.v3RecipeSelected : undefined}
+            key={item}
+            onClick={() => setRecipe(item)}
+            type="button"
+          >
+            <StudioV2Icon name="template" size={14} />
+            {item}
+          </button>
+        ))}
+      </div>
+
+      <div className={styles.v3ComposerBody}>
+        {activeMode.product !== 'hidden' && (
+          <div className={styles.v3ComposerField}>
+            <div className={styles.v3FieldLabel}>
+              <span>Product / mannequin</span>
+              <em>{activeMode.product}</em>
+            </div>
+            <div className={styles.v3ProductSelect}>
+              {PRODUCTS.map((product) => (
+                <button
+                  aria-pressed={productId === product.id}
+                  className={productId === product.id ? styles.v3ReferenceSelected : undefined}
+                  key={product.id}
+                  onClick={() => setProductId(productId === product.id ? '' : product.id)}
+                  type="button"
+                >
+                  <span className={`${styles.v3ProductSwatch} ${styles[`v3Tone_${product.tone}`]}`} />
+                  <span>
+                    <strong>{product.name}</strong>
+                    <small>{product.code} · {product.resolution}</small>
+                  </span>
+                  {product.status === 'needs_reference' && <em>Low source</em>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeMode.avatar !== 'hidden' && (
+          <div className={styles.v3ComposerField}>
+            <div className={styles.v3FieldLabel}>
+              <span>Saved model / identity avatar</span>
+              <em>{activeMode.avatar}</em>
+            </div>
+            <div className={styles.v3AvatarReference}>
+              {selectedAvatar ? (
+                <button
+                  aria-label="Clear selected identity avatar"
+                  className={styles.v3SelectedAvatarReference}
+                  onClick={() => onSelectAvatar('')}
+                  type="button"
+                >
+                  <span
+                    className={`${styles.v3AvatarPortrait} ${styles[`v3Tone_${selectedAvatar.tone}`]}`}
+                  >
+                    <i />
+                    <b />
+                  </span>
+                  <span>
+                    <strong>{selectedAvatar.name}</strong>
+                    <small>{selectedAvatar.version} · {selectedAvatar.imageCount} angles</small>
+                  </span>
+                  <span className={styles.v3PinnedIdentity}>
+                    <StudioV2Icon name="lock" size={12} />
+                    Brand pinned
+                  </span>
+                  <StudioV2Icon name="close" size={15} />
+                </button>
+              ) : (
+                AVATARS.slice(0, 3).map((avatar) => (
+                  <button
+                    key={avatar.id}
+                    onClick={() => onSelectAvatar(avatar.id)}
+                    type="button"
+                  >
+                    <span
+                      className={`${styles.v3AvatarPortrait} ${styles[`v3Tone_${avatar.tone}`]}`}
+                    >
+                      <i />
+                      <b />
+                    </span>
+                    <span>{avatar.name}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeMode.source !== 'hidden' && (
+          <ReferencePicker
+            assets={imageAssets}
+            label="Source image"
+            onClear={() => setSourceId('')}
+            onSelect={setSourceId}
+            requirement={activeMode.source}
+            selectedId={sourceId}
+          />
+        )}
+
+        {activeMode.extraReference !== 'hidden' && (
+          <ReferencePicker
+            assets={imageAssets.filter((asset) => asset.id !== sourceId)}
+            label="Extra image reference"
+            onClear={() => setExtraReferenceId('')}
+            onSelect={setExtraReferenceId}
+            requirement="optional"
+            selectedId={extraReferenceId}
+          />
+        )}
+
+        {activeMode.family && (
+          <div className={styles.v3ComposerField}>
+            <div className={styles.v3FieldLabel}>
+              <span>Composition preset</span>
+              <em>hard family roles</em>
+            </div>
+            <div className={styles.v3SegmentedWrap}>
+              {FAMILY_PRESETS.map((item) => (
+                <button
+                  aria-pressed={family === item}
+                  className={family === item ? styles.v3SegmentActive : undefined}
+                  key={item}
+                  onClick={() => setFamily(item)}
+                  type="button"
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {mode === 'try_on' && (
+          <div className={styles.v3ComposerField}>
+            <div className={styles.v3FieldLabel}>
+              <span>Garment placement</span>
+              <em>provider contract</em>
+            </div>
+            <div className={styles.v3SegmentedWrap}>
+              {['Auto', 'Overall', 'Upper', 'Lower', 'Outer'].map((item) => (
+                <button
+                  aria-pressed={placement === item}
+                  className={placement === item ? styles.v3SegmentActive : undefined}
+                  key={item}
+                  onClick={() => setPlacement(item)}
+                  type="button"
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <label className={styles.v3PromptField}>
+          <span>
+            Prompt
+            <em>{mode === 'generate' ? 'required' : 'creative direction'}</em>
+          </span>
+          <textarea onChange={(event) => setPrompt(event.target.value)} value={prompt} />
+        </label>
+
+        <div className={styles.v3ControlGrid}>
+          <label>
+            <span>Provider / model</span>
+            <select
+              onChange={(event) => chooseProvider(event.target.value)}
+              value={provider.id}
+            >
+              {providers.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label} · {item.badge}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Background</span>
+            <select
+              onChange={(event) =>
+                setBackground(event.target.value as (typeof BACKGROUNDS)[number])
+              }
+              value={background}
+            >
+              {BACKGROUNDS.map((item) => <option key={item}>{item}</option>)}
+            </select>
+          </label>
+        </div>
+
+        <div className={styles.v3OptionGroup}>
+          <div className={styles.v3FieldLabel}>
+            <span>Aspect</span>
+            <em>request</em>
+          </div>
+          <div className={styles.v3OptionRow}>
+            {(['4:5', '1:1', '9:16', '16:9'] as const).map((item) => (
+              <button
+                aria-pressed={aspect === item}
+                className={aspect === item ? styles.v3SegmentActive : undefined}
+                key={item}
+                onClick={() => setAspect(item)}
+                type="button"
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className={styles.v3OptionGroup}>
+          <div className={styles.v3FieldLabel}>
+            <span>Resolution</span>
+            <em>requested ≠ delivered until verified</em>
+          </div>
+          <div className={styles.v3OptionRow}>
+            {(['1K', '2K', '4K'] as const).map((item) => {
+              const supported = imageProviderSupports(provider.id, mode, item)
+              return (
+                <button
+                  aria-pressed={resolution === item}
+                  className={resolution === item ? styles.v3SegmentActive : undefined}
+                  disabled={!supported}
+                  key={item}
+                  onClick={() => setResolution(item)}
+                  title={
+                    supported
+                      ? `${provider.label} advertises native ${item}`
+                      : item === '4K'
+                        ? 'No integrated provider advertises native 4K; upscale is prohibited.'
+                        : `${provider.label} does not support ${item} for this mode.`
+                  }
+                  type="button"
+                >
+                  {item}
+                  {!supported && <small>Unavailable</small>}
+                </button>
+              )
+            })}
+          </div>
+          <p className={styles.v3CapabilityNote}>
+            <StudioV2Icon
+              name={provider.researchOnly ? 'lock' : 'check'}
+              size={13}
+            />
+            {provider.note}
+          </p>
+        </div>
+
+        <div className={styles.v3ControlGrid}>
+          <div className={styles.v3OptionGroup}>
+            <div className={styles.v3FieldLabel}>
+              <span>Quality</span>
+              <em>safety checks stay on</em>
+            </div>
+            <div className={styles.v3OptionRow}>
+              {(['Fast', 'Balanced', 'Quality'] as const).map((item) => (
+                <button
+                  aria-pressed={quality === item}
+                  className={quality === item ? styles.v3SegmentActive : undefined}
+                  key={item}
+                  onClick={() => setQuality(item)}
+                  type="button"
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className={styles.v3OptionGroup}>
+            <div className={styles.v3FieldLabel}>
+              <span>Outputs</span>
+              <em>1–4</em>
+            </div>
+            <div className={styles.v3OptionRow}>
+              {[1, 2, 3, 4].map((item) => (
+                <button
+                  aria-pressed={count === item}
+                  className={count === item ? styles.v3SegmentActive : undefined}
+                  key={item}
+                  onClick={() => setCount(item)}
+                  type="button"
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.v3ComposerReadiness}>
+        <div>
+          <span className={missingRequirements.length ? styles.v3ReadinessBlocked : styles.v3ReadinessReady}>
+            <StudioV2Icon name={missingRequirements.length ? 'lock' : 'check'} size={15} />
+          </span>
+          <span>
+            <strong>
+              {missingRequirements.length
+                ? `${missingRequirements.length} gate${missingRequirements.length > 1 ? 's' : ''} unresolved`
+                : 'Configuration ready for owner cost review'}
+            </strong>
+            <small>
+              {missingRequirements.length
+                ? missingRequirements.join(' · ')
+                : `${provider.label} · ${aspect} · ${resolution} · ${quality}`}
+            </small>
+          </span>
+        </div>
+        <div>
+          <span>ESTIMATE</span>
+          <strong>{estimatedBdt === null ? 'Unavailable' : `৳${estimatedBdt.toFixed(2)}`}</strong>
+          <small>Actual cost belongs to verified result</small>
+        </div>
+      </div>
+
+      <footer className={styles.v3ComposerFooter}>
+        <div>
+          <StudioV2Icon name="lock" size={15} />
+          <span>
+            <strong>Plan and configuration only</strong>
+            <small>{localStatus}</small>
+          </span>
+        </div>
+        {mode === 'reel' ? (
+          <button
+            className={styles.primaryButton}
+            disabled={!sourceId}
+            onClick={() => onNavigate({ id: 'video-lab', sourceAssetId: sourceId })}
+            type="button"
+          >
+            Continue in Video Lab
+            <StudioV2Icon name="chevron-right" size={17} />
+          </button>
+        ) : (
+          <>
+            <button
+              className={styles.secondaryButton}
+              onClick={() => setLocalStatus('Configuration saved in local demo state. No request was created.')}
+              type="button"
+            >
+              Save local configuration
+            </button>
+            <button className={styles.v3DisconnectedButton} disabled type="button">
+              Generation disconnected
+            </button>
+          </>
+        )}
+      </footer>
+    </section>
+  )
+}
+
+function VideoComposer({
+  initialTemplateId,
+  initialSourceAssetId,
+  selectedAvatarId,
+  onNavigate,
+}: {
+  initialTemplateId: string
+  initialSourceAssetId?: string
+  selectedAvatarId: string
+  onNavigate: StudioV3Navigate
+}) {
+  const imageSources = GALLERY_ASSETS.filter((asset) => asset.type === 'image')
+  const videoSources = GALLERY_ASSETS.filter((asset) => asset.type === 'video')
+  const initialOwnedRecipe = initialTemplateId !== 'premium-turn'
+  const initialModel = initialOwnedRecipe ? VIDEO_MODELS[1] : VIDEO_MODELS[0]
+  const [modelId, setModelId] = useState(initialModel.id)
+  const [sourceId, setSourceId] = useState(
+    initialSourceAssetId && GALLERY_ASSETS.some((asset) => asset.id === initialSourceAssetId)
+      ? initialSourceAssetId
+      : initialOwnedRecipe
+        ? videoSources[0].id
+        : imageSources[0].id,
+  )
+  const templateId = initialTemplateId
+  const [duration, setDuration] = useState(initialModel.durations[0])
+  const [resolution, setResolution] = useState<'720p' | '1080p' | '4K'>(
+    initialModel.resolutions[0],
+  )
+  const [aspect, setAspect] = useState<'9:16' | '1:1' | '16:9'>(
+    initialModel.aspects[0],
+  )
+  const [startFrameId, setStartFrameId] = useState(sourceId)
+  const [endFrameId, setEndFrameId] = useState('')
+  const [imageReferenceId, setImageReferenceId] = useState('')
+  const [prompt, setPrompt] = useState(
+    'A restrained fabric turn with a slow camera push, accurate embroidery and natural evening light.',
+  )
+  const [audioMode, setAudioMode] = useState<'generate' | 'mute'>('mute')
+  const [count, setCount] = useState(1)
+  const [localStatus, setLocalStatus] = useState(
+    'No video job exists. Capability review is local and reversible.',
+  )
+
+  const model = VIDEO_MODELS.find((item) => item.id === modelId) ?? VIDEO_MODELS[0]
+  const selectedSource = GALLERY_ASSETS.find((asset) => asset.id === sourceId)
+  const sourceOptions = model.id === 'owned-local' ? videoSources : imageSources
+  const estimatedBdt = duration * model.estimatePerSecondBdt * count
+  const valid =
+    videoModelSupports(model.id, duration, resolution, aspect) ||
+    (model.id === 'veo-preview' &&
+      (duration === 16 || duration === 24) &&
+      resolution === '720p' &&
+      (aspect === '9:16' || aspect === '16:9'))
+
+  function chooseModel(nextModelId: string) {
+    const next = VIDEO_MODELS.find((item) => item.id === nextModelId)
+    if (!next) return
+    setModelId(next.id)
+    setDuration(next.durations[0])
+    setResolution(next.resolutions[0])
+    setAspect(next.aspects[0])
+    const nextSource = next.id === 'owned-local' ? videoSources[0] : imageSources[0]
+    setSourceId(nextSource.id)
+    setStartFrameId(next.id === 'owned-local' ? '' : nextSource.id)
+    setEndFrameId('')
+    setLocalStatus('Model changed. Source, duration, aspect and resolution were constrained to its manifest.')
+  }
+
+  return (
+    <section aria-labelledby="video-composer-title" className={styles.v3Composer}>
+      <header className={styles.v3ComposerHeader}>
+        <div>
+          <span className={styles.eyebrow}>VIDEO COMPOSER</span>
+          <h2 id="video-composer-title">Source-first motion brief</h2>
+          <p>
+            {VIDEO_TEMPLATES.find((item) => item.id === templateId)?.title} · choose
+            owned/gallery media before delivery capability.
+          </p>
+        </div>
+        <span className={styles.v3NoRunBadge}>No API connected</span>
+      </header>
+
+      <div className={styles.v3SourceStage}>
+        <div className={styles.v3FieldLabel}>
+          <span>01 · Gallery source</span>
+          <em>required</em>
+        </div>
+        <div className={styles.v3SourceStrip}>
+          {sourceOptions.slice(0, 5).map((asset) => (
+            <button
+              aria-pressed={sourceId === asset.id}
+              className={sourceId === asset.id ? styles.v3SourceSelected : undefined}
+              key={asset.id}
+              onClick={() => {
+                setSourceId(asset.id)
+                if (model.id !== 'owned-local') setStartFrameId(asset.id)
+              }}
+              type="button"
+            >
+              <AssetArtwork asset={asset} compact />
+              <span>
+                <strong>{asset.title}</strong>
+                <small>{asset.subtype} · {asset.resolution}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+        <button
+          className={styles.textButton}
+          onClick={() =>
+            onNavigate({
+              id: 'gallery',
+              initialType: model.id === 'owned-local' ? 'video' : 'image',
+            })
+          }
+          type="button"
+        >
+          Open full Gallery
+          <StudioV2Icon name="chevron-right" size={15} />
+        </button>
+      </div>
+
+      <div className={styles.v3ComposerBody}>
+        <div className={styles.v3ComposerField}>
+          <div className={styles.v3FieldLabel}>
+            <span>02 · Model / recipe</span>
+            <em>explicit</em>
+          </div>
+          <div className={styles.v3ModelCards}>
+            {VIDEO_MODELS.map((item) => (
+              <button
+                aria-pressed={model.id === item.id}
+                className={model.id === item.id ? styles.v3ModelSelected : undefined}
+                key={item.id}
+                onClick={() => chooseModel(item.id)}
+                type="button"
+              >
+                <span className={styles.v3ModelIcon}>
+                  <StudioV2Icon name={item.id === 'owned-local' ? 'scissors' : 'agent'} size={18} />
+                </span>
+                <span>
+                  <strong>{item.label}</strong>
+                  <small>{item.provider}</small>
+                </span>
+                <em>{item.id === 'owned-local' ? '৳0 edit' : 'Paid gate'}</em>
+              </button>
+            ))}
+          </div>
+          <p className={styles.v3CapabilityNote}>
+            <StudioV2Icon name="check" size={13} />
+            {model.note}
+          </p>
+        </div>
+
+        <div className={styles.v3ControlGrid}>
+          <div className={styles.v3OptionGroup}>
+            <div className={styles.v3FieldLabel}>
+              <span>Duration</span>
+              <em>model capability</em>
+            </div>
+            <div className={styles.v3OptionRow}>
+              {[4, 5, 6, 7, 8, 15, 16, 24, 30, 60].map((item) => {
+                const direct = model.durations.includes(item)
+                const chain = model.id === 'veo-preview' && (item === 16 || item === 24)
+                return (
+                  <button
+                    aria-pressed={duration === item}
+                    className={duration === item ? styles.v3SegmentActive : undefined}
+                    disabled={!direct && !chain}
+                    key={item}
+                    onClick={() => setDuration(item)}
+                    title={
+                      chain
+                        ? `${item / 8} verified 8-second clips, then local concat`
+                        : direct
+                          ? `${item} seconds supported`
+                          : `${model.label} does not support ${item} seconds`
+                    }
+                    type="button"
+                  >
+                    {item}s
+                    {chain && <small>chain</small>}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <div className={styles.v3OptionGroup}>
+            <div className={styles.v3FieldLabel}>
+              <span>Output count</span>
+              <em>1–2 candidates</em>
+            </div>
+            <div className={styles.v3OptionRow}>
+              {[1, 2].map((item) => (
+                <button
+                  aria-pressed={count === item}
+                  className={count === item ? styles.v3SegmentActive : undefined}
+                  key={item}
+                  onClick={() => setCount(item)}
+                  type="button"
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className={styles.v3ControlGrid}>
+          <div className={styles.v3OptionGroup}>
+            <div className={styles.v3FieldLabel}>
+              <span>Aspect</span>
+              <em>delivery</em>
+            </div>
+            <div className={styles.v3OptionRow}>
+              {(['9:16', '1:1', '16:9'] as const).map((item) => {
+                const supported = model.aspects.includes(item)
+                return (
+                  <button
+                    aria-pressed={aspect === item}
+                    className={aspect === item ? styles.v3SegmentActive : undefined}
+                    disabled={!supported}
+                    key={item}
+                    onClick={() => setAspect(item)}
+                    title={supported ? `${item} supported` : `${model.label} does not advertise ${item}`}
+                    type="button"
+                  >
+                    {item}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <div className={styles.v3OptionGroup}>
+            <div className={styles.v3FieldLabel}>
+              <span>Resolution</span>
+              <em>delivered truth</em>
+            </div>
+            <div className={styles.v3OptionRow}>
+              {(['720p', '1080p', '4K'] as const).map((item) => {
+                const supported =
+                  item !== '4K' &&
+                  model.resolutions.includes(item) &&
+                  model.aspects.includes(aspect)
+                return (
+                  <button
+                    aria-pressed={resolution === item}
+                    className={resolution === item ? styles.v3SegmentActive : undefined}
+                    disabled={!supported}
+                    key={item}
+                    onClick={() => setResolution(item)}
+                    title={
+                      supported
+                        ? `${item} is declared by this capability`
+                        : item === '4K'
+                          ? 'Native 4K is not in the integrated capability manifest.'
+                          : `${item} is not truthful for this model/source path.`
+                    }
+                    type="button"
+                  >
+                    {item}
+                    {!supported && <small>Unavailable</small>}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+
+        {model.id !== 'owned-local' && (
+          <>
+            <ReferencePicker
+              assets={imageSources}
+              label="Start frame"
+              onClear={() => setStartFrameId('')}
+              onSelect={setStartFrameId}
+              requirement="required"
+              selectedId={startFrameId}
+            />
+            <ReferencePicker
+              assets={imageSources.filter((asset) => asset.id !== startFrameId)}
+              label="End frame"
+              onClear={() => setEndFrameId('')}
+              onSelect={setEndFrameId}
+              requirement="optional"
+              selectedId={endFrameId}
+            />
+            <ReferencePicker
+              assets={imageSources.filter(
+                (asset) => asset.id !== startFrameId && asset.id !== endFrameId,
+              )}
+              label="Image reference"
+              onClear={() => setImageReferenceId('')}
+              onSelect={setImageReferenceId}
+              requirement="optional"
+              selectedId={imageReferenceId}
+            />
+          </>
+        )}
+
+        <label className={styles.v3PromptField}>
+          <span>
+            {model.id === 'owned-local' ? 'Edit direction' : 'Motion prompt'}
+            <em>{model.id === 'owned-local' ? 'hard recipe stays authoritative' : 'required'}</em>
+          </span>
+          <textarea onChange={(event) => setPrompt(event.target.value)} value={prompt} />
+        </label>
+
+        <div className={styles.v3ControlGrid}>
+          <div className={styles.v3OptionGroup}>
+            <div className={styles.v3FieldLabel}>
+              <span>Audio</span>
+              <em>{model.supportsAudio ? 'supported' : 'unavailable'}</em>
+            </div>
+            <div className={styles.v3OptionRow}>
+              <button
+                aria-pressed={audioMode === 'generate'}
+                className={audioMode === 'generate' ? styles.v3SegmentActive : undefined}
+                disabled={!model.supportsAudio}
+                onClick={() => setAudioMode('generate')}
+                type="button"
+              >
+                {model.id === 'owned-local' ? 'Keep source' : 'Generate audio'}
+              </button>
+              <button
+                aria-pressed={audioMode === 'mute'}
+                className={audioMode === 'mute' ? styles.v3SegmentActive : undefined}
+                onClick={() => setAudioMode('mute')}
+                type="button"
+              >
+                Mute
+              </button>
+            </div>
+          </div>
+          <div className={styles.v3AvatarVideoContext}>
+            <span>IDENTITY CONTEXT</span>
+            <strong>
+              {AVATARS.find((avatar) => avatar.id === selectedAvatarId)?.name ?? 'No avatar'}
+            </strong>
+            <small>Optional guidance · never replaces selected source silently</small>
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.v3ComposerReadiness}>
+        <div>
+          <span className={valid && sourceId && prompt.trim() ? styles.v3ReadinessReady : styles.v3ReadinessBlocked}>
+            <StudioV2Icon
+              name={valid && sourceId && prompt.trim() ? 'check' : 'lock'}
+              size={15}
+            />
+          </span>
+          <span>
+            <strong>
+              {valid && sourceId && prompt.trim()
+                ? 'Capability configuration is internally consistent'
+                : 'Source or capability combination needs attention'}
+            </strong>
+            <small>
+              {selectedSource?.title ?? 'No source'} · {duration}s · {aspect} · {resolution}
+            </small>
+          </span>
+        </div>
+        <div>
+          <span>ESTIMATE</span>
+          <strong>{estimatedBdt === 0 ? '৳0 local edit' : `৳${estimatedBdt.toFixed(2)}`}</strong>
+          <small>{duration === 16 || duration === 24 ? 'Chain cap shown before queue' : 'No spend in demo'}</small>
+        </div>
+      </div>
+
+      <footer className={styles.v3ComposerFooter}>
+        <div>
+          <StudioV2Icon name="lock" size={15} />
+          <span>
+            <strong>{model.id === 'owned-local' ? 'Local edit plan only' : 'Paid provider review required'}</strong>
+            <small>{localStatus}</small>
+          </span>
+        </div>
+        <button
+          className={styles.secondaryButton}
+          onClick={() =>
+            setLocalStatus('Capability and cost review captured locally. No request was created.')
+          }
+          type="button"
+        >
+          Review capability
+        </button>
+        <button
+          className={styles.primaryButton}
+          onClick={() => onNavigate({ id: 'editor', kind: 'video' })}
+          type="button"
+        >
+          Take source to Editor
+          <StudioV2Icon name="chevron-right" size={17} />
+        </button>
+        <button className={styles.v3DisconnectedButton} disabled type="button">
+          Generation disconnected
+        </button>
+      </footer>
+    </section>
+  )
+}
+
+export function CreativeStudioCreateLab({
+  kind,
+  initialSourceAssetId,
+  initialAvatarId,
+  onNavigate,
+}: CreativeStudioCreateLabProps) {
+  const [tab, setTab] = useState<LabTab>('explore')
+  const [selectedAvatarId, setSelectedAvatarId] = useState(
+    initialAvatarId ?? AVATARS[0].id,
+  )
+  const [selectedTemplate, setSelectedTemplate] = useState<string>(
+    kind === 'image' ? IMAGE_TEMPLATES[0].id : VIDEO_TEMPLATES[0].id,
+  )
+
+  const templates = kind === 'image' ? IMAGE_TEMPLATES : VIDEO_TEMPLATES
+
+  return (
+    <CreativeStudioWorkspaceShell
+      active={kind}
+      description={
+        kind === 'image'
+          ? 'Explore approved products, identities, recipes and gallery sources before configuring an image request.'
+          : 'Begin with a gallery source or avatar, then constrain motion by model, duration and truthful delivery capability.'
+      }
+      eyebrow={kind === 'image' ? 'CREATE / EXPLORE' : 'CREATE / MOTION'}
+      icon={kind}
+      onNavigate={onNavigate}
+      title={kind === 'image' ? 'Image Lab' : 'Video Lab'}
+      actions={
+        <div className={styles.v3LabTabs} role="tablist" aria-label={`${kind} lab views`}>
+          <button
+            aria-selected={tab === 'explore'}
+            className={tab === 'explore' ? styles.v3LabTabActive : undefined}
+            onClick={() => setTab('explore')}
+            role="tab"
+            type="button"
+          >
+            <StudioV2Icon name="assets" size={16} />
+            Explore
+          </button>
+          <button
+            aria-selected={tab === 'history'}
+            className={tab === 'history' ? styles.v3LabTabActive : undefined}
+            onClick={() => setTab('history')}
+            role="tab"
+            type="button"
+          >
+            <StudioV2Icon name="history" size={16} />
+            History
+          </button>
+        </div>
+      }
+    >
+      <AvatarRail
+        onNavigate={onNavigate}
+        onSelect={(avatar) => setSelectedAvatarId(avatar.id)}
+        selectedId={selectedAvatarId}
+      />
+
+      {tab === 'history' ? (
+        <HistoryLedger kind={kind} />
+      ) : (
+        <div className={styles.v3LabLayout}>
+          <section aria-labelledby="lab-template-title" className={styles.v3ExploreBoard}>
+            <header className={styles.v3ExploreHeader}>
+              <div>
+                <span className={styles.eyebrow}>
+                  {kind === 'image' ? 'APPROVED STARTING SYSTEMS' : 'SOURCE + TEMPLATE GALLERY'}
+                </span>
+                <h2 id="lab-template-title">
+                  {kind === 'image' ? 'Recipes with production context' : 'Motion patterns around your assets'}
+                </h2>
+                <p>
+                  Selecting a template configures the local composer; it does not queue work.
+                </p>
+              </div>
+              <label className={styles.v3ExploreSearch}>
+                <StudioV2Icon name="search" size={16} />
+                <span className={styles.srOnly}>Search templates</span>
+                <input placeholder="Search templates and assets" />
+              </label>
+            </header>
+
+            <div className={styles.v3TemplateGrid}>
+              {templates.map((template) => (
+                <button
+                  aria-pressed={selectedTemplate === template.id}
+                  className={`${styles.v3TemplateCard} ${
+                    selectedTemplate === template.id ? styles.v3TemplateSelected : ''
+                  }`}
+                  key={template.id}
+                  onClick={() => setSelectedTemplate(template.id)}
+                  type="button"
+                >
+                  <span
+                    className={`${styles.v3TemplateArtwork} ${styles[`v3Tone_${template.tone}`]}`}
+                  >
+                    <span>ALMA</span>
+                    <i />
+                    <b />
+                    {kind === 'video' && (
+                      <em>
+                        <StudioV2Icon name="play" size={15} />
+                      </em>
+                    )}
+                  </span>
+                  <span>
+                    <small>{'recipe' in template ? 'RECIPE' : template.source}</small>
+                    <strong>{template.title}</strong>
+                    <em>{template.meta}</em>
+                    <span>{'recipe' in template ? template.recipe : 'Brand-safe template'}</span>
+                  </span>
+                  <StudioV2Icon name="check" size={15} />
+                </button>
+              ))}
+            </div>
+
+            <div className={styles.v3ExploreGallery}>
+              <header>
+                <div>
+                  <h3>{kind === 'image' ? 'Recent approved imagery' : 'Eligible gallery sources'}</h3>
+                  <p>Provider, status and delivered resolution remain visible.</p>
+                </div>
+                <button
+                  className={styles.textButton}
+                  onClick={() =>
+                    onNavigate({ id: 'gallery', initialType: kind === 'image' ? 'image' : 'all' })
+                  }
+                  type="button"
+                >
+                  Open Gallery
+                  <StudioV2Icon name="chevron-right" size={15} />
+                </button>
+              </header>
+              <div>
+                {GALLERY_ASSETS.filter((asset) =>
+                  kind === 'image'
+                    ? asset.type === 'image'
+                    : asset.type === 'image' || asset.type === 'video',
+                )
+                  .slice(0, 6)
+                  .map((asset) => (
+                    <button
+                      key={asset.id}
+                      onClick={() =>
+                        onNavigate(
+                          kind === 'image'
+                            ? { id: 'image-lab', sourceAssetId: asset.id }
+                            : { id: 'video-lab', sourceAssetId: asset.id },
+                        )
+                      }
+                      type="button"
+                    >
+                      <AssetArtwork asset={asset} />
+                      <span>
+                        <strong>{asset.title}</strong>
+                        <small>{asset.provider} · {asset.resolution}</small>
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          </section>
+
+          {kind === 'image' ? (
+            <ImageComposer
+              initialTemplateId={selectedTemplate}
+              initialSourceAssetId={initialSourceAssetId}
+              key={selectedTemplate}
+              onNavigate={onNavigate}
+              onSelectAvatar={setSelectedAvatarId}
+              selectedAvatarId={selectedAvatarId}
+            />
+          ) : (
+            <VideoComposer
+              initialTemplateId={selectedTemplate}
+              initialSourceAssetId={initialSourceAssetId}
+              key={selectedTemplate}
+              onNavigate={onNavigate}
+              selectedAvatarId={selectedAvatarId}
+            />
+          )}
+        </div>
+      )}
+    </CreativeStudioWorkspaceShell>
+  )
+}
