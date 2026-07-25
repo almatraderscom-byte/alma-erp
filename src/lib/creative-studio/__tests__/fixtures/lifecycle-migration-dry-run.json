@@ -1,0 +1,34 @@
+{
+  "expectedBackfill": 0,
+  "legacyFallbackEnabled": true,
+  "sourceRows": [
+    {
+      "id": "delivery-1",
+      "status": "SCHEDULED",
+      "ownerId": "owner-1",
+      "brandProfileId": "brand-1",
+      "projectId": "project-1",
+      "productId": "product-1",
+      "versionId": "version-1",
+      "costUsd": 0,
+      "qcState": "READY",
+      "reviewState": "APPROVED",
+      "publishState": "SCHEDULED"
+    }
+  ],
+  "targetRows": [
+    {
+      "id": "delivery-1",
+      "status": "SCHEDULED",
+      "ownerId": "owner-1",
+      "brandProfileId": "brand-1",
+      "projectId": "project-1",
+      "productId": "product-1",
+      "versionId": "version-1",
+      "costUsd": 0,
+      "qcState": "READY",
+      "reviewState": "APPROVED",
+      "publishState": "SCHEDULED"
+    }
+  ]
+}

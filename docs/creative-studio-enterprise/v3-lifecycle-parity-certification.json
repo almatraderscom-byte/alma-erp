@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "program": "creative-studio-v3-lifecycle",
+  "status": "implementation-ready-foundation-ui-wiring-pending",
+  "productionMutation": false,
+  "externalMeta": "off",
+  "requiredFoundationPort": "StudioFoundationLifecyclePort",
+  "requiredUiContract": "toStudioLifecycleView",
+  "checks": [
+    { "id": "role-capability", "required": true, "evidence": "lifecycle-contract.test.ts" },
+    { "id": "composition-review-version-pin", "required": true, "evidence": "lifecycle-contract.test.ts" },
+    { "id": "composition-version-approval-pin", "required": true, "evidence": "lifecycle-contract.test.ts" },
+    { "id": "approval-invalidation", "required": true, "evidence": "lifecycle-contract.test.ts" },
+    { "id": "render-idempotency-progress-truth", "required": true, "evidence": "lifecycle-contract.test.ts" },
+    { "id": "preview-render-export-dry-run-schedule-live-separation", "required": true, "evidence": "lifecycle-contract.test.ts" },
+    { "id": "verified-receipt-only-state-truth", "required": true, "evidence": "lifecycle-contract.test.ts" },
+    { "id": "cancel-retry-ambiguous-quarantine", "required": true, "evidence": "lifecycle-contract.test.ts" },
+    { "id": "append-only-composition-attribution", "required": true, "evidence": "lifecycle-contract.test.ts" },
+    { "id": "archive-fetch-back-checksum", "required": true, "evidence": "lifecycle-contract.test.ts" },
+    { "id": "scoped-flags-canary-dual-read-legacy-fallback-rollback", "required": true, "evidence": "lifecycle-contract.test.ts" },
+    { "id": "migration-dry-run-roadmap-reconciliation-no-production-mutation", "required": true, "evidence": "scripts/creative-studio-lifecycle-migration-dry-run.mjs" }
+  ],
+  "gates": {
+    "livePublish": false,
+    "paidRender": false,
+    "voiceProvider": false,
+    "dualRead": false,
+    "legacyFallback": true
+  },
+  "migrations": [],
+  "risks": [
+    "Foundation composition snapshots are intentionally not wired until the parent supplies its exact integration SHA.",
+    "UI desks are intentionally not wired until the parent UI integration supplies its exact integration SHA.",
+    "Existing CSE7 publish service remains the external-effect owner; this boundary neither calls Meta nor changes its scheduler."
+  ]
+}
