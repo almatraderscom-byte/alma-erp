@@ -94,12 +94,13 @@ function LineCard({ line, error }: { line: LineView | undefined; error: string |
     <section className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
       <header className="mb-3 flex items-center justify-between gap-3">
         <h2 className="text-sm font-bold text-cream">লাইন</h2>
+        {/* .tone-* rather than raw Tailwind colour steps: the ERP runs a light AND a dark
+            theme off `data-theme`, which Tailwind's `dark:` variant does not follow here, so
+            a hand-picked emerald-300 is legible in one theme and invisible in the other. */}
         <span
           className={cn(
-            'rounded-full px-2.5 py-1 text-[11px] font-semibold',
-            unknown ? 'bg-white/[0.06] text-muted'
-              : ok ? 'bg-emerald-500/15 text-emerald-300'
-                : 'bg-red-500/15 text-red-300',
+            'rounded-full border px-2.5 py-1 text-[11px] font-semibold',
+            unknown ? 'tone-slate' : ok ? 'tone-green' : 'tone-red',
           )}
         >
           {unknown ? 'জানা যায়নি' : ok ? 'রেজিস্টার্ড' : 'রেজিস্ট্রেশন নেই'}
@@ -112,7 +113,7 @@ function LineCard({ line, error }: { line: LineView | undefined; error: string |
         </p>
       )}
       {error && (
-        <p className="mb-3 rounded-xl border border-red-500/25 bg-red-500/[0.06] px-3 py-2 text-[12px] text-red-200">
+        <p className="tone-red mb-3 rounded-xl border px-3 py-2 text-[12px]">
           গেটওয়ে থেকে উত্তর আসেনি: {error}
         </p>
       )}
@@ -143,7 +144,7 @@ function LineCard({ line, error }: { line: LineView | undefined; error: string |
 
       {/* The lesson that cost two sessions and roughly half of all outbound calls for days:
           our own "Registered" is a claim, not evidence. Say so on the screen, every time. */}
-      <p className="mt-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.05] px-3 py-2 text-[11px] leading-relaxed text-amber-100/80">
+      <p className="tone-amber mt-3 rounded-xl border px-3 py-2 text-[11px] leading-relaxed">
         উপরের অবস্থা <strong>আমাদের সার্ভারের দাবি</strong> — প্রমাণ নয়। প্রোভাইডার এক অ্যাকাউন্টে
         একটাই রেজিস্ট্রেশন রাখে, শেষ যে রেজিস্টার করে লাইনটা তার। কে আসলে লাইন ধরে আছে সেটা একমাত্র
         তাদের নিজের টেবিলেই দেখা যায়:{' '}
@@ -160,8 +161,8 @@ function Stat({ label, value, hint, bad }: { label: string; value: string; hint?
   return (
     <div className="rounded-xl border border-border-subtle bg-card/60 px-3 py-2.5">
       <p className="text-[10px] uppercase tracking-wide text-muted">{label}</p>
-      <p className={cn('mt-0.5 truncate text-sm font-semibold', bad ? 'text-red-300' : 'text-cream')}>{value}</p>
-      {hint && <p className="text-[10px] text-amber-200/70">{hint}</p>}
+      <p className={cn('mt-0.5 truncate text-sm font-semibold', bad ? 'text-danger' : 'text-cream')}>{value}</p>
+      {hint && <p className="tone-amber mt-1 inline-block rounded border px-1.5 text-[10px]">{hint}</p>}
     </div>
   )
 }
@@ -213,14 +214,14 @@ function LiveCard({ line, now }: { line: LineView | undefined; now: number }) {
                   </p>
                 </div>
                 <div className="shrink-0 text-right">
-                  <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-cream">
+                  <span className="rounded-full border border-border-subtle bg-card/80 px-2 py-0.5 text-[11px] text-cream">
                     {STATE_BN[c.state] ?? c.state}
                   </span>
                   <p className="mt-0.5 text-[11px] tabular-nums text-muted">{secs(elapsed)}</p>
                 </div>
               </div>
               {c.audio && (c.audio.underruns > 0 || c.audio.dropped > 0) && (
-                <p className="mt-1.5 text-[10px] text-amber-200/80">
+                <p className="tone-amber mt-1.5 inline-block rounded border px-1.5 py-0.5 text-[10px]">
                   অডিও: {c.audio.underruns} বার কেটেছে • {c.audio.dropped} ফ্রেম বাদ
                 </p>
               )}
@@ -253,7 +254,7 @@ function TodayCard({ today }: { today: TodayTally | null }) {
         </div>
       )}
       {today && today.withUnderruns > 0 && (
-        <p className="mt-2 text-[11px] text-amber-200/80">
+        <p className="tone-amber mt-2 inline-block rounded-lg border px-2 py-1 text-[11px]">
           {today.withUnderruns}টি কলে অডিও অন্তত একবার কেটেছে।
         </p>
       )}
@@ -340,7 +341,7 @@ function CallLog() {
       </div>
 
       {error && (
-        <p className="rounded-xl border border-red-500/25 bg-red-500/[0.06] px-3 py-2 text-[12px] text-red-200">
+        <p className="tone-red rounded-xl border px-3 py-2 text-[12px]">
           কল লগ আনা যায়নি: {error}
         </p>
       )}
@@ -404,10 +405,10 @@ function CallCard({ call, open, onToggle }: { call: CallRow; open: boolean; onTo
           </span>
         </span>
         <span className="shrink-0 text-right">
-          <span className={cn('block text-[11px] font-medium', bad ? 'text-red-300' : 'text-emerald-300')}>
+          <span className={cn('inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium', bad ? 'tone-red' : 'tone-green')}>
             {call.statusLabel}
           </span>
-          <span className="block text-[11px] tabular-nums text-muted">{secs(call.durationSecs)}</span>
+          <span className="mt-0.5 block text-[11px] tabular-nums text-muted">{secs(call.durationSecs)}</span>
         </span>
       </button>
 
