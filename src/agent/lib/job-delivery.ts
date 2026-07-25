@@ -134,15 +134,20 @@ export function messageContentText(content: unknown): string {
 }
 
 /**
- * A progress placeholder is NOT a delivery. The client-SEO contract deliberately
- * replaces the head's draft with "🔄 … worker-এ চলছে" / "⏳ Ordered SEO কাজ চলমান"
- * while a crawl runs; counting those as the report would re-create the exact
- * silence this module exists to prevent.
+ * Text that is NOT a delivery, however long it is:
+ *  - progress placeholders the client-SEO contract substitutes while a crawl
+ *    runs ("🔄 … worker-এ চলছে", "⏳ Ordered SEO কাজ চলমান");
+ *  - the contract-failure line the turn ends on when a required step was
+ *    rejected ("⚠️ বাধ্যতামূলক ধাপ … সফল হয়নি, তাই কাজ সম্পন্ন বলছি না") — an
+ *    honest admission is the opposite of the report being handed over, and
+ *    counting it as delivery would let the sweep close a job it never delivered
+ *    (live run 2026-07-25).
  */
 export function isProgressPlaceholder(text: string): boolean {
   const t = text.trim()
   if (!t) return true
-  return /^[⏳🔄]/u.test(t) || /কাজ\s*চলমান|worker-?এ\s*চলছে|crawl\s*চলছে/i.test(t)
+  if (/^[⏳🔄]/u.test(t) || /কাজ\s*চলমান|worker-?এ\s*চলছে|crawl\s*চলছে/i.test(t)) return true
+  return /বাধ্যতামূলক\s*ধাপ[^\n]{0,60}সফল\s*হয়নি|সম্পন্ন\s*বলছি\s*না/i.test(t)
 }
 
 /** Did the conversation actually receive the result after the job resolved? */

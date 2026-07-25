@@ -209,4 +209,15 @@ describe('delivery message building', () => {
     expect(isProgressPlaceholder('')).toBe(true)
     expect(isProgressPlaceholder('Boss, রিপোর্ট এই যে: স্কোর ২৪/১০০, ৩টা critical সমস্যা।')).toBe(false)
   })
+
+  // Live run 2026-07-25: the turn ended on this honest contract-failure line.
+  // It is long and substantive-looking, but the owner still got no report — the
+  // sweep must keep working, not mark the job delivered.
+  it('an honest contract-failure line is not a delivery', () => {
+    expect(
+      isProgressPlaceholder(
+        '⚠️ বাধ্যতামূলক ধাপ check_website_seo_audit সফল হয়নি, তাই কাজ সম্পন্ন বলছি না। কারণ: WORKFLOW_BLOCKED',
+      ),
+    ).toBe(true)
+  })
 })

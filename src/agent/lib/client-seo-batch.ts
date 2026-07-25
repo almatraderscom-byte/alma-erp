@@ -222,10 +222,14 @@ export async function guardClientSeoBatchTool(
   }
 
   if (toolName === 'check_website_seo_audit' && requiredTool === toolName && target) {
+    // The audit has finished, so the batch needs the report (then the links).
+    // Blocking a status-only poll here USED to end the whole turn — the head
+    // polled while the crawl was still running, the crawl finished in between,
+    // and its next status check was rejected as a contract failure with the
+    // report never read (live run 2026-07-25). The server knows exactly which
+    // read is due, so it CORRECTS the call instead of killing the turn.
     const expectedRead = target.reportDelivered ? 'links' : 'report'
-    if (input.read !== expectedRead) {
-      return { guard: 'client_seo_required_read', error: `WORKFLOW_BLOCKED: current audit-এর read:"${expectedRead}" এখন বাধ্যতামূলক; status-only check completion নয়।` }
-    }
+    if (input.read !== expectedRead) input.read = expectedRead
   }
 
   // 2026-07-16 incident fix: the browse guard's job is keeping the agent ON
