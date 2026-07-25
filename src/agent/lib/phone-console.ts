@@ -293,7 +293,9 @@ export async function listCalls(f: CallLogFilters = {}): Promise<CallPage> {
         purpose: r.purpose ?? null,
         status,
         statusLabel: STATUS_LABEL_BN[status] ?? status,
-        reached: Boolean(r.answeredAt) && !UNREACHED.has(status),
+        // Same rule as the tally: being picked up is what "reached" means, so one call is
+        // never both reached and unreached.
+        reached: Boolean(r.answeredAt),
         startedAt: (r.dialedAt ?? r.createdAt)?.toISOString() ?? null,
         answeredAt: r.answeredAt?.toISOString() ?? null,
         endedAt: r.endedAt?.toISOString() ?? null,
@@ -350,7 +352,10 @@ export async function tally(days: number): Promise<{ tally: Tally; trend: TrendD
   for (const r of rows as any[]) {
     const dir = directionOf(r)
     const answered = Boolean(r.answeredAt)
-    const unreached = UNREACHED.has(String(r.status))
+    // Exclusive of `answered` on purpose. A call that was picked up and later settled with a
+    // failure status would otherwise be counted in both buckets, and the split then reads
+    // "60 inbound: 30 answered, 33 unreached" — three more outcomes than there were calls.
+    const unreached = !answered && UNREACHED.has(String(r.status))
     const secs = typeof r.durationSecs === 'number' ? r.durationSecs : 0
 
     if (dir === 'inbound') t.inbound++

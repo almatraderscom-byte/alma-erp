@@ -233,7 +233,9 @@ export function MiniBars({
       <p className="mb-2 text-[11px] text-muted">{label}</p>
       <div className="flex h-28 items-end gap-1">
         {data.map((d) => (
-          <div key={d.date} className="group relative flex min-w-0 flex-1 flex-col items-center justify-end">
+          {/* h-full matters: a percentage height needs a parent with a DEFINITE height, and
+              without it every bar collapsed to nothing and the chart rendered empty. */}
+          <div key={d.date} className="group relative flex h-full min-w-0 flex-1 flex-col items-center justify-end">
             {d.sub != null && d.sub > 0 && (
               <div
                 className="w-full rounded-t-sm bg-[#E07A5F]/25"
