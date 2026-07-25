@@ -176,8 +176,13 @@ async function sendRecordingToTelegram(wavPath, { title, seconds, caption }) {
   if (!token || !chatId) { log('telegram recording skipped: bot token / chat id missing'); return false }
   const mp3Path = `${wavPath.replace(/\.wav$/, '')}.mp3`
   try {
-    // 24 kbps mono is transparent for 8 kHz telephony speech and keeps a long call small.
-    await execFileAsync('ffmpeg', ['-y', '-loglevel', 'error', '-i', wavPath, '-codec:a', 'libmp3lame', '-b:a', '24k', '-ac', '1', mp3Path], { timeout: 120_000 })
+    // Resample to 44.1 kHz. Encoding telephony audio straight to an 8 kHz mp3 produces a
+    // technically valid MPEG-2.5 file that many players — Telegram's included — show with the
+    // right duration and then play as SILENCE (owner hit exactly that). 44.1 kHz is
+    // universally decodable; 48 kbps mono keeps a long call to about a megabyte.
+    // -nostdin so ffmpeg never blocks waiting on a console.
+    await execFileAsync('ffmpeg', ['-y', '-nostdin', '-loglevel', 'error', '-i', wavPath,
+      '-ar', '44100', '-ac', '1', '-codec:a', 'libmp3lame', '-b:a', '48k', mp3Path], { timeout: 120_000 })
     const audio = await readFile(mp3Path)
     const form = new FormData()
     form.append('chat_id', String(chatId))
@@ -347,6 +352,8 @@ class Call {
     this.transferring = false
     this.ringGroup = null               // remaining transfer targets to try, in order
     this.ringIndex = 0
+    this.ringRound = 1                  // which pass over the group we are on
+    this.moh = false                    // hold music playing while we hunt for a human
     this.playOnly = false               // one-way message call: play a file, then hang up
     this.playUrl = ''
     this.playFile = ''
@@ -739,6 +746,7 @@ class Call {
     if (this.digitTimer) { clearTimeout(this.digitTimer); this.digitTimer = null }
     if (this.vmTimer) { clearTimeout(this.vmTimer); this.vmTimer = null }
     if (this.vmPromptTimer) { clearTimeout(this.vmPromptTimer); this.vmPromptTimer = null }
+    if (this.moh) await stopMoh(this)
     try { this.asSocket?.end() } catch { /* */ }
     // End the PSTN leg + tidy the bridge/externalMedia via ARI.
     try { if (this.extChannelId) await ari('DELETE', `/channels/${this.extChannelId}`).catch(() => {}) } catch { /* */ }
@@ -1043,8 +1051,10 @@ async function onAriEvent(e) {
         call.answered = true
         call.answeredAt = Date.now()
         // Somebody picked up: stop walking the ring group.
+        // Somebody picked up: stop walking the group and drop the hold music, so the two
+        // humans hear each other rather than the music.
         const parent = call._transferParent && calls.get(call._transferParent)
-        if (parent) parent.ringGroup = null
+        if (parent) { parent.ringGroup = null; await stopMoh(parent) }
         try { await ari('POST', `/bridges/${call._bridgeInto}/addChannel`, { channel: call.channelId }) }
         catch (err) { log(call.channelId, 'forward bridge failed', err?.message) }
         return
@@ -1482,14 +1492,43 @@ async function transferCall(call, forwardTo) {
   if (!group.length) return { ok: false, error: 'no forward destination' }
   call.ringGroup = group
   call.ringIndex = 0
+  call.ringRound = 1
+  // Hold music while we look for a human. Silence is the worst thing to give a caller who was
+  // just told "connecting you" — they assume the line died and hang up.
+  // SIP_MOH_CLASS lets the owner swap in his own recorded hold message without touching code
+  // (drop the audio into a musiconhold class on the VPS and set the name here).
+  await ari('POST', `/bridges/${call.bridgeId}/moh`, MOH_CLASS ? { mohClass: MOH_CLASS } : undefined)
+    .catch((err) => log(call.channelId, 'moh failed:', err?.message))
+  call.moh = true
   return dialNextInGroup(call)
+}
+
+/** How many times to walk the whole ring group before handing the caller back to the AI. */
+const TRANSFER_ROUNDS = Number(process.env.SIP_TRANSFER_ROUNDS || 2)
+/** Music-on-hold class played while hunting for a human. Empty = Asterisk's default. */
+const MOH_CLASS = process.env.SIP_MOH_CLASS || ''
+
+/** Stop hold music (safe to call when it was never started). */
+async function stopMoh(call) {
+  if (!call?.moh || !call.bridgeId) return
+  call.moh = false
+  await ari('DELETE', `/bridges/${call.bridgeId}/moh`).catch(() => {})
 }
 
 /** Dial the next member of the ring group; falls back to the AI when the list is exhausted. */
 async function dialNextInGroup(call) {
   const dest = call.ringGroup?.[call.ringIndex]
   if (!dest) {
+    // One pass is not a serious attempt — people miss the first ring while putting down what
+    // they were doing. Go round the group again before giving up on the caller.
+    if ((call.ringRound || 1) < TRANSFER_ROUNDS) {
+      call.ringRound = (call.ringRound || 1) + 1
+      call.ringIndex = 0
+      log(call.channelId, `ring group round ${call.ringRound}/${TRANSFER_ROUNDS}`)
+      return dialNextInGroup(call)
+    }
     log(call.channelId, 'ring group exhausted — returning the caller to the AI')
+    await stopMoh(call)
     await returnToAi(call, 'কাউকেই লাইনে পাওয়া যায়নি')
     return { ok: false, error: 'nobody answered' }
   }

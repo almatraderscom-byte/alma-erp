@@ -25,6 +25,10 @@ export type PhoneStatus = 'idle' | 'connecting' | 'registered' | 'ringing' | 'in
 export interface SoftphoneState {
   status: PhoneStatus
   extension: string | null
+  muted: boolean
+  /** True when the browser lets us pick an output device (desktop Chrome; not mobile WebViews). */
+  canSwitchSpeaker: boolean
+  speakerOn: boolean
   /** Who is on the line (caller-ID for an incoming call, dialled number for outgoing). */
   peer: string | null
   incoming: boolean
@@ -50,6 +54,7 @@ function peerFromUri(raw: string): string {
 export function useSoftphone() {
   const [state, setState] = useState<SoftphoneState>({
     status: 'idle', extension: null, peer: null, incoming: false, error: null, seconds: 0,
+    muted: false, canSwitchSpeaker: false, speakerOn: false,
   })
   const uaRef = useRef<UserAgent | null>(null)
   const registererRef = useRef<Registerer | null>(null)
@@ -98,7 +103,7 @@ export function useSoftphone() {
         answeredRef.current = false
         failureRef.current = null
         if (audioRef.current) audioRef.current.srcObject = null
-        patch({ status: 'registered', peer: null, incoming: false, seconds: 0, error: reason })
+        patch({ status: 'registered', peer: null, incoming: false, seconds: 0, error: reason, muted: false })
       }
     })
   }, [attachRemoteAudio, patch, stopTimer])
@@ -177,6 +182,57 @@ export function useSoftphone() {
    * the dialplan the extension lands in accepts nothing else, so a typo cannot become an
    * expensive international call.
    */
+  /** The peer connection for the live call, or null. */
+  const peerConnection = useCallback((): RTCPeerConnection | null => {
+    const sdh = sessionRef.current?.sessionDescriptionHandler as unknown as
+      { peerConnection?: RTCPeerConnection } | undefined
+    return sdh?.peerConnection ?? null
+  }, [])
+
+  /** Mute/unmute the microphone. Disabling the track is instant and keeps the call up. */
+  const toggleMute = useCallback(() => {
+    const pc = peerConnection()
+    if (!pc) return
+    let muted = false
+    pc.getSenders().forEach((sender) => {
+      if (sender.track?.kind === 'audio') {
+        sender.track.enabled = !sender.track.enabled
+        muted = !sender.track.enabled
+      }
+    })
+    patch({ muted })
+  }, [patch, peerConnection])
+
+  /**
+   * Switch between the earpiece/default output and the loudspeaker. Only desktop browsers
+   * expose output selection; on a phone the OS owns it, so the button is hidden rather than
+   * shown-but-dead.
+   */
+  const toggleSpeaker = useCallback(async () => {
+    const el = audioRef.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null
+    if (!el?.setSinkId) return
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const outputs = devices.filter((d) => d.kind === 'audiooutput')
+      const next = state.speakerOn
+        ? outputs.find((d) => d.deviceId === 'default') ?? outputs[0]
+        : outputs.find((d) => /speaker/i.test(d.label)) ?? outputs[outputs.length - 1]
+      if (next) { await el.setSinkId(next.deviceId); patch({ speakerOn: !state.speakerOn }) }
+    } catch { /* device switching is a convenience, never break the call over it */ }
+  }, [patch, state.speakerOn])
+
+  /** Send a keypad tone mid-call — needed for the automated menus banks and couriers use. */
+  const sendDtmf = useCallback((digit: string) => {
+    const session = sessionRef.current
+    if (!session || session.state !== SessionState.Established) return
+    try {
+      session.info({ requestOptions: { body: {
+        contentDisposition: 'render', contentType: 'application/dtmf-relay',
+        content: `Signal=${digit}\r\nDuration=100`,
+      } } })
+    } catch { /* the tone is best-effort */ }
+  }, [])
+
   const dial = useCallback(async (number: string) => {
     const ua = uaRef.current
     if (!ua || sessionRef.current) return
@@ -215,5 +271,11 @@ export function useSoftphone() {
     [],
   )
 
-  return { state, connect, disconnect, answer, hangup, dial, audioElement }
+  // Output switching only exists on desktop; detect once so the UI can hide the control.
+  useEffect(() => {
+    const el = audioRef.current as (HTMLAudioElement & { setSinkId?: unknown }) | null
+    patch({ canSwitchSpeaker: typeof el?.setSinkId === 'function' })
+  }, [patch, state.status])
+
+  return { state, connect, disconnect, answer, hangup, dial, toggleMute, toggleSpeaker, sendDtmf, audioElement }
 }
