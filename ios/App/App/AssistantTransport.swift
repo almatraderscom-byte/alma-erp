@@ -80,6 +80,7 @@ struct AgentSSEEvent: Decodable {
     let type: String
     let id: String?
     let delta: String?
+    let text: String?           // preamble
     let label: String?
     let name: String?
     let success: Bool?
@@ -144,6 +145,11 @@ enum AgentTurnEvent: Sendable {
     case confirmCard(pendingActionId: String, summary: String, actionType: String?, costEstimate: Double?)
     case askCard(id: String, question: String, options: [String])
     case verificationRetry(attempt: Int, maxAttempts: Int)
+    /// Speak-first (owner rule 2026-07-25): the opening line the head wrote
+    /// BEFORE it ran anything. It already arrived as text_delta; this marker
+    /// says "that prose is the line Boss read" so the client can keep it while
+    /// still clearing ordinary mid-turn narration.
+    case preamble(String)
     case conversationCompacted(newConversationId: String)
     case done(messageId: String?, tokensIn: Int?, tokensOut: Int?, costUsd: Double?,
               needContinue: Bool, apiRounds: Int?, cacheCreation: Int?, cacheRead: Int?,
@@ -208,6 +214,8 @@ enum AgentTurnEvent: Sendable {
             } ?? .unknown(type: "ask_card/noid")
         case "verification_retry":
             self = .verificationRetry(attempt: ev.attempt ?? 1, maxAttempts: ev.maxAttempts ?? 1)
+        case "preamble":
+            self = .preamble(ev.text ?? ev.delta ?? "")
         case "conversation_compacted":
             self = ev.conversationId.map(AgentTurnEvent.conversationCompacted)
                 ?? .unknown(type: "conversation_compacted/noid")

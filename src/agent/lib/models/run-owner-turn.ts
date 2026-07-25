@@ -1527,6 +1527,10 @@ async function* runAlternateProviderTurn(
         finalText = line
         preambleTimelineIndex = timeline.length
         timeline.push({ t: 'text', text: line })
+        // Explicit marker so a client never has to GUESS which prose was the
+        // opening line (iOS clears narration on tool_start and on a verify
+        // rewrite — this line must survive both).
+        yield { type: 'preamble', text: line }
         // In the transcript as the assistant's own words — it continues from
         // here instead of greeting Boss a second time.
         messages = [...messages, { role: 'assistant', content: line }]
