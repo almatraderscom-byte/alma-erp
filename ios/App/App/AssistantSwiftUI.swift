@@ -993,9 +993,15 @@ struct AgentChatMessage: Identifiable, Equatable {
         }
         // The lead line goes FIRST, above the activity rows — the same shape the
         // live stream shows and the same shape the web renders.
+        // Owner rule 2026-07-26: the line sits AFTER the head's first thinking
+        // row, not above it — the agent did not answer without thinking first,
+        // so reply-then-reasoning reads backwards. Insert right after the first
+        // activity block (or at the front when the turn had none).
         if !leadTimelineText.isEmpty, leadTimelineText != lastSettledTimelineText {
             let leadId = "bp-\(m.id)-lead"
-            blocks.insert(.prose(id: leadId, text: leadTimelineText), at: 0)
+            let afterFirstActivity = blocks.firstIndex { if case .activity = $0 { return true }; return false }
+                .map { $0 + 1 } ?? 0
+            blocks.insert(.prose(id: leadId, text: leadTimelineText), at: afterFirstActivity)
             m.leadProseId = leadId
         }
         let stored = m.text.trimmingCharacters(in: .whitespacesAndNewlines)

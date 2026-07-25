@@ -771,6 +771,13 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
     | { kind: 'file'; entry: Extract<TimelineEntry, { t: 'file' }> }
   const segments = useMemo(() => {
     const segs: Seg[] = []
+    let leadText = ''
+    let leadEmitted = false
+    const emitLead = () => {
+      if (leadEmitted || !leadText.trim()) return
+      leadEmitted = true
+      segs.push({ kind: 'text', text: leadText })
+    }
     const entries = msg.timeline ?? []
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i]
@@ -781,21 +788,28 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
       // work began (he caught it live). Every LATER text entry stays audit-only:
       // rendering each model round made one turn look like several replies.
       if (e.t === 'text') {
-        if (i === 0 && e.state !== 'superseded' && e.text.trim()) {
-          segs.push({ kind: 'text', text: e.text })
-        }
+        // Owner rule 2026-07-26: the spoken line renders AFTER the first
+        // thinking row, not above it — the agent did not answer without
+        // thinking first, so reply-then-reasoning reads backwards. Hold it and
+        // emit it once the first activity segment exists (or at the end, when
+        // the turn had no activity at all).
+        if (i === 0 && e.state !== 'superseded' && e.text.trim()) leadText = e.text
         continue
       }
       if (e.t === 'file') {
+        emitLead()
         segs.push({ kind: 'file', entry: e })
       } else {
         const last = segs[segs.length - 1]
         if (last && last.kind === 'steps') last.entries.push(e)
         else segs.push({ kind: 'steps', entries: [e] })
+        // After the first activity row — that row is the head's thinking.
+        emitLead()
       }
     }
+    emitLead()
     if (msg.text.trim()) {
-      const lead = segs[0]?.kind === 'text' ? segs[0].text.trim() : ''
+      const lead = leadText.trim()
       // The server keeps the first line as a floor inside the final text, so
       // strip it here rather than printing the same sentence twice.
       const body = lead && msg.text.trim().startsWith(lead)
