@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import type { LineView } from '@/agent/lib/phone-console'
+import type { LineView } from '@/agent/lib/phone-console-types'
 import { useJson } from './useJson'
 import { LineStrip } from './LineStrip'
 import {

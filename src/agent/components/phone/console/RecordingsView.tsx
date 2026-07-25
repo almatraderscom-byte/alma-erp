@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import type { CallRow, Period } from '@/agent/lib/phone-console'
+import type { CallRow, Period } from '@/agent/lib/phone-console-types'
 import { useJson } from './useJson'
 import { CallDetail } from './CallLogView'
 import {

@@ -7,27 +7,35 @@
  * module is the read side of closing that gap. It writes nothing, anywhere — not to the
  * database, not to the gateway, not to Asterisk. The write paths come in later steps,
  * deliberately separately, because this is a live business line.
+ *
+ * SERVER ONLY. It reaches Prisma, which reaches the job queue, which reaches `child_process`.
+ * The shapes and labels the browser also needs live in `phone-console-types.ts`; import them
+ * from there in client components, never from here.
  */
 import { prisma } from '@/lib/prisma'
 import { agentStorageSignedUrls } from '@/agent/lib/storage'
 import { dhakaDayStart } from '@/agent/lib/proactive-call'
+import {
+  HANGUP_CAUSE_BN,
+  STATUS_LABEL_BN,
+  type CallAudio,
+  type CallLogFilters,
+  type CallPage,
+  type CallRow,
+  type GatewayLiveCall,
+  type LineView,
+  type QualityDay,
+  type QualityWorst,
+  type Tally,
+  type TrendDay,
+} from '@/agent/lib/phone-console-types'
+
+export * from '@/agent/lib/phone-console-types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-// ── periods ──────────────────────────────────────────────────────────────────
-
-export type Period = 'today' | '7d' | '30d' | '90d'
-export const PERIODS: Array<{ value: Period; label: string; days: number }> = [
-  { value: 'today', label: 'আজ', days: 1 },
-  { value: '7d', label: '৭ দিন', days: 7 },
-  { value: '30d', label: '৩০ দিন', days: 30 },
-  { value: '90d', label: '৯০ দিন', days: 90 },
-]
-
-export function periodDays(p: string | null | undefined): number {
-  return PERIODS.find((x) => x.value === p)?.days ?? 1
-}
+// ── time windows ─────────────────────────────────────────────────────────────
 
 /** Start of the Dhaka day `days - 1` days ago — i.e. a window of whole local days. */
 function windowStart(days: number): Date {
@@ -40,58 +48,6 @@ function dhakaYmd(d: Date): string {
 }
 
 // ── the line, as the gateway sees it ─────────────────────────────────────────
-
-export interface GatewayLiveCall {
-  id: string
-  direction: string | null
-  from: string | null
-  to: string | null
-  did: string | null
-  name: string | null
-  purpose: string | null
-  startedAt: number | null
-  answeredAt: number | null
-  answered: boolean
-  state: 'ringing' | 'talking' | 'hold' | 'transferring' | 'voicemail' | 'message'
-  botReady: boolean
-  transferredTo: string | null
-  ringRound: number | null
-  audio?: CallAudio
-}
-
-export interface CallAudio {
-  underruns: number
-  dropped: number
-  cushionFrames: number
-  framesOut: number
-  silenceFrames: number
-  bargeIns: number
-}
-
-export interface LineView {
-  /** false when SIP_GATEWAY_BASE / AGENT_INTERNAL_TOKEN are not configured for this env. */
-  configured: boolean
-  reachable: boolean
-  error: string | null
-  /**
-   * Whether the gateway carries the console endpoint yet. The ERP deploys before the VPS
-   * does, so a fresh preview legitimately talks to an older gateway; we degrade to /health
-   * (counts only, no per-call detail) instead of showing an error for a working line.
-   */
-  liveDetail: boolean
-  registration: {
-    registered: boolean | null
-    status: string | null
-    /** Seconds left on our binding. ~60 counting down is the healthy shape — see below. */
-    expiresIn: number | null
-    consecutiveFailures: number | null
-    lastWatchdogCheck: number | null
-  }
-  softphone: { healthy: boolean | null; status: string | null; repairs: number | null }
-  counts: { active: number; maxConcurrent: number | null }
-  hourly: { placed: number; cap: number } | null
-  active: GatewayLiveCall[]
-}
 
 function gatewayConfig(): { base: string; token: string } | null {
   const base = (process.env.SIP_GATEWAY_BASE ?? '').replace(/\/$/, '')
@@ -204,95 +160,10 @@ export async function fetchLine(): Promise<LineView> {
   }
 }
 
-// ── vocabulary ───────────────────────────────────────────────────────────────
+// ── the call log ─────────────────────────────────────────────────────────────
 
 /** Statuses that mean the far end never had a conversation with us. */
 const UNREACHED = new Set(['no_answer', 'busy', 'failed'])
-
-export const STATUS_LABEL_BN: Record<string, string> = {
-  completed: 'সম্পন্ন',
-  answered: 'ধরা হয়েছে',
-  no_answer: 'কেউ ধরেনি',
-  busy: 'ব্যস্ত',
-  failed: 'ব্যর্থ',
-  blocked: 'আটকানো',
-  report_missing: 'রিপোর্ট আসেনি',
-  initiated: 'শুরু হয়েছে',
-  ringing: 'রিং হচ্ছে',
-  voicemail: 'ভয়েসমেইল',
-}
-
-/**
- * ISDN (Q.850) hangup causes in plain Bangla. This is the column that answers "why did that
- * call fail", which until now could only be answered by reading the VPS log — and the
- * outbound investigation turned entirely on telling `no_route` apart from `user busy`.
- */
-export const HANGUP_CAUSE_BN: Record<number, string> = {
-  1: 'নম্বরটি নেই',
-  16: 'স্বাভাবিকভাবে শেষ',
-  17: 'নম্বর ব্যস্ত',
-  18: 'কেউ সাড়া দেয়নি',
-  19: 'রিং হয়েছে, কেউ ধরেনি',
-  20: 'গ্রাহকের ফোন বন্ধ',
-  21: 'কল বাতিল করা হয়েছে',
-  27: 'গন্তব্য অচল',
-  28: 'নম্বরের গঠন ভুল',
-  31: 'অনির্দিষ্ট কারণে শেষ',
-  34: 'নেটওয়ার্কে লাইন খালি ছিল না',
-  38: 'নেটওয়ার্ক অচল',
-  41: 'সাময়িক গোলযোগ',
-  42: 'নেটওয়ার্কে ভিড়',
-  47: 'রিসোর্স পাওয়া যায়নি',
-  50: 'এই সেবা প্যাকেজে নেই',
-  57: 'এই ধরনের কলের অনুমতি নেই',
-  58: 'এই ধরনের কল এখন সম্ভব নয়',
-  63: 'সেবা পাওয়া যায়নি',
-  65: 'কোডেক সমর্থিত নয়',
-  88: 'বেমানান গন্তব্য',
-  102: 'সময় শেষ হয়ে গেছে',
-  111: 'প্রোটোকল ত্রুটি',
-  127: 'অন্য নেটওয়ার্কের কারণে শেষ',
-}
-
-// ── the call log ─────────────────────────────────────────────────────────────
-
-export interface CallRow {
-  id: string
-  direction: 'inbound' | 'outbound' | 'unknown'
-  /** The far end: the caller on an inbound call, the dialled number on an outbound one. */
-  number: string
-  name: string | null
-  did: string | null
-  purpose: string | null
-  status: string
-  statusLabel: string
-  reached: boolean
-  startedAt: string | null
-  answeredAt: string | null
-  endedAt: string | null
-  durationSecs: number | null
-  hangupCause: number | null
-  hangupCauseLabel: string | null
-  hangupCauseTxt: string | null
-  transferredTo: string | null
-  transferTalkSecs: number | null
-  recordingUrl: string | null
-  recordingSecs: number | null
-  summary: string | null
-  transcript: Array<{ role: string; message: string }> | null
-  audio: CallAudio | null
-}
-
-export interface CallLogFilters {
-  /** Dhaka calendar days to look back over. 1 = today only. */
-  days?: number
-  direction?: 'inbound' | 'outbound' | 'all'
-  status?: 'all' | 'answered' | 'unreached' | 'recorded'
-  /** Digits; matched on the last 9+ so 01…, 880… and +880… all find the same person. */
-  number?: string
-  page?: number
-  perPage?: number
-}
 
 /**
  * Direction for rows written before the `direction` column existed. Old rows keep the guess
@@ -378,13 +249,6 @@ function callWhere(f: CallLogFilters) {
   return { AND: and }
 }
 
-export interface CallPage {
-  calls: CallRow[]
-  total: number
-  page: number
-  perPage: number
-}
-
 export async function listCalls(f: CallLogFilters = {}): Promise<CallPage> {
   const perPage = Math.min(Math.max(Math.round(f.perPage ?? 25), 5), 200)
   const page = Math.max(Math.round(f.page ?? 1), 1)
@@ -450,38 +314,6 @@ export async function listCalls(f: CallLogFilters = {}): Promise<CallPage> {
 }
 
 // ── the numbers ──────────────────────────────────────────────────────────────
-
-export interface Tally {
-  /** First Dhaka calendar day covered, as YYYY-MM-DD. */
-  from: string
-  to: string
-  days: number
-  total: number
-  inbound: number
-  outbound: number
-  answered: number
-  unreached: number
-  voicemail: number
-  recorded: number
-  talkSecs: number
-  avgTalkSecs: number
-  successPct: number
-  /** Calls whose audio dipped — a count to watch instead of listening to every call. */
-  withUnderruns: number
-  /** Per-direction split, the shape the old PBX's trunk report had. */
-  split: {
-    inbound: { total: number; answered: number; unreached: number; talkSecs: number }
-    outbound: { total: number; answered: number; unreached: number; talkSecs: number }
-  }
-}
-
-export interface TrendDay {
-  date: string
-  total: number
-  answered: number
-  unreached: number
-  talkSecs: number
-}
 
 const TALLY_SELECT = {
   direction: true, purpose: true, status: true, answeredAt: true, createdAt: true,
@@ -553,25 +385,6 @@ export async function tally(days: number): Promise<{ tally: Tally; trend: TrendD
 }
 
 // ── audio quality ────────────────────────────────────────────────────────────
-
-export interface QualityDay {
-  date: string
-  measured: number
-  withUnderruns: number
-  underruns: number
-  dropped: number
-  avgCushionFrames: number
-}
-
-export interface QualityWorst {
-  id: string
-  number: string
-  startedAt: string | null
-  durationSecs: number | null
-  underruns: number
-  dropped: number
-  cushionFrames: number
-}
 
 /**
  * Audio quality as a graph rather than as the owner's ear. An underrun is the playout queue

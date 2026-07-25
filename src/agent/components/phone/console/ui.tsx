@@ -12,7 +12,7 @@
 
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import { PERIODS, type Period } from '@/agent/lib/phone-console'
+import { PERIODS, type Period } from '@/agent/lib/phone-console-types'
 
 export const CORAL = '#E07A5F'
 

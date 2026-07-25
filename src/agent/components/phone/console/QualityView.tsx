@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import type { Period, QualityDay, QualityWorst } from '@/agent/lib/phone-console'
+import type { Period, QualityDay, QualityWorst } from '@/agent/lib/phone-console-types'
 import { useJson } from './useJson'
 import {
   EmptyState, ErrorNote, Kpi, KpiRow, MiniBars, PageHead, Panel, PeriodTabs,

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import type { LineView, Period, Tally, TrendDay } from '@/agent/lib/phone-console'
+import type { LineView, Period, Tally, TrendDay } from '@/agent/lib/phone-console-types'
 import { useJson } from './useJson'
 import { LineStrip } from './LineStrip'
 import {

@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import type { LineView } from '@/agent/lib/phone-console'
+import type { LineView } from '@/agent/lib/phone-console-types'
 import { Pill } from './ui'
 
 /**

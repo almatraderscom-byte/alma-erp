@@ -1,6 +1,6 @@
 'use client'
 
-import type { LineView } from '@/agent/lib/phone-console'
+import type { LineView } from '@/agent/lib/phone-console-types'
 import { useJson } from './useJson'
 import { CORAL, ErrorNote, Kpi, KpiRow, PageHead, Panel, Pill, clockBn } from './ui'
 
