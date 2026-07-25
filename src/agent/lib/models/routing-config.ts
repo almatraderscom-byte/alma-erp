@@ -38,6 +38,16 @@ export interface ModelRoutingConfig {
    * restores the cheap cost-routing for that conversation.
    */
   defaultHeadModelId: string
+  /**
+   * Cost audit Phase 8d/8e — ship EVERY prompt module every turn.
+   *
+   * Prompt gating trims modules to the turn's tool selection, which moves the
+   * cached prefix (measured: 65 vs 62 sections across two turns of one chat) and
+   * makes the provider cache miss, so the whole ~46k prompt is re-billed at the
+   * full input rate. A constant prompt is bigger but bills cached — $0.20/Mtok
+   * vs $1.25 on Grok. Owner-tunable so both modes can be A/B measured live.
+   */
+  forceFullPrompt: boolean
 }
 
 const KEYS = {
@@ -50,6 +60,7 @@ const KEYS = {
   heavyModelId: 'model.routing.tier.heavyModelId',
   criticalSubagentModelId: 'model.routing.tier.criticalSubagentModelId',
   defaultHeadModelId: 'model.routing.defaultHeadModelId',
+  forceFullPrompt: 'model.routing.forceFullPrompt',
 } as const
 
 /** Fallback head when nothing is configured — owner rule 2026-07-18: Grok 4.20. */
@@ -72,6 +83,8 @@ export const ROUTING_DEFAULTS: ModelRoutingConfig = {
   heavyModelId: 'or-gemini-2.5-flash-lite',
   criticalSubagentModelId: DEFAULT_MODEL_ID,
   defaultHeadModelId: DEFAULT_HEAD_MODEL_ID,
+  // Default OFF — today's gated behaviour until the owner flips it.
+  forceFullPrompt: false,
 }
 
 export async function getModelRoutingConfig(): Promise<ModelRoutingConfig> {
@@ -106,6 +119,9 @@ export async function getModelRoutingConfig(): Promise<ModelRoutingConfig> {
 
     return {
       opusEnabled: map.has(KEYS.opusEnabled) ? map.get(KEYS.opusEnabled) === 'true' : ROUTING_DEFAULTS.opusEnabled,
+      forceFullPrompt: map.has(KEYS.forceFullPrompt)
+        ? map.get(KEYS.forceFullPrompt) === 'true'
+        : ROUTING_DEFAULTS.forceFullPrompt,
       opusDailyCap: num(KEYS.opusDailyCap, ROUTING_DEFAULTS.opusDailyCap, true),
       opusConfidenceThreshold: num(KEYS.opusConfidenceThreshold, ROUTING_DEFAULTS.opusConfidenceThreshold),
       opusCriticalTaka: num(KEYS.opusCriticalTaka, ROUTING_DEFAULTS.opusCriticalTaka, true),
@@ -137,6 +153,7 @@ export async function getDefaultHeadModelId(): Promise<string> {
 export async function setModelRoutingConfig(patch: Partial<ModelRoutingConfig>): Promise<void> {
   const entries: Array<[string, string]> = []
   if (patch.opusEnabled !== undefined) entries.push([KEYS.opusEnabled, String(patch.opusEnabled)])
+  if (patch.forceFullPrompt !== undefined) entries.push([KEYS.forceFullPrompt, String(patch.forceFullPrompt)])
   if (patch.opusDailyCap !== undefined) entries.push([KEYS.opusDailyCap, String(Math.max(0, Math.round(patch.opusDailyCap)))])
   if (patch.opusConfidenceThreshold !== undefined) {
     const clamped = Math.min(1, Math.max(0, patch.opusConfidenceThreshold))

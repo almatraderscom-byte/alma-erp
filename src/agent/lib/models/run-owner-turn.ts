@@ -163,12 +163,10 @@ async function conversationAutoApprovesUpgrade(conversationId: string): Promise<
 async function promptGatingForceFull(): Promise<boolean> {
   if (process.env.AGENT_FORCE_FULL_PROMPT === 'true') return true
   try {
-    const row = await prisma.agentKvSetting.findUnique({
-      where: { key: 'prompt.forceFullPrompt' },
-      select: { value: true },
-    })
-    const v = (row?.value ?? '').trim().toLowerCase()
-    return v === 'on' || v === 'true' || v === '1'
+    // Lives on the model-routing config so the owner flips it from the same
+    // Model Control surface as every other routing lever (KV, no redeploy).
+    const { getModelRoutingConfig } = await import('@/agent/lib/models/routing-config')
+    return (await getModelRoutingConfig()).forceFullPrompt === true
   } catch {
     return false
   }
