@@ -64,16 +64,25 @@ describe('G6 time budget', () => {
   const budgetMs = DEFAULT_PLAN_BUDGET_MIN * 60_000
   const now = new Date('2026-07-26T12:00:00Z')
 
-  it('a plan inside its budget is left alone', () => {
-    expect(isOverBudget({ createdAt: new Date('2026-07-26T11:45:00Z') }, budgetMs, now)).toBe(false)
+  it('an attempt inside its budget is left alone', () => {
+    expect(isOverBudget(new Date('2026-07-26T11:45:00Z'), budgetMs, now)).toBe(false)
   })
 
   it('the hour-long silence he watched is over budget', () => {
-    expect(isOverBudget({ createdAt: new Date('2026-07-26T11:00:00Z') }, budgetMs, now)).toBe(true)
+    expect(isOverBudget(new Date('2026-07-26T11:00:00Z'), budgetMs, now)).toBe(true)
+  })
+
+  // Caught live the day G6 shipped: resuming a 2-hour-old plan blew the budget on
+  // its first tick and escalated straight back at him, so "আবার চালাও" did nothing.
+  it('measures the CURRENT attempt, so a resume genuinely restarts the clock', () => {
+    const created = new Date('2026-07-26T09:00:00Z')      // 3 hours ago
+    const resumedAt = new Date('2026-07-26T11:55:00Z')    // 5 minutes ago
+    expect(isOverBudget(created, budgetMs, now)).toBe(true)
+    expect(isOverBudget(resumedAt, budgetMs, now)).toBe(false)
   })
 
   it('reports the elapsed time in words he can read', () => {
-    expect(elapsedBn({ createdAt: new Date('2026-07-26T11:20:00Z') }, now)).toBe('40 মিনিট')
-    expect(elapsedBn({ createdAt: new Date('2026-07-26T09:00:00Z') }, now)).toBe('3 ঘণ্টা')
+    expect(elapsedBn(new Date('2026-07-26T11:20:00Z'), now)).toBe('40 মিনিট')
+    expect(elapsedBn(new Date('2026-07-26T09:00:00Z'), now)).toBe('3 ঘণ্টা')
   })
 })

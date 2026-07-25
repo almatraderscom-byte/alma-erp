@@ -114,20 +114,46 @@ export async function planBudgetMs(): Promise<number> {
   return DEFAULT_PLAN_BUDGET_MIN * 60_000
 }
 
-/** Has this plan run past its budget without finishing? Pure. */
+/**
+ * When the current attempt started. Normally the plan's creation, but "আবার
+ * চালাও" restarts the clock — otherwise resuming a day-old plan would blow the
+ * budget on its very first tick and escalate straight back at Boss, which is
+ * exactly what happened the first time this shipped (2026-07-26).
+ */
+export const PLAN_BUDGET_FROM_PREFIX = 'plan_budget_from:'
+
+export async function markBudgetRestart(planId: string, now = new Date()): Promise<void> {
+  const key = `${PLAN_BUDGET_FROM_PREFIX}${planId}`
+  await prisma.agentKvSetting
+    .upsert({ where: { key }, update: { value: now.toISOString() }, create: { key, value: now.toISOString() } })
+    .catch(() => {})
+}
+
+export async function budgetStartedAt(plan: Pick<Plan, 'id' | 'createdAt'>): Promise<Date | null> {
+  try {
+    const row = await prisma.agentKvSetting.findUnique({ where: { key: `${PLAN_BUDGET_FROM_PREFIX}${plan.id}` } })
+    if (row?.value) {
+      const t = Date.parse(row.value)
+      if (Number.isFinite(t)) return new Date(t)
+    }
+  } catch { /* fall back to creation */ }
+  return plan.createdAt ? new Date(plan.createdAt) : null
+}
+
+/** Has this attempt run past its budget without finishing? Pure. */
 export function isOverBudget(
-  plan: Pick<Plan, 'createdAt'>,
+  startedAt: Date | null,
   budgetMs: number,
   now = new Date(),
 ): boolean {
-  if (!plan.createdAt) return false
-  return now.getTime() - new Date(plan.createdAt).getTime() > budgetMs
+  if (!startedAt) return false
+  return now.getTime() - startedAt.getTime() > budgetMs
 }
 
-/** How long it has been running, in owner-facing Bangla. */
-export function elapsedBn(plan: Pick<Plan, 'createdAt'>, now = new Date()): string {
-  if (!plan.createdAt) return ''
-  const min = Math.round((now.getTime() - new Date(plan.createdAt).getTime()) / 60_000)
+/** How long this attempt has been running, in owner-facing Bangla. */
+export function elapsedBn(startedAt: Date | null, now = new Date()): string {
+  if (!startedAt) return ''
+  const min = Math.round((now.getTime() - startedAt.getTime()) / 60_000)
   if (min < 60) return `${min} মিনিট`
   const h = Math.round(min / 60)
   return h < 24 ? `${h} ঘণ্টা` : `${Math.round(h / 24)} দিন`
