@@ -116,7 +116,10 @@ export async function recordClientSeoBatchTool(
   const next = reduceClientSeoBatch(facts, event)
   const required = clientSeoBatchRequiredTool(next)
   const waitingWorker = event.type === 'audit_queued'
-  const done = event.type === 'pack_completed' && clientSeoBatchIsReadyForPack(facts)
+  // Close the run whenever the work is genuinely finished — not only when the
+  // model happens to call the pack gate (2026-07-25: it couldn't, and the run
+  // stayed open forever demanding a tool that always refused).
+  const done = next.packCompleted && clientSeoBatchIsReadyForPack(next)
   try {
     await transitionWorkflowRun({
       runId: run.id,
@@ -181,6 +184,7 @@ export async function recordClientSeoAuditResult(
 }
 
 export function clientSeoBatchProgressText(facts: ClientSeoBatchFacts): string {
+  if (facts.packCompleted) return '✅ সব target-এর crawl, রিপোর্ট আর ফাইল-লিংক দেওয়া হয়ে গেছে।'
   const target = facts.targets[facts.currentIndex]
   if (!target) return 'সব target-এর audit/report হয়েছে; এখন final client file completion gate বাকি।'
   if (target.auditStatus === 'queued') {
@@ -188,6 +192,28 @@ export function clientSeoBatchProgressText(facts: ClientSeoBatchFacts): string {
   }
   if (target.auditStatus === 'failed') return `❌ ${target.url}-এর crawl ব্যর্থ হয়েছে; workflow fail-safe অবস্থায় থেমেছে।`
   return `⏳ Ordered SEO কাজ চলমান: target ${facts.currentIndex + 1}/${facts.targets.length} — ${target.url}; পরের ধাপ: ${clientSeoBatchRequiredTool(facts) ?? 'worker result'}.`
+}
+
+/**
+ * The contract's progress line must never DESTROY a delivery.
+ *
+ * Live run 2026-07-25: the audit finished, the head read the report, the file
+ * card landed — and then the contract replaced its written answer with
+ * "⏳ Ordered SEO কাজ চলমান … পরের ধাপ: complete_skill_pack_run", because one
+ * internal completion gate was still open. The owner was left with a progress
+ * line for work that was actually done and in front of him.
+ *
+ * So: once the current target's report AND links have been read, the model's
+ * draft IS the deliverable — keep it. The remaining gate is internal
+ * bookkeeping and is not worth overwriting the owner's report with. Only while
+ * there is genuinely nothing to present (crawl pending/queued, or an empty
+ * draft) does the progress text take over.
+ */
+export function contractStatusOrDraft(facts: ClientSeoBatchFacts, draft: string): string {
+  const target = facts.targets[facts.currentIndex]
+  const hasDelivery = Boolean(target?.reportDelivered && target?.linksDelivered)
+  if (hasDelivery && draft.trim()) return draft
+  return clientSeoBatchProgressText(facts)
 }
 
 export async function guardClientSeoBatchTool(
@@ -222,10 +248,14 @@ export async function guardClientSeoBatchTool(
   }
 
   if (toolName === 'check_website_seo_audit' && requiredTool === toolName && target) {
+    // The audit has finished, so the batch needs the report (then the links).
+    // Blocking a status-only poll here USED to end the whole turn — the head
+    // polled while the crawl was still running, the crawl finished in between,
+    // and its next status check was rejected as a contract failure with the
+    // report never read (live run 2026-07-25). The server knows exactly which
+    // read is due, so it CORRECTS the call instead of killing the turn.
     const expectedRead = target.reportDelivered ? 'links' : 'report'
-    if (input.read !== expectedRead) {
-      return { guard: 'client_seo_required_read', error: `WORKFLOW_BLOCKED: current audit-এর read:"${expectedRead}" এখন বাধ্যতামূলক; status-only check completion নয়।` }
-    }
+    if (input.read !== expectedRead) input.read = expectedRead
   }
 
   // 2026-07-16 incident fix: the browse guard's job is keeping the agent ON

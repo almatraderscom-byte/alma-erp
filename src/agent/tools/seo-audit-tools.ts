@@ -14,7 +14,13 @@
  */
 import { prisma } from '@/lib/prisma'
 import { agentStorageDownload, agentStorageUpload } from '@/agent/lib/storage'
-import { buildClientReportMarkdown, buildCompareMarkdown, buildIssuesCsv, type AuditJson } from '@/agent/lib/seo-report'
+import {
+  buildClientReportHtml,
+  buildClientReportMarkdown,
+  buildCompareMarkdown,
+  buildIssuesCsv,
+  type AuditJson,
+} from '@/agent/lib/seo-report'
 import {
   normalizeAuditUrl,
   ownerExplicitlyRequestedFreshAudit,
@@ -157,7 +163,11 @@ const run_website_seo_audit: AgentTool = {
             dedupeKey,
             type: 'seo_audit',
             payload: { url: normalizedUrl, maxPages, keywordsNote: input.keywordsNote ?? null, conversationId },
-            summary: `🔎 SEO audit: ${normalizedUrl} (${maxPages} pages)`,
+            // "up to" is deliberate: this number is the CAP, not a result. The
+            // head read the old wording ("40 pages") as a finding and told the
+            // owner 40 pages had been audited seconds after queueing the job
+            // (incident 2026-07-25). Real coverage comes from the worker result.
+            summary: `🔎 SEO audit: ${normalizedUrl} (up to ${maxPages} pages)`,
             costEstimate: 0,
             // Read-only crawl, no owner-side effects → runs without an approval card.
             status: 'approved',
@@ -210,10 +220,13 @@ const check_website_seo_audit: AgentTool = {
     'audit of the SAME site (score change, resolved issues with evidence, new issues, remaining) and ' +
     'returns the markdown + a stable download link. Use it after client fixes are done and a fresh ' +
     're-audit has executed — this is the proof file the owner sends the client.\n' +
-    'After status=executed you MUST put the report content (score, every critical/high issue, ' +
-    'prioritized fixes) AND the download links INTO THE SAME REPLY — saying "রিপোর্ট উপরে দিয়েছি" or ' +
-    '"done" WITHOUT the content in that reply is forbidden. Never claim the audit is done before ' +
-    'status=executed.',
+    'When the audit finishes the server has ALREADY built the client report, the issues CSV and a ' +
+    'LIVE HTML DASHBOARD, and filed the dashboard as a chat file card — read:"links" returns all of ' +
+    'them (dashboardUrl first).\n' +
+    'After status=executed you MUST put the report content (score, real pages-crawled coverage, every ' +
+    'critical/high issue with its fix, what to do first) AND the download links INTO THE SAME REPLY — ' +
+    'saying "রিপোর্ট উপরে দিয়েছি" or "done" WITHOUT the content in that reply is forbidden, and so is ' +
+    'asking Boss whether he wants the report. Never claim the audit is done before status=executed.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -300,15 +313,23 @@ const check_website_seo_audit: AgentTool = {
           const csvPath = reportPath.replace(/report\.md$/, 'issues.csv')
           // Regenerate the client-grade report + evidence CSV from the raw findings
           // (upsert: replaces the worker's bare version and any stale copy).
+          const htmlPath = reportPath.replace(/report\.md$/, 'report.html')
           const reportMd = buildClientReportMarkdown(loaded.audit, { keywordsNote })
           await agentStorageUpload(reportPath, Buffer.from(reportMd, 'utf8'), 'text/markdown', { upsert: true })
           await agentStorageUpload(csvPath, Buffer.from(buildIssuesCsv(loaded.audit), 'utf8'), 'text/csv', { upsert: true })
+          await agentStorageUpload(
+            htmlPath,
+            Buffer.from(buildClientReportHtml(loaded.audit, { keywordsNote }), 'utf8'),
+            'text/html',
+            { upsert: true },
+          )
           await fileReport(`SEO অডিট রিপোর্ট — ${new URL(loaded.audit.url).hostname.replace(/^www\./, '')}`, reportMd)
           links = {
+            dashboardUrl: ownerFileUrl(htmlPath),
             reportUrl: ownerFileUrl(reportPath),
             auditJsonUrl: ownerFileUrl(loaded.path),
             issuesCsvUrl: ownerFileUrl(csvPath),
-            note: 'লিংকগুলো স্থায়ী — বস তার লগইন-করা ব্রাউজারে ক্লিক করলেই ফাইল নামবে। URL গুলো অক্ষরে-অক্ষরে হুবহু কপি করে reply-তে markdown link হিসেবে দাও: [পুরো রিপোর্ট (md)](…), [সব issue Excel/CSV](…), [raw findings (json)](…)',
+            note: 'লিংকগুলো স্থায়ী — বস তার লগইন-করা ব্রাউজারে ক্লিক করলেই ফাইল খুলবে/নামবে। URL গুলো অক্ষরে-অক্ষরে হুবহু কপি করে reply-তে markdown link হিসেবে দাও: [লাইভ ড্যাশবোর্ড](…), [পুরো রিপোর্ট (md)](…), [সব issue Excel/CSV](…), [raw findings (json)](…)',
           }
         } catch (err) {
           return { success: false, error: `লিংক বানানো গেল না: ${String(err)}` }

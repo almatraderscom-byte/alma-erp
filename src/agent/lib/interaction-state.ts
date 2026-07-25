@@ -25,6 +25,13 @@ export interface InteractionState {
   repairNeeded: boolean
   /** Preferred verbosity for THIS turn. */
   detail: 'short' | 'normal' | 'detailed'
+  /**
+   * This turn PRESENTS a finished deliverable (a completed worker job's report).
+   * The short-reply default is wrong here by construction: the owner is owed the
+   * whole thing, at whatever length it takes (owner incident 2026-07-25 — a
+   * 40-page audit report was squeezed against a ~10-line cap and became "done").
+   */
+  deliveryTurn: boolean
 }
 
 // ── Deterministic nets (Bangla + Banglish + English) ─────────────────────────
@@ -93,14 +100,30 @@ export function deriveInteractionMode(input: DeriveModeInput): InteractionMode {
   return 'work'
 }
 
-export function deriveInteractionState(input: DeriveModeInput & { priorAssistantAsserted?: boolean }): InteractionState {
+export function deriveInteractionState(
+  input: DeriveModeInput & {
+    priorAssistantAsserted?: boolean
+    /** Boss asked for deep/full/end-to-end work (owner-turn requirements). */
+    deepWork?: boolean
+    /** This turn presents a finished job's result. */
+    deliveryTurn?: boolean
+  },
+): InteractionState {
   const mode = deriveInteractionMode(input)
   const correction = detectCorrection(input.text)
+  const deliveryTurn = Boolean(input.deliveryTurn)
+  // An explicit "সংক্ষেপে বলো" still wins — Boss can always ask for short.
+  const detail: InteractionState['detail'] = SHORT_RE.test(input.text)
+    ? 'short'
+    : DETAILED_RE.test(input.text) || input.deepWork || deliveryTurn
+      ? 'detailed'
+      : 'normal'
   return {
     mode,
     emotion: deriveEmotion(input.text),
     correction,
     repairNeeded: correction && (input.priorAssistantAsserted ?? true),
-    detail: SHORT_RE.test(input.text) ? 'short' : DETAILED_RE.test(input.text) ? 'detailed' : 'normal',
+    detail,
+    deliveryTurn,
   }
 }

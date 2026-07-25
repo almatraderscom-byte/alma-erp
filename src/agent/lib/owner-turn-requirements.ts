@@ -8,6 +8,7 @@
  */
 
 import { AGENT_PLAN_GATE, AGENT_GROUNDING_GATE } from '@/agent/config'
+import { DEEP_SCOPE_RE } from '@/agent/lib/turn-authorization'
 
 export interface OwnerTurnRequirements {
   liveBrowser: boolean
@@ -15,6 +16,12 @@ export interface OwnerTurnRequirements {
   reportArtifact: boolean
   remember: boolean
   targets: string[]
+  /**
+   * Boss asked for DEEP / full / end-to-end work (2026-07-25 owner rule). Drives
+   * the depth budget: a detailed answer plan instead of the ~10-line cap, and a
+   * bigger tool-iteration budget. Never a trimmed-down version of the task.
+   */
+  deepWork: boolean
   /** P3 — clearly multi-step work → make_plan first (only true when AGENT_PLAN_GATE on). */
   planFirst: boolean
   /** P2 — live-data question → must read before answering (only true when AGENT_GROUNDING_GATE on). */
@@ -63,12 +70,18 @@ export function deriveOwnerTurnRequirements(text: string): OwnerTurnRequirements
   const targets = extractOrderedWebTargets(t)
   const liveBrowser = /\blive[\s_-]*browser\b|আমার\s*(?:chrome|ক্রোম|browser|ব্রাউজার)|(?:chrome|ক্রোম|browser|ব্রাউজার)\s*(?:use|ব্যবহার|দিয়ে|diye)/i.test(t)
   const clientSeo = targets.length > 0 && /\bseo\b|এসইও|audit|অডিট/i.test(t)
-  const reportArtifact = clientSeo && /report|রিপোর্ট|file|ফাইল|evidence|প্রমাণ|customer|client|কাস্টমার|ক্লায়েন্ট/i.test(t)
+  // Owner standing rule (2026-07-25): a website audit ALWAYS ends in a
+  // client-ready deliverable — the owner should never have to type the word
+  // "report" to get one. Previously "Do a Deep SEO Audit - almatraders.com"
+  // armed clientSeo but not reportArtifact, so the "prose alone is not
+  // delivery" line was never emitted on the very turn that needed it.
+  const reportArtifact = clientSeo
   const remember = /মনে\s*(?:রাখ|রেখ)|remember\s+this|save\s+(?:this\s+)?(?:to\s+)?memory|don't\s+forget/i.test(t)
   // P3/P2 — each gated by its own flag (off by default → false → no note, no bind).
   const planFirst = AGENT_PLAN_GATE && classifyPlanFirst(t)
   const groundingRequired = AGENT_GROUNDING_GATE && classifyGroundingRequired(t) && !remember && !liveBrowser
-  return { liveBrowser, clientSeo, reportArtifact, remember, targets, planFirst, groundingRequired }
+  const deepWork = DEEP_SCOPE_RE.test(t) || clientSeo
+  return { liveBrowser, clientSeo, reportArtifact, remember, targets, deepWork, planFirst, groundingRequired }
 }
 
 export function buildOwnerRequirementNote(req: OwnerTurnRequirements): string {
@@ -79,6 +92,12 @@ export function buildOwnerRequirementNote(req: OwnerTurnRequirements): string {
   }
   if (req.clientSeo) lines.push('Each target requires its own crawl, executed result, full report read, and download links before moving on.')
   if (req.reportArtifact) lines.push('A client-ready artifact is REQUIRED; prose alone is not delivery.')
+  if (req.deepWork) {
+    lines.push(
+      'Boss asked for DEEP/full work: cover the complete end-to-end scope — a shortened or sampled version is a failure. '
+        + 'Answer at full length when you deliver (the short-reply default does not apply to this delivery).',
+    )
+  }
   if (req.remember) lines.push('save_memory is REQUIRED before acknowledging this explicit remember request.')
   if (req.planFirst) lines.push('Multi-step work: call make_plan FIRST, then execute step by step, then self-check — do not tool-spray.')
   if (req.groundingRequired) lines.push('Live-data question: read the current value with a tool BEFORE answering — never state a number/status from memory.')

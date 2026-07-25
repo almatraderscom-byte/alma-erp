@@ -46,6 +46,11 @@ export type AuditJson = {
   siteChecks?: { issues?: AuditIssue[] }
   sitemap?: { ok: boolean; count: number }
   pages?: AuditPage[]
+  /** How many pages the crawl actually fetched (may be < sitemap count). */
+  pagesCrawled?: number
+  /** Wall-clock crawl duration — coverage honesty, shown on the dashboard. */
+  elapsedMs?: number
+  avgTtfbMs?: number
 }
 
 const SEV_BN: Record<string, string> = {
@@ -317,7 +322,8 @@ export function buildClientReportMarkdown(audit: AuditJson, opts?: { keywordsNot
     '',
     `**সাইট:** ${audit.url}`,
     `**অডিটের তারিখ:** ${fmtDate(audit.crawledAt)}`,
-    `**পেজ পরীক্ষা করা হয়েছে:** ${pages.length}টা`,
+    `**পেজ পরীক্ষা করা হয়েছে:** ${audit.pagesCrawled ?? pages.length}টা`
+      + (audit.sitemap?.count ? ` (sitemap-এ মোট ${audit.sitemap.count}টা URL)` : ''),
     `**প্রস্তুত করেছে:** ${opts?.preparedBy ?? 'ALMA Digital — AI-চালিত পূর্ণাঙ্গ সাইট ক্রল ও বিশ্লেষণ'}`,
     '',
     '---',
@@ -466,6 +472,197 @@ export function buildClientReportMarkdown(audit: AuditJson, opts?: { keywordsNot
     `_ALMA Digital · স্বয়ংক্রিয় SEO অডিট · ${fmtDate(audit.crawledAt)}_`,
   )
   return L.join('\n')
+}
+
+// ── Live HTML dashboard (owner ruling 2026-07-25) ────────────────────────────
+//
+// Boss compared his agent against Claude, which handed him a rendered dashboard
+// he could read at a glance. Markdown + CSV are the client deliverables; this is
+// the one he actually looks at. It is a complete, self-contained document (the
+// artifact panel passes full documents through untouched) with no external
+// assets, and it follows the viewer's light/dark preference.
+
+const esc = (s: unknown) =>
+  String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+
+const SEV_COLOR: Record<string, string> = {
+  critical: '#e5484d',
+  high: '#f76b15',
+  medium: '#f5c518',
+  low: '#8b93a7',
+}
+
+/** Score ring as inline SVG — no library, no fonts, no network. */
+function scoreRing(score: number): string {
+  const pct = Math.max(0, Math.min(100, score))
+  const r = 52
+  const circumference = 2 * Math.PI * r
+  const dash = (pct / 100) * circumference
+  const color = pct >= 75 ? '#30a46c' : pct >= 50 ? '#f5c518' : '#e5484d'
+  return `<svg viewBox="0 0 130 130" width="130" height="130" role="img" aria-label="স্কোর ${pct} / ১০০">
+  <circle cx="65" cy="65" r="${r}" fill="none" stroke="currentColor" stroke-opacity=".14" stroke-width="12"/>
+  <circle cx="65" cy="65" r="${r}" fill="none" stroke="${color}" stroke-width="12" stroke-linecap="round"
+    stroke-dasharray="${dash.toFixed(1)} ${(circumference - dash).toFixed(1)}" transform="rotate(-90 65 65)"/>
+  <text x="65" y="62" text-anchor="middle" font-size="30" font-weight="700" fill="currentColor">${pct}</text>
+  <text x="65" y="84" text-anchor="middle" font-size="13" fill="currentColor" fill-opacity=".6">/ 100</text>
+</svg>`
+}
+
+/**
+ * The live dashboard artifact: score, coverage, severity split, category
+ * scorecard, every issue group with evidence, and the phased action plan.
+ */
+export function buildClientReportHtml(audit: AuditJson, opts?: { keywordsNote?: string | null }): string {
+  const pages = audit.pages ?? []
+  const all = flattenIssues(audit)
+  const c = audit.counts
+  const host = (() => {
+    try { return new URL(audit.url).hostname.replace(/^www\./, '') } catch { return audit.url }
+  })()
+
+  const byCode = new Map<string, FlatIssue[]>()
+  for (const i of all) {
+    const k = `${i.severity}|${i.code}`
+    byCode.set(k, [...(byCode.get(k) ?? []), i])
+  }
+  const ranked = [...byCode.entries()].sort((a, b) => {
+    const sa = SEV_ORDER.indexOf(a[1][0].severity)
+    const sb = SEV_ORDER.indexOf(b[1][0].severity)
+    return sa === sb ? b[1].length - a[1].length : sa - sb
+  })
+
+  const stat = (label: string, value: string) =>
+    `<div class="stat"><div class="stat-v">${esc(value)}</div><div class="stat-l">${esc(label)}</div></div>`
+
+  const sevChips = SEV_ORDER.map((s) =>
+    `<span class="chip" style="--c:${SEV_COLOR[s]}">${esc(SEV_BN[s].split(' ')[0])} ${esc(SEV_BN[s].split(' ')[1] ?? s)} <b>${c[s]}</b></span>`,
+  ).join('')
+
+  const categoryRows = CATEGORIES.map((cat) => {
+    const items = all.filter((i) => categoryOf(i.code) === cat)
+    const worst = SEV_ORDER.find((s) => items.some((i) => i.severity === s))
+    const status = items.length === 0
+      ? '<span class="ok">✅ ঠিক আছে</span>'
+      : `<span class="bad" style="--c:${SEV_COLOR[worst!]}">${items.length}টা সমস্যা</span>`
+    const names = [...new Set(items.map((i) => issueInfo(i.code, i.detail).name))].slice(0, 3).join('; ')
+    return `<tr><td>${esc(cat)}</td><td>${status}</td><td class="muted">${esc(names || '—')}</td></tr>`
+  }).join('')
+
+  const issueSections = ranked.map(([, items]) => {
+    const info = issueInfo(items[0].code, items[0].detail)
+    const sev = items[0].severity
+    const rows = items.slice(0, 15).map((it) => {
+      const ev = it.page && info.evidence ? info.evidence(it.page, it.detail) : it.detail
+      return `<tr><td class="url">${esc(it.scope === 'site' ? 'পুরো সাইট' : it.scope)}</td><td>${esc(ev)}</td></tr>`
+    }).join('')
+    const more = items.length > 15
+      ? `<tr><td class="muted" colspan="2">… আরো ${items.length - 15}টা — issues.csv ফাইলে সম্পূর্ণ তালিকা</td></tr>`
+      : ''
+    return `<details class="issue" style="--c:${SEV_COLOR[sev]}"${sev === 'critical' ? ' open' : ''}>
+  <summary><span class="dot"></span><b>${esc(info.name)}</b><span class="count">${items.length}টা জায়গায়</span></summary>
+  <p class="why"><b>কেন গুরুত্বপূর্ণ:</b> ${esc(info.why)}</p>
+  <p class="fix"><b>করণীয়:</b> ${esc(info.fix)}</p>
+  <div class="scroll"><table><thead><tr><th>পেজ</th><th>প্রমাণ (যা পাওয়া গেছে)</th></tr></thead><tbody>${rows}${more}</tbody></table></div>
+</details>`
+  }).join('')
+
+  const phases: string[] = []
+  const namesOf = (sev: string) =>
+    [...new Set(all.filter((i) => i.severity === sev).map((i) => issueInfo(i.code, i.detail).name))].join('; ')
+  if (c.critical) phases.push(`<li><b>এই সপ্তাহেই (জরুরি):</b> ${esc(namesOf('critical'))}। এগুলো ঠিক না হলে বাকি সব কাজ বৃথা।</li>`)
+  if (c.high) phases.push(`<li><b>প্রথম ২ সপ্তাহ (গুরুতর):</b> ${esc(namesOf('high'))}।</li>`)
+  if (c.medium) phases.push(`<li><b>প্রথম মাস (মাঝারি):</b> ${esc(namesOf('medium'))}।</li>`)
+  if (c.low) phases.push(`<li><b>চলমান পলিশ:</b> ${esc(namesOf('low'))}।</li>`)
+
+  const crawled = audit.pagesCrawled ?? pages.length
+  const coverage = audit.sitemap?.count
+    ? `${crawled} / ${audit.sitemap.count} (sitemap)`
+    : `${crawled}`
+  const crawlSeconds = typeof audit.elapsedMs === 'number' ? `${Math.round(audit.elapsedMs / 1000)}s` : '—'
+
+  return `<!doctype html>
+<html lang="bn"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SEO অডিট — ${esc(host)}</title>
+<style>
+  :root { color-scheme: light dark; --bg:#FAF9F6; --card:#fff; --ink:#1d1d2b; --muted:#6b7280; --line:#e6e6ee; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#141418; --card:#1c1c22; --ink:#F7F8FC; --muted:#9aa1b1; --line:#2c2c36; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:20px; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Bengali",system-ui,sans-serif; line-height:1.6; }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  h1 { font-size:1.5rem; margin:0 0 4px; }
+  h2 { font-size:1.1rem; margin:28px 0 10px; }
+  .sub { color:var(--muted); font-size:.9rem; margin-bottom:18px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; }
+  .hero { display:flex; gap:22px; align-items:center; flex-wrap:wrap; }
+  .stats { display:flex; gap:22px; flex-wrap:wrap; }
+  .stat-v { font-size:1.35rem; font-weight:700; }
+  .stat-l { color:var(--muted); font-size:.82rem; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+  .chip { border:1px solid var(--c); color:var(--c); border-radius:999px; padding:3px 11px; font-size:.82rem; }
+  .scroll { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:.88rem; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  td.url { word-break:break-all; max-width:320px; }
+  .muted { color:var(--muted); }
+  .ok { color:#30a46c; }
+  .bad { color:var(--c); font-weight:600; }
+  .issue { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--c);
+    border-radius:10px; padding:12px 14px; margin-bottom:10px; }
+  .issue summary { cursor:pointer; display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+  .issue .dot { width:9px; height:9px; border-radius:50%; background:var(--c); flex:none; }
+  .issue .count { color:var(--muted); font-size:.82rem; }
+  .why, .fix { margin:9px 0 0; font-size:.9rem; }
+  ol { padding-left:20px; }
+  footer { color:var(--muted); font-size:.8rem; margin-top:26px; }
+</style></head>
+<body><div class="wrap">
+  <h1>SEO অডিট — ${esc(host)}</h1>
+  <div class="sub">${esc(audit.url)} · ${esc(fmtDate(audit.crawledAt))}</div>
+
+  <div class="card hero">
+    ${scoreRing(audit.score)}
+    <div>
+      <div class="stats">
+        ${stat('গ্রেড', grade(audit.score))}
+        ${stat('পেজ দেখা হয়েছে', coverage)}
+        ${stat('মোট সমস্যা', String(all.length))}
+        ${stat('ক্রল সময়', crawlSeconds)}
+      </div>
+      <div class="chips">${sevChips}</div>
+    </div>
+  </div>
+
+  <h2>বিভাগভিত্তিক স্কোরকার্ড</h2>
+  <div class="card scroll"><table>
+    <thead><tr><th>বিভাগ</th><th>অবস্থা</th><th>পাওয়া সমস্যা</th></tr></thead>
+    <tbody>${categoryRows}</tbody>
+  </table></div>
+
+  <h2>বিস্তারিত সমস্যা ও প্রমাণ</h2>
+  ${issueSections || '<div class="card">✅ কোনো সমস্যা পাওয়া যায়নি।</div>'}
+
+  ${opts?.keywordsNote ? `<h2>কীওয়ার্ড প্রেক্ষাপট</h2><div class="card">${esc(opts.keywordsNote)}</div>` : ''}
+
+  <h2>অগ্রাধিকারভিত্তিক অ্যাকশন প্ল্যান</h2>
+  <div class="card"><ol>${phases.join('') || '<li>এখন কিছু করার নেই — সাইটের ভিত শক্ত।</li>'}</ol></div>
+
+  <h2>পেজ ইনভেন্টরি</h2>
+  <div class="card scroll"><table>
+    <thead><tr><th>পেজ</th><th>HTTP</th><th>টাইটেল</th><th>Meta</th><th>H1</th><th>শব্দ</th><th>TTFB</th><th>সমস্যা</th></tr></thead>
+    <tbody>${pages.slice(0, 60).map((p) => `<tr><td class="url">${esc(p.url)}</td><td>${esc(p.status ?? '—')}</td><td>${esc(p.titleLength ?? 0)}</td><td>${esc(p.metaDescLength ?? 0)}</td><td>${esc(p.h1Count ?? 0)}</td><td>${esc(p.wordCount ?? '—')}</td><td>${p.ttfbMs != null ? `${esc(p.ttfbMs)}ms` : '—'}</td><td>${esc(p.issues?.length ?? 0)}</td></tr>`).join('')}</tbody>
+  </table></div>
+
+  <footer>ALMA Digital · read-only ক্রল, কোনো ফর্ম/লগইন নয় · স্কোরিং: জরুরি −15, গুরুতর −6, মাঝারি −2, ছোট −0.5</footer>
+</div></body></html>`
 }
 
 /** Issues CSV (Excel-openable) with evidence + fix columns. */

@@ -898,6 +898,9 @@ export async function POST(req: NextRequest) {
                   conversationId,
                   message: lastMomentSteering.map((item) => item.prompt).join('\n\n'),
                   force: true,
+                  // This IS Boss speaking (his last-moment steer), so the
+                  // awaiting-answer gate must not swallow it.
+                  ignoreAwaitingOwner: true,
                 })
               }
             }

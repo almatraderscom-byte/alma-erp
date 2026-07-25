@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
+import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
 
 describe('owner turn requirement contract', () => {
   it('preserves two SEO targets in owner order and requires live browser proof', () => {
@@ -15,8 +15,26 @@ describe('owner turn requirement contract', () => {
   it('does not turn an ordinary office question into work requirements', () => {
     expect(deriveOwnerTurnRequirements('Ajker office kemon jacche?')).toEqual({
       liveBrowser: false, clientSeo: false, reportArtifact: false, remember: false, targets: [],
-      planFirst: false, groundingRequired: false,
+      deepWork: false, planFirst: false, groundingRequired: false,
     })
+  })
+
+  // Live miss 2026-07-25 — the owner's plain-English order. reportArtifact used
+  // to need the literal word "report"/"file"/"client", so the very turn that
+  // ordered a deep audit did not require a deliverable.
+  it('an English deep-audit order requires the artifact without the word "report"', () => {
+    const r = deriveOwnerTurnRequirements('Do a Deep SEO Audit - almatraders.com')
+    expect(r.clientSeo).toBe(true)
+    expect(r.reportArtifact).toBe(true)
+    expect(r.deepWork).toBe(true)
+    expect(r.targets).toEqual(['https://almatraders.com'])
+    expect(buildOwnerRequirementNote(r)).toMatch(/client-ready artifact is REQUIRED/)
+    expect(buildOwnerRequirementNote(r)).toMatch(/DEEP\/full work/)
+  })
+
+  it('marks deep scope words as deep work even without a website target', () => {
+    expect(deriveOwnerTurnRequirements('আজকের বিক্রির বিস্তারিত বিশ্লেষণ দাও').deepWork).toBe(true)
+    expect(deriveOwnerTurnRequirements('ajker sales koto?').deepWork).toBe(false)
   })
 })
 

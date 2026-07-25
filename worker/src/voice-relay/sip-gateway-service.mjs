@@ -288,11 +288,33 @@ const VOICEMAIL_MAX_SECS = Number(process.env.SIP_VOICEMAIL_MAX_SECS || 120)
 // Length of the barge-in fade, in 20 ms frames. Two frames (40 ms) is long enough to be
 // click-free and short enough that the caller still experiences an immediate interruption.
 const FADE_FRAMES = Number(process.env.SIP_BARGE_FADE_FRAMES || 2)
-// How much audio to hold before playing, in 20 ms frames. Small enough not to add
-// noticeable delay, large enough to ride out the bot's event-loop stalls.
-const JITTER_FRAMES = Number(process.env.SIP_JITTER_FRAMES || 8)
 /**
- * The cushion GROWS when it proves too small, because a fixed 160 ms was not enough.
+ * How much audio to hold before playing, in 20 ms frames.
+ *
+ * 20 frames = 400 ms, and the number comes from comparing the two paths we actually run.
+ * The WhatsApp/Twilio path sounds perfect to the owner, and looking at why is instructive:
+ * `/glive` in worker/src/voice-relay/server.mjs is a bare pass-through —
+ *
+ *     ws.on('message', (raw) => up.send(raw))
+ *     up.on('message', (raw) => ws.send(raw))
+ *
+ * no pacing, no cushion, no frame slicing. It sounds clean because TWILIO's media server
+ * does the buffering for us: we hand it gusts and it plays them out smoothly.
+ *
+ * On our own line there is no Twilio — AudioSocket wants a frame every 20 ms and WE are the
+ * media server. So THIS is the single jitter buffer in the pipeline: the bot now frame-aligns
+ * and forwards immediately (see startDrain in gemini-live-bot.mjs), exactly as Google's
+ * reference does towards Twilio, so nothing upstream paces or re-buffers any more.
+ *
+ * 12 frames = 240 ms. 160 ms was too thin — the owner heard `underruns=5, 5, 4`, each one
+ * ~200 ms of dead air inside a word. 400 ms fixed the breaking but he felt the latency
+ * ("ager moto fast na"), and with the bot no longer holding its own 120 ms cushion this side
+ * does not need to be that deep. It still grows on demand, so a call with unusually bursty
+ * generation ends up where it needs to be without charging every call for it.
+ */
+const JITTER_FRAMES = Number(process.env.SIP_JITTER_FRAMES || 12)
+/**
+ * The cushion GROWS when it proves too small — a fixed depth cannot fit every call.
  *
  * Measured on the owner's own calls (2026-07-25, from the per-call line this file logs):
  * `underruns=5`, `underruns=5`, `underruns=4` — five times in ~80 s the queue ran dry mid
@@ -308,8 +330,15 @@ const JITTER_FRAMES = Number(process.env.SIP_JITTER_FRAMES || 8)
  * conversational, and nothing else about the audio is touched: no filtering, no resampling,
  * no level changes. Only WHEN we start playing.
  */
-const JITTER_MAX_FRAMES = Number(process.env.SIP_JITTER_MAX_FRAMES || 25)   // 500 ms ceiling
+const JITTER_MAX_FRAMES = Number(process.env.SIP_JITTER_MAX_FRAMES || 35)   // 700 ms ceiling
 const JITTER_GROW_FRAMES = Number(process.env.SIP_JITTER_GROW_FRAMES || 4)  // +80 ms per dry-out
+/**
+ * Overrun watermarks, in 20 ms frames. HIGH is where we admit we are hopelessly behind
+ * (10 s of unplayed speech); LOW is where one clean jump lands us (1 s), leaving a normal
+ * working buffer instead of parking on the ceiling and dropping a frame per arrival.
+ */
+const QUEUE_HIGH = Number(process.env.SIP_QUEUE_HIGH_FRAMES || 500)
+const QUEUE_LOW = Number(process.env.SIP_QUEUE_LOW_FRAMES || 50)
 
 /** Ease a frame up from digital zero, for the first audio after a silent gap. */
 function fadeInFrame(f) {
@@ -531,15 +560,23 @@ class Call {
       this.playQueue.push(buf.subarray(off, off + FRAME))
     }
     this.slinResidual = buf.subarray(off)
-    // Safety net only: with clock-scheduled playout the queue should never build up, so if
-    // this ever fires it means we are falling behind real time — log it instead of silently
-    // deleting the caller's audio, because dropped frames are exactly what "the voice keeps
-    // sticking" sounds like.
-    if (this.playQueue.length > 500) {
-      const dropped = this.playQueue.length - 500
+    // Overrun recovery, WITH HYSTERESIS.
+    //
+    // This used to trim back to exactly the cap on every enqueue, which meant that once the
+    // queue reached it, every single arriving frame pushed one frame off the FRONT — the audio
+    // about to be spoken. On 2026-07-25 that logged "dropped 1 frames" ninety times in one
+    // call: not one skip but a hole punched every 20 ms for nearly two seconds, which is
+    // precisely the "jhirjhir, kotha kete jay" the owner described.
+    //
+    // Being this far behind means the conversation is already broken, so the recovery is still
+    // to jump forward — but ONCE, cleanly, down to a low-water mark, and then run normally
+    // again instead of sitting at the ceiling shredding frames. One audible skip beats a
+    // hundred micro-gaps.
+    if (this.playQueue.length > QUEUE_HIGH) {
+      const dropped = this.playQueue.length - QUEUE_LOW
       this.playQueue.splice(0, dropped)
       this.dropped = (this.dropped || 0) + dropped
-      log(this.channelId, `playout OVERRUN — dropped ${dropped} frames (${this.dropped} total)`)
+      log(this.channelId, `playout OVERRUN — jumped forward ${dropped} frames (${Math.round(dropped * 20 / 1000)}s), queue now ${QUEUE_LOW} (${this.dropped} total)`)
     }
   }
   /** Open raw slin8k dumps for this call (debug only). */

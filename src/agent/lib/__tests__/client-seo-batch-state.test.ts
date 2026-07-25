@@ -52,7 +52,12 @@ describe('durable ordered client SEO batch', () => {
       f = reduceClientSeoBatch(f, { type: 'links_read', actionId })
     }
     expect(clientSeoBatchIsReadyForPack(f)).toBe(true)
-    expect(clientSeoBatchRequiredTool(f)).toBe('complete_skill_pack_run')
+    // The batch closes itself once its own definition of done is met. It used
+    // to demand `complete_skill_pack_run` — a gate belonging to a separate
+    // skill-pack run that was never started, so it refused every time and the
+    // contract could never be satisfied (live run 2026-07-25).
+    expect(f.packCompleted).toBe(true)
+    expect(clientSeoBatchRequiredTool(f)).toBeNull()
   })
 })
 
