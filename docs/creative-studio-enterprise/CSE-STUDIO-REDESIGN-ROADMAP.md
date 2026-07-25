@@ -14,8 +14,8 @@ The current CSE7 Studio remains the production fallback until the final phase pa
 ```mermaid
 flowchart LR
   A["Phase 1\nProject document + command foundation"] --> B["Phase 2\nUnified editor + Creative Agent"]
-  A --> C["Provider workstream A\nResolution integrity"]
-  A --> D["Provider workstream B\nAdvanced model fidelity"]
+  A --> C["Provider workstream A\nAdvanced model/reference fidelity"]
+  A --> D["Provider workstream B\nTruthful resolution integrity"]
   C --> B
   D --> B
   B --> E["Phase 3\nEnterprise lifecycle"]
@@ -28,8 +28,8 @@ flowchart LR
 
 The two provider streams may continue independently from the common CSE7 base:
 
-- `codex/cs-resolution-integrity`
-- `codex/cs-advanced-model-fidelity`
+- Workstream A — `codex/cs-advanced-model-fidelity`
+- Workstream B — `codex/cs-resolution-integrity`
 
 They should not directly implement editor state. They should expose provider-neutral capability and result contracts that Phase 2 consumes.
 
