@@ -67,8 +67,15 @@ export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return deny()
 
+  // Either credential is accepted: the ?k= shared secret, or a Bearer AGENT_INTERNAL_TOKEN
+  // — the secret this app and the VPS already share. Allowing the token means the cutover
+  // needs no new secret copied between machines, and an untransported secret cannot leak.
   const url = new URL(req.url)
-  if (!secretOk(url.searchParams.get('k') ?? '')) return deny()
+  const bearer = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
+  const internal = process.env.AGENT_INTERNAL_TOKEN ?? ''
+  const tokenOk = Boolean(internal && bearer && bearer.length === internal.length
+    && timingSafeEqual(Buffer.from(bearer), Buffer.from(internal)))
+  if (!tokenOk && !secretOk(url.searchParams.get('k') ?? '')) return deny()
   if (process.env.VOICE_CALL_ENABLED !== 'true') return deny()
 
   const internalToken = process.env.AGENT_INTERNAL_TOKEN ?? ''
