@@ -71,6 +71,11 @@ jobs:
             # VPS runs it. (NO backticks in these comments - unquoted heredoc turns
             # backticks into command substitution; that broke the 2026-07-23 deploy.)
             pm2 restart gemini-live-bot --update-env || true
+            # The SIP gateway (control API + AudioSocket bridge + browser softphone /ws proxy)
+            # is a THIRD pm2 app and was missing here, so gateway changes landed on disk and
+            # then silently did not run - the deploy looked green while the fix was not live.
+            # It drops calls in progress, which is why deploys are dispatched by hand.
+            pm2 restart alma-sip-gateway --update-env || true
             pm2 save
             pm2 list --no-color | head -12
           EOF
