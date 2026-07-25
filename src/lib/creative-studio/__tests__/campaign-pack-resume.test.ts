@@ -11,8 +11,17 @@ import {
 const serviceHarness = vi.hoisted(() => {
   type Row = Record<string, unknown>
   const rows: Row[] = []
+  const attachedActionIds = new Set<string>()
   let sequence = 0
   const now = () => new Date('2026-07-25T00:00:00.000Z')
+  const attachProjectAsset = vi.fn(async (
+    _ownerId: string,
+    _projectId: string,
+    value: { pendingActionId: string },
+  ) => {
+    attachedActionIds.add(value.pendingActionId)
+    return {}
+  })
   const action = {
     findUnique: vi.fn(async ({ where }: { where: { id?: string; dedupeKey?: string } }) =>
       rows.find((row) => where.id ? row.id === where.id : row.dedupeKey === where.dedupeKey) ?? null),
@@ -46,10 +55,13 @@ const serviceHarness = vi.hoisted(() => {
   }
   return {
     rows,
+    attachProjectAsset,
     reset() {
       rows.splice(0)
+      attachedActionIds.clear()
       sequence = 0
       for (const method of Object.values(action)) method.mockClear()
+      attachProjectAsset.mockClear()
     },
     prisma: {
       creativeProject: {
@@ -74,16 +86,25 @@ const serviceHarness = vi.hoisted(() => {
           },
         })),
       },
-      creativeProjectAsset: { findFirst: vi.fn(async () => null) },
+      creativeProjectAsset: {
+        findFirst: vi.fn(async () => null),
+        findMany: vi.fn(async ({ where }: {
+          where: { pendingActionId?: { in?: string[] } }
+        }) => (where.pendingActionId?.in ?? [])
+          .filter((id) => attachedActionIds.has(id))
+          .map((pendingActionId) => ({ pendingActionId }))),
+      },
       agentPendingAction: action,
     },
   }
 })
 
 vi.mock('@/lib/prisma', () => ({ prisma: serviceHarness.prisma }))
-vi.mock('@/lib/creative-studio/project-service', () => ({ attachProjectAsset: vi.fn() }))
+vi.mock('@/lib/creative-studio/project-service', () => ({
+  attachProjectAsset: serviceHarness.attachProjectAsset,
+}))
 
-import { createCampaignPack } from '@/lib/creative-studio/campaign-pack-service'
+import { createCampaignPack, getCampaignPack } from '@/lib/creative-studio/campaign-pack-service'
 
 const manifest = buildCampaignPackManifest({
   projectId: 'project-1',
@@ -125,7 +146,10 @@ describe('campaign-pack restart and retry planning', () => {
     expect(first.idempotent).toBe(false)
     expect(replay.idempotent).toBe(true)
     expect(serviceHarness.rows.filter((row) => row.type === 'campaign_pack')).toHaveLength(1)
-    expect(serviceHarness.rows.filter((row) => String(row.dedupeKey).startsWith('campaign-pack-stage:'))).toHaveLength(2)
+    const stages = serviceHarness.rows.filter((row) => String(row.dedupeKey).startsWith('campaign-pack-stage:'))
+    expect(stages).toHaveLength(2)
+    expect(stages.every((row) => row.type === 'image_gen')).toBe(true)
+    expect(stages.every((row) => row.status === 'campaign_approved')).toBe(true)
   })
 
   it('uses stable pack/stage idempotency keys', () => {
@@ -133,6 +157,33 @@ describe('campaign-pack restart and retry planning', () => {
       .toBe(campaignPackDedupeKey('owner-1', 'request-1'))
     expect(campaignStageDedupeKey('pack-1', 'reel-6s', 1))
       .toBe('campaign-pack-stage:pack-1:reel-6s:attempt:1')
+  })
+
+  it('repairs a completed stage asset once when reconciliation resumes', async () => {
+    serviceHarness.reset()
+    const created = await createCampaignPack('owner-1', {
+      projectId: 'project-1',
+      idempotencyKey: 'request-reconcile-1',
+      options: { includeFamily: false, includeReel: false },
+      confirmedCostUsd: 0,
+    })
+    const draft = serviceHarness.rows.find((row) =>
+      String(row.dedupeKey).includes(':draft-a:attempt:1'))
+    expect(draft).toBeTruthy()
+    Object.assign(draft!, {
+      status: 'executed',
+      result: { storagePath: 'campaign-packs/pack/draft-a-attempt-1.jpg', costUsd: 0 },
+    })
+
+    await getCampaignPack('owner-1', created.pack.id)
+    await getCampaignPack('owner-1', created.pack.id)
+
+    expect(serviceHarness.attachProjectAsset).toHaveBeenCalledTimes(1)
+    expect(serviceHarness.attachProjectAsset).toHaveBeenCalledWith(
+      'owner-1',
+      'project-1',
+      expect.objectContaining({ pendingActionId: draft!.id }),
+    )
   })
 
   it('restarts by creating only absent stages and never repeats completed paid stages', () => {

@@ -122,7 +122,7 @@ function rowStatus(row: AnyRecord | undefined): CampaignPackStageView['status'] 
   if (row.status === 'executed') return 'ready'
   if (row.status === 'failed') return 'failed'
   if (row.status === 'rejected') return 'rejected'
-  if (row.status === 'approved') return 'queued'
+  if (row.status === 'approved' || row.status === 'campaign_approved') return 'queued'
   return 'running'
 }
 
@@ -252,6 +252,7 @@ function stageActionData(input: {
     },
   }
   let type = 'image_gen'
+  let status = 'approved'
   let payload: AnyRecord
 
   if (stage.id === 'reel-6s') {
@@ -283,6 +284,10 @@ function stageActionData(input: {
         + `Premium ${manifest.recipe.finishTheme} finish, no text or logo.`,
     }
   } else {
+    // Keep the existing image_gen lineage contract, but isolate free campaign
+    // work behind a status an older production poller cannot lease. The CSE4
+    // pending-jobs route understands this status and the provider remains local.
+    status = 'campaign_approved'
     payload = {
       ...common,
       provider: 'campaign_pack_local',
@@ -304,7 +309,7 @@ function stageActionData(input: {
     payload,
     summary: `Campaign Pack · ${stage.labelBn} · ${manifest.product.code}`,
     costEstimate: stage.estimatedCostUsd,
-    status: 'approved',
+    status,
   }
 }
 
@@ -345,6 +350,56 @@ function latestRows(rows: AnyRecord[]): Map<CampaignPackStageId, AnyRecord> {
 function selectedDraftId(pack: AnyRecord): CampaignPackStageId | null {
   const id = object(pack.result).selectedDraftStageId
   return id === 'draft-a' || id === 'draft-b' ? id : null
+}
+
+async function attachCompletedStageAssets(pack: AnyRecord, rows: AnyRecord[]) {
+  const completed = rows.filter((row) => row.status === 'executed' && resultStoragePath(row))
+  if (!completed.length) return
+  const packId = String(pack.id)
+  const manifest = manifestFromPack(pack)
+  const projectId = manifest.projectId
+  const actionIds = completed.map((row) => String(row.id))
+  const attached = await db.creativeProjectAsset.findMany({
+    where: {
+      projectId,
+      pendingActionId: { in: actionIds },
+    },
+    select: { pendingActionId: true },
+  })
+  const attachedIds = new Set(
+    attached
+      .map((row: AnyRecord) => row.pendingActionId)
+      .filter((id: unknown): id is string => typeof id === 'string'),
+  )
+  const latest = latestRows(rows)
+  const selected = selectedDraftId(pack)
+  const selectedRow = selected ? latest.get(selected) : null
+
+  for (const action of completed) {
+    if (attachedIds.has(String(action.id))) continue
+    const meta = stageMeta(action)
+    if (
+      meta.packId !== packId
+      || !meta.ownerId
+      || !meta.projectId
+      || !meta.recipeId
+    ) continue
+    const sourcePendingActionIds = meta.phase === 'after_selection'
+      ? selectedRow && selectedRow.id !== action.id
+        ? [String(selectedRow.id)]
+        : []
+      : manifest.masterSource.pendingActionId
+        ? [manifest.masterSource.pendingActionId]
+        : []
+    await attachProjectAsset(String(meta.ownerId), String(meta.projectId), {
+      pendingActionId: String(action.id),
+      title: String(meta.output ?? action.summary ?? 'Campaign Pack asset'),
+      folder: 'Campaign Packs',
+      tags: ['campaign-pack', String(meta.stageId ?? 'output')],
+      recipeId: String(meta.recipeId),
+      sourcePendingActionIds,
+    })
+  }
 }
 
 function stateFor(
@@ -435,6 +490,9 @@ async function reconcilePackRow(pack: AnyRecord): Promise<{
   }
   if (missing.length) rows = await stageRows(String(pack.id))
 
+  // Results can arrive through the normal callback or after a worker restart.
+  // Reconciliation repairs any missing project asset/lineage idempotently.
+  await attachCompletedStageAssets(pack, rows)
   const latest = latestRows(rows)
   const state = stateFor(manifest, latest, selected)
   const previousResult = object(pack.result)
@@ -686,30 +744,6 @@ export async function reconcileCampaignPackStageResult(stageActionId: string): P
   if (!meta.packId || !meta.ownerId || !meta.projectId || !meta.recipeId) return
   const pack = await db.agentPendingAction.findUnique({ where: { id: String(meta.packId) } })
   if (!pack || pack.type !== 'campaign_pack') return
-
-  const storagePath = resultStoragePath(action)
-  if (action.status === 'executed' && storagePath) {
-    const manifest = manifestFromPack(pack)
-    const rows = await stageRows(String(meta.packId))
-    const latest = latestRows(rows)
-    const selected = selectedDraftId(pack)
-    const selectedRow = selected ? latest.get(selected) : null
-    const sourcePendingActionIds = meta.phase === 'after_selection'
-      ? selectedRow && selectedRow.id !== action.id
-        ? [String(selectedRow.id)]
-        : []
-      : manifest.masterSource.pendingActionId
-        ? [manifest.masterSource.pendingActionId]
-        : []
-    await attachProjectAsset(String(meta.ownerId), String(meta.projectId), {
-      pendingActionId: String(action.id),
-      title: String(meta.output ?? action.summary ?? 'Campaign Pack asset'),
-      folder: 'Campaign Packs',
-      tags: ['campaign-pack', String(meta.stageId ?? 'output')],
-      recipeId: String(meta.recipeId),
-      sourcePendingActionIds,
-    })
-  }
   await reconcilePackRow(pack)
 }
 

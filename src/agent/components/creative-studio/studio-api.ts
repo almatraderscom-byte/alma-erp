@@ -183,6 +183,16 @@ export async function fetchCampaignPack(packId: string): Promise<CampaignPackCli
   return data.pack
 }
 
+export async function listCampaignPacks(projectId: string): Promise<CampaignPackClient[]> {
+  const query = new URLSearchParams({ projectId })
+  const data = await studioRequest<{ packs: CampaignPackClient[] }>(
+    `/api/assistant/creative-studio/campaign-packs?${query.toString()}`,
+    undefined,
+    'campaign_pack_list_failed',
+  )
+  return data.packs
+}
+
 export async function selectCampaignPackDraft(
   packId: string,
   selectedDraftStageId: 'draft-a' | 'draft-b',

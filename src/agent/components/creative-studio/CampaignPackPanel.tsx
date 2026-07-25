@@ -6,6 +6,7 @@ import { CampaignPackProgress } from '@/agent/components/creative-studio/Campaig
 import {
   fetchCampaignPack,
   getActiveStudioContentContext,
+  listCampaignPacks,
   previewCampaignPack,
   queueCampaignPack,
   retryCampaignPackStage,
@@ -33,6 +34,7 @@ export function CampaignPackPanel() {
   const [error, setError] = useState<string | null>(null)
   const [busyStageId, setBusyStageId] = useState<string | null>(null)
   const idempotencyKey = useRef('')
+  const initialRestoreComplete = useRef(false)
   const activePackId = pack?.id ?? null
   const activePackStatus = pack?.status ?? null
 
@@ -62,11 +64,38 @@ export function CampaignPackPanel() {
   }, [includeFamily, includeReel])
 
   useEffect(() => {
-    void loadManifest()
+    const restoreOrPreview = async () => {
+      const context = getActiveStudioContentContext()
+      if (!context) {
+        await loadManifest()
+        return
+      }
+      if (!initialRestoreComplete.current) {
+        initialRestoreComplete.current = true
+        setLoading(true)
+        setError(null)
+        try {
+          const recent = await listCampaignPacks(context.projectId)
+          if (recent[0]) {
+            // The detail route signs every completed storage path, so a browser
+            // reload restores both durable progress and viewable draft/output URLs.
+            setPack(await fetchCampaignPack(recent[0].id))
+            setManifest(null)
+            setLoading(false)
+            return
+          }
+        } catch {
+          // Fall through to a fresh manifest; recovery must not strand Studio.
+        }
+      }
+      await loadManifest()
+    }
+    void restoreOrPreview()
     const refresh = () => {
       setPack(null)
       idempotencyKey.current = ''
-      void loadManifest()
+      initialRestoreComplete.current = false
+      void restoreOrPreview()
     }
     window.addEventListener('alma-studio-content-context', refresh)
     return () => window.removeEventListener('alma-studio-content-context', refresh)
