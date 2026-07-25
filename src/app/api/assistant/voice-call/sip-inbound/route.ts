@@ -85,6 +85,24 @@ async function officeOpenNow(): Promise<{ open: boolean; window: string }> {
   return { open, window }
 }
 
+/**
+ * Numbers we refuse outright. Nuisance callers should not reach the assistant at all —
+ * every answered call costs Gemini minutes and, for a repeat caller, the owner's attention.
+ * KV `blocked_callers` (comma-separated, matched on the last 9 digits so prefixes and
+ * formatting cannot be used to slip past it); env SIP_BLOCKLIST is the fallback.
+ */
+async function isBlockedCaller(caller: string): Promise<boolean> {
+  const tail = (n: string) => n.replace(/\D/g, '').slice(-9)
+  const target = tail(caller)
+  if (!target) return false
+  let raw = process.env.SIP_BLOCKLIST ?? ''
+  try {
+    const kv = await db.agentKvSetting.findUnique({ where: { key: 'blocked_callers' } })
+    if (typeof kv?.value === 'string' && kv.value.trim()) raw = kv.value
+  } catch { /* env fallback */ }
+  return raw.split(',').map((n) => tail(n)).filter(Boolean).includes(target)
+}
+
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return deny()
@@ -111,6 +129,12 @@ export async function POST(req: NextRequest) {
   // The whole reason for self-hosting: a REAL caller number, so the boss calling his own
   // line gets the full assistant (ERP tools + submit_boss_instruction), not the receptionist.
   const ownerCalling = caller !== 'unknown' && isOwnerNumber(caller)
+
+  // Blocked numbers are refused before anything is answered, so they cost nothing.
+  if (!ownerCalling && await isBlockedCaller(caller)) {
+    console.warn('[sip-inbound] blocked caller refused:', caller)
+    return NextResponse.json({ ok: true, reject: true, reason: 'blocked' })
+  }
 
   // Human-PA point 7: transfer policy. 'direct' dials the team number; 'ask_first' makes
   // the bot take a message + ping the boss instead of blind-transferring (KV-flipped).

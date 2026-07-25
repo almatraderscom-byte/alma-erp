@@ -301,6 +301,8 @@ class Call {
     this.answered = false
     this.closed = false
     this.transferring = false
+    this.ringGroup = null               // remaining transfer targets to try, in order
+    this.ringIndex = 0
     this.playOnly = false               // one-way message call: play a file, then hang up
     this.playUrl = ''
     this.playFile = ''
@@ -721,7 +723,7 @@ const audioServer = net.createServer((socket) => {
       } else if (type === AS_TYPE_AUDIO) {
         if (call) call.onAsteriskAudio(Buffer.from(payload)) // slin8k
       } else if (type === AS_TYPE_TERMINATE) {
-        if (call && !call.voicemail) void call.hangup('audiosocket terminate')
+        if (call && !call.voicemail && !call.transferring) void call.hangup('audiosocket terminate')
         socket.end()
       } else if (type === AS_TYPE_ERROR) {
         log(call?.channelId || '?', 'AudioSocket error frame')
@@ -729,10 +731,11 @@ const audioServer = net.createServer((socket) => {
     }
   })
   socket.on('close', () => {
-    // In voicemail mode we deliberately delete the externalMedia channel, which closes this
-    // socket — hanging the caller up here would end the call before the prompt even finished
-    // (that is exactly what silently killed the first voicemail attempts, 2026-07-25).
-    if (call && !call.closed && !call.voicemail) void call.hangup('audiosocket closed')
+    // Voicemail AND transfer both deliberately delete the externalMedia channel, which closes
+    // this socket. Hanging up here would end the call at the worst moment — mid-prompt, or the
+    // instant a human is being dialled. Both cases killed a live path before this guard
+    // existed (2026-07-25); the caller's own hangup still arrives via ARI.
+    if (call && !call.closed && !call.voicemail && !call.transferring) void call.hangup('audiosocket closed')
   })
   socket.on('error', (e) => log('audiosocket err', e?.message))
 })
@@ -843,7 +846,24 @@ async function onInboundCall(e) {
   const caller = normalizeCaller(e.channel?.caller?.number || args[1] || '')
   const did = String(args[2] || e.channel?.dialplan?.exten || '').trim()
   log(chanId, `INBOUND from=${caller || 'unknown'} did=${did || '-'}`)
+  // Local blocklist, checked BEFORE we ask the app anything. Blocking a nuisance caller must
+  // not depend on Vercel being reachable — and refusing before answering means the call costs
+  // nothing at all. The app keeps its own list (KV `blocked_callers`) for the owner to edit.
+  if (isBlockedLocally(caller)) {
+    log(chanId, 'INBOUND refused (local blocklist) — not answering')
+    await ari('DELETE', `/channels/${chanId}`).catch(() => {})
+    putCdr(chanId, { direction: 'inbound', from: caller, did, startedAt: Date.now(), answered: false, status: 'blocked', endedAt: Date.now() })
+    void persistCdr(chanId)
+    return
+  }
   let params = await fetchInboundParams(caller, did)
+  if (params?.reject) {
+    log(chanId, `INBOUND refused (${params.reason}) — not answering`)
+    await ari('DELETE', `/channels/${chanId}`).catch(() => {})
+    putCdr(chanId, { direction: 'inbound', from: caller, did, startedAt: Date.now(), answered: false, status: 'blocked', endedAt: Date.now() })
+    void persistCdr(chanId)
+    return
+  }
   if (!params) {
     // Fail-safe persona: answer with a locally-signed token so the bot accepts the media
     // session. No DB row -> the post-call report has no target, which is a far smaller loss
@@ -899,6 +919,15 @@ function isOwnerCaller(number) {
     .some((n) => n === target)
 }
 
+/** Is this caller on the gateway's own blocklist (SIP_BLOCKLIST, last 9 digits)? */
+function isBlockedLocally(number) {
+  const tail = (n) => String(n || '').replace(/\D/g, '').slice(-9)
+  const target = tail(number)
+  if (!target) return false
+  return (process.env.SIP_BLOCKLIST || '')
+    .split(',').map(tail).filter(Boolean).includes(target)
+}
+
 /** BD numbers arrive as +8801… or 8801… or 01… — normalise to +E.164 for owner matching. */
 function normalizeCaller(raw) {
   const d = String(raw || '').replace(/\D/g, '')
@@ -923,6 +952,8 @@ async function fetchInboundParams(caller, did) {
       signal: AbortSignal.timeout(8_000),
     })
     const data = await res.json().catch(() => null)
+    // A blocked caller: refuse without answering, so a nuisance number costs us nothing.
+    if (data?.reject) return { reject: true, reason: String(data.reason || 'blocked') }
     if (!res.ok || !data?.ok || !data.params?.id) { log('sip-inbound route said', res.status, JSON.stringify(data).slice(0, 120)); return null }
     return data.params
   } catch (err) { log('sip-inbound fetch failed:', err?.message); return null }
@@ -951,6 +982,9 @@ async function onAriEvent(e) {
       if (call._bridgeInto) {
         call.answered = true
         call.answeredAt = Date.now()
+        // Somebody picked up: stop walking the ring group.
+        const parent = call._transferParent && calls.get(call._transferParent)
+        if (parent) parent.ringGroup = null
         try { await ari('POST', `/bridges/${call._bridgeInto}/addChannel`, { channel: call.channelId }) }
         catch (err) { log(call.channelId, 'forward bridge failed', err?.message) }
         return
@@ -977,6 +1011,14 @@ async function onAriEvent(e) {
       // A forward leg dying tells us how the human-to-human half went; fold it into the
       // ORIGINAL call's record, which is the row the owner actually reads.
       const fwdParent = call?._transferParent
+      if (fwdParent) {
+        const parent = calls.get(fwdParent)
+        // Nobody picked up this member of the ring group — move on to the next one.
+        if (parent && !call.answered && !parent.closed && parent.ringGroup) {
+          calls.delete(chanId)
+          void dialNextInGroup(parent)
+        }
+      }
       if (fwdParent && cdr.has(fwdParent)) {
         const answered = Boolean(call.answered)
         putCdr(fwdParent, {
@@ -1020,7 +1062,21 @@ async function onAriEvent(e) {
     }
     case 'ChannelDtmfReceived': {
       const call = chanId && calls.get(chanId)
-      if (call && call.collectDigits && !call.digit) void call.onDigit(String(e.digit ?? ''))
+      if (!call) break
+      const digit = String(e.digit ?? '')
+      if (call.collectDigits && !call.digit) { void call.onDigit(digit); break }
+      // Press 0 for a human. Speech recognition on a noisy Bangla phone line is not perfect,
+      // and a caller who cannot make the AI understand them needs an escape that does not
+      // depend on being understood at all.
+      if (digit === '0' && call.inbound && !call.transferring && !call.voicemail) {
+        const dest = call.params?.forwardSupport || call.params?.forwardBoss || ''
+        if (dest) {
+          log(call.channelId, 'caller pressed 0 — transferring to a human')
+          void transferCall(call, localDial(dest))
+        } else {
+          log(call.channelId, 'caller pressed 0 but no forward number is configured')
+        }
+      }
       break
     }
     case 'StasisEnd':
@@ -1213,12 +1269,34 @@ const ctrlServer = http.createServer(async (req, res) => {
 
 // Phase 2 transfer: dial the forward number and bridge it in; drop the AI media leg
 // so the two humans hear each other cleanly (mirrors the NGS <Dial> behaviour).
+/**
+ * Transfer the caller to a human. `forwardTo` may be a COMMA-SEPARATED ring group: the
+ * numbers are tried in order, because one person not picking up should not cost the business
+ * a customer. If nobody answers, the caller goes back to the AI rather than being abandoned
+ * on a dead line (see returnToAi).
+ */
 async function transferCall(call, forwardTo) {
   if (call.transferring) return { ok: true, status: 'already' }
+  const group = String(forwardTo).split(',').map((n) => localDial(n.trim())).filter(Boolean)
+  if (!group.length) return { ok: false, error: 'no forward destination' }
+  call.ringGroup = group
+  call.ringIndex = 0
+  return dialNextInGroup(call)
+}
+
+/** Dial the next member of the ring group; falls back to the AI when the list is exhausted. */
+async function dialNextInGroup(call) {
+  const dest = call.ringGroup?.[call.ringIndex]
+  if (!dest) {
+    log(call.channelId, 'ring group exhausted — returning the caller to the AI')
+    await returnToAi(call, 'কাউকেই লাইনে পাওয়া যায়নি')
+    return { ok: false, error: 'nobody answered' }
+  }
+  call.ringIndex++
   call.transferring = true
   const fwdId = 'sipfwd-' + randomUUID()
   await ari('POST', '/channels', {
-    endpoint: `PJSIP/${forwardTo}@${TRUNK_ENDPOINT}`,
+    endpoint: `PJSIP/${dest}@${TRUNK_ENDPOINT}`,
     app: ARI_APP,
     channelId: fwdId,
     // Shorter than a normal call: the caller is on hold listening to ringback, so a long
@@ -1231,13 +1309,39 @@ async function transferCall(call, forwardTo) {
   fwd._bridgeInto = call.bridgeId
   fwd._transferParent = call.channelId   // so the forward leg's outcome lands on the real call
   calls.set(fwdId, fwd)
-  putCdr(call.channelId, { transferredTo: forwardTo, transferredAt: Date.now() })
+  putCdr(call.channelId, { transferredTo: dest, transferredAt: Date.now() })
   // when the forward answers, its StasisStart handler bridges it in; drop AI media.
   try { if (call.extChannelId) await ari('DELETE', `/channels/${call.extChannelId}`).catch(() => {}) } catch { /* */ }
   try { call.bot?.close() } catch { /* */ }
   call.botReady = false
-  log(call.channelId, `transfer -> ${forwardTo} (fwd ${fwdId})`)
+  log(call.channelId, `transfer -> ${dest} (fwd ${fwdId}, ${call.ringIndex}/${call.ringGroup.length})`)
   return { ok: true, status: 'connecting' }
+}
+
+/**
+ * Put the AI back on a call whose transfer failed. Without this the caller is left holding a
+ * line with nobody on it: the media leg was torn down for the transfer and the bot's socket
+ * was closed. Rebuilding both is cheap and is the difference between "sorry, let me take your
+ * details" and a customer hanging up on silence.
+ */
+async function returnToAi(call, reason) {
+  if (call.closed) return
+  call.transferring = false
+  call.ringGroup = null
+  try {
+    call.params = {
+      ...call.params,
+      purpose: `${reason} — কলদাতা আবার তোমার লাইনে ফিরে এসেছে। বিনয়ের সাথে বলো এই মুহূর্তে কাউকে যুক্ত করা গেল না, তারপর তার নাম, নম্বর ও প্রয়োজনটা নিশ্চিত করে নাও যাতে টিম পরে কল করতে পারে — অথবা নিজে যতটা পারো সাহায্য করো।`,
+    }
+    // A fresh audio path and a fresh bot session; the old ones are gone.
+    call.audioUuid = randomUUID()
+    byUuid.set(call.audioUuid, call)
+    await bridgeAndStartBot(call)
+    log(call.channelId, 'AI re-attached after a failed transfer')
+  } catch (err) {
+    log(call.channelId, 'could not re-attach the AI:', err?.message)
+    void call.hangup('return-to-ai failed')
+  }
 }
 
 // ── per-call token (owner rule: only our backend opens the media path) ────────
