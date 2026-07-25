@@ -1281,6 +1281,10 @@ async function* runAlternateProviderTurn(
   // Gemini does this occasionally and ending the turn there strands the owner
   // with a blank reply (2026-07-12: WhatsApp-fix turn died after one navigate).
   let emptyRoundRetries = 0
+  // First-line contract (owner rule 2026-07-25): did the head SAY something to
+  // Boss before it started running tools? One backstop nudge per turn.
+  let preambleSpoken = false
+  let preambleNudgeSent = false
   // Announced-intent guard (global terminal/failure rules live in turn-loop-policy).
   let intentNudges = 0
   let requirementRetries = 0
@@ -1596,6 +1600,10 @@ async function* runAlternateProviderTurn(
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + iterationText
         yield { type: 'text_delta', delta: sep + iterationText }
+        // First-line contract: the model spoke to Boss BEFORE running tools —
+        // exactly the Claude-app shape he asked for. Recorded so the backstop
+        // below stays quiet and telemetry can score compliance per model.
+        preambleSpoken = true
       }
 
       if (calls.length === 0 || signal?.aborted) {
@@ -2116,6 +2124,34 @@ async function* runAlternateProviderTurn(
       }
 
       messages = appendToolExchange(messages, calls, toolResults)
+
+      // ── First-line contract (owner rule 2026-07-25) ────────────────────────
+      // Boss wants what the Claude app does: understand the message, SAY the
+      // understanding in one line, THEN work step by step. Reasoning models put
+      // that line inside their hidden thinking (Boss never sees it) and jumped
+      // straight to tools, so all he saw was a spinner. The prompt now demands a
+      // spoken first line; this is the deterministic backstop — one nudge per
+      // turn when a model still went silent, so the reply it finally writes
+      // leads with the understanding instead of dumping raw output.
+      if (!preambleSpoken && !preambleNudgeSent) {
+        preambleNudgeSent = true
+        void logToolEvent({
+          surface: 'owner', toolName: '__preamble__', success: false,
+          errorClass: 'preamble_missing', conversationId,
+          turnId: turnId ?? undefined, phase: 'route',
+          detail: { modelId: model.id, headTier: headTier ?? null, round: iteration },
+        })
+        messages = [
+          ...messages,
+          {
+            role: 'user',
+            content:
+              '[স্টাইল সংশোধন] তুমি টুল চালানোর আগে Boss-কে এক লাইনও বলোনি — তিনি শুধু স্পিনার দেখেছেন। '
+              + 'এখনকার উত্তরটা শুরু করো এক লাইনে তুমি তাঁর কথা কী বুঝেছ ও কী দেখেছ তা দিয়ে ("বস, … চাইছেন — … দেখে নিলাম"), '
+              + 'তারপর ফলাফল। "ঠিক আছে/অবশ্যই" দিয়ে শুরু কোরো না। পরের ধাপগুলোতে টুল চালানোর আগে ওই এক লাইন আগে লিখবে।',
+          },
+        ]
+      }
 
       // Harness Gap 5 — after a find_tool round, expose the matched tools'
       // schemas for the remaining rounds of THIS turn (any head model).

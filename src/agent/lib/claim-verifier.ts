@@ -533,6 +533,13 @@ export function detectFabricatedStatViolations(
  */
 const ROBOTIC_FILLER_PATTERNS: Array<{ id: string; re: RegExp }> = [
   { id: 'canned_opener', re: /^(?:অবশ্যই|নিশ্চিতভাবে|নিশ্চয়ই|certainly|of course|sure)[!,\s]/i },
+  // Owner rule 2026-07-25: an "ঠিক আছে Boss —" opener carries zero information;
+  // he pointed at two live replies and asked for the DeepSeek shape instead
+  // ("বস, গত ৭ দিনের অ্যাড পারফরম্যান্স …" — substance from the first word).
+  // Deliberately anchored to the START only: mid-reply "ঠিক আছে" is fine.
+  // NOTE: no \b here — Bangla codepoints are non-word characters to JS regex, so
+  // a trailing \b silently never matches after "আছে". Use an explicit separator.
+  { id: 'thik_ache_opener', re: /^(?:ঠিক\s*আছে|থিক\s*আছে|thik\s*ach(?:e|he)|ok(?:ay)?)(?=[\s,—–\-.!।]|$)/i },
   { id: 'great_question', re: /চমৎকার\s*প্রশ্ন|খুব\s*ভালো\s*প্রশ্ন|দারুণ\s*প্রশ্ন|great\s+question|excellent\s+question/i },
   { id: 'answer_is', re: /আপনার\s*প্রশ্নের\s*উত্তর(?:\s*হলো|\s*হচ্ছে|ে\s*বলি)/i },
   { id: 'hope_helps', re: /আশা\s*করি\s*(?:এই\s*)?(?:তথ্য|উত্তর)(?:টি|টা)?\s*(?:সহায়ক|কাজে)|hope\s+this\s+helps/i },
@@ -687,8 +694,9 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'আপনি লাইভ ডেটা (সংখ্যা/অর্ডার/স্টক/বিক্রি/টাকা/হাজিরা) উল্লেখ করেছেন কিন্তু এই turn-এ কোনো read tool দিয়ে সেটা যাচাই করেননি। ' +
     'হয় এখনই relevant read tool (get_/list_/check_…) call করে আসল সংখ্যাটা আনুন, নয়তো সততা সঙ্গে বলুন সংখ্যাটা যাচাই করা হয়নি ("যাচাই করে দেখিনি — আনুমানিক")। মেমরি থেকে নিশ্চিত সংখ্যা দেবেন না।',
   robotic_style:
-    'আপনার উত্তরে রোবটিক ফিলার ধরা পড়েছে (canned opener / "চমৎকার প্রশ্ন" / "আপনার প্রশ্নের উত্তর হলো" / কর্পোরেট ক্লোজিং / emoji-বৃষ্টি)। ' +
-    'একই কথাগুলোই আবার লিখুন — এবার একজন ধারালো মানুষ পার্টনারের মতো: সরাসরি আসল উত্তর দিয়ে শুরু, প্লেইন ভাষা, উষ্ণ কিন্তু সংক্ষিপ্ত, ফিলার সম্পূর্ণ বাদ। তথ্য/সিদ্ধান্ত কিছু বদলাবেন না — শুধু ধরন।',
+    'আপনার উত্তরে রোবটিক ফিলার ধরা পড়েছে (canned opener / "ঠিক আছে বস" দিয়ে শুরু / "চমৎকার প্রশ্ন" / "আপনার প্রশ্নের উত্তর হলো" / কর্পোরেট ক্লোজিং / emoji-বৃষ্টি)। ' +
+    'একই কথাগুলোই আবার লিখুন — এবার একজন ধারালো মানুষ পার্টনারের মতো: **প্রথম শব্দ থেকেই কাজের কথা** ("বস, গত ৭ দিনের অ্যাড পারফরম্যান্স…"), ' +
+    'প্লেইন ভাষা, উষ্ণ কিন্তু সংক্ষিপ্ত, ফিলার সম্পূর্ণ বাদ। তথ্য/সিদ্ধান্ত কিছু বদলাবেন না — শুধু ধরন।',
 }
 
 export function buildVerificationReminder(violations: ClaimViolation[]): string {
