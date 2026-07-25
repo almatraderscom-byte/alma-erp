@@ -8,6 +8,7 @@ import {
   IMAGE_MODES,
   MASK_REPAIR_PRESETS,
   VIDEO_FINISH_TEMPLATES,
+  agentPlanMatchesVersion,
   compatibleImageProviders,
   imageProviderSupports,
   videoModelSupports,
@@ -51,6 +52,12 @@ describe('Studio V3 capability truth', () => {
     expect(videoModelSupports('veo-preview', 24, '720p', '9:16')).toBe(false)
     expect(videoModelSupports('owned-local', 30, '1080p', '1:1')).toBe(true)
     expect(videoModelSupports('owned-local', 30, '4K', '1:1')).toBe(false)
+  })
+
+  it('invalidates an Agent plan when the composition version advances', () => {
+    expect(agentPlanMatchesVersion(12, 12)).toBe(true)
+    expect(agentPlanMatchesVersion(12, 13)).toBe(false)
+    expect(agentPlanMatchesVersion(14, 12)).toBe(false)
   })
 })
 

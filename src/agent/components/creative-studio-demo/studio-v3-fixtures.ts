@@ -790,3 +790,14 @@ export function videoModelSupports(
     model.aspects.includes(aspect)
   )
 }
+
+export function agentPlanMatchesVersion(
+  plannedVersion: number,
+  currentVersion: number,
+) {
+  return (
+    Number.isInteger(plannedVersion) &&
+    Number.isInteger(currentVersion) &&
+    plannedVersion === currentVersion
+  )
+}

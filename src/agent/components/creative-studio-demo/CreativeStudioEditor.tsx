@@ -19,6 +19,7 @@ import {
   type EditorTool,
   type StudioProject,
 } from './studio-v2-fixtures'
+import { agentPlanMatchesVersion } from './studio-v3-fixtures'
 import { StudioV2Icon, type StudioIconName } from './StudioV2Icon'
 import styles from './CreativeStudioEnterpriseDemo.module.css'
 
@@ -169,6 +170,9 @@ export function CreativeStudioEditor({
   const [approved, setApproved] = useState(false)
   const [composition, setComposition] =
     useState<DemoCompositionState>(INITIAL_DEMO_STATE)
+  const [planBaseVersion, setPlanBaseVersion] = useState(
+    INITIAL_DEMO_STATE.version,
+  )
   const [captionDraft, setCaptionDraft] = useState(INITIAL_DEMO_STATE.caption)
   const [rollbackPoint, setRollbackPoint] =
     useState<DemoCompositionState | null>(null)
@@ -207,6 +211,7 @@ export function CreativeStudioEditor({
           asset.type === activeTool || (activeTool === 'video' && asset.type === 'image')
         ))
   const playheadPercent = Math.min(100, (playhead / composition.durationSec) * 100)
+  const planCurrent = agentPlanMatchesVersion(planBaseVersion, composition.version)
   const editorStyle = {
     '--playhead-position': `${playheadPercent}%`,
     '--timeline-scale': `${timelineZoom / 72}`,
@@ -238,12 +243,22 @@ export function CreativeStudioEditor({
 
   function createPlan() {
     showContext('agent')
+    setPlanBaseVersion(composition.version)
     setAgentPhase('planned')
     setApproved(false)
-    setNotice('Plan fingerprint 8F2C created locally. Exact owner review is required.')
+    setNotice(
+      `Plan fingerprint 8F2C created against composition v${composition.version}. Exact owner review is required.`,
+    )
   }
 
   function applyPlan() {
+    if (!planCurrent) {
+      setApproved(false)
+      setNotice(
+        `Composition advanced to v${composition.version}. Re-plan before applying any operation.`,
+      )
+      return
+    }
     if (!approved) {
       setNotice('Review and acknowledge this exact plan fingerprint before applying.')
       return
@@ -920,7 +935,7 @@ export function CreativeStudioEditor({
                     </div>
                     <span>
                       <StudioV2Icon name="lock" size={13} />
-                      8F2C · v12
+                      8F2C · base v{planBaseVersion}
                     </span>
                   </header>
 
@@ -997,23 +1012,31 @@ export function CreativeStudioEditor({
                       <label>
                         <input
                           checked={approved}
+                          disabled={!planCurrent}
                           onChange={(event) => setApproved(event.target.checked)}
                           type="checkbox"
                         />
                         <span>
-                          <strong>I reviewed fingerprint 8F2C.</strong>
+                          <strong>
+                            I reviewed fingerprint 8F2C for base v{planBaseVersion}.
+                          </strong>
                           <small>Apply only the three reversible ৳0 operations.</small>
                         </span>
                       </label>
                       <button
                         className={styles.primaryButton}
-                        disabled={!approved}
+                        disabled={!approved || !planCurrent}
                         onClick={applyPlan}
                         type="button"
                       >
                         Apply 3 safe edits
                         <StudioV2Icon name="chevron-right" size={17} />
                       </button>
+                      {!planCurrent && (
+                        <p role="alert">
+                          Project is now v{composition.version}. Re-plan to create a current fingerprint review.
+                        </p>
+                      )}
                       <p>AI video generation and external publish stay locked.</p>
                     </div>
                   )}
