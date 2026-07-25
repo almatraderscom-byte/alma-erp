@@ -1263,8 +1263,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
   // no owner conversation — e.g. promoted stuck todos), so they never hide.
   const inlineDrives = useMemo(() => {
     const all = planDrive?.drives ?? []
+    // A plan the agent started itself has its own thread (S0), so matching on
+    // conversationId alone made it invisible on web while iOS still showed it.
+    // Autonomous work belongs to no chat in particular — surface it in whichever
+    // chat Boss has open, which is the one place he is actually looking.
     return all.filter((d) =>
-      d.conversationId === conversationId || (isOfficeShift && d.conversationId == null),
+      d.conversationId === conversationId
+      || d.isAutonomous
+      || (isOfficeShift && d.conversationId == null),
     )
   }, [planDrive, conversationId, isOfficeShift])
   const streamingMessage = messages.find((m) => m.streaming)

@@ -75,6 +75,14 @@ export interface PlanDriveView {
   /** ms since this plan last did anything — "কতক্ষণ ধরে চুপ". */
   idleMs: number | null
   /**
+   * True when the agent started this itself, so it belongs to no owner chat.
+   * S0 gave such plans their own drive conversation (right: it keeps synthetic
+   * step messages out of Boss's chat) — but the web thread only rendered plans
+   * whose conversationId matched the open chat, so they became invisible on web
+   * while iOS still listed them. Clients show an autonomous plan in ANY chat.
+   */
+  isAutonomous: boolean
+  /**
    * Present only for a grind campaign ("fix all 246 issues"). Additive — every
    * existing web/native consumer keeps working without knowing about it.
    */
@@ -235,7 +243,24 @@ function currentLine(plan: Plan, phase: PlanDrivePhase): string {
   return 'কাজ চলছে…'
 }
 
-async function toView(plan: Plan): Promise<PlanDriveView> {
+/** Conversations the engine created for its own plans (source 'plan_drive'). */
+async function driveConversationIds(plans: Plan[]): Promise<Set<string>> {
+  const ids = plans.map((p) => p.conversationId).filter((v): v is string => Boolean(v))
+  if (ids.length === 0) return new Set()
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = prisma as any
+    const rows = await db.agentConversation.findMany({
+      where: { id: { in: ids }, source: 'plan_drive' },
+      select: { id: true },
+    })
+    return new Set(rows.map((r: { id: string }) => r.id))
+  } catch {
+    return new Set()
+  }
+}
+
+async function toView(plan: Plan, autonomousConvIds: ReadonlySet<string>): Promise<PlanDriveView> {
   const phase = phaseOf(plan.autodriveState)
   const steps: PlanDriveStepView[] = plan.steps.map((s) => ({
     id: s.id,
@@ -274,6 +299,7 @@ async function toView(plan: Plan): Promise<PlanDriveView> {
     statusLabel: STATUS_LABEL[phase],
     runningStep: plan.steps.find((s) => s.status === 'running')?.action ?? null,
     idleMs: plan.lastDrivenAt ? Date.now() - new Date(plan.lastDrivenAt).getTime() : null,
+    isAutonomous: !plan.conversationId || autonomousConvIds.has(plan.conversationId),
     grind: (await grindViewForPlan(plan.id)) ?? undefined,
   }
 }
@@ -384,7 +410,8 @@ export async function getPlanDrivePanel(): Promise<PlanDrivePanelData> {
     loadFinishedPlanDrives({ limit: 20 }),
     loadRunningJobs(),
   ])
-  const drives = await Promise.all(plans.map(toView))
+  const autonomousConvIds = await driveConversationIds(plans)
+  const drives = await Promise.all(plans.map((p) => toView(p, autonomousConvIds)))
   const finished = finishedPlans.map(toHistoryView)
 
   // Order: needs-decision → waiting-approval → driving (most-recent within group).
