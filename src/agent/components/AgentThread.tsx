@@ -771,10 +771,21 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
     | { kind: 'file'; entry: Extract<TimelineEntry, { t: 'file' }> }
   const segments = useMemo(() => {
     const segs: Seg[] = []
-    for (const e of msg.timeline ?? []) {
-      // Timeline prose is retained for audit/debug only. Rendering every model
-      // round here made one turn look like several assistant replies.
-      if (e.t === 'text') continue
+    const entries = msg.timeline ?? []
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i]
+      // The LEADING text entry is the spoken first line (owner rule 2026-07-25):
+      // "বস, … বুঝেছি — … দেখছি", written before any tool ran. It must stay
+      // pinned at the top for the whole turn — the stream clears msg.text when a
+      // tool starts, so without this the line Boss just read vanished the moment
+      // work began (he caught it live). Every LATER text entry stays audit-only:
+      // rendering each model round made one turn look like several replies.
+      if (e.t === 'text') {
+        if (i === 0 && e.state !== 'superseded' && e.text.trim()) {
+          segs.push({ kind: 'text', text: e.text })
+        }
+        continue
+      }
       if (e.t === 'file') {
         segs.push({ kind: 'file', entry: e })
       } else {
@@ -783,7 +794,15 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
         else segs.push({ kind: 'steps', entries: [e] })
       }
     }
-    if (msg.text.trim()) segs.push({ kind: 'text', text: msg.text })
+    if (msg.text.trim()) {
+      const lead = segs[0]?.kind === 'text' ? segs[0].text.trim() : ''
+      // The server keeps the first line as a floor inside the final text, so
+      // strip it here rather than printing the same sentence twice.
+      const body = lead && msg.text.trim().startsWith(lead)
+        ? msg.text.trim().slice(lead.length).trim()
+        : msg.text
+      if (body.trim()) segs.push({ kind: 'text', text: body })
+    }
     return segs
   }, [msg.text, msg.timeline])
 
