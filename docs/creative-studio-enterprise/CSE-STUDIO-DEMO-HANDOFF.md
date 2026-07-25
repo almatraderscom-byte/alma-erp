@@ -140,9 +140,10 @@ Final live-preview captures and exact deployment identity are added after the fi
 | Gallery Compact materially denser | PASS |
 | Finishing exact action families | PASS |
 | Desktop/tablet/mobile document overflow | PASS — 1440/1024/390 `scrollWidth === clientWidth` |
-| V3 fixture/capability tests | PASS — 5/5 |
+| V3 fixture/capability tests | PASS — 6/6, including stale Agent plan invalidation |
 | Deterministic Agent operation tests | PASS — plan/fingerprint/apply/audit/rollback verified |
-| Full relevant Creative Studio suite | PASS — 28 files / 178 tests |
+| Full relevant Creative Studio suite | PASS — 28 files / 179 tests after the live-preview regression fix |
+| Live-preview regression correction | PASS — plan review is bound to its composition version; any version drift disables acknowledgement/apply and requires re-planning |
 | React/Next review | PASS — split client boundaries, stable keys/state, effect cleanup, semantic/accessibility review |
 | TypeScript | PASS — `npm run type-check` |
 | ESLint | PASS — targeted demo lint clean; full lint exits 0 with the repository's pre-existing warning baseline |
