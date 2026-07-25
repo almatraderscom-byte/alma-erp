@@ -169,6 +169,12 @@ export default function SoftphonePanel() {
         </div>
       ) : state.status === 'registered' ? (
         <>
+        {state.extension ? (
+          <p className="mt-3 rounded-lg bg-[#E07A5F]/10 px-3 py-2 text-sm text-white/70">
+            আপনার নিজের এক্সটেনশন <span className="font-semibold text-white">{state.extension}</span> —
+            সহকর্মীরা এই নম্বরে আপনাকে কল করবেন। নিজেকে কল করা যাবে না।
+          </p>
+        ) : null}
         {colleagues.length ? (
           <div className="mt-4">
             <p className="mb-2 text-xs uppercase tracking-wide text-white/40">সহকর্মী — ফ্রি কল</p>

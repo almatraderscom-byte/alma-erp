@@ -56,6 +56,8 @@ export function useSoftphone() {
   const sessionRef = useRef<Session | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const answeredRef = useRef(false)
+  const failureRef = useRef<string | null>(null)
 
   const patch = useCallback((p: Partial<SoftphoneState>) => setState((s) => ({ ...s, ...p })), [])
 
@@ -76,9 +78,11 @@ export function useSoftphone() {
 
   const wireSession = useCallback((session: Session, peer: string, incoming: boolean) => {
     sessionRef.current = session
-    patch({ peer, incoming, status: 'ringing', seconds: 0 })
+    patch({ peer, incoming, status: 'ringing', seconds: 0, error: null })
     session.stateChange.addListener((s) => {
       if (s === SessionState.Established) {
+        answeredRef.current = true
+        failureRef.current = null
         attachRemoteAudio(session)
         patch({ status: 'in-call', seconds: 0 })
         stopTimer()
@@ -86,9 +90,15 @@ export function useSoftphone() {
       }
       if (s === SessionState.Terminated) {
         stopTimer()
+        // Say WHY the call ended. Silence here is a real failure mode: dialling a colleague
+        // whose tab is closed simply did nothing, with no way to tell that from a broken
+        // phone (the owner hit exactly this — "1001 e test dilam kichui to ashlo na").
+        const reason = !answeredRef.current ? failureRef.current : null
         sessionRef.current = null
+        answeredRef.current = false
+        failureRef.current = null
         if (audioRef.current) audioRef.current.srcObject = null
-        patch({ status: 'registered', peer: null, incoming: false, seconds: 0 })
+        patch({ status: 'registered', peer: null, incoming: false, seconds: 0, error: reason })
       }
     })
   }, [attachRemoteAudio, patch, stopTimer])
@@ -179,7 +189,23 @@ export function useSoftphone() {
       sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
     })
     wireSession(inviter, digits, false)
-    await inviter.invite()
+    answeredRef.current = false
+    failureRef.current = null
+    await inviter.invite({
+      requestDelegate: {
+        // Turn SIP status codes into something a non-technical user can act on.
+        onReject: (response) => {
+          const code = response.message.statusCode
+          failureRef.current =
+            code === 404 ? 'এই নম্বর/এক্সটেনশন নেই'
+              : code === 480 || code === 408 ? 'কেউ ধরেননি — সহকর্মীর ফোন/ট্যাব বন্ধ থাকতে পারে'
+                : code === 486 ? 'লাইন ব্যস্ত'
+                  : code === 603 ? 'কল ফিরিয়ে দেওয়া হয়েছে'
+                    : code === 403 ? 'এই নম্বরে কল করার অনুমতি নেই'
+                      : `কল যায়নি (SIP ${code})`
+        },
+      },
+    })
   }, [patch, wireSession])
 
   useEffect(() => () => { void disconnect() }, [disconnect])
