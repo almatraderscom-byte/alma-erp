@@ -47,6 +47,7 @@ import {
   type AgentBusinessId,
 } from '@/lib/agent-api/business-context'
 import { shouldPersistIncomingMessage } from '@/agent/lib/continuation-policy'
+import { type ChatMode, DEFAULT_CHAT_MODE, normalizeChatMode } from '@/agent/lib/chat-mode'
 
 export const runtime = 'nodejs'
 // 800s (Pro plan + Fluid compute; Vercel allows up to 1800s). Raised from 300s
@@ -63,6 +64,8 @@ interface ChatBody {
   files?: FileRef[]
   projectId?: string
   personalMode?: boolean
+  /** Chat mode picker value, sent with the FIRST message of a new conversation. */
+  chatMode?: string
   source?: string
   /** Set by the voice session — the reply is read aloud (TTS), so the head should
    *  answer TTS-friendly and hand money/irreversible confirmations off to a tap. */
@@ -266,6 +269,9 @@ export async function POST(req: NextRequest) {
   let convSource: string | null = null
   let convProjectId: string | null = null
   let projectSystemInstructions: string | null = null
+  // Owner's chat mode picker (auto | direct | plan | plan_drive). Absent/unknown
+  // ⇒ 'auto', which is exactly today's behaviour.
+  let chatMode: ChatMode = normalizeChatMode(body.chatMode)
   let personalMode = body.personalMode === true
   let requestedProjectId = typeof body.projectId === 'string' ? body.projectId : null
   // Business scope for the turn — resolved from project or conversation row.
@@ -304,6 +310,7 @@ export async function POST(req: NextRequest) {
           projectId: true,
           businessId: true,
           modelId: true,
+          chatMode: true,
           project: { select: { name: true, systemInstructions: true, businessId: true } },
         },
       })
@@ -324,6 +331,7 @@ export async function POST(req: NextRequest) {
         }
       }
       conversationModelId = conv.modelId ?? defaultHeadModelId
+      chatMode = normalizeChatMode(conv.chatMode)
       personalMode = isPersonalProject(conv.project) || personalMode
       projectSystemInstructions = personalMode
         ? null
@@ -374,6 +382,9 @@ export async function POST(req: NextRequest) {
           data: {
             title,
             modelId: conversationModelId,
+            // The mode chip applies from the FIRST message of a new chat, not
+            // only after the conversation row exists.
+            chatMode,
             source,
             projectId: personalMode ? requestedProjectId : (requestedProjectId ?? null),
             businessId: personalMode ? null : businessId,
@@ -657,6 +668,7 @@ export async function POST(req: NextRequest) {
     // progress wrap-up (+ "continue" hint) instead of dying silently at the cap.
     deadlineAt: Date.now() + TURN_HARD_CAP_MS,
     approveModelSwitch: resume?.approve === true,
+    chatMode,
   }
 
   async function* runTurn() {

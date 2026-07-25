@@ -54,7 +54,8 @@ import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { logCost } from '@/agent/lib/cost-events'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
-import { isTurnCancelRequested } from '@/agent/lib/turn-status'
+import { isTurnCancelRequested, getTurnInstructionOrigin } from '@/agent/lib/turn-status'
+import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import {
@@ -339,6 +340,7 @@ async function* runAlternateProviderTurn(
 ): AsyncGenerator<AgentEvent> {
   const model = getModel(modelId)
   const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null } = options
+  const chatMode = normalizeChatMode(options.chatMode)
   const businessId: AgentBusinessId = personalMode
     ? 'ALMA_LIFESTYLE'
     : normalizeBusinessId(options.businessId)
@@ -835,8 +837,11 @@ async function* runAlternateProviderTurn(
     : (listenMode ? [] : ownerIntentTools.map((t) => t.name))
   const promptToolMismatch = promptToolNames.filter((n) => !shippedToolNames.includes(n))
 
+  // The mode's own rules ride with the project instructions. The words explain
+  // the mode to the head; the tool filter above is what actually enforces it.
+  const modeDirective = chatModeDirective(chatMode)
   const promptArgs = {
-    projectInstructions: projectSystemInstructions,
+    projectInstructions: [modeDirective, projectSystemInstructions].filter(Boolean).join('\n\n') || null,
     pinnedMemories,
     relevantMemories,
     recalledTurns,
@@ -1075,7 +1080,15 @@ async function* runAlternateProviderTurn(
   // (prompt rules alone don't hold the cheap heads back) that a feelings message
   // can't be answered with generate_image / ads / list_owner_todos etc. — the head
   // has nothing to call, so it must simply respond in words.
-  const neutralTools = listenMode ? [] : anthropicToolsToNeutral(cappedTools)
+  // Chat mode is enforced HERE, by withholding tools — a prompt rule is a
+  // request, an absent tool is a guarantee (same lesson as listen mode above).
+  // 'সরাসরি' loses the planning tools; 'প্ল্যান' loses everything that changes
+  // the world, so it can research and propose but not act.
+  const { getCapability } = await import('@/agent/tools/capability-manifest')
+  const isReadOnlyTool = (name: string) => getCapability(name)?.mode === 'read'
+  const neutralTools = listenMode
+    ? []
+    : filterToolsForMode(chatMode, anthropicToolsToNeutral(cappedTools), isReadOnlyTool)
   // Harness Gap 5 — schemas dynamically loaded by find_tool for the rest of this
   // turn (appended after the base list; execution guards unchanged).
   const dynamicNeutralTools: NeutralTool[] = []
@@ -1425,6 +1438,11 @@ async function* runAlternateProviderTurn(
   let budgetNudgeSent = false
   let cardStagedNudgeSent = false
   let deadlineNudgeSent = false
+  // S0 — whose instruction this turn executes. An unattended Plan-Driver step
+  // stamps 'owner_policy' on its turn row, so every tool call in this loop meets
+  // the autonomy ladder + money cap instead of inheriting Boss's own authority.
+  // One read per turn; null (the normal chat case) changes nothing.
+  const turnInstructionOrigin = await getTurnInstructionOrigin(turnId)
   let canceled = false
   /// Confirm cards yielded this turn — precondition for the card-shape
   /// verifiers (an emitted card legitimately carries the ask).
@@ -2099,6 +2117,7 @@ async function* runAlternateProviderTurn(
               model: model.id,
               toolName: call.name,
               attributes: call.input as Record<string, unknown>,
+              ...(turnInstructionOrigin ? { instructionOrigin: turnInstructionOrigin } : {}),
             })
           : null
         // Harness Gap 2 — generic pre-tool hooks (deterministic, fail-open),
@@ -2142,6 +2161,9 @@ async function* runAlternateProviderTurn(
             ownerVoicePref,
             voiceCallInstruction,
             callbackRequested,
+            // Unattended Plan-Driver step → 'owner_policy', so the autonomy
+            // ladder and the money cap apply to work Boss is not watching.
+            ...(turnInstructionOrigin ? { instructionOrigin: turnInstructionOrigin } : {}),
           })
         const durationMs = Date.now() - started
         // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).

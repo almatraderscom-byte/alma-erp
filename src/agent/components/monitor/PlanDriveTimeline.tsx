@@ -43,6 +43,22 @@ export interface PlanDriveView {
   attemptCount: number
   maxAttempts: number
   costTaka: number
+  /** Present only for a "fix everything" campaign — every number here is measured. */
+  grind?: GrindDriveView
+}
+
+export interface GrindDriveView {
+  campaignId: string
+  target: string
+  headline: string
+  total: number
+  fixed: number
+  open: number
+  claimedOnly: number
+  regressed: number
+  introduced: number
+  blockers: string[]
+  families: Array<{ family: string; total: number; fixed: number; open: number; mode: 'proposal' | 'apply' }>
 }
 
 export interface PlanDrivePanelData {
@@ -54,7 +70,7 @@ export interface PlanDrivePanelData {
   perPlanCapTaka: number
 }
 
-export type PlanDriveAction = 'resume' | 'add-budget' | 'abandon'
+export type PlanDriveAction = 'resume' | 'add-budget' | 'abandon' | 'family-auto' | 'family-stop'
 
 function relativeWhen(iso: string | null): string {
   if (!iso) return ''
@@ -99,7 +115,11 @@ function StepNode({ status }: { status: StepStatus }) {
 }
 
 /* ── A live working plan — vertical step ladder ───────────────────────────── */
-function WorkingPlan({ drive, onOpen }: { drive: PlanDriveView; onOpen?: (id: string) => void }) {
+function WorkingPlan({ drive, onOpen, onAction }: {
+  drive: PlanDriveView
+  onOpen?: (id: string) => void
+  onAction?: (planId: string, action: PlanDriveAction, family?: string) => void | Promise<void>
+}) {
   const [open, setOpen] = useState(false)
   const wake = relativeWhen(drive.nextTickAt)
   const pct = drive.totalCount > 0 ? Math.round((drive.doneCount / drive.totalCount) * 100) : 0
@@ -144,6 +164,9 @@ function WorkingPlan({ drive, onOpen }: { drive: PlanDriveView; onOpen?: (id: st
         <span className="ml-auto text-[#E07A5F]/80">{open ? 'গুটিয়ে নিন' : 'ধাপগুলো দেখুন'}</span>
       </div>
 
+      {/* campaign progress — measured counts, never claims */}
+      {drive.grind && <GrindBlock grind={drive.grind} planId={drive.planId} onAction={onAction} />}
+
       {/* step ladder */}
       <AnimatePresence initial={false}>
         {open && (
@@ -187,11 +210,72 @@ function WorkingPlan({ drive, onOpen }: { drive: PlanDriveView; onOpen?: (id: st
   )
 }
 
+/* ── Campaign progress — measured counts, and the two family buttons ──────── */
+function GrindBlock({ grind, planId, onAction }: {
+  grind: GrindDriveView
+  planId: string
+  onAction?: (planId: string, action: PlanDriveAction, family?: string) => void | Promise<void>
+}) {
+  const [busy, setBusy] = useState<string | null>(null)
+
+  async function run(action: PlanDriveAction, family: string) {
+    if (!onAction || busy) return
+    setBusy(`${action}:${family}`)
+    try {
+      await onAction(planId, action, family)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <div className="mx-3.5 mb-2.5 rounded-xl border border-border-subtle bg-card/60 px-3 py-2.5">
+      <p className="text-[10.5px] font-semibold text-cream/85">{grind.headline}</p>
+      {grind.regressed > 0 && (
+        <p className="mt-1 text-[9.5px] font-semibold text-red-500/90">
+          ⚠️ {grind.regressed} টা আবার ভেঙেছে — ঠিক করতে গিয়ে নতুন সমস্যা হয়েছে
+        </p>
+      )}
+      {grind.blockers.length > 0 && (
+        <p className="mt-1 text-[9.5px] text-muted">বাকি: {grind.blockers.join(' · ')}</p>
+      )}
+
+      <div className="mt-2 space-y-1.5">
+        {grind.families.slice(0, 8).map((f) => {
+          const pct = f.total > 0 ? Math.round((f.fixed / f.total) * 100) : 0
+          return (
+            <div key={f.family} className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-[9.5px] text-cream/70">{f.family}</span>
+              <span className="relative h-1 w-16 overflow-hidden rounded-full bg-border-subtle">
+                <span
+                  className="absolute inset-y-0 left-0 rounded-full bg-emerald-500/80"
+                  style={{ width: `${pct}%` }}
+                />
+              </span>
+              <span className="w-10 shrink-0 text-right text-[9px] tabular-nums text-muted">{f.fixed}/{f.total}</span>
+              {onAction && (
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => run(f.mode === 'apply' ? 'family-stop' : 'family-auto', f.family)}
+                  className="shrink-0 rounded-full border border-[#E07A5F]/30 px-2 py-0.5 text-[8.5px] font-bold text-[#E07A5F] disabled:opacity-50"
+                >
+                  {f.mode === 'apply' ? 'থামাও' : 'আর জিজ্ঞেস কোরো না'}
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 /* ── An attention card — loud, owner-action-first ─────────────────────────── */
 function AttentionCard({ drive, onOpen, onAction }: {
   drive: PlanDriveView
   onOpen?: (id: string) => void
-  onAction?: (planId: string, action: PlanDriveAction) => void | Promise<void>
+  onAction?: (planId: string, action: PlanDriveAction, family?: string) => void | Promise<void>
 }) {
   const isDecision = drive.phase === 'needs-decision'
   const [busy, setBusy] = useState<PlanDriveAction | null>(null)
@@ -279,7 +363,7 @@ function AttentionCard({ drive, onOpen, onAction }: {
 export function PlanDriveTimeline({ data, onOpenConversation, onAction }: {
   data: PlanDrivePanelData
   onOpenConversation?: (conversationId: string) => void
-  onAction?: (planId: string, action: PlanDriveAction) => void | Promise<void>
+  onAction?: (planId: string, action: PlanDriveAction, family?: string) => void | Promise<void>
 }) {
   const drives = data?.drives ?? []
   if (drives.length === 0) return null
@@ -338,7 +422,7 @@ export function PlanDriveTimeline({ data, onOpenConversation, onAction }: {
             <p className="px-1 text-[9.5px] font-bold uppercase tracking-[0.1em] text-emerald-600/70">▶ এখন কাজ করছে</p>
             <AnimatePresence initial={false}>
               {working.map((d) => (
-                <WorkingPlan key={d.planId} drive={d} onOpen={onOpenConversation} />
+                <WorkingPlan key={d.planId} drive={d} onOpen={onOpenConversation} onAction={onAction} />
               ))}
             </AnimatePresence>
           </div>

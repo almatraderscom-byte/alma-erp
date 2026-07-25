@@ -68,6 +68,7 @@ import { VISION_TOOLS } from './vision-tools'
 import { SIMULATE_TOOLS } from './simulate-tools'
 import { WORK_TODO_TOOLS } from './work-todo-tools'
 import { ORCHESTRATOR_TOOLS } from './orchestrator-tools'
+import { GRIND_TOOLS } from './grind-tools'
 import { AUTONOMY_TOOLS } from './autonomy-tools'
 import { HEARTBEAT_TOOLS } from './heartbeat-tools'
 import { BILLS_TOOLS } from './bills-tools'
@@ -528,6 +529,7 @@ export const TRADING_TOOLS: AgentTool[] = [
   ...PLAYBOOK_TOOLS,
   ...WORK_TODO_TOOLS,
   ...ORCHESTRATOR_TOOLS,
+  ...GRIND_TOOLS,
   ...AUTONOMY_TOOLS,
   ...HEARTBEAT_TOOLS,
   ...CS_AUTONOMY_TOOLS,
@@ -611,6 +613,7 @@ export const TOOLS: AgentTool[] = [
   ...BRAND_TOOLS,
   ...WORK_TODO_TOOLS,
   ...ORCHESTRATOR_TOOLS,
+  ...GRIND_TOOLS,
   ...AUTONOMY_TOOLS,
   ...HEARTBEAT_TOOLS,
   ...CS_AUTONOMY_TOOLS,

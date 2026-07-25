@@ -51,7 +51,12 @@ export interface JobDeliveryState {
   attempts: number
   since: string
   deliveredAt?: string
-  via?: 'head' | 'server_fallback'
+  /**
+   * 'server_spine' — the server posted the complete, bounded summary itself and
+   * the head only adds verified commentary on top (SEO delivery path). Distinct
+   * from 'server_fallback', which means the head said nothing at all.
+   */
+  via?: 'head' | 'server_fallback' | 'server_spine'
 }
 
 export function readDeliveryState(result: unknown): JobDeliveryState | null {
@@ -64,7 +69,7 @@ export function readDeliveryState(result: unknown): JobDeliveryState | null {
     attempts: Number(m.attempts) || 0,
     since: typeof m.since === 'string' ? m.since : new Date().toISOString(),
     deliveredAt: typeof m.deliveredAt === 'string' ? m.deliveredAt : undefined,
-    via: m.via === 'head' || m.via === 'server_fallback' ? m.via : undefined,
+    via: m.via === 'head' || m.via === 'server_fallback' || m.via === 'server_spine' ? m.via : undefined,
   }
 }
 

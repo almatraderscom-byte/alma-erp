@@ -605,6 +605,11 @@ export interface RunAgentTurnOptions {
    * Absent/null = no deadline (VPS worker turns are uncapped).
    */
   deadlineAt?: number | null
+  /**
+   * Per-conversation execution mode (owner's chat mode picker). Enforced by
+   * withholding tools — see chat-mode.ts. Absent = 'auto' (today's behaviour).
+   */
+  chatMode?: import('@/agent/lib/chat-mode').ChatMode | null
 }
 
 /** One-time nudge injected when the serverless deadline is close. */

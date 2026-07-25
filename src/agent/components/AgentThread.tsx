@@ -178,7 +178,7 @@ interface AgentThreadProps {
   homePanel?: ReactNode
   /** Plan-Drive data — drives render INLINE inside the relevant conversation turn. */
   planDrive?: PlanDrivePanelData | null
-  onPlanDriveAction?: (planId: string, action: PlanDriveAction) => void | Promise<void>
+  onPlanDriveAction?: (planId: string, action: PlanDriveAction, family?: string) => void | Promise<void>
   onPlanDriveOpen?: (conversationId: string) => void
 }
 

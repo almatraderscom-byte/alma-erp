@@ -45,6 +45,7 @@ import { LOCATION_TOOLS } from './location-tools'
 import { CAMERA_TOOLS } from './camera-tools'
 import { WORK_TODO_TOOLS } from './work-todo-tools'
 import { ORCHESTRATOR_TOOLS } from './orchestrator-tools'
+import { GRIND_TOOLS } from './grind-tools'
 import { AUTONOMY_TOOLS } from './autonomy-tools'
 import { HEARTBEAT_TOOLS } from './heartbeat-tools'
 import { VISION_TOOLS } from './vision-tools'
@@ -107,6 +108,10 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     ...LEARNING_TOOLS,
     ...SALAH_TOOLS,
     ...ORCHESTRATOR_TOOLS,
+    // Grind engine: start_fix_campaign / record_root_cause / get_fix_campaign.
+    // Always-on with the other plan machinery — "সব ঠিক করো" must not need a
+    // discovery hop before the campaign can even be started.
+    ...GRIND_TOOLS,
     // Autonomy control panel: check_autonomy / set_autonomy_policy / undo_action.
     // Always-on so the owner can inspect or tune the agent's autonomy (and undo a
     // self-done action) from any chat without a keyword unlocking the group.
