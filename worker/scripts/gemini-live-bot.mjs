@@ -426,6 +426,11 @@ class Call {
   // than stutter. Clock-scheduled (nextT) so a busy event loop just catches up.
   startDrain() {
     const FB = 160, FMS = 20, CUSHION = 6 // ~120 ms of audio before (re)starting playout
+    // REVERTED 2026-07-25. Removing this pacing for the SIP path looked right on paper (one
+    // clock instead of two) and measured well on a SIMULATED call, but on the owner's real
+    // call it made things WORSE — speech cut out and the call dropped. Handing a whole
+    // Gemini utterance over at once is not something the downstream path handles gracefully.
+    // The owner's ear is the measurement that counts; the simulated metric was not.
     this.drainer = setInterval(() => {
       if (this.closed) return
       const now = Date.now()

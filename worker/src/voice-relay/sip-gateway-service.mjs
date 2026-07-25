@@ -161,6 +161,47 @@ async function persistCdr(id) {
 }
 
 /**
+ * Send a call recording to Telegram as PLAYABLE audio.
+ *
+ * A link is not good enough: the owner asked to hear the call from inside Telegram without
+ * opening a browser and signing in. Converted to a small mono mp3 first — an 8 kHz WAV is
+ * ~16 KB/s and Telegram renders mp3 with a proper player.
+ *
+ * Sent from the gateway rather than the app because the audio already lives here: no upload,
+ * no round trip, and it still works if Vercel is unreachable.
+ */
+async function sendRecordingToTelegram(wavPath, { title, seconds, caption }) {
+  const token = process.env.ASSISTANT_BOT_TOKEN
+  const chatId = process.env.TELEGRAM_OWNER_CHAT_ID
+  if (!token || !chatId) { log('telegram recording skipped: bot token / chat id missing'); return false }
+  const mp3Path = `${wavPath.replace(/\.wav$/, '')}.mp3`
+  try {
+    // 24 kbps mono is transparent for 8 kHz telephony speech and keeps a long call small.
+    await execFileAsync('ffmpeg', ['-y', '-loglevel', 'error', '-i', wavPath, '-codec:a', 'libmp3lame', '-b:a', '24k', '-ac', '1', mp3Path], { timeout: 120_000 })
+    const audio = await readFile(mp3Path)
+    const form = new FormData()
+    form.append('chat_id', String(chatId))
+    form.append('title', title || 'ALMA কল')
+    form.append('performer', 'ALMA')
+    if (seconds) form.append('duration', String(seconds))
+    if (caption) form.append('caption', String(caption).slice(0, 1000))
+    form.append('audio', new Blob([audio], { type: 'audio/mpeg' }), `${(title || 'call').replace(/[^\w.-]/g, '_')}.mp3`)
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendAudio`, {
+      method: 'POST', body: form, signal: AbortSignal.timeout(120_000),
+    })
+    const ok = res.ok
+    if (!ok) log(`telegram sendAudio HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 120)}`)
+    else log('recording sent to Telegram as audio')
+    return ok
+  } catch (err) {
+    log('telegram recording failed:', err?.message)
+    return false
+  } finally {
+    await unlink(mp3Path).catch(() => {})
+  }
+}
+
+/**
  * Put a finished recording in Supabase and return a URL the owner can open.
  * Signed for a long window rather than made public: a phone call is private business
  * content, so the link should be shareable with him without making the bucket readable.
@@ -507,12 +548,21 @@ class Call {
         const buf = await readFile(file)
         // A near-empty WAV is a call where nothing was ever said — not worth storing.
         if (buf.length > 8000) {
+          const secs = Math.max(0, Math.round((buf.length - 44) / (8000 * 2)))
           const url = await uploadRecording(name, buf)
           if (url) {
-            const secs = Math.max(0, Math.round((buf.length - 44) / (8000 * 2)))
             putCdr(this.channelId, { recordingUrl: url, recordingSecs: secs })
             log(this.channelId, `recording stored (${secs}s)`)
           }
+          // Deliver the audio itself, whether or not the upload worked — hearing the call is
+          // the point, and a failed upload should not also cost the owner the recording.
+          const who = this.params?.caller || this.params?.recipientName || cdr.get(this.channelId)?.to || 'কল'
+          const mins = Math.floor(secs / 60)
+          await sendRecordingToTelegram(file, {
+            title: `${who} — ${mins ? `${mins}ম ` : ''}${secs % 60}সে`,
+            seconds: secs,
+            caption: `${this.inbound ? 'ইনকামিং' : 'আউটগোয়িং'} কল • ${who} • ${secs} সেকেন্ড`,
+          })
         }
         await unlink(file).catch(() => {})
         putCdr(this.channelId, { _pendingRecording: false })
@@ -612,6 +662,13 @@ class Call {
             }).catch((err) => log(this.channelId, 'voicemail notify failed:', err?.message))
             log(this.channelId, `voicemail delivered (${secs}s)`)
           }
+          // The message itself, playable in Telegram — a voicemail the owner has to go and
+          // fetch from a link is a voicemail he will hear late.
+          await sendRecordingToTelegram(file, {
+            title: `ভয়েসমেইল — ${this.params?.caller || 'অজানা'}`,
+            seconds: secs,
+            caption: `ভয়েসমেইল • ${this.params?.caller || 'অজানা নম্বর'} • ${secs} সেকেন্ড — সহকারী কলটি ধরতে পারেনি`,
+          })
         } else {
           log(this.channelId, 'voicemail too short — discarded')
         }
@@ -1271,12 +1328,20 @@ const ctrlServer = http.createServer(async (req, res) => {
   }
   if (!m) return json(res, 404, { error: 'not found' })
   if (!authOk(req)) {
-    // Somebody is trying keys against a call-control API. Worth knowing about, but alert at
-    // most once an hour so a scanner cannot turn this into its own notification flood.
+    // Log WHO, always: without a source there is no way to tell a background scanner from
+    // our own app failing to authenticate, and those need opposite responses.
+    const src = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '?'
+    log(`unauthorized ${req.method} ${url.pathname} from ${src} ua=${String(req.headers['user-agent'] || '-').slice(0, 60)}`)
     authFailures++
-    if (authFailures >= 5 && Date.now() - lastAuthAlert > 3_600_000) {
-      lastAuthAlert = Date.now(); authFailures = 0
-      void alertOwner('ফোন সিস্টেমে অননুমোদিত চেষ্টা', 'কল-কন্ট্রোলে ভুল পাসওয়ার্ড দিয়ে বারবার ঢোকার চেষ্টা হচ্ছে।')
+    // This endpoint is on the public internet, so it WILL be probed. Alerting on that spends
+    // the owner's notification budget — his tier-2 limit was actually exhausted by this alarm
+    // (6/5 used), which could have suppressed a real business alert. So: a much higher bar,
+    // and at most once every six hours.
+    if (authFailures >= 50 && Date.now() - lastAuthAlert > 6 * 3_600_000) {
+      lastAuthAlert = Date.now()
+      const count = authFailures
+      authFailures = 0
+      void alertOwner('ফোন সিস্টেমে বারবার অননুমোদিত চেষ্টা', `কল-কন্ট্রোলে ${count} বার ভুল পরিচয় দিয়ে ঢোকার চেষ্টা হয়েছে। সিস্টেম প্রতিবার আটকে দিয়েছে — কিছু ভাঙেনি।`)
     }
     return json(res, 401, { error: 'unauthorized' })
   }

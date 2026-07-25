@@ -114,8 +114,13 @@ async function reportSipCallOutcome(row: {
   try {
     const res = await fetch(`${base}/api/v1/call/${row.callSid}`, {
       headers: {
-        'X-Authorization': process.env.SIP_GATEWAY_KEY ?? '',
-        'X-Authorization-Secret': process.env.SIP_GATEWAY_SECRET ?? '',
+        // The shared internal token both machines already hold. This poll ran on the old
+        // key/secret pair, which was never provisioned here — so every sweep 401'd and set
+        // off the gateway's intruder alarm, which then ate the owner's alert budget. The
+        // credential used to ASK about a call must match the one used to place it.
+        Authorization: `Bearer ${process.env.AGENT_INTERNAL_TOKEN ?? ''}`,
+        ...(process.env.SIP_GATEWAY_KEY ? { 'X-Authorization': process.env.SIP_GATEWAY_KEY } : {}),
+        ...(process.env.SIP_GATEWAY_SECRET ? { 'X-Authorization-Secret': process.env.SIP_GATEWAY_SECRET } : {}),
       },
       signal: AbortSignal.timeout(12_000),
     })
