@@ -101,3 +101,38 @@ describe('turn-loop policy — no hidden duplicate work', () => {
     })).toBe(false)
   })
 })
+
+describe('a read-only turn that ran NO tool must not end on an announcement', () => {
+  // Owner hit this live on the preview 2026-07-25: the reply was exactly
+  // "বস, … সঠিক ফোন নম্বর বের করতে list_family_contacts চালাচ্ছি।" and the turn
+  // ended there. `ownerRequestedAction` was false (a read question), so the
+  // guard exempted it.
+  it('nudges when zero tools ran, even without a mutation intent', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, সঠিক ফোন নম্বর বের করতে list_family_contacts চালাচ্ছি।',
+      toolRecords: [],
+      ownerRequestedAction: false,
+    })).toBe(true)
+  })
+
+  it('still exempts a finished read turn that already used a tool', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, আজ ৫টা অর্ডার পেন্ডিং। পরের ধাপে dispatch দেখব।',
+      toolRecords: [{ status: 'success' }],
+      ownerRequestedAction: false,
+    })).toBe(false)
+  })
+
+  it('still respects the terminal-reply guards (question / failure)', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, এখনই চালাব কি?',
+      toolRecords: [],
+      ownerRequestedAction: false,
+    })).toBe(false)
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, চালাতে পারিনি — সংযোগ নেই।',
+      toolRecords: [],
+      ownerRequestedAction: false,
+    })).toBe(false)
+  })
+})

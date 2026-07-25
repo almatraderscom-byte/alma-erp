@@ -44,7 +44,13 @@ export function shouldNudgeAdapterIntent(input: {
   hasAskCard?: boolean
   ownerRequestedAction: boolean
 }): boolean {
-  if (!input.ownerRequestedAction) return false
+  // A turn that ran NO tool at all and signs off with "… চালাচ্ছি / দেখছি" is
+  // unfinished by definition — whether or not the message asked for a mutation.
+  // The old `ownerRequestedAction` requirement made read-only turns exempt, so a
+  // head that announced a lookup and stopped ended the turn there (owner hit
+  // this live 2026-07-25: "list_family_contacts চালাচ্ছি।" and nothing else).
+  const noToolRan = input.toolRecords.length === 0
+  if (!input.ownerRequestedAction && !noToolRan) return false
   if (input.hasAskCard || isTerminalReply(input.text)) return false
   const latestTool = input.toolRecords.at(-1)
   if (latestTool?.status === 'error') return false

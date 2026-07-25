@@ -221,6 +221,15 @@ const CARD_STAGED_WRAPUP_NUDGE =
   'এক লাইনে জানাও যে অনুমোদনের অপেক্ষায় আছ, তারপর থামো। ' +
   'Boss সিদ্ধান্ত দিলে পরের টার্নে বাকিটা হবে।'
 
+// Speak-first (owner rule 2026-07-25): the ONLY job of the preamble round. It
+// runs with no tools and no thinking, so the instruction has to be narrow — one
+// line, no numbers, no answer — or a strong head will try to do the whole task
+// from memory here, which is exactly the fabrication we gate against everywhere.
+const SPEAK_FIRST_INSTRUCTION =
+  '[প্রথম লাইন — শুধু এইটুকু] Boss-কে এখনই এক লাইনে বলো তুমি তাঁর কথাটা কী বুঝেছ আর এখন কোথায়/কী দেখতে যাচ্ছ। ' +
+  'নিয়ম: ঠিক এক লাইন, "বস," দিয়ে শুরু; কোনো সংখ্যা, উত্তর, তালিকা বা প্রতিশ্রুতি নয় (ডেটা এখনো দেখোনি); ' +
+  '"ঠিক আছে/অবশ্যই/নিশ্চয়ই" দিয়ে শুরু নয়। কাজটা এর পরেই করবে — এখন শুধু ওই এক লাইন লেখো।'
+
 const MARKETING_HEAD_WRAPUP_NUDGE =
   'টুল ব্যবহারের বাজেট শেষ। এখন আর নতুন টুল কল কোরো না। ' +
   'হাতে যা তথ্য আছে তা দিয়েই মার্কেটিং কাজটা নিজে শেষ করো এবং সংক্ষেপে চূড়ান্ত উত্তর দাও। ' +
@@ -1285,6 +1294,10 @@ async function* runAlternateProviderTurn(
   // Boss before it started running tools? One backstop nudge per turn.
   let preambleSpoken = false
   let preambleNudgeSent = false
+  // The spoken first line, kept as a FLOOR for finalText: a verification or
+  // act-now retry resets the draft, and without this the line Boss already saw
+  // would vanish from the persisted message on reload.
+  let preambleText = ''
   // Speak-first: the ground-before-answer guarantee now runs AFTER round 0
   // instead of forcing a tool call that silences it. One retry per turn.
   let groundingNudgeSent = false
@@ -1393,6 +1406,68 @@ async function* runAlternateProviderTurn(
     finalText = g.replyText
     timeline.push({ t: 'text', text: finalText })
     yield { type: 'text_delta', delta: finalText }
+  }
+
+  // ── SPEAK FIRST, THEN WORK (owner rule 2026-07-25) ─────────────────────────
+  // Boss wants the Claude-app shape: read the message, SAY what you understood,
+  // then work step by step. Two rounds of preview testing proved a prompt rule
+  // cannot deliver it — with a tool obviously needed, every head (Grok, DeepSeek,
+  // Qwen, Sonnet) goes straight to the tool call and speaks only afterwards, so
+  // Boss watches a spinner and has no idea whether his message landed.
+  // So the harness guarantees it instead of hoping for it: one short tool-free
+  // round whose ONLY job is that line. Thinking is off and no tools are offered,
+  // so it is a few dozen output tokens against an already-cached prefix; the
+  // line is streamed instantly and seeded into the transcript, so the model does
+  // not repeat it. Same behaviour on every model — the harness, not the model.
+  // Skipped for listen mode, tool-free turns, internal continuations and short
+  // acknowledgements, which answer instantly anyway.
+  if (
+    speakFirstEnabled()
+    && !listenMode
+    && model.supportsTools
+    && neutralTools.length > 0
+    && maxIterations > 0
+    && !internalTurn
+    && lastUserText.trim().length >= 12
+    && !isContinuationText(lastUserText)
+    && !signal?.aborted
+  ) {
+    try {
+      let line = ''
+      for await (const ev of adapter.streamTurn({
+        apiModel: model.apiModel,
+        system: systemText,
+        messages: [...messages, { role: 'user', content: SPEAK_FIRST_INSTRUCTION }],
+        tools: [],
+        thinking: 'none',
+        signal,
+        cacheKey: conversationId,
+      })) {
+        if (ev.type === 'text_delta') {
+          line += ev.text
+          yield { type: 'text_delta', delta: ev.text }
+        } else if (ev.type === 'usage') {
+          totalInputTokens += ev.inputTokens
+          totalOutputTokens += ev.outputTokens
+          totalCacheCreationTokens += ev.cacheWrite ?? 0
+          totalCacheReadTokens += ev.cacheRead ?? 0
+          apiRounds++
+        }
+      }
+      line = line.trim()
+      if (line) {
+        preambleSpoken = true
+        preambleText = line
+        finalText = line
+        timeline.push({ t: 'text', text: line })
+        // In the transcript as the assistant's own words — it continues from
+        // here instead of greeting Boss a second time.
+        messages = [...messages, { role: 'assistant', content: line }]
+      }
+    } catch (err) {
+      // A preamble failure must never cost Boss the actual answer.
+      console.warn('[run-owner-turn] speak-first failed open:', err instanceof Error ? err.message : err)
+    }
   }
 
   try {
@@ -1505,12 +1580,15 @@ async function* runAlternateProviderTurn(
         ownerRequirements.groundingRequired && iteration === 0 && !roundBoundToolName
           && iterationTools.length > 0
           && !toolRecords.some((r) => r.status === 'success')
-      // Speak-first (owner rule 2026-07-25): `tool_choice: 'required'` is what
-      // MECHANICALLY silenced round 0 — a forced tool call leaves the provider no
-      // room for text, so Boss saw a spinner instead of "বস, … বুঝেছি — … দেখছি"।
-      // Round 0 goes back to 'auto' and the grounding guarantee moves AFTER the
-      // round (see the retry below): speak, then read, then answer.
-      const forceGroundingToolChoice = groundingRequiredThisRound && !speakFirstEnabled()
+      // Speak-first note: `tool_choice: 'required'` is what MECHANICALLY silences
+      // round 0 — a forced tool call leaves the provider no room for text. The
+      // first attempt at this fix dropped the force so the head could speak, and
+      // that REGRESSED the turn loop: a text-only round 0 means calls.length === 0,
+      // which ENDS the turn, so the head announced "… চালাচ্ছি" and stopped
+      // (owner hit it live in the preview minutes after deploy).
+      // The preamble now has its own dedicated round BEFORE this loop, so Boss
+      // already has his line and the force can stay exactly as it was.
+      const forceGroundingToolChoice = groundingRequiredThisRound
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
@@ -1682,7 +1760,7 @@ async function* runAlternateProviderTurn(
             { role: 'assistant', content: iterationText },
             { role: 'user', content: ADAPTER_ACT_NOW_NUDGE },
           ]
-          finalText = ''
+          finalText = preambleText
           continue
         }
         // Speak-first grounding retry (owner rule 2026-07-25): round 0 is no
@@ -1763,7 +1841,7 @@ async function* runAlternateProviderTurn(
               if (te.t === 'text') { te.state = 'superseded'; break }
             }
             timeline.push({ t: 'verify', attempt: verifyRetries, max: MAX_VERIFY_RETRIES })
-            finalText = ''
+            finalText = preambleText
             messages = [
               ...messages,
               { role: 'assistant', content: iterationText },
