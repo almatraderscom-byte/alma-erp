@@ -277,6 +277,25 @@ describe('speak-first: the spoken FIRST line leads the reply (owner rule 2026-07
     expect(p.blocks[3]).toMatchObject({ type: 'prose', text: answer, state: 'final' })
   })
 
+  it('places the line AFTER the first thinking row, not above it (owner rule 2026-07-26)', () => {
+    // The agent did not answer without thinking first, so showing the reply
+    // above its own reasoning reads backwards: thought → line → the rest.
+    const p = buildAgentPresentationV1({
+      messageId: MSG,
+      content: `${lead}\n\n${answer}`,
+      timeline: [
+        { t: 'text', text: lead, lead: true },
+        { t: 'think', text: 'The user wants last 7 days ad performance data.' },
+        { t: 'tool', name: 'recommend_ad_actions', ok: true },
+        { t: 'text', text: answer },
+      ],
+    })
+    expect(p.blocks.map((b) => b.type)).toEqual(['activity', 'prose', 'activity', 'prose'])
+    expect(p.blocks[0]).toMatchObject({ activityType: 'thinking' })
+    expect(p.blocks[1]).toMatchObject({ type: 'prose', text: lead })
+    expect(p.blocks[3]).toMatchObject({ type: 'prose', text: answer })
+  })
+
   it('a turn with ONLY the lead shows it once, not twice', () => {
     const p = buildAgentPresentationV1({
       messageId: MSG,
