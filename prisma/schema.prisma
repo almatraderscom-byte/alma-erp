@@ -2602,6 +2602,7 @@ model CreativeBrandProfile {
   roleAssignments           CreativeStudioRoleAssignment[]
   reviewComments            CreativeAssetReviewComment[]
   reviewEvents              CreativeAssetReviewEvent[]
+  publishDeliveries         CreativePublishDelivery[]
 
   @@unique([ownerId, name])
   @@index([ownerId, updatedAt(sort: Desc)])
@@ -2609,27 +2610,29 @@ model CreativeBrandProfile {
 }
 
 model CreativeBrandRecipe {
-  id              String                 @id @default(uuid())
-  ownerId         String                 @map("owner_id")
-  brandProfileId  String                 @map("brand_profile_id")
-  brandProfile    CreativeBrandProfile   @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
-  recipeKey       String                 @map("recipe_key")
-  version         Int                    @default(1)
-  name            String
-  sceneSubset     Json                   @default("[]") @map("scene_subset")
-  modelRoles      Json                   @default("[]") @map("model_roles")
-  finishTheme     String                 @default("default") @map("finish_theme")
-  captionTone     String                 @default("premium") @map("caption_tone")
-  aspectPack      Json                   @default("[\"4:5\"]") @map("aspect_pack")
-  musicVibe       String                 @default("premium") @map("music_vibe")
-  qcLevel         String                 @default("strict") @map("qc_level")
-  spendCeilingBdt Int                    @default(0) @map("spend_ceiling_bdt")
-  lockedAt        DateTime?              @map("locked_at")
-  lockedById      String?                @map("locked_by_id")
-  createdAt       DateTime               @default(now()) @map("created_at")
-  updatedAt       DateTime               @updatedAt @map("updated_at")
-  projects        CreativeProject[]      @relation("CreativeProjectRecipe")
-  assetVersions   CreativeAssetVersion[]
+  id                 String                            @id @default(uuid())
+  ownerId            String                            @map("owner_id")
+  brandProfileId     String                            @map("brand_profile_id")
+  brandProfile       CreativeBrandProfile              @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
+  recipeKey          String                            @map("recipe_key")
+  version            Int                               @default(1)
+  name               String
+  sceneSubset        Json                              @default("[]") @map("scene_subset")
+  modelRoles         Json                              @default("[]") @map("model_roles")
+  finishTheme        String                            @default("default") @map("finish_theme")
+  captionTone        String                            @default("premium") @map("caption_tone")
+  aspectPack         Json                              @default("[\"4:5\"]") @map("aspect_pack")
+  musicVibe          String                            @default("premium") @map("music_vibe")
+  qcLevel            String                            @default("strict") @map("qc_level")
+  spendCeilingBdt    Int                               @default(0) @map("spend_ceiling_bdt")
+  lockedAt           DateTime?                         @map("locked_at")
+  lockedById         String?                           @map("locked_by_id")
+  createdAt          DateTime                          @default(now()) @map("created_at")
+  updatedAt          DateTime                          @updatedAt @map("updated_at")
+  projects           CreativeProject[]                 @relation("CreativeProjectRecipe")
+  assetVersions      CreativeAssetVersion[]
+  publishDeliveries  CreativePublishDelivery[]
+  performanceWeights CreativeRecipePerformanceWeight[]
 
   @@unique([brandProfileId, recipeKey, version])
   @@index([ownerId, updatedAt(sort: Desc)])
@@ -2638,23 +2641,24 @@ model CreativeBrandRecipe {
 }
 
 model CreativeProject {
-  id                 String                 @id @default(uuid())
-  ownerId            String                 @map("owner_id")
+  id                 String                    @id @default(uuid())
+  ownerId            String                    @map("owner_id")
   name               String
-  description        String?                @db.Text
-  brandProfileId     String?                @map("brand_profile_id")
-  brandProfile       CreativeBrandProfile?  @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
-  currentRecipeId    String?                @map("current_recipe_id")
-  currentRecipe      CreativeBrandRecipe?   @relation("CreativeProjectRecipe", fields: [currentRecipeId], references: [id], onDelete: SetNull)
-  productCode        String?                @map("product_code")
-  productName        String?                @map("product_name")
-  productPriceBdt    Int?                   @map("product_price_bdt")
-  productSourceImage String?                @map("product_source_image") @db.Text
-  defaultFolder      String                 @default("Unsorted") @map("default_folder")
-  archivedAt         DateTime?              @map("archived_at")
-  createdAt          DateTime               @default(now()) @map("created_at")
-  updatedAt          DateTime               @updatedAt @map("updated_at")
+  description        String?                   @db.Text
+  brandProfileId     String?                   @map("brand_profile_id")
+  brandProfile       CreativeBrandProfile?     @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
+  currentRecipeId    String?                   @map("current_recipe_id")
+  currentRecipe      CreativeBrandRecipe?      @relation("CreativeProjectRecipe", fields: [currentRecipeId], references: [id], onDelete: SetNull)
+  productCode        String?                   @map("product_code")
+  productName        String?                   @map("product_name")
+  productPriceBdt    Int?                      @map("product_price_bdt")
+  productSourceImage String?                   @map("product_source_image") @db.Text
+  defaultFolder      String                    @default("Unsorted") @map("default_folder")
+  archivedAt         DateTime?                 @map("archived_at")
+  createdAt          DateTime                  @default(now()) @map("created_at")
+  updatedAt          DateTime                  @updatedAt @map("updated_at")
   assets             CreativeProjectAsset[]
+  publishDeliveries  CreativePublishDelivery[]
 
   @@index([ownerId, archivedAt, updatedAt(sort: Desc)])
   @@index([brandProfileId])
@@ -2681,6 +2685,7 @@ model CreativeProjectAsset {
   tagAssignments    CreativeProjectAssetTag[]
   reviewComments    CreativeAssetReviewComment[]
   reviewEvents      CreativeAssetReviewEvent[]
+  publishDeliveries CreativePublishDelivery[]
 
   @@unique([projectId, pendingActionId])
   @@index([projectId, folder, updatedAt(sort: Desc)])
@@ -2690,24 +2695,27 @@ model CreativeProjectAsset {
 }
 
 model CreativeAssetVersion {
-  id            String                 @id @default(uuid())
-  assetId       String                 @map("asset_id")
-  asset         CreativeProjectAsset   @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  version       Int
-  storagePath   String?                @map("storage_path") @db.Text
-  recipeId      String?                @map("recipe_id")
-  recipe        CreativeBrandRecipe?   @relation(fields: [recipeId], references: [id], onDelete: SetNull)
-  recipeVersion Int?                   @map("recipe_version")
-  provider      String?
-  engine        String?
-  jobId         String?                @map("job_id")
-  costBdt       Int                    @default(0) @map("cost_bdt")
-  costUsd       Decimal?               @map("cost_usd") @db.Decimal(12, 6)
-  qc            Json?
-  metadata      Json                   @default("{}")
-  createdById   String                 @map("created_by_id")
-  createdAt     DateTime               @default(now()) @map("created_at")
-  lineage       CreativeAssetLineage[]
+  id                   String                        @id @default(uuid())
+  assetId              String                        @map("asset_id")
+  asset                CreativeProjectAsset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  version              Int
+  storagePath          String?                       @map("storage_path") @db.Text
+  recipeId             String?                       @map("recipe_id")
+  recipe               CreativeBrandRecipe?          @relation(fields: [recipeId], references: [id], onDelete: SetNull)
+  recipeVersion        Int?                          @map("recipe_version")
+  provider             String?
+  engine               String?
+  jobId                String?                       @map("job_id")
+  costBdt              Int                           @default(0) @map("cost_bdt")
+  costUsd              Decimal?                      @map("cost_usd") @db.Decimal(12, 6)
+  qc                   Json?
+  metadata             Json                          @default("{}")
+  createdById          String                        @map("created_by_id")
+  createdAt            DateTime                      @default(now()) @map("created_at")
+  lineage              CreativeAssetLineage[]
+  publishDeliveries    CreativePublishDelivery[]
+  performanceSnapshots CreativePerformanceSnapshot[]
+  archiveReceipts      CreativeArchiveReceipt[]
 
   @@unique([assetId, version])
   @@index([recipeId])
@@ -2826,6 +2834,179 @@ model CreativeAssetReviewEvent {
   @@index([brandProfileId, createdAt])
   @@index([actorId, createdAt])
   @@map("creative_asset_review_events")
+}
+
+// ─── Creative Studio Enterprise CSE7: distribution and attribution ─────────
+// Publishing is an owner-only, approved-version effect. The delivery row is the
+// exactly-once ledger: an ambiguous Meta outcome is never retried automatically.
+
+enum CreativePublishPlatform {
+  FACEBOOK
+  INSTAGRAM
+}
+
+enum CreativePublishStatus {
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED_RETRYABLE
+  NEEDS_REVIEW
+  CANCELED
+}
+
+model CreativePublishDelivery {
+  id                    String                        @id @default(uuid())
+  ownerId               String                        @map("owner_id")
+  brandProfileId        String                        @map("brand_profile_id")
+  brandProfile          CreativeBrandProfile          @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
+  projectId             String                        @map("project_id")
+  project               CreativeProject               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  assetId               String                        @map("asset_id")
+  asset                 CreativeProjectAsset          @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  assetVersionId        String                        @map("asset_version_id")
+  assetVersion          CreativeAssetVersion          @relation(fields: [assetVersionId], references: [id], onDelete: Restrict)
+  recipeId              String?                       @map("recipe_id")
+  recipe                CreativeBrandRecipe?          @relation(fields: [recipeId], references: [id], onDelete: SetNull)
+  campaignPackId        String?                       @map("campaign_pack_id")
+  sceneKey              String                        @default("unclassified") @map("scene_key")
+  approvedReviewEventId String                        @map("approved_review_event_id")
+  createdById           String                        @map("created_by_id")
+  platform              CreativePublishPlatform
+  pageRef               String                        @map("page_ref")
+  caption               String                        @db.Text
+  mediaStoragePath      String                        @map("media_storage_path") @db.Text
+  adId                  String?                       @map("ad_id")
+  idempotencyKey        String                        @map("idempotency_key")
+  requestFingerprint    String                        @map("request_fingerprint")
+  status                CreativePublishStatus         @default(SCHEDULED)
+  scheduledFor          DateTime                      @map("scheduled_for")
+  attempts              Int                           @default(0)
+  leaseStartedAt        DateTime?                     @map("lease_started_at")
+  nextAttemptAt         DateTime?                     @map("next_attempt_at")
+  externalPostId        String?                       @map("external_post_id")
+  permalinkUrl          String?                       @map("permalink_url") @db.Text
+  verifiedAt            DateTime?                     @map("verified_at")
+  publishedAt           DateTime?                     @map("published_at")
+  receipt               Json                          @default("{}")
+  lastErrorCode         String?                       @map("last_error_code")
+  lastErrorMessage      String?                       @map("last_error_message") @db.Text
+  metricsLastSyncedAt   DateTime?                     @map("metrics_last_synced_at")
+  metricsNextSyncAt     DateTime?                     @map("metrics_next_sync_at")
+  metricsLastError      String?                       @map("metrics_last_error") @db.Text
+  costUsd               Decimal                       @default(0) @map("cost_usd") @db.Decimal(10, 6)
+  createdAt             DateTime                      @default(now()) @map("created_at")
+  updatedAt             DateTime                      @updatedAt @map("updated_at")
+  performanceSnapshots  CreativePerformanceSnapshot[]
+
+  @@unique([ownerId, idempotencyKey])
+  @@index([status, scheduledFor])
+  @@index([ownerId, createdAt(sort: Desc)])
+  @@index([brandProfileId, createdAt(sort: Desc)])
+  @@index([projectId, createdAt(sort: Desc)])
+  @@index([assetId, createdAt(sort: Desc)])
+  @@index([campaignPackId])
+  @@index([metricsNextSyncAt])
+  @@map("creative_publish_deliveries")
+}
+
+model CreativePerformanceSnapshot {
+  id                String                             @id @default(uuid())
+  deliveryId        String                             @map("delivery_id")
+  delivery          CreativePublishDelivery            @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+  assetVersionId    String                             @map("asset_version_id")
+  assetVersion      CreativeAssetVersion               @relation(fields: [assetVersionId], references: [id], onDelete: Restrict)
+  campaignPackId    String?                            @map("campaign_pack_id")
+  externalObjectId  String                             @map("external_object_id")
+  source            String                             @default("meta_graph")
+  sourceFingerprint String                             @unique @map("source_fingerprint")
+  reach             Int                                @default(0)
+  impressions       Int                                @default(0)
+  engagements       Int                                @default(0)
+  clicks            Int                                @default(0)
+  conversions       Int                                @default(0)
+  spendAmount       Decimal?                           @map("spend_amount") @db.Decimal(14, 2)
+  spendCurrency     String?                            @map("spend_currency")
+  revenueBdt        Int?                               @map("revenue_bdt")
+  rawMetrics        Json                               @default("{}") @map("raw_metrics")
+  capturedAt        DateTime                           @default(now()) @map("captured_at")
+  feedbackEvents    CreativePerformanceFeedbackEvent[]
+
+  @@index([deliveryId, capturedAt(sort: Desc)])
+  @@index([assetVersionId, capturedAt(sort: Desc)])
+  @@index([campaignPackId, capturedAt(sort: Desc)])
+  @@map("creative_performance_snapshots")
+}
+
+model CreativeRecipePerformanceWeight {
+  id             String                             @id @default(uuid())
+  recipeId       String                             @map("recipe_id")
+  recipe         CreativeBrandRecipe                @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  sceneKey       String                             @map("scene_key")
+  weight         Int                                @default(100)
+  sampleCount    Int                                @default(0) @map("sample_count")
+  updatedAt      DateTime                           @updatedAt @map("updated_at")
+  feedbackEvents CreativePerformanceFeedbackEvent[]
+
+  @@unique([recipeId, sceneKey])
+  @@index([recipeId, weight(sort: Desc)])
+  @@map("creative_recipe_performance_weights")
+}
+
+model CreativePerformanceFeedbackEvent {
+  id                   String                          @id @default(uuid())
+  weightId             String                          @map("weight_id")
+  weight               CreativeRecipePerformanceWeight @relation(fields: [weightId], references: [id], onDelete: Restrict)
+  sourceSnapshotId     String                          @unique @map("source_snapshot_id")
+  sourceSnapshot       CreativePerformanceSnapshot     @relation(fields: [sourceSnapshotId], references: [id], onDelete: Restrict)
+  winnerAssetVersionId String                          @map("winner_asset_version_id")
+  comparedVersionIds   Json                            @default("[]") @map("compared_version_ids")
+  score                Int
+  previousWeight       Int                             @map("previous_weight")
+  nextWeight           Int                             @map("next_weight")
+  reasonCode           String                          @map("reason_code")
+  createdAt            DateTime                        @default(now()) @map("created_at")
+
+  @@index([weightId, createdAt(sort: Desc)])
+  @@map("creative_performance_feedback_events")
+}
+
+model CreativeRetentionPolicy {
+  id                     String   @id @default(uuid())
+  ownerId                String   @unique @map("owner_id")
+  archiveEnabled         Boolean  @default(true) @map("archive_enabled")
+  deleteOriginalsEnabled Boolean  @default(true) @map("delete_originals_enabled")
+  retentionDays          Int      @default(30) @map("retention_days")
+  verificationGraceHours Int      @default(24) @map("verification_grace_hours")
+  updatedById            String   @map("updated_by_id")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  @@map("creative_retention_policies")
+}
+
+model CreativeArchiveReceipt {
+  id                String                @id @default(uuid())
+  pendingActionId   String                @map("pending_action_id")
+  assetVersionId    String?               @map("asset_version_id")
+  assetVersion      CreativeAssetVersion? @relation(fields: [assetVersionId], references: [id], onDelete: SetNull)
+  storagePath       String                @map("storage_path") @db.Text
+  driveFileId       String                @map("drive_file_id")
+  driveWebViewUrl   String?               @map("drive_web_view_url") @db.Text
+  sizeBytes         BigInt?               @map("size_bytes")
+  archivedAt        DateTime              @map("archived_at")
+  verifiedAt        DateTime?             @map("verified_at")
+  lastVerifiedAt    DateTime?             @map("last_verified_at")
+  originalDeletedAt DateTime?             @map("original_deleted_at")
+  attempts          Int                   @default(1)
+  lastErrorCode     String?               @map("last_error_code")
+  lastAttemptAt     DateTime              @default(now()) @map("last_attempt_at")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  @@unique([pendingActionId, storagePath])
+  @@index([verifiedAt, originalDeletedAt])
+  @@index([assetVersionId])
+  @@map("creative_archive_receipts")
 }
 
 // ─── Creative Studio Enterprise CSE5: owner voice lifecycle ────────────────
@@ -3511,19 +3692,19 @@ model AgentCostEvent {
 }
 
 model AgentSubscription {
-  id            String   @id @default(uuid())
-  name          String
-  amount        Decimal  @db.Decimal(10, 2)
-  currency      String   @default("USD")
-  billingCycle  String   @map("billing_cycle")
-  nextRenewalAt DateTime @map("next_renewal_at") @db.Date
-  category      String?
-  notes         String?  @db.Text
-  active        Boolean  @default(true)
+  id                     String    @id @default(uuid())
+  name                   String
+  amount                 Decimal   @db.Decimal(10, 2)
+  currency               String    @default("USD")
+  billingCycle           String    @map("billing_cycle")
+  nextRenewalAt          DateTime  @map("next_renewal_at") @db.Date
+  category               String?
+  notes                  String?   @db.Text
+  active                 Boolean   @default(true)
   // Owner-facing manual-tracker fields (native Subscriptions screen, 2026-07):
   // the plan tier name (e.g. "Google AI Pro") and a payment-method label.
-  plan          String?
-  paymentMethod String?  @map("payment_method")
+  plan                   String?
+  paymentMethod          String?   @map("payment_method")
   // Phase 69: provider/invoice provenance. These stay nullable because several
   // providers do not expose subscription or invoice data through a public API.
   providerId             String?   @map("provider_id")
@@ -3538,8 +3719,8 @@ model AgentSubscription {
   sourceUrl              String?   @map("source_url")
   lastSyncedAt           DateTime? @map("last_synced_at")
   syncStatus             String    @default("manual") @map("sync_status")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
 
   @@index([nextRenewalAt])
   @@index([active])
@@ -4666,30 +4847,30 @@ model OfficeStaffProposal {
 /// One row per call: status while live, full transcript + summary after the
 /// ElevenLabs post-call webhook fires. Keyed to ElevenLabs' conversation_id.
 model AgentVoiceCall {
-  id             String    @id @default(uuid())
-  elevenConvId   String?   @unique @map("eleven_conversation_id")
-  callSid        String?   @map("call_sid")
-  toNumber       String    @map("to_number")
-  recipientName  String?   @map("recipient_name")
-  purpose        String?
-  firstMessage   String?   @map("first_message")
-  status         String    @default("initiated")
-  transcript     Json?
-  summary        String?
-  durationSecs   Int?      @map("duration_secs")
-  costCredits    Int?      @map("cost_credits")
-  conversationId String?   @map("conversation_id")
+  id               String                   @id @default(uuid())
+  elevenConvId     String?                  @unique @map("eleven_conversation_id")
+  callSid          String?                  @map("call_sid")
+  toNumber         String                   @map("to_number")
+  recipientName    String?                  @map("recipient_name")
+  purpose          String?
+  firstMessage     String?                  @map("first_message")
+  status           String                   @default("initiated")
+  transcript       Json?
+  summary          String?
+  durationSecs     Int?                     @map("duration_secs")
+  costCredits      Int?                     @map("cost_credits")
+  conversationId   String?                  @map("conversation_id")
   /// Pending approval that dispatched this asynchronous call. Approval is not
   /// marked executed until the terminal report is durably stored.
-  pendingActionId String?   @map("pending_action_id")
-  provider        String?
-  providerStatus  String?   @map("provider_status")
-  dialedAt        DateTime? @map("dialed_at")
-  answeredAt      DateTime? @map("answered_at")
-  reportReceivedAt DateTime? @map("report_received_at")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  endedAt        DateTime? @map("ended_at")
-  deliveries     AgentVoiceCallDelivery[]
+  pendingActionId  String?                  @map("pending_action_id")
+  provider         String?
+  providerStatus   String?                  @map("provider_status")
+  dialedAt         DateTime?                @map("dialed_at")
+  answeredAt       DateTime?                @map("answered_at")
+  reportReceivedAt DateTime?                @map("report_received_at")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  endedAt          DateTime?                @map("ended_at")
+  deliveries       AgentVoiceCallDelivery[]
 
   @@index([status, createdAt])
   @@index([conversationId])
@@ -4701,20 +4882,20 @@ model AgentVoiceCall {
 /// report is stored first, then Telegram/chat/agent-continuation are leased and
 /// retried independently; one broken channel can never suppress another.
 model AgentVoiceCallDelivery {
-  id          String    @id @default(uuid())
-  callId      String    @map("call_id")
+  id          String         @id @default(uuid())
+  callId      String         @map("call_id")
   call        AgentVoiceCall @relation(fields: [callId], references: [id], onDelete: Cascade)
   /// telegram | push | continuation
   channel     String
   /// pending | processing | retry | delivered | dead
-  status      String    @default("pending")
-  attempts    Int       @default(0)
-  availableAt DateTime  @default(now()) @map("available_at")
-  leaseUntil  DateTime? @map("lease_until")
-  lastError   String?   @map("last_error") @db.Text
-  deliveredAt DateTime? @map("delivered_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+  status      String         @default("pending")
+  attempts    Int            @default(0)
+  availableAt DateTime       @default(now()) @map("available_at")
+  leaseUntil  DateTime?      @map("lease_until")
+  lastError   String?        @map("last_error") @db.Text
+  deliveredAt DateTime?      @map("delivered_at")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @default(now()) @updatedAt @map("updated_at")
 
   @@unique([callId, channel])
   @@index([status, availableAt])

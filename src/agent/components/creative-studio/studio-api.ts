@@ -1696,3 +1696,270 @@ export async function saveModel(body: { id: string; name: string; imagePath: str
     'save_failed',
   )
 }
+
+// ── CSE7: approved distribution, attribution, and retention ────────────────
+
+export type StudioPublishPlatform = 'facebook' | 'instagram'
+export type StudioPublishStatus =
+  | 'scheduled'
+  | 'publishing'
+  | 'published'
+  | 'failed_retryable'
+  | 'needs_review'
+  | 'canceled'
+
+export type StudioPublishInput = {
+  assetId: string
+  brandProfileId: string
+  platform: StudioPublishPlatform
+  pageRef: 'lifestyle' | 'onlineshop'
+  caption: string
+  scheduledFor: string
+  idempotencyKey: string
+  adId?: string
+}
+
+export type StudioPublishPreview = StudioPublishInput & {
+  dryRun: true
+  requestFingerprint: string
+  assetVersionId: string
+  approvedReviewEventId: string
+  projectId: string
+  campaignPackId: string | null
+  sceneKey: string
+  mediaStoragePath: string
+  estimatedCostUsd: 0
+  publishingEnabled: boolean
+  receipt: {
+    mode: 'dry_run'
+    externalEffect: false
+    approvedVersionPinned: true
+    duplicateProtection: string
+  }
+}
+
+export type StudioPublishDelivery = {
+  id: string
+  ownerId: string
+  brandProfileId: string
+  projectId: string
+  assetId: string
+  assetVersionId: string
+  campaignPackId: string | null
+  sceneKey: string
+  platform: StudioPublishPlatform
+  pageRef: string
+  caption: string
+  adId: string | null
+  idempotencyKey: string
+  status: StudioPublishStatus
+  scheduledFor: string
+  attempts: number
+  externalPostId: string | null
+  permalinkUrl: string | null
+  verifiedAt: string | null
+  publishedAt: string | null
+  receipt: Record<string, unknown>
+  lastErrorCode: string | null
+  lastErrorMessage: string | null
+  metricsLastSyncedAt: string | null
+  metricsLastError: string | null
+  costUsd: number
+  createdAt: string
+  updatedAt: string
+}
+
+export async function fetchStudioPublishDeliveries(
+  assetId: string,
+  brandProfileId: string,
+): Promise<{
+  deliveries: StudioPublishDelivery[]
+  publishingEnabled: boolean
+  canPublish: boolean
+}> {
+  const query = new URLSearchParams({ assetId, brandProfileId })
+  return studioRequest(
+    `/api/assistant/creative-studio/publish?${query.toString()}`,
+    undefined,
+    'publish_deliveries_failed',
+  )
+}
+
+export async function previewStudioPublishClient(
+  input: StudioPublishInput,
+): Promise<StudioPublishPreview> {
+  const data = await studioRequest<{ preview: StudioPublishPreview }>(
+    '/api/assistant/creative-studio/publish',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ intent: 'dry_run', ...input }),
+    },
+    'publish_preview_failed',
+  )
+  return data.preview
+}
+
+export async function scheduleStudioPublishClient(
+  input: StudioPublishInput,
+): Promise<{ delivery: StudioPublishDelivery; idempotent: boolean }> {
+  return studioRequest(
+    '/api/assistant/creative-studio/publish',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        intent: 'schedule',
+        ...input,
+        confirmedOwnerApproval: true,
+      }),
+    },
+    'publish_schedule_failed',
+  )
+}
+
+export async function setStudioPublishingEnabledClient(
+  brandProfileId: string,
+  enabled: boolean,
+): Promise<{ publishingEnabled: boolean }> {
+  return studioRequest(
+    '/api/assistant/creative-studio/publish',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ intent: 'set_enabled', brandProfileId, enabled }),
+    },
+    'publish_setting_failed',
+  )
+}
+
+export async function mutateStudioPublishDelivery(
+  intent: 'cancel' | 'retry',
+  deliveryId: string,
+): Promise<StudioPublishDelivery> {
+  const data = await studioRequest<{ delivery: StudioPublishDelivery }>(
+    '/api/assistant/creative-studio/publish',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ intent, deliveryId }),
+    },
+    `publish_${intent}_failed`,
+  )
+  return data.delivery
+}
+
+export type StudioPerformanceDashboard = {
+  scope: {
+    brandProfileId: string
+    projectId: string | null
+    assetId: string | null
+    role: StudioAccessRole
+  }
+  totals: {
+    reach: number
+    impressions: number
+    engagements: number
+    clicks: number
+    conversions: number
+  }
+  deliveries: Array<{
+    id: string
+    assetId: string
+    assetVersionId: string
+    campaignPackId: string | null
+    sceneKey: string
+    platform: string
+    status: string
+    postId: string | null
+    permalinkUrl: string | null
+    latestSnapshot: null | {
+      id: string
+      deliveryId: string
+      assetVersionId: string
+      campaignPackId: string | null
+      externalObjectId: string
+      reach: number
+      impressions: number
+      engagements: number
+      clicks: number
+      conversions: number
+      spendAmount: number | null
+      spendCurrency: string | null
+      revenueBdt: number | null
+      capturedAt: string
+    }
+  }>
+  weights: Array<{
+    recipeId: string
+    sceneKey: string
+    weight: number
+    sampleCount: number
+    updatedAt: string
+  }>
+  observability: {
+    queueAgeSec: number
+    workerHeartbeatAt: string | null
+    workerHeartbeatAgeSec: number | null
+    providerErrorRatePct: number
+    spendUsd7d: number
+    qcRatePct7d: number | null
+    archivePending: number
+    archiveLagHours: number
+    publishFailures7d: number
+  }
+}
+
+export async function fetchStudioPerformance(input: {
+  brandProfileId: string
+  projectId?: string
+  assetId?: string
+}): Promise<StudioPerformanceDashboard> {
+  const query = new URLSearchParams({ brandProfileId: input.brandProfileId })
+  if (input.projectId) query.set('projectId', input.projectId)
+  if (input.assetId) query.set('assetId', input.assetId)
+  return studioRequest(
+    `/api/assistant/creative-studio/performance?${query.toString()}`,
+    undefined,
+    'performance_failed',
+  )
+}
+
+export type StudioRetentionDashboard = {
+  policy: {
+    archiveEnabled: boolean
+    deleteOriginalsEnabled: boolean
+    retentionDays: number
+    verificationGraceHours: number
+  }
+  stats: {
+    totalReceipts: number
+    verifiedReceipts: number
+    deletedOriginals: number
+    failedReceipts: number
+    oldestUnverifiedAgeHours: number
+    lastRun: { at: string; detail: string } | null
+  }
+}
+
+export async function fetchStudioRetention(): Promise<StudioRetentionDashboard> {
+  return studioRequest(
+    '/api/assistant/creative-studio/retention',
+    undefined,
+    'retention_failed',
+  )
+}
+
+export async function saveStudioRetention(
+  policy: StudioRetentionDashboard['policy'],
+): Promise<StudioRetentionDashboard> {
+  return studioRequest(
+    '/api/assistant/creative-studio/retention',
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(policy),
+    },
+    'retention_save_failed',
+  )
+}

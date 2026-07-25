@@ -5,13 +5,16 @@ import {
   fetchGoldenEval,
   fetchStudioConfig,
   fetchStudioHealth,
+  fetchStudioRetention,
   fetchStudioSettings,
   runGoldenEvalNow,
+  saveStudioRetention,
   saveStudioSettings,
   setEngineKill,
   type GoldenEvalSummary,
   type StudioConfig,
   type StudioHealth,
+  type StudioRetentionDashboard,
   type StudioSettings,
 } from '@/agent/components/creative-studio/studio-api'
 import { type StudioEngineId } from '@/lib/creative-studio/provider-registry'
@@ -27,6 +30,9 @@ export function StudioSettingsView() {
   const [evalRunning, setEvalRunning] = useState(false)
   // CS12 — engine health + kill switches
   const [health, setHealth] = useState<StudioHealth | null>(null)
+  // CSE7 — durable Drive receipt before any original can be deleted.
+  const [retention, setRetention] = useState<StudioRetentionDashboard | null>(null)
+  const [retentionSaving, setRetentionSaving] = useState(false)
   useEffect(() => {
     void fetchStudioSettings()
       .then(setSettings)
@@ -39,6 +45,9 @@ export function StudioSettingsView() {
       .catch(() => {})
     void fetchStudioHealth()
       .then(setHealth)
+      .catch(() => {})
+    void fetchStudioRetention()
+      .then(setRetention)
       .catch(() => {})
   }, [])
   if (!settings) return null
@@ -262,6 +271,105 @@ export function StudioSettingsView() {
               ব্যালেন্স: {health.balances.map((b) => b.label + ' ' + (b.balanceUsd !== null ? '$' + b.balanceUsd : '—')).join(' · ')}
             </p>
           )}
+        </div>
+      )}
+
+      {retention && (
+        <div className="border-t border-border-subtle pt-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-[12px] font-bold text-cream">🗄️ Drive archive ও retention</p>
+              <p className="mt-0.5 text-[9px] text-muted">
+                Durable Drive verification ছাড়া original কখনো delete হবে না।
+              </p>
+            </div>
+            <span className="rounded-full bg-[#81B29A]/10 px-2 py-0.5 text-[9px] text-[#a7d7bf]">
+              {retention.stats.verifiedReceipts}/{retention.stats.totalReceipts} verified
+            </span>
+          </div>
+          <div className="mt-2 space-y-2">
+            <label className="flex items-center justify-between gap-2 text-[10px] text-muted">
+              Drive archive চালু
+              <input
+                type="checkbox"
+                checked={retention.policy.archiveEnabled}
+                onChange={(event) => setRetention({
+                  ...retention,
+                  policy: { ...retention.policy, archiveEnabled: event.target.checked },
+                })}
+                className="h-4 w-4 accent-[#E07A5F]"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-2 text-[10px] text-muted">
+              Verified copy-এর পর original cleanup
+              <input
+                type="checkbox"
+                checked={retention.policy.deleteOriginalsEnabled}
+                onChange={(event) => setRetention({
+                  ...retention,
+                  policy: { ...retention.policy, deleteOriginalsEnabled: event.target.checked },
+                })}
+                className="h-4 w-4 accent-[#E07A5F]"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="space-y-1 text-[9px] font-semibold text-muted">
+                Retention দিন (7–3650)
+                <input
+                  type="number"
+                  min={7}
+                  max={3650}
+                  value={retention.policy.retentionDays}
+                  onChange={(event) => setRetention({
+                    ...retention,
+                    policy: {
+                      ...retention.policy,
+                      retentionDays: Number(event.target.value),
+                    },
+                  })}
+                  className="w-full rounded-lg border border-border-subtle bg-bg-1 px-2 py-1.5 text-[10px] text-cream"
+                />
+              </label>
+              <label className="space-y-1 text-[9px] font-semibold text-muted">
+                Verification grace ঘণ্টা
+                <input
+                  type="number"
+                  min={1}
+                  max={168}
+                  value={retention.policy.verificationGraceHours}
+                  onChange={(event) => setRetention({
+                    ...retention,
+                    policy: {
+                      ...retention.policy,
+                      verificationGraceHours: Number(event.target.value),
+                    },
+                  })}
+                  className="w-full rounded-lg border border-border-subtle bg-bg-1 px-2 py-1.5 text-[10px] text-cream"
+                />
+              </label>
+            </div>
+            <p className="text-[9px] text-muted">
+              Deleted {retention.stats.deletedOriginals} · failed {retention.stats.failedReceipts}
+              {' '}· oldest unverified {retention.stats.oldestUnverifiedAgeHours}h
+            </p>
+            <button
+              type="button"
+              disabled={retentionSaving}
+              onClick={() => {
+                setRetentionSaving(true)
+                void saveStudioRetention(retention.policy)
+                  .then((result) => {
+                    setRetention(result)
+                    toast.success('Retention policy সেভ হয়েছে')
+                  })
+                  .catch((error) => toast.error(error instanceof Error ? error.message : 'হয়নি'))
+                  .finally(() => setRetentionSaving(false))
+              }}
+              className="w-full rounded-lg bg-white/10 px-3 py-2 text-[10px] font-bold text-cream disabled:opacity-40"
+            >
+              {retentionSaving ? 'সেভ হচ্ছে…' : 'Archive policy সেভ'}
+            </button>
+          </div>
         </div>
       )}
 

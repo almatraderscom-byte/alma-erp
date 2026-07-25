@@ -6,6 +6,8 @@ import {
   fetchProjectAssets,
   updateProjectAsset,
 } from '@/agent/components/creative-studio/studio-api'
+import { PerformanceView } from '@/agent/components/creative-studio/PerformanceView'
+import { PublishPanel } from '@/agent/components/creative-studio/PublishPanel'
 import { ReviewPanel } from '@/agent/components/creative-studio/ReviewPanel'
 import type {
   StudioProjectAsset,
@@ -237,10 +239,22 @@ export function ProjectLibraryView({
             )}
 
             {!project.readonly && project.brandProfileId && (
-              <ReviewPanel
-                assetId={selected.id}
-                brandProfileId={project.brandProfileId}
-              />
+              <>
+                <ReviewPanel
+                  assetId={selected.id}
+                  brandProfileId={project.brandProfileId}
+                />
+                <PublishPanel
+                  assetId={selected.id}
+                  brandProfileId={project.brandProfileId}
+                  assetTitle={selected.title}
+                />
+                <PerformanceView
+                  brandProfileId={project.brandProfileId}
+                  projectId={project.id}
+                  assetId={selected.id}
+                />
+              </>
             )}
 
             <div className="mt-4">

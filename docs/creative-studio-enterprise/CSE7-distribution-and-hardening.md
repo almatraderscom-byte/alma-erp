@@ -55,3 +55,11 @@ Close the loop from approved asset to measured business result and certify the f
 
 `$1`; live Meta publishing requires the owner's explicit in-phase confirmation.
 
+## Implementation record (2026-07-25)
+
+- Distribution uses the existing `publishCalendarEntry` → direct Meta Graph API path. A delivery is pinned to the exact approved review event and latest approved asset version before it can be scheduled.
+- `owner_id + idempotency_key` is unique. A verified provider receipt becomes `PUBLISHED`; an ambiguous or unverified outcome becomes `NEEDS_REVIEW` and is never retried automatically.
+- Live Meta delivery has two independent safe defaults: the owner setting is OFF until explicitly enabled, and the VPS cadence is OFF until `STUDIO_DISTRIBUTION_SCHEDULERS_ENABLED=true`.
+- Metrics are append-only snapshots tied to delivery, asset version, and campaign pack. Winner feedback uses only counters: at least two versions, at least 100 impressions each, at least a 10% deterministic score margin, a bounded `+5` scene weight, and at most one update per recipe/scene/week.
+- Archive cleanup requires a durable `creative_archive_receipts.verified_at`, the owner retention window, a 24-hour default verification grace, and a second Drive fetch-back immediately before deletion.
+- Delegated live verification is further capped at `$0` and explicitly forbids external publishing. Therefore the browser proof must exercise the dry-run receipt and read-only performance/retention surfaces; the first real Meta receipt remains an owner-gated rollout proof and is not silently simulated.

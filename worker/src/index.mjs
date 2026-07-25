@@ -24,6 +24,7 @@ import { launchTelegramBot, stopTelegramBot } from './telegram/launcher.mjs'
 import { loadOwnerStateFromKv } from './telegram/owner-state-persist.mjs'
 import { hydrateAwaitingProof } from './staff/task-verification.mjs'
 import { setupSchedulers } from './schedulers/index.mjs'
+import { startCreativeDistributionLoop } from './schedulers/creative-performance.mjs'
 import { dispatchTasksToStaff } from './staff/dispatch.mjs'
 import { sendStaffAnnouncement } from './staff/announcement.mjs'
 import { initializeDailySalahRecords } from './salah/scheduler.mjs'
@@ -1754,6 +1755,21 @@ const heartbeatInterval = startHeartbeatLoop({
 })
 const healthPingInterval = startHealthPingLoop()
 
+// CSE7 stays OFF until the preview-tested worker revision is deliberately
+// rolled out. Even when this loop is enabled, each owner has a separate
+// publishing kill switch that defaults OFF in the app.
+const creativeDistributionInterval =
+  process.env.STUDIO_DISTRIBUTION_SCHEDULERS_ENABLED === 'true'
+    ? startCreativeDistributionLoop({
+        appUrl: getAppUrl(),
+        internalToken: getInternalToken(),
+        intervalMs: Number(process.env.STUDIO_DISTRIBUTION_INTERVAL_MS) || 5 * 60_000,
+      })
+    : null
+if (!creativeDistributionInterval) {
+  console.log('[creative-distribution] scheduler OFF — rollout gate not enabled')
+}
+
 // Phase 53 — effect-outbox dispatcher (OFF by default; readiness gates flip it).
 // Dispatch posts the run back to the app's assistant surface, where the guard +
 // effect engine own execution; the worker only drives retries/dead-letter.
@@ -1822,6 +1838,7 @@ async function shutdown(signal) {
   clearInterval(csMessengerPollInterval)
   clearInterval(heartbeatInterval)
   clearInterval(healthPingInterval)
+  if (creativeDistributionInterval) clearInterval(creativeDistributionInterval)
   clearInterval(workbenchJanitorInterval)
   if (schedulerTeardown?.retriggerPoll) clearInterval(schedulerTeardown.retriggerPoll)
   if (schedulerTeardown?.dutyTimePoll) clearInterval(schedulerTeardown.dutyTimePoll)
