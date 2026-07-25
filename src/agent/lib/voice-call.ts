@@ -158,7 +158,8 @@ export function getVoiceCallConfig(): VoiceCallConfig {
   const enabled =
     killSwitch &&
     (provider === 'sip'
-      ? Boolean(sipGatewayBase && sipGatewayKey && sipGatewaySecret && internalToken)
+      // Key/secret are optional: the shared internal token authenticates us on its own.
+      ? Boolean(sipGatewayBase && internalToken)
       : provider === 'ngs'
         ? Boolean(ngsApiKey && ngsApiSecret && ngsLiveWsUrl && internalToken)
         : provider === 'relay' || provider === 'sarvam'
@@ -196,7 +197,6 @@ export function voiceCallUnavailableReason(config = getVoiceCallConfig()): strin
   }
   if (config.provider === 'sip') {
     if (!config.sipGatewayBase) return 'SIP_GATEWAY_BASE সেট করা নেই — self-hosted Asterisk gateway-এর ঠিকানা বসান (যেমন http://31.97.237.40:8770)।'
-    if (!config.sipGatewayKey || !config.sipGatewaySecret) return 'SIP_GATEWAY_KEY / SIP_GATEWAY_SECRET সেট করা নেই — gateway control API-এর key।'
     if (!config.internalToken) return 'AGENT_INTERNAL_TOKEN সেট করা নেই — call stream signing ও terminal report-এর জন্য এটি আবশ্যক।'
     return null
   }
@@ -884,8 +884,11 @@ async function placeSipLiveCall(
     const res = await fetch(`${config.sipGatewayBase}/api/v1/call`, {
       method: 'POST',
       headers: {
-        'X-Authorization': config.sipGatewayKey,
-        'X-Authorization-Secret': config.sipGatewaySecret,
+        // The gateway accepts either credential; the shared internal token is always
+        // present, so a cutover needs no new secret provisioned here.
+        Authorization: `Bearer ${config.internalToken}`,
+        ...(config.sipGatewayKey ? { 'X-Authorization': config.sipGatewayKey } : {}),
+        ...(config.sipGatewaySecret ? { 'X-Authorization-Secret': config.sipGatewaySecret } : {}),
         'Content-Type': 'application/json',
       },
       body,

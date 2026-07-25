@@ -689,11 +689,15 @@ function normalizeCaller(raw) {
 
 /** Ask our Next.js route for the persona + signed token + DB row. null on any failure. */
 async function fetchInboundParams(caller, did) {
-  if (!APP_URL || !SIP_INBOUND_SECRET) return null
+  if (!APP_URL || !(SIP_INBOUND_SECRET || INTERNAL_TOKEN)) return null
   try {
-    const res = await fetch(`${APP_URL}/api/assistant/voice-call/sip-inbound?k=${encodeURIComponent(SIP_INBOUND_SECRET)}`, {
+    const res = await fetch(`${APP_URL}/api/assistant/voice-call/sip-inbound${SIP_INBOUND_SECRET ? `?k=${encodeURIComponent(SIP_INBOUND_SECRET)}` : ''}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        // The shared token both machines already hold — nothing extra to provision.
+        ...(INTERNAL_TOKEN ? { Authorization: `Bearer ${INTERNAL_TOKEN}` } : {}),
+      },
       body: JSON.stringify({ caller, did }),
       signal: AbortSignal.timeout(8_000),
     })
@@ -797,15 +801,24 @@ async function onAriEvent(e) {
 }
 
 // ── control API (HTTP) — NGS-shaped ──────────────────────────────────────────
+const eqConst = (a, b) => {
+  const ba = Buffer.from(String(a)), bb = Buffer.from(String(b))
+  return ba.length === bb.length && timingSafeEqual(ba, bb)
+}
+/**
+ * Two accepted credentials, of equal strength:
+ *  - the NGS-shaped key + secret pair (used by callers on this host), or
+ *  - a Bearer AGENT_INTERNAL_TOKEN — the secret Vercel and this VPS ALREADY share.
+ * Accepting the shared token means the cutover needs no new secret copied between machines,
+ * and a secret that is never transported cannot leak in transit, in a chat log or in a
+ * screenshot. Originating a call additionally requires the per-call HMAC either way.
+ */
 function authOk(req) {
+  const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '')
+  if (INTERNAL_TOKEN && bearer && eqConst(bearer, INTERNAL_TOKEN)) return true
   if (!KEY || !SECRET) return false
-  const k = req.headers['x-authorization'] || ''
-  const s = req.headers['x-authorization-secret'] || ''
-  const eq = (a, b) => {
-    const ba = Buffer.from(String(a)), bb = Buffer.from(String(b))
-    return ba.length === bb.length && timingSafeEqual(ba, bb)
-  }
-  return eq(k, KEY) && eq(s, SECRET)
+  return eqConst(req.headers['x-authorization'] || '', KEY)
+    && eqConst(req.headers['x-authorization-secret'] || '', SECRET)
 }
 function readBody(req) {
   return new Promise((resolve) => {
