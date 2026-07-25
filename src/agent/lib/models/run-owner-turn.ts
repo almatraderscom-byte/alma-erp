@@ -1298,6 +1298,12 @@ async function* runAlternateProviderTurn(
   // act-now retry resets the draft, and without this the line Boss already saw
   // would vanish from the persisted message on reload.
   let preambleText = ''
+  // …and its timeline slot, which must survive every supersede walk-back. The
+  // owner-facing client projects prose from the LAST non-superseded text entry,
+  // so when a verify retry marked the most recent text (the preamble, since no
+  // tool-round prose existed yet) the line vanished from the finished message
+  // even though Boss had already watched it stream (live-verified 2026-07-25).
+  let preambleTimelineIndex = -1
   // Speak-first: the ground-before-answer guarantee now runs AFTER round 0
   // instead of forcing a tool call that silences it. One retry per turn.
   let groundingNudgeSent = false
@@ -1327,6 +1333,14 @@ async function* runAlternateProviderTurn(
     | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; shot?: string }
     | { t: 'file'; id: string; name: string; kind?: string }
   const timeline: TimelineEntry[] = []
+  /** Mark the most recent DRAFT as superseded — never the spoken first line. */
+  const supersedeLastDraft = () => {
+    for (let ti = timeline.length - 1; ti >= 0; ti--) {
+      if (ti === preambleTimelineIndex) continue
+      const te = timeline[ti]
+      if (te.t === 'text') { te.state = 'superseded'; break }
+    }
+  }
   const compactTimelineInput = (input: unknown): unknown => {
     try {
       const json = JSON.stringify(input)
@@ -1459,6 +1473,7 @@ async function* runAlternateProviderTurn(
         preambleSpoken = true
         preambleText = line
         finalText = line
+        preambleTimelineIndex = timeline.length
         timeline.push({ t: 'text', text: line })
         // In the transcript as the assistant's own words — it continues from
         // here instead of greeting Boss a second time.
@@ -1703,10 +1718,7 @@ async function* runAlternateProviderTurn(
           currentOwnerInstructions = [currentOwnerInstructions, ...lateSteering.map((item) => item.prompt)]
             .filter(Boolean)
             .join('\n')
-          for (let ti = timeline.length - 1; ti >= 0; ti--) {
-            const te = timeline[ti]
-            if (te.t === 'text') { te.state = 'superseded'; break }
-          }
+          supersedeLastDraft()
           messages = [
             ...messages,
             ...(iterationText.trim() ? [{ role: 'assistant' as const, content: iterationText }] : []),
@@ -1836,10 +1848,7 @@ async function* runAlternateProviderTurn(
             // Keep the rejected draft in the raw audit timeline, truthfully marked
             // superseded, and persist the verification event. Owner-facing clients
             // project only the verified replacement as prose.
-            for (let ti = timeline.length - 1; ti >= 0; ti--) {
-              const te = timeline[ti]
-              if (te.t === 'text') { te.state = 'superseded'; break }
-            }
+            supersedeLastDraft()
             timeline.push({ t: 'verify', attempt: verifyRetries, max: MAX_VERIFY_RETRIES })
             finalText = preambleText
             messages = [
@@ -1892,16 +1901,14 @@ async function* runAlternateProviderTurn(
         // retries) and record what was actually said instead.
         if (iterationText !== preContractText) {
           if (preContractText.trim()) {
-            for (let ti = timeline.length - 1; ti >= 0; ti--) {
-              const te = timeline[ti]
-              if (te.t === 'text') { te.state = 'superseded'; break }
-            }
+            supersedeLastDraft()
           }
           if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
         }
         if (iterationText) {
-          finalText += iterationText
-          yield { type: 'text_delta', delta: iterationText }
+          const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+          finalText += sep + iterationText
+          yield { type: 'text_delta', delta: sep + iterationText }
         }
         break
       }
