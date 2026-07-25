@@ -229,12 +229,48 @@ function dhakaDayStart(now = new Date()): Date {
   return new Date(dhaka.getTime() - 6 * 60 * 60 * 1000)
 }
 
-/** How many agent calls have been placed today (Dhaka), for cap enforcement. */
+/** Purposes written by the INBOUND webhooks — calls that came TO us, not spend of ours. */
+const INBOUND_PURPOSES = ['inbound_call', 'inbound_owner_call', 'inbound_voicemail']
+
+/** Only rows we created by dialling out. Purpose is nullable, and a null purpose is ours. */
+const OUTBOUND_ONLY = {
+  OR: [{ purpose: null }, { purpose: { notIn: INBOUND_PURPOSES } }],
+}
+
+/**
+ * Outbound calls that actually reached the network today (Dhaka) — what the daily cap counts.
+ *
+ * This used to count every row in the table, and a row is written before the provider is even
+ * asked, so two unrelated things quietly ate the owner's daily call budget:
+ *   - INBOUND calls, which write rows of their own. On 2026-07-25, 49 of 62 rows were inbound
+ *     (23 of them from the self-test harness's fake caller). A busy morning of customer calls
+ *     used up the cap, and from then on the agent could not phone anyone — with nothing on
+ *     screen to explain why.
+ *   - Attempts the provider dropped. On a day when their switch misroutes, every failure burned
+ *     a slot, so a provider outage became a self-inflicted outage on top of it.
+ *
+ * `dialedAt` is set only once a provider has accepted the call and it is ringing, which makes
+ * it the honest measure of what we spent.
+ */
 export async function callsPlacedToday(): Promise<number> {
   return db.agentVoiceCall.count({
-    where: { createdAt: { gte: dhakaDayStart() } },
+    where: { createdAt: { gte: dhakaDayStart() }, dialedAt: { not: null }, ...OUTBOUND_ONLY },
   })
 }
+
+/**
+ * Every outbound attempt today, reached or not. The cap deliberately ignores failures, so this
+ * is the backstop: without it a retry loop against a broken trunk could dial forever, since
+ * nothing it did would ever count.
+ */
+export async function callAttemptsToday(): Promise<number> {
+  return db.agentVoiceCall.count({
+    where: { createdAt: { gte: dhakaDayStart() }, ...OUTBOUND_ONLY },
+  })
+}
+
+/** Attempts are allowed to run this many times over the cap before we stop dialling at all. */
+const ATTEMPT_CEILING_MULTIPLIER = 3
 
 export interface PlaceCallInput {
   toNumber: string
@@ -288,6 +324,18 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
   const placedToday = await callsPlacedToday()
   if (placedToday >= config.dailyCap) {
     return { ok: false, error: `আজকের কল লিমিট শেষ (${config.dailyCap}টি)। কাল আবার চেষ্টা করুন।` }
+  }
+
+  // Failures no longer consume the cap, so the cap alone can no longer stop a retry loop
+  // dialling a broken trunk all day. This does — and it says WHY, because "limit finished"
+  // on a day when almost nothing connected is a misleading thing to read.
+  const attemptsToday = await callAttemptsToday()
+  const attemptCeiling = config.dailyCap * ATTEMPT_CEILING_MULTIPLIER
+  if (attemptsToday >= attemptCeiling) {
+    return {
+      ok: false,
+      error: `আজ ${attemptsToday}বার কল করার চেষ্টা হয়েছে কিন্তু মাত্র ${placedToday}টি লাইনে পৌঁছেছে — লাইনে সমস্যা আছে, তাই আপাতত থামানো হলো।`,
+    }
   }
 
   const firstMessage = input.firstMessage.trim() || 'আসসালামু আলাইকুম।'

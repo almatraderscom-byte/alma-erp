@@ -25,9 +25,11 @@ layer on top. Everything below is built, merged to `main`, and running.
 - Registration watchdog, per-call CDR, outcome sweep, concurrency + hourly caps, BD-only
   destination allowlist, SIP port firewall.
 
-**BLOCKED — the one open problem**
-Outbound calls fail roughly half the time, and it is **provider-side**. Proven by packet
-capture, not inference (see §5).
+**Outbound — root cause found 2026-07-25, and it was ours (see §5).** The provider holds ONE
+registration binding per account and the last registrant wins it. NGS re-registers every ~60 s;
+we were doing it every 300 s, so the line usually belonged to NGS and our INVITEs went out from
+an address that was not the current binding — about half of them died. `expiration` is now 60,
+and no second PBX may register this account.
 
 ---
 
@@ -112,7 +114,75 @@ Gemini's audio arrived late.
 
 ---
 
-## 5. THE OPEN PROBLEM — outbound, provider-side (evidence, not opinion)
+## 5. OUTBOUND — ROOT CAUSE, found 2026-07-25 (everything before this was a symptom)
+
+**The provider keeps exactly ONE registration binding per SIP account, and the last registrant
+owns it. We were re-registering every 300 s; NGS re-registers every ~60 s. So whenever both
+were configured, NGS owned the line almost all the time — and our outbound INVITEs went out
+from an address that was not the current binding.**
+
+Watch their own table (`amarip.net` → SIP Users, or `/api/sip-registrations` behind it, which
+returns the row with IP, user agent and seconds remaining):
+
+```
+09:19:51  163.227.239.96  NextGenSwitch v1.0.0  exp=35
+09:20:21  163.227.239.96  NextGenSwitch v1.0.0  exp=58   <- NGS refreshed
+09:22:51  163.227.239.96  NextGenSwitch v1.0.0  exp=15
+09:23:21  31.97.237.40    Asterisk PBX 20.6.0   exp=45   <- we took it, after switching to 60s
+09:24:21  31.97.237.40    Asterisk PBX 20.6.0   exp=35
+```
+
+Calls placed while we did not own that row are the ones that died — `no_route`,
+`rate_plan_no_match`, `stale_timeout`, or silence with `481` to our CANCEL. Roughly half of
+them, which is exactly what the owner counted (18 of 35).
+
+**A `200 OK` to our REGISTER proves nothing.** Asterisk reported `Registered (exp. 3227s)`
+while the provider's table did not list us at all. Our own registration state is not evidence;
+only their table is.
+
+**Fix (live on the VPS and in `worker/deploy/asterisk/alma-trunk.conf`):** `expiration=60`,
+matching what NGS does. Verified: the binding flipped to us within one cycle and stayed.
+
+**Second rule, equally important:** never let a second PBX register this account. NGS must be
+genuinely deactivated — pointing its trunk at a wrong port is not enough, and while its trunk
+is healthy it takes the line back every minute.
+
+### Tested and NOT the cause — do not spend a session on these again
+
+Destination format (`01…`, `880…`, `+880…`), operator prefix (013/016/017/018/019 behave
+identically), on-net vs off-net, an `"Anonymous"` display name in `From`, and call spacing.
+Failing and succeeding INVITEs are byte-for-byte identical apart from the dialled number.
+
+Two readings that looked right and were not, recorded so nobody re-derives them: (1) "the
+failures never appear in their CDR" — they do, with causes; (2) "every call within ~80 s of a
+re-registration dies" — a clean rerun disproved it. And `expiration=3600`, briefly shipped as
+"hygiene", was actively harmful: it meant we claimed the binding once an hour.
+
+### Verified after the fix
+
+Thirty outbound calls with the 60 s binding held throughout: **29 reached the network, 1 died**
+(`setup_failure`) — 3%, against 19% (14 of 74) earlier the same day. Of the earlier failures,
+every `rate_plan_no_match`, `no_route` and `stale_timeout` disappeared; only the lone
+`setup_failure` class remains, and that one is plausibly theirs.
+
+### How to test outbound — DO NOT invent numbers
+
+Earlier in this session the test batches dialled made-up numbers on the assumption they were
+unassigned. **That assumption cannot be verified, the calls do ring if the number is live, and
+they go out under the owner's own licence.** Owner instruction 2026-07-25: never again.
+
+Use instead:
+- **PSTN loopback — dial our OWN DID `09649777738`.** It leaves through the trunk, comes back
+  through the provider, and nobody else's phone is involved. It costs two of the trunk's two
+  channels, so run it only when the line is idle. Proven working: `183 Session Progress` then
+  `200 OK`, and the inbound leg arrives on our own Asterisk.
+- **The owner's own number**, when he is expecting it.
+- **Passive**: read the provider's CDR (filter CLIENT IP `31.97.237.40`) and count hangup
+  causes on the real business traffic. No calls placed at all, and it is the honest measure.
+
+---
+
+## 5b. Earlier reading of the same problem (kept for the packet evidence)
 
 Packet capture on 2026-07-25 12:38:54 Dhaka, `tcpdump host 103.170.231.10`:
 
@@ -196,6 +266,19 @@ approved).
     and every call went silent. One config change per live call.
 12. **qualify OFF for WebRTC AORs** — a browser that misses an OPTIONS poll is marked
     Unavailable and Asterisk then refuses to dial it.
+13. **An unattended apt upgrade will restart Asterisk mid-day** — on 2026-07-25 an rsyslog +
+    libpam upgrade (not Asterisk itself) restarted it at 12:26 Dhaka, dropping calls and
+    reloading `modules.conf`. `needrestart` is now told never to restart `asterisk.service`
+    (`/etc/needrestart/conf.d/50-alma-phone.conf`) and the apt timers were moved to ~03:00
+    Dhaka. A library fix therefore needs a human restart at a quiet hour.
+14. **The log directory reached 21 GB, and 99% of it was one SIP brute-force flood** on
+    2026-07-24 (39,605 failed REGISTERs from 163.172.111.53 alone) that hammered UDP 5060
+    before the firewall was in place. Real traffic writes almost nothing — measured 0 bytes in
+    60 s on an idle line. Rotation is now daily + compressed + 500 MB per file, and the old
+    files are gzipped: 21 GB → 537 MB.
+15. **A dead second trunk was in `pjsip.conf` the whole time** — `amberit` (202.4.97.37, user
+    1098173), pre-dating this work, retrying a REGISTER that never got an answer. Removed
+    2026-07-25. It cost nothing but noise; it was not related to the outbound problem.
 
 ---
 
@@ -217,9 +300,12 @@ approved).
 
 ## 8. Next steps, in order
 
-1. **Owner + provider**: the outbound problem (§5). Ask them to raise CALL LIMIT from 2, and
-   to explain why authenticated INVITEs are accepted and then dropped without a CDR entry.
-2. **Waiting on owner's approval**: lower `SIP_MAX_CONCURRENT_CALLS` 4 → 2 to match the trunk.
+1. **Owner + provider**: one precise question now, not a vague complaint — why does a fresh
+   REGISTER take ~100 s to become routable? (§5 has the wording and the numbers.)
+2. **Worth building**: an outbound canary — dial an unassigned number on a schedule, expect a
+   `18x`, alert when the answer is silence. It would have caught this class of failure on day
+   one, and it measures whether the provider ever fixes their side.
+3. `SIP_MAX_CONCURRENT_CALLS` is **2**, matching the trunk's call limit. Done.
 3. **Waiting on owner's file**: his recorded hold audio → drop into `/var/lib/asterisk/moh-alma`
    on the VPS and set `SIP_MOH_CLASS=alma-hold`. (Bangla script already given to him.)
 4. **Owner eye-check**: the new phone UI at `/agent/phone` (PR #572) — keypad, mute, speaker,
