@@ -61,6 +61,20 @@ export interface PlanDriveView {
   maxAttempts: number
   costTaka: number
   /**
+   * G1 (owner ruling 2026-07-26) — the screen must never call a parked plan
+   * "Running". His iOS panel said "Running 2" while both plans had been sitting
+   * at nextTickAt=null for an hour. These three fields are the honest answer, so
+   * no client has to infer state from the array length.
+   */
+  /** True ONLY while a step is actually executing or a tick is scheduled. */
+  isRunning: boolean
+  /** Owner-readable state, ready to print: "চলছে" / "আপনার সিদ্ধান্ত দরকার" / … */
+  statusLabel: string
+  /** The step running right now, when one is. */
+  runningStep: string | null
+  /** ms since this plan last did anything — "কতক্ষণ ধরে চুপ". */
+  idleMs: number | null
+  /**
    * Present only for a grind campaign ("fix all 246 issues"). Additive — every
    * existing web/native consumer keeps working without knowing about it.
    */
@@ -107,6 +121,10 @@ export interface PlanDrivePanelData {
   /** Master kill-switch echo — UI shows "চালু/বন্ধ". */
   enabled: boolean
   drives: PlanDriveView[]
+  /** G1: genuinely-moving plans. A client showing "Running N" must use THIS. */
+  runningCount: number
+  /** Parked, waiting on an owner approval card. */
+  waitingApprovalCount: number
   /** Recent terminal plans; additive so existing web/native consumers stay safe. */
   finished: PlanDriveHistoryView[]
   activeCount: number
@@ -114,6 +132,14 @@ export interface PlanDrivePanelData {
   /** Whole-taka spent vs the daily cap, for the panel header. */
   dailyCapTaka: number
   perPlanCapTaka: number
+}
+
+/** Owner-readable state. Printed as-is by web and native. */
+const STATUS_LABEL: Record<PlanDrivePhase, string> = {
+  driving: 'চলছে',
+  'waiting-approval': 'অনুমোদনের অপেক্ষায়',
+  'needs-decision': 'আপনার সিদ্ধান্ত দরকার',
+  done: 'শেষ',
 }
 
 function phaseOf(state: AutodriveState): PlanDrivePhase {
@@ -186,6 +212,15 @@ async function toView(plan: Plan): Promise<PlanDriveView> {
     attemptCount: plan.attemptCount,
     maxAttempts: plan.maxAttempts,
     costTaka: plan.costTaka,
+    // A plan is RUNNING only if a step is executing right now, or the driver has
+    // actually scheduled its next tick. 'escalated' with no next tick is parked —
+    // the exact state that spent an hour labelled "Running".
+    isRunning:
+      phase === 'driving'
+      && (plan.steps.some((s) => s.status === 'running') || Boolean(plan.nextTickAt)),
+    statusLabel: STATUS_LABEL[phase],
+    runningStep: plan.steps.find((s) => s.status === 'running')?.action ?? null,
+    idleMs: plan.lastDrivenAt ? Date.now() - new Date(plan.lastDrivenAt).getTime() : null,
     grind: (await grindViewForPlan(plan.id)) ?? undefined,
   }
 }
@@ -312,6 +347,8 @@ export async function getPlanDrivePanel(): Promise<PlanDrivePanelData> {
     drives,
     finished,
     activeCount: drives.filter((d) => d.phase === 'driving').length,
+    runningCount: drives.filter((d) => d.isRunning).length,
+    waitingApprovalCount: drives.filter((d) => d.phase === 'waiting-approval').length,
     needsDecisionCount: drives.filter((d) => d.phase === 'needs-decision').length,
     dailyCapTaka: config.dailyCapTaka,
     perPlanCapTaka: config.planCapTaka,

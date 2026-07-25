@@ -43,6 +43,11 @@ export interface PlanDriveView {
   attemptCount: number
   maxAttempts: number
   costTaka: number
+  /** G1 — honest state, straight from the server. Never inferred here. */
+  isRunning?: boolean
+  statusLabel?: string
+  runningStep?: string | null
+  idleMs?: number | null
   /** Present only for a "fix everything" campaign — every number here is measured. */
   grind?: GrindDriveView
 }
@@ -64,6 +69,8 @@ export interface GrindDriveView {
 export interface PlanDrivePanelData {
   enabled: boolean
   drives: PlanDriveView[]
+  runningCount?: number
+  waitingApprovalCount?: number
   activeCount: number
   needsDecisionCount: number
   dailyCapTaka: number
@@ -71,6 +78,15 @@ export interface PlanDrivePanelData {
 }
 
 export type PlanDriveAction = 'resume' | 'add-budget' | 'abandon' | 'family-auto' | 'family-stop'
+
+/** "৪২ মিনিট" / "১ ঘণ্টা" — how long this plan has been silent. */
+function idleFor(ms: number | null | undefined): string {
+  if (!ms || ms < 5 * 60_000) return ''
+  const min = Math.round(ms / 60_000)
+  if (min < 60) return `${min} মিনিট`
+  const h = Math.round(min / 60)
+  return h < 24 ? `${h} ঘণ্টা` : `${Math.round(h / 24)} দিন`
+}
 
 function relativeWhen(iso: string | null): string {
   if (!iso) return ''
@@ -124,6 +140,10 @@ function WorkingPlan({ drive, onOpen, onAction }: {
   const wake = relativeWhen(drive.nextTickAt)
   const pct = drive.totalCount > 0 ? Math.round((drive.doneCount / drive.totalCount) * 100) : 0
   const runningStep = drive.steps.find((s) => s.status === 'running')
+  // G1 — trust the server's honest flag; only fall back to inference for an old
+  // payload that predates it.
+  const live = drive.isRunning ?? (Boolean(runningStep) || Boolean(drive.nextTickAt))
+  const idle = idleFor(drive.idleMs)
 
   return (
     <motion.div
@@ -133,13 +153,23 @@ function WorkingPlan({ drive, onOpen, onAction }: {
       className="overflow-hidden rounded-2xl border border-border-subtle bg-card/70"
     >
       <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-start gap-3 px-3.5 py-3 text-left">
-        <span className="relative mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-[#E07A5F]/10">
-          <span className="absolute inset-0 rounded-xl border border-[#E07A5F]/30" />
-          <span className="h-2 w-2 rounded-full bg-[#E07A5F] shadow-[0_0_8px_rgba(224,122,95,0.7)] animate-pulse" />
+        {/* G1: the dot pulses ONLY while the plan is genuinely moving. A parked
+            plan gets a still, amber dot — never the "it's working" animation. */}
+        <span className={cn(
+          'relative mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl',
+          live ? 'bg-[#E07A5F]/10' : 'bg-amber-500/10',
+        )}>
+          <span className={cn('absolute inset-0 rounded-xl border', live ? 'border-[#E07A5F]/30' : 'border-amber-500/30')} />
+          <span className={cn(
+            'h-2 w-2 rounded-full',
+            live
+              ? 'bg-[#E07A5F] shadow-[0_0_8px_rgba(224,122,95,0.7)] animate-pulse'
+              : 'bg-amber-500',
+          )} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[12.5px] font-semibold text-cream/90">{drive.goal}</span>
-          <span className={cn('mt-0.5 block truncate text-[10.5px]', runningStep ? 'alma-thinking-shimmer' : 'text-muted')}>
+          <span className={cn('mt-0.5 block truncate text-[10.5px]', live && runningStep ? 'alma-thinking-shimmer' : 'text-muted')}>
             {drive.currentLine}
           </span>
           {/* progress rail */}
@@ -158,6 +188,11 @@ function WorkingPlan({ drive, onOpen, onAction }: {
 
       {/* meta strip */}
       <div className="flex items-center gap-3 px-3.5 pb-2.5 text-[9px] text-muted">
+        {/* Honest state first — "চলছে" only when it really is. */}
+        <span className={cn('font-semibold', live ? 'text-[#E07A5F]' : 'text-amber-600')}>
+          {drive.statusLabel ?? (live ? 'চলছে' : 'অপেক্ষায়')}
+        </span>
+        {!live && idle && <span>{idle} ধরে থেমে</span>}
         {wake && <span className="inline-flex items-center gap-1">🕐 পরবর্তী {wake}</span>}
         {drive.costTaka > 0 && <span className="tabular-nums">৳{drive.costTaka}</span>}
         {drive.attemptCount > 0 && <span>চেষ্টা {drive.attemptCount}/{drive.maxAttempts}</span>}
@@ -369,7 +404,10 @@ export function PlanDriveTimeline({ data, onOpenConversation, onAction }: {
   if (drives.length === 0) return null
 
   const attention = drives.filter((d) => d.phase === 'needs-decision' || d.phase === 'waiting-approval')
+  // G1 — "N চলছে" counts plans that are genuinely moving, not every non-parked
+  // row. His phone said "Running 2" about two plans that had been dead an hour.
   const working = drives.filter((d) => d.phase === 'driving')
+  const runningNow = drives.filter((d) => d.isRunning ?? d.phase === 'driving')
 
   return (
     <motion.div
@@ -381,8 +419,8 @@ export function PlanDriveTimeline({ data, onOpenConversation, onAction }: {
       {/* Live-desk header */}
       <div className="flex items-center gap-2.5 border-b border-border-subtle px-4 py-3">
         <span className="relative flex h-2.5 w-2.5">
-          <span className={cn('absolute inline-flex h-full w-full rounded-full opacity-75', working.length > 0 ? 'animate-ping bg-emerald-400' : 'bg-zinc-300')} />
-          <span className={cn('relative inline-flex h-2.5 w-2.5 rounded-full', working.length > 0 ? 'bg-emerald-500' : 'bg-zinc-400')} />
+          <span className={cn('absolute inline-flex h-full w-full rounded-full opacity-75', runningNow.length > 0 ? 'animate-ping bg-emerald-400' : 'bg-zinc-300')} />
+          <span className={cn('relative inline-flex h-2.5 w-2.5 rounded-full', runningNow.length > 0 ? 'bg-emerald-500' : 'bg-zinc-400')} />
         </span>
         <h3 className="text-[13px] font-extrabold tracking-tight text-cream/90">এজেন্ট লাইভ ডেস্ক</h3>
         <span className="text-[10px] text-muted">Plan-Drive</span>
@@ -392,9 +430,14 @@ export function PlanDriveTimeline({ data, onOpenConversation, onAction }: {
               {attention.length} অপেক্ষায়
             </span>
           )}
-          {working.length > 0 && (
+          {runningNow.length > 0 && (
             <span className="rounded-full bg-emerald-500/12 px-2 py-0.5 text-[9px] font-bold text-emerald-600">
-              {working.length} চলছে
+              {runningNow.length} চলছে
+            </span>
+          )}
+          {working.length > runningNow.length && (
+            <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[9px] font-bold text-amber-600">
+              {working.length - runningNow.length} থেমে আছে
             </span>
           )}
           {!data.enabled && (

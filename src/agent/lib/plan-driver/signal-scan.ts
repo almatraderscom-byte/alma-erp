@@ -169,6 +169,24 @@ export function selectDrivableSignals(briefing: OwnerBriefingData): DrivableSign
   return out.slice(0, MAX_SIGNALS_PER_SCAN)
 }
 
+/**
+ * The visible step list for a signal. Ordered and dependent, so the panel shows a
+ * real todo list the moment the work starts and each step is separately checkable.
+ */
+export function buildSignalSteps(sig: DrivableSignal): Array<{ action: string; dependsOn?: string[] }> {
+  return [
+    { action: `কারণ বের করো — ${sig.goal}. ডেটা দেখে সিদ্ধান্ত নাও, অনুমান নয়।` },
+    {
+      action: `করণীয় ঠিক করো: কী করা উচিত, কেন, আর ঝুঁকি কী। ${sig.doneCriteria}`,
+      dependsOn: ['step-1'],
+    },
+    {
+      action: 'Boss-কে ২-৩ লাইনে জানাও কী পেলে আর কী করণীয়; টাকা/পোস্ট/মেসেজ লাগলে approval card দাও।',
+      dependsOn: ['step-2'],
+    },
+  ]
+}
+
 /** Owner-abandoned signals stay suppressed this long before they may re-surface.
  * "বাদ দাও" means STOP pursuing it — not "re-plan it on the next 30-min scan"
  * (owner bug 2026-07-13: the same Mustahid/24h-window plans were re-created and
@@ -268,9 +286,14 @@ export async function scanSignalsToPlanDrive(
       // abandoned it within the cool-off — his dismissal must stick.
       if (existing?.value && !(await signalReplannable(existing.value))) continue
 
+      // G3 (owner ruling 2026-07-26): the todo list comes FIRST, then visible
+      // progress. A one-step plan showed Boss a blank box for an hour and then
+      // failed the completion gate, because "find the cause" and "decide what to
+      // do" were squashed into a single step that could never satisfy both. Three
+      // ordered steps mean he watches it move — and each one can actually pass.
       const plan = await createPlan({
         goal: sig.goal,
-        steps: [{ action: sig.goal }],
+        steps: buildSignalSteps(sig),
         businessId,
       })
       // A plan with no conversation is DEAD ON ARRIVAL — the executor cannot run

@@ -30,6 +30,7 @@ import type { Plan, PlanStep } from '@/agent/lib/planner'
 import { createTurn, finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
 import { ensureDriveConversation } from '@/agent/lib/plan-driver/drive-conversation'
+import { OWNER_STEERING_NOTE } from '@/agent/lib/turn-steering'
 
 export interface StepExecResult {
   /** The step ran cleanly (no error, no pending approval). */
@@ -120,6 +121,46 @@ export function buildDirective(plan: Pick<Plan, 'goal'>, step: PlanStep, suffix?
 }
 
 /**
+ * Owner messages typed into the plan's own thread that no step has consumed yet.
+ * Marked consumed as they are handed over, so one instruction steers once.
+ * Fail-open: a bookkeeping problem must never stop the step from running.
+ */
+async function claimDriveSteering(conversationId: string, stepId: string): Promise<string> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = prisma as any
+  try {
+    const rows: Array<{ id: string; content: unknown; usage: unknown }> = await db.agentMessage.findMany({
+      where: { conversationId, role: 'user' },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+      select: { id: true, content: true, usage: true },
+    })
+
+    const texts: string[] = []
+    for (const row of [...rows].reverse()) {
+      const usage = (row.usage ?? {}) as Record<string, unknown>
+      // Written by the engine itself, or already handed to an earlier step.
+      if (usage.driverDirective === true) continue
+      if (typeof usage.steeringConsumedBy === 'string') continue
+
+      const blocks = Array.isArray(row.content) ? row.content as Array<Record<string, unknown>> : []
+      const text = blocks
+        .filter((b) => b.type === 'text' && typeof b.text === 'string')
+        .map((b) => String(b.text))
+        .join('\n')
+        .trim()
+      if (text) texts.push(text)
+      await db.agentMessage
+        .update({ where: { id: row.id }, data: { usage: { ...usage, steeringConsumedBy: stepId } } })
+        .catch(() => {})
+    }
+    return texts.length > 0 ? OWNER_STEERING_NOTE + texts.join('\n') : ''
+  } catch {
+    return ''
+  }
+}
+
+/**
  * Execute one ready step of a plan. Never throws — all failures come back as
  * `{ ok:false, error }`.
  *
@@ -150,7 +191,15 @@ export async function executeStep(
     }
   }
 
-  const directive = buildDirective(plan, step, opts.directiveSuffix)
+  // G8 (owner ruling 2026-07-26) — Boss must be able to correct work WHILE it
+  // runs, the way he corrects me mid-turn, without killing what is in flight.
+  // Chat turns already claim steering messages each round; a Plan-Drive step
+  // could not hear him at all. Anything he typed into this plan's thread since
+  // the last step now rides at the TOP of the next step's directive.
+  const steering = await claimDriveSteering(conversationId, step.id)
+  const directive = [steering, buildDirective(plan, step, opts.directiveSuffix)]
+    .filter(Boolean)
+    .join('\n\n')
 
   // ── Queue mode ────────────────────────────────────────────────────────────
   if (!opts.forceInline && isTurnHandoffConfigured()) {
@@ -185,6 +234,9 @@ export async function executeStep(
         conversationId,
         role: 'user',
         content: [{ type: 'text', text: directive }],
+        // Marks this as the ENGINE's message, so claimDriveSteering never mistakes
+        // a driver directive for something Boss typed.
+        usage: { driverDirective: true },
       },
     })
   } catch (err) {
