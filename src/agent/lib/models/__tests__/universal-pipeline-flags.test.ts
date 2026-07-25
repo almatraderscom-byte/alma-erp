@@ -140,3 +140,23 @@ describe('the delegation note only ships when delegation is actually shipped (Ph
     expect(systemText(undefined)).toContain(NOTE_MARKER)
   })
 })
+
+describe('speak-first (owner rule 2026-07-25)', () => {
+  it('is ON by default and off-switchable', async () => {
+    const { speakFirstEnabled } = await import('@/agent/config')
+    expect(speakFirstEnabled(undefined)).toBe(true)
+    expect(speakFirstEnabled('off')).toBe(false)
+  })
+
+  it('the style rule teaches a SUBSTANTIVE first line, not the old filler example', async () => {
+    const { buildSystemPromptBlocks } = await import('@/agent/lib/system-prompt')
+    const text = buildSystemPromptBlocks({
+      projectInstructions: '', pinnedMemories: [], relevantMemories: [], recalledTurns: [],
+      personalMode: false, businessId: 'ALMA_LIFESTYLE',
+    }).stable.map((b) => b.text).join('\n')
+    // The rule must demand a SPOKEN line before tools…
+    expect(text).toContain('টুল চালানোর আগেই')
+    // …and must no longer hand the model the filler it used to copy verbatim.
+    expect(text).not.toContain('"ঠিক আছে, করছি"')
+  })
+})

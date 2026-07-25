@@ -204,6 +204,20 @@ export function subagentToolTrimEnabled(
   return flag === 'on' || (vercelEnv === 'preview' && flag !== 'off')
 }
 
+/**
+ * Owner rule 2026-07-25 — SPEAK FIRST, then work (the Claude-app shape).
+ * The head must write one spoken line (what it understood + where it will look)
+ * BEFORE its first tool call. The blocker was mechanical, not stylistic: the
+ * grounding gate set `tool_choice: 'required'` on round 0, which forces the
+ * provider to emit a tool call and therefore NO text. With this on, round 0 is
+ * left on 'auto' and grounding is enforced AFTER the round instead (one nudge),
+ * so the guarantee survives and Boss still gets an instant reply.
+ * ON by default; AGENT_SPEAK_FIRST=off restores the forced-tool round 0.
+ */
+export function speakFirstEnabled(flag = process.env.AGENT_SPEAK_FIRST): boolean {
+  return flag !== 'off'
+}
+
 /** Hard ceiling on a trimmed specialist sub-agent's tool count. */
 export const SUBAGENT_TOOL_CAP = Number(process.env.SUBAGENT_TOOL_CAP) || 40
 

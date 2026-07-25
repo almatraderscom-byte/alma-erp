@@ -5,7 +5,7 @@
  */
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET } from '@/agent/config'
 import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
@@ -1285,6 +1285,9 @@ async function* runAlternateProviderTurn(
   // Boss before it started running tools? One backstop nudge per turn.
   let preambleSpoken = false
   let preambleNudgeSent = false
+  // Speak-first: the ground-before-answer guarantee now runs AFTER round 0
+  // instead of forcing a tool call that silences it. One retry per turn.
+  let groundingNudgeSent = false
   // Announced-intent guard (global terminal/failure rules live in turn-loop-policy).
   let intentNudges = 0
   let requirementRetries = 0
@@ -1502,6 +1505,12 @@ async function* runAlternateProviderTurn(
         ownerRequirements.groundingRequired && iteration === 0 && !roundBoundToolName
           && iterationTools.length > 0
           && !toolRecords.some((r) => r.status === 'success')
+      // Speak-first (owner rule 2026-07-25): `tool_choice: 'required'` is what
+      // MECHANICALLY silenced round 0 — a forced tool call leaves the provider no
+      // room for text, so Boss saw a spinner instead of "বস, … বুঝেছি — … দেখছি"।
+      // Round 0 goes back to 'auto' and the grounding guarantee moves AFTER the
+      // round (see the retry below): speak, then read, then answer.
+      const forceGroundingToolChoice = groundingRequiredThisRound && !speakFirstEnabled()
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
@@ -1553,7 +1562,7 @@ async function* runAlternateProviderTurn(
         toolChoice:
           roundBoundToolName && iterationTools.length > 0
             ? { name: roundBoundToolName }
-            : groundingRequiredThisRound
+            : forceGroundingToolChoice
               ? 'required'
               : undefined,
       })) {
@@ -1674,6 +1683,34 @@ async function* runAlternateProviderTurn(
             { role: 'user', content: ADAPTER_ACT_NOW_NUDGE },
           ]
           finalText = ''
+          continue
+        }
+        // Speak-first grounding retry (owner rule 2026-07-25): round 0 is no
+        // longer forced to call a tool (that is what silenced it), so the
+        // ground-before-answer guarantee is enforced HERE instead. The head spoke
+        // its understanding but read nothing — send it straight back to read,
+        // once. Net shape: speak → read → answer, with the guarantee intact.
+        if (
+          !signal?.aborted
+          && !nearDeadline
+          && groundingRequiredThisRound
+          && !groundingNudgeSent
+          && iterationTools.length > 0
+        ) {
+          groundingNudgeSent = true
+          if (iterationText.trim()) {
+            // Keep the spoken line in the transcript — it is the reply Boss already saw.
+            messages = [...messages, { role: 'assistant', content: iterationText }]
+          }
+          messages = [
+            ...messages,
+            {
+              role: 'user',
+              content:
+                '[লাইভ ডেটা বাধ্যতামূলক] এটা লাইভ-ডেটার প্রশ্ন — স্মৃতি থেকে সংখ্যা/অবস্থা বলা নিষেধ। '
+                + 'এখনই relevant read tool (get_/list_/check_/recommend_…) চালিয়ে আসল মানটা আনো, তারপর উত্তর দাও।',
+            },
+          ]
           continue
         }
         // Verify-retry also skips near the deadline: a rewrite round costs 20-60s
