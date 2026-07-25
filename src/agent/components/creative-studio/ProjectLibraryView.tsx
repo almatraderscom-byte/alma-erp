@@ -6,6 +6,7 @@ import {
   fetchProjectAssets,
   updateProjectAsset,
 } from '@/agent/components/creative-studio/studio-api'
+import { ReviewPanel } from '@/agent/components/creative-studio/ReviewPanel'
 import type {
   StudioProjectAsset,
   StudioProjectSummary,
@@ -233,6 +234,13 @@ export function ProjectLibraryView({
                   {saving ? 'সেভ হচ্ছে…' : 'Folder ও tag সেভ'}
                 </button>
               </div>
+            )}
+
+            {!project.readonly && project.brandProfileId && (
+              <ReviewPanel
+                assetId={selected.id}
+                brandProfileId={project.brandProfileId}
+              />
             )}
 
             <div className="mt-4">

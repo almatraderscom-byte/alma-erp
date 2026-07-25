@@ -406,6 +406,232 @@ export async function updateProjectAsset(
   return data.asset
 }
 
+// ── CSE6: review, approval, and multi-brand ─────────────────────────────────
+
+export type StudioAccessRole = 'owner' | 'creator' | 'reviewer'
+export type StudioReviewState = 'draft' | 'changes_requested' | 'revised' | 'approved'
+
+export type StudioBrandProfile = {
+  brandProfileId: string
+  ownerId: string
+  name: string
+  organization: string | null
+  notes: string | null
+  role: StudioAccessRole
+  approvalSpendThresholdBdt: number
+  projectCount: number
+  recipeCount: number
+  assetCount: number
+}
+
+export type StudioRoleAssignment = {
+  id: string
+  brandProfileId: string
+  userId: string
+  userName: string
+  userEmail: string | null
+  erpRole: string
+  role: Exclude<StudioAccessRole, 'owner'>
+  createdAt: string
+}
+
+export type StudioEligibleUser = {
+  id: string
+  name: string
+  email: string | null
+  erpRole: string
+}
+
+export type StudioRoleSettings = {
+  assignments: StudioRoleAssignment[]
+  eligibleUsers: StudioEligibleUser[]
+}
+
+export type StudioReviewThread = {
+  assetId: string
+  brandProfileId: string
+  brandName: string
+  projectId: string
+  projectName: string
+  assetTitle: string | null
+  currentState: StudioReviewState
+  currentSequence: number
+  latestVersionId: string | null
+  approvedVersionId: string | null
+  publishReady: boolean
+  role: StudioAccessRole
+  approvalSpendThresholdBdt: number
+  capabilities: {
+    comment: boolean
+    requestChanges: boolean
+    markRevised: boolean
+    approve: boolean
+  }
+  comments: Array<{
+    id: string
+    authorId: string
+    authorName: string
+    authorRole: StudioAccessRole
+    body: string
+    createdAt: string
+  }>
+  events: Array<{
+    id: string
+    sequence: number
+    fromState: StudioReviewState | null
+    toState: StudioReviewState
+    actorId: string
+    actorName: string
+    actorRole: StudioAccessRole
+    note: string | null
+    approvedVersionId: string | null
+    createdAt: string
+  }>
+}
+
+export async function fetchStudioBrands(): Promise<StudioBrandProfile[]> {
+  const data = await studioRequest<{ brands: StudioBrandProfile[] }>(
+    '/api/assistant/creative-studio/brands',
+    undefined,
+    'studio_brands_failed',
+  )
+  return data.brands
+}
+
+export async function updateStudioBrand(input: {
+  brandProfileId: string
+  approvalSpendThresholdBdt: number
+  notes?: string | null
+}): Promise<StudioBrandProfile[]> {
+  const data = await studioRequest<{ brands: StudioBrandProfile[] }>(
+    '/api/assistant/creative-studio/brands',
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+    'studio_brand_update_failed',
+  )
+  return data.brands
+}
+
+export async function fetchStudioRoleSettings(
+  brandProfileId: string,
+): Promise<StudioRoleSettings> {
+  const query = new URLSearchParams({ brandProfileId })
+  return studioRequest<StudioRoleSettings>(
+    `/api/assistant/creative-studio/roles?${query.toString()}`,
+    undefined,
+    'studio_roles_failed',
+  )
+}
+
+export async function assignStudioRole(input: {
+  brandProfileId: string
+  userId: string
+  role: Exclude<StudioAccessRole, 'owner'>
+}): Promise<StudioRoleSettings> {
+  return studioRequest<StudioRoleSettings>(
+    '/api/assistant/creative-studio/roles',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+    'studio_role_assign_failed',
+  )
+}
+
+export async function removeStudioRole(input: {
+  brandProfileId: string
+  userId: string
+}): Promise<StudioRoleSettings> {
+  return studioRequest<StudioRoleSettings>(
+    '/api/assistant/creative-studio/roles',
+    {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+    'studio_role_remove_failed',
+  )
+}
+
+export async function fetchStudioReview(
+  assetId: string,
+  brandProfileId: string,
+): Promise<StudioReviewThread> {
+  const query = new URLSearchParams({ assetId, brandProfileId })
+  const data = await studioRequest<{ review: StudioReviewThread }>(
+    `/api/assistant/creative-studio/reviews?${query.toString()}`,
+    undefined,
+    'studio_review_failed',
+  )
+  return data.review
+}
+
+export async function addStudioReviewComment(input: {
+  assetId: string
+  brandProfileId: string
+  comment: string
+}): Promise<StudioReviewThread> {
+  const data = await studioRequest<{ review: StudioReviewThread }>(
+    '/api/assistant/creative-studio/reviews',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...input, intent: 'comment' }),
+    },
+    'studio_review_comment_failed',
+  )
+  return data.review
+}
+
+export async function transitionStudioReview(input: {
+  assetId: string
+  brandProfileId: string
+  targetState: StudioReviewState
+  expectedSequence: number
+  note?: string
+}): Promise<StudioReviewThread> {
+  const data = await studioRequest<{ review: StudioReviewThread }>(
+    `/api/assistant/creative-studio/assets/${encodeURIComponent(input.assetId)}/state`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        brandProfileId: input.brandProfileId,
+        targetState: input.targetState,
+        expectedSequence: input.expectedSequence,
+        note: input.note,
+      }),
+    },
+    'studio_review_transition_failed',
+  )
+  return data.review
+}
+
+export async function authorizeStudioSpend(input: {
+  assetId: string
+  brandProfileId: string
+  estimatedCostBdt: number
+}): Promise<{
+  authorized: true
+  role: StudioAccessRole
+  estimatedCostBdt: number
+  approvalSpendThresholdBdt: number
+}> {
+  return studioRequest(
+    '/api/assistant/creative-studio/reviews',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...input, intent: 'authorize_spend' }),
+    },
+    'studio_spend_authorization_failed',
+  )
+}
+
 export type StudioConfig = {
   fashnConfigured: boolean
   geminiConfigured: boolean

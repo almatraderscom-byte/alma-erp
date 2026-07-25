@@ -57,6 +57,10 @@ model User {
   operationalTaskAcks           OperationalTaskAcknowledgement[] @relation("OperationalTaskAckUser")
   paymentMethods                EmployeePaymentMethod[]          @relation("UserPaymentMethods")
   agentStaffLinks               AgentStaff[]                     @relation("AgentStaffUser")
+  creativeStudioRoles           CreativeStudioRoleAssignment[]   @relation("CreativeStudioRoleUser")
+  creativeStudioRolesGranted    CreativeStudioRoleAssignment[]   @relation("CreativeStudioRoleGrantor")
+  creativeReviewComments        CreativeAssetReviewComment[]     @relation("CreativeReviewCommentAuthor")
+  creativeReviewEvents          CreativeAssetReviewEvent[]       @relation("CreativeReviewEventActor")
 
   @@index([active, role])
   @@index([active, createdAt])
@@ -2585,15 +2589,19 @@ model BrandAsset {
 // so Studio can never mutate a live ERP product through these relationships.
 
 model CreativeBrandProfile {
-  id           String                @id @default(uuid())
-  ownerId      String                @map("owner_id")
-  name         String
-  organization String?
-  notes        String?               @db.Text
-  createdAt    DateTime              @default(now()) @map("created_at")
-  updatedAt    DateTime              @updatedAt @map("updated_at")
-  recipes      CreativeBrandRecipe[]
-  projects     CreativeProject[]
+  id                        String                         @id @default(uuid())
+  ownerId                   String                         @map("owner_id")
+  name                      String
+  organization              String?
+  notes                     String?                        @db.Text
+  approvalSpendThresholdBdt Int                            @default(0) @map("approval_spend_threshold_bdt")
+  createdAt                 DateTime                       @default(now()) @map("created_at")
+  updatedAt                 DateTime                       @updatedAt @map("updated_at")
+  recipes                   CreativeBrandRecipe[]
+  projects                  CreativeProject[]
+  roleAssignments           CreativeStudioRoleAssignment[]
+  reviewComments            CreativeAssetReviewComment[]
+  reviewEvents              CreativeAssetReviewEvent[]
 
   @@unique([ownerId, name])
   @@index([ownerId, updatedAt(sort: Desc)])
@@ -2655,20 +2663,24 @@ model CreativeProject {
 }
 
 model CreativeProjectAsset {
-  id                String                    @id @default(uuid())
-  projectId         String                    @map("project_id")
-  project           CreativeProject           @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  pendingActionId   String?                   @map("pending_action_id")
-  assetType         String                    @default("image") @map("asset_type")
+  id                String                       @id @default(uuid())
+  projectId         String                       @map("project_id")
+  project           CreativeProject              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  pendingActionId   String?                      @map("pending_action_id")
+  assetType         String                       @default("image") @map("asset_type")
   title             String?
-  folder            String                    @default("Unsorted")
-  latestStoragePath String?                   @map("latest_storage_path") @db.Text
-  createdById       String                    @map("created_by_id")
-  createdAt         DateTime                  @default(now()) @map("created_at")
-  updatedAt         DateTime                  @updatedAt @map("updated_at")
+  folder            String                       @default("Unsorted")
+  latestStoragePath String?                      @map("latest_storage_path") @db.Text
+  reviewState       CreativeAssetReviewState     @default(DRAFT) @map("review_state")
+  reviewSequence    Int                          @default(0) @map("review_sequence")
+  createdById       String                       @map("created_by_id")
+  createdAt         DateTime                     @default(now()) @map("created_at")
+  updatedAt         DateTime                     @updatedAt @map("updated_at")
   versions          CreativeAssetVersion[]
-  lineageSources    CreativeAssetLineage[]    @relation("CreativeLineageSource")
+  lineageSources    CreativeAssetLineage[]       @relation("CreativeLineageSource")
   tagAssignments    CreativeProjectAssetTag[]
+  reviewComments    CreativeAssetReviewComment[]
+  reviewEvents      CreativeAssetReviewEvent[]
 
   @@unique([projectId, pendingActionId])
   @@index([projectId, folder, updatedAt(sort: Desc)])
@@ -2740,6 +2752,80 @@ model CreativeProjectAssetTag {
   @@id([assetId, tagId])
   @@index([tagId])
   @@map("creative_project_asset_tags")
+}
+
+// ─── Creative Studio Enterprise CSE6: review and multi-brand ───────────────
+
+enum CreativeStudioRole {
+  OWNER
+  CREATOR
+  REVIEWER
+}
+
+enum CreativeAssetReviewState {
+  DRAFT
+  CHANGES_REQUESTED
+  REVISED
+  APPROVED
+}
+
+model CreativeStudioRoleAssignment {
+  id             String               @id @default(uuid())
+  ownerId        String               @map("owner_id")
+  brandProfileId String               @map("brand_profile_id")
+  brandProfile   CreativeBrandProfile @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
+  userId         String               @map("user_id")
+  user           User                 @relation("CreativeStudioRoleUser", fields: [userId], references: [id], onDelete: Restrict)
+  role           CreativeStudioRole
+  grantedById    String               @map("granted_by_id")
+  grantedBy      User                 @relation("CreativeStudioRoleGrantor", fields: [grantedById], references: [id], onDelete: Restrict)
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  @@unique([brandProfileId, userId])
+  @@index([ownerId, brandProfileId])
+  @@index([userId, role])
+  @@map("creative_studio_role_assignments")
+}
+
+model CreativeAssetReviewComment {
+  id             String               @id @default(uuid())
+  assetId        String               @map("asset_id")
+  asset          CreativeProjectAsset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  brandProfileId String               @map("brand_profile_id")
+  brandProfile   CreativeBrandProfile @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
+  authorId       String               @map("author_id")
+  author         User                 @relation("CreativeReviewCommentAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  authorRole     CreativeStudioRole   @map("author_role")
+  body           String               @db.Text
+  createdAt      DateTime             @default(now()) @map("created_at")
+
+  @@index([assetId, createdAt])
+  @@index([brandProfileId, createdAt])
+  @@index([authorId, createdAt])
+  @@map("creative_asset_review_comments")
+}
+
+model CreativeAssetReviewEvent {
+  id             String                    @id @default(uuid())
+  assetId        String                    @map("asset_id")
+  asset          CreativeProjectAsset      @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  brandProfileId String                    @map("brand_profile_id")
+  brandProfile   CreativeBrandProfile      @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
+  sequence       Int
+  fromState      CreativeAssetReviewState? @map("from_state")
+  toState        CreativeAssetReviewState  @map("to_state")
+  actorId        String                    @map("actor_id")
+  actor          User                      @relation("CreativeReviewEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+  actorRole      CreativeStudioRole        @map("actor_role")
+  note           String?                   @db.Text
+  metadata       Json                      @default("{}")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+
+  @@unique([assetId, sequence])
+  @@index([brandProfileId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("creative_asset_review_events")
 }
 
 // ─── Creative Studio Enterprise CSE5: owner voice lifecycle ────────────────

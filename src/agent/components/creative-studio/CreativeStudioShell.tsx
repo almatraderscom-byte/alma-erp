@@ -6,16 +6,20 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Toaster } from 'react-hot-toast'
 import { cn } from '@/lib/utils'
 import { AudioLabView } from '@/agent/components/creative-studio/AudioLabView'
+import { BrandSwitcher } from '@/agent/components/creative-studio/BrandSwitcher'
 import { GalleryView } from '@/agent/components/creative-studio/GalleryView'
 import { ModelLibraryView } from '@/agent/components/creative-studio/ModelLibraryView'
 import { ProjectBar } from '@/agent/components/creative-studio/ProjectBar'
 import { ProjectLibraryView } from '@/agent/components/creative-studio/ProjectLibraryView'
+import { StudioRoleSettings } from '@/agent/components/creative-studio/StudioRoleSettings'
 import { StudioWorkspaceView, ENGINE_LABELS_BN } from '@/agent/components/creative-studio/StudioWorkspaceView'
 import { VideoStudioView } from '@/agent/components/creative-studio/VideoStudioView'
 import { AudioSvg, GallerySvg, StudioSvg, UserSvg, VideoSvg } from '@/agent/components/creative-studio/StudioUi'
 import {
+  fetchStudioBrands,
   fetchStudioConfig,
   STUDIO_NAV_DEFINITIONS,
+  type StudioBrandProfile,
   type StudioConfig,
   type StudioView,
 } from '@/agent/components/creative-studio/studio-api'
@@ -34,9 +38,14 @@ export const STUDIO_NAV_ITEMS = STUDIO_NAV_DEFINITIONS.map((item) => ({
   Icon: STUDIO_NAV_ICONS[item.id],
 }))
 
+const ACTIVE_BRAND_KEY = 'alma-creative-studio-brand'
+
 export function CreativeStudioShell() {
   const [view, setView] = useState<StudioView>('studio')
   const [config, setConfig] = useState<StudioConfig | null>(null)
+  const [brands, setBrands] = useState<StudioBrandProfile[]>([])
+  const [brandsLoading, setBrandsLoading] = useState(true)
+  const [activeBrandProfileId, setActiveBrandProfileId] = useState<string | null>(null)
   const [activeProject, setActiveProject] = useState<StudioProjectSummary | null>(null)
   const [libraryProject, setLibraryProject] = useState<StudioProjectSummary | null>(null)
 
@@ -56,10 +65,34 @@ export function CreativeStudioShell() {
   }, [])
 
   useEffect(() => {
+    void fetchStudioBrands()
+      .then((rows) => {
+        setBrands(rows)
+        const stored = window.localStorage.getItem(ACTIVE_BRAND_KEY)
+        const selected = rows.find((brand) => brand.brandProfileId === stored) ?? rows[0] ?? null
+        setActiveBrandProfileId(selected?.brandProfileId ?? null)
+      })
+      .catch(() => setBrands([]))
+      .finally(() => setBrandsLoading(false))
+  }, [])
+
+  useEffect(() => {
     const root = document.documentElement
     root.classList.add('cs-fullscreen')
     return () => root.classList.remove('cs-fullscreen')
   }, [])
+
+  const activeBrand = brands.find((brand) => brand.brandProfileId === activeBrandProfileId) ?? null
+
+  const changeBrand = useCallback((brandProfileId: string) => {
+    const brand = brands.find((item) => item.brandProfileId === brandProfileId)
+    if (!brand) return
+    setActiveBrandProfileId(brandProfileId)
+    setActiveProject(null)
+    setLibraryProject(null)
+    window.localStorage.setItem(ACTIVE_BRAND_KEY, brandProfileId)
+    window.dispatchEvent(new CustomEvent('alma-studio-brand-context', { detail: brand }))
+  }, [brands])
 
   return (
     <div data-studio-view={view} className="studio-shell flex h-full min-h-0 w-full overflow-hidden text-cream">
@@ -82,13 +115,20 @@ export function CreativeStudioShell() {
             </Link>
             <div className="min-w-0">
               <p className="text-lg font-extrabold tracking-tight text-cream">ক্রিয়েটিভ স্টুডিও</p>
-              <p className="text-[10px] text-muted">{config?.organization ?? 'ALMA Lifestyle'} · সব ক্রিয়েটিভ এক জায়গায়</p>
+              <p className="text-[10px] text-muted">{activeBrand?.organization ?? config?.organization ?? 'ALMA Lifestyle'} · আলাদা ব্র্যান্ড, আলাদা সম্পদ</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <BrandSwitcher
+              brands={brands}
+              activeBrandProfileId={activeBrandProfileId}
+              loading={brandsLoading}
+              onChange={changeBrand}
+            />
+            <StudioRoleSettings brand={activeBrand} onBrandsChange={setBrands} />
             <Link
               href="/agent/catalog-images"
-              className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-muted hover:text-cream"
+              className="hidden rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-muted hover:text-cream lg:block"
             >
               📸 ক্যাটালগ
             </Link>
