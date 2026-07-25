@@ -158,9 +158,27 @@ failures never appear in their CDR" — they do, with causes; (2) "every call wi
 re-registration dies" — a clean rerun disproved it. And `expiration=3600`, briefly shipped as
 "hygiene", was actively harmful: it meant we claimed the binding once an hour.
 
-**Test outbound without dialling a human:** unassigned numbers (`01711100001`, …) answer with
-`183 Session Progress` when routing works, cost nothing, and their CDR names the cause a few
-minutes later.
+### Verified after the fix
+
+Thirty outbound calls with the 60 s binding held throughout: **29 reached the network, 1 died**
+(`setup_failure`) — 3%, against 19% (14 of 74) earlier the same day. Of the earlier failures,
+every `rate_plan_no_match`, `no_route` and `stale_timeout` disappeared; only the lone
+`setup_failure` class remains, and that one is plausibly theirs.
+
+### How to test outbound — DO NOT invent numbers
+
+Earlier in this session the test batches dialled made-up numbers on the assumption they were
+unassigned. **That assumption cannot be verified, the calls do ring if the number is live, and
+they go out under the owner's own licence.** Owner instruction 2026-07-25: never again.
+
+Use instead:
+- **PSTN loopback — dial our OWN DID `09649777738`.** It leaves through the trunk, comes back
+  through the provider, and nobody else's phone is involved. It costs two of the trunk's two
+  channels, so run it only when the line is idle. Proven working: `183 Session Progress` then
+  `200 OK`, and the inbound leg arrives on our own Asterisk.
+- **The owner's own number**, when he is expecting it.
+- **Passive**: read the provider's CDR (filter CLIENT IP `31.97.237.40`) and count hangup
+  causes on the real business traffic. No calls placed at all, and it is the honest measure.
 
 ---
 
