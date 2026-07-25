@@ -114,58 +114,53 @@ Gemini's audio arrived late.
 
 ---
 
-## 5. OUTBOUND — what the provider's own CDR says (2026-07-25)
+## 5. OUTBOUND — ROOT CAUSE, found 2026-07-25 (everything before this was a symptom)
 
-The old reading in §5b ("their switch swallows our INVITE and it appears in NO CDR") is
-**wrong on the second half**. Their panel at `amarip.net` records every one of our calls and
-names the reason. Today's causes, read from their CDR:
+**The provider keeps exactly ONE registration binding per SIP account, and the last registrant
+owns it. We were re-registering every 300 s; NGS re-registers every ~60 s. So whenever both
+were configured, NGS owned the line almost all the time — and our outbound INVITEs went out
+from an address that was not the current binding.**
 
-| their hangup cause | count | what it means |
-|---|---|---|
-| `rate_plan_no_match` | 7 | their billing lookup found no rate for the number |
-| `client_concurrent_limit_cancelled` | 2 | our trunk's CALL LIMIT of **2** was hit |
-| `no_route` | 1 | no outbound route on their side |
-| `stale_timeout` / `setup_failure` | 1 / 3 | their switch never completed setup and never answered us |
-
-`rate_plan_no_match` is a **provider bug, and it is provable from their own screens**: their
-rate plan `SCL_Low` contains the prefix `01` at ৳0.30, yet these calls to plain `01…` numbers
-were failed for "no matching rate" — and the same numbers route fine minutes later:
+Watch their own table (`amarip.net` → SIP Users, or `/api/sip-registrations` behind it, which
+returns the row with IP, user agent and seconds remaining):
 
 ```
-25/07/2026 11:23:16  01779640373   GRAMEENPHONE  FAILED  rate_plan_no_match
-25/07/2026 12:11:50  01900000001   BANGLALINK    FAILED  rate_plan_no_match
-25/07/2026 12:12:34  01900000000   BANGLALINK    FAILED  rate_plan_no_match
-25/07/2026 13:57:51  01700000009   GRAMEENPHONE  FAILED  rate_plan_no_match
+09:19:51  163.227.239.96  NextGenSwitch v1.0.0  exp=35
+09:20:21  163.227.239.96  NextGenSwitch v1.0.0  exp=58   <- NGS refreshed
+09:22:51  163.227.239.96  NextGenSwitch v1.0.0  exp=15
+09:23:21  31.97.237.40    Asterisk PBX 20.6.0   exp=45   <- we took it, after switching to 60s
+09:24:21  31.97.237.40    Asterisk PBX 20.6.0   exp=35
 ```
 
-`stale_timeout` is the "100 seconds of silence" case in §5b, seen from their side:
+Calls placed while we did not own that row are the ones that died — `no_route`,
+`rate_plan_no_match`, `stale_timeout`, or silence with `481` to our CANCEL. Roughly half of
+them, which is exactly what the owner counted (18 of 35).
 
-```
-25/07/2026 12:29:47  01779640373   GRAMEENPHONE  NO ANSWER  stale_timeout   (PDD 0.05s)
-```
+**A `200 OK` to our REGISTER proves nothing.** Asterisk reported `Registered (exp. 3227s)`
+while the provider's table did not list us at all. Our own registration state is not evidence;
+only their table is.
 
-**Take to support, with dates:** (1) why does `rate_plan_no_match` fire for numbers that match
-the `01` prefix already in our own rate plan, (2) why does a failed setup return no SIP response
-at all — our PBX then waits out its full timeout on a call that is already dead on their side —
-and (3) raise CALL LIMIT from 2.
+**Fix (live on the VPS and in `worker/deploy/asterisk/alma-trunk.conf`):** `expiration=60`,
+matching what NGS does. Verified: the binding flipped to us within one cycle and stayed.
+
+**Second rule, equally important:** never let a second PBX register this account. NGS must be
+genuinely deactivated — pointing its trunk at a wrong port is not enough, and while its trunk
+is healthy it takes the line back every minute.
 
 ### Tested and NOT the cause — do not spend a session on these again
 
-Destination format (`01…`, `880…`, `+880…`; their rate plan carries all of them), operator
-prefix (013/016/017/018/019 behave identically), on-net vs off-net, an `"Anonymous"` display
-name in `From`, and call spacing. Failing and succeeding INVITEs are byte-for-byte identical
-apart from the dialled number.
+Destination format (`01…`, `880…`, `+880…`), operator prefix (013/016/017/018/019 behave
+identically), on-net vs off-net, an `"Anonymous"` display name in `From`, and call spacing.
+Failing and succeeding INVITEs are byte-for-byte identical apart from the dialled number.
 
-**A correlation that looked certain and did not survive retesting:** an early run suggested
-every call within ~80 s of a re-registration died. A clean rerun with valid numbers and no
-concurrency contention had calls succeeding from 28 s onward. The first run was contaminated by
-a malformed 12-digit test number and by hitting the concurrency limit. `expiration` is now 3600
-anyway — fewer re-registrations is free hygiene and the provider grants it — but it is NOT the
-fix, and it was never proven to be.
+Two readings that looked right and were not, recorded so nobody re-derives them: (1) "the
+failures never appear in their CDR" — they do, with causes; (2) "every call within ~80 s of a
+re-registration dies" — a clean rerun disproved it. And `expiration=3600`, briefly shipped as
+"hygiene", was actively harmful: it meant we claimed the binding once an hour.
 
-**Test outbound without dialling a human:** unassigned numbers (`01711100001`, `01700000001`, …)
-answer with `183 Session Progress` when routing works and cost nothing, and their CDR names the
-cause a few minutes later. That is the harness for any future outbound question.
+**Test outbound without dialling a human:** unassigned numbers (`01711100001`, …) answer with
+`183 Session Progress` when routing works, cost nothing, and their CDR names the cause a few
+minutes later.
 
 ---
 
