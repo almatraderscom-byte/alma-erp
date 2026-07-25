@@ -23,11 +23,11 @@ export default function Dialpad({ onPress }: { onPress: (digit: string) => void 
           type="button"
           onClick={() => onPress(digit)}
           // Big targets: this gets used on a phone, one-handed, often in a hurry.
-          className="flex h-14 flex-col items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] transition-all active:scale-95 hover:border-[#E07A5F]/40 hover:bg-white/[0.08]"
+          className="flex h-14 flex-col items-center justify-center rounded-xl border border-border-subtle bg-bg-2 transition-all active:scale-95 hover:border-gold/40 hover:bg-gold/10"
         >
-          <span className="text-xl font-medium leading-none text-white">{digit}</span>
+          <span className="text-xl font-medium leading-none text-cream">{digit}</span>
           {letters ? (
-            <span className="mt-0.5 text-[9px] tracking-widest text-white/35">{letters}</span>
+            <span className="mt-0.5 text-[9px] tracking-widest text-muted">{letters}</span>
           ) : null}
         </button>
       ))}

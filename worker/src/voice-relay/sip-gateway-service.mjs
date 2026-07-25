@@ -1334,7 +1334,7 @@ const ctrlServer = http.createServer(async (req, res) => {
     } catch (err) { return json(res, 502, { error: err?.message || String(err) }) }
   }
   if (url.pathname === '/health') {
-    return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size, registration: { registered: regState.registered, status: regState.lastStatus, failures: regState.consecutiveFailures } })
+    return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size, registration: { registered: regState.registered, status: regState.lastStatus, failures: regState.consecutiveFailures }, softphone: { healthy: wsState.healthy, status: wsState.lastStatus, repairs: wsState.repairs } })
   }
   if (!m) return json(res, 404, { error: 'not found' })
   if (!authOk(req)) {
@@ -1676,6 +1676,101 @@ async function checkRegistration() {
   }
 }
 
+// ── softphone stack watchdog ─────────────────────────────────────────────────
+/**
+ * The browser softphone has exactly one silent failure mode, and it has already bitten us
+ * twice: chan_sip claims the "sip" websocket subprotocol before res_pjsip_transport_websocket
+ * can, so every staff REGISTER is checked against chan_sip's EMPTY user list and a correct
+ * password comes back "Wrong password". res_pjsip_transport_websocket then sits there loaded
+ * but "Not Running".
+ *
+ * Nothing surfaces it: the trunk stays registered, inbound AI calls keep working, the line
+ * looks perfectly healthy — the only symptom is staff being unable to log in to the phone.
+ * On 2026-07-25 an unattended apt upgrade restarted Asterisk at 06:26 and the softphone was
+ * dead until a probe found it.
+ *
+ * modules.conf noloads chan_sip now, but a config file is only as good as the next restart
+ * that reads it (and the previous noload sat in [global], where Asterisk ignores it). So the
+ * runtime state is what we verify — and repair, because the repair is the same two commands
+ * every time and waiting for a human means staff are locked out meanwhile.
+ */
+const WS_CHECK_SECS = Number(process.env.SIP_WS_CHECK_SECS || 300)
+const wsState = { healthy: null, alerted: false, lastStatus: '', lastCheck: 0, repairs: 0 }
+
+/** True when the pjsip websocket transport — and not chan_sip — owns the "sip" subprotocol. */
+async function readSoftphoneStack() {
+  const chanSip = /chan_sip\.so/.test(await asteriskCli('module show like chan_sip'))
+  const out = await asteriskCli('module show like res_pjsip_transport_websocket')
+  const line = out.split('\n').find((l) => l.startsWith('res_pjsip_transport_websocket.so')) || ''
+  // "Not Running" contains "Running", so the negative has to be tested first.
+  const wsRunning = /\bRunning\b/.test(line) && !/\bNot Running\b/.test(line)
+  return { chanSip, wsRunning, healthy: !chanSip && wsRunning }
+}
+
+async function checkSoftphoneStack() {
+  let state
+  try {
+    state = await readSoftphoneStack()
+  } catch (err) {
+    wsState.lastStatus = `check-failed: ${err?.message || err}`
+    wsState.lastCheck = Date.now()
+    log(`softphone stack check failed: ${err?.message || err}`)
+    return
+  }
+  wsState.lastCheck = Date.now()
+  wsState.healthy = state.healthy
+  wsState.lastStatus = state.healthy ? 'ok' : `chan_sip=${state.chanSip ? 'loaded' : 'no'} pjsip-ws=${state.wsRunning ? 'running' : 'DOWN'}`
+
+  if (state.healthy) {
+    if (wsState.alerted) {
+      await alertOwner('স্টাফ ফোন আবার ঠিক আছে', 'ব্রাউজার সফটফোন আবার লগইন নিচ্ছে — স্টাফ আবার ERP থেকে কল ধরতে পারবে।')
+      log('softphone stack RECOVERED')
+    }
+    wsState.alerted = false
+    return
+  }
+
+  log(`softphone stack BROKEN (${wsState.lastStatus})`)
+  // Reloading the websocket transport tears down every SIP-over-WS connection with it, so a
+  // repair mid-call would drop a staff member's live call to fix a login problem. Wait for
+  // the line to go quiet; the next cycle will catch it.
+  if (calls.size > 0) {
+    log(`softphone repair deferred — ${calls.size} call(s) in progress`)
+    return
+  }
+  try {
+    if (state.chanSip) await asteriskCli('module unload chan_sip.so')
+    // Unload+load, not reload: the module is loaded-but-declined, and only a fresh load
+    // re-registers the subprotocol that chan_sip was holding.
+    await asteriskCli('module unload res_pjsip_transport_websocket.so')
+    await asteriskCli('module load res_pjsip_transport_websocket.so')
+  } catch (err) {
+    log(`softphone repair command failed: ${err?.message || err}`)
+  }
+
+  const after = await readSoftphoneStack().catch(() => ({ healthy: false }))
+  if (after.healthy) {
+    wsState.repairs++
+    wsState.healthy = true
+    wsState.lastStatus = 'repaired'
+    log('softphone stack REPAIRED (chan_sip unloaded, pjsip ws transport reloaded)')
+    // Told, not hidden: a self-heal that nobody hears about becomes a habit that masks a
+    // config regression on the box.
+    await alertOwner(
+      'স্টাফ ফোন নিজে থেকে ঠিক করা হয়েছে',
+      'Asterisk রিস্টার্টের পর chan_sip আবার উঠে গিয়েছিল, তাতে ব্রাউজার সফটফোন লগইন নিচ্ছিল না। নিজে থেকে ঠিক করা হয়েছে — এখন স্টাফ আবার কল ধরতে পারবে।',
+    )
+    return
+  }
+  if (!wsState.alerted) {
+    wsState.alerted = true
+    await alertOwner(
+      'জরুরি: স্টাফ ব্রাউজার ফোন কাজ করছে না',
+      `ERP-র ফোন পেজে স্টাফ লগইন করতে পারছে না (${wsState.lastStatus})। নিজে থেকে ঠিক করার চেষ্টা ব্যর্থ হয়েছে। ইনকামিং AI কল ঠিক আছে।`,
+    )
+  }
+}
+
 // ── boot ─────────────────────────────────────────────────────────────────────
 audioServer.listen(AS_PORT, AS_BIND, () => log(`AudioSocket TCP listening ${AS_BIND}:${AS_PORT} (advertise ${AS_ADVERTISE})`))
 /**
@@ -1718,5 +1813,7 @@ startAri()
 if (ARI_READY) {
   void checkRegistration()
   setInterval(() => { void checkRegistration() }, REG_CHECK_SECS * 1000).unref()
+  void checkSoftphoneStack()
+  setInterval(() => { void checkSoftphoneStack() }, WS_CHECK_SECS * 1000).unref()
 }
 log(`boot: ariReady=${ARI_READY} trunk=${TRUNK_ENDPOINT} bot=${BOT_WS_URL} ctrlBase=${CTRL_BASE}`)

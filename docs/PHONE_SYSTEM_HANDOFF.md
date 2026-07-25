@@ -156,6 +156,22 @@ approved).
 1. **`chan_sip` hijacks the "sip" websocket subprotocol** — softphone registrations were
    validated against its empty user list ("Wrong password" for a correct password). Now
    `noload`ed. It also owned UDP 5060, which is what the port scanners were reaching.
+   **This regressed on 2026-07-25** and cost a second diagnosis, so read the whole trap:
+   - `noload => chan_sip.so` is honoured **only inside the `[modules]` section**. Appended at
+     the end of `modules.conf` it lands in `[global]` and is silently ignored. The line is now
+     under `autoload=yes`, and `worker/deploy/asterisk/alma-modules.conf` is the copy of record.
+   - The first fix had only been applied at runtime (`module unload`), so an **unattended apt
+     upgrade restarted Asterisk at 06:26 and brought chan_sip straight back**.
+   - The victim module is `res_pjsip_transport_websocket`: it ends up loaded but **`Not
+     Running`**, because it could not claim a subprotocol chan_sip already held. Unloading
+     chan_sip is not enough — that module needs `module unload` + `module load` to grab it.
+   - **The failure is silent.** The trunk stays registered and inbound AI calls keep working;
+     the only symptom is staff unable to log in at `/agent/phone`. The gateway now checks this
+     every `SIP_WS_CHECK_SECS` (300) and self-repairs when no call is in progress.
+   - To identify which module owns the subprotocol without a real password: send a REGISTER
+     over `ws://127.0.0.1:8088/ws` with a bogus digest and read the log — `chan_sip.c: …Wrong
+     password` means chan_sip owns it, `res_pjsip/pjsip_distributor.c: …Failed to authenticate`
+     means pjsip does.
 2. **An AOR must be named EXACTLY as the extension** — pjsip's registrar matches the To-header
    user against the AOR *name*; `<ext>-aor` answers 404 even though the AOR exists.
 3. **Deleting the externalMedia channel closes its AudioSocket, and that close handler used to
