@@ -11,6 +11,7 @@ import {
   fetchStudioHealth,
   fetchStudioProjects,
   fetchStudioReviewQueue,
+  fetchStudioReview,
   fetchStudioRetention,
   fetchStudioSettings,
   fetchStudioVideos,
@@ -20,6 +21,7 @@ import {
   confirmStudioJob,
   estimateStudioJob,
   partiallyFinishVideo,
+  transitionStudioReview,
   uploadFillMask,
   uploadStudioFile,
   uploadStudioVideo,
@@ -29,6 +31,8 @@ import type {
   StudioV3DataIssue,
   StudioV3HomeSnapshot,
 } from '@/agent/components/creative-studio-v3/ports'
+import { creativeStudioV3CompositionClient } from '@/agent/components/creative-studio-v3/composition-client'
+import { studioV3LifecycleClient } from '@/agent/components/creative-studio-v3/lifecycle-client'
 import { scopeProjectsToBrand } from '@/agent/components/creative-studio-v3/ui-contract'
 
 function issue(resource: string, reason: unknown): StudioV3DataIssue {
@@ -83,6 +87,9 @@ export const creativeStudioV3ProductionPort: CreativeStudioV3ProductionPort = {
   ),
   listRecipes: fetchBrandRecipes,
   listProducts: fetchErpProducts,
+  listCompositions: creativeStudioV3CompositionClient.listCompositions,
+  getReview: fetchStudioReview,
+  transitionReview: transitionStudioReview,
   // V3 reads require both brand and project. Server routes validate the actor's
   // assignment and exclude every unscoped legacy resource.
   listModels: async (brandProfileId, projectId) =>
@@ -93,6 +100,13 @@ export const creativeStudioV3ProductionPort: CreativeStudioV3ProductionPort = {
   listVideoUploads: fetchStudioVideos,
   listMusicTracks: fetchMusicTracks,
   listReviewQueue: fetchStudioReviewQueue,
+  loadWorkspace: studioV3LifecycleClient.loadWorkspace,
+  resolvePin: studioV3LifecycleClient.resolvePin,
+  previewLocal: studioV3LifecycleClient.previewLocal,
+  queueLocal: studioV3LifecycleClient.queueLocal,
+  controlJob: studioV3LifecycleClient.controlJob,
+  listFlags: studioV3LifecycleClient.listFlags,
+  configureFlag: studioV3LifecycleClient.configureFlag,
   getConfig: fetchStudioConfig,
   getSettings: fetchStudioSettings,
   getHealth: fetchStudioHealth,

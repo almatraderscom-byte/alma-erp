@@ -16,56 +16,63 @@ enum UserRole {
 }
 
 model User {
-  id                            String                           @id @default(cuid())
-  email                         String?                          @unique
-  passwordHash                  String
-  name                          String
-  phone                         String?                          @unique
-  role                          UserRole                         @default(STAFF)
-  active                        Boolean                          @default(true)
+  id                               String                            @id @default(cuid())
+  email                            String?                           @unique
+  passwordHash                     String
+  name                             String
+  phone                            String?                           @unique
+  role                             UserRole                          @default(STAFF)
+  active                           Boolean                           @default(true)
   /// Comma-separated BusinessId: ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT,ALMA_TRADING
-  businessAccess                String                           @default("ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT,ALMA_TRADING")
-  employeeIdGas                 String?
-  joiningDate                   DateTime?
-  salaryHint                    Decimal?                         @db.Decimal(12, 2)
-  profileImageUrl               String?
-  createdAt                     DateTime                         @default(now())
-  updatedAt                     DateTime                         @updatedAt
-  advanceRequests               SalaryAdvanceRequest[]
-  mealAllowanceProfiles         MealAllowanceProfile[]
-  mealAllowanceRequests         MealAllowanceRequest[]
-  drivingModeProfiles           DrivingModeProfile[]
-  drivingModeSessions           DrivingModeSession[]
-  passwordResetTokens           PasswordResetToken[]
-  assignedTradingAccounts       TradingAccount[]                 @relation("TradingAccountAssignedUser")
-  tradingTrades                 TradingTrade[]                   @relation("TradingTradeUser")
-  tradingExpensesCreated        TradingExpense[]                 @relation("TradingExpenseCreatedBy")
-  tradingPartnershipSettlements TradingPartnershipSettlement[]   @relation("TradingPartnershipSettledBy")
-  tradingCapitalCreated         TradingCapitalEntry[]            @relation("TradingCapitalCreatedBy")
-  tradingBkashCreated           TradingBkashDailySummary[]       @relation("TradingBkashSummaryCreatedBy")
-  tradingPerformanceShots       TradingPerformanceScreenshot[]   @relation("TradingPerformanceUploadedBy")
-  tradingEmployeeProfile        TradingEmployeeProfile?          @relation("TradingEmployeeProfileUser")
-  tradingDailyReports           TradingEmployeeDailyReport[]     @relation("TradingEmployeeDailyReportUser")
-  attendanceRecords             AttendanceRecord[]               @relation("AttendanceRecordUser")
-  attendanceWaivers             AttendanceWaiverRequest[]        @relation("AttendanceWaiverRequester")
-  attendanceReviews             AttendanceWaiverRequest[]        @relation("AttendanceWaiverReviewer")
-  attendanceSelfies             AttendanceSelfieVerification[]   @relation("AttendanceSelfieUser")
-  tradingTelegramLinks          TradingTelegramUser[]            @relation("TradingTelegramErpUser")
-  tradingTelegramDrafts         TradingTelegramDraft[]           @relation("TradingTelegramDraftErpUser")
-  operationalTasksCreated       OperationalTask[]                @relation("OperationalTaskCreator")
-  operationalTaskAssignments    OperationalTaskAssignment[]      @relation("OperationalTaskAssignee")
-  operationalTaskAcks           OperationalTaskAcknowledgement[] @relation("OperationalTaskAckUser")
-  paymentMethods                EmployeePaymentMethod[]          @relation("UserPaymentMethods")
-  agentStaffLinks               AgentStaff[]                     @relation("AgentStaffUser")
-  creativeStudioRoles           CreativeStudioRoleAssignment[]   @relation("CreativeStudioRoleUser")
-  creativeStudioRolesGranted    CreativeStudioRoleAssignment[]   @relation("CreativeStudioRoleGrantor")
-  creativeReviewComments        CreativeAssetReviewComment[]     @relation("CreativeReviewCommentAuthor")
-  creativeReviewEvents          CreativeAssetReviewEvent[]       @relation("CreativeReviewEventActor")
-  creativeCompositionsCreated   CreativeComposition[]            @relation("CreativeCompositionCreator")
-  creativeVersionsCreated       CreativeCompositionVersion[]     @relation("CreativeCompositionVersionCreator")
-  creativeOperationBatches      CreativeOperationBatch[]         @relation("CreativeOperationBatchActor")
-  creativeEditOperations        CreativeEditOperation[]          @relation("CreativeEditOperationActor")
-  creativeRollbackPoints        CreativeRollbackPoint[]          @relation("CreativeRollbackPointActor")
+  businessAccess                   String                            @default("ALMA_LIFESTYLE,CREATIVE_DIGITAL_IT,ALMA_TRADING")
+  employeeIdGas                    String?
+  joiningDate                      DateTime?
+  salaryHint                       Decimal?                          @db.Decimal(12, 2)
+  profileImageUrl                  String?
+  createdAt                        DateTime                          @default(now())
+  updatedAt                        DateTime                          @updatedAt
+  advanceRequests                  SalaryAdvanceRequest[]
+  mealAllowanceProfiles            MealAllowanceProfile[]
+  mealAllowanceRequests            MealAllowanceRequest[]
+  drivingModeProfiles              DrivingModeProfile[]
+  drivingModeSessions              DrivingModeSession[]
+  passwordResetTokens              PasswordResetToken[]
+  assignedTradingAccounts          TradingAccount[]                  @relation("TradingAccountAssignedUser")
+  tradingTrades                    TradingTrade[]                    @relation("TradingTradeUser")
+  tradingExpensesCreated           TradingExpense[]                  @relation("TradingExpenseCreatedBy")
+  tradingPartnershipSettlements    TradingPartnershipSettlement[]    @relation("TradingPartnershipSettledBy")
+  tradingCapitalCreated            TradingCapitalEntry[]             @relation("TradingCapitalCreatedBy")
+  tradingBkashCreated              TradingBkashDailySummary[]        @relation("TradingBkashSummaryCreatedBy")
+  tradingPerformanceShots          TradingPerformanceScreenshot[]    @relation("TradingPerformanceUploadedBy")
+  tradingEmployeeProfile           TradingEmployeeProfile?           @relation("TradingEmployeeProfileUser")
+  tradingDailyReports              TradingEmployeeDailyReport[]      @relation("TradingEmployeeDailyReportUser")
+  attendanceRecords                AttendanceRecord[]                @relation("AttendanceRecordUser")
+  attendanceWaivers                AttendanceWaiverRequest[]         @relation("AttendanceWaiverRequester")
+  attendanceReviews                AttendanceWaiverRequest[]         @relation("AttendanceWaiverReviewer")
+  attendanceSelfies                AttendanceSelfieVerification[]    @relation("AttendanceSelfieUser")
+  tradingTelegramLinks             TradingTelegramUser[]             @relation("TradingTelegramErpUser")
+  tradingTelegramDrafts            TradingTelegramDraft[]            @relation("TradingTelegramDraftErpUser")
+  operationalTasksCreated          OperationalTask[]                 @relation("OperationalTaskCreator")
+  operationalTaskAssignments       OperationalTaskAssignment[]       @relation("OperationalTaskAssignee")
+  operationalTaskAcks              OperationalTaskAcknowledgement[]  @relation("OperationalTaskAckUser")
+  paymentMethods                   EmployeePaymentMethod[]           @relation("UserPaymentMethods")
+  agentStaffLinks                  AgentStaff[]                      @relation("AgentStaffUser")
+  creativeStudioRoles              CreativeStudioRoleAssignment[]    @relation("CreativeStudioRoleUser")
+  creativeStudioRolesGranted       CreativeStudioRoleAssignment[]    @relation("CreativeStudioRoleGrantor")
+  creativeReviewComments           CreativeAssetReviewComment[]      @relation("CreativeReviewCommentAuthor")
+  creativeReviewEvents             CreativeAssetReviewEvent[]        @relation("CreativeReviewEventActor")
+  creativeCompositionsCreated      CreativeComposition[]             @relation("CreativeCompositionCreator")
+  creativeVersionsCreated          CreativeCompositionVersion[]      @relation("CreativeCompositionVersionCreator")
+  creativeOperationBatches         CreativeOperationBatch[]          @relation("CreativeOperationBatchActor")
+  creativeEditOperations           CreativeEditOperation[]           @relation("CreativeEditOperationActor")
+  creativeRollbackPoints           CreativeRollbackPoint[]           @relation("CreativeRollbackPointActor")
+  creativeLifecycleJobsOwned       CreativeLifecycleJob[]            @relation("CreativeLifecycleJobOwner")
+  creativeLifecycleJobsCreated     CreativeLifecycleJob[]            @relation("CreativeLifecycleJobCreator")
+  creativeLifecycleAudits          CreativeLifecycleAuditEvent[]     @relation("CreativeLifecycleAuditActor")
+  creativeLifecycleFlagsOwned      CreativeLifecycleFeatureFlag[]    @relation("CreativeLifecycleFlagOwner")
+  creativeLifecycleFlagsUpdated    CreativeLifecycleFeatureFlag[]    @relation("CreativeLifecycleFlagUpdater")
+  creativeLifecycleFlagAuditsOwned CreativeLifecycleFlagAuditEvent[] @relation("CreativeLifecycleFlagAuditOwner")
+  creativeLifecycleFlagAudits      CreativeLifecycleFlagAuditEvent[] @relation("CreativeLifecycleFlagAuditActor")
 
   @@index([active, role])
   @@index([active, createdAt])
@@ -2609,8 +2616,11 @@ model CreativeBrandProfile {
   reviewEvents              CreativeAssetReviewEvent[]
   publishDeliveries         CreativePublishDelivery[]
   compositions              CreativeComposition[]
+  lifecycleJobs             CreativeLifecycleJob[]         @relation("CreativeLifecycleJobBrandScope")
+  lifecycleFlags            CreativeLifecycleFeatureFlag[] @relation("CreativeLifecycleFlagBrandScope")
 
   @@unique([ownerId, name])
+  @@unique([id, ownerId])
   @@index([ownerId, updatedAt(sort: Desc)])
   @@map("creative_brand_profiles")
 }
@@ -2647,26 +2657,29 @@ model CreativeBrandRecipe {
 }
 
 model CreativeProject {
-  id                 String                    @id @default(uuid())
-  ownerId            String                    @map("owner_id")
+  id                 String                         @id @default(uuid())
+  ownerId            String                         @map("owner_id")
   name               String
-  description        String?                   @db.Text
-  brandProfileId     String?                   @map("brand_profile_id")
-  brandProfile       CreativeBrandProfile?     @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
-  currentRecipeId    String?                   @map("current_recipe_id")
-  currentRecipe      CreativeBrandRecipe?      @relation("CreativeProjectRecipe", fields: [currentRecipeId], references: [id], onDelete: SetNull)
-  productCode        String?                   @map("product_code")
-  productName        String?                   @map("product_name")
-  productPriceBdt    Int?                      @map("product_price_bdt")
-  productSourceImage String?                   @map("product_source_image") @db.Text
-  defaultFolder      String                    @default("Unsorted") @map("default_folder")
-  archivedAt         DateTime?                 @map("archived_at")
-  createdAt          DateTime                  @default(now()) @map("created_at")
-  updatedAt          DateTime                  @updatedAt @map("updated_at")
+  description        String?                        @db.Text
+  brandProfileId     String?                        @map("brand_profile_id")
+  brandProfile       CreativeBrandProfile?          @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
+  currentRecipeId    String?                        @map("current_recipe_id")
+  currentRecipe      CreativeBrandRecipe?           @relation("CreativeProjectRecipe", fields: [currentRecipeId], references: [id], onDelete: SetNull)
+  productCode        String?                        @map("product_code")
+  productName        String?                        @map("product_name")
+  productPriceBdt    Int?                           @map("product_price_bdt")
+  productSourceImage String?                        @map("product_source_image") @db.Text
+  defaultFolder      String                         @default("Unsorted") @map("default_folder")
+  archivedAt         DateTime?                      @map("archived_at")
+  createdAt          DateTime                       @default(now()) @map("created_at")
+  updatedAt          DateTime                       @updatedAt @map("updated_at")
   assets             CreativeProjectAsset[]
   publishDeliveries  CreativePublishDelivery[]
   compositions       CreativeComposition[]
+  lifecycleJobs      CreativeLifecycleJob[]         @relation("CreativeLifecycleJobProjectScope")
+  lifecycleFlags     CreativeLifecycleFeatureFlag[] @relation("CreativeLifecycleFlagProjectScope")
 
+  @@unique([id, ownerId, brandProfileId])
   @@index([ownerId, archivedAt, updatedAt(sort: Desc)])
   @@index([brandProfileId])
   @@index([currentRecipeId])
@@ -2702,28 +2715,33 @@ model CreativeProjectAsset {
 }
 
 model CreativeAssetVersion {
-  id                   String                        @id @default(uuid())
-  assetId              String                        @map("asset_id")
-  asset                CreativeProjectAsset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  version              Int
-  storagePath          String?                       @map("storage_path") @db.Text
-  recipeId             String?                       @map("recipe_id")
-  recipe               CreativeBrandRecipe?          @relation(fields: [recipeId], references: [id], onDelete: SetNull)
-  recipeVersion        Int?                          @map("recipe_version")
-  provider             String?
-  engine               String?
-  jobId                String?                       @map("job_id")
-  costBdt              Int                           @default(0) @map("cost_bdt")
-  costUsd              Decimal?                      @map("cost_usd") @db.Decimal(12, 6)
-  qc                   Json?
-  metadata             Json                          @default("{}")
-  createdById          String                        @map("created_by_id")
-  createdAt            DateTime                      @default(now()) @map("created_at")
-  lineage              CreativeAssetLineage[]
-  publishDeliveries    CreativePublishDelivery[]
-  performanceSnapshots CreativePerformanceSnapshot[]
-  archiveReceipts      CreativeArchiveReceipt[]
-  compositionNodes     CreativeCompositionNode[]
+  id                    String                        @id @default(uuid())
+  assetId               String                        @map("asset_id")
+  asset                 CreativeProjectAsset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  version               Int
+  storagePath           String?                       @map("storage_path") @db.Text
+  recipeId              String?                       @map("recipe_id")
+  recipe                CreativeBrandRecipe?          @relation(fields: [recipeId], references: [id], onDelete: SetNull)
+  recipeVersion         Int?                          @map("recipe_version")
+  provider              String?
+  engine                String?
+  jobId                 String?                       @map("job_id")
+  costBdt               Int                           @default(0) @map("cost_bdt")
+  costUsd               Decimal?                      @map("cost_usd") @db.Decimal(12, 6)
+  qc                    Json?
+  metadata              Json                          @default("{}")
+  createdById           String                        @map("created_by_id")
+  createdAt             DateTime                      @default(now()) @map("created_at")
+  lineage               CreativeAssetLineage[]
+  publishDeliveries     CreativePublishDelivery[]
+  performanceSnapshots  CreativePerformanceSnapshot[]
+  archiveReceipts       CreativeArchiveReceipt[]
+  compositionNodes      CreativeCompositionNode[]
+  lifecycleSourceJobs   CreativeLifecycleJob[]        @relation("CreativeLifecycleSourceArtifact")
+  lifecycleApprovedJobs CreativeLifecycleJob[]        @relation("CreativeLifecycleApprovedArtifact")
+  lifecycleResultJobs   CreativeLifecycleJob[]        @relation("CreativeLifecycleResultArtifact")
+  lifecycleReceipts     CreativeLifecycleReceipt[]
+  reviewApprovals       CreativeAssetReviewEvent[]    @relation("CreativeReviewApprovedArtifact")
 
   @@unique([assetId, version])
   @@index([recipeId])
@@ -2823,25 +2841,226 @@ model CreativeAssetReviewComment {
 }
 
 model CreativeAssetReviewEvent {
-  id             String                    @id @default(uuid())
-  assetId        String                    @map("asset_id")
-  asset          CreativeProjectAsset      @relation(fields: [assetId], references: [id], onDelete: Restrict)
-  brandProfileId String                    @map("brand_profile_id")
-  brandProfile   CreativeBrandProfile      @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
-  sequence       Int
-  fromState      CreativeAssetReviewState? @map("from_state")
-  toState        CreativeAssetReviewState  @map("to_state")
-  actorId        String                    @map("actor_id")
-  actor          User                      @relation("CreativeReviewEventActor", fields: [actorId], references: [id], onDelete: Restrict)
-  actorRole      CreativeStudioRole        @map("actor_role")
-  note           String?                   @db.Text
-  metadata       Json                      @default("{}")
-  createdAt      DateTime                  @default(now()) @map("created_at")
+  id                        String                      @id @default(uuid())
+  assetId                   String                      @map("asset_id")
+  asset                     CreativeProjectAsset        @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  brandProfileId            String                      @map("brand_profile_id")
+  brandProfile              CreativeBrandProfile        @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
+  sequence                  Int
+  fromState                 CreativeAssetReviewState?   @map("from_state")
+  toState                   CreativeAssetReviewState    @map("to_state")
+  actorId                   String                      @map("actor_id")
+  actor                     User                        @relation("CreativeReviewEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+  actorRole                 CreativeStudioRole          @map("actor_role")
+  note                      String?                     @db.Text
+  compositionId             String?                     @map("composition_id")
+  compositionVersionId      String?                     @map("composition_version_id")
+  compositionVersion        Int?                        @map("composition_version")
+  compositionDocumentHash   String?                     @map("composition_document_hash")
+  approvedArtifactVersionId String?                     @map("approved_artifact_version_id")
+  approvedArtifactVersion   CreativeAssetVersion?       @relation("CreativeReviewApprovedArtifact", fields: [approvedArtifactVersionId], references: [id], onDelete: Restrict)
+  composition               CreativeComposition?        @relation("CreativeReviewComposition", fields: [compositionId], references: [id], onDelete: Restrict)
+  compositionVersionRecord  CreativeCompositionVersion? @relation("CreativeReviewCompositionVersion", fields: [compositionVersionId, compositionId, compositionVersion, compositionDocumentHash], references: [id, compositionId, version, documentHash], onDelete: Restrict)
+  lifecycleJobs             CreativeLifecycleJob[]
+  publishDeliveries         CreativePublishDelivery[]
+  metadata                  Json                        @default("{}")
+  createdAt                 DateTime                    @default(now()) @map("created_at")
 
   @@unique([assetId, sequence])
   @@index([brandProfileId, createdAt])
   @@index([actorId, createdAt])
+  @@index([compositionId, compositionVersionId])
+  @@index([approvedArtifactVersionId])
   @@map("creative_asset_review_events")
+}
+
+enum CreativeLifecycleJobKind {
+  RENDER
+  EXPORT
+}
+
+enum CreativeLifecycleJobStatus {
+  QUEUED
+  RUNNING
+  READY
+  FAILED
+  CANCELED
+  NEEDS_REVIEW
+}
+
+enum CreativeLifecycleEffectClass {
+  ZERO_COST_LOCAL
+  PAID
+}
+
+model CreativeLifecycleJob {
+  id                        String                        @id @default(uuid())
+  ownerId                   String                        @map("owner_id")
+  owner                     User                          @relation("CreativeLifecycleJobOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  brandProfileId            String                        @map("brand_profile_id")
+  brandProfile              CreativeBrandProfile          @relation("CreativeLifecycleJobBrandScope", fields: [brandProfileId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  projectId                 String                        @map("project_id")
+  project                   CreativeProject               @relation("CreativeLifecycleJobProjectScope", fields: [projectId, ownerId, brandProfileId], references: [id, ownerId, brandProfileId], onDelete: Restrict)
+  compositionId             String                        @map("composition_id")
+  composition               CreativeComposition           @relation("CreativeLifecycleJobComposition", fields: [compositionId, ownerId, brandProfileId, projectId], references: [id, ownerId, brandProfileId, projectId], onDelete: Restrict)
+  compositionVersionId      String                        @map("composition_version_id")
+  compositionVersionRecord  CreativeCompositionVersion    @relation("CreativeLifecycleJobCompositionVersion", fields: [compositionVersionId, compositionId, compositionVersion, compositionDocumentHash], references: [id, compositionId, version, documentHash], onDelete: Restrict)
+  compositionVersion        Int                           @map("composition_version")
+  compositionDocumentHash   String                        @map("composition_document_hash")
+  operationBatchId          String?                       @map("operation_batch_id")
+  operationBatch            CreativeOperationBatch?       @relation("CreativeLifecycleJobOperationBatch", fields: [operationBatchId, compositionId, compositionVersion], references: [id, compositionId, resultVersion], onDelete: Restrict)
+  sourceArtifactVersionId   String                        @map("source_artifact_version_id")
+  sourceArtifactVersion     CreativeAssetVersion          @relation("CreativeLifecycleSourceArtifact", fields: [sourceArtifactVersionId], references: [id], onDelete: Restrict)
+  sourceStoragePath         String                        @map("source_storage_path") @db.Text
+  sourceChecksum            String                        @map("source_checksum")
+  sourceBytes               BigInt                        @map("source_bytes")
+  approvedReviewEventId     String?                       @map("approved_review_event_id")
+  approvedReviewEvent       CreativeAssetReviewEvent?     @relation(fields: [approvedReviewEventId], references: [id], onDelete: Restrict)
+  approvedArtifactVersionId String?                       @map("approved_artifact_version_id")
+  approvedArtifactVersion   CreativeAssetVersion?         @relation("CreativeLifecycleApprovedArtifact", fields: [approvedArtifactVersionId], references: [id], onDelete: Restrict)
+  reviewFingerprint         String?                       @map("review_fingerprint")
+  kind                      CreativeLifecycleJobKind
+  renderProfile             String                        @map("render_profile")
+  outputFormat              String                        @map("output_format")
+  rendererVersion           String                        @map("renderer_version")
+  renderFingerprint         String                        @map("render_fingerprint")
+  idempotencyKey            String                        @map("idempotency_key")
+  requestFingerprint        String                        @map("request_fingerprint")
+  effectClass               CreativeLifecycleEffectClass  @default(ZERO_COST_LOCAL) @map("effect_class")
+  estimatedCostBdt          Int                           @default(0) @map("estimated_cost_bdt")
+  paidExecutionAllowed      Boolean                       @default(false) @map("paid_execution_allowed")
+  status                    CreativeLifecycleJobStatus    @default(QUEUED)
+  progressCompleted         Int                           @default(0) @map("progress_completed")
+  progressTotal             Int                           @default(4) @map("progress_total")
+  attempts                  Int                           @default(0)
+  leaseToken                String?                       @unique @map("lease_token")
+  leaseExpiresAt            DateTime?                     @map("lease_expires_at")
+  resultStoragePath         String?                       @map("result_storage_path") @db.Text
+  resultChecksum            String?                       @map("result_checksum")
+  resultBytes               BigInt?                       @map("result_bytes")
+  resultArtifactVersionId   String?                       @unique @map("result_artifact_version_id")
+  resultArtifactVersion     CreativeAssetVersion?         @relation("CreativeLifecycleResultArtifact", fields: [resultArtifactVersionId], references: [id], onDelete: Restrict)
+  verifiedAt                DateTime?                     @map("verified_at")
+  lastErrorCode             String?                       @map("last_error_code")
+  lastErrorMessage          String?                       @map("last_error_message") @db.Text
+  createdById               String                        @map("created_by_id")
+  createdBy                 User                          @relation("CreativeLifecycleJobCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdByRole             CreativeStudioRole            @map("created_by_role")
+  createdAt                 DateTime                      @default(now()) @map("created_at")
+  updatedAt                 DateTime                      @updatedAt @map("updated_at")
+  receipts                  CreativeLifecycleReceipt[]
+  auditEvents               CreativeLifecycleAuditEvent[]
+
+  @@unique([ownerId, idempotencyKey])
+  @@unique([ownerId, renderFingerprint])
+  @@index([status, createdAt])
+  @@index([brandProfileId, projectId, createdAt(sort: Desc)])
+  @@index([compositionId, compositionVersion, createdAt(sort: Desc)])
+  @@index([renderFingerprint])
+  @@index([compositionVersionId, compositionId])
+  @@index([operationBatchId, compositionId, compositionVersion])
+  @@index([sourceArtifactVersionId])
+  @@index([approvedReviewEventId])
+  @@index([approvedArtifactVersionId])
+  @@index([resultArtifactVersionId])
+  @@index([createdById])
+  @@map("creative_lifecycle_jobs")
+}
+
+model CreativeLifecycleReceipt {
+  id                       String                     @id @default(uuid())
+  jobId                    String                     @map("job_id")
+  job                      CreativeLifecycleJob       @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  status                   CreativeLifecycleJobStatus
+  storagePath              String?                    @map("storage_path") @db.Text
+  checksum                 String?
+  sizeBytes                BigInt?                    @map("size_bytes")
+  artifactVerified         Boolean                    @default(false) @map("artifact_verified")
+  artifactVersionId        String?                    @map("artifact_version_id")
+  artifactVersion          CreativeAssetVersion?      @relation(fields: [artifactVersionId], references: [id], onDelete: Restrict)
+  compositionDocumentHash  String                     @map("composition_document_hash")
+  operationPackageChecksum String?                    @map("operation_package_checksum")
+  playableProxyPath        String?                    @map("playable_proxy_path") @db.Text
+  originalStoragePath      String?                    @map("original_storage_path") @db.Text
+  renderStoragePath        String?                    @map("render_storage_path") @db.Text
+  metadata                 Json                       @default("{}")
+  createdAt                DateTime                   @default(now()) @map("created_at")
+
+  @@index([jobId, createdAt])
+  @@index([artifactVersionId])
+  @@map("creative_lifecycle_receipts")
+}
+
+model CreativeLifecycleAuditEvent {
+  id                 String                      @id @default(uuid())
+  jobId              String                      @map("job_id")
+  job                CreativeLifecycleJob        @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  actorId            String                      @map("actor_id")
+  actor              User                        @relation("CreativeLifecycleAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  actorRole          CreativeStudioRole          @map("actor_role")
+  idempotencyKey     String?                     @map("idempotency_key")
+  requestFingerprint String?                     @map("request_fingerprint")
+  eventType          String                      @map("event_type")
+  fromStatus         CreativeLifecycleJobStatus? @map("from_status")
+  toStatus           CreativeLifecycleJobStatus? @map("to_status")
+  metadata           Json                        @default("{}")
+  createdAt          DateTime                    @default(now()) @map("created_at")
+
+  @@unique([jobId, idempotencyKey])
+  @@index([jobId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("creative_lifecycle_audit_events")
+}
+
+model CreativeLifecycleFeatureFlag {
+  /// Exact nullable owner/brand/project/role/capability uniqueness is enforced
+  /// by six function-free partial indexes in the lifecycle SQL migration.
+  id                    String                            @id @default(uuid())
+  ownerId               String                            @map("owner_id")
+  owner                 User                              @relation("CreativeLifecycleFlagOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  brandProfileId        String?                           @map("brand_profile_id")
+  brandProfile          CreativeBrandProfile?             @relation("CreativeLifecycleFlagBrandScope", fields: [brandProfileId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  projectId             String?                           @map("project_id")
+  project               CreativeProject?                  @relation("CreativeLifecycleFlagProjectScope", fields: [projectId, ownerId, brandProfileId], references: [id, ownerId, brandProfileId], onDelete: Restrict)
+  role                  CreativeStudioRole?
+  capability            String
+  enabled               Boolean                           @default(false)
+  dualReadEnabled       Boolean                           @default(false) @map("dual_read_enabled")
+  legacyFallbackEnabled Boolean                           @default(true) @map("legacy_fallback_enabled")
+  canaryPercent         Int                               @default(0) @map("canary_percent")
+  canarySalt            String?                           @map("canary_salt")
+  updatedById           String                            @map("updated_by_id")
+  updatedBy             User                              @relation("CreativeLifecycleFlagUpdater", fields: [updatedById], references: [id], onDelete: Restrict)
+  auditEvents           CreativeLifecycleFlagAuditEvent[]
+  createdAt             DateTime                          @default(now()) @map("created_at")
+  updatedAt             DateTime                          @updatedAt @map("updated_at")
+
+  @@index([ownerId, capability])
+  @@index([brandProfileId, projectId, role])
+  @@index([updatedById])
+  @@map("creative_lifecycle_feature_flags")
+}
+
+model CreativeLifecycleFlagAuditEvent {
+  id                 String                       @id @default(uuid())
+  ownerId            String                       @map("owner_id")
+  owner              User                         @relation("CreativeLifecycleFlagAuditOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  featureFlagId      String                       @map("feature_flag_id")
+  featureFlag        CreativeLifecycleFeatureFlag @relation(fields: [featureFlagId], references: [id], onDelete: Restrict)
+  actorId            String                       @map("actor_id")
+  actor              User                         @relation("CreativeLifecycleFlagAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  actorRole          CreativeStudioRole           @map("actor_role")
+  idempotencyKey     String                       @map("idempotency_key")
+  requestFingerprint String                       @map("request_fingerprint")
+  eventType          String                       @map("event_type")
+  before             Json?
+  after              Json
+  createdAt          DateTime                     @default(now()) @map("created_at")
+
+  @@unique([ownerId, idempotencyKey])
+  @@index([featureFlagId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("creative_lifecycle_flag_audit_events")
 }
 
 // ─── Creative Studio V3 Phase 1: composition and command foundation ────────
@@ -2870,54 +3089,67 @@ enum CreativeOperationBatchKind {
 }
 
 model CreativeComposition {
-  id                         String                         @id @default(uuid())
-  ownerId                    String                         @map("owner_id")
-  brandProfileId             String                         @map("brand_profile_id")
-  brandProfile               CreativeBrandProfile           @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
-  projectId                  String                         @map("project_id")
-  project                    CreativeProject                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  id                         String                        @id @default(uuid())
+  ownerId                    String                        @map("owner_id")
+  brandProfileId             String                        @map("brand_profile_id")
+  brandProfile               CreativeBrandProfile          @relation(fields: [brandProfileId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  projectId                  String                        @map("project_id")
+  project                    CreativeProject               @relation(fields: [projectId, ownerId, brandProfileId], references: [id, ownerId, brandProfileId], onDelete: Restrict)
   title                      String
-  sourceKind                 CreativeCompositionSourceKind  @default(PROJECT_PROJECTION) @map("source_kind")
-  schemaVersion              Int                            @default(1) @map("schema_version")
-  currentVersion             Int                            @default(1) @map("current_version")
-  concurrencyToken           String                         @map("concurrency_token")
-  readOnly                   Boolean                        @default(false) @map("read_only")
-  creationIdempotencyKey     String                         @map("creation_idempotency_key")
-  creationRequestFingerprint String                         @map("creation_request_fingerprint")
-  createdById                String                         @map("created_by_id")
-  createdBy                  User                           @relation("CreativeCompositionCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  createdAt                  DateTime                       @default(now()) @map("created_at")
-  updatedAt                  DateTime                       @updatedAt @map("updated_at")
-  archivedAt                 DateTime?                      @map("archived_at")
+  sourceKind                 CreativeCompositionSourceKind @default(PROJECT_PROJECTION) @map("source_kind")
+  schemaVersion              Int                           @default(1) @map("schema_version")
+  currentVersion             Int                           @default(1) @map("current_version")
+  concurrencyToken           String                        @map("concurrency_token")
+  readOnly                   Boolean                       @default(false) @map("read_only")
+  creationIdempotencyKey     String                        @map("creation_idempotency_key")
+  creationRequestFingerprint String                        @map("creation_request_fingerprint")
+  createdById                String                        @map("created_by_id")
+  createdBy                  User                          @relation("CreativeCompositionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt                  DateTime                      @default(now()) @map("created_at")
+  updatedAt                  DateTime                      @updatedAt @map("updated_at")
+  archivedAt                 DateTime?                     @map("archived_at")
   versions                   CreativeCompositionVersion[]
   operationBatches           CreativeOperationBatch[]
   editOperations             CreativeEditOperation[]
   rollbackPoints             CreativeRollbackPoint[]
+  lifecycleJobs              CreativeLifecycleJob[]        @relation("CreativeLifecycleJobComposition")
+  reviewEvents               CreativeAssetReviewEvent[]    @relation("CreativeReviewComposition")
+  publishDeliveries          CreativePublishDelivery[]     @relation("CreativePublishComposition")
+  performanceSnapshots       CreativePerformanceSnapshot[] @relation("CreativePerformanceComposition")
+  archiveReceipts            CreativeArchiveReceipt[]      @relation("CreativeArchiveComposition")
 
   @@unique([ownerId, creationIdempotencyKey])
+  @@unique([id, ownerId, brandProfileId, projectId])
   @@index([brandProfileId, projectId, updatedAt(sort: Desc)])
   @@index([ownerId, archivedAt, updatedAt(sort: Desc)])
   @@map("creative_compositions")
 }
 
 model CreativeCompositionVersion {
-  id               String                     @id @default(uuid())
-  compositionId    String                     @map("composition_id")
-  composition      CreativeComposition        @relation(fields: [compositionId], references: [id], onDelete: Restrict)
-  version          Int
-  schemaVersion    Int                        @default(1) @map("schema_version")
-  parentVersion    Int?                       @map("parent_version")
-  document         Json
-  documentHash     String                     @map("document_hash")
-  operationBatchId String?                    @unique @map("operation_batch_id")
-  operationBatch   CreativeOperationBatch?    @relation("CreativeBatchGeneratedVersion", fields: [operationBatchId], references: [id], onDelete: Restrict)
-  createdById      String                     @map("created_by_id")
-  createdBy        User                       @relation("CreativeCompositionVersionCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  createdAt        DateTime                   @default(now()) @map("created_at")
-  nodes             CreativeCompositionNode[]
-  rollbackPoints    CreativeRollbackPoint[]
+  id                   String                        @id @default(uuid())
+  compositionId        String                        @map("composition_id")
+  composition          CreativeComposition           @relation(fields: [compositionId], references: [id], onDelete: Restrict)
+  version              Int
+  schemaVersion        Int                           @default(1) @map("schema_version")
+  parentVersion        Int?                          @map("parent_version")
+  document             Json
+  documentHash         String                        @map("document_hash")
+  operationBatchId     String?                       @unique @map("operation_batch_id")
+  operationBatch       CreativeOperationBatch?       @relation("CreativeBatchGeneratedVersion", fields: [operationBatchId], references: [id], onDelete: Restrict)
+  createdById          String                        @map("created_by_id")
+  createdBy            User                          @relation("CreativeCompositionVersionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt            DateTime                      @default(now()) @map("created_at")
+  nodes                CreativeCompositionNode[]
+  rollbackPoints       CreativeRollbackPoint[]
+  lifecycleJobs        CreativeLifecycleJob[]        @relation("CreativeLifecycleJobCompositionVersion")
+  reviewEvents         CreativeAssetReviewEvent[]    @relation("CreativeReviewCompositionVersion")
+  publishDeliveries    CreativePublishDelivery[]     @relation("CreativePublishCompositionVersion")
+  performanceSnapshots CreativePerformanceSnapshot[] @relation("CreativePerformanceCompositionVersion")
+  archiveReceipts      CreativeArchiveReceipt[]      @relation("CreativeArchiveCompositionVersion")
 
   @@unique([compositionId, version])
+  @@unique([id, compositionId])
+  @@unique([id, compositionId, version, documentHash])
   @@index([compositionId, createdAt(sort: Desc)])
   @@index([createdById, createdAt(sort: Desc)])
   @@map("creative_composition_versions")
@@ -2964,8 +3196,14 @@ model CreativeOperationBatch {
   operations              CreativeEditOperation[]
   generatedVersion        CreativeCompositionVersion?    @relation("CreativeBatchGeneratedVersion")
   rollbackPointsCreated   CreativeRollbackPoint[]        @relation("CreativeRollbackPointSourceBatch")
+  lifecycleJobs           CreativeLifecycleJob[]         @relation("CreativeLifecycleJobOperationBatch")
+  publishDeliveries       CreativePublishDelivery[]      @relation("CreativePublishOperationBatch")
+  performanceSnapshots    CreativePerformanceSnapshot[]  @relation("CreativePerformanceOperationBatch")
+  archiveReceipts         CreativeArchiveReceipt[]       @relation("CreativeArchiveOperationBatch")
 
   @@unique([compositionId, idempotencyKey])
+  @@unique([id, compositionId])
+  @@unique([id, compositionId, resultVersion])
   @@index([compositionId, resultVersion(sort: Desc)])
   @@index([actorId, createdAt(sort: Desc)])
   @@index([targetBatchId])
@@ -3005,18 +3243,18 @@ model CreativeEditOperation {
 }
 
 model CreativeRollbackPoint {
-  id             String                     @id
-  compositionId  String                     @map("composition_id")
-  composition    CreativeComposition        @relation(fields: [compositionId], references: [id], onDelete: Restrict)
-  versionId      String                     @map("version_id")
-  version        CreativeCompositionVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
-  versionNumber  Int                        @map("version_number")
-  sourceBatchId  String                     @unique @map("source_batch_id")
-  sourceBatch    CreativeOperationBatch      @relation("CreativeRollbackPointSourceBatch", fields: [sourceBatchId], references: [id], onDelete: Restrict)
-  label          String?
-  createdById    String                     @map("created_by_id")
-  createdBy      User                       @relation("CreativeRollbackPointActor", fields: [createdById], references: [id], onDelete: Restrict)
-  createdAt      DateTime                   @default(now()) @map("created_at")
+  id            String                     @id
+  compositionId String                     @map("composition_id")
+  composition   CreativeComposition        @relation(fields: [compositionId], references: [id], onDelete: Restrict)
+  versionId     String                     @map("version_id")
+  version       CreativeCompositionVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  versionNumber Int                        @map("version_number")
+  sourceBatchId String                     @unique @map("source_batch_id")
+  sourceBatch   CreativeOperationBatch     @relation("CreativeRollbackPointSourceBatch", fields: [sourceBatchId], references: [id], onDelete: Restrict)
+  label         String?
+  createdById   String                     @map("created_by_id")
+  createdBy     User                       @relation("CreativeRollbackPointActor", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt     DateTime                   @default(now()) @map("created_at")
 
   @@index([compositionId, versionNumber(sort: Desc)])
   @@index([createdById, createdAt(sort: Desc)])
@@ -3042,48 +3280,59 @@ enum CreativePublishStatus {
 }
 
 model CreativePublishDelivery {
-  id                    String                        @id @default(uuid())
-  ownerId               String                        @map("owner_id")
-  brandProfileId        String                        @map("brand_profile_id")
-  brandProfile          CreativeBrandProfile          @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
-  projectId             String                        @map("project_id")
-  project               CreativeProject               @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  assetId               String                        @map("asset_id")
-  asset                 CreativeProjectAsset          @relation(fields: [assetId], references: [id], onDelete: Restrict)
-  assetVersionId        String                        @map("asset_version_id")
-  assetVersion          CreativeAssetVersion          @relation(fields: [assetVersionId], references: [id], onDelete: Restrict)
-  recipeId              String?                       @map("recipe_id")
-  recipe                CreativeBrandRecipe?          @relation(fields: [recipeId], references: [id], onDelete: SetNull)
-  campaignPackId        String?                       @map("campaign_pack_id")
-  sceneKey              String                        @default("unclassified") @map("scene_key")
-  approvedReviewEventId String                        @map("approved_review_event_id")
-  createdById           String                        @map("created_by_id")
-  platform              CreativePublishPlatform
-  pageRef               String                        @map("page_ref")
-  caption               String                        @db.Text
-  mediaStoragePath      String                        @map("media_storage_path") @db.Text
-  adId                  String?                       @map("ad_id")
-  idempotencyKey        String                        @map("idempotency_key")
-  requestFingerprint    String                        @map("request_fingerprint")
-  status                CreativePublishStatus         @default(SCHEDULED)
-  scheduledFor          DateTime                      @map("scheduled_for")
-  attempts              Int                           @default(0)
-  leaseStartedAt        DateTime?                     @map("lease_started_at")
-  nextAttemptAt         DateTime?                     @map("next_attempt_at")
-  externalPostId        String?                       @map("external_post_id")
-  permalinkUrl          String?                       @map("permalink_url") @db.Text
-  verifiedAt            DateTime?                     @map("verified_at")
-  publishedAt           DateTime?                     @map("published_at")
-  receipt               Json                          @default("{}")
-  lastErrorCode         String?                       @map("last_error_code")
-  lastErrorMessage      String?                       @map("last_error_message") @db.Text
-  metricsLastSyncedAt   DateTime?                     @map("metrics_last_synced_at")
-  metricsNextSyncAt     DateTime?                     @map("metrics_next_sync_at")
-  metricsLastError      String?                       @map("metrics_last_error") @db.Text
-  costUsd               Decimal                       @default(0) @map("cost_usd") @db.Decimal(10, 6)
-  createdAt             DateTime                      @default(now()) @map("created_at")
-  updatedAt             DateTime                      @updatedAt @map("updated_at")
-  performanceSnapshots  CreativePerformanceSnapshot[]
+  id                       String                        @id @default(uuid())
+  ownerId                  String                        @map("owner_id")
+  brandProfileId           String                        @map("brand_profile_id")
+  brandProfile             CreativeBrandProfile          @relation(fields: [brandProfileId], references: [id], onDelete: Restrict)
+  projectId                String                        @map("project_id")
+  project                  CreativeProject               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  assetId                  String                        @map("asset_id")
+  asset                    CreativeProjectAsset          @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  assetVersionId           String                        @map("asset_version_id")
+  assetVersion             CreativeAssetVersion          @relation(fields: [assetVersionId], references: [id], onDelete: Restrict)
+  recipeId                 String?                       @map("recipe_id")
+  recipe                   CreativeBrandRecipe?          @relation(fields: [recipeId], references: [id], onDelete: SetNull)
+  campaignPackId           String?                       @map("campaign_pack_id")
+  compositionId            String?                       @map("composition_id")
+  composition              CreativeComposition?          @relation("CreativePublishComposition", fields: [compositionId, ownerId, brandProfileId, projectId], references: [id, ownerId, brandProfileId, projectId], onDelete: Restrict)
+  compositionVersionId     String?                       @map("composition_version_id")
+  compositionVersionRecord CreativeCompositionVersion?   @relation("CreativePublishCompositionVersion", fields: [compositionVersionId, compositionId, compositionVersion, compositionDocumentHash], references: [id, compositionId, version, documentHash], onDelete: Restrict)
+  compositionVersion       Int?                          @map("composition_version")
+  compositionDocumentHash  String?                       @map("composition_document_hash")
+  operationBatchId         String?                       @map("operation_batch_id")
+  operationBatch           CreativeOperationBatch?       @relation("CreativePublishOperationBatch", fields: [operationBatchId, compositionId, compositionVersion], references: [id, compositionId, resultVersion], onDelete: Restrict)
+  reviewFingerprint        String?                       @map("review_fingerprint")
+  renderFingerprint        String?                       @map("render_fingerprint")
+  sceneKey                 String                        @default("unclassified") @map("scene_key")
+  approvedReviewEventId    String                        @map("approved_review_event_id")
+  approvedReviewEvent      CreativeAssetReviewEvent      @relation(fields: [approvedReviewEventId], references: [id], onDelete: Restrict)
+  createdById              String                        @map("created_by_id")
+  platform                 CreativePublishPlatform
+  pageRef                  String                        @map("page_ref")
+  caption                  String                        @db.Text
+  mediaStoragePath         String                        @map("media_storage_path") @db.Text
+  adId                     String?                       @map("ad_id")
+  idempotencyKey           String                        @map("idempotency_key")
+  requestFingerprint       String                        @map("request_fingerprint")
+  status                   CreativePublishStatus         @default(SCHEDULED)
+  scheduledFor             DateTime                      @map("scheduled_for")
+  attempts                 Int                           @default(0)
+  leaseStartedAt           DateTime?                     @map("lease_started_at")
+  nextAttemptAt            DateTime?                     @map("next_attempt_at")
+  externalPostId           String?                       @map("external_post_id")
+  permalinkUrl             String?                       @map("permalink_url") @db.Text
+  verifiedAt               DateTime?                     @map("verified_at")
+  publishedAt              DateTime?                     @map("published_at")
+  receipt                  Json                          @default("{}")
+  lastErrorCode            String?                       @map("last_error_code")
+  lastErrorMessage         String?                       @map("last_error_message") @db.Text
+  metricsLastSyncedAt      DateTime?                     @map("metrics_last_synced_at")
+  metricsNextSyncAt        DateTime?                     @map("metrics_next_sync_at")
+  metricsLastError         String?                       @map("metrics_last_error") @db.Text
+  costUsd                  Decimal                       @default(0) @map("cost_usd") @db.Decimal(10, 6)
+  createdAt                DateTime                      @default(now()) @map("created_at")
+  updatedAt                DateTime                      @updatedAt @map("updated_at")
+  performanceSnapshots     CreativePerformanceSnapshot[]
 
   @@unique([ownerId, idempotencyKey])
   @@index([status, scheduledFor])
@@ -3093,34 +3342,49 @@ model CreativePublishDelivery {
   @@index([assetId, createdAt(sort: Desc)])
   @@index([campaignPackId])
   @@index([metricsNextSyncAt])
+  @@index([compositionId, compositionVersionId])
+  @@index([operationBatchId, compositionId, compositionVersion])
+  @@index([approvedReviewEventId])
   @@map("creative_publish_deliveries")
 }
 
 model CreativePerformanceSnapshot {
-  id                String                             @id @default(uuid())
-  deliveryId        String                             @map("delivery_id")
-  delivery          CreativePublishDelivery            @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
-  assetVersionId    String                             @map("asset_version_id")
-  assetVersion      CreativeAssetVersion               @relation(fields: [assetVersionId], references: [id], onDelete: Restrict)
-  campaignPackId    String?                            @map("campaign_pack_id")
-  externalObjectId  String                             @map("external_object_id")
-  source            String                             @default("meta_graph")
-  sourceFingerprint String                             @unique @map("source_fingerprint")
-  reach             Int                                @default(0)
-  impressions       Int                                @default(0)
-  engagements       Int                                @default(0)
-  clicks            Int                                @default(0)
-  conversions       Int                                @default(0)
-  spendAmount       Decimal?                           @map("spend_amount") @db.Decimal(14, 2)
-  spendCurrency     String?                            @map("spend_currency")
-  revenueBdt        Int?                               @map("revenue_bdt")
-  rawMetrics        Json                               @default("{}") @map("raw_metrics")
-  capturedAt        DateTime                           @default(now()) @map("captured_at")
-  feedbackEvents    CreativePerformanceFeedbackEvent[]
+  id                       String                             @id @default(uuid())
+  deliveryId               String                             @map("delivery_id")
+  delivery                 CreativePublishDelivery            @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+  assetVersionId           String                             @map("asset_version_id")
+  assetVersion             CreativeAssetVersion               @relation(fields: [assetVersionId], references: [id], onDelete: Restrict)
+  campaignPackId           String?                            @map("campaign_pack_id")
+  compositionId            String?                            @map("composition_id")
+  composition              CreativeComposition?               @relation("CreativePerformanceComposition", fields: [compositionId], references: [id], onDelete: Restrict)
+  compositionVersionId     String?                            @map("composition_version_id")
+  compositionVersionRecord CreativeCompositionVersion?        @relation("CreativePerformanceCompositionVersion", fields: [compositionVersionId, compositionId, compositionVersion, compositionDocumentHash], references: [id, compositionId, version, documentHash], onDelete: Restrict)
+  compositionVersion       Int?                               @map("composition_version")
+  compositionDocumentHash  String?                            @map("composition_document_hash")
+  operationBatchId         String?                            @map("operation_batch_id")
+  operationBatch           CreativeOperationBatch?            @relation("CreativePerformanceOperationBatch", fields: [operationBatchId, compositionId, compositionVersion], references: [id, compositionId, resultVersion], onDelete: Restrict)
+  reviewFingerprint        String?                            @map("review_fingerprint")
+  renderFingerprint        String?                            @map("render_fingerprint")
+  externalObjectId         String                             @map("external_object_id")
+  source                   String                             @default("meta_graph")
+  sourceFingerprint        String                             @unique @map("source_fingerprint")
+  reach                    Int                                @default(0)
+  impressions              Int                                @default(0)
+  engagements              Int                                @default(0)
+  clicks                   Int                                @default(0)
+  conversions              Int                                @default(0)
+  spendAmount              Decimal?                           @map("spend_amount") @db.Decimal(14, 2)
+  spendCurrency            String?                            @map("spend_currency")
+  revenueBdt               Int?                               @map("revenue_bdt")
+  rawMetrics               Json                               @default("{}") @map("raw_metrics")
+  capturedAt               DateTime                           @default(now()) @map("captured_at")
+  feedbackEvents           CreativePerformanceFeedbackEvent[]
 
   @@index([deliveryId, capturedAt(sort: Desc)])
   @@index([assetVersionId, capturedAt(sort: Desc)])
   @@index([campaignPackId, capturedAt(sort: Desc)])
+  @@index([compositionId, compositionVersionId])
+  @@index([operationBatchId, compositionId, compositionVersion])
   @@map("creative_performance_snapshots")
 }
 
@@ -3172,28 +3436,64 @@ model CreativeRetentionPolicy {
 }
 
 model CreativeArchiveReceipt {
-  id                String                @id @default(uuid())
-  pendingActionId   String                @map("pending_action_id")
-  assetVersionId    String?               @map("asset_version_id")
-  assetVersion      CreativeAssetVersion? @relation(fields: [assetVersionId], references: [id], onDelete: SetNull)
-  storagePath       String                @map("storage_path") @db.Text
-  driveFileId       String                @map("drive_file_id")
-  driveWebViewUrl   String?               @map("drive_web_view_url") @db.Text
-  sizeBytes         BigInt?               @map("size_bytes")
-  archivedAt        DateTime              @map("archived_at")
-  verifiedAt        DateTime?             @map("verified_at")
-  lastVerifiedAt    DateTime?             @map("last_verified_at")
-  originalDeletedAt DateTime?             @map("original_deleted_at")
-  attempts          Int                   @default(1)
-  lastErrorCode     String?               @map("last_error_code")
-  lastAttemptAt     DateTime              @default(now()) @map("last_attempt_at")
-  createdAt         DateTime              @default(now()) @map("created_at")
-  updatedAt         DateTime              @updatedAt @map("updated_at")
+  id                       String                               @id @default(uuid())
+  pendingActionId          String                               @map("pending_action_id")
+  assetVersionId           String?                              @map("asset_version_id")
+  assetVersion             CreativeAssetVersion?                @relation(fields: [assetVersionId], references: [id], onDelete: SetNull)
+  compositionId            String?                              @map("composition_id")
+  composition              CreativeComposition?                 @relation("CreativeArchiveComposition", fields: [compositionId], references: [id], onDelete: Restrict)
+  compositionVersionId     String?                              @map("composition_version_id")
+  compositionVersionRecord CreativeCompositionVersion?          @relation("CreativeArchiveCompositionVersion", fields: [compositionVersionId, compositionId, compositionVersion, compositionDocumentHash], references: [id, compositionId, version, documentHash], onDelete: Restrict)
+  compositionVersion       Int?                                 @map("composition_version")
+  compositionDocumentHash  String?                              @map("composition_document_hash")
+  operationBatchId         String?                              @map("operation_batch_id")
+  operationBatch           CreativeOperationBatch?              @relation("CreativeArchiveOperationBatch", fields: [operationBatchId, compositionId, compositionVersion], references: [id, compositionId, resultVersion], onDelete: Restrict)
+  operationPackageChecksum String?                              @map("operation_package_checksum")
+  artifactChecksum         String?                              @map("artifact_checksum")
+  archiveChecksum          String?                              @map("archive_checksum")
+  fetchBackChecksum        String?                              @map("fetch_back_checksum")
+  fetchBackVerifiedAt      DateTime?                            @map("fetch_back_verified_at")
+  playableProxyPath        String?                              @map("playable_proxy_path") @db.Text
+  originalStoragePath      String?                              @map("original_storage_path") @db.Text
+  renderStoragePath        String?                              @map("render_storage_path") @db.Text
+  lineageManifest          Json                                 @default("{}") @map("lineage_manifest")
+  storagePath              String                               @map("storage_path") @db.Text
+  driveFileId              String                               @map("drive_file_id")
+  driveWebViewUrl          String?                              @map("drive_web_view_url") @db.Text
+  sizeBytes                BigInt?                              @map("size_bytes")
+  archivedAt               DateTime                             @map("archived_at")
+  verifiedAt               DateTime?                            @map("verified_at")
+  lastVerifiedAt           DateTime?                            @map("last_verified_at")
+  originalDeletedAt        DateTime?                            @map("original_deleted_at")
+  attempts                 Int                                  @default(1)
+  lastErrorCode            String?                              @map("last_error_code")
+  lastAttemptAt            DateTime                             @default(now()) @map("last_attempt_at")
+  createdAt                DateTime                             @default(now()) @map("created_at")
+  updatedAt                DateTime                             @updatedAt @map("updated_at")
+  verificationAttempts     CreativeArchiveVerificationAttempt[]
 
   @@unique([pendingActionId, storagePath])
   @@index([verifiedAt, originalDeletedAt])
   @@index([assetVersionId])
+  @@index([compositionId, compositionVersionId])
+  @@index([operationBatchId, compositionId, compositionVersion])
   @@map("creative_archive_receipts")
+}
+
+model CreativeArchiveVerificationAttempt {
+  id                String                 @id @default(uuid())
+  archiveReceiptId  String                 @map("archive_receipt_id")
+  archiveReceipt    CreativeArchiveReceipt @relation(fields: [archiveReceiptId], references: [id], onDelete: Restrict)
+  outcome           String
+  expectedChecksum  String?                @map("expected_checksum")
+  archiveChecksum   String?                @map("archive_checksum")
+  fetchBackChecksum String?                @map("fetch_back_checksum")
+  errorCode         String?                @map("error_code")
+  errorMessage      String?                @map("error_message") @db.Text
+  attemptedAt       DateTime               @default(now()) @map("attempted_at")
+
+  @@index([archiveReceiptId, attemptedAt(sort: Desc)])
+  @@map("creative_archive_verification_attempts")
 }
 
 // ─── Creative Studio Enterprise CSE5: owner voice lifecycle ────────────────

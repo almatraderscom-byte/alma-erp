@@ -90,6 +90,7 @@ export interface CreativeStudioV3ReviewQueuePort {
   listReviewQueue(input: {
     brandProfileId: string
     projectId?: string | null
+    includeApproved?: boolean
   }): Promise<{
     items: CreativeStudioV3ReviewQueueItem[]
     nextCursor: string | null

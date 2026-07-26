@@ -4,6 +4,7 @@ import {
   StudioClientError,
   estimateAudioJob,
   fetchGallery,
+  fetchStudioReviewQueue,
   finishImage,
   isStudioView,
   normalizeStudioApiError,
@@ -13,6 +14,7 @@ import {
   runStudioJob,
   runVideoRecipe,
   studioRequest,
+  transitionStudioReview,
 } from '@/agent/components/creative-studio/studio-api'
 import {
   buildStudioResolutionUiState,
@@ -127,6 +129,41 @@ describe('typed Studio client errors', () => {
 })
 
 describe('Creative Studio request payload contract', () => {
+  it('requests approved Review rows explicitly and sends the exact composition approval pin', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ items: [], nextCursor: null }))
+      .mockResolvedValueOnce(jsonResponse({
+        review: {
+          assetId: 'asset-1',
+          currentState: 'approved',
+        },
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await fetchStudioReviewQueue({
+      brandProfileId: 'brand-1',
+      projectId: 'project-1',
+      includeApproved: true,
+    })
+    await transitionStudioReview({
+      assetId: 'asset-1',
+      brandProfileId: 'brand-1',
+      targetState: 'approved',
+      expectedSequence: 7,
+      compositionId: 'composition-1',
+      compositionVersionId: 'composition-version-4',
+    })
+
+    expect(requestAt(fetchMock, 0).url).toContain('includeApproved=true')
+    expect(requestAt(fetchMock, 1).body).toMatchObject({
+      brandProfileId: 'brand-1',
+      targetState: 'approved',
+      expectedSequence: 7,
+      compositionId: 'composition-1',
+      compositionVersionId: 'composition-version-4',
+    })
+  })
+
   it('requests an exact Review asset/version/sequence without a generic Gallery fallback', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
       items: [],

@@ -606,8 +606,8 @@ function ReviewPanel({
         </div>
       )}
       <footer className={styles.reviewBoundary}>
-        <button disabled type="button">Lifecycle Review port unavailable</button>
-        <p>Review mutation, approval and publish remain disabled pending the corrective backend integration.</p>
+        <button disabled type="button">Use the Studio Review desk</button>
+        <p>The Editor remains read-only enrichment; the Review desk owns exact composition-pinned approval and zero-cost Lifecycle preview.</p>
       </footer>
     </div>
   )

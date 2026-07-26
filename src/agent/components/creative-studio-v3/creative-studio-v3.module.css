@@ -2749,6 +2749,327 @@
   line-height: 1.55;
 }
 
+.lifecycleScopePicker {
+  display: flex;
+  max-width: 560px;
+  align-items: center;
+  gap: 12px;
+  margin: -4px 0 18px;
+  color: var(--studio-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lifecycleScopePicker select,
+.lifecycleField select,
+.lifecycleFlagFields select {
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--studio-ink);
+  background: var(--studio-surface);
+  font-size: 13px;
+}
+
+.lifecycleScopePicker select {
+  flex: 1;
+  padding: 0 14px;
+}
+
+.reviewQueue > article[data-selected='true'] {
+  border-color: color-mix(in srgb, var(--studio-accent) 55%, var(--border));
+  background: var(--studio-accent-wash);
+}
+
+.lifecycleReviewPanel {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--studio-surface);
+}
+
+.lifecycleReviewLayout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.42fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.lifecycleReview,
+.lifecycleOperations {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+
+.lifecyclePanelHeader,
+.lifecycleFlagPanel > header,
+.lifecycleJobs article > header,
+.lifecycleModeGrid article > header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lifecyclePanelHeader h2,
+.lifecycleFlagPanel h2 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: -0.025em;
+}
+
+.lifecyclePanelHeader p,
+.lifecycleFlagPanel p {
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--studio-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.lifecycleField,
+.lifecycleFlagFields label {
+  display: grid;
+  gap: 6px;
+  color: var(--studio-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lifecycleField select,
+.lifecycleFlagFields select {
+  width: 100%;
+  padding: 0 13px;
+}
+
+.lifecycleFacts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0;
+}
+
+.lifecycleFacts > div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--studio-soft);
+}
+
+.lifecycleFacts dt {
+  margin-bottom: 4px;
+  color: var(--studio-muted);
+  font-size: 12px;
+}
+
+.lifecycleFacts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1.45;
+}
+
+.lifecycleReviewControls {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  margin: 0;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.lifecycleReviewControls legend {
+  padding: 0 6px;
+  color: var(--studio-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.lifecycleReviewControls textarea {
+  width: 100%;
+  min-height: 78px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--studio-ink);
+  background: var(--studio-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.lifecycleReviewControls > div,
+.lifecycleActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lifecycleModeGrid,
+.lifecycleSafetyGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.lifecycleModeGrid article,
+.lifecycleSafetyGrid article {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--studio-soft);
+}
+
+.lifecycleModeGrid article[data-enabled='true'] {
+  border-color: color-mix(in srgb, var(--success) 35%, var(--border));
+  background: color-mix(in srgb, var(--success) 7%, var(--studio-soft));
+}
+
+.lifecycleModeGrid strong,
+.lifecycleSafetyGrid strong {
+  font-size: 13px;
+}
+
+.lifecycleModeGrid em {
+  color: var(--studio-accent-strong);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 750;
+  text-align: right;
+}
+
+.lifecycleModeGrid p,
+.lifecycleModeGrid small,
+.lifecycleSafetyGrid p {
+  display: block;
+  margin: 7px 0 0;
+  color: var(--studio-muted);
+  font-size: 12px;
+  line-height: 1.48;
+}
+
+.lifecycleModeGrid small {
+  padding-top: 7px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.lifecycleReceipt {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--success) 35%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--success) 7%, var(--studio-surface));
+}
+
+.lifecycleReceipt > svg {
+  width: 17px;
+  flex: 0 0 17px;
+  color: var(--success);
+}
+
+.lifecycleReceipt strong {
+  font-size: 13px;
+}
+
+.lifecycleReceipt p {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--studio-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.lifecycleSafetyGrid article[data-off='true'] strong {
+  color: color-mix(in srgb, var(--warning) 72%, var(--studio-ink));
+}
+
+.lifecycleSafetyGrid article > span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--studio-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lifecycleMetrics,
+.lifecycleFlagPanel,
+.lifecycleJobs {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--studio-surface);
+}
+
+.lifecycleFlagPanel {
+  display: grid;
+  gap: 13px;
+}
+
+.lifecycleFlagPanel > header > span {
+  color: var(--studio-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lifecycleFlagFields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 9px;
+}
+
+.lifecycleJobs > div {
+  display: grid;
+  gap: 8px;
+}
+
+.lifecycleJobs article {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--studio-soft);
+}
+
+.lifecycleJobs article strong,
+.lifecycleJobs article em {
+  font-size: 12px;
+}
+
+.lifecycleJobs article em {
+  color: var(--studio-muted);
+  font-style: normal;
+  font-weight: 700;
+}
+
+.lifecycleJobs article p,
+.lifecycleJobs article small {
+  display: block;
+  margin: 7px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--studio-muted);
+  font-size: 12px;
+  line-height: 1.48;
+}
+
+.lifecycleJobs article > div {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 .capabilitySurface,
 .campaignSurface {
   min-width: 0;
@@ -2830,6 +3151,7 @@
   .inventoryGrid,
   .homeColumns,
   .deskLayout,
+  .lifecycleReviewLayout,
   .campaignLayout,
   .galleryLayout {
     grid-template-columns: minmax(0, 1fr);
@@ -2996,6 +3318,15 @@
     width: 100%;
     max-width: none;
   }
+
+  .lifecycleModeGrid,
+  .lifecycleSafetyGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lifecycleFlagFields {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 480px) {
@@ -3058,6 +3389,21 @@
   .deskDetail {
     padding: 12px;
     border-radius: var(--radius-md);
+  }
+
+  .lifecyclePanelHeader,
+  .lifecycleFlagPanel > header {
+    flex-direction: column;
+  }
+
+  .lifecycleFacts,
+  .lifecycleModeGrid,
+  .lifecycleSafetyGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lifecycleScopePicker {
+    display: grid;
   }
 
   .architectureSwitch,

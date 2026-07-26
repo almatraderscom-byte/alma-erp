@@ -54,6 +54,7 @@ async function listReviewQueue(
     brandProfileId: string
     projectId: string | null
     cursor: string | null
+    includeApproved: boolean
   },
 ) {
   const access = await requireStudioBrandAccess(actor, input.brandProfileId)
@@ -73,7 +74,11 @@ async function listReviewQueue(
   }
   const rows = await (prisma as any).creativeProjectAsset.findMany({
     where: {
-      reviewState: { in: ['DRAFT', 'CHANGES_REQUESTED', 'REVISED'] },
+      reviewState: {
+        in: input.includeApproved
+          ? ['DRAFT', 'CHANGES_REQUESTED', 'REVISED', 'APPROVED']
+          : ['DRAFT', 'CHANGES_REQUESTED', 'REVISED'],
+      },
       versions: { some: {} },
       project: {
         ownerId: access.ownerId,
@@ -110,7 +115,7 @@ async function listReviewQueue(
     id: string
     projectId: string
     title: string | null
-    reviewState: 'DRAFT' | 'CHANGES_REQUESTED' | 'REVISED'
+    reviewState: 'DRAFT' | 'CHANGES_REQUESTED' | 'REVISED' | 'APPROVED'
     reviewSequence: number
     latestStoragePath: string | null
     updatedAt: Date
@@ -160,6 +165,8 @@ export async function GET(req: NextRequest) {
         brandProfileId,
         projectId: req.nextUrl.searchParams.get('projectId'),
         cursor: req.nextUrl.searchParams.get('cursor'),
+        includeApproved:
+          req.nextUrl.searchParams.get('includeApproved') === 'true',
       }))
     } catch (error) {
       return reviewError(error)

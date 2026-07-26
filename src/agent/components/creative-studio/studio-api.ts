@@ -465,6 +465,11 @@ export type StudioReviewThread = {
   currentSequence: number
   latestVersionId: string | null
   approvedVersionId: string | null
+  approvedCompositionId: string | null
+  approvedCompositionVersionId: string | null
+  approvedCompositionVersion: number | null
+  approvedCompositionDocumentHash: string | null
+  approvalInvalidatedReason: string | null
   publishReady: boolean
   role: StudioAccessRole
   approvalSpendThresholdBdt: number
@@ -492,6 +497,10 @@ export type StudioReviewThread = {
     actorRole: StudioAccessRole
     note: string | null
     approvedVersionId: string | null
+    approvedCompositionId: string | null
+    approvedCompositionVersionId: string | null
+    approvedCompositionVersion: number | null
+    approvedCompositionDocumentHash: string | null
     createdAt: string
   }>
 }
@@ -592,6 +601,7 @@ export async function fetchStudioReviewQueue(input: {
   brandProfileId: string
   projectId?: string | null
   cursor?: string | null
+  includeApproved?: boolean
 }): Promise<{
   items: StudioReviewQueueClientItem[]
   nextCursor: string | null
@@ -599,6 +609,7 @@ export async function fetchStudioReviewQueue(input: {
   const query = new URLSearchParams({ brandProfileId: input.brandProfileId })
   if (input.projectId) query.set('projectId', input.projectId)
   if (input.cursor) query.set('cursor', input.cursor)
+  if (input.includeApproved) query.set('includeApproved', 'true')
   return studioRequest(
     `/api/assistant/creative-studio/reviews?${query.toString()}`,
     undefined,
@@ -629,6 +640,8 @@ export async function transitionStudioReview(input: {
   targetState: StudioReviewState
   expectedSequence: number
   note?: string
+  compositionId?: string
+  compositionVersionId?: string
 }): Promise<StudioReviewThread> {
   const data = await studioRequest<{ review: StudioReviewThread }>(
     `/api/assistant/creative-studio/assets/${encodeURIComponent(input.assetId)}/state`,
@@ -640,6 +653,8 @@ export async function transitionStudioReview(input: {
         targetState: input.targetState,
         expectedSequence: input.expectedSequence,
         note: input.note,
+        compositionId: input.compositionId,
+        compositionVersionId: input.compositionVersionId,
       }),
     },
     'studio_review_transition_failed',

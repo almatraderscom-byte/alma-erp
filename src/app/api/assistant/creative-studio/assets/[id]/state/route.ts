@@ -41,6 +41,8 @@ export async function PATCH(
         targetState: body.targetState,
         note: body.note,
         expectedSequence: body.expectedSequence,
+        compositionId: body.compositionId,
+        compositionVersionId: body.compositionVersionId,
       }),
     })
   } catch (error) {

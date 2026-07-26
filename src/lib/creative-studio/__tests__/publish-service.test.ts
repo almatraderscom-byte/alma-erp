@@ -4,6 +4,8 @@ const publishHarness = vi.hoisted(() => {
   const state = {
     delivery: null as Record<string, unknown> | null,
     creates: 0,
+    v3Approval: false,
+    compositionCurrentVersion: 3,
   }
   const prisma = {
     creativeProjectAsset: {
@@ -13,6 +15,7 @@ const publishHarness = vi.hoisted(() => {
         latestStoragePath: 'generated/approved.png',
         project: {
           id: 'project-1',
+          ownerId: 'owner-1',
           brandProfileId: 'brand-alma',
         },
         versions: [{
@@ -25,9 +28,61 @@ const publishHarness = vi.hoisted(() => {
         }],
         reviewEvents: [{
           id: 'review-event-1',
+          ...(state.v3Approval
+            ? {
+                compositionId: 'composition-1',
+                compositionVersionId: 'composition-version-3',
+                compositionVersion: 3,
+                compositionDocumentHash: 'a'.repeat(64),
+                approvedArtifactVersionId: 'version-1',
+              }
+            : {}),
           metadata: { approvedVersionId: 'version-1' },
         }],
       })),
+    },
+    creativeComposition: {
+      findUnique: vi.fn(async () => ({
+        id: 'composition-1',
+        ownerId: 'owner-1',
+        brandProfileId: 'brand-alma',
+        projectId: 'project-1',
+        currentVersion: state.compositionCurrentVersion,
+        archivedAt: null,
+      })),
+    },
+    creativeCompositionVersion: {
+      findUnique: vi.fn(async () => ({
+        id: 'composition-version-3',
+        compositionId: 'composition-1',
+        version: 3,
+        documentHash: 'a'.repeat(64),
+        operationBatchId: 'batch-3',
+      })),
+    },
+    creativeOperationBatch: {
+      findUnique: vi.fn(async () => ({
+        id: 'batch-3',
+        compositionId: 'composition-1',
+        resultVersion: 3,
+      })),
+    },
+    creativeLifecycleFeatureFlag: {
+      findMany: vi.fn(async ({ where }: { where: { capability: string } }) => [{
+        id: `flag-${where.capability}`,
+        ownerId: 'owner-1',
+        brandProfileId: 'brand-alma',
+        projectId: 'project-1',
+        role: 'OWNER',
+        capability: where.capability,
+        enabled: true,
+        dualReadEnabled: false,
+        legacyFallbackEnabled: true,
+        canaryPercent: 100,
+      }]),
+    },
+    creativeLifecycleJob: {
+      findUnique: vi.fn(async () => null),
     },
     agentPendingAction: {
       findUnique: vi.fn(async () => ({
@@ -64,6 +119,8 @@ const publishHarness = vi.hoisted(() => {
     reset() {
       state.delivery = null
       state.creates = 0
+      state.v3Approval = false
+      state.compositionCurrentVersion = 3
       vi.clearAllMocks()
     },
   }
@@ -195,5 +252,44 @@ describe('CSE7 publish contract', () => {
     expect(publishHarness.state.creates).toBe(1)
     expect(first.delivery.campaignPackId).toBe('pack-1')
     expect(first.delivery.assetVersionId).toBe('version-1')
+  })
+
+  it('pins a dry-run to exact composition/review/batch identity and rejects stale versions', async () => {
+    publishHarness.state.v3Approval = true
+    const owner = {
+      userId: 'owner-1',
+      name: 'Owner',
+      email: null,
+      erpRole: 'SUPER_ADMIN',
+    }
+    const request = {
+      intent: 'dry_run',
+      assetId: 'asset-1',
+      brandProfileId: 'brand-alma',
+      platform: 'instagram',
+      pageRef: 'lifestyle',
+      caption: 'Pinned preview',
+      scheduledFor: '2026-07-25T12:00:00.000Z',
+      idempotencyKey: 'studio-publish:composition-1:preview-1',
+      compositionId: 'composition-1',
+      compositionVersionId: 'composition-version-3',
+      operationBatchId: 'batch-3',
+      approvedArtifactVersionId: 'version-1',
+      approvedReviewEventId: 'review-event-1',
+    }
+    await expect(previewStudioPublish(owner, request)).resolves.toMatchObject({
+      dryRun: true,
+      compositionId: 'composition-1',
+      compositionVersionId: 'composition-version-3',
+      compositionVersion: 3,
+      operationBatchId: 'batch-3',
+      renderFingerprint: null,
+      receipt: { externalEffect: false },
+    })
+
+    publishHarness.state.compositionCurrentVersion = 4
+    await expect(previewStudioPublish(owner, request)).rejects.toThrow(
+      'stale_composition_version',
+    )
   })
 })

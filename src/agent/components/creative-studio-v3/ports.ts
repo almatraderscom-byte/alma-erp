@@ -15,6 +15,8 @@ import type {
   StudioHealth,
   StudioMusicTrack,
   StudioRetentionDashboard,
+  StudioReviewState,
+  StudioReviewThread,
   StudioSettings,
   StudioRunEstimateClient,
   StudioVideoUpload,
@@ -26,7 +28,9 @@ import type {
   StudioProductOption,
   StudioProjectSummary,
 } from '@/lib/creative-studio/project-contract'
+import type { CreativeCompositionSummary } from '@/lib/creative-studio/composition-service'
 import type { VideoEditContract } from '@/lib/creative-studio/video-edit-contract'
+import type { StudioV3LifecycleClient } from '@/agent/components/creative-studio-v3/lifecycle-client'
 
 export type StudioV3DataIssue = {
   resource: string
@@ -55,12 +59,27 @@ export type StudioV3HomeSnapshot = {
   issues: StudioV3DataIssue[]
 }
 
-export interface CreativeStudioV3ProductionPort extends CreativeStudioV3ReviewQueuePort {
+export interface CreativeStudioV3ProductionPort
+  extends CreativeStudioV3ReviewQueuePort, StudioV3LifecycleClient {
   loadHome(brandProfileId?: string | null, projectId?: string | null): Promise<StudioV3HomeSnapshot>
   listBrands(): Promise<StudioBrandProfile[]>
   listProjects(brandProfileId?: string | null): Promise<StudioProjectSummary[]>
   listRecipes(brandProfileId?: string | null): Promise<StudioBrandRecipe[]>
   listProducts(query?: string): Promise<StudioProductOption[]>
+  listCompositions(input: {
+    brandProfileId: string
+    projectId: string
+  }): Promise<CreativeCompositionSummary[]>
+  getReview(assetId: string, brandProfileId: string): Promise<StudioReviewThread>
+  transitionReview(input: {
+    assetId: string
+    brandProfileId: string
+    targetState: StudioReviewState
+    expectedSequence: number
+    note?: string
+    compositionId?: string
+    compositionVersionId?: string
+  }): Promise<StudioReviewThread>
   listModels(brandProfileId?: string | null, projectId?: string | null): Promise<SavedStudioModel[]>
   listGallery(query?: GalleryQuery, brandProfileId?: string | null, projectId?: string | null): Promise<GalleryPage>
   listVoices(brandProfileId?: string | null, projectId?: string | null): Promise<CreativeVoiceClient[]>

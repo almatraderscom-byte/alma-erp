@@ -147,9 +147,9 @@ describe('Creative Studio V3 cross-stream Editor integration', () => {
     expect(v3Styles).toContain('.editorHost')
   })
 
-  it('leaves Lifecycle Review and Operations mutations disabled', () => {
-    expect(workbenchSource).toContain('Lifecycle Review port unavailable')
-    expect(workbenchSource).toContain('corrective backend integration')
+  it('keeps Editor enrichment read-only and hands Lifecycle authority to the Review desk', () => {
+    expect(workbenchSource).toContain('Use the Studio Review desk')
+    expect(workbenchSource).toContain('exact composition-pinned approval')
     expect(workbenchSource).not.toContain('transitionStudioReview')
     expect(workbenchSource).not.toContain('approveStudio')
   })
