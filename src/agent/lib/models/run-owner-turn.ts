@@ -73,6 +73,7 @@ import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import {
+  isRepeatedOpener,
   shouldNudgeAdapterIntent,
   shouldRestartHeadAfterFailure,
 } from '@/agent/lib/turn-loop-policy'
@@ -883,6 +884,24 @@ async function* runAlternateProviderTurn(
       } catch (err) {
         console.warn('[skill-allowlist] tool supply failed:', err instanceof Error ? err.message : err)
       }
+    }
+  }
+  // ANSWERING A QUESTION IS NOT THE MOMENT TO ASK ANOTHER ONE (owner report
+  // 2026-07-27). He answered a card — "এখন কোনো SEO fix কাজ করার দরকার নেই" —
+  // and the very next thing he got was a SECOND card, with the work no further
+  // along. That is the drip of questions he has objected to from the start
+  // ("ask everything ONCE, then work").
+  //
+  // Withholding the tool is the only version of this that holds. `ask_user` is
+  // in ALWAYS_ALLOWED precisely so a skill can never be trapped, so a prompt
+  // rule here would be a request the head could decline. It still has every
+  // honest way out: say plainly what it needs and stop, or stage a card. And it
+  // is one turn only — the next message can ask again if the fork is real.
+  if (!listenMode && explicitAskCardId) {
+    const before = ownerIntentTools.length
+    ownerIntentTools = ownerIntentTools.filter((t) => t.name !== 'ask_user')
+    if (ownerIntentTools.length < before) {
+      console.info('[ask-card] withheld ask_user on the answering turn', { conversationId })
     }
   }
   // A CONTRACT MUST NEVER DEMAND A TOOL THE HEAD DOES NOT HAVE (live prod run
@@ -1982,6 +2001,22 @@ async function* runAlternateProviderTurn(
       // Tool-round prose streams right away so the live view and reload both keep
       // the narration between steps; final-round text is emitted AFTER the
       // requirement-contract checks below (which may replace it).
+      // The model sometimes restates the spoken opening line in its first tool
+      // round — close paraphrase, not an exact copy, so seeding the transcript
+      // did not stop it and no equality check could catch it. Dropped here,
+      // before Boss sees it: the tool-round prose arrives as ONE block, so there
+      // is nothing half-streamed to take back. Only ever the first prose after
+      // the preamble; every later progress line is left alone.
+      if (
+        iterationText.trim()
+        && calls.length > 0
+        && preambleText.trim()
+        && !answerBody()
+        && isRepeatedOpener(preambleText, iterationText)
+      ) {
+        console.info('[speak-first] dropped a restated opening line', { conversationId })
+        iterationText = ''
+      }
       if (iterationText.trim() && calls.length > 0) {
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + iterationText
