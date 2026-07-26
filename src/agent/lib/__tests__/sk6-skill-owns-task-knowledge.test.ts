@@ -57,32 +57,42 @@ describe('SK-6 — the SEO procedure leaves the global requirement note', () => 
   })
 })
 
-describe('SK-6 — the job procedure leaves the global prompt', () => {
-  const jobModule = () => {
-    const m = PROMPT_MODULES.find((x) => x.id === 'client_seo_audit_procedure')
-    expect(m, 'the extracted module must exist').toBeTruthy()
-    return m!.text.trim().slice(0, 120)
-  }
+/**
+ * SK-6 COMPLETE, 2026-07-27. The client-SEO procedure is no longer skipped when
+ * a skill is pinned — it is GONE from global code. `seo-fixing-client-site` is
+ * the only place that describes that job.
+ *
+ * Measured before deleting: ten client-SEO phrasings, ten pins — the "no skill
+ * pinned but the job IS client-SEO" case the text existed to cover did not
+ * occur. What did not go, deliberately, is the two one-line contract statements
+ * in `buildOwnerRequirementNote`: they are the floor if the engine is ever
+ * switched off (see the comment there).
+ */
+describe('SK-6 — the job procedure is gone from the global prompt', () => {
   const stableText = (skillPinned?: boolean) =>
     buildSystemPromptBlocks({ forceFullPrompt: true, skillPinned })
       .stable.map((b) => b.text).join('')
 
-  it('no skill pinned → it still ships, exactly as before', () => {
-    expect(stableText()).toContain(jobModule())
+  // A distinctive sentence from the deleted procedure.
+  const DELETED = 'যেকোনো ওয়েবসাইট SEO অডিট'
+
+  it('the module no longer exists in the registry', () => {
+    expect(PROMPT_MODULES.find((x) => x.id === 'client_seo_audit_procedure')).toBeUndefined()
   })
 
-  it('a skill pinned → global code stops narrating the job', () => {
-    expect(stableText(true)).not.toContain(jobModule())
+  it('the text is absent whether or not a skill is pinned', () => {
+    expect(stableText()).not.toContain(DELETED)
+    expect(stableText(true)).not.toContain(DELETED)
   })
 
-  it('skipping beats forceFullPrompt — "ship everything" must not resurrect it', () => {
-    // forceFullPrompt is on in BOTH cases above; that is the point of this test.
-    expect(stableText(true).length).toBeLessThan(stableText().length)
+  it('forceFullPrompt cannot resurrect it — there is nothing to ship', () => {
+    // Both calls above already set forceFullPrompt; this states the consequence.
+    expect(stableText()).toBe(stableText(true))
   })
 
-  it('it is a MOVE: computer_capabilities no longer carries the job', () => {
+  it('it left computer_capabilities too — this was a move, then a delete', () => {
     const cc = PROMPT_MODULES.find((x) => x.id === 'computer_capabilities')!
-    expect(cc.text).not.toContain('যেকোনো ওয়েবসাইট SEO অডিট')
+    expect(cc.text).not.toContain(DELETED)
   })
 })
 
