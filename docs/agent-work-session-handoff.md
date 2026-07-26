@@ -75,16 +75,78 @@ Branch `claude/context-on-resume`, also pushed to `claude/roadmap-plan-8e52ff`.
 6. **Working-time badge.** Live ticking timer while the turn runs, and `⏱ 24m 20s`
    beside the tokens afterwards (persisted in `usage.duration_ms`).
 
-**Next action: deploy this preview, run the alt-text job again, and watch whether
-it (a) does the work instead of writing a report, (b) reports honest reasons, and
-(c) self-continues. Only then merge.**
+7. **Capability preflight.** The live run below showed the head spending 15
+   steps and 1m36s discovering, one tool at a time, that the website DB was
+   unreachable. A block now names the dead capability and the exact missing env
+   var before step 0 — and is empty (zero bytes) when nothing is down.
+
+---
+
+## The live proof run — 2026-07-26, preview, his Chrome
+
+I gave the agent the alt-text fix order myself on the preview alias, in **auto**
+mode (not Plan-Drive — his point was that this job never needed it).
+
+Everything in the batch held:
+
+| | before | on this build |
+|---|---|---|
+| fix order | produced another SEO report | went straight to the work |
+| turn end | "সার্ভারের সময়সীমায় টার্ন শেষ" after 40s | "কাজ শেষ হয়নি — ৩০ সেকেন্ড পরে নিজেই চালিয়ে যাব, hop 1" |
+| clock | none | `⏱ 1m 36s` beside the tokens |
+| self-repair | — | "নিজে যাচাই করে ঠিক করেছে" chip |
+| cost | ~$0.17/turn | $0.0335 (722.9k of 837.6k served from cache) |
+
+**But the alt-text job still did not happen, and the reason was never the code.**
+The agent said so honestly: `audit_product_seo` / `draft_seo_fixes` /
+`update_product_web` all need the website Supabase connection, which was not
+configured. Vercel confirmed it exactly:
+
+```
+WEBSITE_SUPABASE_SERVICE_ROLE_KEY   Production, Preview
+WEBSITE_SUPABASE_URL                Production          ← missing on Preview
+```
+
+Half configured for 42 days: the key on both, the URL on one. Same trap as the
+storage key before it. With his approval I added the URL to Preview
+(`https://awugvcjezittjjgfysuk.supabase.co` — the storefront's own public
+project URL, so no secret was handled). Production was not touched.
+
+## Blocked: every new deploy, by another agent's migration
+
+The redeploy then failed, and so will any deploy until it is cleared:
+
+```
+P3009 — migrate found failed migrations in the target database
+20260921130000_creative_lifecycle_production  failed 2026-07-26 06:48:58 UTC
+```
+
+- It belongs to branch `codex-cs-v3-lifecycle` (Codex agent, commits `477bd64d`,
+  `fae40b8c`).
+- **`DATABASE_URL` on Vercel is ONE record covering Production *and* Preview** —
+  so preview deploys run migrations against the live database. That is the
+  structural hazard worth fixing separately.
+- The data is fine: the migration is wrapped `BEGIN; … COMMIT;` and rolled back.
+  Only the `_prisma_migrations` row is marked failed, and Prisma then refuses
+  every later migration. Production itself keeps serving normally — only new
+  deploys are blocked.
+- **Owner ruling: leave it to Codex.** Do not run `migrate resolve` on his live
+  database.
+
+**Next action: once deploys unblock, re-run the alt-text job on preview — the
+env is now in place — and take the proof. Only then merge.**
 
 ---
 
 ## Open items
 
 - **The alt-text job itself is not done.** ~52+ images across the catalogue still
-  have no alt text. That is the live deliverable he is waiting on.
+  have no alt text. That is the live deliverable he is waiting on. The env gap is
+  now closed on Preview; the blocker is the failed migration above.
+- **Preview deploys migrate the production database.** One `DATABASE_URL` record
+  serves both environments. Today that let another branch's broken migration
+  block every deploy in the project. Worth raising with him as its own decision;
+  nothing here should change it unasked.
 - **G7 native parity** — iOS still shows the old "Running N". He asked to see it
   proven on web first, then implement on iOS. Do not touch iOS before telling him.
 - **Plan cost** — one Qwen step round cost ৳43 (a two-step plan spent ৳84 against
