@@ -1,0 +1,16 @@
+{
+  "name": "alma-base",
+  "description": "Shared ALMA invariants every other skill inherits via `extends`. Never selected on its own — it grants no capability and describes no task.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE", "ALMA_TRADING", "CDIT"],
+  "riskTier": "low",
+  "requiredCapabilities": [],
+  "networkPolicy": "none",
+  "writePolicy": "none",
+  "approvalPolicy": "inherit",
+  "implicit": false,
+  "whenNotToUse": "Always. This is a base layer, not a task skill — `extends: alma-base` pulls it in.",
+  "status": "active"
+}

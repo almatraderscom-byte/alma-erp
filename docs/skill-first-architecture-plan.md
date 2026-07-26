@@ -287,7 +287,7 @@ Eval-first, because finding 5 says skills can regress things.
 |---|---|---|
 | **SK-0** ✅ | **Measure today's reality** — 24 of his real messages through the live router. Result: `docs/skill-selection-baseline.md`. | done, see below |
 | **SK-1** ✅ | **Eval harness** — `evals/scoring.ts` (5 dimensions), `evals/scenarios.ts` (9 scenarios, 3 per SEO skill), `evals/owner-corpus.ts`. Validated by replaying this week's real failures. | done, see below |
-| **SK-2** | **Format v2 + `alma-base` + linter.** Schema (incl. U2/U8 fields), loader support, and a linter for the 99%-of-skills flaws — description person/what+when, body length, reference depth, tool names that exist, **description overlap between skills (U7)**, and **no multi-purpose skill (U7)**: audit, edit, deploy and review may not share one file. | linter green on all skills |
+| **SK-2** ✅ | **Format v2 + `alma-base` + linter.** Schema (incl. U2/U8 fields), loader support, and a linter for the 99%-of-skills flaws — description person/what+when, body length, reference depth, tool names that exist, **description overlap between skills (U7)**, and **no multi-purpose skill (U7)**: audit, edit, deploy and review may not share one file. | linter green on all skills |
 | **SK-3** | **Select → pin → announce → trace.** Three-layer router (U4), conversation pin, UI chip + override, selection trace (U5), registry budget (U3). | right skill on ≥90% of the SK-0 set |
 | **SK-4** | **Isolate + allowlist + gate.** Route `isolation: subagent` skills through `runSubAgent`; wire `done:` into the existing pack gate. | audit skill provably cannot write |
 | **SK-5** | **Write the three SEO skills properly**, with `traps.md` seeded from this week. | beats no-skill baseline on evals |
@@ -355,6 +355,38 @@ scoring harness nobody tested just produces comfortable green numbers:
 `compareToBaseline()` is the gate the research demands: a skill ships only if no
 scenario regressed against the no-skill baseline, *even when the average improved*.
 That is the direct answer to "13 of 87 tasks got worse".
+
+### SK-2 result (2026-07-26)
+
+Format v2 landed as optional manifest fields, so every v1 skill stays valid.
+`alma-base` now holds the invariants once — authority ladder, language, money,
+never-auto rules, honesty, working style — and is `implicit: false`, so it can be
+inherited but never selected.
+
+**The linter's verdict on our own 16 skills: 79 findings, 12 of them errors.**
+Report: `docs/skill-lint-report.md`.
+
+| rule | count | what it means |
+|---|---|---|
+| `description-when` | **16** | every single description says WHAT but not WHEN — the half routing runs on |
+| `missing-when-not` | **16** | no tie-break exists anywhere |
+| `missing-done` | 12 | a writing skill with no completion gate |
+| `missing-stop-conditions` | 12 | no declared point to stop and ask Boss |
+| `missing-output-contract` | 12 | "a good report" is not checkable |
+| `multi-purpose` | 6 | audit + edit + deploy in one file |
+| `keyword-collision` | 4 | two skills claim the same word |
+| `description-overlap` | 1 | two descriptions compete for the same messages |
+
+16 of 16 missing the "when" half is the cleanest explanation of the 61% routing
+score there is — and it is a writing problem, not an engine problem.
+
+Two thresholds were calibrated on our real data rather than guessed. The first
+overlap limit (0.5) fired on nothing: the worst real pair is 40%
+(`alma-customer-support` ~ `alma-product-social-post`), everything else ≤13%, so
+it is now 0.35. And description overlap turned out to be the wrong detector for
+the failure SK-0 actually measured — "meta description লিখে দাও" hit the Meta ADS
+skill because one WORD belonged to both, not because the descriptions were
+similar. Hence `keyword-collision`, which finds four real ones.
 
 `alma-seo-base` → `seo-auditing-own-site` (read-only) → `seo-fixing-own-site`
 (write via approval card) → `seo-fixing-client-site` (no DB, PR/report only).

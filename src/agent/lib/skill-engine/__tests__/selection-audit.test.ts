@@ -57,8 +57,11 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     const all = await discoverSkills(SKILLS_ROOT, { includeDraft: true })
 
     expect(all.skills.length).toBeGreaterThanOrEqual(16)
-    expect(live.skills.length).toBe(1)
-    expect(live.skills[0].name).toBe('alma-owner-daily-briefing')
+    // `alma-base` is also active but `implicit: false` — it exists to be inherited
+    // via `extends`, never to be picked. So exactly ONE skill is selectable today.
+    const selectable = live.skills.filter((s) => s.implicit !== false)
+    expect(selectable).toHaveLength(1)
+    expect(selectable[0].name).toBe('alma-owner-daily-briefing')
   })
 
   it('records the baseline table and the headline numbers', async () => {

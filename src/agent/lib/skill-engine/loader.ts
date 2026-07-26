@@ -119,6 +119,7 @@ export async function discoverSkills(
       status: manifest.status,
       requiredCapabilities: manifest.requiredCapabilities,
       keywords,
+      implicit: manifest.implicit !== false,
       dir,
     })
   }
@@ -139,7 +140,10 @@ export function selectSkills(index: SkillIndex, queryText: string, max = MAX_SKI
   const q = new Set(tokenize(queryText))
   if (q.size === 0) return []
 
-  const scored = index.skills.map((s) => {
+  // U8 — `implicit: false` never auto-selects. Two kinds live here: base layers
+  // pulled in by `extends` (alma-base), and skills Boss must ask for by name
+  // (money movement, publishing).
+  const scored = index.skills.filter((s) => s.implicit !== false).map((s) => {
     let score = 0
     for (const kw of s.keywords) {
       // A multi-word keyword phrase present verbatim is a strong signal.
