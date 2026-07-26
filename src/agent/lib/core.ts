@@ -137,6 +137,14 @@ export type AgentEvent =
       source: 'owner' | 'router'
       layer: string
       reason: string
+      /**
+       * SK-7 — true when this turn ran on the skill's OWN system prompt instead
+       * of inside the general one. On the wire so the isolation claim can be
+       * checked from outside the server: a `[skill-isolation]` line in a Vercel
+       * log is not something the owner can see, and "trust the code" is exactly
+       * the kind of proof this programme rejects.
+       */
+      isolated?: boolean
     }
   | {
       type: 'verification_retry'

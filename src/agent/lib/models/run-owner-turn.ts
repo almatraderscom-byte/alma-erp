@@ -825,6 +825,8 @@ async function* runAlternateProviderTurn(
       source: activeSkills.pinned.source,
       layer: activeSkills.pinned.layer,
       reason: activeSkills.pinned.reason,
+      // SK-7 — say on the wire whether the skill actually got its own prompt.
+      isolated: Boolean(activeSkills.isolated),
     }
   }
   let ownerIntentTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
