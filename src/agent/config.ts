@@ -271,6 +271,45 @@ export const SUBAGENT_TOOL_CAP = Number(process.env.SUBAGENT_TOOL_CAP) || 40
  */
 export const STANDARD_HEAD_TOOL_BUDGET = Number(process.env.STANDARD_HEAD_TOOL_BUDGET) || 8
 
+/**
+ * The head budgets above are sized for a CHAT reply. A turn the server itself
+ * classified as work is a different animal, and mixing the two is what made the
+ * owner say "non-stop kaj ekhono hoy na" (2026-07-26).
+ *
+ * The arithmetic he was up against: a deep-work turn is allowed
+ * DEEP_TURN_MAX_ITERATIONS (60) rounds and plan-drive LONG_RUN (120), while the
+ * standard head's budget stripped its tools after 8 — and on Vercel PREVIEW,
+ * where he tests, AGENT_UNIVERSAL_TOOL_PIPELINE defaults ON, so that 8 was live.
+ * The turn did not "decide" to stop; the server took its tools away at round 9.
+ *
+ * So the budget now follows the turn class. It is still a real ceiling — a chat
+ * reply cannot spree — but a job he explicitly started as work gets a budget
+ * that matches the work.
+ */
+export const DEEP_HEAD_TOOL_BUDGET = Number(process.env.DEEP_HEAD_TOOL_BUDGET) || 40
+export const LONG_RUN_HEAD_TOOL_BUDGET = Number(process.env.LONG_RUN_HEAD_TOOL_BUDGET) || 100
+
+export type TurnWorkClass = 'chat' | 'deep' | 'long_run'
+
+/** Never smaller than the chat budget — this only ever widens a work turn. */
+export function headToolBudgetFor(chatBudget: number, workClass: TurnWorkClass): number {
+  if (workClass === 'long_run') return Math.max(chatBudget, LONG_RUN_HEAD_TOOL_BUDGET)
+  if (workClass === 'deep') return Math.max(chatBudget, DEEP_HEAD_TOOL_BUDGET)
+  return chatBudget
+}
+
+/**
+ * How many times one turn may push a head that ANNOUNCED the next step and then
+ * stopped. One push is right for a chat reply; on a work session it was the
+ * difference between finishing and waiting for Boss to type "continue" — which
+ * is the whole complaint.
+ */
+export function maxIntentNudgesFor(workClass: TurnWorkClass): number {
+  if (workClass === 'long_run') return Number(process.env.LONG_RUN_INTENT_NUDGES) || 6
+  if (workClass === 'deep') return Number(process.env.DEEP_INTENT_NUDGES) || 3
+  return 1
+}
+
 // Phase prompt specifies budget_tokens values for reference.
 // budget_tokens is deprecated on claude-sonnet-4-6; we use thinking: {type:'adaptive'}
 // and map to output_config.effort levels instead (off → no thinking param, low → medium, high → high).

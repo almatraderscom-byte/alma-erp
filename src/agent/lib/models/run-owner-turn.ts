@@ -5,7 +5,7 @@
  */
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET, PROGRESS_UPDATE_EVERY, MAX_PROGRESS_NUDGES } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET, PROGRESS_UPDATE_EVERY, MAX_PROGRESS_NUDGES, headToolBudgetFor, maxIntentNudgesFor, type TurnWorkClass } from '@/agent/config'
 import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
@@ -1581,10 +1581,16 @@ async function* runAlternateProviderTurn(
   // chat reply: it gets the long-run budget so it can grind a real job to the
   // end in one visible session instead of being chopped into engine steps.
   const longRunTurn = chatMode === 'plan_drive'
+  const deepTurn = ownerRequirements.deepWork || driveClientSeoBatch || isJobDeliveryDirective(projectSystemInstructions)
+  // The turn's work class drives BOTH how many rounds it may take and how big
+  // the head's tool budget is. They used to disagree — 60 rounds allowed, tools
+  // confiscated at 8 — and the head budget always won (owner: "non-stop kaj
+  // ekhono hoy na", 2026-07-26).
+  const workClass: TurnWorkClass = longRunTurn ? 'long_run' : deepTurn ? 'deep' : 'chat'
   let maxIterations =
     longRunTurn
       ? LONG_RUN_TURN_MAX_ITERATIONS
-      : ownerRequirements.deepWork || driveClientSeoBatch || isJobDeliveryDirective(projectSystemInstructions)
+      : deepTurn
         ? DEEP_TURN_MAX_ITERATIONS
         : MAX_TOOL_ITERATIONS
   const claimedSteeringIds = new Set<string>()
@@ -1753,17 +1759,18 @@ async function* runAlternateProviderTurn(
       // No delegate hand-off: marketing quality stays on Qwen, not DeepSeek.
       // Second empty-round retry also goes text-only: Gemini sometimes wedges
       // trying to emit another tool call — with no tools it must speak.
-      const overBudget = isMarketingHead && headToolRounds >= MARKETING_HEAD_TOOL_BUDGET
+      const overBudget = isMarketingHead && headToolRounds >= headToolBudgetFor(MARKETING_HEAD_TOOL_BUDGET, workClass)
       // Premium Claude head over its (smaller) budget → delegate-only, per the
       // core.ts Option A guard this loop now owns (Phase 6). Inert when the
       // pack carries no delegate tool (narrow modes) — the normal caps apply.
       const premiumOverBudget =
-        isPremiumHead && delegateOnlyNeutral.length > 0 && headToolRounds >= HEAD_TOOL_BUDGET
+        isPremiumHead && delegateOnlyNeutral.length > 0 && headToolRounds >= headToolBudgetFor(HEAD_TOOL_BUDGET, workClass)
       // Phase 6 — the same discipline for cheap 'standard' heads (Grok/DeepSeek),
       // which previously ran unbounded. Delegate-only when a delegate tool is in
       // the pack, otherwise tools are stripped and it must answer (same shape as
       // the marketing wrap-up).
-      const standardOverBudget = standardBudgetLive && headToolRounds >= STANDARD_HEAD_TOOL_BUDGET
+      const standardOverBudget =
+        standardBudgetLive && headToolRounds >= headToolBudgetFor(STANDARD_HEAD_TOOL_BUDGET, workClass)
       // Models whose provider offers no tool-calling (e.g. Qwen 2.5 VL 72B on
       // OpenRouter) get a chat/vision-only turn — sending tool defs would 4xx
       // the request and bounce the owner to the cheap-head fallback.
@@ -2002,7 +2009,7 @@ async function* runAlternateProviderTurn(
         if (
           !signal?.aborted
           && !deadlineNudgeSent
-          && intentNudges < 1
+          && intentNudges < maxIntentNudgesFor(workClass)
           && iterationText.trim()
           && shouldNudgeAdapterIntent({
             text: iterationText,
