@@ -94,6 +94,7 @@ describe('gatewayConfigPayload', () => {
       'transferRingTimeout',
       'transferRounds',
       'voicemailMaxSecs',
+      'welcomeMohClass',
     ])
   })
 })

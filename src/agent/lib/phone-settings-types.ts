@@ -287,13 +287,23 @@ export const PHONE_SETTINGS: ReadonlyArray<SettingDef> = [
   {
     key: 'phone_moh_class',
     group: 'hold',
-    label: 'হোল্ড অডিও ক্লাস',
-    help: 'মানুষ খোঁজার সময় কোন সুর/বার্তা বাজবে। খালি রাখলে Asterisk-এর নিজের ডিফল্ট। নিচের আপলোড এই নামটাই ব্যবহার করে — হাতে বদলানোর দরকার নেই।',
+    label: 'ট্রান্সফারের সুরের নাম',
+    help: 'AI যখন মানুষে যুক্ত করছে, তখন কলদাতা যেটা শোনে। খালি রাখলে Asterisk-এর নিজের ডিফল্ট। নিচের আপলোড এই নামটাই ব্যবহার করে — হাতে বদলানোর দরকার নেই।',
     kind: 'text',
     scope: 'gateway',
     envName: 'SIP_MOH_CLASS',
     fallback: 'alma-hold',
     placeholder: 'alma-hold',
+  },
+  {
+    key: 'phone_welcome_moh_class',
+    group: 'hold',
+    label: 'শুরুর সুরের নাম',
+    help: 'অচেনা নম্বর থেকে কল এলে টিমের ফোন যতক্ষণ বাজে, ততক্ষণ কলদাতা এটা শোনে। ট্রান্সফারের সুর থেকে আলাদা রাখা হয়েছে ইচ্ছে করেই — একটা এমন কাউকে স্বাগত জানায় যে এখনো কারো সাথে কথা বলেনি, আরেকটা মাঝপথে থাকা কাউকে আশ্বস্ত করে। খালি রাখলে দুই জায়গাতেই ট্রান্সফারের সুরটাই বাজবে।',
+    kind: 'text',
+    scope: 'gateway',
+    fallback: 'alma-welcome',
+    placeholder: 'alma-welcome',
   },
 
   // ── outbound rules ─────────────────────────────────────────────────────────

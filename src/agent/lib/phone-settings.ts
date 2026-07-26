@@ -186,7 +186,7 @@ export function validateSetting(def: SettingDef, raw: string): string | null {
   }
 
   // text
-  if (def.key === 'phone_moh_class' && value && !/^[A-Za-z0-9_-]{1,40}$/.test(value)) {
+  if ((def.key === 'phone_moh_class' || def.key === 'phone_welcome_moh_class') && value && !/^[A-Za-z0-9_-]{1,40}$/.test(value)) {
     return 'ক্লাসের নামে শুধু ইংরেজি অক্ষর, সংখ্যা, - আর _ চলবে।'
   }
   if ((def.key === 'phone_outbound_strip' || def.key === 'phone_outbound_prefix') && value) {
@@ -331,6 +331,8 @@ export type GatewayConfig = {
   maxConcurrent: number
   voicemailMaxSecs: number
   mohClass: string
+  /** Played while the staff phones ring; empty means "use mohClass for that too". */
+  welcomeMohClass: string
   /** Comma-separated. The gateway refuses these BEFORE answering, so they cost nothing. */
   blocklist: string
   /** Step 4. What may be dialled, and how the number is rewritten before it is. */
@@ -354,6 +356,7 @@ export async function gatewayConfigPayload(): Promise<GatewayConfig> {
     'phone_max_concurrent',
     'phone_voicemail_max_secs',
     'phone_moh_class',
+    'phone_welcome_moh_class',
     'blocked_callers',
     'phone_dest_policy',
     'phone_outbound_strip',
@@ -370,6 +373,7 @@ export async function gatewayConfigPayload(): Promise<GatewayConfig> {
     maxConcurrent: num('phone_max_concurrent', 2),
     voicemailMaxSecs: num('phone_voicemail_max_secs', 120),
     mohClass: m.phone_moh_class ?? '',
+    welcomeMohClass: m.phone_welcome_moh_class ?? '',
     blocklist: m.blocked_callers ?? '',
     destPolicy: m.phone_dest_policy || 'bd_all',
     outboundStrip: m.phone_outbound_strip ?? '',

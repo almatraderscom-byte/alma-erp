@@ -90,6 +90,7 @@ export function useSoftphone() {
    */
   const reconnectRef = useRef<{ tries: number; timer: ReturnType<typeof setTimeout> | null }>({ tries: 0, timer: null })
   const closingRef = useRef(false)
+  const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const reconnect = useCallback(() => {
     const ua = uaRef.current
@@ -147,7 +148,26 @@ export function useSoftphone() {
       if (!uri) throw new Error('bad SIP address')
       const ua = new UserAgent({
         uri,
-        transportOptions: { server: cred.wsUrl },
+        /*
+         * KEEP THE SOCKET WARM. This is the fix for a call that would not hang up.
+         *
+         * During a call the websocket carries no SIP at all — the audio is RTP on a different
+         * path — so the connection sits idle for the whole conversation. The proxy chain in
+         * front of Asterisk (Traefik, then socat, then the gateway) drops an idle connection,
+         * and neither end notices: the browser still shows a phone, Asterisk still shows a
+         * contact, and the TCP is half-open. Then the far end hangs up, Asterisk tries to send
+         * BYE, and it fails with TRANSPORT_ERROR — measured on the box on 2026-07-26, where an
+         * INVITE to a freshly registered extension died in 2 ms with `Inv State: DISCONNCTD,
+         * Source of transaction state change is TRANSPORT_ERROR, Response 503`.
+         *
+         * The owner's symptom was exactly that: he hung up from his mobile after 15 s, Asterisk
+         * ended the channel (CDR billsec=14) and his screen counted on to 0:32.
+         *
+         * Traffic every 20 s stops the path idling out, and a failed write surfaces the death
+         * so `onDisconnect` can reconnect and re-register instead of leaving a phone that looks
+         * fine and cannot be reached.
+         */
+        transportOptions: { server: cred.wsUrl, keepAliveInterval: 20 },
         authorizationUsername: cred.extension,
         authorizationPassword: cred.password,
         displayName: cred.displayName || `ALMA ${cred.extension}`,
@@ -206,6 +226,19 @@ export function useSoftphone() {
         if (s === RegistererState.Unregistered && closingRef.current) patch({ status: 'idle' })
       })
       await registerer.register()
+
+      /*
+       * Our own keep-alive on top of the transport's, because sip.js marks `keepAliveInterval`
+       * as internal and it may quietly do nothing. A double CRLF is the SIP idiom for "still
+       * here" — Asterisk ignores the content and the bytes are what matter. A rejected write is
+       * the earliest honest signal that the socket is gone, and it hands straight to reconnect.
+       */
+      if (keepAliveRef.current) clearInterval(keepAliveRef.current)
+      keepAliveRef.current = setInterval(() => {
+        const t = uaRef.current?.transport
+        if (!t || closingRef.current) return
+        void Promise.resolve(t.send('\r\n\r\n')).catch(() => reconnect())
+      }, 25_000)
     } catch (err) {
       uaRef.current = null
       patch({ status: 'error', error: err instanceof Error ? err.message : String(err) })
@@ -216,6 +249,7 @@ export function useSoftphone() {
     stopTimer()
     closingRef.current = true
     if (reconnectRef.current.timer) { clearTimeout(reconnectRef.current.timer); reconnectRef.current.timer = null }
+    if (keepAliveRef.current) { clearInterval(keepAliveRef.current); keepAliveRef.current = null }
     reconnectRef.current.tries = 0
     try { await registererRef.current?.unregister() } catch { /* */ }
     try { await uaRef.current?.stop() } catch { /* */ }
