@@ -64,6 +64,8 @@ type MessageRow = {
     actionType?: string
     costEstimate?: number
     status?: string
+    /** False when the row ran under standing authority and never reached him. */
+    ownerDecided?: boolean
     failReason?: string
     durationMs?: number
     askCardId?: string
@@ -161,6 +163,9 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
             // Persisted/reloaded cards carry their resolved status so the card
             // renders as a settled breadcrumb (✅/❌) instead of a fresh prompt.
             resolvedStatus: cb.status,
+            // False when the row ran under standing authority and never reached
+            // him — the card must not claim he approved it.
+            ownerDecided: cb.ownerDecided !== false,
             failReason: cb.failReason,
           }))
         : undefined,
