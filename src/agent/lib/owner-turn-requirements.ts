@@ -110,14 +110,30 @@ export function deriveOwnerTurnRequirements(text: string): OwnerTurnRequirements
   return { liveBrowser, clientSeo, reportArtifact, remember, targets, deepWork, planFirst, groundingRequired }
 }
 
-export function buildOwnerRequirementNote(req: OwnerTurnRequirements): string {
+/**
+ * SK-6 — when a skill is pinned, the SEO-specific lines below are NOT emitted.
+ *
+ * They are task procedure ("crawl each target, read the report, produce an
+ * artifact"), and task procedure is what a skill is for. Kept in global code they
+ * are the owner's exact complaint: teaching the agent one job by editing a file
+ * every other job also reads. They now live in `seo-fixing-client-site/SKILL.md`,
+ * so with a skill pinned they would be said twice and could drift apart.
+ *
+ * The generic lines — ordered targets, live Chrome, remember, deep work — stay
+ * unconditionally. They are true of any job, which is the test §6 of the plan
+ * sets for what may remain global.
+ */
+export function buildOwnerRequirementNote(
+  req: OwnerTurnRequirements,
+  opts: { skillPinned?: boolean } = {},
+): string {
   const lines: string[] = []
   if (req.targets.length) lines.push(`Ordered targets: ${req.targets.join(' → ')}`)
   if (req.liveBrowser) {
     lines.push('Live Chrome is REQUIRED: visit and LOOK at at least 5 distinct pages per target; crawler-only completion is forbidden.')
   }
-  if (req.clientSeo) lines.push('Each target requires its own crawl, executed result, full report read, and download links before moving on.')
-  if (req.reportArtifact) lines.push('A client-ready artifact is REQUIRED; prose alone is not delivery.')
+  if (req.clientSeo && !opts.skillPinned) lines.push('Each target requires its own crawl, executed result, full report read, and download links before moving on.')
+  if (req.reportArtifact && !opts.skillPinned) lines.push('A client-ready artifact is REQUIRED; prose alone is not delivery.')
   if (req.deepWork) {
     lines.push(
       'Boss asked for DEEP/full work: cover the complete end-to-end scope — a shortened or sampled version is a failure. '

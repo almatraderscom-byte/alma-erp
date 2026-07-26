@@ -864,7 +864,12 @@ async function* runAlternateProviderTurn(
   // demanded run_website_seo_audit, the head could not call it, and Boss got a
   // progress line instead of an audit. Whatever the selector decides, a derived
   // requirement brings its own tools.
-  if (!listenMode && (ownerRequirements.clientSeo || driveClientSeoBatch)) {
+  // SK-6: with a skill pinned, its `requiredCapabilities` ARE the tool list —
+  // that is the allowlist enforcement, and a hardcoded SEO injection here would
+  // hand back tools the pinned skill deliberately does not have (a read-only
+  // audit skill being handed the crawl tools is exactly the failure SK-4 exists
+  // to prevent). `seo-fixing-client-site` already declares all three.
+  if (!listenMode && !activeSkills.pinned && (ownerRequirements.clientSeo || driveClientSeoBatch)) {
     const present = new Set(ownerIntentTools.map((t) => t.name))
     const needed = ['run_website_seo_audit', 'check_website_seo_audit', 'save_artifact'].filter((n) => !present.has(n))
     if (needed.length) {
@@ -1046,7 +1051,11 @@ async function* runAlternateProviderTurn(
   const authorizationNote =
     process.env.AGENT_OWNER_INTENT_GATE !== 'false' ? ownerTurnAuthorizationNote(turnAuthorization) : ''
   if (authorizationNote) volatileSections.push(authorizationNote)
-  const requirementNote = !listenMode ? buildOwnerRequirementNote(ownerRequirements) : ''
+  // SK-6: a pinned skill owns its own procedure, so the SEO-specific contract
+  // lines are not repeated here (see buildOwnerRequirementNote).
+  const requirementNote = !listenMode
+    ? buildOwnerRequirementNote(ownerRequirements, { skillPinned: Boolean(activeSkills.pinned) })
+    : ''
   if (requirementNote) volatileSections.push(requirementNote)
   // Phase 32 — the conversation-focus block leads the job state: the durable
   // "where we are / what's next / what is already verified-done" record, plus
