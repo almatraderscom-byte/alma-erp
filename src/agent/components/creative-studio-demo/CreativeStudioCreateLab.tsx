@@ -231,7 +231,12 @@ function ReferencePicker({
         ) : (
           <div className={styles.v3ReferenceChoices}>
             {assets.slice(0, 3).map((asset) => (
-              <button key={asset.id} onClick={() => onSelect(asset.id)} type="button">
+              <button
+                aria-label={`Select ${asset.title} as ${label}`}
+                key={asset.id}
+                onClick={() => onSelect(asset.id)}
+                type="button"
+              >
                 <AssetArtwork asset={asset} compact />
                 <span>{asset.title}</span>
               </button>
@@ -304,15 +309,15 @@ function ImageComposer({
     if (activeMode.avatar === 'required' && !selectedAvatarId) missing.push('model / avatar')
     if (activeMode.source === 'required' && !sourceId) missing.push('source image')
     if (mode === 'generate' && !prompt.trim()) missing.push('prompt')
-    if (!imageProviderSupports(provider.id, mode, resolution)) {
+    if (mode !== 'reel' && !imageProviderSupports(provider.id, mode, resolution)) {
       missing.push(`${provider.label} does not support ${mode} at ${resolution}`)
     }
-    if (provider.researchOnly) missing.push('commercial policy approval')
+    if (mode !== 'reel' && provider.researchOnly) missing.push('commercial policy approval')
     return missing
   }, [activeMode, mode, productId, prompt, provider, resolution, selectedAvatarId, sourceId])
 
   const estimatedBdt =
-    resolution === '4K'
+    mode === 'reel' || resolution === '4K'
       ? null
       : provider.estimate[resolution] === null
         ? null
@@ -688,284 +693,323 @@ function ImageComposer({
       </div>
 
       <div className={styles.v3ComposerBody}>
-        {activeMode.product !== 'hidden' && (
-          <div className={styles.v3ComposerField}>
-            <div className={styles.v3FieldLabel}>
-              <span>Product / mannequin</span>
-              <em>{activeMode.product}</em>
-            </div>
-            <div className={styles.v3ProductSelect}>
-              {PRODUCTS.map((product) => (
-                <button
-                  aria-pressed={productId === product.id}
-                  className={productId === product.id ? styles.v3ReferenceSelected : undefined}
-                  key={product.id}
-                  onClick={() => setProductId(productId === product.id ? '' : product.id)}
-                  type="button"
-                >
-                  <span className={`${styles.v3ProductSwatch} ${styles[`v3Tone_${product.tone}`]}`} />
-                  <span>
-                    <strong>{product.name}</strong>
-                    <small>{product.code} · {product.resolution}</small>
-                  </span>
-                  {product.status === 'needs_reference' && <em>Low source</em>}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {activeMode.avatar !== 'hidden' && (
-          <div className={styles.v3ComposerField}>
-            <div className={styles.v3FieldLabel}>
-              <span>Saved model / identity avatar</span>
-              <em>{activeMode.avatar}</em>
-            </div>
-            <div className={styles.v3AvatarReference}>
-              {selectedAvatar ? (
-                <button
-                  aria-label="Clear selected identity avatar"
-                  className={styles.v3SelectedAvatarReference}
-                  onClick={() => onSelectAvatar('')}
-                  type="button"
-                >
-                  <span
-                    className={`${styles.v3AvatarPortrait} ${styles[`v3Tone_${selectedAvatar.tone}`]}`}
-                  >
-                    <i />
-                    <b />
-                  </span>
-                  <span>
-                    <strong>{selectedAvatar.name}</strong>
-                    <small>{selectedAvatar.version} · {selectedAvatar.imageCount} angles</small>
-                  </span>
-                  <span className={styles.v3PinnedIdentity}>
-                    <StudioV2Icon name="lock" size={12} />
-                    Brand pinned
-                  </span>
-                  <StudioV2Icon name="close" size={15} />
-                </button>
-              ) : (
-                AVATARS.slice(0, 3).map((avatar) => (
-                  <button
-                    key={avatar.id}
-                    onClick={() => onSelectAvatar(avatar.id)}
-                    type="button"
-                  >
-                    <span
-                      className={`${styles.v3AvatarPortrait} ${styles[`v3Tone_${avatar.tone}`]}`}
+        <details className={styles.v5ComposerDisclosure}>
+          <summary>
+            <span>
+              <StudioV2Icon name="assets" size={15} />
+              Sources
+            </span>
+            <small>
+              {activeMode.product !== 'hidden' ? 'Product' : ''}
+              {activeMode.avatar !== 'hidden' ? ' · Identity' : ''}
+              {activeMode.source !== 'hidden' ? ' · Source image' : ''}
+              {activeMode.extraReference !== 'hidden' ? ' · Extra reference' : ''}
+              {activeMode.product === 'hidden' &&
+              activeMode.avatar === 'hidden' &&
+              activeMode.source === 'hidden'
+                ? 'No source required'
+                : ''}
+            </small>
+          </summary>
+          <div className={styles.v5DisclosureBody}>
+            {activeMode.product !== 'hidden' && (
+              <div className={styles.v3ComposerField}>
+                <div className={styles.v3FieldLabel}>
+                  <span>Product / mannequin</span>
+                  <em>{activeMode.product}</em>
+                </div>
+                <div className={styles.v3ProductSelect}>
+                  {PRODUCTS.map((product) => (
+                    <button
+                      aria-pressed={productId === product.id}
+                      className={productId === product.id ? styles.v3ReferenceSelected : undefined}
+                      key={product.id}
+                      onClick={() => setProductId(productId === product.id ? '' : product.id)}
+                      type="button"
                     >
-                      <i />
-                      <b />
-                    </span>
-                    <span>{avatar.name}</span>
-                  </button>
-                ))
-              )}
-            </div>
+                      <span className={`${styles.v3ProductSwatch} ${styles[`v3Tone_${product.tone}`]}`} />
+                      <span>
+                        <strong>{product.name}</strong>
+                        <small>{product.code} · {product.resolution}</small>
+                      </span>
+                      {product.status === 'needs_reference' && <em>Low source</em>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {activeMode.avatar !== 'hidden' && (
+              <div className={styles.v3ComposerField}>
+                <div className={styles.v3FieldLabel}>
+                  <span>Saved model / identity avatar</span>
+                  <em>{activeMode.avatar}</em>
+                </div>
+                <div className={styles.v3AvatarReference}>
+                  {selectedAvatar ? (
+                    <button
+                      aria-label="Clear selected identity avatar"
+                      className={styles.v3SelectedAvatarReference}
+                      onClick={() => onSelectAvatar('')}
+                      type="button"
+                    >
+                      <span
+                        className={`${styles.v3AvatarPortrait} ${styles[`v3Tone_${selectedAvatar.tone}`]}`}
+                      >
+                        <i />
+                        <b />
+                      </span>
+                      <span>
+                        <strong>{selectedAvatar.name}</strong>
+                        <small>{selectedAvatar.version} · {selectedAvatar.imageCount} angles</small>
+                      </span>
+                      <span className={styles.v3PinnedIdentity}>
+                        <StudioV2Icon name="lock" size={12} />
+                        Brand pinned
+                      </span>
+                      <StudioV2Icon name="close" size={15} />
+                    </button>
+                  ) : (
+                    AVATARS.slice(0, 3).map((avatar) => (
+                      <button
+                        aria-label={`Select identity avatar ${avatar.name}`}
+                        key={avatar.id}
+                        onClick={() => onSelectAvatar(avatar.id)}
+                        type="button"
+                      >
+                        <span
+                          className={`${styles.v3AvatarPortrait} ${styles[`v3Tone_${avatar.tone}`]}`}
+                        >
+                          <i />
+                          <b />
+                        </span>
+                        <span>{avatar.name}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeMode.source !== 'hidden' && (
+              <ReferencePicker
+                assets={imageAssets}
+                label="Source image"
+                onClear={() => setSourceId('')}
+                onSelect={setSourceId}
+                requirement={activeMode.source}
+                selectedId={sourceId}
+              />
+            )}
+
+            {activeMode.extraReference !== 'hidden' && (
+              <ReferencePicker
+                assets={imageAssets.filter((asset) => asset.id !== sourceId)}
+                label="Extra image reference"
+                onClear={() => setExtraReferenceId('')}
+                onSelect={setExtraReferenceId}
+                requirement="optional"
+                selectedId={extraReferenceId}
+              />
+            )}
+
+            {activeMode.family && (
+              <div className={styles.v3ComposerField}>
+                <div className={styles.v3FieldLabel}>
+                  <span>Composition preset</span>
+                  <em>hard family roles</em>
+                </div>
+                <div className={styles.v3SegmentedWrap}>
+                  {FAMILY_PRESETS.map((item) => (
+                    <button
+                      aria-pressed={family === item}
+                      className={family === item ? styles.v3SegmentActive : undefined}
+                      key={item}
+                      onClick={() => setFamily(item)}
+                      type="button"
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {mode === 'try_on' && (
+              <div className={styles.v3ComposerField}>
+                <div className={styles.v3FieldLabel}>
+                  <span>Garment placement</span>
+                  <em>provider contract</em>
+                </div>
+                <div className={styles.v3SegmentedWrap}>
+                  {['Auto', 'Overall', 'Upper', 'Lower', 'Outer'].map((item) => (
+                    <button
+                      aria-pressed={placement === item}
+                      className={placement === item ? styles.v3SegmentActive : undefined}
+                      key={item}
+                      onClick={() => setPlacement(item)}
+                      type="button"
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-        )}
-
-        {activeMode.source !== 'hidden' && (
-          <ReferencePicker
-            assets={imageAssets}
-            label="Source image"
-            onClear={() => setSourceId('')}
-            onSelect={setSourceId}
-            requirement={activeMode.source}
-            selectedId={sourceId}
-          />
-        )}
-
-        {activeMode.extraReference !== 'hidden' && (
-          <ReferencePicker
-            assets={imageAssets.filter((asset) => asset.id !== sourceId)}
-            label="Extra image reference"
-            onClear={() => setExtraReferenceId('')}
-            onSelect={setExtraReferenceId}
-            requirement="optional"
-            selectedId={extraReferenceId}
-          />
-        )}
-
-        {activeMode.family && (
-          <div className={styles.v3ComposerField}>
-            <div className={styles.v3FieldLabel}>
-              <span>Composition preset</span>
-              <em>hard family roles</em>
-            </div>
-            <div className={styles.v3SegmentedWrap}>
-              {FAMILY_PRESETS.map((item) => (
-                <button
-                  aria-pressed={family === item}
-                  className={family === item ? styles.v3SegmentActive : undefined}
-                  key={item}
-                  onClick={() => setFamily(item)}
-                  type="button"
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {mode === 'try_on' && (
-          <div className={styles.v3ComposerField}>
-            <div className={styles.v3FieldLabel}>
-              <span>Garment placement</span>
-              <em>provider contract</em>
-            </div>
-            <div className={styles.v3SegmentedWrap}>
-              {['Auto', 'Overall', 'Upper', 'Lower', 'Outer'].map((item) => (
-                <button
-                  aria-pressed={placement === item}
-                  className={placement === item ? styles.v3SegmentActive : undefined}
-                  key={item}
-                  onClick={() => setPlacement(item)}
-                  type="button"
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        </details>
 
         <label className={styles.v3PromptField}>
           <span>
             Prompt
             <em>{mode === 'generate' ? 'required' : 'creative direction'}</em>
           </span>
-          <textarea onChange={(event) => setPrompt(event.target.value)} value={prompt} />
+          <textarea
+            aria-label={`${activeMode.label} creative direction`}
+            onChange={(event) => setPrompt(event.target.value)}
+            value={prompt}
+          />
         </label>
 
-        <div className={styles.v3ControlGrid}>
-          <label>
-            <span>Provider / model</span>
-            <select
-              onChange={(event) => chooseProvider(event.target.value)}
-              value={provider.id}
-            >
-              {providers.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label} · {item.badge}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Background</span>
-            <select
-              onChange={(event) =>
-                setBackground(event.target.value as (typeof BACKGROUNDS)[number])
-              }
-              value={background}
-            >
-              {BACKGROUNDS.map((item) => <option key={item}>{item}</option>)}
-            </select>
-          </label>
-        </div>
+        {mode !== 'reel' && (
+          <details className={styles.v5ComposerDisclosure}>
+            <summary>
+              <span>
+                <StudioV2Icon name="inspector" size={15} />
+                Production controls
+              </span>
+              <small>{provider.label} · {aspect} · {resolution} · {quality} · {count} output</small>
+            </summary>
+            <div className={styles.v5DisclosureBody}>
+              <div className={styles.v3ControlGrid}>
+                <label>
+                  <span>Provider / model</span>
+                  <select
+                    onChange={(event) => chooseProvider(event.target.value)}
+                    value={provider.id}
+                  >
+                    {providers.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.label} · {item.badge}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Background</span>
+                  <select
+                    onChange={(event) =>
+                      setBackground(event.target.value as (typeof BACKGROUNDS)[number])
+                    }
+                    value={background}
+                  >
+                    {BACKGROUNDS.map((item) => <option key={item}>{item}</option>)}
+                  </select>
+                </label>
+              </div>
 
-        <div className={styles.v3OptionGroup}>
-          <div className={styles.v3FieldLabel}>
-            <span>Aspect</span>
-            <em>request</em>
-          </div>
-          <div className={styles.v3OptionRow}>
-            {(['4:5', '1:1', '9:16', '16:9'] as const).map((item) => (
-              <button
-                aria-pressed={aspect === item}
-                className={aspect === item ? styles.v3SegmentActive : undefined}
-                key={item}
-                onClick={() => setAspect(item)}
-                type="button"
-              >
-                {item}
-              </button>
-            ))}
-          </div>
-        </div>
+              <div className={styles.v3OptionGroup}>
+                <div className={styles.v3FieldLabel}>
+                  <span>Aspect</span>
+                  <em>request</em>
+                </div>
+                <div className={styles.v3OptionRow}>
+                  {(['4:5', '1:1', '9:16', '16:9'] as const).map((item) => (
+                    <button
+                      aria-pressed={aspect === item}
+                      className={aspect === item ? styles.v3SegmentActive : undefined}
+                      key={item}
+                      onClick={() => setAspect(item)}
+                      type="button"
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-        <div className={styles.v3OptionGroup}>
-          <div className={styles.v3FieldLabel}>
-            <span>Resolution</span>
-            <em>requested ≠ delivered until verified</em>
-          </div>
-          <div className={styles.v3OptionRow}>
-            {(['1K', '2K', '4K'] as const).map((item) => {
-              const supported = imageProviderSupports(provider.id, mode, item)
-              return (
-                <button
-                  aria-pressed={resolution === item}
-                  className={resolution === item ? styles.v3SegmentActive : undefined}
-                  disabled={!supported}
-                  key={item}
-                  onClick={() => setResolution(item)}
-                  title={
-                    supported
-                      ? `${provider.label} advertises native ${item}`
-                      : item === '4K'
-                        ? 'No integrated provider advertises native 4K; upscale is prohibited.'
-                        : `${provider.label} does not support ${item} for this mode.`
-                  }
-                  type="button"
-                >
-                  {item}
-                  {!supported && <small>Unavailable</small>}
-                </button>
-              )
-            })}
-          </div>
-          <p className={styles.v3CapabilityNote}>
-            <StudioV2Icon
-              name={provider.researchOnly ? 'lock' : 'check'}
-              size={13}
-            />
-            {provider.note}
-          </p>
-        </div>
+              <div className={styles.v3OptionGroup}>
+                <div className={styles.v3FieldLabel}>
+                  <span>Resolution</span>
+                  <em>requested ≠ delivered until verified</em>
+                </div>
+                <div className={styles.v3OptionRow}>
+                  {(['1K', '2K', '4K'] as const).map((item) => {
+                    const supported = imageProviderSupports(provider.id, mode, item)
+                    return (
+                      <button
+                        aria-pressed={resolution === item}
+                        className={resolution === item ? styles.v3SegmentActive : undefined}
+                        disabled={!supported}
+                        key={item}
+                        onClick={() => setResolution(item)}
+                        title={
+                          supported
+                            ? `${provider.label} advertises native ${item}`
+                            : item === '4K'
+                              ? 'No integrated provider advertises native 4K; upscale is prohibited.'
+                              : `${provider.label} does not support ${item} for this mode.`
+                        }
+                        type="button"
+                      >
+                        {item}
+                        {!supported && <small>Unavailable</small>}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className={styles.v3CapabilityNote}>
+                  <StudioV2Icon
+                    name={provider.researchOnly ? 'lock' : 'check'}
+                    size={13}
+                  />
+                  {provider.note}
+                </p>
+              </div>
 
-        <div className={styles.v3ControlGrid}>
-          <div className={styles.v3OptionGroup}>
-            <div className={styles.v3FieldLabel}>
-              <span>Quality</span>
-              <em>safety checks stay on</em>
+              <div className={styles.v3ControlGrid}>
+                <div className={styles.v3OptionGroup}>
+                  <div className={styles.v3FieldLabel}>
+                    <span>Quality</span>
+                    <em>safety checks stay on</em>
+                  </div>
+                  <div className={styles.v3OptionRow}>
+                    {(['Fast', 'Balanced', 'Quality'] as const).map((item) => (
+                      <button
+                        aria-pressed={quality === item}
+                        className={quality === item ? styles.v3SegmentActive : undefined}
+                        key={item}
+                        onClick={() => setQuality(item)}
+                        type="button"
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className={styles.v3OptionGroup}>
+                  <div className={styles.v3FieldLabel}>
+                    <span>Outputs</span>
+                    <em>1–4</em>
+                  </div>
+                  <div className={styles.v3OptionRow}>
+                    {[1, 2, 3, 4].map((item) => (
+                      <button
+                        aria-pressed={count === item}
+                        className={count === item ? styles.v3SegmentActive : undefined}
+                        key={item}
+                        onClick={() => setCount(item)}
+                        type="button"
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className={styles.v3OptionRow}>
-              {(['Fast', 'Balanced', 'Quality'] as const).map((item) => (
-                <button
-                  aria-pressed={quality === item}
-                  className={quality === item ? styles.v3SegmentActive : undefined}
-                  key={item}
-                  onClick={() => setQuality(item)}
-                  type="button"
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className={styles.v3OptionGroup}>
-            <div className={styles.v3FieldLabel}>
-              <span>Outputs</span>
-              <em>1–4</em>
-            </div>
-            <div className={styles.v3OptionRow}>
-              {[1, 2, 3, 4].map((item) => (
-                <button
-                  aria-pressed={count === item}
-                  className={count === item ? styles.v3SegmentActive : undefined}
-                  key={item}
-                  onClick={() => setCount(item)}
-                  type="button"
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+          </details>
+        )}
       </div>
 
       <div className={styles.v3ComposerReadiness}>
@@ -982,7 +1026,9 @@ function ImageComposer({
             <small>
               {missingRequirements.length
                 ? missingRequirements.join(' · ')
-                : `${provider.label} · ${aspect} · ${resolution} · ${quality}`}
+                : mode === 'reel'
+                  ? 'Source ready · continue in Video Lab'
+                  : `${provider.label} · ${aspect} · ${resolution} · ${quality}`}
             </small>
           </span>
         </div>
@@ -1099,7 +1145,10 @@ function VideoComposer({
   }
 
   return (
-    <section aria-labelledby="video-composer-title" className={styles.v3Composer}>
+    <section
+      aria-labelledby="video-composer-title"
+      className={`${styles.v3Composer} ${styles.v4FloatingComposer} ${styles.v5VideoComposer}`}
+    >
       <header className={styles.v3ComposerHeader}>
         <div>
           <span className={styles.eyebrow}>VIDEO COMPOSER</span>
@@ -1112,47 +1161,95 @@ function VideoComposer({
         <span className={styles.v3NoRunBadge}>No API connected</span>
       </header>
 
-      <div className={styles.v3SourceStage}>
-        <div className={styles.v3FieldLabel}>
-          <span>01 · Gallery source</span>
-          <em>required</em>
-        </div>
-        <div className={styles.v3SourceStrip}>
-          {sourceOptions.slice(0, 5).map((asset) => (
-            <button
-              aria-pressed={sourceId === asset.id}
-              className={sourceId === asset.id ? styles.v3SourceSelected : undefined}
-              key={asset.id}
-              onClick={() => {
-                setSourceId(asset.id)
-                if (model.id !== 'owned-local') setStartFrameId(asset.id)
-              }}
-              type="button"
-            >
-              <AssetArtwork asset={asset} compact />
-              <span>
-                <strong>{asset.title}</strong>
-                <small>{asset.subtype} · {asset.resolution}</small>
-              </span>
-            </button>
-          ))}
-        </div>
-        <button
-          className={styles.textButton}
-          onClick={() =>
-            onNavigate({
-              id: 'gallery',
-              initialType: model.id === 'owned-local' ? 'video' : 'image',
-            })
-          }
-          type="button"
-        >
-          Open full Gallery
-          <StudioV2Icon name="chevron-right" size={15} />
-        </button>
+      <div className={styles.v5VideoSummaryRail}>
+        <span>
+          <AssetArtwork asset={selectedSource ?? sourceOptions[0]} compact />
+          <span>
+            <small>SOURCE</small>
+            <strong>{selectedSource?.title ?? 'Choose a source'}</strong>
+          </span>
+        </span>
+        <span>
+          <small>MODEL</small>
+          <strong>{model.label}</strong>
+        </span>
+        <span>
+          <small>DELIVERY</small>
+          <strong>{duration}s · {aspect} · {resolution}</strong>
+        </span>
       </div>
 
-      <div className={styles.v3ComposerBody}>
+      <details className={styles.v5ComposerDisclosure}>
+        <summary>
+          <span>
+            <StudioV2Icon name="assets" size={15} />
+            Change source
+          </span>
+          <small>{selectedSource?.subtype ?? 'Gallery media'} · owner-approved fixtures</small>
+        </summary>
+        <div className={`${styles.v3SourceStage} ${styles.v5DisclosureBody}`}>
+          <div className={styles.v3FieldLabel}>
+            <span>01 · Gallery source</span>
+            <em>required</em>
+          </div>
+          <div className={styles.v3SourceStrip}>
+            {sourceOptions.slice(0, 5).map((asset) => (
+              <button
+                aria-label={`Use ${asset.title} as the video source`}
+                aria-pressed={sourceId === asset.id}
+                className={sourceId === asset.id ? styles.v3SourceSelected : undefined}
+                key={asset.id}
+                onClick={() => {
+                  setSourceId(asset.id)
+                  if (model.id !== 'owned-local') setStartFrameId(asset.id)
+                }}
+                type="button"
+              >
+                <AssetArtwork asset={asset} compact />
+                <span>
+                  <strong>{asset.title}</strong>
+                  <small>{asset.subtype} · {asset.resolution}</small>
+                </span>
+              </button>
+            ))}
+          </div>
+          <button
+            className={styles.textButton}
+            onClick={() =>
+              onNavigate({
+                id: 'gallery',
+                initialType: model.id === 'owned-local' ? 'video' : 'image',
+              })
+            }
+            type="button"
+          >
+            Open full Gallery
+            <StudioV2Icon name="chevron-right" size={15} />
+          </button>
+        </div>
+      </details>
+
+      <label className={styles.v3PromptField}>
+        <span>
+          {model.id === 'owned-local' ? 'Edit direction' : 'Motion prompt'}
+          <em>{model.id === 'owned-local' ? 'hard recipe stays authoritative' : 'required'}</em>
+        </span>
+        <textarea
+          aria-label={model.id === 'owned-local' ? 'Video edit direction' : 'Video motion prompt'}
+          onChange={(event) => setPrompt(event.target.value)}
+          value={prompt}
+        />
+      </label>
+
+      <details className={styles.v5ComposerDisclosure}>
+        <summary>
+          <span>
+            <StudioV2Icon name="inspector" size={15} />
+            Motion settings
+          </span>
+          <small>{model.label} · {duration}s · {aspect} · {resolution} · {audioMode}</small>
+        </summary>
+        <div className={`${styles.v3ComposerBody} ${styles.v5DisclosureBody}`}>
         <div className={styles.v3ComposerField}>
           <div className={styles.v3FieldLabel}>
             <span>02 · Model / recipe</span>
@@ -1330,14 +1427,6 @@ function VideoComposer({
           </>
         )}
 
-        <label className={styles.v3PromptField}>
-          <span>
-            {model.id === 'owned-local' ? 'Edit direction' : 'Motion prompt'}
-            <em>{model.id === 'owned-local' ? 'hard recipe stays authoritative' : 'required'}</em>
-          </span>
-          <textarea onChange={(event) => setPrompt(event.target.value)} value={prompt} />
-        </label>
-
         <div className={styles.v3ControlGrid}>
           <div className={styles.v3OptionGroup}>
             <div className={styles.v3FieldLabel}>
@@ -1372,7 +1461,8 @@ function VideoComposer({
             <small>Optional guidance · never replaces selected source silently</small>
           </div>
         </div>
-      </div>
+        </div>
+      </details>
 
       <div className={styles.v3ComposerReadiness}>
         <div>
@@ -1496,9 +1586,7 @@ export function CreativeStudioCreateLab({
         <HistoryLedger kind={kind} />
       ) : (
         <div
-          className={`${styles.v3LabLayout} ${
-            kind === 'image' ? styles.v4LabWithFloatingComposer : ''
-          }`}
+          className={`${styles.v3LabLayout} ${styles.v4LabWithFloatingComposer}`}
         >
           <section aria-labelledby="lab-template-title" className={styles.v3ExploreBoard}>
             <header className={styles.v3ExploreHeader}>

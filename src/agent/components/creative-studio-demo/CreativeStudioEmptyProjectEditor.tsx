@@ -89,10 +89,10 @@ export function CreativeStudioEmptyProjectEditor({
             <StudioV2Icon name="check" size={14} />
             Local draft
           </span>
-          <button disabled type="button">
+          <button aria-label="Undo unavailable in an empty project" disabled type="button">
             <StudioV2Icon name="undo" size={17} />
           </button>
-          <button disabled type="button">
+          <button aria-label="Redo unavailable in an empty project" disabled type="button">
             <StudioV2Icon name="redo" size={17} />
           </button>
         </div>
@@ -126,7 +126,7 @@ export function CreativeStudioEmptyProjectEditor({
         <strong>PROTOTYPE · ৳0</strong>
       </div>
 
-      <div className={styles.v4EditorBody}>
+      <div className={styles.v4EditorBody} data-panel={activePanel}>
         <nav aria-label="Project editing tools" className={styles.v4EditorToolrail}>
           {PANEL_TOOLS.map((tool) => (
             <button
@@ -143,7 +143,7 @@ export function CreativeStudioEmptyProjectEditor({
         </nav>
 
         <aside className={styles.v4EditorMediaPanel}>
-          {activePanel === 'media' ? (
+          {activePanel === 'media' || activePanel === 'agent' ? (
             <>
               <header>
                 <div>
@@ -197,29 +197,6 @@ export function CreativeStudioEmptyProjectEditor({
                 </div>
               )}
             </>
-          ) : activePanel === 'agent' ? (
-            <div className={styles.v4EditorAgentPanel}>
-              <span className={styles.eyebrow}>CREATIVE AGENT</span>
-              <h2>Plan this edit with me</h2>
-              <p>The Agent may propose timeline changes. Apply remains a separate owner action.</p>
-              <textarea
-                onChange={(event) => setAgentBrief(event.target.value)}
-                value={agentBrief}
-              />
-              <div>
-                <span>Plan only</span>
-                <span>Current project</span>
-                <span>৳0</span>
-              </div>
-              <button
-                disabled={!agentBrief.trim()}
-                onClick={() => setNotice('A reviewable fixture plan was drafted. No edit was applied.')}
-                type="button"
-              >
-                Draft plan
-                <StudioV2Icon name="chevron-right" size={16} />
-              </button>
-            </div>
           ) : (
             <div className={styles.v4PanelPlaceholder}>
               <span>
@@ -279,13 +256,18 @@ export function CreativeStudioEmptyProjectEditor({
           </div>
 
           <footer className={styles.v4Transport}>
-            <button disabled type="button">
+            <button aria-label="Previous frame unavailable in an empty project" disabled type="button">
               <StudioV2Icon name="skip-back" size={16} />
             </button>
-            <button className={styles.v4PlayButton} disabled type="button">
+            <button
+              aria-label="Play unavailable in an empty project"
+              className={styles.v4PlayButton}
+              disabled
+              type="button"
+            >
               <StudioV2Icon name="play" size={17} />
             </button>
-            <button disabled type="button">
+            <button aria-label="Next frame unavailable in an empty project" disabled type="button">
               <StudioV2Icon name="skip-back" size={16} />
             </button>
             <time>00:00.0</time>
@@ -301,44 +283,75 @@ export function CreativeStudioEmptyProjectEditor({
           </footer>
         </main>
 
-        <aside className={styles.v4EditorInspector}>
-          <header>
-            <span className={styles.eyebrow}>PROJECT</span>
-            <h2>Properties</h2>
-          </header>
-          <dl>
-            <div>
-              <dt>Canvas</dt>
-              <dd>{canvasPreset}</dd>
+        <aside
+          aria-label={activePanel === 'agent' ? 'Creative Agent' : 'Project properties'}
+          className={styles.v4EditorInspector}
+        >
+          {activePanel === 'agent' ? (
+            <div className={styles.v4EditorAgentPanel}>
+              <span className={styles.eyebrow}>CREATIVE AGENT</span>
+              <h2>Plan this edit with me</h2>
+              <p>The Agent may propose timeline changes. Apply remains a separate owner action.</p>
+              <textarea
+                aria-label="Creative Agent project brief"
+                onChange={(event) => setAgentBrief(event.target.value)}
+                value={agentBrief}
+              />
+              <div>
+                <span>Plan only</span>
+                <span>Current project</span>
+                <span>৳0</span>
+              </div>
+              <button
+                disabled={!agentBrief.trim()}
+                onClick={() => setNotice('A reviewable fixture plan was drafted. No edit was applied.')}
+                type="button"
+              >
+                Draft plan
+                <StudioV2Icon name="chevron-right" size={16} />
+              </button>
             </div>
-            <div>
-              <dt>Resolution</dt>
-              <dd>{canvasResolution(canvasPreset)}</dd>
-            </div>
-            <div>
-              <dt>Frame rate</dt>
-              <dd>30 fps</dd>
-            </div>
-            <div>
-              <dt>Duration</dt>
-              <dd>00:00</dd>
-            </div>
-          </dl>
-          <label>
-            <span>Background</span>
-            <select defaultValue="black">
-              <option value="black">Black</option>
-              <option value="ivory">ALMA ivory</option>
-              <option value="transparent">Transparent</option>
-            </select>
-          </label>
-          <section>
-            <StudioV2Icon name="lock" size={15} />
-            <span>
-              <strong>Safe empty state</strong>
-              <small>No default clip, provider call or external action.</small>
-            </span>
-          </section>
+          ) : (
+            <>
+              <header>
+                <span className={styles.eyebrow}>PROJECT</span>
+                <h2>Properties</h2>
+              </header>
+              <dl>
+                <div>
+                  <dt>Canvas</dt>
+                  <dd>{canvasPreset}</dd>
+                </div>
+                <div>
+                  <dt>Resolution</dt>
+                  <dd>{canvasResolution(canvasPreset)}</dd>
+                </div>
+                <div>
+                  <dt>Frame rate</dt>
+                  <dd>30 fps</dd>
+                </div>
+                <div>
+                  <dt>Duration</dt>
+                  <dd>00:00</dd>
+                </div>
+              </dl>
+              <label>
+                <span>Background</span>
+                <select defaultValue="black">
+                  <option value="black">Black</option>
+                  <option value="ivory">ALMA ivory</option>
+                  <option value="transparent">Transparent</option>
+                </select>
+              </label>
+              <section>
+                <StudioV2Icon name="lock" size={15} />
+                <span>
+                  <strong>Safe empty state</strong>
+                  <small>No default clip, provider call or external action.</small>
+                </span>
+              </section>
+            </>
+          )}
         </aside>
       </div>
 

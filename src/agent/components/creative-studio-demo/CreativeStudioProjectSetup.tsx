@@ -29,9 +29,7 @@ export function CreativeStudioProjectSetup({
   onCancel,
   onCreate,
 }: CreativeStudioProjectSetupProps) {
-  const [projectName, setProjectName] = useState(
-    kind === 'longform' ? 'Untitled long-form project' : 'Untitled video project',
-  )
+  const [projectName, setProjectName] = useState('')
   const [canvasPreset, setCanvasPreset] = useState<CanvasPreset>(
     kind === 'longform' ? '16:9' : '9:16',
   )

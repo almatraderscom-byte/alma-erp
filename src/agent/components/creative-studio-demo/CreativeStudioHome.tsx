@@ -205,6 +205,7 @@ export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
           <nav>
             {navItems.map((item) => (
               <button
+                aria-label={`Open ${item.label}`}
                 aria-current={activeSection === item.id ? 'page' : undefined}
                 className={activeSection === item.id ? styles.sidebarActive : undefined}
                 key={item.id}
