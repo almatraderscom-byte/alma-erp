@@ -8,25 +8,25 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 > engine on today would expose exactly one skill (`alma-owner-daily-briefing`).
 > That alone explains why the skills have never done anything.
 
-- Messages that SHOULD pin a skill: **18** — correct top pick: **10** (**56%**)
-- Wrong skill chosen: **6** · nothing chosen: **2**
+- Messages that SHOULD pin a skill: **18** — correct top pick: **12** (**67%**)
+- Wrong skill chosen: **4** · nothing chosen: **2**
 - Messages that should pin NOTHING: **6** — false triggers: **1**
 
 | # | message | expected | picked (top 3) | result |
 |---|---|---|---|---|
-| seo-fix-alt | almatraders.com এর ছবির alt ঠিক করো | seo-fixing-own-site | alma-seo-audit, alma-product-listing | ❌ wrong skill |
-| seo-audit-full | almatraders.com এর পূর্ণাঙ্গ SEO অডিট করো | seo-auditing-own-site | alma-seo-audit, alma-client-seo | ❌ wrong skill |
+| seo-fix-alt | almatraders.com এর ছবির alt ঠিক করো | seo-fixing-own-site | seo-fixing-own-site, alma-seo-audit, seo-auditing-own-site | ✅ hit |
+| seo-audit-full | almatraders.com এর পূর্ণাঙ্গ SEO অডিট করো | seo-auditing-own-site | alma-seo-audit, seo-fixing-own-site, seo-auditing-own-site | ❌ wrong skill |
 | seo-fix-meta | product-code-110 এর meta description লিখে দাও | seo-fixing-own-site | alma-website, alma-meta-campaign-launch, alma-product-listing | ❌ wrong skill |
-| seo-client | client er site example.com er seo dekho | seo-fixing-client-site | alma-seo-audit, alma-client-seo | ❌ wrong skill |
+| seo-client | client er site example.com er seo dekho | seo-fixing-client-site | seo-fixing-client-site, seo-fixing-own-site, alma-seo-audit | ✅ hit |
 | staff | Mustahid ajke kokhon asche? | alma-staff-dispatch | — | ⬜ nothing picked |
-| listing | notun panjabi ta website e tolo | alma-product-listing | alma-website, alma-client-seo | ❌ wrong skill |
+| listing | notun panjabi ta website e tolo | alma-product-listing | alma-website, alma-client-seo, seo-fixing-client-site | ❌ wrong skill |
 | finance | ei masher khoroch koto holo? | alma-finance-brief | alma-finance-brief | ✅ hit |
 | cs | customer der message gulor reply dao | alma-customer-support | alma-customer-support | ✅ hit |
 | social | facebook e notun product er post dao | alma-product-social-post | alma-product-social-post, alma-product-listing, alma-website | ✅ hit |
 | briefing | ajker briefing dao | alma-owner-daily-briefing | alma-owner-daily-briefing | ✅ hit |
 | marketing | marketing kemon cholche? | alma-marketing | alma-marketing | ✅ hit |
 | campaign | ekta meta campaign chalu koro 5000 takar | alma-meta-campaign-launch | alma-meta-campaign-launch, alma-marketing, alma-website | ✅ hit |
-| website | website e ki ki somossa ache? | alma-website | alma-website, alma-client-seo | ✅ hit |
+| website | website e ki ki somossa ache? | alma-website | alma-website, alma-client-seo, seo-fixing-client-site | ✅ hit |
 | incident | agent ta kaj korche na keno, dekho | alma-agent-incident-diagnosis | alma-agent-incident-diagnosis | ✅ hit |
 | invoice | ei invoice ta ERP te tolo | alma-invoice-to-erp | alma-invoice-to-erp | ✅ hit |
 | audience | je customer ra beshi kene tader ekta audience banao | alma-audience-builder | alma-audience-builder, alma-customer-support, alma-meta-campaign-launch | ✅ hit |

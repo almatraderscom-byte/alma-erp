@@ -49,19 +49,30 @@ async function runAudit(includeDraft: boolean): Promise<Row[]> {
 }
 
 describe('SK-0 — skill selection on the owner’s real messages', () => {
-  // The finding that explains "অনেকগুলো শুধু Skill হিসেবেই পড়ে আছে": the loader
-  // only offers `active` skills, and 15 of the 16 on disk are still `draft`.
-  // Flipping the engine on today would expose exactly one skill.
-  it('shows how few skills the live path can actually offer', async () => {
+  // SK-0's finding, which explained "অনেকগুলো শুধু Skill হিসেবেই পড়ে আছে": the
+  // loader only offers `active` skills, and 15 of the 16 originals are `draft`.
+  // Flipping the engine on then would have exposed exactly ONE skill.
+  //
+  // SK-5 added the three SEO skills as `active`, so the live path now offers
+  // four. The old ones are still draft on purpose — they get promoted one at a
+  // time, each with evals, not in a batch.
+  it('offers only skills that were deliberately promoted', async () => {
     const live = await discoverSkills(SKILLS_ROOT)
     const all = await discoverSkills(SKILLS_ROOT, { includeDraft: true })
 
-    expect(all.skills.length).toBeGreaterThanOrEqual(16)
-    // `alma-base` is also active but `implicit: false` — it exists to be inherited
-    // via `extends`, never to be picked. So exactly ONE skill is selectable today.
-    const selectable = live.skills.filter((s) => s.implicit !== false)
-    expect(selectable).toHaveLength(1)
-    expect(selectable[0].name).toBe('alma-owner-daily-briefing')
+    expect(all.skills.length).toBeGreaterThanOrEqual(19)
+    // `alma-base` is active but `implicit: false` — inherited via `extends`,
+    // never selected. It must not show up as a choice.
+    const selectable = live.skills.filter((s) => s.implicit !== false).map((s) => s.name).sort()
+    expect(selectable).toEqual([
+      'alma-owner-daily-briefing',
+      'seo-auditing-own-site',
+      'seo-fixing-client-site',
+      'seo-fixing-own-site',
+    ])
+
+    const stillDraft = all.skills.length - live.skills.length
+    expect(stillDraft).toBeGreaterThanOrEqual(15)
   })
 
   it('records the baseline table and the headline numbers', async () => {

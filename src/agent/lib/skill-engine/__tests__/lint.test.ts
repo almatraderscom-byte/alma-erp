@@ -154,6 +154,7 @@ describe('the verdict on our 16 real skills', () => {
         outputContract: manifest.outputContract,
         dependencies: manifest.dependencies,
         requiredCapabilities: manifest.requiredCapabilities,
+        implicit: manifest.implicit,
         keywords: (frontmatter.keywords ?? '').split(',').map((k) => k.trim()).filter(Boolean),
       })
     }

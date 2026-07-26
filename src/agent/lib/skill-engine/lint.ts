@@ -45,6 +45,8 @@ export interface LintableSkill {
   requiredCapabilities?: string[]
   /** Routing keywords from SKILL.md frontmatter. */
   keywords?: string[]
+  /** U8 — false means it is inherited, never selected. */
+  implicit?: boolean
 }
 
 /** Compact wins: +19.0 vs +0.7 for "comprehensive". 200 lines is our ceiling. */
@@ -67,13 +69,33 @@ const WHEN_RE = /(use when|use for|when the owner|when boss|যখন|ব্য�
 const NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const RESERVED = ['anthropic', 'claude']
 
-/** The four purposes a skill may have exactly one of (U7). */
+/**
+ * The purposes a skill may have exactly one of (U7).
+ *
+ * Verification is deliberately NOT one of them. The first version listed it, and
+ * it flagged both new SEO skills — wrongly: every good skill verifies its own
+ * work, and the research says so explicitly. A rule that punishes the thing we
+ * want in every skill is a broken rule.
+ */
 const PURPOSES: Array<{ id: string; re: RegExp }> = [
   { id: 'audit', re: /(audits?|auditing|অডিট|analys[ei]|analyz[ei]|reviews?|পর্যালোচনা|reports?|রিপোর্ট)/i },
   { id: 'edit', re: /(fix(es|ing|ed)?|edits?|updates?|writes?|writing|ঠিক\s*কর|লিখ|আপডেট|সংশোধন)/i },
   { id: 'deploy', re: /(deploys?|publish(es|ing)?|launch(es|ing)?|ships?|প্রকাশ|লাইভ\s*কর)/i },
-  { id: 'test', re: /(tests?|verif(y|ies|ication)|validat(e|es|ion)|যাচাই|পরীক্ষা)/i },
 ]
+
+/**
+ * A description's NEGATIVE half — "Not for producing an audit", "নয়" — says what
+ * the skill refuses, which is the opposite of a claimed purpose. Counting it was
+ * the second half of the same bug.
+ */
+const NEGATIVE_CLAUSE = /(\bnot for\b|\bnever\b|\bdoes not\b|\bno longer\b|নয়\b|করবে না|ছাড়া)/i
+
+function positiveHalf(text: string): string {
+  return text
+    .split(/(?<=[.।])\s+/)
+    .filter((sentence) => !NEGATIVE_CLAUSE.test(sentence))
+    .join(' ')
+}
 
 const STOPWORDS = new Set([
   'the', 'and', 'for', 'use', 'when', 'with', 'from', 'this', 'that', 'into', 'via',
@@ -96,7 +118,9 @@ function jaccard(a: Set<string>, b: Set<string>): number {
 
 /** Which purposes a skill claims, judged on its description + first 40 lines. */
 export function purposesOf(skill: LintableSkill): string[] {
-  const head = `${skill.description}\n${skill.body.split('\n').slice(0, 40).join('\n')}`
+  const head = positiveHalf(
+    `${skill.description}\n${skill.body.split('\n').slice(0, 40).join('\n')}`,
+  )
   return PURPOSES.filter((p) => p.re.test(head)).map((p) => p.id)
 }
 
@@ -121,7 +145,9 @@ function lintOne(s: LintableSkill): LintFinding[] {
   if (FIRST_PERSON_RE.test(d) || SECOND_PERSON_RE.test(d)) {
     add('description-person', 'error', 'write in third person — it is injected into the system prompt')
   }
-  if (d && !WHEN_RE.test(d)) {
+  // A skill that can never be auto-selected has nothing to route on, so the
+  // "when to use it" half is meaningless for it (alma-base is inherited, not picked).
+  if (d && !WHEN_RE.test(d) && s.implicit !== false) {
     add('description-when', 'warn', 'says WHAT it does but not WHEN to use it — the half routing needs')
   }
 
