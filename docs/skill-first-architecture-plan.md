@@ -201,13 +201,47 @@ Eval-first, because finding 5 says skills can regress things.
 
 | Phase | What | Gate to pass |
 |---|---|---|
-| **SK-0** | **Measure today's reality.** Flip `skill_engine_enabled` ON in preview, run ~20 of his real messages, record picked-vs-correct and completion. No code. | a hit-rate table |
-| **SK-1** | **Eval harness.** 3 scenarios per skill, each runnable with and without the skill. | baseline numbers exist |
+| **SK-0** ✅ | **Measure today's reality** — 24 of his real messages through the live router. Result: `docs/skill-selection-baseline.md`. | done, see below |
+| **SK-1** ◐ | **Eval harness.** Corpus done (`skill-engine/evals/owner-corpus.ts`); with/without-skill runner next. | baseline numbers exist |
 | **SK-2** | **Format v2 + `alma-base`.** Schema, loader support, a linter for the 99%-of-skills flaws (description person/what+when, length, reference depth, tool names exist). | linter green on all skills |
 | **SK-3** | **Select → pin → announce.** Deterministic router, conversation pin, UI chip + override. | right skill on ≥90% of the SK-0 set |
 | **SK-4** | **Isolate + allowlist + gate.** Route `isolation: subagent` skills through `runSubAgent`; wire `done:` into the existing pack gate. | audit skill provably cannot write |
 | **SK-5** | **Write the three SEO skills properly**, with `traps.md` seeded from this week. | beats no-skill baseline on evals |
 | **SK-6** | **Move the global hacks into skills** and delete them from global code. | tests stay green |
+
+### SK-0 result (2026-07-26)
+
+**The skills were never even offered.** The loader serves only `status: active`
+skills, and **15 of the 16 on disk are still `draft`** — so turning the engine on
+today would expose exactly one skill, `alma-owner-daily-briefing`. That single
+line explains the owner's *"অনেকগুলো শুধু Skill হিসেবেই পড়ে আছে"* completely, and
+it is not a subtle bug: no amount of skill-writing would have changed anything.
+
+Measured with drafts included, so the router gets a fair test:
+
+| | |
+|---|---|
+| Should pin a skill | 18 → **11 correct (61%)** |
+| Wrong skill chosen | **5** |
+| Nothing chosen | **2** |
+| Should pin nothing | 6 → **1 false trigger** |
+
+Where it fails, and what each failure means for the plan:
+
+- **Fix vs audit collapses** — "ছবির alt ঠিক করো" routes to `alma-seo-audit`.
+  Keyword scoring cannot see verbs. Confirms SK-3's deterministic decision list.
+- **"meta description লিখে দাও" → `alma-meta-campaign-launch`** — the word "meta"
+  means two unrelated things. Confirms the need for `when_not_to_use`.
+- **Own-site vs client-site collapses** — both SEO skills answer to "seo".
+- **Two misses have no skill at all yet** (a staff question by a person's name, a
+  browser task phrased naturally) — those are description/keyword gaps, cheap to
+  fix once the format is v2.
+- **One false trigger:** "kalker order gulo dekhao" → `alma-agent-incident-diagnosis`,
+  purely on the token "dekho". A false trigger also pins a tool allowlist, so
+  this is the failure mode that actually costs work.
+
+61% is a fair starting point for pure keyword routing, and it says the router
+needs a tie-break layer, not a rewrite.
 
 `alma-seo-base` → `seo-auditing-own-site` (read-only) → `seo-fixing-own-site`
 (write via approval card) → `seo-fixing-client-site` (no DB, PR/report only).

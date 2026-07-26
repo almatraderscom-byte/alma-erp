@@ -67,7 +67,7 @@ async function readManifest(dir: string): Promise<SkillManifest | null> {
  */
 export async function discoverSkills(
   rootDir: string,
-  opts: { knownCapabilities?: Set<string>; includeCanary?: boolean } = {},
+  opts: { knownCapabilities?: Set<string>; includeCanary?: boolean; includeDraft?: boolean } = {},
 ): Promise<SkillIndex> {
   const skills: SkillMetadata[] = []
   const warnings: string[] = []
@@ -88,7 +88,14 @@ export async function discoverSkills(
       warnings.push(`skip ${name}: missing/invalid manifest.json`)
       continue
     }
-    const usable = manifest.status === 'active' || (opts.includeCanary && manifest.status === 'canary')
+    // `includeDraft` is for MEASUREMENT only (SK-0). 15 of the 16 skills on disk
+    // are still `draft`, so the live path offers exactly one — which is why the
+    // owner saw his skills "শুধু পড়ে আছে". Runtime never sets this flag; the audit
+    // does, to measure what selection WOULD do once they are promoted.
+    const usable =
+      manifest.status === 'active'
+      || (opts.includeCanary && manifest.status === 'canary')
+      || (opts.includeDraft && manifest.status === 'draft')
     if (!usable) continue
 
     if (opts.knownCapabilities) {
