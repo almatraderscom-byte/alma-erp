@@ -899,6 +899,27 @@ class Call {
     if (this.vmPromptTimer) { clearTimeout(this.vmPromptTimer); this.vmPromptTimer = null }
     if (this.moh) await stopMoh(this)
     try { this.asSocket?.end() } catch { /* */ }
+    /*
+     * TAKE THE OTHER HUMANS WITH US. ARI does not do this for you.
+     *
+     * Deleting the bridge only REMOVES its channels; it does not hang them up. They drop back
+     * into the Stasis app and sit there with the phone still showing an active call. The owner
+     * hit exactly that: he hung up as the customer, and the support team's screen stayed lit
+     * until they ended it by hand.
+     *
+     * Two families of child leg: the transfer/ring-group legs from dialNextInGroup, and the
+     * staff-first race legs. Both are registered with `_transferParent` pointing here, and the
+     * race legs additionally hold the give-up timer that must not fire after the caller left.
+     */
+    await hangupRaceLegs(this)
+    for (const [id, other] of [...calls]) {
+      if (other === this || other._transferParent !== this.channelId) continue
+      // Deliberately NOT removed from `calls` here. Its ChannelDestroyed event is what folds
+      // the transfer outcome — answered, talk seconds, hangup cause — onto the CDR row the
+      // owner actually reads, and that handler looks the leg up by id. Dropping it first would
+      // silently lose the human-to-human half of every call the customer ended.
+      await ari('DELETE', `/channels/${id}`).catch(() => { /* already gone is the goal */ })
+    }
     // End the PSTN leg + tidy the bridge/externalMedia via ARI.
     try { if (this.extChannelId) await ari('DELETE', `/channels/${this.extChannelId}`).catch(() => {}) } catch { /* */ }
     try { await ari('DELETE', `/channels/${this.channelId}`).catch(() => {}) } catch { /* */ }
@@ -1275,6 +1296,14 @@ async function onAriEvent(e) {
         if (parent && !call.answered && !parent.closed && parent.ringGroup) {
           calls.delete(chanId)
           void dialNextInGroup(parent)
+        } else if (parent && call.answered && !parent.closed) {
+          // The HUMAN ended a connected call. Nothing is on the caller's audio path any more —
+          // the bot stepped off when the transfer went through — so leaving the parent up
+          // parks the customer in an empty bridge listening to silence. The conversation is
+          // over; end it. (The other direction, the customer hanging up first, is handled in
+          // hangup() above.)
+          log(parent.channelId, 'transfer leg ended the call — hanging up the caller too')
+          void parent.hangup('human ended the transferred call')
         }
       }
       if (fwdParent && cdr.has(fwdParent)) {
