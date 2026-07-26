@@ -583,9 +583,36 @@ const CARD_PROMISE_REV = new RegExp(
 const CARD_INABILITY = /(?:card|কার্ড)[^।.!?\n]{0,30}?(?:আসেনি|আসছে\s*না|দেখা\s*যাচ্ছে\s*না|হয়নি|পারিনি|পারলাম\s*না|পারছি\s*না|failed|আসেনা)|(?:card|কার্ড)\s*(?:তৈরি|বানা(?:তে|নো)|surface|show)[^।.!?\n]{0,20}?(?:পারিনি|পারলাম\s*না|হয়নি)/i
 
 /**
+ * Did any tool this turn actually put a card in front of the owner?
+ *
+ * The emitted-card counters only see confirm_card / ask_card. A staging tool —
+ * draft_seo_fixes, draft_marketing_campaign, schedule_content_batch — creates a
+ * pending action instead, and that IS the owner's card. Counting only the
+ * emitted kinds means a truthful "approval card বানালাম" after a SUCCESSFUL
+ * staging call reads as an unbacked promise.
+ *
+ * Only successful calls count. A staging tool that failed created nothing, which
+ * is the exact case the detector exists to catch.
+ */
+export function countStagedCards(
+  records: ReadonlyArray<{ status: 'success' | 'error'; output: Record<string, unknown> | null }>,
+): number {
+  let n = 0
+  for (const r of records) {
+    if (r.status !== 'success' || !r.output) continue
+    const data = (r.output.data ?? r.output) as Record<string, unknown> | null
+    if (!data || typeof data !== 'object') continue
+    const id = data.pendingActionId ?? data.askCardId
+    if (typeof id === 'string' && id.length > 0) n++
+  }
+  return n
+}
+
+/**
  * Detects an unbacked owner-facing card promise: the reply says an approval/
- * question card is now shown, but no confirm_card or ask_card was emitted this
- * turn. Only call this when both counts are zero.
+ * question card is now shown, but no card of any kind surfaced this turn — no
+ * confirm_card, no ask_card, and no staged pending action (countStagedCards).
+ * Only call this when all three counts are zero.
  */
 export function detectMissingCardViolation(replyText: string): ClaimViolation[] {
   const text = replyText.trim()

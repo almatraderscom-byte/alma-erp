@@ -4,7 +4,7 @@
  * caught the claim. The detector knew "তৈরি করছি" but not its everyday synonym.
  */
 import { describe, it, expect } from 'vitest'
-import { detectMissingCardViolation } from '@/agent/lib/claim-verifier'
+import { countStagedCards, detectMissingCardViolation } from '@/agent/lib/claim-verifier'
 
 const caught = (s: string) => detectMissingCardViolation(s).length > 0
 
@@ -35,5 +35,28 @@ describe('card-promise detection', () => {
   it('does not fire on prose that only mentions a card', () => {
     expect(caught('আগের approval card-টা আপনি কালকে approve করেছিলেন।')).toBe(false)
     expect(caught('SEO অডিট শেষ — ৮৭টা product ঠিক আছে।')).toBe(false)
+  })
+})
+
+describe('countStagedCards — a pending action IS a card', () => {
+  const ok = (output: Record<string, unknown> | null) => ({ status: 'success' as const, output })
+
+  it('counts a successful staging call', () => {
+    expect(countStagedCards([ok({ data: { pendingActionId: 'a1', count: 3 } })])).toBe(1)
+    expect(countStagedCards([ok({ data: { askCardId: 'q1' } })])).toBe(1)
+  })
+
+  it('does NOT count a failed staging call', () => {
+    expect(countStagedCards([{ status: 'error', output: null }])).toBe(0)
+    expect(countStagedCards([{ status: 'error', output: { data: { pendingActionId: 'a1' } } }])).toBe(0)
+  })
+
+  it('does not count ordinary read results', () => {
+    expect(countStagedCards([ok({ data: { products: 89 } })])).toBe(0)
+    expect(countStagedCards([ok(null)])).toBe(0)
+  })
+
+  it('accepts an id at the top level of the result too', () => {
+    expect(countStagedCards([ok({ pendingActionId: 'a1' })])).toBe(1)
   })
 })

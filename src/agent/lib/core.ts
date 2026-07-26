@@ -82,6 +82,7 @@ import {
 import {
   buildVerificationReminder,
   detectExplicitInstructionViolations,
+  countStagedCards,
   detectMissingCardViolation,
   detectProseChoiceViolation,
   MAX_VERIFY_RETRIES,
@@ -1377,7 +1378,11 @@ export async function* runAgentTurn(
           // but NO interactive card surfaced this turn (head forgot to call the
           // approval tool, or a sub-agent made a DB-only pending action). Force the
           // head to actually surface it or admit it couldn't.
-          if (finalText && violations.length === 0 && emittedConfirmCards.length === 0 && askCardsEmitted === 0) {
+          // A staging tool's pending action is a real card too (parity with
+          // run-owner-turn) — otherwise a truthful "approval card বানালাম" after
+          // a SUCCESSFUL draft_seo_fixes is punished as an unbacked promise.
+          const stagedCards = countStagedCards(toolRecords)
+          if (finalText && violations.length === 0 && emittedConfirmCards.length === 0 && askCardsEmitted === 0 && stagedCards === 0) {
             violations.push(...detectMissingCardViolation(finalText))
             // Owner rule: a choice for the Boss MUST be an ask_user card — a
             // prose "Option A/B … কোনটা করবেন?" has nothing to tap (live-hit

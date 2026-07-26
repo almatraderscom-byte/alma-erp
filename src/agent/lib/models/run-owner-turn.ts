@@ -85,6 +85,7 @@ import {
   verifyClaimsAgainstLedger,
   buildVerificationReminder,
   detectExplicitInstructionViolations,
+  countStagedCards,
   detectMissingCardViolation,
   detectProseChoiceViolation,
   detectFabricatedStatViolations,
@@ -2048,7 +2049,11 @@ async function* runAlternateProviderTurn(
           // ran them, which is exactly where weak models break the HARD RULE):
           // a promised-but-unemitted card, and the owner-hit 2026-07-16 case of
           // an Option-A/B choice asked in prose with nothing to tap.
-          if (violations.length === 0 && emittedAskCards.length === 0 && confirmCardsEmitted === 0) {
+          // A staging tool's pending action is a real card too — count it, or a
+          // truthful "approval card বানালাম" after a SUCCESSFUL draft_seo_fixes
+          // is punished as an unbacked promise.
+          const stagedCards = countStagedCards(toolRecords)
+          if (violations.length === 0 && emittedAskCards.length === 0 && confirmCardsEmitted === 0 && stagedCards === 0) {
             violations.push(...detectMissingCardViolation(iterationText.trim()))
             violations.push(...detectProseChoiceViolation(iterationText.trim()))
           }
