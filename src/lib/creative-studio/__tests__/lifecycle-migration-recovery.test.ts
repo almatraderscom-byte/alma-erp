@@ -112,6 +112,7 @@ describe('Creative Studio lifecycle failed-migration recovery', () => {
   it('uses a transactional restrictive whitelist and never drops Foundation objects', () => {
     expect(script).toContain('TransactionIsolationLevel.Serializable')
     expect(script).toContain('pg_advisory_xact_lock')
+    expect(script).toContain('await tx.$executeRawUnsafe(')
     expect(script).toContain('DROP TABLE IF EXISTS ${quoteIdentifier(table)} RESTRICT')
     expect(script).toContain('DROP COLUMN IF EXISTS ${quoteIdentifier(column)} RESTRICT')
     expect(script).toContain('DROP TYPE IF EXISTS ${quoteIdentifier(type)} RESTRICT')

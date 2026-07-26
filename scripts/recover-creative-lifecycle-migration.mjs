@@ -478,7 +478,7 @@ async function main() {
     }
 
     await client.$transaction(async (tx) => {
-      await tx.$queryRawUnsafe(
+      await tx.$executeRawUnsafe(
         `SELECT pg_advisory_xact_lock(hashtext($1))`,
         migrationName,
       )
