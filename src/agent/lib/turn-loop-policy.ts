@@ -11,6 +11,24 @@ export interface TurnLoopToolRecord {
   /** Name of the tool, when the caller has it — lets the failure guard tell a
    *  concrete recovery ("now get_staff_tasks") from hammering the same call. */
   toolName?: string
+  /** Stable error code from the tool envelope, when the caller has it. Lets the
+   *  failure guard tell a BROKEN call from a badly-ARGUED one. */
+  errorCode?: string
+}
+
+/**
+ * Failures that mean "you called it wrong", not "it does not work".
+ *
+ * Owner watched this live 2026-07-27: audit_product_seo failed on its arguments,
+ * the head said *"ভুল ছিল … এখন সঠিকভাবে চালাচ্ছি"* — and the turn ended, because
+ * the guard below saw the same tool named again and refused to push, treating a
+ * self-correction as hammering. A corrected retry is the opposite of hammering:
+ * it is the recovery the whole self-correction machinery exists to produce.
+ */
+const ARGUMENT_ERROR_CODES = new Set(['invalid_args', 'malformed_args'])
+
+export function isArgumentFailure(record: TurnLoopToolRecord | undefined): boolean {
+  return record?.status === 'error' && !!record.errorCode && ARGUMENT_ERROR_CODES.has(record.errorCode)
 }
 
 // A permission question may be followed by a parenthetical detail, as in the
@@ -59,6 +77,12 @@ function isTerminalReply(text: string, failedTool?: string, lastFailed = false):
   if (OWNER_QUESTION_TAIL_RE.test(normalized)) return true
   if (OWNER_PERMISSION_QUESTION_RE.test(normalized.slice(-800))) return true
   if (!BLOCKED_OR_FAILED_RE.test(normalized)) return false
+  // An admission plus work in flight is not a sign-off — it is "I got that wrong,
+  // I am doing it properly now". Since 2026-07-27 the verifier REQUIRES that
+  // admission when an opening-line promise went unmet, so without this line the
+  // honesty fix would itself end the turn: the word পারিনি appears, the reply
+  // reads as blocked, and the push that would have finished the job is suppressed.
+  if (isWorkInFlight(normalized)) return false
   // Blocked/failed report → terminal unless a concrete different tool follows it.
   return !(lastFailed && namesDifferentTool(normalized, failedTool))
 }
@@ -111,7 +135,10 @@ export function shouldNudgeAdapterIntent(input: {
   // call. But when the head has just named a DIFFERENT concrete tool as its next
   // step, stopping is the bug: it promised a recovery and never ran it. The
   // caller bounds this to one nudge per turn, so it cannot become a retry loop.
-  if (lastFailed && !namesDifferentTool(input.text, latestTool?.toolName)) return false
+  // …unless the failure was the ARGUMENTS. Then naming the same tool again is
+  // the correction, not the repetition, and stopping there strands the job one
+  // step from done (owner, live 2026-07-27).
+  if (lastFailed && !isArgumentFailure(latestTool) && !namesDifferentTool(input.text, latestTool?.toolName)) return false
   return ADAPTER_INTENT_RE.test(input.text.trim().slice(-600))
 }
 

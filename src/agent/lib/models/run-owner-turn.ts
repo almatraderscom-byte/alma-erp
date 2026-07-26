@@ -1449,6 +1449,8 @@ async function* runAlternateProviderTurn(
     id: string; toolName: string; input: Record<string, unknown>
     output: Record<string, unknown> | null; status: 'success' | 'error'
     durationMs: number; error: string | null
+    /** Stable envelope code — lets the loop tell a broken call from a mis-argued one. */
+    errorCode?: string
   }
   const toolRecords: ToolRecord[] = []
   // Dead-path guard state (2026-07-16): consecutive-failure streaks per tool
@@ -2026,7 +2028,7 @@ async function* runAlternateProviderTurn(
           && iterationText.trim()
           && shouldNudgeAdapterIntent({
             text: iterationText,
-            toolRecords: toolRecords.map((r) => ({ status: r.status, toolName: r.toolName })),
+            toolRecords: toolRecords.map((r) => ({ status: r.status, toolName: r.toolName, errorCode: r.errorCode })),
             hasAskCard: emittedAskCards.length > 0,
             ownerRequestedAction: turnAuthorization.allowMutations,
           })
@@ -2410,6 +2412,7 @@ async function* runAlternateProviderTurn(
           status: result.success ? 'success' : 'error',
           durationMs,
           error: result.error ?? null,
+          errorCode: 'errorCode' in result ? result.errorCode : undefined,
         }
         toolRecords.push(toolRecord)
         if (call.name === contractToolName && !result.success) roundContractFailure = toolRecord
