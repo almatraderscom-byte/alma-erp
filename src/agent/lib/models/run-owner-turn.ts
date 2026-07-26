@@ -1104,9 +1104,20 @@ async function* runAlternateProviderTurn(
   // the world, so it can research and propose but not act.
   const { getCapability } = await import('@/agent/tools/capability-manifest')
   const isReadOnlyTool = (name: string) => getCapability(name)?.mode === 'read'
+  // "নিজে থেকে কাজ চালিয়ে যাও — আমাকে জিজ্ঞেস করতে হবে না" is an instruction, not
+  // a preference (owner bug 2026-07-26: told exactly that, the head still stopped
+  // on an ask card and did nothing). Withhold ask_user for the turn — the same
+  // deterministic technique as listen mode, because a prompt rule alone does not
+  // hold. Approval CARDS for money/publish are untouched: those are safety, not
+  // question-asking.
+  const noQuestionsTurn = /(?:জিজ্ঞেস\s*কর(?:তে|ার)?\s*(?:হবে\s*না|দরকার\s*নেই|লাগবে\s*না)|নিজে\s*থেকে(?:ই)?\s*(?:কাজ\s*)?(?:চালিয়ে|শেষ|কর)|do\s+not\s+ask|don'?t\s+ask|without\s+asking)/i
+    .test(lastUserText)
+  const modeFiltered = filterToolsForMode(chatMode, anthropicToolsToNeutral(cappedTools), isReadOnlyTool)
   const neutralTools = listenMode
     ? []
-    : filterToolsForMode(chatMode, anthropicToolsToNeutral(cappedTools), isReadOnlyTool)
+    : noQuestionsTurn
+      ? modeFiltered.filter((t) => t.name !== 'ask_user')
+      : modeFiltered
   // Harness Gap 5 — schemas dynamically loaded by find_tool for the rest of this
   // turn (appended after the base list; execution guards unchanged).
   const dynamicNeutralTools: NeutralTool[] = []
@@ -2598,12 +2609,25 @@ async function* runAlternateProviderTurn(
         .filter((e) => e.t === 'text')
         .map((e) => (e as { text: string }).text)
         .filter((t) => t.trim() !== preambleText.trim())
+      // HONEST REASON (owner bug 2026-07-26): this used to print "সার্ভারের
+      // সময়সীমায় টার্ন শেষ হয়েছে" for ANY turn that ended without a final answer.
+      // Boss watched a turn stop after FORTY SECONDS and be told the server ran
+      // out of time — a plain untruth, and it hid the real reason (the head had
+      // asked a question and stopped). Only claim the deadline when the deadline
+      // actually fired.
+      const endReason = deadlineHit
+        ? (browserSteps.length
+            ? `এই টার্নে ${browserSteps.length}টা ব্রাউজার ধাপ হয়েছে, তারপর সার্ভারের সময়সীমায় টার্ন শেষ হয়েছে।`
+            : 'সার্ভারের সময়সীমায় টার্ন শেষ হয়েছে।')
+        : emittedAskCards.length > 0
+          ? 'উপরের প্রশ্নটার উত্তর পেলে বাকিটা করব।'
+          : confirmCardsEmitted > 0
+            ? 'অনুমোদনের কার্ড দিয়েছি — আপনি Approve করলেই কাজটা করব।'
+            : 'এই টার্নে আর কিছু লেখা হয়নি — কাজটা এখান থেকেই ধরব।'
       finalText = [
         preambleText.trim(),
         lastTexts.length ? lastTexts[lastTexts.length - 1].slice(0, 600) : '',
-        browserSteps.length
-          ? `এই টার্নে ${browserSteps.length}টা ব্রাউজার ধাপ হয়েছে, তারপর সার্ভারের সময়সীমায় টার্ন শেষ হয়েছে।`
-          : 'সার্ভারের সময়সীমায় টার্ন শেষ হয়েছে।',
+        endReason,
         taskUnfinished ? 'Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।' : '',
       ].filter(Boolean).join('\n\n')
       yield { type: 'text_delta', delta: finalText }

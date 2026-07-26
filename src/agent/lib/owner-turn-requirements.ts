@@ -65,11 +65,24 @@ export function extractOrderedWebTargets(text: string): string[] {
   return out
 }
 
+/**
+ * "Do the work" verbs. When Boss uses one of these about findings that already
+ * exist, he wants execution — not another audit, and not another report.
+ */
+const FIX_INTENT_RE =
+  /(?:ঠিক\s*কর|সমাধান\s*কর|লেখো|লিখে\s*দাও|বসাও|যোগ\s*কর|আপডেট\s*কর|apply|fix(?:ing|es)?\b|implement|write\s+(?:the\s+)?alt|update\s+the)/i
+
 export function deriveOwnerTurnRequirements(text: string): OwnerTurnRequirements {
   const t = text.trim()
   const targets = extractOrderedWebTargets(t)
   const liveBrowser = /\blive[\s_-]*browser\b|আমার\s*(?:chrome|ক্রোম|browser|ব্রাউজার)|(?:chrome|ক্রোম|browser|ব্রাউজার)\s*(?:use|ব্যবহার|দিয়ে|diye)/i.test(t)
-  const clientSeo = targets.length > 0 && /\bseo\b|এসইও|audit|অডিট/i.test(t)
+  // A FIX order is not an audit order (owner bug 2026-07-26). "almatraders.com
+  // এর SEO অডিটে পাওয়া ছবির alt সমস্যা ঠিক করো" armed the audit contract purely
+  // because it contains the words "SEO" and "অডিট" — so the agent produced ANOTHER
+  // report instead of doing the work, and Boss's reaction was exactly right:
+  // "agent ke kaj dile fix korte, kintu abar SEO report baniye dilo".
+  const fixIntent = FIX_INTENT_RE.test(t)
+  const clientSeo = targets.length > 0 && /\bseo\b|এসইও|audit|অডিট/i.test(t) && !fixIntent
   // Owner standing rule (2026-07-25): a website audit ALWAYS ends in a
   // client-ready deliverable — the owner should never have to type the word
   // "report" to get one. Previously "Do a Deep SEO Audit - almatraders.com"
