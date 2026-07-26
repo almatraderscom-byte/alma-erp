@@ -83,8 +83,19 @@ export const WEEKDAYS: ReadonlyArray<{ value: string; label: string; index: numb
 
 // ── shapes the API returns ───────────────────────────────────────────────────
 
+export type NowState = {
+  open: boolean
+  /** Which time rule decided it, in Bangla. */
+  reason: string
+  /** What the rules would actually do to a call arriving right now. */
+  effect: string
+  /** The trap: a known number never takes the staff path. */
+  note: string
+}
+
 export type RoutingPayload = {
   ok: true
+  now?: NowState
   dids: DidRoute[]
   /** The DIDs we have actually seen calls arrive on, so the owner is not typing from memory. */
   seenDids: Array<{ did: string; calls: number; lastAt: string | null }>

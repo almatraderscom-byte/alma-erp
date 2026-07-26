@@ -738,10 +738,32 @@ class Call {
    */
   armVoicemailFallback() {
     if (!VOICEMAIL_ENABLED) return
+    /*
+     * ONE RETRY BEFORE GIVING UP ON THE AI.
+     *
+     * Gemini Live can open a session, produce a transcript, and send no audio at all — seen live
+     * on 2026-07-26 with `queued=0b`, no `out mime=` line and no error of any kind. The owner rang
+     * his own line, got the voicemail prompt, and reasonably concluded the whole system was
+     * broken. One fluke should not cost a call, and a fresh session is cheap next to losing a
+     * customer, so we re-open the bot once at the half-way mark and only fall back if that is
+     * silent too.
+     */
+    const half = Math.max(3, Math.round(VOICEMAIL_AFTER_SECS / 2))
+    this.vmRetryTimer = setTimeout(() => {
+      if (this.closed || this.voicemail) return
+      if ((this.framesOut || 0) > 25) return // the bot is talking; nothing is wrong
+      log(this.channelId, `no bot audio in ${half}s — restarting the bot session once`)
+      try { this.bot?.close() } catch { /* */ }
+      this.botReady = false
+      this.audioUuid = randomUUID()
+      byUuid.set(this.audioUuid, this)
+      this.connectBot()
+    }, half * 1000)
+
     this.vmTimer = setTimeout(() => {
       if (this.closed || this.voicemail) return
       if ((this.framesOut || 0) > 25) return // the bot is talking; nothing is wrong
-      log(this.channelId, `no bot audio in ${VOICEMAIL_AFTER_SECS}s — falling back to voicemail`)
+      log(this.channelId, `no bot audio in ${VOICEMAIL_AFTER_SECS}s (retry did not help) — falling back to voicemail`)
       void this.startVoicemail()
     }, VOICEMAIL_AFTER_SECS * 1000)
   }
@@ -750,6 +772,7 @@ class Call {
   async startVoicemail() {
     if (this.voicemail || this.closed) return
     this.voicemail = true
+    if (this.vmRetryTimer) { clearTimeout(this.vmRetryTimer); this.vmRetryTimer = null }
     try { this.bot?.close() } catch { /* */ }
     this.botReady = false
     this.playQueue.length = 0
@@ -896,6 +919,7 @@ class Call {
     try { this.txFd?.end(); this.rxFd?.end() } catch { /* */ }
     if (this.digitTimer) { clearTimeout(this.digitTimer); this.digitTimer = null }
     if (this.vmTimer) { clearTimeout(this.vmTimer); this.vmTimer = null }
+    if (this.vmRetryTimer) { clearTimeout(this.vmRetryTimer); this.vmRetryTimer = null }
     if (this.vmPromptTimer) { clearTimeout(this.vmPromptTimer); this.vmPromptTimer = null }
     if (this.moh) await stopMoh(this)
     try { this.asSocket?.end() } catch { /* */ }
@@ -1287,6 +1311,8 @@ async function onAriEvent(e) {
     case 'ChannelDestroyed': {
       // The only place Asterisk tells us WHY the leg ended — keep it for the sweep.
       const call = chanId && calls.get(chanId)
+      // Was this a ring at a browser phone, and did it ever get off the ground?
+      if (chanId) noteBrowserOutcome(chanId, Boolean(call?.answered) || Number(e.cause) === 16 || Number(e.cause) === 19)
       // A forward leg dying tells us how the human-to-human half went; fold it into the
       // ORIGINAL call's record, which is the row the owner actually reads.
       const fwdParent = call?._transferParent
@@ -2214,6 +2240,7 @@ async function staffFirstAnswer(call, dests, ringSecs) {
   for (const dest of dests) {
     const internal = /^1\d{3}$/.test(dest)
     const legId = 'sipring-' + randomUUID()
+    if (internal) noteBrowserAttempt(legId)
     const leg = new Call(legId, {})
     leg._bridgeInto = call.bridgeId
     leg._transferParent = call.channelId
@@ -2333,6 +2360,7 @@ async function dialNextInGroup(call) {
    */
   const internal = /^1\d{3}$/.test(dest)
   const customer = call.params?.caller || cdr.get(call.channelId)?.from || ''
+  if (internal) noteBrowserAttempt(fwdId)
   await ari('POST', '/channels', {
     endpoint: internal ? `PJSIP/${dest}` : `PJSIP/${dest}@${TRUNK_ENDPOINT}`,
     app: ARI_APP,
@@ -2591,6 +2619,51 @@ async function readSoftphoneStack() {
   return { chanSip, wsRunning, healthy: !chanSip && wsRunning }
 }
 
+/*
+ * DID ASTERISK ACTUALLY REACH A BROWSER?
+ *
+ * The old check asked only whether a REGISTER could arrive, and reported `healthy: true` all
+ * through 2026-07-26 while Asterisk could not send a single request to a browser phone — every
+ * originate died in 3 ms with TRANSPORT_ERROR. Inbound-to-browser, colleague calls and the BYE at
+ * the end of a call were all dead, and /health said everything was fine.
+ *
+ * A registration proves the browser can talk to us. It proves nothing about the other direction,
+ * which is the direction that was broken. So we watch the real thing: every time we ring an
+ * internal extension we note it, and if the channel dies almost immediately without ever ringing,
+ * that is the signature of the fault. Two of those and the owner is told, with the fix that
+ * actually worked — a full Asterisk restart, NOT a module reload, which is plausibly what caused
+ * it in the first place.
+ */
+const browserReach = { attempts: new Map(), fails: 0, lastOk: 0, alerted: false }
+
+function noteBrowserAttempt(channelId) {
+  browserReach.attempts.set(channelId, Date.now())
+  // Never let this map grow: a ring attempt is resolved within seconds either way.
+  if (browserReach.attempts.size > 50) {
+    for (const [k, t] of browserReach.attempts) {
+      if (Date.now() - t > 120_000) browserReach.attempts.delete(k)
+    }
+  }
+}
+
+/** Called from ChannelDestroyed. A leg that dies under a second without ringing never arrived. */
+function noteBrowserOutcome(channelId, rang) {
+  const startedAt = browserReach.attempts.get(channelId)
+  if (!startedAt) return
+  browserReach.attempts.delete(channelId)
+  if (rang) { browserReach.fails = 0; browserReach.lastOk = Date.now(); return }
+  if (Date.now() - startedAt > 1000) return  // a real no-answer, not a transport failure
+  browserReach.fails++
+  log(`browser unreachable: a ring at an extension died in <1s (${browserReach.fails} in a row)`)
+  if (browserReach.fails >= 2 && !browserReach.alerted) {
+    browserReach.alerted = true
+    void alertOwner(
+      'স্টাফের ব্রাউজার ফোনে কল পৌঁছাচ্ছে না',
+      'Asterisk স্টাফের ব্রাউজারে কল পাঠাতে পারছে না — ইনবাউন্ড কল ব্রাউজারে বাজবে না। সারানোর উপায়: VPS-এ `asterisk -rx "core restart now"` (কনফিগ বদলানোর দরকার নেই, লাইন খালি থাকলে করুন)। module reload দিয়ে এটা সারে না।',
+    )
+  }
+}
+
 async function checkSoftphoneStack() {
   let state
   try {
@@ -2602,8 +2675,13 @@ async function checkSoftphoneStack() {
     return
   }
   wsState.lastCheck = Date.now()
-  wsState.healthy = state.healthy
-  wsState.lastStatus = state.healthy ? 'ok' : `chan_sip=${state.chanSip ? 'loaded' : 'no'} pjsip-ws=${state.wsRunning ? 'running' : 'DOWN'}`
+  // A registration path that works does NOT make the softphone healthy: say so when we have
+  // evidence that Asterisk cannot reach a browser, instead of reporting ok and being believed.
+  const reachBroken = browserReach.fails >= 2
+  wsState.healthy = state.healthy && !reachBroken
+  wsState.lastStatus = reachBroken
+    ? 'registration ok BUT Asterisk cannot send to a browser — needs a full Asterisk restart'
+    : state.healthy ? 'ok' : `chan_sip=${state.chanSip ? 'loaded' : 'no'} pjsip-ws=${state.wsRunning ? 'running' : 'DOWN'}`
 
   if (state.healthy) {
     if (wsState.alerted) {
