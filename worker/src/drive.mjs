@@ -224,3 +224,20 @@ export async function verifyDriveFile(token, fileId) {
     return false
   }
 }
+
+/** Download the exact archived bytes for checksum verification before a
+ * receipt is allowed to become durable. Callers keep this bounded to the same
+ * file they just uploaded; no Drive listing or broad access is involved. */
+export async function fetchBackDriveFile(token, fileId) {
+  if (!token || !fileId) throw new Error('Drive fetch-back identity missing')
+  const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`)
+  url.searchParams.set('alt', 'media')
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(120_000),
+  })
+  if (!response.ok) {
+    throw new Error(`Drive fetch-back failed: HTTP ${response.status}`)
+  }
+  return Buffer.from(await response.arrayBuffer())
+}

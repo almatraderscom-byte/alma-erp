@@ -19,7 +19,14 @@
  * to exist and be non-trashed at delete time. Drive is the only-copy guardian.
  */
 
-import { getDriveConnection, getDriveAccessToken, uploadToDrive, verifyDriveFile } from '../drive.mjs'
+import { createHash } from 'node:crypto'
+import {
+  fetchBackDriveFile,
+  getDriveConnection,
+  getDriveAccessToken,
+  uploadToDrive,
+  verifyDriveFile,
+} from '../drive.mjs'
 
 const BUCKET = 'agent-files'
 const ENABLED_KEY = 'studio_archive_enabled'
@@ -31,9 +38,93 @@ const DEFAULT_VERIFICATION_GRACE_HOURS = 24
 const ARCHIVE_BATCH = 20
 const CLEANUP_BATCH = 20
 const SCAN_LIMIT = 400
+const MAX_FETCH_BACK_ATTEMPTS = 5
 
 // Thumbnail paths are tiny and power the gallery grid — keep them in Supabase.
 const THUMBNAIL_KEYS = ['thumbPath', 'brandedThumbPath']
+
+function sha256(buffer) {
+  return createHash('sha256').update(buffer).digest('hex')
+}
+
+export function archiveVerificationAttemptEvidence({
+  archiveReceiptId,
+  expectedChecksum,
+  archiveChecksum,
+  fetchBackChecksum,
+  errorCode = null,
+}) {
+  const verified = Boolean(
+    !errorCode
+    && /^[a-f0-9]{64}$/.test(String(expectedChecksum ?? ''))
+    && archiveChecksum === expectedChecksum
+    && fetchBackChecksum === expectedChecksum,
+  )
+  return {
+    archiveReceiptId,
+    outcome: verified ? 'verified' : 'failed',
+    expectedChecksum: expectedChecksum ?? null,
+    archiveChecksum: archiveChecksum ?? null,
+    fetchBackChecksum: fetchBackChecksum ?? null,
+    errorCode: verified ? null : errorCode ?? 'drive_fetch_back_checksum_mismatch',
+  }
+}
+
+export function archiveVerificationRetryDecision({
+  driveFile,
+  receipt,
+  maxAttempts = MAX_FETCH_BACK_ATTEMPTS,
+}) {
+  if (!driveFile?.fileId) return { shouldRetry: false, reason: 'drive_file_missing' }
+  if (driveFile.verifiedAt) return { shouldRetry: false, reason: 'already_verified' }
+  if (!receipt) return { shouldRetry: false, reason: 'receipt_missing' }
+  if (Number(receipt.attempts ?? 0) >= maxAttempts) {
+    return { shouldRetry: false, reason: 'attempt_limit_reached' }
+  }
+  if (!/^[a-f0-9]{64}$/.test(String(receipt.artifact_checksum ?? ''))) {
+    return { shouldRetry: false, reason: 'expected_checksum_missing' }
+  }
+  return { shouldRetry: true, reason: 'fetch_back_unverified' }
+}
+
+export function lifecycleArchiveLineage(item, result, storagePath) {
+  const lifecycle = result.lifecycleAttribution && typeof result.lifecycleAttribution === 'object'
+    ? result.lifecycleAttribution
+    : item.payload?.lifecycleAttribution && typeof item.payload.lifecycleAttribution === 'object'
+      ? item.payload.lifecycleAttribution
+      : null
+  if (!lifecycle?.compositionId || !lifecycle?.compositionVersionId) return {}
+  const compositionVersion = Number(lifecycle.compositionVersion)
+  if (
+    !Number.isInteger(compositionVersion)
+    || compositionVersion < 1
+    || !/^[a-f0-9]{64}$/.test(String(lifecycle.compositionDocumentHash ?? ''))
+    || !/^[a-f0-9]{64}$/.test(String(lifecycle.operationPackageChecksum ?? ''))
+  ) throw new Error('lifecycle archive attribution incomplete')
+  const originalStoragePath = String(
+    lifecycle.originalStoragePath ?? result.originalStoragePath ?? result.storagePath ?? storagePath,
+  )
+  const renderStoragePath = String(
+    lifecycle.renderStoragePath ?? result.renderStoragePath ?? result.brandedPath ?? result.videoPath ?? storagePath,
+  )
+  const playableProxyPath = lifecycle.playableProxyPath ?? result.playableProxyPath ?? null
+  return {
+    compositionId: String(lifecycle.compositionId),
+    compositionVersionId: String(lifecycle.compositionVersionId),
+    compositionVersion,
+    compositionDocumentHash: String(lifecycle.compositionDocumentHash),
+    operationBatchId: lifecycle.operationBatchId ? String(lifecycle.operationBatchId) : null,
+    operationPackageChecksum: String(lifecycle.operationPackageChecksum),
+    playableProxyPath: playableProxyPath ? String(playableProxyPath) : null,
+    originalStoragePath,
+    renderStoragePath,
+    lineageManifest: {
+      original: originalStoragePath,
+      render: renderStoragePath,
+      playableProxy: playableProxyPath ? String(playableProxyPath) : null,
+    },
+  }
+}
 
 async function readSetting(supabase, key) {
   const { data } = await supabase
@@ -115,7 +206,9 @@ export function archiveReceiptDeletionEligibility({
   retentionDays,
   verificationGraceHours,
   deleteOriginalsEnabled = true,
+  compositionId = null,
 }) {
+  if (compositionId) return { eligible: false, reason: 'lifecycle_archive_no_delete' }
   if (!deleteOriginalsEnabled) return { eligible: false, reason: 'deletion_disabled' }
   if (originalDeletedAt) return { eligible: false, reason: 'already_deleted' }
   if (!verifiedAt) return { eligible: false, reason: 'durable_verification_required' }
@@ -194,6 +287,23 @@ async function upsertArchiveReceipt(supabase, input) {
     .upsert({
       pending_action_id: input.pendingActionId,
       asset_version_id: input.assetVersionId ?? previous?.asset_version_id ?? null,
+      composition_id: input.compositionId ?? previous?.composition_id ?? null,
+      composition_version_id: input.compositionVersionId ?? previous?.composition_version_id ?? null,
+      composition_version: input.compositionVersion ?? previous?.composition_version ?? null,
+      composition_document_hash:
+        input.compositionDocumentHash ?? previous?.composition_document_hash ?? null,
+      operation_batch_id: input.operationBatchId ?? previous?.operation_batch_id ?? null,
+      operation_package_checksum:
+        input.operationPackageChecksum ?? previous?.operation_package_checksum ?? null,
+      artifact_checksum: input.artifactChecksum ?? previous?.artifact_checksum ?? null,
+      archive_checksum: input.archiveChecksum ?? previous?.archive_checksum ?? null,
+      fetch_back_checksum: input.fetchBackChecksum ?? previous?.fetch_back_checksum ?? null,
+      fetch_back_verified_at:
+        input.fetchBackVerifiedAt ?? previous?.fetch_back_verified_at ?? null,
+      playable_proxy_path: input.playableProxyPath ?? previous?.playable_proxy_path ?? null,
+      original_storage_path: input.originalStoragePath ?? previous?.original_storage_path ?? null,
+      render_storage_path: input.renderStoragePath ?? previous?.render_storage_path ?? null,
+      lineage_manifest: input.lineageManifest ?? previous?.lineage_manifest ?? {},
       storage_path: input.storagePath,
       drive_file_id: input.driveFileId,
       drive_web_view_url: input.driveWebViewUrl ?? previous?.drive_web_view_url ?? null,
@@ -211,6 +321,21 @@ async function upsertArchiveReceipt(supabase, input) {
     .single()
   if (error) throw new Error(`archive receipt write failed: ${error.message}`)
   return data
+}
+
+async function appendArchiveVerificationAttempt(supabase, input) {
+  const { error } = await supabase
+    .from('creative_archive_verification_attempts')
+    .insert({
+      archive_receipt_id: input.archiveReceiptId,
+      outcome: input.outcome,
+      expected_checksum: input.expectedChecksum ?? null,
+      archive_checksum: input.archiveChecksum ?? null,
+      fetch_back_checksum: input.fetchBackChecksum ?? null,
+      error_code: input.errorCode ?? null,
+      error_message: input.errorMessage ?? null,
+    })
+  if (error) throw new Error(`archive verification attempt write failed: ${error.message}`)
 }
 
 async function writeArchiveObservability(supabase, detail) {
@@ -309,13 +434,74 @@ export async function runStudioArchive(context) {
     const result = { ...item.result }
     const driveFiles = (result.driveFiles && typeof result.driveFiles === 'object') ? { ...result.driveFiles } : {}
     const bigPaths = collectBigPaths(result)
-    const pending = bigPaths.filter((p) => !driveFiles[p]?.fileId)
+    const pending = bigPaths.filter((p) => (
+      !driveFiles[p]?.fileId || !driveFiles[p]?.verifiedAt
+    ))
     if (pending.length === 0) continue
 
     const createdAt = item.createdAt ? new Date(item.createdAt) : new Date()
     let changed = false
     try {
       for (const path of pending) {
+        const existingDrive = driveFiles[path]
+        if (existingDrive?.fileId && !existingDrive.verifiedAt) {
+          const receipt = await getArchiveReceipt(supabase, item.id, path)
+          const retry = archiveVerificationRetryDecision({ driveFile: existingDrive, receipt })
+          if (!retry.shouldRetry) continue
+          let fetchedBack = null
+          let fetchBackChecksum = null
+          let verified = false
+          let verificationError = null
+          try {
+            const exists = await verifyDriveFile(accessToken, existingDrive.fileId)
+            fetchedBack = exists
+              ? await fetchBackDriveFile(accessToken, existingDrive.fileId)
+              : null
+            fetchBackChecksum = fetchedBack ? sha256(fetchedBack) : null
+            verified = Boolean(
+              exists
+              && fetchedBack?.length === Number(receipt.size_bytes)
+              && fetchBackChecksum === receipt.artifact_checksum,
+            )
+            if (!verified) verificationError = 'drive_fetch_back_checksum_mismatch'
+          } catch (error) {
+            verificationError = 'drive_fetch_back_failed'
+            console.warn(`[studio-archive] fetch-back retry failed ${path}: ${error.message}`)
+          }
+          const verifiedAt = verified ? new Date().toISOString() : null
+          const updatedReceipt = await upsertArchiveReceipt(supabase, {
+            pendingActionId: item.id,
+            storagePath: path,
+            driveFileId: existingDrive.fileId,
+            driveWebViewUrl: existingDrive.webViewLink,
+            fetchBackChecksum,
+            fetchBackVerifiedAt: verifiedAt,
+            verifiedAt,
+            lastVerifiedAt: verifiedAt,
+            lastErrorCode: verificationError,
+          })
+          const attemptEvidence = archiveVerificationAttemptEvidence({
+            archiveReceiptId: updatedReceipt.id,
+            expectedChecksum: receipt.artifact_checksum,
+            archiveChecksum: receipt.archive_checksum,
+            fetchBackChecksum,
+            errorCode: verificationError,
+          })
+          await appendArchiveVerificationAttempt(supabase, {
+            ...attemptEvidence,
+            errorMessage: verificationError
+              ? `Drive fetch-back retry did not prove exact bytes for ${path}`
+              : null,
+          })
+          if (verified) durableVerified += 1
+          driveFiles[path] = {
+            ...existingDrive,
+            bytes: Number(receipt.size_bytes),
+            verifiedAt,
+          }
+          changed = true
+          continue
+        }
         const { data: file, error: dlErr } = await supabase.storage.from(BUCKET).download(path)
         if (dlErr || !file) {
           // The Supabase object is already gone — record so we don't retry forever.
@@ -325,6 +511,7 @@ export async function runStudioArchive(context) {
           continue
         }
         const buffer = Buffer.from(await file.arrayBuffer())
+        const artifactChecksum = sha256(buffer)
         const up = await uploadToDrive({
           token: accessToken,
           buffer,
@@ -332,19 +519,72 @@ export async function runStudioArchive(context) {
           contentType: file.type || guessContentType(path),
           date: createdAt,
         })
-        const verified = await verifyDriveFile(accessToken, up.fileId)
-        const verifiedAt = verified ? new Date().toISOString() : null
-        await upsertArchiveReceipt(supabase, {
+        const lineage = lifecycleArchiveLineage(item, result, path)
+        let receipt = await upsertArchiveReceipt(supabase, {
           pendingActionId: item.id,
           assetVersionId: versionsByAction.get(item.id) ?? null,
           storagePath: path,
           driveFileId: up.fileId,
           driveWebViewUrl: up.webViewLink,
           sizeBytes: buffer.length,
+          artifactChecksum,
+          archiveChecksum: artifactChecksum,
+          fetchBackChecksum: null,
+          fetchBackVerifiedAt: null,
+          ...lineage,
           archivedAt: new Date().toISOString(),
+          verifiedAt: null,
+          lastVerifiedAt: null,
+          lastErrorCode: 'drive_fetch_back_pending',
+        })
+        let fetchedBack = null
+        let fetchBackChecksum = null
+        let verified = false
+        let verificationError = null
+        try {
+          const exists = await verifyDriveFile(accessToken, up.fileId)
+          fetchedBack = exists ? await fetchBackDriveFile(accessToken, up.fileId) : null
+          fetchBackChecksum = fetchedBack ? sha256(fetchedBack) : null
+          verified = Boolean(
+            exists
+            && fetchedBack?.length === buffer.length
+            && fetchBackChecksum === artifactChecksum,
+          )
+          if (!verified) verificationError = 'drive_fetch_back_checksum_mismatch'
+        } catch (error) {
+          verificationError = 'drive_fetch_back_failed'
+          console.warn(`[studio-archive] fetch-back failed ${path}: ${error.message}`)
+        }
+        const verifiedAt = verified ? new Date().toISOString() : null
+        receipt = await upsertArchiveReceipt(supabase, {
+          pendingActionId: item.id,
+          assetVersionId: versionsByAction.get(item.id) ?? null,
+          storagePath: path,
+          driveFileId: up.fileId,
+          driveWebViewUrl: up.webViewLink,
+          sizeBytes: buffer.length,
+          artifactChecksum,
+          archiveChecksum: artifactChecksum,
+          fetchBackChecksum,
+          fetchBackVerifiedAt: verifiedAt,
+          ...lineage,
+          archivedAt: receipt.archived_at,
           verifiedAt,
           lastVerifiedAt: verifiedAt,
-          lastErrorCode: verified ? null : 'drive_fetch_back_unverified',
+          lastErrorCode: verificationError,
+        })
+        const attemptEvidence = archiveVerificationAttemptEvidence({
+          archiveReceiptId: receipt.id,
+          expectedChecksum: artifactChecksum,
+          archiveChecksum: artifactChecksum,
+          fetchBackChecksum,
+          errorCode: verificationError,
+        })
+        await appendArchiveVerificationAttempt(supabase, {
+          ...attemptEvidence,
+          errorMessage: verificationError
+            ? `Drive fetch-back did not prove exact bytes for ${path}`
+            : null,
         })
         if (verified) durableVerified += 1
         driveFiles[path] = {
@@ -416,6 +656,7 @@ export async function runStudioArchive(context) {
             retentionDays,
             verificationGraceHours,
             deleteOriginalsEnabled: policy.deleteOriginalsEnabled,
+            compositionId: receipt.composition_id,
           })
           if (!eligibility.eligible) continue
 

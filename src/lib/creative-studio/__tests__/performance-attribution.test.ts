@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  assertPerformanceDeliveryLineage,
   deterministicPerformanceScore,
   nextDeterministicSceneWeight,
   normalizePerformanceMetrics,
@@ -8,6 +9,26 @@ import {
 } from '@/lib/creative-studio/performance-attribution'
 
 describe('CSE7 deterministic performance attribution', () => {
+  it('requires the exact immutable composition version hash from delivery lineage', () => {
+    expect(() => assertPerformanceDeliveryLineage({
+      compositionId: 'composition-1',
+      compositionVersionId: 'composition-version-2',
+      compositionVersion: 2,
+      compositionDocumentHash: 'a'.repeat(64),
+    })).not.toThrow()
+    expect(() => assertPerformanceDeliveryLineage({
+      compositionId: 'composition-1',
+      compositionVersionId: 'composition-version-2',
+      compositionVersion: 2,
+    })).toThrow('performance_delivery_pin_incomplete')
+    expect(() => assertPerformanceDeliveryLineage({
+      compositionId: null,
+      compositionVersionId: 'composition-version-2',
+      compositionVersion: 2,
+      compositionDocumentHash: 'a'.repeat(64),
+    })).toThrow('performance_delivery_pin_incomplete')
+  })
+
   it('maps metrics into a reproducible score without creative judgment', () => {
     expect(deterministicPerformanceScore({
       reach: 1_000,

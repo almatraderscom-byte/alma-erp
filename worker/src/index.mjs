@@ -1838,6 +1838,23 @@ if (!creativeDistributionInterval) {
   console.log('[creative-distribution] scheduler OFF — rollout gate not enabled')
 }
 
+// V3 lifecycle execution is independently OFF by default and only admits the
+// built-in zero-cost local manifest adapter. Paid/provider renderers are never
+// selected by this loop.
+let lifecycleWorkerInterval = null
+if (process.env.STUDIO_LIFECYCLE_LOCAL_WORKER_ENABLED === 'true') {
+  const { startLifecycleWorkerLoop } = await import('./lifecycle-worker.mjs')
+  lifecycleWorkerInterval = startLifecycleWorkerLoop({
+    appUrl: getAppUrl(),
+    internalToken: getInternalToken(),
+    supabase,
+    intervalMs: Number(process.env.STUDIO_LIFECYCLE_WORKER_INTERVAL_MS) || 60_000,
+  })
+  console.log('[lifecycle-worker] zero-cost local adapter started')
+} else {
+  console.log('[lifecycle-worker] OFF — rollout gate not enabled')
+}
+
 // Phase 53 — effect-outbox dispatcher (OFF by default; readiness gates flip it).
 // Dispatch posts the run back to the app's assistant surface, where the guard +
 // effect engine own execution; the worker only drives retries/dead-letter.
@@ -1907,6 +1924,7 @@ async function shutdown(signal) {
   clearInterval(heartbeatInterval)
   clearInterval(healthPingInterval)
   if (creativeDistributionInterval) clearInterval(creativeDistributionInterval)
+  if (lifecycleWorkerInterval) clearInterval(lifecycleWorkerInterval)
   clearInterval(workbenchJanitorInterval)
   if (schedulerTeardown?.retriggerPoll) clearInterval(schedulerTeardown.retriggerPoll)
   if (schedulerTeardown?.dutyTimePoll) clearInterval(schedulerTeardown.dutyTimePoll)

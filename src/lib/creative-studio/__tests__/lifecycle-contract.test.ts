@@ -135,21 +135,44 @@ describe('V3 lifecycle boundary', () => {
     expect(buildStudioLifecycleAttribution({ eventId: 'event-1', pin, lifecycleFingerprint: 'f'.repeat(64) }))
       .toMatchObject({ compositionVersionId: 'composition-v4', artifactVersionId: 'asset-v4', campaignPackId: 'pack-1', batchId: 'batch-1' })
     expect(() => assertArchiveFetchBackManifest({
-      compositionId: pin.compositionId, compositionVersionId: pin.compositionVersionId, artifactVersionId: pin.artifactVersionId,
-      artifactChecksum: pin.artifactChecksum, archiveChecksum: pin.artifactChecksum, storagePath: 'agent-files/asset.mp4', driveFileId: 'drive-1',
+      compositionId: pin.compositionId, compositionVersionId: pin.compositionVersionId, compositionVersion: pin.compositionVersion,
+      compositionDocumentHash: 'd'.repeat(64), operationBatchId: pin.batchId, operationPackageChecksum: 'e'.repeat(64),
+      artifactVersionId: pin.artifactVersionId, artifactChecksum: pin.artifactChecksum,
+      archiveChecksum: pin.artifactChecksum, fetchBackChecksum: pin.artifactChecksum,
+      storagePath: 'agent-files/render.mp4', playableProxyPath: 'agent-files/proxy.mp4',
+      originalStoragePath: 'agent-files/original.mp4', renderStoragePath: 'agent-files/render.mp4', driveFileId: 'drive-1',
       fetchedBackAt: '2026-07-26T00:00:00.000Z', verifiedAt: '2026-07-26T00:00:00.000Z',
     })).not.toThrow()
   })
 
   it('uses owner/brand/project/role/capability scoped canaries, default-off and legacy-on', () => {
     const scope = { ownerId: 'owner-1', brandProfileId: 'brand-1', projectId: 'project-1', role: 'owner' as const, capability: 'render' as const }
-    expect(evaluateStudioLifecycleRollout({ scope, flags: [] })).toEqual({ enabled: false, legacyFallbackEnabled: true, dualReadEnabled: false, canary: 'not_configured', matchedFlagId: null })
+    expect(evaluateStudioLifecycleRollout({ scope, flags: [] })).toEqual({
+      enabled: false,
+      legacyFallbackAvailable: true,
+      fallbackExecution: 'client_orchestrated',
+      dualReadEnabled: false,
+      canary: 'not_configured',
+      matchedFlagId: null,
+      reason: 'default_off',
+    })
     expect(evaluateStudioLifecycleRollout({ scope, flags: [
       { id: 'owner-wide', scope: { ownerId: 'owner-1' }, enabled: true, canaryPercent: 100 },
       { id: 'exact-render', scope, enabled: true, dualReadEnabled: true, canaryPercent: 100 },
     ] })).toMatchObject({ enabled: true, dualReadEnabled: true, canary: 'included', matchedFlagId: 'exact-render' })
     expect(evaluateStudioLifecycleRollout({ scope, flags: [{ id: 'excluded', scope, enabled: true, canaryPercent: 0 }] }))
-      .toMatchObject({ enabled: false, legacyFallbackEnabled: true, canary: 'excluded' })
+      .toMatchObject({ enabled: false, legacyFallbackAvailable: true, canary: 'excluded' })
+    expect(evaluateStudioLifecycleRollout({
+      scope,
+      flags: [
+        { id: 'duplicate-a', scope, enabled: true, canaryPercent: 100 },
+        { id: 'duplicate-b', scope, enabled: true, canaryPercent: 100 },
+      ],
+    })).toMatchObject({
+      enabled: false,
+      matchedFlagId: null,
+      reason: 'duplicate_scope_ambiguous',
+    })
   })
 
   it('keeps rollback additive and reports every owned rollout operation signal', () => {
@@ -188,5 +211,27 @@ describe('V3 lifecycle boundary', () => {
     const report = JSON.parse(output) as { ok: boolean; productionMutation: boolean; networkAccess: boolean; roadmapReconciliation: { mismatchCount: number; counts: Record<string, { sourceDefined: number }> } }
     expect(report).toMatchObject({ ok: true, productionMutation: false, networkAccess: false, roadmapReconciliation: { mismatchCount: 0 } })
     expect(report.roadmapReconciliation.counts).toMatchObject({ ownerId: { sourceDefined: 1 }, publishState: { sourceDefined: 1 } })
+  })
+
+  it('keeps DDL validation held and makes no unproven low-lock claim', () => {
+    const output = execFileSync('node', [
+      'scripts/creative-studio-lifecycle-ddl-preflight.mjs',
+    ], { cwd: process.cwd(), encoding: 'utf8' })
+    const report = JSON.parse(output) as {
+      ok: boolean
+      productionMutation: boolean
+      networkAccess: boolean
+      representativeDatabaseRehearsal: string
+      lowLockProof: boolean
+      checks: { validationHeldOutsideDeploy: boolean }
+    }
+    expect(report).toMatchObject({
+      ok: true,
+      productionMutation: false,
+      networkAccess: false,
+      representativeDatabaseRehearsal: 'not_run',
+      lowLockProof: false,
+      checks: { validationHeldOutsideDeploy: true },
+    })
   })
 })

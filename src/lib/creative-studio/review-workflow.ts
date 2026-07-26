@@ -34,6 +34,10 @@ export type StudioReviewEvent = {
   actorRole: StudioAccessRole
   note: string | null
   approvedVersionId: string | null
+  approvedCompositionId: string | null
+  approvedCompositionVersionId: string | null
+  approvedCompositionVersion: number | null
+  approvedCompositionDocumentHash: string | null
   createdAt: string
 }
 
@@ -48,6 +52,11 @@ export type StudioReviewThread = {
   currentSequence: number
   latestVersionId: string | null
   approvedVersionId: string | null
+  approvedCompositionId: string | null
+  approvedCompositionVersionId: string | null
+  approvedCompositionVersion: number | null
+  approvedCompositionDocumentHash: string | null
+  approvalInvalidatedReason: string | null
   publishReady: boolean
   role: StudioAccessRole
   approvalSpendThresholdBdt: number
@@ -220,9 +229,31 @@ function serializeThread(
       actorName: String(actor.name ?? 'Studio user'),
       actorRole: role(event.actorRole),
       note: typeof event.note === 'string' ? event.note : null,
-      approvedVersionId: typeof metadata.approvedVersionId === 'string'
-        ? metadata.approvedVersionId
-        : null,
+      approvedVersionId: typeof event.approvedArtifactVersionId === 'string'
+        ? event.approvedArtifactVersionId
+        : typeof metadata.approvedVersionId === 'string'
+          ? metadata.approvedVersionId
+          : null,
+      approvedCompositionId: typeof event.compositionId === 'string'
+        ? event.compositionId
+        : typeof metadata.approvedCompositionId === 'string'
+          ? metadata.approvedCompositionId
+          : null,
+      approvedCompositionVersionId: typeof event.compositionVersionId === 'string'
+        ? event.compositionVersionId
+        : typeof metadata.approvedCompositionVersionId === 'string'
+          ? metadata.approvedCompositionVersionId
+          : null,
+      approvedCompositionVersion: Number.isInteger(event.compositionVersion)
+        ? Number(event.compositionVersion)
+        : Number.isInteger(metadata.approvedCompositionVersion)
+          ? Number(metadata.approvedCompositionVersion)
+          : null,
+      approvedCompositionDocumentHash: typeof event.compositionDocumentHash === 'string'
+        ? event.compositionDocumentHash
+        : typeof metadata.approvedCompositionDocumentHash === 'string'
+          ? metadata.approvedCompositionDocumentHash
+          : null,
       createdAt: iso(event.createdAt),
     }
   })
@@ -232,6 +263,10 @@ function serializeThread(
   const approvedVersionId = approvalEvent?.approvedVersionId ?? null
   const latestVersionId = latestVersion ? String(latestVersion.id) : null
   const currentState = reviewState(row.reviewState)
+  const approvedCompositionId = approvalEvent?.approvedCompositionId ?? null
+  const approvedCompositionVersionId = approvalEvent?.approvedCompositionVersionId ?? null
+  const approvedCompositionVersion = approvalEvent?.approvedCompositionVersion ?? null
+  const approvedCompositionDocumentHash = approvalEvent?.approvedCompositionDocumentHash ?? null
 
   return {
     assetId: String(row.id),
@@ -244,6 +279,11 @@ function serializeThread(
     currentSequence: Number(row.reviewSequence ?? 0),
     latestVersionId,
     approvedVersionId,
+    approvedCompositionId,
+    approvedCompositionVersionId,
+    approvedCompositionVersion,
+    approvedCompositionDocumentHash,
+    approvalInvalidatedReason: null,
     publishReady: currentState === 'approved'
       && Boolean(latestVersionId)
       && latestVersionId === approvedVersionId,
@@ -277,7 +317,39 @@ export async function getStudioReviewThread(
   brandProfileId?: string | null,
 ): Promise<StudioReviewThread> {
   const { row, access } = await loadReviewContext(actor, assetId, brandProfileId)
-  return serializeThread(row, access)
+  const thread = serializeThread(row, access)
+  if (!thread.approvedCompositionId && !thread.approvedCompositionVersionId) return thread
+  if (!thread.approvedCompositionId || !thread.approvedCompositionVersionId) {
+    return {
+      ...thread,
+      publishReady: false,
+      approvalInvalidatedReason: 'approval_composition_pin_incomplete',
+    }
+  }
+  const [composition, version] = await Promise.all([
+    db.creativeComposition.findUnique({ where: { id: thread.approvedCompositionId } }),
+    db.creativeCompositionVersion.findUnique({
+      where: { id: thread.approvedCompositionVersionId },
+    }),
+  ])
+  const currentVersionMatches = Boolean(
+    composition
+    && !composition.archivedAt
+    && composition.projectId === thread.projectId
+    && composition.brandProfileId === thread.brandProfileId
+    && version
+    && version.compositionId === composition.id
+    && Number(version.version) === Number(composition.currentVersion)
+    && Number(version.version) === thread.approvedCompositionVersion
+    && version.documentHash === thread.approvedCompositionDocumentHash,
+  )
+  return currentVersionMatches
+    ? thread
+    : {
+        ...thread,
+        publishReady: false,
+        approvalInvalidatedReason: 'approved_composition_version_stale',
+      }
 }
 
 export async function addStudioReviewComment(
@@ -311,6 +383,8 @@ export async function transitionStudioAssetReview(
     targetState: unknown
     note?: unknown
     expectedSequence?: unknown
+    compositionId?: unknown
+    compositionVersionId?: unknown
   },
 ): Promise<StudioReviewThread> {
   const { row, access } = await loadReviewContext(actor, input.assetId, input.brandProfileId)
@@ -331,6 +405,50 @@ export async function transitionStudioAssetReview(
     : null
   if (target === 'approved' && !latestVersion?.id) {
     throw new ReviewWorkflowError('asset_version_required', 409)
+  }
+  const requestedCompositionId = typeof input.compositionId === 'string'
+    ? input.compositionId.trim()
+    : ''
+  const requestedCompositionVersionId = typeof input.compositionVersionId === 'string'
+    ? input.compositionVersionId.trim()
+    : ''
+  if (
+    target === 'approved'
+    && Boolean(requestedCompositionId) !== Boolean(requestedCompositionVersionId)
+  ) throw new ReviewWorkflowError('composition_approval_pin_incomplete', 422)
+
+  let approvedComposition: Record<string, unknown> | null = null
+  let approvedCompositionVersion: Record<string, unknown> | null = null
+  if (target === 'approved' && requestedCompositionId && requestedCompositionVersionId) {
+    const [composition, compositionVersion] = await Promise.all([
+      db.creativeComposition.findUnique({ where: { id: requestedCompositionId } }),
+      db.creativeCompositionVersion.findUnique({
+        where: { id: requestedCompositionVersionId },
+      }),
+    ])
+    if (
+      !composition
+      || composition.archivedAt
+      || composition.projectId !== object(row.project).id
+      || composition.brandProfileId !== access.brandProfileId
+    ) throw new ReviewWorkflowError('composition_scope_mismatch', 403)
+    if (
+      !compositionVersion
+      || compositionVersion.compositionId !== composition.id
+      || Number(compositionVersion.version) !== Number(composition.currentVersion)
+    ) throw new ReviewWorkflowError('stale_composition_version', 409)
+    const referencedNode = await db.creativeCompositionNode.findFirst({
+      where: {
+        compositionVersionId: compositionVersion.id,
+        assetVersionId: String(latestVersion!.id),
+      },
+      select: { id: true },
+    })
+    if (!referencedNode) {
+      throw new ReviewWorkflowError('composition_artifact_version_mismatch', 409)
+    }
+    approvedComposition = composition
+    approvedCompositionVersion = compositionVersion
   }
 
   await db.$transaction(async (tx: typeof db) => {
@@ -357,10 +475,31 @@ export async function transitionStudioAssetReview(
         actorId: actor.userId,
         actorRole: studioRoleToDb(access.role),
         note,
+        compositionId: approvedComposition ? String(approvedComposition.id) : null,
+        compositionVersionId: approvedCompositionVersion
+          ? String(approvedCompositionVersion.id)
+          : null,
+        compositionVersion: approvedCompositionVersion
+          ? Number(approvedCompositionVersion.version)
+          : null,
+        compositionDocumentHash: approvedCompositionVersion
+          ? String(approvedCompositionVersion.documentHash)
+          : null,
+        approvedArtifactVersionId: target === 'approved'
+          ? String(latestVersion!.id)
+          : null,
         metadata: target === 'approved'
           ? {
               approvedVersionId: String(latestVersion!.id),
               approvedVersion: Number(latestVersion!.version ?? 0),
+              ...(approvedComposition && approvedCompositionVersion
+                ? {
+                    approvedCompositionId: String(approvedComposition.id),
+                    approvedCompositionVersionId: String(approvedCompositionVersion.id),
+                    approvedCompositionVersion: Number(approvedCompositionVersion.version),
+                    approvedCompositionDocumentHash: String(approvedCompositionVersion.documentHash),
+                  }
+                : {}),
             }
           : {},
       },

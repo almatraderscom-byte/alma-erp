@@ -40,10 +40,12 @@ export type StudioLifecycleScopedFlag = {
 
 export type StudioLifecycleRolloutDecision = {
   enabled: boolean
-  legacyFallbackEnabled: boolean
+  legacyFallbackAvailable: boolean
+  fallbackExecution: 'client_orchestrated' | 'none'
   dualReadEnabled: boolean
   canary: 'not_configured' | 'included' | 'excluded'
   matchedFlagId: string | null
+  reason: 'default_off' | 'matched' | 'duplicate_scope_ambiguous'
 }
 
 function scopeMatches(flag: StudioLifecycleScopedFlag, scope: StudioLifecycleFlagScope): boolean {
@@ -51,7 +53,17 @@ function scopeMatches(flag: StudioLifecycleScopedFlag, scope: StudioLifecycleFla
 }
 
 function scopeSpecificity(flag: StudioLifecycleScopedFlag): number {
-  return Object.keys(flag.scope).length
+  const weights: Record<keyof StudioLifecycleFlagScope, number> = {
+    ownerId: 1,
+    role: 2,
+    brandProfileId: 4,
+    projectId: 8,
+    capability: 16,
+  }
+  return Object.keys(flag.scope).reduce(
+    (score, key) => score + weights[key as keyof StudioLifecycleFlagScope],
+    0,
+  )
 }
 
 function deterministicCanary(scope: StudioLifecycleFlagScope, salt: string): number {
@@ -59,16 +71,43 @@ function deterministicCanary(scope: StudioLifecycleFlagScope, salt: string): num
   return Number.parseInt(digest.slice(0, 8), 16) % 100
 }
 
-/** Default-off lifecycle admission with legacy fallback kept on. */
+/**
+ * Default-off lifecycle admission. A legacy flag only tells the caller that a
+ * legacy route remains available; this evaluator never executes that fallback.
+ */
 export function evaluateStudioLifecycleRollout(input: {
   scope: StudioLifecycleFlagScope
   flags: StudioLifecycleScopedFlag[]
 }): StudioLifecycleRolloutDecision {
   const matches = input.flags.filter((flag) => scopeMatches(flag, input.scope))
-    .sort((a, b) => scopeSpecificity(b) - scopeSpecificity(a) || a.id.localeCompare(b.id))
+    .sort((a, b) => scopeSpecificity(b) - scopeSpecificity(a))
   const flag = matches[0]
   if (!flag) {
-    return { enabled: false, legacyFallbackEnabled: true, dualReadEnabled: false, canary: 'not_configured', matchedFlagId: null }
+    return {
+      enabled: false,
+      legacyFallbackAvailable: true,
+      fallbackExecution: 'client_orchestrated',
+      dualReadEnabled: false,
+      canary: 'not_configured',
+      matchedFlagId: null,
+      reason: 'default_off',
+    }
+  }
+  if (
+    matches.length > 1
+    && scopeSpecificity(matches[1]) === scopeSpecificity(flag)
+  ) {
+    return {
+      enabled: false,
+      legacyFallbackAvailable: matches.every((entry) => entry.legacyFallbackEnabled !== false),
+      fallbackExecution: matches.every((entry) => entry.legacyFallbackEnabled !== false)
+        ? 'client_orchestrated'
+        : 'none',
+      dualReadEnabled: false,
+      canary: 'not_configured',
+      matchedFlagId: null,
+      reason: 'duplicate_scope_ambiguous',
+    }
   }
   const percent = flag.canaryPercent == null ? null : Math.max(0, Math.min(100, Math.floor(flag.canaryPercent)))
   const canary = percent == null
@@ -78,10 +117,12 @@ export function evaluateStudioLifecycleRollout(input: {
       : 'excluded' as const
   return {
     enabled: flag.enabled && canary !== 'excluded',
-    legacyFallbackEnabled: flag.legacyFallbackEnabled !== false,
+    legacyFallbackAvailable: flag.legacyFallbackEnabled !== false,
+    fallbackExecution: flag.legacyFallbackEnabled !== false ? 'client_orchestrated' : 'none',
     dualReadEnabled: flag.dualReadEnabled === true,
     canary,
     matchedFlagId: flag.id,
+    reason: 'matched',
   }
 }
 

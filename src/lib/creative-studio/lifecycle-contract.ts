@@ -63,10 +63,18 @@ export type StudioRenderProgress = {
 export type StudioArchiveManifest = {
   compositionId: string
   compositionVersionId: string
+  compositionVersion: number
+  compositionDocumentHash: string
+  operationBatchId: string | null
+  operationPackageChecksum: string
   artifactVersionId: string
   artifactChecksum: string
   archiveChecksum: string
+  fetchBackChecksum: string
   storagePath: string
+  playableProxyPath: string | null
+  originalStoragePath: string
+  renderStoragePath: string
   driveFileId: string
   fetchedBackAt: string | null
   verifiedAt: string | null
@@ -221,10 +229,31 @@ export function assertArchiveFetchBackManifest(manifest: StudioArchiveManifest):
   if (!manifest.fetchedBackAt || !manifest.verifiedAt) {
     throw new StudioLifecycleError('archive_fetch_back_required', 409)
   }
-  if (!manifest.artifactChecksum || manifest.artifactChecksum !== manifest.archiveChecksum) {
+  if (
+    !/^[a-f0-9]{64}$/.test(manifest.artifactChecksum)
+    || manifest.artifactChecksum !== manifest.archiveChecksum
+    || manifest.artifactChecksum !== manifest.fetchBackChecksum
+  ) {
     throw new StudioLifecycleError('archive_checksum_mismatch', 409)
   }
-  if (!manifest.driveFileId || !manifest.storagePath) {
+  if (
+    !manifest.driveFileId
+    || !manifest.storagePath
+    || !manifest.compositionId
+    || !manifest.compositionVersionId
+    || !Number.isInteger(manifest.compositionVersion)
+    || manifest.compositionVersion < 1
+    || !/^[a-f0-9]{64}$/.test(manifest.compositionDocumentHash)
+    || !/^[a-f0-9]{64}$/.test(manifest.operationPackageChecksum)
+  ) {
     throw new StudioLifecycleError('archive_receipt_incomplete', 409)
+  }
+  const lineage = [
+    manifest.originalStoragePath,
+    manifest.renderStoragePath,
+    manifest.playableProxyPath,
+  ].filter((path): path is string => Boolean(path))
+  if (!lineage.includes(manifest.storagePath) || !manifest.originalStoragePath || !manifest.renderStoragePath) {
+    throw new StudioLifecycleError('archive_lineage_incomplete', 409)
   }
 }
