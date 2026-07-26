@@ -723,6 +723,11 @@ function commandMessage(reason: unknown): string {
       unsafe_operation: 'Only reversible ৳0 operations can use local apply.',
       clarification_required: 'A deterministic target or value is still missing.',
       history_unavailable: 'No matching undo, redo or rollback point is available.',
+      network_unavailable: 'The Foundation service is offline; no edit was applied.',
+      invalid_foundation_response: 'The Foundation response failed contract validation.',
+      unsupported_foundation_mapping: 'This composition shape is not safely representable in the editor.',
+      idempotency_conflict: 'The Foundation rejected a reused command key with different content.',
+      foundation_unavailable: 'The Foundation composition service is unavailable.',
     }
     return messages[reason.message] ?? messages[reason.name] ?? reason.message
   }

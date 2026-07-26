@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyEditorOperations,
-  createEditorFixtureSnapshot,
   type EditorLocalOperation,
 } from '@/lib/creative-studio/editor-agent'
+import { createEditorFixtureSnapshot } from '@/lib/creative-studio/editor-agent/__fixtures__/editor-snapshot'
 
 const BASE = {
   effect: 'local_reversible' as const,

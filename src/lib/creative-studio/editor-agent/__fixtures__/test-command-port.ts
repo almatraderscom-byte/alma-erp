@@ -9,14 +9,16 @@ import {
   type EditorHistoryRequest,
 } from '@/lib/creative-studio/editor-agent/contracts'
 import {
-  acknowledgementMatchesProposal,
-  computeProposalFingerprint,
   shortPlanFingerprint,
 } from '@/lib/creative-studio/editor-agent/fingerprint'
 import {
   applyEditorOperations,
   cloneEditorSnapshot,
 } from '@/lib/creative-studio/editor-agent/operations'
+import {
+  sameEditorCompositionScope,
+  validateEditorApplyPolicy,
+} from '@/lib/creative-studio/editor-agent/proposal-policy'
 
 type HistoryEntry = {
   batchId: string
@@ -25,30 +27,6 @@ type HistoryEntry = {
   after: EditorCompositionSnapshot
   operationIds: string[]
   actorName: string
-}
-
-function sameScope(
-  left: EditorCompositionScope,
-  right: EditorCompositionScope,
-): boolean {
-  return (
-    left.brandProfileId === right.brandProfileId
-    && left.projectId === right.projectId
-    && left.compositionId === right.compositionId
-  )
-}
-
-function validation(
-  snapshot: EditorCompositionSnapshot,
-  ok: boolean,
-  code: EditorCommandValidation['code'],
-): EditorCommandValidation {
-  return {
-    ok,
-    code,
-    currentVersion: snapshot.version,
-    currentConcurrencyToken: snapshot.concurrencyToken,
-  }
 }
 
 function nextToken(snapshot: EditorCompositionSnapshot): string {
@@ -60,17 +38,17 @@ function historyScopeValid(
   request: EditorHistoryRequest,
 ): boolean {
   return (
-    sameScope(snapshot.scope, request.scope)
+    sameEditorCompositionScope(snapshot.scope, request.scope)
     && snapshot.version === request.expectedVersion
     && snapshot.concurrencyToken === request.expectedConcurrencyToken
   )
 }
 
 /**
- * Temporary Workstream-E adapter. It is intentionally process-local, does not
- * call an API, and must be replaced by the Foundation port before rollout.
+ * Test-only command double. Production code uses the authenticated Foundation
+ * HTTP adapter and this class is intentionally absent from the production barrel.
  */
-export class InMemoryCompositionCommandPort implements CompositionCommandPort {
+export class TestCompositionCommandPort implements CompositionCommandPort {
   private current: EditorCompositionSnapshot
   private undoStack: HistoryEntry[] = []
   private redoStack: HistoryEntry[] = []
@@ -80,69 +58,14 @@ export class InMemoryCompositionCommandPort implements CompositionCommandPort {
   }
 
   async load(scope: EditorCompositionScope): Promise<EditorCompositionSnapshot> {
-    if (!sameScope(this.current.scope, scope)) {
+    if (!sameEditorCompositionScope(this.current.scope, scope)) {
       throw new CompositionCommandError('scope_mismatch')
     }
     return cloneEditorSnapshot(this.current)
   }
 
   async validateLocal(request: EditorApplyRequest): Promise<EditorCommandValidation> {
-    const proposal = request.proposal
-    if (!sameScope(this.current.scope, proposal.scope)) {
-      return validation(this.current, false, 'scope_mismatch')
-    }
-    if (request.actor.role === 'reviewer') {
-      return validation(this.current, false, 'role_forbidden')
-    }
-    if (
-      proposal.expectedVersion !== this.current.version
-      || proposal.expectedConcurrencyToken !== this.current.concurrencyToken
-    ) {
-      return validation(this.current, false, 'stale_version')
-    }
-
-    const computed = await computeProposalFingerprint(proposal)
-    if (computed !== proposal.fingerprint) {
-      return validation(this.current, false, 'fingerprint_mismatch')
-    }
-    if (proposal.requiresClarification || proposal.operations.length === 0) {
-      return validation(this.current, false, 'clarification_required')
-    }
-
-    if (proposal.origin === 'agent') {
-      if (
-        request.actor.role !== 'owner'
-        || proposal.actorRoleAtPlan !== request.actor.role
-      ) {
-        return validation(this.current, false, 'role_forbidden')
-      }
-      if (!acknowledgementMatchesProposal(request.acknowledgement, proposal)) {
-        return validation(this.current, false, 'approval_required')
-      }
-      if (
-        request.acknowledgement?.acknowledgedByRole !== 'owner'
-        || request.acknowledgement.acknowledgedByUserId !== request.actor.userId
-      ) {
-        return validation(this.current, false, 'role_forbidden')
-      }
-    }
-
-    if (
-      proposal.operations.some((operation) => (
-        operation.effect !== 'local_reversible'
-        || operation.estimatedCostBdt !== 0
-        || operation.requiredRole === 'owner' && request.actor.role !== 'owner'
-      ))
-    ) {
-      return validation(this.current, false, 'unsafe_operation')
-    }
-
-    try {
-      applyEditorOperations(this.current, proposal.operations)
-    } catch {
-      return validation(this.current, false, 'stale_target')
-    }
-    return validation(this.current, true, 'valid')
+    return validateEditorApplyPolicy(this.current, request, request.actor.role)
   }
 
   async applyLocal(request: EditorApplyRequest): Promise<EditorCommandReceipt> {
@@ -229,7 +152,7 @@ export class InMemoryCompositionCommandPort implements CompositionCommandPort {
     if (request.actor.role === 'reviewer') {
       throw new CompositionCommandError('role_forbidden')
     }
-    if (!sameScope(this.current.scope, request.scope)) {
+    if (!sameEditorCompositionScope(this.current.scope, request.scope)) {
       throw new CompositionCommandError('scope_mismatch')
     }
     if (!historyScopeValid(this.current, request)) {
@@ -285,8 +208,8 @@ export class InMemoryCompositionCommandPort implements CompositionCommandPort {
   }
 }
 
-export function createInMemoryCompositionCommandPort(
+export function createTestCompositionCommandPort(
   initial: EditorCompositionSnapshot,
 ): CompositionCommandPort {
-  return new InMemoryCompositionCommandPort(initial)
+  return new TestCompositionCommandPort(initial)
 }

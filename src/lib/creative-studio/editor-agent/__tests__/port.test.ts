@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   compileCreativeAgentInstruction,
-  createEditorFixtureSnapshot,
-  createInMemoryCompositionCommandPort,
   createOperationProposal,
   type AgentPlanningContext,
   type EditorActor,
   type EditorTrackVolumeOperation,
   type OwnerPlanAcknowledgement,
 } from '@/lib/creative-studio/editor-agent'
+import { createEditorFixtureSnapshot } from '@/lib/creative-studio/editor-agent/__fixtures__/editor-snapshot'
+import { createTestCompositionCommandPort } from '@/lib/creative-studio/editor-agent/__fixtures__/test-command-port'
 
 const OWNER: EditorActor = { userId: 'owner-1', name: 'Owner', role: 'owner' }
 
@@ -38,14 +38,14 @@ function acknowledgement(
   }
 }
 
-describe('temporary CompositionCommandPort adapter', () => {
+describe('test-only CompositionCommandPort double', () => {
   it('applies an acknowledged local batch and appends version-derived audit IDs', async () => {
     const context = planningContext()
     const proposal = await compileCreativeAgentInstruction(
       'Move caption to first beat and lower music to 12%.',
       context,
     )
-    const port = createInMemoryCompositionCommandPort(context.snapshot)
+    const port = createTestCompositionCommandPort(context.snapshot)
     const receipt = await port.applyLocal({
       proposal,
       acknowledgement: acknowledgement(proposal),
@@ -71,7 +71,7 @@ describe('temporary CompositionCommandPort adapter', () => {
       'Move caption to first beat and lower music to 12%.',
       context,
     )
-    const port = createInMemoryCompositionCommandPort(context.snapshot)
+    const port = createTestCompositionCommandPort(context.snapshot)
     const applied = await port.applyLocal({
       proposal,
       acknowledgement: acknowledgement(proposal),
@@ -135,7 +135,7 @@ describe('temporary CompositionCommandPort adapter', () => {
       normalizedInstruction: 'set music volume to 10%',
       operations: [operation],
     })
-    const port = createInMemoryCompositionCommandPort(snapshot)
+    const port = createTestCompositionCommandPort(snapshot)
     const receipt = await port.applyLocal({ proposal, actor: OWNER })
 
     expect(receipt.snapshot.tracks[4].clips[0].volume).toBe(0.1)
@@ -162,7 +162,7 @@ describe('temporary CompositionCommandPort adapter', () => {
       normalizedInstruction: 'set missing music volume',
       operations: [operation],
     })
-    const port = createInMemoryCompositionCommandPort(snapshot)
+    const port = createTestCompositionCommandPort(snapshot)
 
     await expect(port.validateLocal({ proposal, actor: OWNER })).resolves.toMatchObject({
       ok: false,
@@ -178,7 +178,7 @@ describe('temporary CompositionCommandPort adapter', () => {
       'Move caption to first beat.',
       planningContext(),
     )
-    const port = createInMemoryCompositionCommandPort(snapshot)
+    const port = createTestCompositionCommandPort(snapshot)
     const receipt = await port.applyLocal({
       proposal,
       acknowledgement: acknowledgement(proposal),

@@ -1,3 +1,4 @@
+// Test-only editor projection. Production snapshots come from the Foundation adapter.
 import {
   EDITOR_AGENT_CONTRACT_VERSION,
   type EditorClip,

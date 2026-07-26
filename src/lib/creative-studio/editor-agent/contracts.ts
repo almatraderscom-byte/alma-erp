@@ -55,7 +55,7 @@ export type EditorAssetReference = {
   provider: string | null
   engine: string | null
   recipeVersion: number | null
-  costBdt: number
+  costBdt: number | null
   qcLabel: string | null
   artifact: StudioArtifactDescriptor | null
   referenceContract: StudioReferenceContract | null

@@ -495,12 +495,12 @@ function InspectorPanel({
           </header>
           <dl className={styles.provenanceGrid}>
             <div><dt>Asset version</dt><dd>{asset.assetVersionId}</dd></div>
-            <div><dt>Provider / model</dt><dd>{asset.provider ?? 'ALMA'} · {asset.engine ?? 'local'}</dd></div>
+            <div><dt>Provider / model</dt><dd>{asset.provider ?? 'Not hydrated'} · {asset.engine ?? 'Not hydrated'}</dd></div>
             <div><dt>Requested</dt><dd>{asset.artifact?.requestedTier?.toUpperCase() ?? 'source'} · {asset.artifact?.requestedAspectRatio ?? 'native'}</dd></div>
-            <div><dt>Delivered</dt><dd>{artifactDimensionLabel(asset.artifact) ?? 'Verified by source contract'}</dd></div>
+            <div><dt>Delivered</dt><dd>{artifactDimensionLabel(asset.artifact) ?? 'Descriptor not hydrated'}</dd></div>
             <div><dt>Reference roles</dt><dd>{asset.referenceContract?.bindings.map((binding) => binding.role).join(' → ') ?? 'No provider reference'}</dd></div>
             <div><dt>QC</dt><dd>{asset.qcLabel ?? 'Not available'}</dd></div>
-            <div><dt>Provider cost</dt><dd>৳{asset.costBdt} recorded</dd></div>
+            <div><dt>Provider cost</dt><dd>{asset.costBdt === null ? 'Not hydrated' : `৳${asset.costBdt} recorded`}</dd></div>
             <div><dt>Local edit</dt><dd>৳0 · reversible</dd></div>
           </dl>
         </section>

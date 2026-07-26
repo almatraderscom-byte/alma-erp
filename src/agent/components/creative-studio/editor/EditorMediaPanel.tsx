@@ -209,7 +209,7 @@ export function EditorMediaPanel({
                     </span>
                     <span className={styles.assetCopy}>
                       <strong>{asset.title}</strong>
-                      <small>{asset.provider ?? 'ALMA local'} · {asset.status}</small>
+                      <small>{asset.provider ?? 'Provider not recorded'} · {asset.status}</small>
                       <em>{placedClip ? 'In composition' : 'Source only'}</em>
                     </span>
                     <span

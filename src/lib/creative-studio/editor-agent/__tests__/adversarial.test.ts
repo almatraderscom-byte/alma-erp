@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   compileCreativeAgentInstruction,
   computeProposalFingerprint,
-  createEditorFixtureSnapshot,
-  createInMemoryCompositionCommandPort,
   verifyEditorJobObservation,
   type AgentPlanningContext,
   type EditorActor,
   type OwnerPlanAcknowledgement,
 } from '@/lib/creative-studio/editor-agent'
 import type { StudioArtifactDescriptor } from '@/lib/creative-studio/artifact-metadata'
+import { createEditorFixtureSnapshot } from '@/lib/creative-studio/editor-agent/__fixtures__/editor-snapshot'
+import { createTestCompositionCommandPort } from '@/lib/creative-studio/editor-agent/__fixtures__/test-command-port'
 
 const OWNER: EditorActor = { userId: 'owner-1', name: 'Owner', role: 'owner' }
 
@@ -97,7 +97,7 @@ describe('Creative Agent adversarial boundaries', () => {
         actor: { userId: 'reviewer-1', name: 'Reviewer', role: 'reviewer' },
       },
     )
-    const port = createInMemoryCompositionCommandPort(base.snapshot)
+    const port = createTestCompositionCommandPort(base.snapshot)
     const result = await port.validateLocal({
       proposal,
       actor: { userId: 'reviewer-1', name: 'Reviewer', role: 'reviewer' },
@@ -114,7 +114,7 @@ describe('Creative Agent adversarial boundaries', () => {
       'Move caption to first beat.',
       { ...base, actor: creator },
     )
-    const port = createInMemoryCompositionCommandPort(base.snapshot)
+    const port = createTestCompositionCommandPort(base.snapshot)
 
     await expect(port.validateLocal({
       proposal,
@@ -130,7 +130,7 @@ describe('Creative Agent adversarial boundaries', () => {
 
   it('invalidates an acknowledged plan after composition version drift', async () => {
     const base = planningContext()
-    const port = createInMemoryCompositionCommandPort(base.snapshot)
+    const port = createTestCompositionCommandPort(base.snapshot)
     const first = await compileCreativeAgentInstruction(
       'Move caption to first beat.',
       base,
@@ -155,7 +155,7 @@ describe('Creative Agent adversarial boundaries', () => {
       'Generate a 4 second video clip.',
       planningContext(),
     )
-    const port = createInMemoryCompositionCommandPort(createEditorFixtureSnapshot())
+    const port = createTestCompositionCommandPort(createEditorFixtureSnapshot())
     const acknowledged = acknowledgement(proposal)
     const changed = structuredClone(proposal)
     changed.pendingActions[0].estimatedCostBdt = 99
