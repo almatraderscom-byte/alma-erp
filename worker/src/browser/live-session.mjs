@@ -268,9 +268,18 @@ async function startSession({ startUrl, goal, profile, stream }) {
       if (!session || session.paused || session.clients.size === 0) return
       if (Date.now() - session.lastFrameSentAt < STATIC_CAPTURE_MS) return
       try {
-        const buf = await session.page.screenshot({ type: 'jpeg', quality: session.stream.quality })
+        // Captured through CDP rather than page.screenshot() so it honours the
+        // session's width: page.screenshot always renders the full viewport, which
+        // silently sent a phone the desktop-sized picture it had just asked not to
+        // get — the scaled screencast frames were small, these were not.
+        const { quality, width } = session.stream
+        const shot = await session.cdp.send('Page.captureScreenshot', {
+          format: 'jpeg',
+          quality,
+          clip: { x: 0, y: 0, width: VIEWPORT.width, height: VIEWPORT.height, scale: width / VIEWPORT.width },
+        })
         session.lastFrameSentAt = Date.now()
-        session.lastFrame = buf.toString('base64')
+        session.lastFrame = shot.data
         broadcast('frame', { data: session.lastFrame })
       } catch {
         /* mid-navigation screenshots can fail; the next tick covers it */
