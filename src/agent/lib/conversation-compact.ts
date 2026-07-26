@@ -17,6 +17,23 @@ const db = prisma as any
 // long-standing behaviour where the agent remembered everything within a chat.
 export const COMPACT_THRESHOLD_USD = Number(process.env.AGENT_COMPACT_THRESHOLD_USD || '25')
 
+/**
+ * OWNER RULING 2026-07-26 — compact on the CONTEXT WINDOW, not on dollars.
+ *
+ * *"amr akhon compect system chilo $ doller diye, eta change kore … token er
+ * upor hobe, mane model er token ja thakbe sheta cross korley usage e jokhn 100%
+ * hobe auto compect hobe."*
+ *
+ * He is right, and this is how every serious agent app behaves. Cost and context
+ * are different things: a cheap model can fill its window long before $25, and
+ * an expensive one can cost $25 while barely a third full. Compaction exists to
+ * stop a conversation OVERFLOWING, so the window is the only honest trigger.
+ *
+ * The dollar valve stays as a second, far-off backstop — if something pathological
+ * spends $25 in one chat, folding it is still the right call.
+ */
+export const COMPACT_CONTEXT_PERCENT = Number(process.env.AGENT_COMPACT_CONTEXT_PERCENT || '100')
+
 export async function getConversationCostUsd(conversationId: string): Promise<number> {
   const rows = await prisma.$queryRaw<Array<{ total: string | null }>>(
     Prisma.sql`SELECT COALESCE(SUM(cost_usd), 0)::text AS total
@@ -30,6 +47,50 @@ export async function getConversationCostUsd(conversationId: string): Promise<nu
   })
   const tracked = Number(conv?.totalCostUsd ?? 0) || 0
   return Math.max(fromEvents, tracked)
+}
+
+/**
+ * Has this conversation filled the head's context window?
+ *
+ * Measured the same way the Usage meter measures it, so what Boss sees at 100%
+ * is exactly what triggers the fold — no second opinion, no drift between the
+ * number on screen and the number in the code.
+ *
+ * Fails CLOSED (returns false) if anything is unknown: an unmeasurable window
+ * must never cause a surprise fold, since folding throws history away.
+ */
+export async function isContextWindowFull(
+  conversationId: string,
+  modelId: string | null,
+  percentLimit = COMPACT_CONTEXT_PERCENT,
+): Promise<boolean> {
+  try {
+    const { getModel, isKnownModelId } = await import('@/agent/lib/models/registry')
+    const { readContextUsage } = await import('@/agent/lib/usage-intelligence')
+
+    const latest = await db.agentMessage.findFirst({
+      where: { conversationId, role: 'assistant' },
+      orderBy: { createdAt: 'desc' },
+      select: { usage: true },
+    })
+    if (!latest?.usage) return false
+
+    const usage = latest.usage as Record<string, unknown>
+    const resolvedId = typeof usage.model === 'string' && isKnownModelId(usage.model)
+      ? usage.model
+      : (modelId && isKnownModelId(modelId) ? modelId : null)
+    if (!resolvedId) return false
+
+    const window = getModel(resolvedId)?.contextWindow
+    if (!window || window <= 0) return false
+
+    const used = readContextUsage(usage, true).tokens
+    if (!used || used <= 0) return false
+
+    return (used / window) * 100 >= percentLimit
+  } catch {
+    return false
+  }
 }
 
 function extractText(content: unknown): string {
@@ -83,10 +144,15 @@ export async function compactConversationIfNeeded(
   })
   if (!conv || conv.compactedToId || conv.archived) return null
 
-  // Cost-only safety valve — never a day-boundary fold. Full history is kept
-  // until a conversation gets genuinely expensive, so the agent keeps remembering.
+  // Never a day-boundary fold. Full history is kept until the chat genuinely
+  // needs folding, so the agent keeps remembering inside a conversation.
+  //
+  // Context first (owner ruling 2026-07-26): fold when the conversation has
+  // filled the head's window, because that is what compaction is FOR. Cost stays
+  // as a far-off second valve for a pathological chat.
+  const contextFull = await isContextWindowFull(conversationId, conv.modelId)
   const costUsd = await getConversationCostUsd(conversationId)
-  if (costUsd < thresholdUsd) return null
+  if (!contextFull && costUsd < thresholdUsd) return null
 
   const messages = await db.agentMessage.findMany({
     where: { conversationId },

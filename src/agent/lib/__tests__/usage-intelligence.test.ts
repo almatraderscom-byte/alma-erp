@@ -32,13 +32,19 @@ describe('usage intelligence context telemetry', () => {
     })
   })
 
-  it('waits for a new provider measurement after the selected model changes', () => {
+  // REVERSED by owner report, 2026-07-26: "model change korle context sunno hoye
+  // jay". The old rule threw the measurement away and showed zero until the new
+  // head produced its own. But the conversation did not shrink — the same
+  // messages are still there; only the window changed. Showing 0 of 200k for a
+  // chat that plainly holds 50k is worse than showing a number from another
+  // tokenizer, so the measurement carries over and is marked inexact.
+  it('keeps the measurement across a model change, flagged as inexact', () => {
     expect(readContextUsage({
       context_tokens: 50_000,
       context_source: 'provider_last_round',
     }, false)).toEqual({
-      tokens: null,
-      source: 'awaiting_provider',
+      tokens: 50_000,
+      source: 'provider_last_round',
       measuredAt: null,
       exact: false,
     })

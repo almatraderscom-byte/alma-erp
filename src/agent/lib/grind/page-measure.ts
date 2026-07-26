@@ -56,6 +56,46 @@ const attr = (tag: string, name: string): string | null => {
 const tagsOf = (html: string, tagName: string): string[] =>
   html.match(new RegExp(`<${tagName}\\b[^>]*>`, 'gi')) ?? []
 
+/**
+ * Images that carry meaning — the only ones an empty alt is a defect on.
+ *
+ * Excluded: anything the author explicitly marked decorative (aria-hidden,
+ * role="presentation"), anything inside such a container, and tracking pixels.
+ * The owner lost an afternoon to this on 2026-07-26: the audit's headline
+ * "52+ images without alt" was a decorative <div aria-hidden="true"> footer
+ * strip that was already correct HTML.
+ *
+ * The container scan is deliberately shallow — a single aria-hidden block up to
+ * its next </div>. That covers the real markup; anything cleverer would be a
+ * parser, and this file is the cheap mirror of the crawler, not a second one.
+ */
+export function contentImages(html: string): string[] {
+  const stripped = html.replace(/<div\b[^>]*aria-hidden\s*=\s*["']true["'][^>]*>[\s\S]*?<\/div>/gi, '')
+  return tagsOf(stripped, 'img').filter((t) => {
+    if ((attr(t, 'aria-hidden') ?? '') === 'true') return false
+    if ((attr(t, 'role') ?? '') === 'presentation') return false
+    const src = attr(t, 'src') ?? ''
+    if (/facebook\.com\/tr|\/pixel|analytics|googletagmanager/i.test(src)) return false
+    return !((attr(t, 'width') ?? '') === '1' && (attr(t, 'height') ?? '') === '1')
+  })
+}
+
+/**
+ * Content images with no accessible name at all.
+ *
+ * An empty alt is fine when the wrapping control already carries the name —
+ * almatraders.com's thumbnails are `<button aria-label="…"><img alt=""/></button>`,
+ * and an alt there makes a screen reader say it twice. Those images still COUNT
+ * (Google Images cares, so the ratio should see them); they are just not missing.
+ */
+export function imagesMissingAlt(html: string): string[] {
+  const withoutNamedControls = html.replace(
+    /<(button|a)\b[^>]*aria-label\s*=\s*["'][^"']+["'][^>]*>[\s\S]*?<\/\1>/gi,
+    '',
+  )
+  return contentImages(withoutNamedControls).filter((t) => !(attr(t, 'alt') ?? '').trim())
+}
+
 function metaContent(html: string, key: 'name' | 'property', value: string): string | null {
   for (const tag of tagsOf(html, 'meta')) {
     const k = attr(tag, key)
@@ -135,13 +175,16 @@ export function measurePageIssues(html: string, pageUrl: string): PageIssue[] {
   if (jsonLdTypes.length === 0) add('medium', 'missing_structured_data', 'কোনো schema.org (JSON-LD) নেই')
   if (jsonLdTypes.includes('INVALID')) add('medium', 'invalid_structured_data', 'JSON-LD ভাঙা')
 
-  const imgs = tagsOf(html, 'img')
-  const missingAlt = imgs.filter((t) => !(attr(t, 'alt') ?? '').trim()).length
+  // Same rule as the crawler (worker/src/seo/audit.mjs): a decorative image is
+  // SUPPOSED to carry alt="". The verifier must agree with the finder, or a
+  // correct page reads as broken forever.
+  const imgs = contentImages(html)
+  const missingAlt = imagesMissingAlt(html).length
   if (imgs.length > 0 && missingAlt > 0) {
     add(
       missingAlt > imgs.length / 2 ? 'medium' : 'low',
       'missing_img_alt',
-      `${imgs.length}টা ছবির মধ্যে ${missingAlt}টায় alt নেই`,
+      `${imgs.length}টা কনটেন্ট ছবির মধ্যে ${missingAlt}টায় alt নেই`,
     )
   }
 

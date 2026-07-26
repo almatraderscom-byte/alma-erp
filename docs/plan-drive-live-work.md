@@ -62,6 +62,18 @@ up the todo list, work visibly step by step, narrate what it just learned, take
 correction mid-flight, and finish. The measure is whether Boss can watch without
 asking a single "what is happening?" question.
 
+**G10 — the working clock is on screen.**
+Owner ask 2026-07-26: the timer starts when the work starts, ticks while it runs,
+and the total stays beside the tokens afterwards ("⏱ 24m 20s") — the way his own
+Claude badge reads. He should never have to guess how long something has taken.
+
+## Status (2026-07-26)
+
+Merged and live: G1, G2, G3, G4, G5, G6, G8.
+On preview awaiting live proof: G10, plus the honesty fixes (fake timeout, fix-vs-audit,
+"don't ask me"), history trimming and checkpoint-resume.
+Open: G7 (native parity — web proof first, then iOS, and tell him before touching iOS).
+
 ## Standard this is held to
 
 > "ami jodi tmk claude app e ei session e ei same task ta ditam, tmi jevabe live

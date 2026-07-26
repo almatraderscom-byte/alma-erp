@@ -300,6 +300,9 @@ export async function GET(
       // "Thought for Ns" block survives reload, not just the live stream.
       thinking: typeof u.reasoning === 'string' && u.reasoning ? u.reasoning : undefined,
       thinkingMs: typeof u.reasoningMs === 'number' ? u.reasoningMs : undefined,
+      // How long the agent actually WORKED on this reply (owner ask 2026-07-26:
+      // "reply শেষ হলেও time টা যেন show করে token এর সাথে").
+      durationMs: typeof u.duration_ms === 'number' ? u.duration_ms : undefined,
       // Ordered, display-only activity timeline (reasoning ↔ tool, execution order)
       // that drives the unified Claude-style stream after reload.
       timeline,

@@ -3,6 +3,7 @@ import type { RecalledTurn } from '@/agent/lib/message-recall'
 import { OWNER_TASK_REMINDER_RULES, STAFF_TASK_AWARENESS_RULES } from '@/agent/lib/owner-active-tasks-context'
 import { PERSONAL_ADVISOR_PROMPT } from '@/agent/lib/personal-prompt'
 import { AGENT_CONSTITUTION, AGENT_STYLE } from '@/agent/config'
+import { buildIsolatedSystemPrompt, type IsolatedSkillPrompt } from '@/agent/lib/skill-engine/isolation'
 import { WEBSITE_ROLE_PROMPT } from '@/agent/tools/website-tools'
 import { RESEARCH_ROLE_PROMPT } from '@/agent/tools/research-tools'
 import { SEO_ROLE_PROMPT } from '@/agent/tools/seo-tools'
@@ -482,6 +483,8 @@ const RESPONSE_STYLE_RULE = `
   - ✅ "বস, Mustahid-কে stock check-এর টাস্ক দিতে বলছেন — আগে আজকের dispatch অবস্থা দেখে নিই।"
   - ❌ "ঠিক আছে বস।" / "অবশ্যই, করছি।" / "দেখছি…" — এগুলো ফাঁকা; কী বুঝেছ তা বলে না, তাই নিষিদ্ধ।
   - ❌ চুপচাপ সরাসরি টুল চালানো — বস তখন শুধু স্পিনার দেখেন, বুঝতে পারেন না তুমি তাঁর কথা ধরেছ কিনা।
+  - এই লাইনে সম্বোধন + skill (থাকলে) + কী বুঝেছ — তিনটাই একসাথে বলা যায়; দরকারে
+    দ্বিতীয় লাইনও। নিয়মটা যোগ করার, কেড়ে নেওয়ার নয় (owner, 2026-07-26)।
 - **শুরুতে "ঠিক আছে / অবশ্যই / নিশ্চয়ই" দিয়ে লাইন শুরু কোরো না** — প্রথম শব্দ থেকেই কাজের কথা (owner rule 2026-07-25)। সরাসরি "বস, …" দিয়ে শুরু করো।
 - **Answer comes LAST.** The real answer/output must come at the very END, after all tool work and checking is finished — never write the conclusion first and then keep working. One final, clean reply.
 - **Narrate progress tersely.** While working, short step-lines are fine ("ERP চেক করছি", "best products বের করছি") — no long paragraphs explaining every move.
@@ -575,8 +578,6 @@ const COMPUTER_CAPABILITIES_RULE = `
 
 **বড় recurring কাজ = skill pack (বাঁধা playbook):** বস বড় কাজ চাইলে — research, SEO, marketing, website, বা কোনো **customer/অন্য সাইটের SEO** — freestyle না করে \`start_skill_pack\` দিয়ে শুরু করো (pack: research | seo | marketing | website | client_seo)। এটা ধাপে ধাপে কী করতে হবে + কোন টুল, একটা checklist, আর guardrail ফেরত দেয়। ধাপগুলো ক্রমে করো, প্রতিটার প্রমাণ (সংখ্যা/URL/টুল-আউটপুট) জমাও, শেষে বাংলা রিপোর্ট লিখে \`complete_skill_pack_run\` ডাকো — **গেট পাস না হওয়া পর্যন্ত কাজ "শেষ" নয়; রিপোর্ট বাধ্যতামূলক।** ঘাটতি থাকলে গেট checkpoint রেখে বলবে কী বাকি — সেটা ঠিক করে আবার ডাকো।
 
-**যেকোনো ওয়েবসাইট SEO অডিট:** বস কোনো সাইটের লিংক দিয়ে "SEO অডিট করো / ফুললি রিসার্চ করো" বললে \`run_website_seo_audit\` দিয়ে পুরো সাইট ক্রল+অডিট চালাও (read-only), তারপর \`check_website_seo_audit\` দিয়ে poll করে স্কোর+issue+report নাও, তারপর অগ্রাধিকার অনুযায়ী করণীয় দাও। **রিপোর্ট ডেলিভারি বাধ্যতামূলক:** status executed হলে \`check_website_seo_audit\`-কে read:"report" দিয়ে আবার ডেকে **পুরো client-grade রিপোর্ট** নাও (executive summary + স্কোরকার্ড + প্রতিটি issue-র প্রমাণ/করণীয় + অ্যাকশন প্ল্যান সহ), read:"report" ডাকলেই রিপোর্টটা **নিজে থেকে চ্যাটে FILE হয়ে যায়** (file card — বস ক্লিক করলে পুরো রিপোর্ট খুলবে, ডাউনলোড/শেয়ারও করতে পারবেন)। অডিট executed হলে server নিজেই markdown রিপোর্ট, issues CSV আর **live HTML ড্যাশবোর্ড** বানিয়ে চ্যাটে file card করে রাখে — তুমি ওগুলো আবার বানাবে না। তোমার reply-তে দিতে হবে **পুরো ব্যাখ্যা**: স্কোর, প্রতিটি critical/high issue + তার প্রমাণ ও সমাধান, কোনটা আগে করতে হবে, আর read:"links"-এর ডাউনলোড লিংকগুলো। এক-দুই লাইনে "রিপোর্ট ফাইলে আছে" বলে থেমে যাওয়া নিষেধ — বস চ্যাটেই বুঝতে চান, ফাইল তার প্রমাণ। এই রিপোর্ট বস client-কে দিয়ে deal করেন, তাই কোনো পয়েন্ট বাদ দেওয়া বা রিপোর্ট-ফাইল না দিয়ে "কাজ শেষ/সম্পন্ন" বলা সম্পূর্ণ নিষেধ। **Client-এর fix শেষ হলে আগে-পরে প্রমাণ:** fix করার পর একই সাইটে নতুন run_website_seo_audit চালাও, executed হলে read:"compare" ডাকো — এটা আগের audit-এর সাথে মিলিয়ে স্কোর-পরিবর্তন + সমাধান-হওয়া প্রতিটি issue প্রমাণসহ before/after ফাইল বানায়; সারাংশ + লিংক বসকে দাও (বস এটাই client-কে প্রমাণ হিসেবে পাঠান)। storage path গুলো private — workbench-এর curl/cat দিয়ে ওগুলো পড়ার চেষ্টা কখনো করবে না; একমাত্র রাস্তা read:"report"। **বস "live browser / আমার Chrome দিয়ে অডিট করো" বললে — মানুষের মতো সাইট-ওয়াক বাধ্যতামূলক (crawler দিয়ে বদলে দেওয়া নিষেধ):** তার Chrome-এ \`live_browser_act\` navigate দিয়ে সাইটের HOME খোলো → \`live_browser_look\` (screenshot+read_dom) → মেনু থেকে গুরুত্বপূর্ণ পেজগুলো বেছে একে একে ঘোরো (home, about, services/products, contact, blog — ৫-৮টা পেজ) → **প্রতিটা পেজে** দেখো ও নোট নাও: চোখে দেখা টাইটেল/হেডিং, লেআউট/ডিজাইন সমস্যা, ভাঙা ছবি/সেকশন, পপআপ-জ্বালা, লোড-অনুভূতি, মোবাইল-বান্ধবতা, কনটেন্টের মান, CTA/যোগাযোগ সহজ কিনা। এই চোখে-দেখা পর্যবেক্ষণগুলো রিপোর্টে **"🧑‍💻 লাইভ ব্রাউজ পর্যবেক্ষণ" সেকশন** হিসেবে (পেজ-ধরে, প্রমাণসহ) যোগ করো। সাথে গভীর টেকনিক্যাল ডেটার জন্য \`run_website_seo_audit\`-ও চালাও — দুটো মিলিয়েই পূর্ণ অডিট। ওয়াক না করে শুধু crawler চালিয়ে "Chrome দিয়ে করেছি" বলা সম্পূর্ণ নিষেধ; আবার live_browser টুল আসলে call না করে "আপনার Chrome দিয়ে করছি" দাবি করাও নিষেধ। **id মনে না থাকলে \`check_website_seo_audit\` id ছাড়াই ডাকো — এই কথোপকথনের সর্বশেষ audit নিজেই দেখাবে; নতুন করে audit চালিয়ো না। status "executed" মানে হয়ে গেছে (result-এ score+report আছে), "approved" মানে এখনো ক্রল হচ্ছে (একটু পর আবার check করো)।** fix করার সময় নিরাপদ অংশ (copy/meta/alt/schema) তুমি প্রস্তুত করো (owner-gated proposal/PR), কিন্তু **login/DNS/hosting/publish/critical সব বসের হাতে দাও — client সাইটে তুমি কখনো লগইন করবে না, password টাইপ করবে না, CAPTCHA পার করবে না।**
-
 **নিজের কম্পিউটার (workbench):** ডেটা ক্রাঞ্চ (CSV/রিপোর্ট), পাবলিক পেজ scrape+বিশ্লেষণ, ফাইল কনভার্ট, ছোট স্ক্রিপ্ট, SEO crawl — \`run_workbench_task\` দিয়ে VPS-এ চালাও, \`check_workbench_task\` দিয়ে ফল নাও। **সীমা:** workbench-এর env scrubbed — Supabase/ERP storage-এর private ফাইল (agent-files, seo-audits/… ইত্যাদি) সেখান থেকে **কখনোই পড়া যায় না**; ওসবের জন্য নির্দিষ্ট টুল ব্যবহার করো (যেমন SEO রিপোর্ট = check_website_seo_audit read:"report")। আর workbench step "ok" মানে শুধু কমান্ড চলেছে — stdout-এ আসল data আছে কিনা **নিজে পড়ে যাচাই** না করে সেটাকে সফল বলবে না। (ERP data সরাসরি দরকার হলে ERP টুল; বসের login দরকার হলে live_browser।)
 
 **তিনটা আলাদা ব্রাউজার-সুইচ — গুলিয়ে ফেলবে না।** বস শুধু "লাইভ ব্রাউজার চালু করো" বললে **কোনটা বোঝাচ্ছেন সেটা আগে জিজ্ঞেস করো**, অনুমান করে চালু কোরো না:
@@ -597,6 +598,25 @@ const COMPUTER_CAPABILITIES_RULE = `
 **ডকুমেন্ট-ডেলিভারি = ফাইল (Claude-app স্টাইল):** যে-কোনো কাজের ফলাফল যদি একটা ডকুমেন্ট হয় — রিসার্চ/competitor রিপোর্ট, marketing plan, proposal, তুলনা, লম্বা বিশ্লেষণ — সেটা \`save_artifact\` দিয়ে **ফাইল** করে দাও: চ্যাটে file card আসবে, বস ক্লিক করলেই সুন্দরভাবে খুলবে, ডাউনলোড/শেয়ার করতে পারবেন। Reply-তে থাকবে শুধু ছোট সারাংশ — পুরো ডকুমেন্ট চ্যাটে পেস্ট করা বা খালি লিংক ছুড়ে দেওয়া নয়। (SEO অডিট রিপোর্ট নিজে থেকেই ফাইল হয় — ওটা আবার save কোরো না।)
 
 **কখনো থেমো না চুপচাপ:** কোনো লম্বা কাজ হয় প্রমাণসহ সফল, নয় checkpoint-সহ ব্যর্থ — কখনো নীরবে মাঝপথে থেমো না। আটকে গেলে অবস্থাটা \`save_task_checkpoint\`-এ লিখে বসকে জানাও, যাতে তার পরের reply-তেই ঠিক ওখান থেকে ধরা যায়।
+`
+
+/**
+ * SK-6 — ONE JOB’S PROCEDURE, pulled out of `computer_capabilities`.
+ *
+ * 6.2 KB teaching the client-SEO audit end to end — crawl, poll, deliver the
+ * report file, the before/after compare, the live-Chrome site walk — sat inside
+ * a module about computer capabilities, and shipped on every turn that carried a
+ * browser or workbench tool. That is the owner’s complaint in one constant:
+ * teaching the agent this job meant editing text that every other job also read.
+ *
+ * The knowledge now lives in `seo-fixing-client-site/SKILL.md`. This copy stays
+ * for the path where no skill is pinned (production today, engine off) and is
+ * SKIPPED the moment one is — see `skipModules`. When the owner turns the engine
+ * on in production, deleting this constant and its registry entry is the whole
+ * removal.
+ */
+const CLIENT_SEO_AUDIT_PROCEDURE = `
+**যেকোনো ওয়েবসাইট SEO অডিট:** বস কোনো সাইটের লিংক দিয়ে "SEO অডিট করো / ফুললি রিসার্চ করো" বললে \`run_website_seo_audit\` দিয়ে পুরো সাইট ক্রল+অডিট চালাও (read-only), তারপর \`check_website_seo_audit\` দিয়ে poll করে স্কোর+issue+report নাও, তারপর অগ্রাধিকার অনুযায়ী করণীয় দাও। **রিপোর্ট ডেলিভারি বাধ্যতামূলক:** status executed হলে \`check_website_seo_audit\`-কে read:"report" দিয়ে আবার ডেকে **পুরো client-grade রিপোর্ট** নাও (executive summary + স্কোরকার্ড + প্রতিটি issue-র প্রমাণ/করণীয় + অ্যাকশন প্ল্যান সহ), read:"report" ডাকলেই রিপোর্টটা **নিজে থেকে চ্যাটে FILE হয়ে যায়** (file card — বস ক্লিক করলে পুরো রিপোর্ট খুলবে, ডাউনলোড/শেয়ারও করতে পারবেন)। অডিট executed হলে server নিজেই markdown রিপোর্ট, issues CSV আর **live HTML ড্যাশবোর্ড** বানিয়ে চ্যাটে file card করে রাখে — তুমি ওগুলো আবার বানাবে না। তোমার reply-তে দিতে হবে **পুরো ব্যাখ্যা**: স্কোর, প্রতিটি critical/high issue + তার প্রমাণ ও সমাধান, কোনটা আগে করতে হবে, আর read:"links"-এর ডাউনলোড লিংকগুলো। এক-দুই লাইনে "রিপোর্ট ফাইলে আছে" বলে থেমে যাওয়া নিষেধ — বস চ্যাটেই বুঝতে চান, ফাইল তার প্রমাণ। এই রিপোর্ট বস client-কে দিয়ে deal করেন, তাই কোনো পয়েন্ট বাদ দেওয়া বা রিপোর্ট-ফাইল না দিয়ে "কাজ শেষ/সম্পন্ন" বলা সম্পূর্ণ নিষেধ। **Client-এর fix শেষ হলে আগে-পরে প্রমাণ:** fix করার পর একই সাইটে নতুন run_website_seo_audit চালাও, executed হলে read:"compare" ডাকো — এটা আগের audit-এর সাথে মিলিয়ে স্কোর-পরিবর্তন + সমাধান-হওয়া প্রতিটি issue প্রমাণসহ before/after ফাইল বানায়; সারাংশ + লিংক বসকে দাও (বস এটাই client-কে প্রমাণ হিসেবে পাঠান)। storage path গুলো private — workbench-এর curl/cat দিয়ে ওগুলো পড়ার চেষ্টা কখনো করবে না; একমাত্র রাস্তা read:"report"। **বস "live browser / আমার Chrome দিয়ে অডিট করো" বললে — মানুষের মতো সাইট-ওয়াক বাধ্যতামূলক (crawler দিয়ে বদলে দেওয়া নিষেধ):** তার Chrome-এ \`live_browser_act\` navigate দিয়ে সাইটের HOME খোলো → \`live_browser_look\` (screenshot+read_dom) → মেনু থেকে গুরুত্বপূর্ণ পেজগুলো বেছে একে একে ঘোরো (home, about, services/products, contact, blog — ৫-৮টা পেজ) → **প্রতিটা পেজে** দেখো ও নোট নাও: চোখে দেখা টাইটেল/হেডিং, লেআউট/ডিজাইন সমস্যা, ভাঙা ছবি/সেকশন, পপআপ-জ্বালা, লোড-অনুভূতি, মোবাইল-বান্ধবতা, কনটেন্টের মান, CTA/যোগাযোগ সহজ কিনা। এই চোখে-দেখা পর্যবেক্ষণগুলো রিপোর্টে **"🧑‍💻 লাইভ ব্রাউজ পর্যবেক্ষণ" সেকশন** হিসেবে (পেজ-ধরে, প্রমাণসহ) যোগ করো। সাথে গভীর টেকনিক্যাল ডেটার জন্য \`run_website_seo_audit\`-ও চালাও — দুটো মিলিয়েই পূর্ণ অডিট। ওয়াক না করে শুধু crawler চালিয়ে "Chrome দিয়ে করেছি" বলা সম্পূর্ণ নিষেধ; আবার live_browser টুল আসলে call না করে "আপনার Chrome দিয়ে করছি" দাবি করাও নিষেধ। **id মনে না থাকলে \`check_website_seo_audit\` id ছাড়াই ডাকো — এই কথোপকথনের সর্বশেষ audit নিজেই দেখাবে; নতুন করে audit চালিয়ো না। status "executed" মানে হয়ে গেছে (result-এ score+report আছে), "approved" মানে এখনো ক্রল হচ্ছে (একটু পর আবার check করো)।** fix করার সময় নিরাপদ অংশ (copy/meta/alt/schema) তুমি প্রস্তুত করো (owner-gated proposal/PR), কিন্তু **login/DNS/hosting/publish/critical সব বসের হাতে দাও — client সাইটে তুমি কখনো লগইন করবে না, password টাইপ করবে না, CAPTCHA পার করবে না।**
 `
 
 /**
@@ -785,6 +805,7 @@ export const PROMPT_MODULES: PromptModule[] = [
   { id: 'check_sources', cls: 'workflow_policy', version: '2026.07.14', text: CHECK_SOURCES_RULE },
   { id: 'live_browser', cls: 'domain_role', version: '2026.07.14', text: LIVE_BROWSER_RULE },
   { id: 'computer_capabilities', cls: 'domain_role', version: '2026.07.14', text: COMPUTER_CAPABILITIES_RULE },
+  { id: 'client_seo_audit_procedure', cls: 'domain_role', version: '2026.07.27', text: CLIENT_SEO_AUDIT_PROCEDURE },
   { id: 'knowledge_graph', cls: 'memory_context', version: '2026.07.14', text: KNOWLEDGE_GRAPH_RULE },
   { id: 'planning_block', cls: 'workflow_policy', version: '2026.07.15', text: LIFESTYLE_PLANNING_BLOCK, core: true },
   { id: 'operations', cls: 'business_context', version: '2026.07.14', text: OPERATIONS_RULE },
@@ -845,6 +866,22 @@ const LIFESTYLE_HEAD_ORDER: Array<{ id: string; groups?: ToolGroupName[]; tools?
       'open_live_browser',
     ],
   },
+  // SK-6: the client-SEO job, extracted from `computer_capabilities`. The tool
+  // gate is deliberately the SAME one it lived under, so with no skill pinned it
+  // still ships on exactly the turns it used to — same content, same conditions.
+  // The only difference is position: it now sits after the rest of that module
+  // instead of in the middle of it. (The gate it DESERVES is the SEO tools; that
+  // correction belongs with the deletion, not with the move.)
+  {
+    id: 'client_seo_audit_procedure',
+    tools: [
+      'run_workbench_task',
+      'run_browser_task',
+      'allow_browser_for_this_chat',
+      'manage_browser_logins',
+      'open_live_browser',
+    ],
+  },
   { id: 'knowledge_graph' },
 ]
 
@@ -863,11 +900,21 @@ const LIFESTYLE_TAIL_ORDER: Array<{ id: string; groups?: ToolGroupName[] }> = [
   { id: 'work_mode_personal_offer' },
 ]
 
+/**
+ * SK-6 — modules a pinned skill takes over. Skipped whenever ANY skill is
+ * pinned, not only its own: the point is that global code stops narrating a job
+ * the moment a skill is responsible for one. Skipping outranks `forceFullPrompt`,
+ * because "ship every module for cache stability" must not resurrect the very
+ * text the skill replaced.
+ */
+const SKILL_OWNED_MODULES = new Set(['client_seo_audit_procedure'])
+
 function compileOrdered(
   order: Array<{ id: string; groups?: ToolGroupName[]; tools?: string[] }>,
   groups?: ToolGroupName[],
   toolNames?: string[],
   forceFull?: boolean,
+  skillPinned?: boolean,
 ): string {
   // Phase 7 kill switch: AGENT_PROMPT_GATING=false ships every module every
   // turn (the pre-Phase-6 full prompt) without a deploy.
@@ -875,6 +922,7 @@ function compileOrdered(
   const all = gatingOff || !groups
   return order
     .filter((e) => {
+      if (skillPinned && SKILL_OWNED_MODULES.has(e.id)) return false
       if (all) return true
       if (e.tools) {
         // Tool-presence gate: this module teaches specific tools — include it
@@ -915,14 +963,19 @@ function buildLifestyleRolePrompts(groups?: ToolGroupName[]): string {
   return parts.map((p) => `\n${p}\n`).join('')
 }
 
-function buildLifestyleStaticPrompt(groups?: ToolGroupName[], toolNames?: string[], forceFull?: boolean): string {
+function buildLifestyleStaticPrompt(
+  groups?: ToolGroupName[],
+  toolNames?: string[],
+  forceFull?: boolean,
+  skillPinned?: boolean,
+): string {
   return (
     (AGENT_CONSTITUTION ? CONSTITUTION_RULE : '')
     + (AGENT_STYLE ? COMMUNICATION_STYLE_RULE + STYLE_EXEMPLARS : '')
-    + compileOrdered(LIFESTYLE_HEAD_ORDER, groups, toolNames, forceFull)
+    + compileOrdered(LIFESTYLE_HEAD_ORDER, groups, toolNames, forceFull, skillPinned)
     + buildLifestyleRolePrompts(forceFull ? undefined : groups)
     + LIFESTYLE_PLANNING_BLOCK
-    + compileOrdered(LIFESTYLE_TAIL_ORDER, groups, toolNames, forceFull)
+    + compileOrdered(LIFESTYLE_TAIL_ORDER, groups, toolNames, forceFull, skillPinned)
   )
 }
 
@@ -1018,6 +1071,21 @@ export type BuildSystemPromptArgs = {
   activePlaybook?: ActivePlaybookEntry[]
   /** Skill Engine V2: ≤3 on-demand skill procedures selected for this turn (gated). */
   activeSkillsBlock?: string
+  /**
+   * SK-7 — a pinned skill with `isolation: subagent`. When present, the STABLE
+   * prompt becomes `compileStableCore()` + alma-base + the skill's SYSTEM.md +
+   * its procedure, and the ~25 business-domain modules are not assembled at all.
+   * This is the owner's original ask ("অন্য কোনো অপ্রয়োজনীয় নিয়ম … প্রভাব ফেলবে না").
+   * Mutually exclusive with `activeSkillsBlock` — the caller sends one or the
+   * other, never both, or the procedure would ship twice.
+   */
+  isolatedSkill?: IsolatedSkillPrompt
+  /**
+   * SK-6 — a skill is pinned for this turn (isolated or inline). Global modules
+   * that describe a JOB (`SKILL_OWNED_MODULES`) are then not assembled: the
+   * skill is the single place that describes it, and two copies drift apart.
+   */
+  skillPinned?: boolean
   teachingBlock?: string
   intakeContextBlock?: string
   ownerActiveTasksBlock?: string
@@ -1114,6 +1182,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     businessId = 'ALMA_LIFESTYLE',
     activePlaybook,
     activeSkillsBlock,
+    isolatedSkill,
     teachingBlock,
     intakeContextBlock,
     ownerActiveTasksBlock,
@@ -1211,8 +1280,28 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
       volatileParts.push(intakeContextBlock)
     }
   } else {
-    const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : buildLifestyleStaticPrompt(activeGroups, args.activeToolNames, args.forceFullPrompt)
-    stableParts.push(corePrompt)
+    // ── SK-7: `isolation: subagent` ──────────────────────────────────────────
+    // The pinned skill's own prompt REPLACES the general behavioural prompt.
+    // What survives is `compileStableCore()` — the `core: true` modules, i.e.
+    // what the agent IS (identity, honesty/claim verification, response style,
+    // delivery defaults, task completion, planning). What is not assembled at
+    // all is the ~25 business-domain modules — none of which have anything to do
+    // with the pinned task, and all of which the owner watched pollute a focused
+    // job ("অন্য কোনো অপ্রয়োজনীয় নিয়ম … প্রভাব ফেলবে না").
+    //
+    // Only the STABLE prompt is swapped. Per-turn context below — memory, the
+    // time block, project instructions, the dependency preflight, salah — is
+    // state, not behavioural prose, and an isolated job needs it just as much.
+    //
+    // The gates are untouched by construction: approvals, money and publish are
+    // server-side code, and the turn's tool list was already narrowed to the
+    // skill's allowlist (SK-4). Nothing here can widen either.
+    if (isolatedSkill) {
+      stableParts.push(buildIsolatedSystemPrompt(compileStableCore(), isolatedSkill))
+    } else {
+      const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : buildLifestyleStaticPrompt(activeGroups, args.activeToolNames, args.forceFullPrompt, args.skillPinned)
+      stableParts.push(corePrompt)
+    }
     if (tailSummaryBlock) stableParts.push(tailSummaryBlock)
 
     // Slim Head Router: tell the lean head to delegate the domains it no longer
@@ -1224,7 +1313,10 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     // Grok/DeepSeek head on a narrow routed pack used to be told "delegate the
     // rest" while carrying no delegate tool — an instruction it could only fail.
     // Unknown tool list (legacy callers/tests) keeps the old unconditional note.
-    if (businessId !== 'ALMA_TRADING') {
+    // SK-7: an isolated skill does its OWN job — telling it to hand the work to
+    // a specialist is the opposite of a focused runner, and the owner-todo /
+    // staff-task rules are another job's procedure. Skipped when isolated.
+    if (businessId !== 'ALMA_TRADING' && !isolatedSkill) {
       const delegateShipped =
         args.activeToolNames == null || args.activeToolNames.includes('delegate_to_specialist')
       if (headTier === 'marketing') {
@@ -1238,8 +1330,10 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     // the cached stable prefix, not the per-turn volatile block where they were
     // re-billed fresh every turn. Only the live task LISTS stay volatile (they
     // change); the rules that govern how to use them never do.
-    stableParts.push(OWNER_TASK_REMINDER_RULES)
-    stableParts.push(STAFF_TASK_AWARENESS_RULES)
+    if (!isolatedSkill) {
+      stableParts.push(OWNER_TASK_REMINDER_RULES)
+      stableParts.push(STAFF_TASK_AWARENESS_RULES)
+    }
 
     if (businessId === 'ALMA_TRADING') {
       stableParts.push(
@@ -1270,7 +1364,10 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
 
     // Skill Engine V2 (gated): on-demand skill procedures for this turn. VOLATILE —
     // selection depends on the message text, so it must never enter the cached prefix.
-    if (activeSkillsBlock && activeSkillsBlock.trim()) {
+    // SK-7: an ISOLATED skill already IS the stable prompt (and, being pinned, is
+    // stable for the whole conversation — one cache write, not one per turn), so
+    // injecting it here too would ship the procedure twice.
+    if (!isolatedSkill && activeSkillsBlock && activeSkillsBlock.trim()) {
       volatileParts.push(activeSkillsBlock)
     }
 

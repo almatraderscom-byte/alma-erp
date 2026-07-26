@@ -63,6 +63,61 @@ function isTerminalReply(text: string, failedTool?: string, lastFailed = false):
   return !(lastFailed && namesDifferentTool(normalized, failedTool))
 }
 
+/**
+ * "I am doing it right now" — present continuous, no deferral. This is the tail
+ * of a turn that was cut off mid-step, not the tail of a finished report.
+ */
+const IN_FLIGHT_RE =
+  /(খুঁজছি|দেখছি|দেখে\s*নিচ্ছি|চালাচ্ছি|করছি|নিচ্ছি|যাচ্ছি|খুলছি|আনছি|টানছি|পড়ছি|বের\s*করছি|checking|fetching|running|looking\s+up|pulling)/i
+
+/** …unless it is explicitly parked for later, which is a legitimate sign-off. */
+const DEFERRED_RE =
+  /(পরের\s*ধাপে|পরে\s*(?:দেখব|করব|জানাব)|পরবর্তীতে|আগামী|next\s+step|later\b|afterwards)/i
+
+function isWorkInFlight(text: string): boolean {
+  const tail = text.trim().slice(-300)
+  if (DEFERRED_RE.test(tail)) return false
+  return IN_FLIGHT_RE.test(tail)
+}
+
+/**
+ * OWNER OBSERVATION 2026-07-27 — one reply opened with the same sentence twice:
+ *
+ *   "বস, আপনি এখন কোনো SEO fix কাজ করার দরকার নেই বলেছেন — চলমান seo task-এর স্ট্যাটাস যাচাই করছি।"
+ *   "বস, আপনি এখন কোনো SEO fix কাজ করার দরকার নেই বলেছেন — seo task-এর চলমান স্ট্যাটাস যাচাই করছি।"
+ *
+ * Speak-first streams the opening line in its own round and seeds it into the
+ * transcript as the assistant's own words, precisely so the model continues
+ * instead of greeting Boss again. It mostly works — and when it does not, the
+ * paraphrase is close but not identical, so no exact-match check catches it.
+ *
+ * Asking the prompt more firmly is a request. Comparing the two lines is a
+ * guarantee, and it is cheap: the tool-round prose arrives as one block, so a
+ * duplicate is dropped before Boss ever sees it.
+ *
+ * Deliberately conservative. The threshold is high and the check only applies to
+ * the FIRST prose after the preamble; a genuine progress line ("catalogue পড়া
+ * শেষ, এখন audit চালাচ্ছি") shares few words with the opener and survives.
+ */
+const OPENER_SIMILARITY = 0.75
+
+function words(s: string): string[] {
+  return (s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => w.length > 1)
+}
+
+export function isRepeatedOpener(preamble: string, next: string): boolean {
+  const a = words(preamble)
+  const b = words(next)
+  if (a.length < 4 || b.length < 4) return false
+  // A restatement is not usually much longer than the line it restates; a real
+  // progress update that happens to echo some words is.
+  if (b.length > a.length * 1.8) return false
+  const setA = new Set(a)
+  const shared = b.filter((w) => setA.has(w)).length
+  const union = new Set([...a, ...b]).size
+  return shared / union >= OPENER_SIMILARITY || shared / b.length >= 0.9
+}
+
 export function shouldNudgeAdapterIntent(input: {
   text: string
   toolRecords: TurnLoopToolRecord[]
@@ -74,8 +129,19 @@ export function shouldNudgeAdapterIntent(input: {
   // The old `ownerRequestedAction` requirement made read-only turns exempt, so a
   // head that announced a lookup and stopped ended the turn there (owner hit
   // this live 2026-07-25: "list_family_contacts চালাচ্ছি।" and nothing else).
+  //
+  // Round 2, 2026-07-26. That fix only covered turns where NO tool ran, so this
+  // still died: Boss typed "almatraders.com এর ছবির alt ঠিক করো", the head read
+  // the catalogue, said "এখন alt text update-এর জন্য সঠিক SEO tool খুঁজছি" — and
+  // ended the turn at 25 seconds. One successful read had made noToolRan false,
+  // and the turn was not mutation-authorised, so the guard bailed.
+  //
+  // The line that matters is not "was this turn allowed to write" — it is "is the
+  // head in the MIDDLE of something". "খুঁজছি / দেখছি / চালাচ্ছি" is work in flight
+  // and stopping there strands it; "পরের ধাপে dispatch দেখব" is a finished report
+  // that mentions what comes later, and pushing on that would be nagging.
   const noToolRan = input.toolRecords.length === 0
-  if (!input.ownerRequestedAction && !noToolRan) return false
+  if (!input.ownerRequestedAction && !noToolRan && !isWorkInFlight(input.text)) return false
   const latestTool = input.toolRecords.at(-1)
   const lastFailed = latestTool?.status === 'error'
   if (input.hasAskCard || isTerminalReply(input.text, latestTool?.toolName, lastFailed)) return false

@@ -12,6 +12,7 @@ import { approvalSuccess, showPulseSuccess } from '@/lib/live-pulse'
 interface AgentConfirmCardGroupProps {
   actions: PendingAction[]
   onResolved: (status: 'approved' | 'rejected') => void
+  onApprovePending?: (pending: boolean) => void
   onQuickSend?: (text: string) => void
 }
 
@@ -43,7 +44,7 @@ async function postDecision(id: string, decision: 'approve' | 'reject'): Promise
  * non-delegation actions — the case the owner reported (expense + post shown as
  * one incomplete card).
  */
-export default function AgentConfirmCardGroup({ actions, onResolved, onQuickSend }: AgentConfirmCardGroupProps) {
+export default function AgentConfirmCardGroup({ actions, onResolved, onQuickSend, onApprovePending }: AgentConfirmCardGroupProps) {
   const resolvedHistory = actions.filter((a) => a.resolvedStatus && a.resolvedStatus !== 'pending')
   const live = actions.filter((a) => !a.resolvedStatus || a.resolvedStatus === 'pending')
   const groupable = live.filter((a) => a.actionType !== 'delegation')
@@ -55,11 +56,11 @@ export default function AgentConfirmCardGroup({ actions, onResolved, onQuickSend
     <>
       {/* Reloaded-from-history breadcrumbs + delegation chips keep their own card. */}
       {standalone.map((a) => (
-        <AgentConfirmCard key={a.id} action={a} onQuickSend={onQuickSend} onResolved={onResolved} />
+        <AgentConfirmCard key={a.id} action={a} onQuickSend={onQuickSend} onResolved={onResolved} onApprovePending={onApprovePending} />
       ))}
       {/* A lone actionable card also keeps the standalone flow (edit/batch). */}
       {!useGroup && groupable.map((a) => (
-        <AgentConfirmCard key={a.id} action={a} onQuickSend={onQuickSend} onResolved={onResolved} />
+        <AgentConfirmCard key={a.id} action={a} onQuickSend={onQuickSend} onResolved={onResolved} onApprovePending={onApprovePending} />
       ))}
       {useGroup && <GroupedSheet actions={groupable} onResolved={onResolved} onQuickSend={onQuickSend} />}
     </>

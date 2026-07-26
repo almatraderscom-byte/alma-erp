@@ -65,11 +65,37 @@ export function extractOrderedWebTargets(text: string): string[] {
   return out
 }
 
+/**
+ * "Do the work" verbs. When Boss uses one of these about findings that already
+ * exist, he wants execution — not another audit, and not another report.
+ *
+ * These are VERB STEMS, not whole phrases. The first version listed exact forms
+ * (লেখো, লিখে দাও) and missed the very next thing he typed — "alt লিখে সেভ করো"
+ * — so the audit contract armed again and the turn died demanding an audit tool.
+ * Bangla inflects; match the stem (লিখ/লেখ/সেভ/বসা) and the forms come free.
+ */
+const FIX_INTENT_RE =
+  /(?:ঠিক\s*কর|সমাধান\s*কর|সংশোধন|লিখ|লেখ|সেভ\s*কর|বসাও|বসিয়ে|যোগ\s*কর|জুড়ে\s*দাও|আপডেট\s*কর|apply|fix(?:ing|es|ed)?\b|implement|write|update|save|add\s+(?:the\s+)?alt)/i
+
+/**
+ * ...but a work verb inside a request FOR an audit or a report is still an audit
+ * order ("SEO অডিট করে রিপোর্ট লিখে দাও"). The object of the verb decides, so an
+ * explicit ask for the audit/report itself wins over the verb.
+ */
+const AUDIT_ASK_RE =
+  /(?:অডিট|audit)\s*(?:কর|চালাও|দাও|run)|রিপোর্ট\s*(?:বানা|তৈরি|দাও|লিখ)|\breport\s+(?:on|for)\b/i
+
 export function deriveOwnerTurnRequirements(text: string): OwnerTurnRequirements {
   const t = text.trim()
   const targets = extractOrderedWebTargets(t)
   const liveBrowser = /\blive[\s_-]*browser\b|আমার\s*(?:chrome|ক্রোম|browser|ব্রাউজার)|(?:chrome|ক্রোম|browser|ব্রাউজার)\s*(?:use|ব্যবহার|দিয়ে|diye)/i.test(t)
-  const clientSeo = targets.length > 0 && /\bseo\b|এসইও|audit|অডিট/i.test(t)
+  // A FIX order is not an audit order (owner bug 2026-07-26). "almatraders.com
+  // এর SEO অডিটে পাওয়া ছবির alt সমস্যা ঠিক করো" armed the audit contract purely
+  // because it contains the words "SEO" and "অডিট" — so the agent produced ANOTHER
+  // report instead of doing the work, and Boss's reaction was exactly right:
+  // "agent ke kaj dile fix korte, kintu abar SEO report baniye dilo".
+  const fixIntent = FIX_INTENT_RE.test(t) && !AUDIT_ASK_RE.test(t)
+  const clientSeo = targets.length > 0 && /\bseo\b|এসইও|audit|অডিট/i.test(t) && !fixIntent
   // Owner standing rule (2026-07-25): a website audit ALWAYS ends in a
   // client-ready deliverable — the owner should never have to type the word
   // "report" to get one. Previously "Do a Deep SEO Audit - almatraders.com"
@@ -84,14 +110,30 @@ export function deriveOwnerTurnRequirements(text: string): OwnerTurnRequirements
   return { liveBrowser, clientSeo, reportArtifact, remember, targets, deepWork, planFirst, groundingRequired }
 }
 
-export function buildOwnerRequirementNote(req: OwnerTurnRequirements): string {
+/**
+ * SK-6 — when a skill is pinned, the SEO-specific lines below are NOT emitted.
+ *
+ * They are task procedure ("crawl each target, read the report, produce an
+ * artifact"), and task procedure is what a skill is for. Kept in global code they
+ * are the owner's exact complaint: teaching the agent one job by editing a file
+ * every other job also reads. They now live in `seo-fixing-client-site/SKILL.md`,
+ * so with a skill pinned they would be said twice and could drift apart.
+ *
+ * The generic lines — ordered targets, live Chrome, remember, deep work — stay
+ * unconditionally. They are true of any job, which is the test §6 of the plan
+ * sets for what may remain global.
+ */
+export function buildOwnerRequirementNote(
+  req: OwnerTurnRequirements,
+  opts: { skillPinned?: boolean } = {},
+): string {
   const lines: string[] = []
   if (req.targets.length) lines.push(`Ordered targets: ${req.targets.join(' → ')}`)
   if (req.liveBrowser) {
     lines.push('Live Chrome is REQUIRED: visit and LOOK at at least 5 distinct pages per target; crawler-only completion is forbidden.')
   }
-  if (req.clientSeo) lines.push('Each target requires its own crawl, executed result, full report read, and download links before moving on.')
-  if (req.reportArtifact) lines.push('A client-ready artifact is REQUIRED; prose alone is not delivery.')
+  if (req.clientSeo && !opts.skillPinned) lines.push('Each target requires its own crawl, executed result, full report read, and download links before moving on.')
+  if (req.reportArtifact && !opts.skillPinned) lines.push('A client-ready artifact is REQUIRED; prose alone is not delivery.')
   if (req.deepWork) {
     lines.push(
       'Boss asked for DEEP/full work: cover the complete end-to-end scope — a shortened or sampled version is a failure. '

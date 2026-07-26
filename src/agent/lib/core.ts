@@ -45,6 +45,7 @@ import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
 import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
 import { trimToolResultForHistory } from '@/agent/lib/context-trim'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
+import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
 import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
 import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
@@ -126,6 +127,25 @@ export type AgentEvent =
   // when a tool starts or a draft is rewritten, but this line is something Boss
   // has already read and must survive both.
   | { type: 'preamble'; text: string }
+  // SK-3: the skill pinned for this conversation, and why. The owner asked to be
+  // able to SEE which skill is running and to change it — this is what feeds the
+  // chip beside the model picker. `source: 'owner'` means he chose it himself,
+  // and the router will not revisit it.
+  | {
+      type: 'skill_pinned'
+      skill: string
+      source: 'owner' | 'router'
+      layer: string
+      reason: string
+      /**
+       * SK-7 — true when this turn ran on the skill's OWN system prompt instead
+       * of inside the general one. On the wire so the isolation claim can be
+       * checked from outside the server: a `[skill-isolation]` line in a Vercel
+       * log is not something the owner can see, and "trust the code" is exactly
+       * the kind of proof this programme rejects.
+       */
+      isolated?: boolean
+    }
   | {
       type: 'verification_retry'
       attempt: number
@@ -136,7 +156,7 @@ export type AgentEvent =
   // needContinue: the turn hit the serverless deadline mid-task (browser work
   // unfinished) — the web client auto-sends a bounded "continue" so a long task
   // finishes end-to-end without the owner typing it every ~4.5 minutes.
-  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number; needContinue?: boolean; apiRounds?: number; roundCostsUsd?: number[] }
+  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number; needContinue?: boolean; apiRounds?: number; roundCostsUsd?: number[]; durationMs?: number }
   | { type: 'error'; message: string }
 
 // ── Mutating tools (conservative: unknown = treat as mutating) ──────────────
@@ -996,10 +1016,13 @@ export async function* runAgentTurn(
 
   // Skill Engine V2 (gated OFF by default) — same on-demand skill selection as the
   // normalized path in run-owner-turn; '' when disabled/personal/no match (fail-open).
-  const activeSkillsBlock = personalMode ? '' : await buildActiveSkillsBlock(lastUserText)
+  const activeSkillsBlock = personalMode ? '' : await buildActiveSkillsBlock(lastUserText, { conversationId })
 
+  // Parity with run-owner-turn: name the dead capabilities before the first step.
+  const deadCapabilityBlock = capabilityPreflightBlock()
   const promptArgs = {
-    projectInstructions: projectSystemInstructions,
+    projectInstructions:
+      [deadCapabilityBlock, projectSystemInstructions].filter(Boolean).join('\n\n') || null,
     pinnedMemories,
     relevantMemories,
     recalledTurns,

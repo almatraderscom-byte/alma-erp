@@ -2043,6 +2043,12 @@ model AgentConversation {
   /// Business scope inherited from project. null = personal / cross-business.
   /// One of: 'ALMA_LIFESTYLE' | 'ALMA_TRADING' | null
   businessId         String?         @map("business_id")
+  /// SK-3: the skill pinned for this chat. One chat, one job — re-picking a 5k
+  /// token skill every turn would destroy the prompt cache. NULL = none pinned.
+  pinnedSkill        String?         @map("pinned_skill")
+  /// SK-3/U5: WHY that skill was pinned — layer, reason, candidates. Stored so a
+  /// wrong pin has an answer instead of a guess.
+  skillRouteTrace    Json?           @map("skill_route_trace")
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   messages           AgentMessage[]

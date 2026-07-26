@@ -39,6 +39,29 @@ describe('pending-action expiry policy', () => {
     expect(isPendingActionExpired(old)).toBe(true)
   })
 
+  // OWNER INCIDENT 2026-07-26 — the loop that wasted his evening. A ten-product
+  // SEO copy batch expired on the 30-minute clock while he was reading it. He
+  // asked for it again; the agent re-DRAFTED from scratch; that expired too.
+  // Four rounds, four different texts, four approvals, and only some of them
+  // landed — leaving the site patchily updated. His verdict: "erta ki kono kaj?"
+  it('never expires a drafted SEO batch out from under the owner', () => {
+    const anHourAgo = new Date(Date.now() - HOUR)
+    const yesterday = new Date(Date.now() - 26 * HOUR)
+
+    expect(isPendingActionExpired(anHourAgo, 'seo_fix_batch')).toBe(false)
+    expect(isPendingActionExpired(yesterday, 'seo_fix_batch')).toBe(false)
+    expect(isLifecycleBoundAction('seo_fix_batch')).toBe(true)
+  })
+
+  it('leaves genuinely time-sensitive cards on the clock', () => {
+    // Deliberately NOT widened: sending a customer a message or spending money an
+    // hour late is a real hazard, unlike applying copy the owner already read.
+    const old = new Date(Date.now() - (PENDING_ACTION_EXPIRY_MS + 60_000))
+    for (const type of ['send_customer_message', 'ad_budget', 'launch_campaign', 'outbound_call']) {
+      expect(isPendingActionExpired(old, type)).toBe(true)
+    }
+  })
+
   it('computes age in ms from a Date or ISO string', () => {
     const t = new Date(Date.now() - 5_000)
     expect(pendingActionAgeMs(t)).toBeGreaterThanOrEqual(5_000)

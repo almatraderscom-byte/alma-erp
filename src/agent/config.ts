@@ -69,6 +69,17 @@ export const LONG_RUN_TURN_MAX_ITERATIONS = Math.max(
 )
 
 /**
+ * Owner ask 2026-07-26: "ekta part er jnne koyek ta dhap sesh kore amk age update
+ * daw, erpor abr onno kaje jaw." A turn may run many tool rounds; without this it
+ * speaks once, at the end, and Boss watches a spinner learning nothing.
+ *
+ * Three rounds is about where a spinner starts to feel dead; four nudges cover a
+ * long job without turning the reply into running commentary.
+ */
+export const PROGRESS_UPDATE_EVERY = Number(process.env.AGENT_PROGRESS_UPDATE_EVERY) || 3
+export const MAX_PROGRESS_NUDGES = Number(process.env.AGENT_MAX_PROGRESS_NUDGES) || 4
+
+/**
  * HARD tool-round budget for EXPENSIVE heads (Sonnet, and the Qwen marketing
  * head). After this many tool ROUNDS (model re-invocations that requested tools)
  * the head is forced to stop spree-calling tools and may ONLY hand the rest of
@@ -248,6 +259,22 @@ export function subagentToolTrimEnabled(
  */
 export function speakFirstEnabled(flag = process.env.AGENT_SPEAK_FIRST): boolean {
   return flag !== 'off'
+}
+
+/**
+ * SK-7 — a pinned skill declaring `isolation: subagent` REPLACES the general
+ * behavioural prompt with its own (kernel + alma-base + SYSTEM.md + SKILL.md)
+ * instead of being appended to it. This is the owner's original ask; the tool
+ * allowlist (SK-4) is the other half and is already live.
+ *
+ * OFF in production until he has seen it work; auto-ON on preview, which is
+ * where SKILL_ENGINE_ENABLED already is.
+ */
+export function skillIsolationEnabled(
+  flag = process.env.AGENT_SKILL_ISOLATION,
+  vercelEnv = process.env.VERCEL_ENV,
+): boolean {
+  return flag === 'on' || (vercelEnv === 'preview' && flag !== 'off')
 }
 
 /** Hard ceiling on a trimmed specialist sub-agent's tool count. */

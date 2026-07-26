@@ -67,7 +67,7 @@ async function readManifest(dir: string): Promise<SkillManifest | null> {
  */
 export async function discoverSkills(
   rootDir: string,
-  opts: { knownCapabilities?: Set<string>; includeCanary?: boolean } = {},
+  opts: { knownCapabilities?: Set<string>; includeCanary?: boolean; includeDraft?: boolean } = {},
 ): Promise<SkillIndex> {
   const skills: SkillMetadata[] = []
   const warnings: string[] = []
@@ -88,7 +88,14 @@ export async function discoverSkills(
       warnings.push(`skip ${name}: missing/invalid manifest.json`)
       continue
     }
-    const usable = manifest.status === 'active' || (opts.includeCanary && manifest.status === 'canary')
+    // `includeDraft` is for MEASUREMENT only (SK-0). 15 of the 16 skills on disk
+    // are still `draft`, so the live path offers exactly one — which is why the
+    // owner saw his skills "শুধু পড়ে আছে". Runtime never sets this flag; the audit
+    // does, to measure what selection WOULD do once they are promoted.
+    const usable =
+      manifest.status === 'active'
+      || (opts.includeCanary && manifest.status === 'canary')
+      || (opts.includeDraft && manifest.status === 'draft')
     if (!usable) continue
 
     if (opts.knownCapabilities) {
@@ -112,6 +119,7 @@ export async function discoverSkills(
       status: manifest.status,
       requiredCapabilities: manifest.requiredCapabilities,
       keywords,
+      implicit: manifest.implicit !== false,
       dir,
     })
   }
@@ -132,7 +140,10 @@ export function selectSkills(index: SkillIndex, queryText: string, max = MAX_SKI
   const q = new Set(tokenize(queryText))
   if (q.size === 0) return []
 
-  const scored = index.skills.map((s) => {
+  // U8 — `implicit: false` never auto-selects. Two kinds live here: base layers
+  // pulled in by `extends` (alma-base), and skills Boss must ask for by name
+  // (money movement, publishing).
+  const scored = index.skills.filter((s) => s.implicit !== false).map((s) => {
     let score = 0
     for (const kw of s.keywords) {
       // A multi-word keyword phrase present verbatim is a strong signal.
@@ -153,7 +164,30 @@ export function selectSkills(index: SkillIndex, queryText: string, max = MAX_SKI
     .map((x) => x.s)
 }
 
-/** ACTIVATION — load the chosen skill's manifest + SKILL.md body on demand. */
+/** Read one optional markdown file from a skill package; '' when absent. */
+async function readSkillFile(dir: string, file: string): Promise<string> {
+  try {
+    return parseFrontmatter(await fs.readFile(path.join(dir, file), 'utf8')).body
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * ACTIVATION — load the chosen skill's manifest + SKILL.md body on demand, plus
+ * (SK-7) the two files the isolated runner needs:
+ *
+ *  • `SYSTEM.md` — the skill's own system prompt. It has existed on disk since
+ *    SK-5 and NOTHING read it, which is precisely why `isolation: subagent` was
+ *    still missing: the file that was supposed to replace the general prompt was
+ *    never opened.
+ *  • the `extends:` base body — `alma-base/SKILL.md`. An isolated turn drops the
+ *    big prompt, so the ALMA invariants have to travel with the skill or they
+ *    leave with it.
+ *
+ * Both are optional and failure is '' — a package without them behaves exactly
+ * as it did before.
+ */
 export async function activateSkill(metadata: SkillMetadata): Promise<ActivatedSkill | null> {
   const manifest = await readManifest(metadata.dir)
   if (!manifest) return null
@@ -163,5 +197,14 @@ export async function activateSkill(metadata: SkillMetadata): Promise<ActivatedS
   } catch {
     return null
   }
-  return { metadata, manifest, instructions }
+  const systemPrompt = await readSkillFile(metadata.dir, 'SYSTEM.md')
+  // The base is a sibling package under the same skills root. Self-extension and
+  // a missing base both degrade to '' rather than throwing — a broken `extends:`
+  // must never take a turn down.
+  const base = manifest.extends?.trim()
+  const baseInstructions =
+    base && base !== manifest.name
+      ? await readSkillFile(path.join(path.dirname(metadata.dir), base), 'SKILL.md')
+      : ''
+  return { metadata, manifest, instructions, systemPrompt, baseInstructions }
 }

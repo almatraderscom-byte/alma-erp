@@ -82,6 +82,8 @@ type MessageRow = {
   cacheCreation: number | null
   cacheRead: number | null
   costUsd: string | null
+  /** How long the agent worked on this reply (ms) — owner ask 2026-07-26. */
+  durationMs?: number | null
   /** Provider API calls in this reply (= rows on the OpenRouter Logs page). */
   apiRounds?: number
   /** Per-round billed cost (USD) when the provider reported actuals. */
@@ -95,8 +97,29 @@ type MessageRow = {
   createdAt?: string
 }
 
+/**
+ * OWNER REPORT 2026-07-27 — answering a question card read like "ami ekta sms
+ * disi": the choice appeared as a loose chat bubble while the question it
+ * answered was nowhere near it.
+ *
+ * The card already renders itself answered (question + the chosen answer). So
+ * the separate user row that IS that same answer is a duplicate, and dropping it
+ * leaves exactly one record of the exchange — the card — the way a professional
+ * agent app shows it. Only an EXACT match against the card's own recorded
+ * `selectedOption`, and only for the row right after it: anything the owner
+ * genuinely typed keeps its bubble.
+ */
+function dropDuplicateAskAnswers(msgs: ChatMessage[]): ChatMessage[] {
+  return msgs.filter((m, i) => {
+    if (m.role !== 'user') return true
+    const prev = msgs[i - 1]
+    const answer = prev?.askCard?.selectedOption
+    return !(answer && answer.trim() === m.text.trim())
+  })
+}
+
 function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
-  return rows.map((r, rowIdx) => {
+  return dropDuplicateAskAnswers(rows.map((r, rowIdx) => {
     const textBlocks = r.content.filter((b) => b.type === 'text')
     const storedText = textBlocks.map((b) => b.text ?? '').join('')
     const settledText = r.role === 'assistant'
@@ -146,6 +169,7 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       cacheCreation: r.cacheCreation ?? undefined,
       cacheRead: r.cacheRead ?? undefined,
       costUsd: r.costUsd != null ? parseFloat(r.costUsd) : undefined,
+      durationMs: r.durationMs ?? undefined,
       apiRounds: r.apiRounds ?? undefined,
       roundCostsUsd: r.roundCostsUsd ?? undefined,
       pendingActions: confirmBlocks.length
@@ -173,7 +197,7 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
           }
         : undefined,
     }
-  })
+  }))
 }
 
 // ── Live activity-timeline builders ─────────────────────────────────────────
@@ -301,6 +325,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   // Chat mode picker (auto | direct | plan | plan_drive) — per conversation, so a
   // "plan only" chat stays plan-only after reload.
   const [chatMode, setChatMode] = useState<ChatMode>(DEFAULT_CHAT_MODE)
+  /** SK-3: which skill is pinned to this chat, and why — shown as a chip. */
+  const [pinnedSkill, setPinnedSkill] = useState<{
+    skill: string
+    source: 'owner' | 'router'
+    reason: string
+  } | null>(null)
+  /** Live SSE for a worker-run continuation after an approval (SK/owner 2026-07-26). */
+  const approvalStreamRef = useRef<EventSource | null>(null)
   const [compacting, setCompacting] = useState(false)
   const [dayShift, setDayShift] = useState<{
     conversationId: string | null
@@ -742,8 +774,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setActiveConvId(null)
     setMessages([])
     setArtifacts([])
-    setActiveModelId('claude-sonnet-4-6')
+    // A new chat starts on AUTO, the same value this component initialises with.
+    // It used to hard-code Sonnet here, so every "নতুন চ্যাট" silently pinned the
+    // most expensive head no matter what the owner had chosen (owner bug 2026-07-26).
+    setActiveModelId('auto')
     setChatMode(DEFAULT_CHAT_MODE)
+    setPinnedSkill(null)
     pendingProjectIdRef.current = projectId ?? null
     setActiveConvProjectId(projectId ?? null)
     setActivePersonalMode(!!personalProjectId && projectId === personalProjectId)
@@ -916,10 +952,34 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           path: fileRefs[idx]?.path,
         })),
       }
-      setMessages((prev) => [
-        ...prev.map((m) => (m.askCard ? { ...m, askCard: undefined } : m)),
-        userMsg,
-      ])
+      // OWNER REPORT 2026-07-27: answering a question card used to DELETE the
+      // card and drop the choice in as a plain chat bubble — "mone hoy je ami
+      // ekta sms disi". The question vanished, so the thread no longer showed
+      // what was asked, only a loose word he had apparently typed.
+      //
+      // The card already knows how to render itself answered (AgentAskCard's
+      // settled breadcrumb: question on top, the chosen answer beneath). So mark
+      // it answered instead of removing it, and — when the send CAME from the
+      // card — skip the user bubble, because the card is now the record of both
+      // the question and his answer. A free-text reply typed in the composer
+      // still gets its own bubble; only the cards go settled.
+      setMessages((prev) => {
+        const settled = prev.map((m) => {
+          if (!m.askCard) return m
+          const isAnswered = askCardId != null && m.askCard.id === askCardId
+          return {
+            ...m,
+            askCard: {
+              ...m.askCard,
+              status: 'answered',
+              // The one he actually answered shows his choice; any other open
+              // card goes settled-stale rather than staying armed under a new turn.
+              ...(isAnswered ? { selectedOption: text } : { staleInChat: true }),
+            },
+          }
+        })
+        return askCardId ? settled : [...settled, userMsg]
+      })
     }
 
     const assistantMsgId = nextId('streaming')
@@ -1028,6 +1088,23 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           activeTurnIdRef.current = evt.id as string
         } else if (evt.type === 'personal_mode') {
           setActivePersonalMode(evt.active === true)
+        } else if (evt.type === 'skill_pinned') {
+          // SK-3: the owner asked to SEE which skill is running, and to be able
+          // to change it. This is what feeds the chip beside the model picker.
+          const pin = {
+            skill: String(evt.skill ?? ''),
+            source: (evt.source === 'owner' ? 'owner' : 'router') as 'owner' | 'router',
+            reason: String(evt.reason ?? ''),
+          }
+          setPinnedSkill(pin)
+          // …and stamp it on the message being built, so the thread shows a system
+          // line before the work — the ChatGPT shape Boss asked for. Left to the
+          // prompt it lost every time to the speak-first rule.
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? { ...m, skill: { name: pin.skill, source: pin.source, reason: pin.reason } }
+              : m,
+          ))
         } else if (evt.type === 'model_info') {
           const variant = (evt.variant as 'claude' | 'qwen' | 'deepseek' | 'default') ?? 'claude'
           setStreamVariant(variant)
@@ -1255,6 +1332,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   cacheCreation: evt.cacheCreation as number,
                   cacheRead: evt.cacheRead as number,
                   costUsd: evt.costUsd as number,
+                  durationMs: evt.durationMs as number | undefined,
                   apiRounds: (evt.apiRounds as number | undefined) ?? undefined,
                   roundCostsUsd: (evt.roundCostsUsd as number[] | undefined) ?? undefined,
                 }
@@ -1653,6 +1731,18 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     }
   }
 
+  /** Tear down the approval loader — used when an approval fails after the click. */
+  function stopResultPolling() {
+    approvalStreamRef.current?.close()
+    approvalStreamRef.current = null
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+    setMessages((prev) => prev.filter((m) => !m.streaming))
+    setStreamMode('settled')
+  }
+
   function startResultPolling(convId: string) {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current)
     let attempts = 0
@@ -1668,11 +1758,51 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setStreamVariant('claude')
     setMessages((prev) => [...prev.filter((m) => !m.streaming), loader])
 
+    // OWNER CATCH 2026-07-26: after an approval the loader sat on "কাজ শুরু করছি…"
+    // for 40 seconds with no thinking behind it, and my claim that reasoning would
+    // fill it in was simply false. The continuation runs on the WORKER, and this
+    // path only polled for messages — thinking events never reached the client at
+    // all. The durable turn already streams the same events over
+    // /api/assistant/turn/<id>/stream, so subscribe to it and show the real thing.
+    let liveThinking = ''
+    let attachedTurnId: string | null = null
+
+    function attachTurnStream(turnId: string) {
+      if (attachedTurnId === turnId) return
+      attachedTurnId = turnId
+      const es = new EventSource(`/api/assistant/turn/${turnId}/stream`)
+      approvalStreamRef.current?.close()
+      approvalStreamRef.current = es
+      es.onmessage = (ev) => {
+        try {
+          const evt = JSON.parse(ev.data) as { type?: string; delta?: string; name?: string }
+          if (evt.type === 'thinking_delta' && typeof evt.delta === 'string') {
+            liveThinking += evt.delta
+            setMessages((prev) => prev.map((m) => (m.id === loaderId ? { ...m, thinking: liveThinking } : m)))
+          } else if (evt.type === 'tool_start' && evt.name) {
+            setMessages((prev) => prev.map((m) => (
+              m.id === loaderId
+                ? { ...m, toolActivity: [...(m.toolActivity ?? []), { id: `${Date.now()}`, name: evt.name as string, done: false }] }
+                : m
+            )))
+          } else if (evt.type === 'done' || evt.type === 'error') {
+            es.close()
+            approvalStreamRef.current = null
+          }
+        } catch { /* a malformed frame must not break the loader */ }
+      }
+      es.onerror = () => { es.close(); approvalStreamRef.current = null }
+    }
+
     async function poll() {
       let running = false
       try {
         const sres = await fetch(`/api/assistant/conversations/${convId}/turn-status`)
-        if (sres.ok) running = ((await sres.json()) as { status?: string }).status === 'running'
+        if (sres.ok) {
+          const st = (await sres.json()) as { status?: string; turnId?: string | null }
+          running = st.status === 'running'
+          if (running && st.turnId) attachTurnStream(st.turnId)
+        }
       } catch {
         running = sawRunning // transient status error → keep the loader as-is
       }
@@ -1687,7 +1817,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           // approval note shows while the agent is still working, then the spinner
           // drops as the continuation reply lands. (!sawRunning guards the brief
           // race before the freshly-created turn registers as running.)
-          setMessages(running || !sawRunning ? [...mapped, loader] : mapped)
+          const pinned = liveThinking ? { ...loader, thinking: liveThinking } : loader
+          setMessages(running || !sawRunning ? [...mapped, pinned] : mapped)
         }
       } catch { /* ignore a transient fetch error */ }
 
@@ -1902,6 +2033,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             conversationId={activeConvId}
             onArtifactOpen={(id) => { if (id) setArtifactFocus((f) => ({ id, n: (f?.n ?? 0) + 1 })); setArtifactsOpen(true) }}
             onActionApproved={() => { if (activeConvId) startResultPolling(activeConvId) }}
+            // The loader must appear on the CLICK, not after the write finishes:
+            // approving a ten-product batch writes every product live, and for
+            // those seconds the thread was blank (owner report 2026-07-26).
+            onApprovePending={(pending: boolean) => {
+              if (!activeConvId) return
+              if (pending) startResultPolling(activeConvId)
+              else stopResultPolling()
+            }}
             onQuickSend={(text, askCardId) => { if (!streaming) void handleSend(text, [], undefined, undefined, askCardId) }}
             onModelSwitchResolve={(opts) => { if (!streaming) void handleSend('', [], opts) }}
             onStartVoiceSession={() => setVoiceOpen(true)}
@@ -1938,6 +2077,17 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           onModelChange={setActiveModelId}
           chatMode={chatMode}
           onChatModeChange={setChatMode}
+          pinnedSkill={pinnedSkill}
+          onClearSkillPin={() => {
+            const convId = activeConvId
+            setPinnedSkill(null)
+            if (!convId) return
+            void fetch(`/api/assistant/conversations/${convId}/skill`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ skill: null }),
+            }).catch(() => {})
+          }}
           onVoiceStart={() => setVoiceOpen(true)}
           seedText={composerSeed}
         />
