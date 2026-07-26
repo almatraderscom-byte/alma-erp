@@ -221,10 +221,48 @@ export const INBOUND_SETTING_KEYS = [
   'inbound_transfer_mode',
   'phone_forward_support',
   'phone_forward_boss',
+  'phone_inbound_answer_mode',
+  'phone_inbound_ring_secs',
+  'phone_inbound_ring_group',
 ]
 
 export async function readInboundSettings(): Promise<Record<string, string>> {
   return readSettingMap(INBOUND_SETTING_KEYS).catch(() => ({}) as Record<string, string>)
+}
+
+/**
+ * Is this a number the agent already knows — the owner, a staff member, or someone saved in
+ * his contacts?
+ *
+ * These callers skip the staff-first ring entirely: for them the assistant IS what they rang
+ * for, and making the boss listen to hold music while his own shop's phones ring would be
+ * absurd. Everyone else is treated as a customer and gets a human first.
+ *
+ * Matched on the last nine digits, like every other number comparison in this system. Never
+ * throws: if the lookup fails we treat the caller as unknown, which is the behaviour that
+ * errs toward a human answering rather than toward a machine.
+ */
+export async function isKnownCaller(number: string): Promise<boolean> {
+  const target = tail(number)
+  if (!target) return false
+
+  // The owner, from env — the one list that does not need a database.
+  const owners = (process.env.OWNER_PHONE_NUMBERS ?? '').split(',').map(tail).filter(Boolean)
+  if (owners.includes(target)) return true
+
+  try {
+    const [staff, contacts] = await Promise.all([
+      db.user.findMany({ where: { active: true, phone: { not: null } }, select: { phone: true } }),
+      db.familyContact.findMany({ select: { phone: true } }),
+    ]) as [Array<{ phone: string | null }>, Array<{ phone: string }>]
+
+    return [...staff.map((s) => s.phone ?? ''), ...contacts.map((c) => c.phone)]
+      .map(tail)
+      .filter(Boolean)
+      .includes(target)
+  } catch {
+    return false
+  }
 }
 
 function isBlocked(caller: string, list: string): boolean {
@@ -246,10 +284,13 @@ export function decideInbound(input: {
   did: string
   at: Date
   owner: boolean
+  /** True when the caller is in the agent's contacts (staff or saved). Owner implies it. */
+  known?: boolean
   settings: Record<string, string>
   routes: DidRoute[]
 }): InboundDecision {
   const { caller, did, at, owner, settings, routes } = input
+  const known = owner || input.known === true
   const route = routeForDid(routes, did)
   const time = decideTime(settings, at)
 
@@ -284,5 +325,19 @@ export function decideInbound(input: {
     outcome = `AI ধরবে (${lineName})। কোনো ফরওয়ার্ড নম্বর সেট নেই, তাই যুক্ত করার বদলে বার্তা নেবে।`
   }
 
-  return { did, route, owner, blocked, time, transferMode, forwardSupport, forwardBoss, outcome }
+  // Staff-first only for a caller we do NOT know, and only while the shop is open — ringing
+  // the team's phones at midnight is not a service, it is a nuisance.
+  const staffFirst = settings.phone_inbound_answer_mode === 'staff_first' && !known && time.open
+  const ringSecs = Math.min(60, Math.max(10, Number(settings.phone_inbound_ring_secs) || 30))
+  const answerMode: InboundDecision['answerMode'] = staffFirst ? 'staff_first' : 'ai_first'
+  const ringGroup = settings.phone_inbound_ring_group ?? ''
+
+  if (staffFirst) {
+    outcome = `প্রথমে আপনাদের ফোন ${ringSecs} সেকেন্ড বাজবে, কলদাতা ততক্ষণ হোল্ড সুর শুনবে। কেউ ধরলে সে-ই কথা বলবে (গ্রাহকের নাম-অর্ডার পর্দায় দেখাবে)। কেউ না ধরলে AI নিয়ে নেবে। — ${outcome}`
+  }
+
+  return {
+    did, route, owner, known, blocked, time, transferMode, forwardSupport, forwardBoss,
+    answerMode, ringSecs, ringGroup, outcome,
+  }
 }
