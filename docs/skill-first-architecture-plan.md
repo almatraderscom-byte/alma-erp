@@ -1,195 +1,269 @@
-# Skill-first agent — architecture plan
+# ALMA skill architecture — research-backed plan (v2)
 
-Owner proposal, 2026-07-26. His words, and they are the whole brief:
+Owner brief, 2026-07-26:
 
-> *"tmi ashole jevabe agent ke train up korteso, eta amr mote onno dik er kaj
-> bhenge dicche … evabe agent ke shikhate gele amr onno kono feature er moddhe
-> effect holew tmi sheta bujhbe na. eta professional ba smart way na."*
+> *"প্রতিটি Skill-এর নিজস্ব System Prompt, Rules, Constraints এবং Execution Logic
+> থাকবে … অন্য কোনো অপ্রয়োজনীয় নিয়ম বা আচরণ সেখানে প্রভাব ফেলবে না।"*
 >
-> *"ami cai amr agent ke custom skill shikhabo — ami kono task dile agent age oi
-> skill ta pore same instruction follow kore kaj korbe, r agent shuru tei bole
-> nibe je ami oi skill ta use korchi … server side theke agent er first reply te
-> skill er nam na bolle server take atke dibe."*
+> *"সেখানে পুরো কাজটি কীভাবে করতে হবে, কোথায় কোথায় আটকে যেতে পারে, কী কী Common
+> Mistake হতে পারে … কোন Step-এর পরে কোন Step, Verification কীভাবে হবে, Failure
+> হলে কীভাবে Recover করবে — সবকিছুই থাকে।"*
+>
+> *"Technical Issue ছাড়া অন্য কোনো কারণে যেন Agent কোথাও আটকে না যায়।"*
 
-He is right, and today proved it. Fixing "a fix order is not an audit order"
-meant editing a global regex; fixing "don't stop mid-step" meant editing the
-global turn loop, which broke a test written for a different feature yesterday.
-Neither change is visible to anyone reading the SEO work, and neither can be
-reasoned about locally. Task knowledge does not belong in global code.
+He asked for market research before a plan. This is that plan.
 
 ---
 
-## 1. What already exists (do not rebuild it)
+## 1. What the research actually says
+
+Six findings that change the design. Numbers are from the sources at the bottom.
+
+**1. Curated beats generated, by a lot.** Human-curated skills added **+18.2 to
++24.8 points** to pass rates across Claude Code, Codex and Gemini harnesses.
+Self-*generated* skills scored **8.1–11.5 points BELOW** the no-skill baseline.
+→ His instinct is right: a skill must carry earned experience, not text an LLM
+invented about a job it has never done.
+
+**2. Longer is NOT better — and this corrects one thing in his brief.** Compact
+skills: **+19.0**. Standard length: **+21.5**. *Comprehensive* documentation:
+**+0.7**. Stuffing everything into one file destroys the benefit.
+→ Everything he listed (traps, common mistakes, recovery, verification) DOES go
+in the skill — but layered: a compact main file that points to deeper files
+loaded only when that branch is hit. This is "progressive disclosure", and it is
+the single most established pattern in the field.
+
+**3. One skill at a time, chosen per task.** Loading all 196 skills: **29.3%**
+pass. Task-conditioned selection: **45.3%**. One skill **+18.0**, two-to-three
+**+19.0**, big bundles only **+10.1** — with **23% fewer tokens**.
+→ Pin exactly one skill per job. His "server picks and locks it" instinct is
+what the data supports.
+
+**4. A portable file does not mean portable behaviour.** The same model scores
+**60.8%** in one harness and **52.8%** in another; Claude Opus **61.2% → 53.1%**.
+→ A skill copied from the internet is unproven here. Every ALMA skill must be
+measured *on our harness, with our head model*, or it is decoration. This is
+exactly why his 16 existing skills "শুধু পড়ে আছে".
+
+**5. Skills can make things WORSE.** In SkillsBench, **13 of 87 tasks regressed**
+once a skill was added.
+→ Every skill change gets eval-gated against a no-skill baseline. No exceptions.
+
+**6. Structure changes behaviour, measurably.** Progressive disclosure raised
+distinct skill resources the agent actually opened from **1.18 → 3.85** per run,
+effective uptake **1.33 → 3.92**, and passes **+4.1%**. But it was *weaker* where
+success depended on exact output conventions, numeric thresholds, or long
+generation pipelines.
+→ Prose for judgement; **scripts and validators for anything with an exact
+answer**. Do not write "title must be 10–70 chars" in prose and hope — validate it.
+
+Plus the field's authoring rules, which our existing skills mostly violate:
+description in third person stating *what* AND *when*, main file under ~500
+lines, references exactly one level deep, one recommended approach not four, no
+time-sensitive text, consistent vocabulary, at least three evals per skill. A
+2026 review of 238 real-world skills found **99% carried at least one flaw a
+routine review catches**.
+
+---
+
+## 2. The architectural answer to his central question
+
+He wants each skill to have **its own system prompt, its own rules, and no
+interference from unrelated rules**. The industry has a precise answer, and it is
+not "a bigger skill file":
+
+| | **Skill** | **Subagent** |
+|---|---|---|
+| What it is | a procedure injected into the *current* context | a separate worker with its **own context window, own system prompt, own tool permissions** |
+| Other rules still apply? | **yes** — the big main prompt is still there | **no** — it starts clean |
+| Best for | short work, needs the conversation | isolated, heavy, must not be polluted |
+
+**What he described is subagent semantics wearing the word "skill".** A skill
+file alone cannot give him "অন্য নিয়ম প্রভাব ফেলবে না" — by construction it sits
+inside the main prompt.
+
+**Recommendation: use both, with a clean split.**
+
+> **The skill FILE is the knowledge. The skill RUNNER is the isolation.**
+>
+> A job runs in a dedicated runner whose system prompt is
+> `ALMA invariants (short) + that one skill`, with a tool allowlist and a
+> completion gate. The huge general prompt does not come along.
+
+This is the standard shape at every major lab, and — importantly — **we already
+have every piece of it**:
 
 | Piece | Where | State |
 |---|---|---|
-| 16 skills as markdown + manifest | `src/agent/skills/*/SKILL.md` | written, unused |
-| Discovery + keyword selection (≤3 per turn) | `skill-engine/loader.ts` | working |
-| Prompt injection of the chosen skill | `skill-engine/runtime.ts` | working |
-| Kill switch, no redeploy | `skill_engine_enabled` KV / `SKILL_ENGINE_ENABLED` | **OFF** |
-| Hard playbooks with a deterministic completion gate | `skill-packs/packs.ts`, `runner.ts`, `complete_skill_pack_run` | separate, older |
-| Tool names in packs validated against the live registry by CI | `skill-packs/__tests__/packs.test.ts` | working |
+| 16 skill files, frontmatter + steps + tools + guardrails | `src/agent/skills/*/SKILL.md` | written, unused |
+| Discovery, keyword selection, prompt injection | `skill-engine/loader.ts`, `runtime.ts` | works, **flag OFF** |
+| Isolated runner: own brief, narrowed tools | `models/subagent.ts` `runSubAgent()` | in production |
+| Role tool allowlists | `models/specialist-roles.ts` | in production |
+| Deterministic completion gate (no "done" without evidence) | `skill-packs/runner.ts` `findGateMisses()` | in production |
+| Tool names in packs CI-validated against the registry | `skill-packs/__tests__/packs.test.ts` | working |
 
-A SKILL.md today already carries: name, description, keywords, numbered steps
-with the exact tools per step, a checklist, guardrails, and a "Done" definition.
-That is most of the shape he described.
-
-**So this is not a build-from-zero project.** It is: turn it on, make the
-selection trustworthy, make the agent announce it, enforce it server-side, and
-move task knowledge out of global code and into the skill files.
+Nothing here is a from-scratch build. It is: wire the pieces into one path,
+raise the skill format to professional grade, and measure.
 
 ---
 
-## 2. The five gaps between what exists and what he asked for
+## 3. The ALMA skill format (v2)
 
-1. **The agent never says which skill it is using.** No announcement, no UI chip.
-2. **Nothing enforces it.** The skill is advice in the prompt; the head may
-   ignore it and no one notices.
-3. **Selection is keyword-scored, so it cannot tell audit from fix.** This is
-   exactly today's bug in a different costume: `alma-seo-audit` and
-   `alma-client-seo` both match "seo", and nothing decides between "audit it"
-   and "fix it".
-4. **Skills hold the happy path, not the traps.** They say what to do; they do
-   not say where the agent got stuck last time, which is the knowledge he
-   actually wants to accumulate.
-5. **"Done" is prose, not a gate.** `skill-packs` has a real completion gate;
-   `skill-engine` does not. Two systems, one of them enforceable.
+```
+src/agent/skills/seo-fixing-own-site/
+├── SKILL.md              # ≤200 lines. The procedure. Always loaded when pinned.
+├── SYSTEM.md             # the skill's OWN system prompt (role, tone, hard limits)
+├── traps.md              # where it got stuck before, and what to do instead
+├── recovery.md           # failure → diagnosis → recovery, per known failure
+├── verify.md             # how to prove each step really happened
+└── scripts/
+    └── check_alt.mjs     # deterministic checks — never prose for exact answers
+```
 
----
-
-## 3. The plan, in the order I would do it
-
-Each phase is independently useful and independently revertible. He approves one
-at a time; nothing merges without a live check in his Chrome.
-
-### SK-0 · Measure before changing anything (half a day, no code)
-
-Turn `skill_engine_enabled` ON in **preview only**, then run 15–20 real messages
-he would actually send and record which skill got picked and whether it was the
-right one. Output: a hit-rate table.
-
-Why first: it tells us whether selection needs a small fix or a redesign, and it
-costs nothing but time. If keyword selection turns out to be 90% right, SK-3
-shrinks a lot.
-
-### SK-1 · The server picks, pins, and announces the skill
-
-- The **server** decides the skill before the model runs, not the model.
-- The chosen skill is **pinned to the conversation**, not re-picked every turn.
-  Two reasons: it matches how he works (one chat = one job), and re-injecting a
-  different 5k-token block every turn breaks the prompt cache — see §5.
-- The head's first line must state it: *"alma-seo-fix skill ব্যবহার করছি।"*
-- The UI shows a chip beside the model picker: `🧠 alma-seo-fix`. He can see it
-  and change it, which is also the manual override when selection is wrong.
-
-### SK-2 · Enforcement, the version that actually works
-
-His ask: *"first reply-তে skill-এর নাম না বললে server আটকে দেবে"*. The literal
-version — let the model choose, then block it — costs a wasted round and only
-catches the announcement, not the behaviour. Stronger, same spirit:
-
-- **The tool list is cut to the skill's allowlist.** This is the only enforcement
-  that has ever held in this codebase: an absent tool is a guarantee, a prompt
-  rule is a request. `alma-seo-audit` gets no write tools at all; `alma-seo-fix`
-  gets `audit_product_seo` + `draft_seo_fixes` and nothing else.
-- **The announcement is checked once**, and a missing one is repaired in place
-  (one retry) rather than failing the turn.
-- **The skill's `Done` list gates completion**, reusing the existing skill-pack
-  gate: the head cannot say "হয়ে গেছে" until every required step has a
-  successful tool record.
-
-### SK-3 · Skill file schema v2 — where the real value is
-
-Add to the frontmatter, keeping v1 files valid:
+Frontmatter, extending what we already parse:
 
 ```yaml
-when_to_use:     "মালিক বিদ্যমান SEO সমস্যা ঠিক করতে বললে"
-when_not_to_use: "নতুন অডিট/রিপোর্ট চাইলে → alma-seo-audit"
-tools:           [audit_product_seo, draft_seo_fixes, submit_to_indexnow]
-extends:         alma-seo-base        # ALMA rules once, not in 40 files
+name: seo-fixing-own-site
+description: >
+  Fixes existing on-page SEO problems on almatraders.com — alt text, meta
+  descriptions, titles — via owner-approved batches. Use when Boss asks to FIX
+  or WRITE SEO content for our own site. Not for producing an audit or report.
+version: 2.0.0
+extends: alma-base                 # ALMA invariants once, not copied 40 times
+tools: [get_website_catalog, audit_product_seo, draft_seo_fixes, submit_to_indexnow]
+isolation: subagent                # or `inline` for light skills
+done:                              # machine-checkable, not prose
+  - tool: audit_product_seo        # every targeted product measured first
+  - tool: draft_seo_fixes          # a real approval card exists
+  - check: no_finding_left_open
 ```
 
-And a new body section that is the point of the whole exercise:
+Four things this adds over what we have today:
+
+- **`SYSTEM.md`** — the skill's own operating rules, which become the runner's
+  system prompt. This is his core ask, and it only works because of `isolation`.
+- **`extends: alma-base`** — money, approvals, Bangla, "Boss" never "Sir", halal,
+  no live writes without a card. Written once; every skill inherits it. Without
+  this, 40 skills drift into 40 dialects of the ALMA rules.
+- **`traps.md` / `recovery.md`** — the accumulating experience he actually wants.
+  Loaded only when that branch is hit, so they cost nothing on the happy path.
+- **`done:`** — becomes the existing completion gate. "হয়ে গেছে" stops being a
+  sentence the model can produce at will.
+
+What `traps.md` looks like for the SEO skill on day one — all of it earned today:
 
 ```markdown
-## যেখানে আগে আটকেছি
-- অডিটের "৫২টা ছবিতে alt নেই" মিথ্যা ছিল — সাজসজ্জার ছবিতে alt="" থাকাই নিয়ম।
-  আগে লাইভ HTML দেখে গুনবে, অডিটের সংখ্যায় বিশ্বাস করবে না। (2026-07-26)
-- Website Supabase কনফিগার না থাকলে সব write টুল মরা — প্রথম ধাপেই যাচাই করবে।
-- ৫০টা প্রোডাক্ট একসাথে নয়; ১০টার ব্যাচ, প্রতি ব্যাচে approval card একটা।
+## অডিটের "৫২টা ছবিতে alt নেই" — মিথ্যা হতে পারে (2026-07-26)
+সাজসজ্জার ছবিতে alt="" থাকাই সঠিক, আর aria-label দেওয়া বাটনের ভেতরের ছবিতেও।
+লাইভ HTML নিজে গুনে নাও (scripts/check_alt.mjs) — অডিটের সংখ্যা যথেষ্ট নয়।
+
+## Website Supabase কনফিগার না থাকলে সব write টুল মরা
+প্রথম ধাপেই যাচাই করো। না থাকলে প্রথম উত্তরেই বলো কোন env নেই — একটার পর একটা
+টুলে ধাক্কা খেয়ো না। (সেদিন ১৫ ধাপ আর ১ মিনিট ৩৬ সেকেন্ড নষ্ট হয়েছিল।)
+
+## ৫০টা প্রোডাক্ট একসাথে নয়
+১০টার ব্যাচ, প্রতি ব্যাচে একটা approval card। বড় ব্যাচ টার্নের সময়সীমায় মরে।
 ```
-
-`extends` matters: without it, every ALMA rule (money, Bangla, "Boss" not "Sir",
-halal, approval gates) gets copy-pasted into every skill and they drift apart.
-
-### SK-4 · Split the SEO skills the way he described
-
-```
-alma-seo-base          ALMA rules + what SEO means here (never selected alone)
-├── alma-seo-audit     read-only. own site. no write tool exists in its list
-├── alma-seo-fix-own   almatraders.com. write via draft_seo_fixes → approval card
-└── alma-seo-fix-client  a customer's site. no DB access; produces a PR/report
-```
-
-Selection between them is a **short deterministic decision list inside the skill
-router** — the verb decides, and `when_not_to_use` is the tiebreak. That decision
-lives in one readable place instead of a regex buried in
-`owner-turn-requirements.ts`.
-
-### SK-5 · Observability, so he can see whether a skill works
-
-Every turn logs: skill, version, steps attempted, steps completed, stop reason,
-tokens, cost. One page: *"alma-seo-fix — 7 runs, 5 completed, stuck twice at step
-3 (draft_seo_fixes validation)"*. That table is what tells him which skill to
-improve next, instead of guessing.
-
-### SK-6 · Move today's hacks out of global code
-
-Once SK-1..SK-4 hold, the global patches I added for SEO come out and go into the
-skill files where they belong:
-
-- fix-vs-audit intent regex → `when_to_use` / `when_not_to_use`
-- the alt false-positive lore → `## যেখানে আগে আটকেছি`
-- the SEO-specific parts of the client-seo batch contract → skill `Done` list
-
-What STAYS global, deliberately: money, approvals, honesty/claim verification,
-Bangla output, the "don't stop mid-step" loop rule. Those are not task knowledge;
-they are what the agent is.
 
 ---
 
-## 4. The rule this whole thing buys us
+## 4. Runtime: select → pin → announce → isolate → gate
 
-**From here on: task knowledge goes in a skill file. Global code changes only for
-things that are true for every task** — safety, money, honesty, language, the
-turn loop itself. If I am about to edit a regex to make one job behave, that is
-the signal that it belongs in a skill instead.
+1. **Select** — the server picks the skill *before* the model runs. Selection is
+   a short deterministic decision list (verb + target + `when_not_to_use`), not
+   keyword scoring alone, because keywords cannot separate "audit it" from
+   "fix it" — which is precisely the bug that cost a day this week.
+2. **Pin** — the choice sticks to the conversation. One chat, one job. This is
+   also the cost fix: a 5k-token skill re-picked every turn destroys the prompt
+   cache (his own meter showed what that costs); pinned, it is one cache write.
+3. **Announce** — the head's first line names the skill, and a chip shows it in
+   the UI next to the model picker. He can change it — that is the override when
+   selection is wrong.
+4. **Isolate** — for `isolation: subagent`, the job runs with
+   `alma-base + SYSTEM.md + SKILL.md` and the skill's tool allowlist. **The
+   allowlist is the real enforcement.** A read-only audit skill is handed no
+   write tool, so it cannot write no matter what it decides. Everything this
+   session proved says the same thing: a prompt rule is a request, an absent tool
+   is a guarantee.
+5. **Gate** — `done:` is checked against actual tool records. Unmet → the turn
+   reports what is left, never "হয়ে গেছে".
 
-That is the answer to his complaint, and it is worth writing down because it is a
-rule about how I work, not a feature.
-
----
-
-## 5. The two risks worth naming up front
-
-**Cost.** A skill body is ~5k tokens injected into the system prompt. Injected
-*volatilely* — different skill per turn — it breaks the prompt cache prefix, and
-his own cost analysis already showed what that does (~$0.17/turn). Pinning the
-skill per conversation (SK-1) is the mitigation: one cache write at the start of
-the chat, cache hits for every turn after. This is why pinning is in SK-1 and not
-an afterthought.
-
-**Wrong skill picked.** A wrong skill is worse than no skill, because it comes
-with an allowlist that removes the tools the job actually needed. Mitigations:
-the chip is always visible and always changeable by him; a skill may declare
-`escalates_to`; and if the head needs a tool the skill withheld, it must say so
-plainly rather than working around it — the capability-preflight block shipped
-today already does exactly this.
+His literal ask — *"first reply-তে skill-এর নাম না বললে server আটকে দেবে"* — is
+kept as the announcement check, but softened to one in-place repair rather than
+killing the turn. Blocking catches only the sentence; the allowlist catches the
+behaviour.
 
 ---
 
-## 6. What I recommend he approves first
+## 5. Build order
 
-**SK-0 alone.** One preview flag, 20 messages, a hit-rate table, no code, nothing
-merged. Everything after it becomes a much better-informed decision — including
-whether SK-3 is a small edit or a real project.
+Eval-first, because finding 5 says skills can regress things.
+
+| Phase | What | Gate to pass |
+|---|---|---|
+| **SK-0** | **Measure today's reality.** Flip `skill_engine_enabled` ON in preview, run ~20 of his real messages, record picked-vs-correct and completion. No code. | a hit-rate table |
+| **SK-1** | **Eval harness.** 3 scenarios per skill, each runnable with and without the skill. | baseline numbers exist |
+| **SK-2** | **Format v2 + `alma-base`.** Schema, loader support, a linter for the 99%-of-skills flaws (description person/what+when, length, reference depth, tool names exist). | linter green on all skills |
+| **SK-3** | **Select → pin → announce.** Deterministic router, conversation pin, UI chip + override. | right skill on ≥90% of the SK-0 set |
+| **SK-4** | **Isolate + allowlist + gate.** Route `isolation: subagent` skills through `runSubAgent`; wire `done:` into the existing pack gate. | audit skill provably cannot write |
+| **SK-5** | **Write the three SEO skills properly**, with `traps.md` seeded from this week. | beats no-skill baseline on evals |
+| **SK-6** | **Move the global hacks into skills** and delete them from global code. | tests stay green |
+
+`alma-seo-base` → `seo-auditing-own-site` (read-only) → `seo-fixing-own-site`
+(write via approval card) → `seo-fixing-client-site` (no DB, PR/report only).
+Naming follows the field convention: gerund, lowercase, hyphens.
+
+---
+
+## 6. What stays global, deliberately
+
+Skills own **task knowledge**. Global code keeps only what is true for every
+task: money and approval gates, honesty/claim verification, Bangla and "Boss",
+the turn loop (don't stop mid-step, self-continue, deadline handling), and the
+capability preflight. Those are not procedures — they are what the agent *is*.
+
+**The rule this buys:** if I am about to edit a regex or a policy file to make
+*one job* behave, that is the signal it belongs in a skill instead. That is the
+direct answer to his complaint, and it is a rule about how I work, not a feature.
+
+---
+
+## 7. Honest limits
+
+- **"কোথাও আটকাবে না" is a target, not a guarantee.** A skill removes the
+  *procedural* stalls — the wrong-turn, the forgotten step, the fake "done", the
+  15-step discovery of a dead connection. It cannot remove a model deciding
+  badly. The measurable goal is completion rate per skill, tracked, improving.
+- **Skills cost tokens.** Pinning + progressive disclosure keeps it to roughly
+  one cache write per conversation. If a skill's main file grows past ~200 lines,
+  that is a signal to split it, not to accept the cost.
+- **A wrong skill is worse than none** — it removes the tools the real job
+  needed. Hence: the chip is always visible and always overridable, and a skill
+  that finds itself missing a tool must say so plainly.
+- **This will take weeks, not days,** if done to the standard he is asking for.
+  SK-0 through SK-2 is the honest first slice.
+
+---
+
+## 8. What to approve first
+
+**SK-0 and SK-1 together** — turn the flag on in preview, run his real messages,
+and build the eval harness. No merge, no new architecture, and it produces the
+one thing every later decision depends on: *do the skills we already have
+actually get picked and actually help?*
+
+Given finding 5, doing anything else first would be guessing.
+
+---
+
+## Sources
+
+- [Skill authoring best practices — Claude Platform Docs](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)
+- [How to write effective AI agent skills: 6 data-backed practices — Arize AI](https://arize.com/blog/how-to-write-effective-ai-agent-skills/)
+- [SkillJuror: Measuring How Agent Skill Organization Changes Runtime Behavior](https://arxiv.org/pdf/2606.11543)
+- [Agent Skills: A Data-Driven Analysis of Claude Skills](https://arxiv.org/pdf/2602.08004)
+- [Skills explained: Skills vs prompts, Projects, MCP, and subagents — Anthropic](https://claude.com/blog/skills-explained)
+- [Claude Code Subagents vs Skills: When to Use Each](https://theaiarchitects.com/blog/claude-code-subagents-vs-skills)
+- [Agent Skill Best Practices — Atlan](https://atlan.com/know/ai-agent/ai-agent-skills/agent-skill-best-practices/)
+- [Testing Agent Skills Systematically with Evals — OpenAI](https://developers.openai.com/blog/eval-skills)
+- [A practical guide to building agents — OpenAI](https://openai.com/business/guides-and-resources/a-practical-guide-to-building-ai-agents/)
