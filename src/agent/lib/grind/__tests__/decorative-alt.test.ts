@@ -17,7 +17,7 @@
  * same rule, or a correct page reads as broken forever.
  */
 import { describe, expect, it } from 'vitest'
-import { contentImages } from '@/agent/lib/grind/page-measure'
+import { contentImages, imagesMissingAlt } from '@/agent/lib/grind/page-measure'
 
 const REAL_FOOTER = `
 <div class="foot-strip" aria-hidden="true">
@@ -45,6 +45,22 @@ describe('what counts as an image that needs alt', () => {
   it('ignores tracking pixels — the Facebook one is on every page', () => {
     expect(contentImages('<img src="https://www.facebook.com/tr?id=42&ev=PageView" alt=""/>')).toHaveLength(0)
     expect(contentImages('<img src="/p.gif" width="1" height="1" alt=""/>')).toHaveLength(0)
+  })
+
+  // The homepage's 22 "missing alt" images, all of this shape. They still COUNT
+  // as content images (Google Images cares) — they are just not missing a name.
+  it('a thumbnail whose button already carries the name is not missing alt', () => {
+    const html =
+      '<button type="button" class="thumb" aria-label="সি-গ্রীন কালার পাঞ্জাবী Product Code: 126">'
+      + '<img src="/thumb.png" alt=""/></button>'
+    expect(contentImages(html)).toHaveLength(1)
+    expect(imagesMissingAlt(html)).toHaveLength(0)
+  })
+
+  it('but an unlabelled button hides nothing — the image still needs alt', () => {
+    const html = '<button type="button"><img src="/thumb.png"/></button>'
+    expect(contentImages(html)).toHaveLength(1)
+    expect(imagesMissingAlt(html)).toHaveLength(1)
   })
 
   it('a genuinely unlabelled content image is still caught', () => {

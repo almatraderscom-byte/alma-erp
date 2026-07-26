@@ -80,6 +80,22 @@ export function contentImages(html: string): string[] {
   })
 }
 
+/**
+ * Content images with no accessible name at all.
+ *
+ * An empty alt is fine when the wrapping control already carries the name —
+ * almatraders.com's thumbnails are `<button aria-label="…"><img alt=""/></button>`,
+ * and an alt there makes a screen reader say it twice. Those images still COUNT
+ * (Google Images cares, so the ratio should see them); they are just not missing.
+ */
+export function imagesMissingAlt(html: string): string[] {
+  const withoutNamedControls = html.replace(
+    /<(button|a)\b[^>]*aria-label\s*=\s*["'][^"']+["'][^>]*>[\s\S]*?<\/\1>/gi,
+    '',
+  )
+  return contentImages(withoutNamedControls).filter((t) => !(attr(t, 'alt') ?? '').trim())
+}
+
 function metaContent(html: string, key: 'name' | 'property', value: string): string | null {
   for (const tag of tagsOf(html, 'meta')) {
     const k = attr(tag, key)
@@ -163,7 +179,7 @@ export function measurePageIssues(html: string, pageUrl: string): PageIssue[] {
   // SUPPOSED to carry alt="". The verifier must agree with the finder, or a
   // correct page reads as broken forever.
   const imgs = contentImages(html)
-  const missingAlt = imgs.filter((t) => !(attr(t, 'alt') ?? '').trim()).length
+  const missingAlt = imagesMissingAlt(html).length
   if (imgs.length > 0 && missingAlt > 0) {
     add(
       missingAlt > imgs.length / 2 ? 'medium' : 'low',

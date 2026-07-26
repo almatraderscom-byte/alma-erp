@@ -188,13 +188,25 @@ export function analyzeHtml(html, pageUrl) {
     if ((node.getAttribute('aria-hidden') ?? '') === 'true') return true
     return isDecorative(node.parentNode)
   }
+  // An image inside a control that ALREADY carries the name is correctly alt=""
+  // — almatraders.com's thumbnails are
+  // <button aria-label="সি-গ্রীন কালার পাঞ্জাবী …"><img alt=""/></button>, and an
+  // alt there makes a screen reader say it twice. Such images still COUNT (Google
+  // Images cares about them); they are simply not missing anything.
+  const hasNamedAncestor = (node) => {
+    if (typeof node?.getAttribute !== 'function') return false
+    if (node.tagName && node.tagName !== 'IMG' && (node.getAttribute('aria-label') ?? '').trim()) return true
+    return hasNamedAncestor(node.parentNode)
+  }
   const isTrackingPixel = (i) => {
     const src = i.getAttribute('src') ?? ''
     if (/facebook\.com\/tr|\/pixel|analytics|googletagmanager/i.test(src)) return true
     return (i.getAttribute('width') ?? '') === '1' && (i.getAttribute('height') ?? '') === '1'
   }
   const contentImgs = root.querySelectorAll('img').filter((i) => !isDecorative(i) && !isTrackingPixel(i))
-  const missingAlt = contentImgs.filter((i) => !(i.getAttribute('alt') ?? '').trim()).length
+  const missingAlt = contentImgs.filter(
+    (i) => !(i.getAttribute('alt') ?? '').trim() && !hasNamedAncestor(i),
+  ).length
   if (contentImgs.length > 0 && missingAlt > 0) {
     add(
       missingAlt > contentImgs.length / 2 ? 'medium' : 'low',
