@@ -24,6 +24,33 @@ function mayPushAgain(input: {
     && (input.intentNudges === 0 || input.successfulToolCount > input.successCountAtLastIntentNudge)
 }
 
+const BOOKKEEPING = new Set([
+  'save_memory', 'update_memory', 'delete_memory', 'graph_remember',
+  'save_task_checkpoint', 'track_open_task', 'add_owner_todo', 'manage_work_todos',
+])
+
+/** Mirrors the loop's count: bookkeeping is not movement. */
+function progressCount(records: Array<{ status: 'success' | 'error'; toolName: string }>): number {
+  return records.filter((r) => r.status === 'success' && !BOOKKEEPING.has(r.toolName)).length
+}
+
+describe('saving memory is not moving', () => {
+  it('a round of nothing but save_memory earns no push', () => {
+    const records = Array.from({ length: 6 }, () => ({ status: 'success' as const, toolName: 'save_memory' }))
+    expect(progressCount(records)).toBe(0)
+    expect(mayPushAgain({ intentNudges: 1, workClass: 'deep', successfulToolCount: 0, successCountAtLastIntentNudge: 0 }))
+      .toBe(false)
+  })
+
+  it('a real tool does earn one', () => {
+    const records = [
+      { status: 'success' as const, toolName: 'save_memory' },
+      { status: 'success' as const, toolName: 'audit_product_seo' },
+    ]
+    expect(progressCount(records)).toBe(1)
+  })
+})
+
 describe('a push must be earned by progress', () => {
   it('the first push is always allowed', () => {
     expect(mayPushAgain({ intentNudges: 0, workClass: 'deep', successfulToolCount: 0, successCountAtLastIntentNudge: -1 }))

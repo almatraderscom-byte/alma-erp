@@ -281,6 +281,15 @@ const INTERNAL_NUDGE_MARKER =
  * second push names the repetition and offers the honest exit; the third stops
  * asking altogether.
  */
+/**
+ * Tools that record what happened rather than move the job forward. A push is
+ * never "earned" by one of these.
+ */
+const BOOKKEEPING_TOOLS = new Set([
+  'save_memory', 'update_memory', 'delete_memory', 'graph_remember',
+  'save_task_checkpoint', 'track_open_task', 'add_owner_todo', 'manage_work_todos',
+])
+
 function adapterActNowNudge(attempt: number): string {
   if (attempt <= 1) {
     return INTERNAL_NUDGE_MARKER
@@ -1940,7 +1949,15 @@ async function* runAlternateProviderTurn(
       // rules while the system prompt scrolls far up the context (context rot).
       if (AGENT_CONSTITUTION && iteration > 0 && iteration % CONSTITUTION_REINJECT_EVERY === 0) {
         // BP6 — the style line rides the same anti-drift injection (tone drifts too).
-        messages = [...messages, { role: 'user', content: AGENT_STYLE ? `${CONSTITUTION_REMINDER}\n${STYLE_REMINDER}` : CONSTITUTION_REMINDER }]
+        // Marked internal: this arrives as a `user` message every few rounds, and
+        // unmarked the head read it as Boss speaking again — live 2026-07-27 its
+        // own thinking said "The latest message is the reminder of the
+        // constitution and style rule", mid-loop.
+        messages = [...messages, {
+          role: 'user',
+          content: INTERNAL_NUDGE_MARKER
+            + (AGENT_STYLE ? `${CONSTITUTION_REMINDER}\n${STYLE_REMINDER}` : CONSTITUTION_REMINDER),
+        }]
       }
 
       for await (const ev of adapter.streamTurn({
@@ -2089,7 +2106,12 @@ async function* runAlternateProviderTurn(
         // every push with text alone gets pushed again immediately, notices the
         // repetition, and thrashes — exactly what happened live on 2026-07-27
         // once work turns were allowed more than one push.
-        const successfulToolCount = toolRecords.filter((r) => r.status === 'success').length
+        // Bookkeeping does not count as moving. In the 2026-07-27 loop the head
+        // answered every push by saving memory — a tool that succeeds, changes
+        // nothing about the job, and would otherwise buy it another push forever.
+        const successfulToolCount = toolRecords
+          .filter((r) => r.status === 'success' && !BOOKKEEPING_TOOLS.has(r.toolName))
+          .length
         if (
           !signal?.aborted
           && !deadlineNudgeSent
