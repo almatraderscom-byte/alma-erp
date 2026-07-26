@@ -5,6 +5,7 @@ import {
   archiveVerificationRetryDecision,
   archiveReceiptDeletionEligibility,
   collectBigPaths,
+  exactArchiveFetchBackEvidence,
   lifecycleArchiveLineage,
 } from '../schedulers/studio-archive.mjs'
 import {
@@ -137,6 +138,32 @@ test('failed fetch-back retries the existing Drive file and stops at the bounded
     }),
     { shouldRetry: false, reason: 'already_verified' },
   )
+})
+
+test('legacy archive verification requires exact fetched-back checksum and size', () => {
+  const source = Buffer.from('exact legacy artifact')
+  assert.deepEqual(exactArchiveFetchBackEvidence({
+    sourceBytes: source,
+    fetchBackBytes: Buffer.from(source),
+    driveExists: true,
+  }), {
+    verified: true,
+    expectedChecksum: '91f2940f2f2ea3c62b89887399333380edb0045b1f4a4c213e2d328aec84ebc6',
+    archiveChecksum: '91f2940f2f2ea3c62b89887399333380edb0045b1f4a4c213e2d328aec84ebc6',
+    fetchBackChecksum: '91f2940f2f2ea3c62b89887399333380edb0045b1f4a4c213e2d328aec84ebc6',
+    sizeBytes: 21,
+    errorCode: null,
+  })
+  assert.equal(exactArchiveFetchBackEvidence({
+    sourceBytes: source,
+    fetchBackBytes: Buffer.from('different bytes'),
+    driveExists: true,
+  }).verified, false)
+  assert.equal(exactArchiveFetchBackEvidence({
+    sourceBytes: source,
+    fetchBackBytes: null,
+    driveExists: true,
+  }).verified, false)
 })
 
 test('archive path collection excludes thumbnails and deduplicates originals', () => {

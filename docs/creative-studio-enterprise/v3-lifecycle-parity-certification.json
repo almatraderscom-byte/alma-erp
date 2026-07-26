@@ -25,6 +25,7 @@
     { "id": "claim-time-source-node-review-batch-revalidation", "required": true, "evidence": "lifecycle-service.test.ts" },
     { "id": "immutable-source-path-checksum-bytes", "required": true, "evidence": "lifecycle-schema.test.ts,lifecycle-service.test.ts" },
     { "id": "owner-render-fingerprint-idempotency", "required": true, "evidence": "lifecycle-service.test.ts,lifecycle-schema.test.ts" },
+    { "id": "postgres-serializable-idempotency-concurrency", "required": true, "evidence": "lifecycle-postgres-concurrency.integration.test.ts; run npm run test:lifecycle:postgres with TEST_DATABASE_URL" },
     { "id": "ready-artifact-relational-proof", "required": true, "evidence": "lifecycle-service.test.ts,lifecycle-schema.test.ts" },
     { "id": "preview-render-export-dry-run-schedule-live-separation", "required": true, "evidence": "lifecycle-contract.test.ts,publish-service.test.ts" },
     { "id": "verified-receipt-only-state-truth", "required": true, "evidence": "lifecycle-contract.test.ts,publish-service.test.ts" },
@@ -34,7 +35,7 @@
     { "id": "scoped-owner-operated-flags", "required": true, "evidence": "lifecycle-service.test.ts,lifecycle-flags-api.test.ts,lifecycle-schema.test.ts" },
     { "id": "unknown-telemetry-remains-unknown", "required": true, "evidence": "lifecycle-contract.test.ts" },
     { "id": "migration-dry-run-roadmap-reconciliation", "required": true, "evidence": "creative-studio-lifecycle-migration-dry-run.mjs" },
-    { "id": "transaction-wrapped-prisma-deploy-compatible", "required": true, "evidence": "lifecycle-schema.test.ts,creative-studio-lifecycle-ddl-preflight.mjs" },
+    { "id": "explicit-transaction-wrapped-prisma-deploy-compatible", "required": true, "evidence": "lifecycle-schema.test.ts,creative-studio-lifecycle-ddl-preflight.mjs" },
     { "id": "ddl-static-preflight-no-low-lock-claim", "required": true, "evidence": "creative-studio-lifecycle-ddl-preflight.mjs" }
   ],
   "gates": {
@@ -64,6 +65,7 @@
   "risks": [
     "V3 Review and Operations UI desks still require typed-contract wiring by the UI stream.",
     "The held constraint-validation script has not been timed on a representative restored database; no low-lock or duration claim is made.",
+    "The real PostgreSQL concurrency gate skips when TEST_DATABASE_URL is absent and must run in database-backed CI before rollout certification.",
     "Legacy fallback is selected by caller orchestration; this server does not claim to execute fallback automatically.",
     "Live publish, paid render, voice provider actions and external Meta execution remain independently hard-disabled."
   ]

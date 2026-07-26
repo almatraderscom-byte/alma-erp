@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
+    "test:lifecycle:postgres": "vitest run src/lib/creative-studio/__tests__/lifecycle-postgres-concurrency.integration.test.ts",
     "test:agent": "vitest run src/agent",
     "type-check": "tsc --noEmit",
     "verify": "npm run type-check && npm run build",

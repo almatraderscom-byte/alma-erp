@@ -32,6 +32,13 @@ describe('Creative Studio V3 lifecycle production schema', () => {
     )
   })
 
+  it('wraps the automatic lifecycle migration explicitly and holds operational DDL outside it', () => {
+    expect(migration.indexOf('BEGIN;')).toBeLessThan(migration.indexOf('CREATE TYPE'))
+    expect(migration.trimEnd()).toMatch(/COMMIT;$/)
+    expect(migration).not.toContain('CREATE INDEX CONCURRENTLY')
+    expect(heldValidationScript).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS')
+  })
+
   it('defines durable job, receipt, audit and scoped rollout models', () => {
     for (const model of [
       'CreativeLifecycleJob',
@@ -111,6 +118,17 @@ describe('Creative Studio V3 lifecycle production schema', () => {
     expect(migration).toContain('creative_archive_verification_attempts_append_only')
     expect(migration).toContain('creative_lifecycle_ready_job_immutable')
     expect(migration).toContain('creative_lifecycle_result_artifact_immutable')
+    expect(migration).toContain('creative lifecycle execution pins are immutable')
+    const triggerStart = migration.indexOf('BEFORE INSERT OR UPDATE OF')
+    const triggerEnd = migration.indexOf('ON "creative_lifecycle_jobs"', triggerStart)
+    const triggerColumns = migration.slice(triggerStart, triggerEnd)
+    for (const column of [
+      '"source_storage_path"',
+      '"source_checksum"',
+      '"source_bytes"',
+    ]) {
+      expect(triggerColumns).toContain(column)
+    }
   })
 
   it('is additive and preserves nullable legacy fallback rows', () => {

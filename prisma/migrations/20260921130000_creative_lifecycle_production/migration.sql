@@ -1,4 +1,6 @@
 -- Creative Studio V3 lifecycle production boundary. Additive only.
+-- Explicit transaction markers match this repository's Prisma deploy contract.
+BEGIN;
 
 CREATE TYPE "CreativeLifecycleJobKind" AS ENUM ('RENDER', 'EXPORT');
 CREATE TYPE "CreativeLifecycleJobStatus" AS ENUM ('QUEUED', 'RUNNING', 'READY', 'FAILED', 'CANCELED', 'NEEDS_REVIEW');
@@ -649,6 +651,23 @@ RETURNS trigger AS $$
 DECLARE
   source_evidence record;
 BEGIN
+  IF TG_OP = 'UPDATE' AND (
+    OLD."composition_id" IS DISTINCT FROM NEW."composition_id"
+    OR OLD."composition_version_id" IS DISTINCT FROM NEW."composition_version_id"
+    OR OLD."composition_version" IS DISTINCT FROM NEW."composition_version"
+    OR OLD."composition_document_hash" IS DISTINCT FROM NEW."composition_document_hash"
+    OR OLD."operation_batch_id" IS DISTINCT FROM NEW."operation_batch_id"
+    OR OLD."source_artifact_version_id" IS DISTINCT FROM NEW."source_artifact_version_id"
+    OR OLD."source_storage_path" IS DISTINCT FROM NEW."source_storage_path"
+    OR OLD."source_checksum" IS DISTINCT FROM NEW."source_checksum"
+    OR OLD."source_bytes" IS DISTINCT FROM NEW."source_bytes"
+    OR OLD."approved_review_event_id" IS DISTINCT FROM NEW."approved_review_event_id"
+    OR OLD."approved_artifact_version_id" IS DISTINCT FROM NEW."approved_artifact_version_id"
+    OR OLD."review_fingerprint" IS DISTINCT FROM NEW."review_fingerprint"
+  ) THEN
+    RAISE EXCEPTION 'creative lifecycle execution pins are immutable';
+  END IF;
+
   SELECT
     v."asset_id",
     v."version" AS source_version,
@@ -721,6 +740,9 @@ BEFORE INSERT OR UPDATE OF
   "composition_document_hash",
   "operation_batch_id",
   "source_artifact_version_id",
+  "source_storage_path",
+  "source_checksum",
+  "source_bytes",
   "approved_review_event_id",
   "approved_artifact_version_id",
   "review_fingerprint"
@@ -825,3 +847,5 @@ FOR EACH ROW EXECUTE FUNCTION "creative_composition_history_append_only"();
 CREATE TRIGGER "creative_archive_verification_attempts_append_only"
 BEFORE UPDATE OR DELETE ON "creative_archive_verification_attempts"
 FOR EACH ROW EXECUTE FUNCTION "creative_composition_history_append_only"();
+
+COMMIT;

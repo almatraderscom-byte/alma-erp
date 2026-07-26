@@ -26,6 +26,10 @@ const missingFromAdd = validationNames.filter(
 )
 const checks = {
   additiveOnly: !/\bDROP\s+(TABLE|COLUMN|TYPE|CONSTRAINT)\b/i.test(addSql),
+  explicitAutomaticTransaction:
+    addSql.indexOf('BEGIN;') >= 0
+    && addSql.indexOf('BEGIN;') < addSql.indexOf('CREATE TYPE')
+    && addSql.trimEnd().endsWith('COMMIT;'),
   automaticMigrationTransactionCompatible:
     !/\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b/i.test(addSql),
   populatedConstraintsStagedNotValid: validationNames.every((name) => {

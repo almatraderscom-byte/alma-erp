@@ -87,6 +87,33 @@ export function archiveVerificationRetryDecision({
   return { shouldRetry: true, reason: 'fetch_back_unverified' }
 }
 
+export function exactArchiveFetchBackEvidence({ sourceBytes, fetchBackBytes, driveExists = true }) {
+  const source = Buffer.isBuffer(sourceBytes) ? sourceBytes : null
+  const fetched = Buffer.isBuffer(fetchBackBytes) ? fetchBackBytes : null
+  const expectedChecksum = source ? sha256(source) : null
+  const fetchBackChecksum = fetched ? sha256(fetched) : null
+  const verified = Boolean(
+    driveExists
+    && source
+    && fetched
+    && source.length > 0
+    && fetched.length === source.length
+    && fetchBackChecksum === expectedChecksum,
+  )
+  return {
+    verified,
+    expectedChecksum,
+    archiveChecksum: fetchBackChecksum,
+    fetchBackChecksum,
+    sizeBytes: source?.length ?? null,
+    errorCode: verified
+      ? null
+      : source
+        ? 'drive_fetch_back_checksum_mismatch'
+        : 'source_artifact_fetch_failed',
+  }
+}
+
 export function lifecycleArchiveLineage(item, result, storagePath) {
   const lifecycle = result.lifecycleAttribution && typeof result.lifecycleAttribution === 'object'
     ? result.lifecycleAttribution
@@ -277,6 +304,7 @@ async function getArchiveReceipt(supabase, pendingActionId, storagePath) {
 
 async function upsertArchiveReceipt(supabase, input) {
   const now = new Date().toISOString()
+  const supplied = (key) => Object.prototype.hasOwnProperty.call(input, key)
   const previous = await getArchiveReceipt(
     supabase,
     input.pendingActionId,
@@ -297,9 +325,13 @@ async function upsertArchiveReceipt(supabase, input) {
         input.operationPackageChecksum ?? previous?.operation_package_checksum ?? null,
       artifact_checksum: input.artifactChecksum ?? previous?.artifact_checksum ?? null,
       archive_checksum: input.archiveChecksum ?? previous?.archive_checksum ?? null,
-      fetch_back_checksum: input.fetchBackChecksum ?? previous?.fetch_back_checksum ?? null,
+      fetch_back_checksum: supplied('fetchBackChecksum')
+        ? input.fetchBackChecksum
+        : previous?.fetch_back_checksum ?? null,
       fetch_back_verified_at:
-        input.fetchBackVerifiedAt ?? previous?.fetch_back_verified_at ?? null,
+        supplied('fetchBackVerifiedAt')
+          ? input.fetchBackVerifiedAt
+          : previous?.fetch_back_verified_at ?? null,
       playable_proxy_path: input.playableProxyPath ?? previous?.playable_proxy_path ?? null,
       original_storage_path: input.originalStoragePath ?? previous?.original_storage_path ?? null,
       render_storage_path: input.renderStoragePath ?? previous?.render_storage_path ?? null,
@@ -309,8 +341,12 @@ async function upsertArchiveReceipt(supabase, input) {
       drive_web_view_url: input.driveWebViewUrl ?? previous?.drive_web_view_url ?? null,
       size_bytes: input.sizeBytes ?? previous?.size_bytes ?? null,
       archived_at: previous?.archived_at ?? input.archivedAt ?? now,
-      verified_at: input.verifiedAt ?? previous?.verified_at ?? null,
-      last_verified_at: input.lastVerifiedAt ?? previous?.last_verified_at ?? null,
+      verified_at: supplied('verifiedAt')
+        ? input.verifiedAt
+        : previous?.verified_at ?? null,
+      last_verified_at: supplied('lastVerifiedAt')
+        ? input.lastVerifiedAt
+        : previous?.last_verified_at ?? null,
       original_deleted_at: input.originalDeletedAt ?? previous?.original_deleted_at ?? null,
       attempts: Number(previous?.attempts ?? 0) + 1,
       last_error_code: input.lastErrorCode ?? null,
@@ -336,6 +372,75 @@ async function appendArchiveVerificationAttempt(supabase, input) {
       error_message: input.errorMessage ?? null,
     })
   if (error) throw new Error(`archive verification attempt write failed: ${error.message}`)
+}
+
+async function verifyLegacyArchiveReceipt({
+  supabase,
+  accessToken,
+  item,
+  path,
+  info,
+  receipt,
+  assetVersionId,
+  ignoreAttemptLimit = false,
+}) {
+  if (!ignoreAttemptLimit && Number(receipt?.attempts ?? 0) >= MAX_FETCH_BACK_ATTEMPTS) {
+    return { receipt, verified: false, reason: 'attempt_limit_reached' }
+  }
+  let sourceBytes = null
+  let fetchedBack = null
+  let driveExists = false
+  let errorMessage = null
+  try {
+    const { data: source, error: sourceError } = await supabase.storage.from(BUCKET).download(path)
+    if (sourceError || !source) {
+      errorMessage = sourceError?.message ?? 'source artifact missing'
+    } else {
+      sourceBytes = Buffer.from(await source.arrayBuffer())
+      driveExists = await verifyDriveFile(accessToken, info.fileId)
+      fetchedBack = driveExists ? await fetchBackDriveFile(accessToken, info.fileId) : null
+    }
+  } catch (error) {
+    errorMessage = error.message
+  }
+  const evidence = exactArchiveFetchBackEvidence({
+    sourceBytes,
+    fetchBackBytes: fetchedBack,
+    driveExists,
+  })
+  const verifiedAt = evidence.verified
+    ? receipt?.verified_at ?? new Date().toISOString()
+    : null
+  const updated = await upsertArchiveReceipt(supabase, {
+    pendingActionId: item.id,
+    assetVersionId,
+    storagePath: path,
+    driveFileId: info.fileId,
+    driveWebViewUrl: info.webViewLink,
+    sizeBytes: evidence.sizeBytes,
+    artifactChecksum: evidence.expectedChecksum,
+    archiveChecksum: evidence.archiveChecksum,
+    fetchBackChecksum: evidence.fetchBackChecksum,
+    fetchBackVerifiedAt: verifiedAt,
+    archivedAt: receipt?.archived_at ?? item.result?.driveArchivedAt ?? new Date().toISOString(),
+    verifiedAt,
+    lastVerifiedAt: verifiedAt,
+    lastErrorCode: evidence.errorCode,
+  })
+  const attempt = archiveVerificationAttemptEvidence({
+    archiveReceiptId: updated.id,
+    expectedChecksum: evidence.expectedChecksum,
+    archiveChecksum: evidence.archiveChecksum,
+    fetchBackChecksum: evidence.fetchBackChecksum,
+    errorCode: evidence.errorCode,
+  })
+  await appendArchiveVerificationAttempt(supabase, {
+    ...attempt,
+    errorMessage: evidence.verified
+      ? null
+      : `Legacy Drive fetch-back did not prove exact bytes for ${path}: ${errorMessage ?? evidence.errorCode}`,
+  })
+  return { receipt: updated, verified: evidence.verified, reason: evidence.errorCode }
 }
 
 async function writeArchiveObservability(supabase, detail) {
@@ -631,21 +736,32 @@ export async function runStudioArchive(context) {
           if (info?.missing || !info?.fileId) continue
           let receipt = await getArchiveReceipt(supabase, item.id, path)
           if (!receipt) {
-            const verified = await verifyDriveFile(accessToken, info.fileId)
-            receipt = await upsertArchiveReceipt(supabase, {
-              pendingActionId: item.id,
+            const verification = await verifyLegacyArchiveReceipt({
+              supabase,
+              accessToken,
+              item,
+              path,
+              info,
+              receipt: null,
               assetVersionId: versionsByAction.get(item.id) ?? null,
-              storagePath: path,
-              driveFileId: info.fileId,
-              driveWebViewUrl: info.webViewLink,
-              sizeBytes: Number(info.bytes ?? 0) || null,
-              archivedAt: result.driveArchivedAt ?? new Date().toISOString(),
-              verifiedAt: verified ? new Date().toISOString() : null,
-              lastVerifiedAt: verified ? new Date().toISOString() : null,
-              lastErrorCode: verified ? null : 'drive_fetch_back_unverified',
             })
-            // Durable grace starts now; never delete on the receipt-creation run.
-            if (verified) durableVerified += 1
+            // Durable grace starts only after checksum+size fetch-back proof;
+            // never delete on the receipt-creation run.
+            if (verification.verified) durableVerified += 1
+            continue
+          }
+          if (!receipt.verified_at) {
+            const verification = await verifyLegacyArchiveReceipt({
+              supabase,
+              accessToken,
+              item,
+              path,
+              info,
+              receipt,
+              assetVersionId: versionsByAction.get(item.id) ?? null,
+            })
+            if (verification.verified) durableVerified += 1
+            // A newly verified receipt must survive the configured grace period.
             continue
           }
           const eligibility = archiveReceiptDeletionEligibility({
@@ -660,24 +776,25 @@ export async function runStudioArchive(context) {
           })
           if (!eligibility.eligible) continue
 
-          const verifiedAgain = await verifyDriveFile(accessToken, receipt.drive_file_id)
-          const lastVerifiedAt = new Date().toISOString()
-          receipt = await upsertArchiveReceipt(supabase, {
-            pendingActionId: item.id,
+          const verification = await verifyLegacyArchiveReceipt({
+            supabase,
+            accessToken,
+            item,
+            path,
+            info: {
+              fileId: receipt.drive_file_id,
+              webViewLink: receipt.drive_web_view_url,
+            },
+            receipt,
             assetVersionId: versionsByAction.get(item.id) ?? null,
-            storagePath: path,
-            driveFileId: receipt.drive_file_id,
-            driveWebViewUrl: receipt.drive_web_view_url,
-            sizeBytes: receipt.size_bytes,
-            archivedAt: receipt.archived_at,
-            verifiedAt: receipt.verified_at,
-            lastVerifiedAt,
-            lastErrorCode: verifiedAgain ? null : 'drive_reverification_failed',
+            ignoreAttemptLimit: true,
           })
-          if (!verifiedAgain) {
-            console.warn(`[studio-archive] skip delete ${path} — Drive copy re-verification failed`)
+          receipt = verification.receipt
+          if (!verification.verified) {
+            console.warn(`[studio-archive] skip delete ${path} — exact Drive fetch-back failed`)
             continue
           }
+          const lastVerifiedAt = new Date().toISOString()
           const { error: rmErr } = await supabase.storage.from(BUCKET).remove([path])
           if (rmErr) {
             await upsertArchiveReceipt(supabase, {

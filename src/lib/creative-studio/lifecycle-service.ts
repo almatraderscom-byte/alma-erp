@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { downloadStorageObject } from '@/lib/supabase-storage'
 import { isAgentEnabled } from '@/lib/agent-runtime-flag'
+import { isSystemOwner } from '@/lib/roles'
 import {
   requireStudioBrandAccess,
   studioRoleToDb,
@@ -1214,6 +1215,79 @@ async function validateLifecycleClaimPins(client: Db, row: Row): Promise<Row> {
   return version
 }
 
+async function validateLifecycleClaimAuthorization(client: Db, row: Row): Promise<void> {
+  const [brand, project, actor] = await Promise.all([
+    client.creativeBrandProfile.findUnique({ where: { id: String(row.brandProfileId) } }),
+    client.creativeProject.findUnique({ where: { id: String(row.projectId) } }),
+    client.user.findUnique({
+      where: { id: String(row.createdById) },
+      select: { id: true, role: true, active: true },
+    }),
+  ])
+  if (
+    !brand
+    || brand.ownerId !== row.ownerId
+    || !project
+    || project.ownerId !== row.ownerId
+    || project.brandProfileId !== row.brandProfileId
+    || actor?.active !== true
+  ) throw new LifecycleServiceError('claim_authorization_revoked', 403)
+
+  let currentRole: StudioLifecycleFlagScope['role'] | null = null
+  if (brand.ownerId === actor.id && isSystemOwner(String(actor.role))) {
+    currentRole = 'owner'
+  } else {
+    const assignment = await client.creativeStudioRoleAssignment.findUnique({
+      where: {
+        brandProfileId_userId: {
+          brandProfileId: String(row.brandProfileId),
+          userId: String(row.createdById),
+        },
+      },
+    })
+    const assignedRole = String(assignment?.role ?? '').toLowerCase()
+    if (
+      assignment
+      && assignment.ownerId === row.ownerId
+      && (assignedRole === 'creator' || assignedRole === 'reviewer')
+    ) currentRole = assignedRole
+  }
+  if (!currentRole || studioRoleToDb(currentRole) !== row.createdByRole) {
+    throw new LifecycleServiceError('claim_role_revoked', 403)
+  }
+
+  const capability = String(row.kind).toLowerCase() === 'export' ? 'export' : 'render'
+  try {
+    assertStudioLifecycleCapability(currentRole, capability)
+  } catch {
+    throw new LifecycleServiceError('claim_capability_revoked', 403)
+  }
+  const flags = await client.creativeLifecycleFeatureFlag.findMany({
+    where: {
+      ownerId: row.ownerId,
+      capability,
+      OR: [{ brandProfileId: null }, { brandProfileId: row.brandProfileId }],
+    },
+  })
+  const decision = evaluateStudioLifecycleRollout({
+    scope: {
+      ownerId: String(row.ownerId),
+      brandProfileId: String(row.brandProfileId),
+      projectId: String(row.projectId),
+      role: currentRole,
+      capability,
+    },
+    flags: flags.map((flag: Row) => dbScopedFlag(flag)),
+  })
+  if (!decision.enabled) {
+    throw new LifecycleServiceError('claim_rollout_revoked', 409, {
+      capability,
+      canary: decision.canary,
+      reason: decision.reason,
+    })
+  }
+}
+
 export async function claimLifecycleJobs(input: {
   now?: Date
   limit?: number
@@ -1272,6 +1346,7 @@ export async function claimLifecycleJobs(input: {
       }
       let version: Row
       try {
+        await validateLifecycleClaimAuthorization(tx, current)
         version = await validateLifecycleClaimPins(tx, current)
       } catch (error) {
         const code = error instanceof LifecycleServiceError
@@ -1288,15 +1363,21 @@ export async function claimLifecycleJobs(input: {
           },
         })
         if (invalidated.count === 1) {
+          const authorizationRevoked = code.startsWith('claim_')
           await tx.creativeLifecycleAuditEvent.create({
             data: {
               jobId: current.id,
               actorId: current.createdById,
               actorRole: current.createdByRole,
-              eventType: 'claim_evidence_quarantined',
+              eventType: authorizationRevoked
+                ? 'claim_authorization_quarantined'
+                : 'claim_evidence_quarantined',
               fromStatus: 'QUEUED',
               toStatus: 'NEEDS_REVIEW',
-              metadata: { reason: code },
+              metadata: {
+                reason: code,
+                authorizationRevoked,
+              },
             },
           })
         }

@@ -14,6 +14,11 @@ const lifecycleHarness = vi.hoisted(() => {
     nodePresent: true,
     batchResultVersion: 2,
     flagsEnabled: true,
+    actorActive: true,
+    actorRole: 'SUPER_ADMIN',
+    brandOwnerId: 'owner-1',
+    projectOwnerId: 'owner-1',
+    assignmentRole: 'CREATOR',
     jobs: new Map<string, Row>(),
     audits: [] as Row[],
     receipts: [] as Row[],
@@ -80,6 +85,25 @@ const lifecycleHarness = vi.hoisted(() => {
     return null
   }
   const prisma: Row = {
+    user: {
+      findUnique: vi.fn(async () => ({
+        id: 'owner-1',
+        role: state.actorRole,
+        active: state.actorActive,
+      })),
+    },
+    creativeBrandProfile: {
+      findUnique: vi.fn(async () => ({
+        id: 'brand-1',
+        ownerId: state.brandOwnerId,
+      })),
+    },
+    creativeStudioRoleAssignment: {
+      findUnique: vi.fn(async () => ({
+        ownerId: 'owner-1',
+        role: state.assignmentRole,
+      })),
+    },
     creativeComposition: {
       findUnique: vi.fn(async () => composition()),
     },
@@ -140,7 +164,7 @@ const lifecycleHarness = vi.hoisted(() => {
     creativeProject: {
       findUnique: vi.fn(async () => ({
         id: 'project-1',
-        ownerId: 'owner-1',
+        ownerId: state.projectOwnerId,
         brandProfileId: 'brand-1',
       })),
     },
@@ -291,6 +315,11 @@ const lifecycleHarness = vi.hoisted(() => {
       state.nodePresent = true
       state.batchResultVersion = 2
       state.flagsEnabled = true
+      state.actorActive = true
+      state.actorRole = 'SUPER_ADMIN'
+      state.brandOwnerId = 'owner-1'
+      state.projectOwnerId = 'owner-1'
+      state.assignmentRole = 'CREATOR'
       state.jobs.clear()
       state.audits.splice(0)
       state.receipts.splice(0)
@@ -544,6 +573,58 @@ describe('V3 lifecycle production service', () => {
       sourceStoragePath: 'generated/source.png',
       sourceChecksum: 'b'.repeat(64),
       sourceBytes: 2048,
+    })
+  })
+
+  it('revalidates current authorization and exact rollout before entering RUNNING', async () => {
+    const revokedActor = await createLifecycleJob(owner, request())
+    lifecycleHarness.state.actorActive = false
+    await expect(claimLifecycleJobs({ workerEnabled: true })).resolves.toEqual([])
+    expect(lifecycleHarness.state.jobs.get(revokedActor.job.id)).toMatchObject({
+      status: 'NEEDS_REVIEW',
+      attempts: 0,
+      lastErrorCode: 'claim_authorization_revoked',
+    })
+    expect(lifecycleHarness.state.audits.at(-1)).toMatchObject({
+      eventType: 'claim_authorization_quarantined',
+      fromStatus: 'QUEUED',
+      toStatus: 'NEEDS_REVIEW',
+      metadata: {
+        authorizationRevoked: true,
+        reason: 'claim_authorization_revoked',
+      },
+    })
+
+    lifecycleHarness.reset()
+    const revokedRole = await createLifecycleJob(owner, request())
+    lifecycleHarness.state.actorRole = 'STAFF'
+    await expect(claimLifecycleJobs({ workerEnabled: true })).resolves.toEqual([])
+    expect(lifecycleHarness.state.jobs.get(revokedRole.job.id)).toMatchObject({
+      status: 'NEEDS_REVIEW',
+      lastErrorCode: 'claim_role_revoked',
+    })
+
+    lifecycleHarness.reset()
+    const revokedProject = await createLifecycleJob(owner, request())
+    lifecycleHarness.state.projectOwnerId = 'other-owner'
+    await expect(claimLifecycleJobs({ workerEnabled: true })).resolves.toEqual([])
+    expect(lifecycleHarness.state.jobs.get(revokedProject.job.id)).toMatchObject({
+      status: 'NEEDS_REVIEW',
+      lastErrorCode: 'claim_authorization_revoked',
+    })
+
+    lifecycleHarness.reset()
+    const revokedFlag = await createLifecycleJob(owner, request())
+    lifecycleHarness.state.flagsEnabled = false
+    await expect(claimLifecycleJobs({ workerEnabled: true })).resolves.toEqual([])
+    expect(lifecycleHarness.state.jobs.get(revokedFlag.job.id)).toMatchObject({
+      status: 'NEEDS_REVIEW',
+      attempts: 0,
+      lastErrorCode: 'claim_rollout_revoked',
+    })
+    expect(lifecycleHarness.state.audits.at(-1)).toMatchObject({
+      eventType: 'claim_authorization_quarantined',
+      metadata: { reason: 'claim_rollout_revoked' },
     })
   })
 

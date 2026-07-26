@@ -32,3 +32,5 @@ The automatic migration contains no executable `CREATE INDEX CONCURRENTLY`;
 required identity indexes use ordinary transactional `CREATE INDEX` because
 the Foundation/lifecycle tables are new and default-off. Optional child-table
 indexes remain in the held script and must never be sent through Prisma deploy.
+The automatic migration also carries explicit `BEGIN`/`COMMIT` markers, matching
+the repository's transaction-wrapped Prisma deploy convention.
