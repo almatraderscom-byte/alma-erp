@@ -15,11 +15,11 @@ import type { AgentTool } from './registry'
 import {
   BROWSER_ACTION_TYPE,
   checkBrowserDailyCap,
+  createBrowserTaskPendingAction,
   isBrowserAgentEnabled,
-  isCriticalBrowserTask,
   normalizeBrowserTask,
-  summarizeBrowserTask,
 } from '@/agent/lib/browser/actions'
+import { driverLabel } from '@/agent/lib/browser/drivers'
 
 const run_browser_task: AgentTool = {
   name: 'run_browser_task',
@@ -58,6 +58,15 @@ const run_browser_task: AgentTool = {
           required: ['action'],
         },
       },
+      driver: {
+        type: 'string',
+        enum: ['vps', 'vps_live', 'companion'],
+        description:
+          'Which browser should run this. Omit for the default (vps). ' +
+          'Use "vps_live" when the task may hit a login or captcha the agent cannot pass alone — the owner can watch and take over. ' +
+          'Use "companion" to run in the owner\'s own logged-in Mac Chrome. ' +
+          'Note: sites carrying the owner\'s business identity (Meta/Facebook, banks, mobile money, infra consoles) are ALWAYS forced to "companion" — asking for vps there is overridden.',
+      },
       conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['goal'],
@@ -89,32 +98,22 @@ const run_browser_task: AgentTool = {
       if (!normalized.ok) {
         return { success: false, error: normalized.error }
       }
-      const payload = normalized.payload
-      const summary = summarizeBrowserTask(payload)
-      const critical = isCriticalBrowserTask(payload)
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const action = await (prisma as any).agentPendingAction.create({
-        data: {
-          conversationId: payload.conversationId,
-          type: BROWSER_ACTION_TYPE,
-          payload: { ...payload, critical },
-          summary,
-          costEstimate: null,
-          status: 'pending',
-        },
-      })
+      // Shared create-path: it resolves the driver (owner-only hosts force the
+      // owner's own Chrome), builds the summary and records the pending action.
+      const created = await createBrowserTaskPendingAction(normalized.payload)
 
       return {
         success: true,
         data: {
-          pendingActionId: action.id as string,
-          critical,
-          stepCount: payload.steps.length,
-          summary,
+          pendingActionId: created.pendingActionId,
+          critical: created.critical,
+          stepCount: created.stepCount,
+          summary: created.summary,
+          driver: created.driver,
+          driverReason: created.driverReason,
           message:
-            'ব্রাউজার টাস্কটা তৈরি করলাম, Boss — আপনার অনুমতির পরই ব্রাউজারে চালাব।' +
-            (critical ? ' ⚠️ এতে টাকা/অপরিবর্তনীয় কিছু থাকতে পারে, দেখে অনুমতি দিন।' : ''),
+            `ব্রাউজার টাস্কটা তৈরি করলাম, Boss — চলবে ${driverLabel(created.driver)}-এ, আপনার অনুমতির পরই।` +
+            (created.critical ? ' ⚠️ এতে টাকা/অপরিবর্তনীয় কিছু থাকতে পারে, দেখে অনুমতি দিন।' : ''),
         },
       }
     } catch (err) {

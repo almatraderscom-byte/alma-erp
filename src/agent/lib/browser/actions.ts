@@ -14,6 +14,13 @@
  */
 import { prisma } from '@/lib/prisma'
 import { validateCriteria } from '@/agent/lib/browser/success-criteria'
+import {
+  driverLabel,
+  isBrowserDriver,
+  resolveBrowserDriver,
+  type BrowserDriver,
+  type OwnerOnlyHit,
+} from '@/agent/lib/browser/drivers'
 
 export const BROWSER_ACTION_TYPE = 'browser_action'
 
@@ -80,6 +87,19 @@ export interface BrowserTaskPayload {
    * the final page and evaluates these — a step log alone never proves success.
    */
   successCriteria?: import('@/agent/lib/browser/success-criteria').SuccessCriterion[]
+  /**
+   * What the CALLER asked for. Only a request — `driver` below is what actually
+   * runs, and an owner-only host overrides this without negotiation.
+   */
+  requestedDriver?: BrowserDriver
+  /** Resolved by createBrowserTaskPendingAction. Absent until then. */
+  driver?: BrowserDriver
+  /** Owner-facing Bangla explanation of the driver choice (approval card). */
+  driverReason?: string
+  /** Hosts that forced the companion driver, if any. */
+  ownerOnlyHosts?: OwnerOnlyHit[]
+  /** True when a requested VPS driver was overridden by an owner-only host. */
+  driverOverrodeRequest?: boolean
 }
 
 const MAX_STEPS = 40
@@ -304,13 +324,32 @@ export function normalizeBrowserTask(input: Record<string, unknown>): Normalized
     successCriteria = input.successCriteria as BrowserTaskPayload['successCriteria']
   }
 
-  return { ok: true, payload: { goal, steps, startUrl, conversationId, ...(successCriteria ? { successCriteria } : {}) } }
+  // Which browser the caller WANTS. An unknown value is not an error — the
+  // resolver falls back to the default — but a known one is carried through so
+  // an override attempt on an owner-only host stays visible in the audit trail.
+  const requestedDriver = isBrowserDriver(input.driver) ? input.driver : undefined
+
+  return {
+    ok: true,
+    payload: {
+      goal,
+      steps,
+      startUrl,
+      conversationId,
+      ...(successCriteria ? { successCriteria } : {}),
+      ...(requestedDriver ? { requestedDriver } : {}),
+    },
+  }
 }
 
 /** Owner-facing Bangla summary for the approval card. */
 export function summarizeBrowserTask(payload: BrowserTaskPayload): string {
   const lines: string[] = []
   lines.push(`🌐 ব্রাউজার টাস্ক: ${payload.goal}`)
+  if (payload.driver) {
+    lines.push(`🖥️ কোথায় চলবে: ${driverLabel(payload.driver)}`)
+    if (payload.driverReason) lines.push(`   ${payload.driverReason}`)
+  }
   const stepLabels: Record<BrowserStepAction, string> = {
     goto: 'খুলবে',
     click: 'ক্লিক করবে',
@@ -357,6 +396,9 @@ export interface CreatedBrowserTask {
   critical: boolean
   stepCount: number
   summary: string
+  /** Which browser will actually run this once approved. */
+  driver: BrowserDriver
+  driverReason: string
 }
 
 /**
@@ -367,20 +409,40 @@ export interface CreatedBrowserTask {
 export async function createBrowserTaskPendingAction(
   payload: BrowserTaskPayload,
 ): Promise<CreatedBrowserTask> {
-  const summary = summarizeBrowserTask(payload)
-  const critical = isCriticalBrowserTask(payload)
+  // Resolve the driver BEFORE the summary is built, so the owner approves a card
+  // that names the browser the task will actually run in. An owner-only host
+  // (Meta, bank, infra console) forces the companion driver here regardless of
+  // what was requested — see drivers.ts for why that is not negotiable.
+  const decision = await resolveBrowserDriver(payload, payload.requestedDriver)
+  const resolved: BrowserTaskPayload = {
+    ...payload,
+    driver: decision.driver,
+    driverReason: decision.reason,
+    ...(decision.ownerOnlyHosts.length ? { ownerOnlyHosts: decision.ownerOnlyHosts } : {}),
+    ...(decision.overrodeRequest ? { driverOverrodeRequest: true } : {}),
+  }
+
+  const summary = summarizeBrowserTask(resolved)
+  const critical = isCriticalBrowserTask(resolved)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const action = await (prisma as any).agentPendingAction.create({
     data: {
-      conversationId: payload.conversationId ?? null,
+      conversationId: resolved.conversationId ?? null,
       type: BROWSER_ACTION_TYPE,
-      payload: { ...payload, critical },
+      payload: { ...resolved, critical },
       summary,
       costEstimate: null,
       status: 'pending',
     },
   })
-  return { pendingActionId: action.id as string, critical, stepCount: payload.steps.length, summary }
+  return {
+    pendingActionId: action.id as string,
+    critical,
+    stepCount: resolved.steps.length,
+    summary,
+    driver: decision.driver,
+    driverReason: decision.reason,
+  }
 }
 
 /**

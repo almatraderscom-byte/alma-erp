@@ -297,8 +297,23 @@ async function pollPendingJobs() {
         }
         handled = true
       } else if (job.type === 'browser_action') {
-        await browserTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
-        console.log(`[worker] enqueued browser task for action ${job.id}`)
+        // The driver router (src/agent/lib/browser/drivers.ts) decides which
+        // browser runs a task. Only the VPS drivers belong on this queue —
+        // a task pinned to the owner's own Chrome must never be executed from a
+        // datacenter IP, so it is refused loudly rather than silently misrouted.
+        const driver = job.payload?.driver
+        if (driver && driver !== 'vps' && driver !== 'vps_live') {
+          await callJobResult(
+            job.id,
+            'failed',
+            undefined,
+            `driver_mismatch — task routed to "${driver}"; the companion (owner's own Chrome) execution path is not wired to this queue`,
+          )
+          console.warn(`[worker] browser task ${job.id} refused — driver "${driver}" is not a VPS driver`)
+        } else {
+          await browserTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+          console.log(`[worker] enqueued browser task for action ${job.id}`)
+        }
         handled = true
       } else if (job.type === 'agent_graph_run') {
         // Phase 35: durable multi-specialist fan-out (>30s work). jobId =
