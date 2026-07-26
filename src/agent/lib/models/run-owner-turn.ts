@@ -10,6 +10,7 @@ import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-to
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_MODULES, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
+import { stripToolCallMarkup } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
   claimsCompletion,
@@ -1761,7 +1762,9 @@ async function* runAlternateProviderTurn(
           apiRounds++
         }
       }
-      line = line.trim()
+      // The opening line is a whole round of its own, so it can carry the same
+      // leaked markup — clean it before it becomes the first thing Boss reads.
+      line = stripToolCallMarkup(line).trim()
       if (line) {
         preambleSpoken = true
         preambleText = line
@@ -1981,6 +1984,10 @@ async function* runAlternateProviderTurn(
             thinkingMs = Date.now() - thinkingStartedAt
           }
           iterationText += ev.text
+          // NOTE: sanitising happens once on the finished round below, not here.
+          // A tool-call fragment arrives split across deltas, so a per-delta
+          // strip would miss it — and the whole round's prose is emitted as one
+          // block, so waiting costs Boss nothing.
         } else if (ev.type === 'thinking_delta') {
           // Surface DeepSeek/Qwen reasoning as the same live "Thought for Ns" block
           // the native Claude head produces — the UI (AgentApp) already handles this.
@@ -2011,6 +2018,22 @@ async function* runAlternateProviderTurn(
         }
       }
 
+      // RAW TOOL-CALL MARKUP MUST NEVER REACH BOSS (seen live 2026-07-27 on the
+      // Qwen head: "<get_website_catalog> <arg_key>scope</arg_key> …</tool_call>"
+      // sitting inside a Bangla sentence). The model wrote its call as text
+      // instead of emitting a structured one; the work recovered on the next
+      // round, but he was shown machine syntax and no reply should ever contain
+      // it. Cleaned ONCE here, on the finished round, before it reaches the
+      // timeline or either emission path — a fragment spans several deltas, so
+      // this is the only place it can be done completely.
+      const rawIterationText = iterationText
+      iterationText = stripToolCallMarkup(iterationText)
+      if (iterationText !== rawIterationText) {
+        console.info('[model-output] stripped tool-call markup from visible text', {
+          conversationId,
+          model: model.id,
+        })
+      }
       // Record this round's reasoning as a timeline segment BEFORE its tool calls.
       if (iterThinking.trim()) timeline.push({ t: 'think', text: iterThinking.trim().slice(0, 4000) })
       // Round's visible text joins the timeline too, so the persisted stream keeps
