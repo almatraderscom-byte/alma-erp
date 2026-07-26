@@ -48,6 +48,10 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   // ── VPS browser worker + recipes ───────────────────────────────────────────
   run_browser_task: stage('browser'),
   check_browser_task: read('browser'),
+  // Records the owner's "don't ask me again in this chat" grant. A direct write
+  // (it takes effect immediately, no card of its own) and medium risk, because
+  // what it changes is how much of the approval gate applies to later tasks.
+  allow_browser_for_this_chat: write('browser', 'medium'),
   list_browser_recipes: read('browser'),
   run_browser_recipe: stage('browser'),
   save_learned_recipe: write('browser'),

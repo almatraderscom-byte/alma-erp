@@ -579,6 +579,10 @@ const COMPUTER_CAPABILITIES_RULE = `
 
 **নিজের কম্পিউটার (workbench):** ডেটা ক্রাঞ্চ (CSV/রিপোর্ট), পাবলিক পেজ scrape+বিশ্লেষণ, ফাইল কনভার্ট, ছোট স্ক্রিপ্ট, SEO crawl — \`run_workbench_task\` দিয়ে VPS-এ চালাও, \`check_workbench_task\` দিয়ে ফল নাও। **সীমা:** workbench-এর env scrubbed — Supabase/ERP storage-এর private ফাইল (agent-files, seo-audits/… ইত্যাদি) সেখান থেকে **কখনোই পড়া যায় না**; ওসবের জন্য নির্দিষ্ট টুল ব্যবহার করো (যেমন SEO রিপোর্ট = check_website_seo_audit read:"report")। আর workbench step "ok" মানে শুধু কমান্ড চলেছে — stdout-এ আসল data আছে কিনা **নিজে পড়ে যাচাই** না করে সেটাকে সফল বলবে না। (ERP data সরাসরি দরকার হলে ERP টুল; বসের login দরকার হলে live_browser।)
 
+**কোন ব্রাউজারে চলবে (\`run_browser_task\`-এর \`driver\`):** ডিফল্ট \`vps\` — VPS-এর ব্রাউজার, লগইন লাগে না এমন কাজ (SEO, পাবলিক পেজ পড়া, competitor সাইট)। লগইন/captcha-য় আটকে যেতে পারে এমন কাজে \`vps_live\` দাও — বস লাইভ দেখে নিজে হাত দিতে পারবেন। বসের নিজের logged-in Chrome দরকার হলে \`companion\`। **যেসব সাইট বসের ব্যবসার পরিচয় বহন করে — Facebook/Meta/Instagram, Google Ads, ব্যাংক, bKash/Nagad, courier panel, Vercel/Supabase/GitHub — সেগুলো সবসময় \`companion\`-এ যাবে; তুমি \`vps\` চাইলেও সার্ভার override করবে।** ওগুলো datacenter IP থেকে চালালে বসের আসল অ্যাকাউন্ট লক হওয়ার ঝুঁকি — তাই এটা নিয়ে তর্ক নেই।
+
+**"আর জিজ্ঞেস কোরো না" (\`allow_browser_for_this_chat\`):** প্রতি ধাপে অনুমতি চেয়ে বসকে ক্লান্ত করবে না। বস **নিজে** যদি বলেন "আর জিজ্ঞেস কোরো না / just do it / চালিয়ে যাও", তখনই এই টুল ডাকো — এই আলাপে পরের ব্রাউজার কাজগুলো কার্ড ছাড়া চলবে (সময় ও সংখ্যার সীমা সহ)। **বস না বললে নিজে থেকে কখনো ডাকবে না।** এই অনুমতি টাকা/checkout/delete কাজ, বসের নিজের Chrome, আর তার logged-in সাইট — কোনোটাই ঢাকে না, ওগুলো সবসময় জিজ্ঞেস করবে। বস "আবার জিজ্ঞেস কোরো" বললে action="revoke" দাও।
+
 **শেখা রেসিপি:** কোনো browser কাজ সফলভাবে **প্রমাণসহ** শেষ হলে \`save_learned_recipe\` দিয়ে সেই ধাপগুলো রেসিপি হিসেবে রেখে দাও — পরেরবার একই কাজ প্রমাণিত ধাপেই দ্রুত হবে। \`list_browser_recipes\`-এ \`learned:*\` হিসেবে দেখা যাবে।
 
 **ডকুমেন্ট-ডেলিভারি = ফাইল (Claude-app স্টাইল):** যে-কোনো কাজের ফলাফল যদি একটা ডকুমেন্ট হয় — রিসার্চ/competitor রিপোর্ট, marketing plan, proposal, তুলনা, লম্বা বিশ্লেষণ — সেটা \`save_artifact\` দিয়ে **ফাইল** করে দাও: চ্যাটে file card আসবে, বস ক্লিক করলেই সুন্দরভাবে খুলবে, ডাউনলোড/শেয়ার করতে পারবেন। Reply-তে থাকবে শুধু ছোট সারাংশ — পুরো ডকুমেন্ট চ্যাটে পেস্ট করা বা খালি লিংক ছুড়ে দেওয়া নয়। (SEO অডিট রিপোর্ট নিজে থেকেই ফাইল হয় — ওটা আবার save কোরো না।)
@@ -822,7 +826,7 @@ const LIFESTYLE_HEAD_ORDER: Array<{ id: string; groups?: ToolGroupName[]; tools?
   { id: 'task_completion' },
   { id: 'check_sources' },
   { id: 'live_browser', tools: ['live_browser_look', 'live_browser_act'] },
-  { id: 'computer_capabilities', tools: ['run_workbench_task', 'run_browser_task'] },
+  { id: 'computer_capabilities', tools: ['run_workbench_task', 'run_browser_task', 'allow_browser_for_this_chat'] },
   { id: 'knowledge_graph' },
 ]
 

@@ -399,6 +399,10 @@ export interface CreatedBrowserTask {
   /** Which browser will actually run this once approved. */
   driver: BrowserDriver
   driverReason: string
+  /** True when an existing in-conversation grant sent it straight to the queue. */
+  autoApproved: boolean
+  /** Bangla line: why it ran without asking, or why it still asks. */
+  consentReason: string
 }
 
 /**
@@ -424,15 +428,27 @@ export async function createBrowserTaskPendingAction(
 
   const summary = summarizeBrowserTask(resolved)
   const critical = isCriticalBrowserTask(resolved)
+
+  // Did the owner already say "don't ask again" in this conversation? Consent
+  // covers only ordinary VPS work — critical tasks and owner-only hosts always
+  // ask, whatever was granted (see consent.ts).
+  const { consumeBrowserConsent } = await import('@/agent/lib/browser/consent')
+  const consent = await consumeBrowserConsent(resolved, critical).catch(() => ({
+    granted: false as const,
+    reason: 'অনুমতির অবস্থা পড়া যায়নি — নিরাপদ দিকে থেকে জিজ্ঞেস করছি।',
+  }))
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const action = await (prisma as any).agentPendingAction.create({
     data: {
       conversationId: resolved.conversationId ?? null,
       type: BROWSER_ACTION_TYPE,
-      payload: { ...resolved, critical },
+      payload: { ...resolved, critical, autoApproved: consent.granted },
       summary,
       costEstimate: null,
-      status: 'pending',
+      // 'approved' is what the VPS worker polls for — an existing grant sends the
+      // task straight to the queue instead of parking it on a card.
+      status: consent.granted ? 'approved' : 'pending',
     },
   })
   return {
@@ -442,6 +458,8 @@ export async function createBrowserTaskPendingAction(
     summary,
     driver: decision.driver,
     driverReason: decision.reason,
+    autoApproved: consent.granted,
+    consentReason: consent.reason,
   }
 }
 

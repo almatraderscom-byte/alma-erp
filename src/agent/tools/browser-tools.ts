@@ -111,9 +111,11 @@ const run_browser_task: AgentTool = {
           summary: created.summary,
           driver: created.driver,
           driverReason: created.driverReason,
-          message:
-            `ব্রাউজার টাস্কটা তৈরি করলাম, Boss — চলবে ${driverLabel(created.driver)}-এ, আপনার অনুমতির পরই।` +
-            (created.critical ? ' ⚠️ এতে টাকা/অপরিবর্তনীয় কিছু থাকতে পারে, দেখে অনুমতি দিন।' : ''),
+          autoApproved: created.autoApproved,
+          message: created.autoApproved
+            ? `ব্রাউজার টাস্কটা ${driverLabel(created.driver)}-এ চালাতে পাঠালাম, Boss — ${created.consentReason}`
+            : `ব্রাউজার টাস্কটা তৈরি করলাম, Boss — চলবে ${driverLabel(created.driver)}-এ, আপনার অনুমতির পরই।` +
+              (created.critical ? ' ⚠️ এতে টাকা/অপরিবর্তনীয় কিছু থাকতে পারে, দেখে অনুমতি দিন।' : ''),
         },
       }
     } catch (err) {
@@ -174,4 +176,73 @@ const check_browser_task: AgentTool = {
   },
 }
 
-export const BROWSER_TOOLS: AgentTool[] = [run_browser_task, check_browser_task]
+/**
+ * The "don't ask me again for this job" grant. Only ever called when the OWNER
+ * says so — never inferred from the agent's own convenience, and never used to
+ * pre-empt a card the owner has not seen.
+ */
+const allow_browser_for_this_chat: AgentTool = {
+  name: 'allow_browser_for_this_chat',
+  description:
+    'Record the owner\'s permission to run further browser tasks in THIS conversation without asking each time. ' +
+    'Call this ONLY when the owner explicitly says so ("do not ask again", "just do it", "আর জিজ্ঞেস কোরো না"). ' +
+    'The grant expires on its own and covers a limited number of tasks. It never covers money/checkout/delete tasks, ' +
+    'never covers the owner\'s own Chrome, and never covers his logged-in business sites — those always ask. ' +
+    'Pass action="revoke" to cancel a grant. Owner-facing, confirm in Bangla.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      action: { type: 'string', enum: ['grant', 'revoke'], description: 'grant (default) or revoke' },
+      driver: {
+        type: 'string',
+        enum: ['vps', 'vps_live'],
+        description: 'Which browser the grant covers. Defaults to vps. A grant for one does not cover the other.',
+      },
+      conversationId: { type: 'string', description: 'Server-managed — omit; the server fills it automatically.' },
+    },
+    required: [],
+  },
+  handler: async (input) => {
+    try {
+      const conversationId = String(input.conversationId ?? '').trim()
+      if (!conversationId) {
+        return { success: false, error: 'no conversation in context' }
+      }
+      const { grantBrowserConsent, revokeBrowserConsent } = await import('@/agent/lib/browser/consent')
+
+      if (String(input.action ?? 'grant') === 'revoke') {
+        await revokeBrowserConsent(conversationId)
+        return {
+          success: true,
+          data: { message: 'ঠিক আছে Boss — এখন থেকে প্রতিটা ব্রাউজার কাজের আগে আবার জিজ্ঞেস করব।' },
+        }
+      }
+
+      const driver = input.driver === 'vps_live' ? 'vps_live' : 'vps'
+      const granted = await grantBrowserConsent(conversationId, driver)
+      if (!granted.ok || !granted.entry) {
+        return { success: false, error: granted.error ?? 'could not record consent' }
+      }
+      const until = new Date(granted.entry.expiresAt).toLocaleTimeString('en-GB', {
+        timeZone: 'Asia/Dhaka',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+      return {
+        success: true,
+        data: {
+          expiresAt: granted.entry.expiresAt,
+          remaining: granted.entry.remaining,
+          message:
+            `বুঝেছি Boss — এই আলাপে ${driverLabel(granted.entry.driver)}-এর কাজ আর জিজ্ঞেস করব না ` +
+            `(${granted.entry.remaining}টি কাজ পর্যন্ত, ${until} পর্যন্ত)। ` +
+            'টাকা/অপরিবর্তনীয় কাজ আর আপনার লগইন করা সাইট তবু জিজ্ঞেস করব।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+export const BROWSER_TOOLS: AgentTool[] = [run_browser_task, check_browser_task, allow_browser_for_this_chat]
