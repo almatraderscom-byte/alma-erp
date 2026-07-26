@@ -289,8 +289,8 @@ Eval-first, because finding 5 says skills can regress things.
 | **SK-1** ✅ | **Eval harness** — `evals/scoring.ts` (5 dimensions), `evals/scenarios.ts` (9 scenarios, 3 per SEO skill), `evals/owner-corpus.ts`. Validated by replaying this week's real failures. | done, see below |
 | **SK-2** ✅ | **Format v2 + `alma-base` + linter.** Schema (incl. U2/U8 fields), loader support, and a linter for the 99%-of-skills flaws — description person/what+when, body length, reference depth, tool names that exist, **description overlap between skills (U7)**, and **no multi-purpose skill (U7)**: audit, edit, deploy and review may not share one file. | linter green on all skills |
 | **SK-3** | **Select → pin → announce → trace.** Three-layer router (U4), conversation pin, UI chip + override, selection trace (U5), registry budget (U3). | right skill on ≥90% of the SK-0 set |
-| **SK-4** | **Isolate + allowlist + gate.** Route `isolation: subagent` skills through `runSubAgent`; wire `done:` into the existing pack gate. | audit skill provably cannot write |
-| **SK-5** | **Write the three SEO skills properly**, with `traps.md` seeded from this week. | beats no-skill baseline on evals |
+| **SK-4** ✅ | **Allowlist + dependencies + done gate**, wired into the live turn. `isolation: subagent` routing through `runSubAgent` is the one piece still outstanding. | audit skill provably cannot write |
+| **SK-5** ✅ | **The three SEO skills**, v2 standard, traps seeded from this week. | lint clean; live proof pending |
 | **SK-6** | **Move the global hacks into skills** and delete them from global code. | tests stay green |
 
 ### SK-0 result (2026-07-26)
@@ -393,6 +393,34 @@ similar. Hence `keyword-collision`, which finds four real ones.
 Naming follows the field convention: gerund, lowercase, hyphens.
 
 ---
+
+### SK-3/4/5 result (2026-07-26)
+
+**Router: 61% → 78%, false triggers 1 → 0.** The rule layer takes fix-vs-audit
+and own-site-vs-client outright; bare "meta" counts as SEO only when a website is
+in the sentence (an ads message names a campaign, not a domain). Two thresholds
+were calibrated on the corpus rather than chosen: a keyword pin needs a score of
+at least 2 (a floor of 3 killed the false trigger but lost the finance skill),
+and the ambiguity margin is 3. The four remaining misses are skill-library gaps
+the linter already named, not router gaps.
+
+**Enforcement is the allowlist.** The pinned skill's `requiredCapabilities`
+become the turn's tool list, so `seo-auditing-own-site` is handed no write tool
+and cannot write whatever it decides. `find_tool`, `ask_user`, `save_memory` and
+`request_agent_action` always survive — a skill must never be trapped. An empty
+capability list means "does not narrow", never "no tools".
+
+**The pin is per conversation**, which is a cost decision as much as a UX one: a
+~5k-token skill re-picked each turn rewrites the cached prefix every turn.
+
+**Three skills written, zero lint findings.** Writing them exposed two rules of
+mine that were wrong, and both were corrected rather than suppressed:
+"verification" was listed as a *purpose*, so the multi-purpose rule punished the
+one thing every skill should do; and the purpose detector counted a
+description's negative half ("Not for producing an audit") as a claimed purpose.
+
+**Still outstanding:** `isolation: subagent` (the lean-system-prompt runner),
+SK-6, and promoting the 16 original skills one at a time with evals.
 
 ## 6. What stays global, deliberately
 
