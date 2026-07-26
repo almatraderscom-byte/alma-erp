@@ -122,6 +122,20 @@ export interface ActivatedSkill {
   manifest: SkillManifest
   /** The SKILL.md body (the actual procedure the head follows). */
   instructions: string
+  /**
+   * SK-7. The skill's OWN system prompt (`SYSTEM.md`) — role, tone, hard limits.
+   * This is the half of the owner's ask that a skill file alone cannot give: it
+   * only means anything when `isolation: 'subagent'` makes it REPLACE the general
+   * behavioural prompt instead of being appended to it. Empty when the package
+   * carries no SYSTEM.md (every v1 skill).
+   */
+  systemPrompt: string
+  /**
+   * SK-7. The resolved `extends:` base body (`alma-base/SKILL.md`) — the ALMA
+   * invariants written once. An isolated turn drops the big prompt, so these
+   * must ride along or the invariants would leave with it.
+   */
+  baseInstructions: string
 }
 
 /** Result of a discovery scan — the metadata index the selector routes over. */

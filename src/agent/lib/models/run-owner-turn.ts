@@ -8,7 +8,8 @@ import { prisma } from '@/lib/prisma'
 import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET, PROGRESS_UPDATE_EVERY, MAX_PROGRESS_NUDGES } from '@/agent/config'
 import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
-import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_MODULES, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
   claimsCompletion,
@@ -797,9 +798,11 @@ async function* runAlternateProviderTurn(
   // Skill Engine V2 (gated OFF by default) — pick ≤3 on-demand skill procedures for
   // this turn from the message text; '' when disabled or nothing matches (fail-open).
   const activeSkills = suppressWork
-    ? { block: '', pinned: null, manifest: null }
+    ? { block: '', pinned: null, manifest: null, isolated: null }
     : await buildActiveSkills(lastUserText, { conversationId })
-  const activeSkillsBlock = activeSkills.block
+  // SK-7: when the pinned skill runs isolated, its procedure becomes the STABLE
+  // system prompt instead of a volatile add-on. Sending both would ship it twice.
+  const activeSkillsBlock = activeSkills.isolated ? '' : activeSkills.block
   // SK-4: a skill that declared what it needs gets checked BEFORE step 0, so a
   // dead connection is one honest sentence rather than a paid tour of the
   // failure (15 steps / 1m36s, watched live 2026-07-26).
@@ -956,6 +959,7 @@ async function* runAlternateProviderTurn(
     businessId,
     activePlaybook,
     activeSkillsBlock,
+    isolatedSkill: activeSkills.isolated ?? undefined,
     intakeContextBlock,
     outcomeLearnings,
     ownerDecisions,
@@ -977,6 +981,20 @@ async function* runAlternateProviderTurn(
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
+  // SK-7 enforcement — the isolation claim is MEASURED on the prompt that was
+  // actually built, not asserted. A leak means the swap silently did not happen
+  // (a caller passing both, a module pushed outside the branch), and the owner
+  // would be paying for the pollution he asked to remove without any sign of it.
+  if (activeSkills.isolated) {
+    const stableText = stable.map((b) => b.text).join('')
+    const leaks = findPromptLeaks(stableText, PROMPT_MODULES)
+    console.info('[skill-isolation]', {
+      conversationId,
+      skill: activeSkills.isolated.skillName,
+      promptChars: stableText.length,
+      leaks: leaks.length ? leaks : undefined,
+    })
+  }
   // Volatile per-turn context goes INTO the current owner user turn, not the
   // system text — same rationale as the native Claude path (core.ts): a stable
   // system prefix is what prefix-caching (native + Gemini/OpenRouter implicit)

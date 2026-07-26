@@ -164,7 +164,30 @@ export function selectSkills(index: SkillIndex, queryText: string, max = MAX_SKI
     .map((x) => x.s)
 }
 
-/** ACTIVATION — load the chosen skill's manifest + SKILL.md body on demand. */
+/** Read one optional markdown file from a skill package; '' when absent. */
+async function readSkillFile(dir: string, file: string): Promise<string> {
+  try {
+    return parseFrontmatter(await fs.readFile(path.join(dir, file), 'utf8')).body
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * ACTIVATION — load the chosen skill's manifest + SKILL.md body on demand, plus
+ * (SK-7) the two files the isolated runner needs:
+ *
+ *  • `SYSTEM.md` — the skill's own system prompt. It has existed on disk since
+ *    SK-5 and NOTHING read it, which is precisely why `isolation: subagent` was
+ *    still missing: the file that was supposed to replace the general prompt was
+ *    never opened.
+ *  • the `extends:` base body — `alma-base/SKILL.md`. An isolated turn drops the
+ *    big prompt, so the ALMA invariants have to travel with the skill or they
+ *    leave with it.
+ *
+ * Both are optional and failure is '' — a package without them behaves exactly
+ * as it did before.
+ */
 export async function activateSkill(metadata: SkillMetadata): Promise<ActivatedSkill | null> {
   const manifest = await readManifest(metadata.dir)
   if (!manifest) return null
@@ -174,5 +197,14 @@ export async function activateSkill(metadata: SkillMetadata): Promise<ActivatedS
   } catch {
     return null
   }
-  return { metadata, manifest, instructions }
+  const systemPrompt = await readSkillFile(metadata.dir, 'SYSTEM.md')
+  // The base is a sibling package under the same skills root. Self-extension and
+  // a missing base both degrade to '' rather than throwing — a broken `extends:`
+  // must never take a turn down.
+  const base = manifest.extends?.trim()
+  const baseInstructions =
+    base && base !== manifest.name
+      ? await readSkillFile(path.join(path.dirname(metadata.dir), base), 'SKILL.md')
+      : ''
+  return { metadata, manifest, instructions, systemPrompt, baseInstructions }
 }

@@ -3,6 +3,7 @@ import type { RecalledTurn } from '@/agent/lib/message-recall'
 import { OWNER_TASK_REMINDER_RULES, STAFF_TASK_AWARENESS_RULES } from '@/agent/lib/owner-active-tasks-context'
 import { PERSONAL_ADVISOR_PROMPT } from '@/agent/lib/personal-prompt'
 import { AGENT_CONSTITUTION, AGENT_STYLE } from '@/agent/config'
+import { buildIsolatedSystemPrompt, type IsolatedSkillPrompt } from '@/agent/lib/skill-engine/isolation'
 import { WEBSITE_ROLE_PROMPT } from '@/agent/tools/website-tools'
 import { RESEARCH_ROLE_PROMPT } from '@/agent/tools/research-tools'
 import { SEO_ROLE_PROMPT } from '@/agent/tools/seo-tools'
@@ -1020,6 +1021,15 @@ export type BuildSystemPromptArgs = {
   activePlaybook?: ActivePlaybookEntry[]
   /** Skill Engine V2: ≤3 on-demand skill procedures selected for this turn (gated). */
   activeSkillsBlock?: string
+  /**
+   * SK-7 — a pinned skill with `isolation: subagent`. When present, the STABLE
+   * prompt becomes `compileStableCore()` + alma-base + the skill's SYSTEM.md +
+   * its procedure, and the ~25 business-domain modules are not assembled at all.
+   * This is the owner's original ask ("অন্য কোনো অপ্রয়োজনীয় নিয়ম … প্রভাব ফেলবে না").
+   * Mutually exclusive with `activeSkillsBlock` — the caller sends one or the
+   * other, never both, or the procedure would ship twice.
+   */
+  isolatedSkill?: IsolatedSkillPrompt
   teachingBlock?: string
   intakeContextBlock?: string
   ownerActiveTasksBlock?: string
@@ -1116,6 +1126,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     businessId = 'ALMA_LIFESTYLE',
     activePlaybook,
     activeSkillsBlock,
+    isolatedSkill,
     teachingBlock,
     intakeContextBlock,
     ownerActiveTasksBlock,
@@ -1213,8 +1224,28 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
       volatileParts.push(intakeContextBlock)
     }
   } else {
-    const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : buildLifestyleStaticPrompt(activeGroups, args.activeToolNames, args.forceFullPrompt)
-    stableParts.push(corePrompt)
+    // ── SK-7: `isolation: subagent` ──────────────────────────────────────────
+    // The pinned skill's own prompt REPLACES the general behavioural prompt.
+    // What survives is `compileStableCore()` — the `core: true` modules, i.e.
+    // what the agent IS (identity, honesty/claim verification, response style,
+    // delivery defaults, task completion, planning). What is not assembled at
+    // all is the ~25 business-domain modules — none of which have anything to do
+    // with the pinned task, and all of which the owner watched pollute a focused
+    // job ("অন্য কোনো অপ্রয়োজনীয় নিয়ম … প্রভাব ফেলবে না").
+    //
+    // Only the STABLE prompt is swapped. Per-turn context below — memory, the
+    // time block, project instructions, the dependency preflight, salah — is
+    // state, not behavioural prose, and an isolated job needs it just as much.
+    //
+    // The gates are untouched by construction: approvals, money and publish are
+    // server-side code, and the turn's tool list was already narrowed to the
+    // skill's allowlist (SK-4). Nothing here can widen either.
+    if (isolatedSkill) {
+      stableParts.push(buildIsolatedSystemPrompt(compileStableCore(), isolatedSkill))
+    } else {
+      const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : buildLifestyleStaticPrompt(activeGroups, args.activeToolNames, args.forceFullPrompt)
+      stableParts.push(corePrompt)
+    }
     if (tailSummaryBlock) stableParts.push(tailSummaryBlock)
 
     // Slim Head Router: tell the lean head to delegate the domains it no longer
@@ -1226,7 +1257,10 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     // Grok/DeepSeek head on a narrow routed pack used to be told "delegate the
     // rest" while carrying no delegate tool — an instruction it could only fail.
     // Unknown tool list (legacy callers/tests) keeps the old unconditional note.
-    if (businessId !== 'ALMA_TRADING') {
+    // SK-7: an isolated skill does its OWN job — telling it to hand the work to
+    // a specialist is the opposite of a focused runner, and the owner-todo /
+    // staff-task rules are another job's procedure. Skipped when isolated.
+    if (businessId !== 'ALMA_TRADING' && !isolatedSkill) {
       const delegateShipped =
         args.activeToolNames == null || args.activeToolNames.includes('delegate_to_specialist')
       if (headTier === 'marketing') {
@@ -1240,8 +1274,10 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     // the cached stable prefix, not the per-turn volatile block where they were
     // re-billed fresh every turn. Only the live task LISTS stay volatile (they
     // change); the rules that govern how to use them never do.
-    stableParts.push(OWNER_TASK_REMINDER_RULES)
-    stableParts.push(STAFF_TASK_AWARENESS_RULES)
+    if (!isolatedSkill) {
+      stableParts.push(OWNER_TASK_REMINDER_RULES)
+      stableParts.push(STAFF_TASK_AWARENESS_RULES)
+    }
 
     if (businessId === 'ALMA_TRADING') {
       stableParts.push(
@@ -1272,7 +1308,10 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
 
     // Skill Engine V2 (gated): on-demand skill procedures for this turn. VOLATILE —
     // selection depends on the message text, so it must never enter the cached prefix.
-    if (activeSkillsBlock && activeSkillsBlock.trim()) {
+    // SK-7: an ISOLATED skill already IS the stable prompt (and, being pinned, is
+    // stable for the whole conversation — one cache write, not one per turn), so
+    // injecting it here too would ship the procedure twice.
+    if (!isolatedSkill && activeSkillsBlock && activeSkillsBlock.trim()) {
       volatileParts.push(activeSkillsBlock)
     }
 
