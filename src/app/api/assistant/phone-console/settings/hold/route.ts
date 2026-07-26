@@ -81,8 +81,13 @@ export async function POST(req: NextRequest) {
   if (file.size > MAX_BYTES) return NextResponse.json({ ok: false, error: 'ফাইলটা ৮ MB-র বেশি — ছোট রেকর্ডিং দিন।' }, { status: 400 })
 
   // Whatever class the settings screen currently names, so the upload and the setting can
-  // never drift apart into "the file is there but nothing plays it".
-  const cls = (await readSetting('phone_moh_class')) || 'alma-hold'
+  // never drift apart into "the file is there but nothing plays it". Two slots: the tune a
+  // caller hears while the team's phones ring, and the one played while the AI hands them to a
+  // human. Different moments, so the owner records them separately.
+  const slot = String(form?.get('slot') ?? 'transfer')
+  const cls = slot === 'welcome'
+    ? (await readSetting('phone_welcome_moh_class')) || 'alma-welcome'
+    : (await readSetting('phone_moh_class')) || 'alma-hold'
 
   try {
     const res = await fetch(`${gw.base}/api/v1/moh`, {

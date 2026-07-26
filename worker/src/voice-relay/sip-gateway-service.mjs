@@ -2174,7 +2174,8 @@ async function staffFirstAnswer(call, dests, ringSecs) {
   const bridge = await ari('POST', '/bridges', { type: 'mixing' })
   call.bridgeId = bridge.id
   await ari('POST', `/bridges/${call.bridgeId}/addChannel`, { channel: call.channelId })
-  await ari('POST', `/bridges/${call.bridgeId}/moh`, MOH_CLASS ? { mohClass: MOH_CLASS } : undefined)
+  const welcome = WELCOME_MOH_CLASS || MOH_CLASS
+  await ari('POST', `/bridges/${call.bridgeId}/moh`, welcome ? { mohClass: welcome } : undefined)
     .catch((err) => log(call.channelId, 'staff-first moh failed:', err?.message))
   call.moh = true
   call.staffFirst = true
@@ -2249,6 +2250,14 @@ let MOH_CLASS = process.env.SIP_MOH_CLASS || ''
 let TRANSFER_RING_TIMEOUT = Number(process.env.SIP_TRANSFER_RING_TIMEOUT || 30)
 /** Numbers refused before we answer, so a nuisance caller costs nothing. */
 let LOCAL_BLOCKLIST = process.env.SIP_BLOCKLIST || ''
+/**
+ * The WELCOME tune, played while the staff phones ring on a staff-first call. Separate from
+ * the transfer music on purpose: the two moments are different — one greets a caller who has
+ * not spoken to anyone yet, the other reassures someone already mid-conversation — and a
+ * greeting turning up in the middle of a transfer would be worse than no music.
+ * Empty falls back to the transfer class, so one recording still works.
+ */
+let WELCOME_MOH_CLASS = process.env.SIP_WELCOME_MOH_CLASS || ''
 
 /** Stop hold music (safe to call when it was never started). */
 async function stopMoh(call) {
@@ -2633,7 +2642,24 @@ function attachWsProxy(server) {
     // to know whether the attempt even arrived is to record every one that does.
     log(`ws upgrade ${req.method} ${req.url} HTTP/${req.httpVersion} proto=${req.headers['sec-websocket-protocol'] || '-'} from=${req.socket.remoteAddress}`)
     if (!String(req.url || '').startsWith('/ws')) { socket.destroy(); return }
+    /*
+     * TCP keep-alive on BOTH legs, and no Nagle delay.
+     *
+     * A browser phone's websocket carries no SIP at all during a call — the audio is RTP
+     * elsewhere — so it sits idle for the whole conversation. Without keep-alives a dead peer
+     * or a dropped path stays half-open: Asterisk still believes it has a contact and fails
+     * with TRANSPORT_ERROR the moment it needs to send the BYE, which is what left the owner's
+     * screen counting after the far end had hung up (2026-07-26). The OS noticing and closing
+     * the socket is what turns that silent half-death into a reconnect.
+     *
+     * `setNoDelay` because SIP over websocket is small single messages; waiting to coalesce
+     * them only adds latency to call setup.
+     */
+    socket.setKeepAlive(true, 15_000)
+    socket.setNoDelay(true)
     const upstream = net.connect(ASTERISK_HTTP_PORT, ASTERISK_HTTP_HOST, () => {
+      upstream.setKeepAlive(true, 15_000)
+      upstream.setNoDelay(true)
       // Replay the handshake verbatim, then let the two sockets talk directly.
       const lines = [`${req.method} ${req.url} HTTP/1.1`]
       for (let i = 0; i < req.rawHeaders.length; i += 2) lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`)
@@ -2685,7 +2711,7 @@ async function pullOwnerConfig() {
       const n = Number(v)
       return Number.isFinite(n) && n >= lo && n <= hi ? Math.round(n) : current
     }
-    const before = `${TRANSFER_ROUNDS}/${TRANSFER_RING_TIMEOUT}/${RING_TIMEOUT}/${MAX_CONCURRENT}/${VOICEMAIL_MAX_SECS}/${MOH_CLASS}/${LOCAL_BLOCKLIST}/${DEST_POLICY}/${OUTBOUND_STRIP}/${OUTBOUND_PREFIX}`
+    const before = `${TRANSFER_ROUNDS}/${TRANSFER_RING_TIMEOUT}/${RING_TIMEOUT}/${MAX_CONCURRENT}/${VOICEMAIL_MAX_SECS}/${MOH_CLASS}/${WELCOME_MOH_CLASS}/${LOCAL_BLOCKLIST}/${DEST_POLICY}/${OUTBOUND_STRIP}/${OUTBOUND_PREFIX}`
 
     TRANSFER_ROUNDS = clamp(c.transferRounds, 1, 4, TRANSFER_ROUNDS)
     TRANSFER_RING_TIMEOUT = clamp(c.transferRingTimeout, 10, 60, TRANSFER_RING_TIMEOUT)
@@ -2693,6 +2719,7 @@ async function pullOwnerConfig() {
     MAX_CONCURRENT = clamp(c.maxConcurrent, 1, 8, MAX_CONCURRENT)
     VOICEMAIL_MAX_SECS = clamp(c.voicemailMaxSecs, 30, 300, VOICEMAIL_MAX_SECS)
     if (typeof c.mohClass === 'string' && /^[A-Za-z0-9_-]{0,40}$/.test(c.mohClass)) MOH_CLASS = c.mohClass
+    if (typeof c.welcomeMohClass === 'string' && /^[A-Za-z0-9_-]{0,40}$/.test(c.welcomeMohClass)) WELCOME_MOH_CLASS = c.welcomeMohClass
     if (typeof c.blocklist === 'string') LOCAL_BLOCKLIST = c.blocklist
     if (['bd_all', 'bd_mobile', 'internal_only'].includes(c.destPolicy)) DEST_POLICY = c.destPolicy
     // Digits only, and short. These go into a dial string; a dial string is not the place to
@@ -2700,7 +2727,7 @@ async function pullOwnerConfig() {
     if (typeof c.outboundStrip === 'string' && /^\d{0,6}$/.test(c.outboundStrip)) OUTBOUND_STRIP = c.outboundStrip
     if (typeof c.outboundPrefix === 'string' && /^\d{0,6}$/.test(c.outboundPrefix)) OUTBOUND_PREFIX = c.outboundPrefix
 
-    const after = `${TRANSFER_ROUNDS}/${TRANSFER_RING_TIMEOUT}/${RING_TIMEOUT}/${MAX_CONCURRENT}/${VOICEMAIL_MAX_SECS}/${MOH_CLASS}/${LOCAL_BLOCKLIST}/${DEST_POLICY}/${OUTBOUND_STRIP}/${OUTBOUND_PREFIX}`
+    const after = `${TRANSFER_ROUNDS}/${TRANSFER_RING_TIMEOUT}/${RING_TIMEOUT}/${MAX_CONCURRENT}/${VOICEMAIL_MAX_SECS}/${MOH_CLASS}/${WELCOME_MOH_CLASS}/${LOCAL_BLOCKLIST}/${DEST_POLICY}/${OUTBOUND_STRIP}/${OUTBOUND_PREFIX}`
     // Only log a CHANGE. A line a minute, forever, is how a log directory reaches 21 GB.
     if (after !== before) log(`config pulled: ${after}`)
     configState = { at: Date.now(), ok: true, error: null }
@@ -2731,24 +2758,63 @@ function mohClassName(raw) {
   return /^[A-Za-z0-9_-]{1,40}$/.test(name) ? name : null
 }
 
+/**
+ * Which directory a class plays from.
+ *
+ * A class that is ALREADY declared keeps whatever directory the conf gives it — `alma-hold`
+ * has played out of `/var/lib/asterisk/moh-alma` since the owner's first recording and moving
+ * it would silently change what callers hear. A class we are declaring for the first time gets
+ * its OWN subdirectory, because two classes sharing one directory means Asterisk plays both
+ * classes' files at random from either — the welcome tune turning up mid-transfer.
+ */
+function mohDirFor(cls, conf) {
+  const declared = conf.match(new RegExp(`^\\[${cls}\\][^\\[]*?^directory\\s*=\\s*(.+)$`, 'ms'))
+  if (declared) return declared[1].trim()
+  return `${MOH_DIR_BASE}/${cls}`
+}
+
+async function mohFilesIn(dir) {
+  const files = []
+  try {
+    for (const name of await readdir(dir)) {
+      const info = await stat(`${dir}/${name}`).catch(() => null)
+      if (!info?.isFile()) continue
+      // .sln is raw 8 kHz signed-linear: two bytes per sample, so the duration is arithmetic.
+      files.push({ name, bytes: info.size, seconds: name.endsWith('.sln') ? Math.round(info.size / 16000) : null })
+    }
+  } catch { /* the directory not existing yet is a normal first-run state, not an error */ }
+  return files
+}
+
 /** What Asterisk itself says is loaded — not what we believe we wrote. */
 async function mohState() {
-  const out = { configured: Boolean(MOH_CLASS), liveClass: null, files: [], busy: calls.size > 0, error: null }
+  const wantHold = MOH_CLASS || 'alma-hold'
+  const wantWelcome = WELCOME_MOH_CLASS || ''
+  const out = {
+    configured: Boolean(MOH_CLASS),
+    liveClass: null,
+    files: [],
+    busy: calls.size > 0,
+    error: null,
+    slots: [],
+  }
+  let loaded = ''
   try {
-    const classes = await asteriskCli('moh show classes')
-    const wanted = MOH_CLASS || 'alma-hold'
-    out.liveClass = new RegExp(`Class:\\s*${wanted}\\b`, 'i').test(classes) ? wanted : null
+    loaded = await asteriskCli('moh show classes')
   } catch (err) {
     out.error = err?.message || String(err)
   }
-  try {
-    for (const name of await readdir(MOH_DIR_BASE)) {
-      const info = await stat(`${MOH_DIR_BASE}/${name}`).catch(() => null)
-      if (!info?.isFile()) continue
-      // .sln is raw 8 kHz signed-linear: two bytes per sample, so the duration is arithmetic.
-      out.files.push({ name, bytes: info.size, seconds: name.endsWith('.sln') ? Math.round(info.size / 16000) : null })
-    }
-  } catch { /* the directory not existing yet is a normal first-run state, not an error */ }
+  const conf = await readFile(MOH_CONF, 'utf8').catch(() => '')
+  const isLive = (cls) => Boolean(cls) && new RegExp(`Class:\\s*${cls}\\b`, 'i').test(loaded)
+
+  out.liveClass = isLive(wantHold) ? wantHold : null
+  out.files = await mohFilesIn(mohDirFor(wantHold, conf))
+  out.slots = [
+    { slot: 'transfer', cls: wantHold, live: isLive(wantHold), files: out.files },
+    ...(wantWelcome
+      ? [{ slot: 'welcome', cls: wantWelcome, live: isLive(wantWelcome), files: await mohFilesIn(mohDirFor(wantWelcome, conf)) }]
+      : []),
+  ]
   return out
 }
 
@@ -2766,14 +2832,18 @@ async function installMohAudio(bytes, rawClass) {
   if (bytes.length > MOH_MAX_BYTES) return { ok: false, error: 'file too large', steps }
 
   const src = `${tmpdir()}/moh-upload-${randomUUID()}`
-  const wav = `${MOH_DIR_BASE}/${cls}.wav`
-  const sln = `${MOH_DIR_BASE}/${cls}.sln`
+  // Resolve the directory BEFORE writing: an existing class keeps its declared one, a new class
+  // gets its own, so two classes can never share a directory and play each other's audio.
+  const confNow = await readFile(MOH_CONF, 'utf8').catch(() => '')
+  const dir = mohDirFor(cls, confNow)
+  const wav = `${dir}/${cls}.wav`
+  const sln = `${dir}/${cls}.sln`
   const backup = `${tmpdir()}/moh-backup-${randomUUID()}`
   let confBackup = null
 
   try {
     await writeFile(src, bytes)
-    await mkdir(MOH_DIR_BASE, { recursive: true })
+    await mkdir(dir, { recursive: true })
 
     // Back up whatever is live, so a failed install can put the owner's previous recording
     // back rather than leaving the class pointing at nothing.
@@ -2789,6 +2859,7 @@ async function installMohAudio(bytes, rawClass) {
     await execFileAsync('ffmpeg', ['-y', '-nostdin', '-loglevel', 'error', '-i', src,
       '-ac', '1', '-ar', '8000', '-f', 's16le', '-acodec', 'pcm_s16le', sln], { timeout: 120_000 })
     await execFileAsync('chown', ['-R', 'asterisk:asterisk', MOH_DIR_BASE]).catch(() => {})
+    await execFileAsync('chown', ['-R', 'asterisk:asterisk', dir]).catch(() => {})
     const info = await stat(sln).catch(() => null)
     steps.push({ step: 'convert', ok: true, detail: `${cls}.wav + ${cls}.sln · ~${info ? Math.round(info.size / 16000) : '?'}s` })
 
@@ -2798,7 +2869,7 @@ async function installMohAudio(bytes, rawClass) {
     if (!new RegExp(`^\\[${cls}\\]`, 'm').test(conf)) {
       confBackup = `${MOH_CONF}.alma-bak-${Date.now()}`
       await copyFile(MOH_CONF, confBackup).catch(() => { confBackup = null })
-      await writeFile(MOH_CONF, `${conf.replace(/\s*$/, '')}\n\n[${cls}]\nmode=files\ndirectory=${MOH_DIR_BASE}\nsort=random\n`)
+      await writeFile(MOH_CONF, `${conf.replace(/\s*$/, '')}\n\n[${cls}]\nmode=files\ndirectory=${dir}\nsort=random\n`)
       steps.push({ step: 'declare-class', ok: true, detail: `[${cls}] added to musiconhold.conf` })
     } else {
       steps.push({ step: 'declare-class', ok: true, detail: 'already declared' })
@@ -2813,13 +2884,14 @@ async function installMohAudio(bytes, rawClass) {
 
     if (!loaded) throw new Error('module reloaded but the class did not appear')
 
-    MOH_CLASS = cls
+    // Deliberately NOT assigning MOH_CLASS here: which class is live is the console's setting,
+    // pulled every minute, and an upload of the WELCOME tune must not become the transfer music.
     log(`hold audio installed: ${cls} (${bytes.length} bytes)`)
     return { ok: true, steps, liveClass: cls }
   } catch (err) {
     // Roll back both halves: the audio files and, if we touched it, the config.
     for (const name of [`${cls}.wav`, `${cls}.sln`]) {
-      await copyFile(`${backup}/${name}`, `${MOH_DIR_BASE}/${name}`).catch(() => {})
+      await copyFile(`${backup}/${name}`, `${dir}/${name}`).catch(() => {})
     }
     if (confBackup) await copyFile(confBackup, MOH_CONF).catch(() => {})
     await asteriskCli('module unload res_musiconhold.so').catch(() => {})
