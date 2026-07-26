@@ -67,6 +67,7 @@ import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
 import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUserTextPeek } from '@/agent/lib/history-trim'
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
+import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/lib/plan-first'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
@@ -824,6 +825,20 @@ async function* runAlternateProviderTurn(
     }
   }
   let ownerIntentTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
+  // Plan-before-work on a big job (owner ask 2026-07-26). The FIRST deep-work
+  // turn of a conversation plans and asks everything at once; the staging/write
+  // tools are withheld so it cannot half-start the job while "planning".
+  const planTurn = suppressWork
+    ? false
+    : await isPlanFirstTurn({ conversationId, deepWork: ownerRequirements.deepWork })
+  if (planTurn) {
+    const gated = filterToolsForPlanTurn(ownerIntentTools)
+    if (gated.removed.length > 0) {
+      console.info('[plan-first] withheld', { conversationId, removed: gated.removed.length })
+    }
+    ownerIntentTools = gated.tools
+  }
+
   // SK-4: the pinned skill's allowlist. This is the enforcement that actually
   // holds — a read-only audit skill is handed no write tool, so it cannot write
   // whatever it decides. A skill with no declared capabilities does not narrow.
@@ -917,7 +932,14 @@ async function* runAlternateProviderTurn(
   const deadCapabilityBlock = capabilityPreflightBlock(shippedToolNames)
   const promptArgs = {
     projectInstructions:
-      [modeDirective, deadCapabilityBlock, skillDependencyBlock, modelSwitchBlock, projectSystemInstructions]
+      [
+        modeDirective,
+        deadCapabilityBlock,
+        skillDependencyBlock,
+        modelSwitchBlock,
+        planTurn ? planFirstNote() : '',
+        projectSystemInstructions,
+      ]
         .filter(Boolean).join('\n\n') || null,
     pinnedMemories,
     relevantMemories,
