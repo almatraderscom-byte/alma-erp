@@ -56,6 +56,43 @@ the verifier were both corrected. The real problem was meta, and meta is done.
 
 ---
 
+## 2b. Fixed on `claude/skills-architecture`, 2026-07-27 — found by HIM, in my test
+
+Every one of these came out of a session I had already called verified. That is
+the pattern worth carrying forward: **the live test is not over when the feature
+works — watch everything else on the screen.**
+
+| what he saw | what it actually was |
+|---|---|
+| no way to stop the agent mid-work | stop appeared only while the box was EMPTY; typing one character turned it back into send |
+| approved a card, then silence forever | the inline continuation (used whenever the worker queue is down) ended in a `console.warn` on failure, timeout, AND on a clean run that said nothing |
+| answering a card looked like sending an SMS | the card was DELETED on answer and the choice dropped in as a loose user bubble |
+| a fix order produced another audit | the router's work verbs were Bangla SCRIPT ONLY — "thik koro" matched nothing, and the read-only audit skill won the tie |
+| audit→fix in one chat never reached fixing | the pin was frozen per conversation; only a deterministic RULE may move it now |
+| the same opening line twice | speak-first seeds the line, but the repeat is a PARAPHRASE, so no equality check saw it |
+| a question answered → another question | `ask_user` is now withheld on the turn that answers a card |
+| two alt numbers for one site | the decorative-alt correction never reached `analyzePageLite`, the counter behind the report he reads |
+| raw `<tool_call>` markup in a Bangla sentence | Qwen wrote its call as text; cleaned once per finished round |
+
+Two more found while fixing those, both worse than the symptom that led to them:
+
+- **`find_tool` could search its way around the skill allowlist.** It resolves any
+  registry tool by name mid-turn, so every list-time restriction was advisory and
+  "an absent tool is a guarantee" was untrue exactly where it was quoted most.
+  Now enforced at the dynamic-load site.
+- **A pinned skill was never handed the tools it declared.** The allowlist
+  filters, it never adds, so the head burned a `find_tool` round reaching its own
+  `audit_product_seo`.
+
+**Upstash is not the problem it looks like.** Its request quota is exhausted
+(`Limit: 500000, Usage: 500001`), so the VPS turn consumer is in a pause/retry
+loop and its heartbeat is stale. But that queue exists ONLY because Vercel
+(producer) and the VPS (consumer) must share one — every other queue is already
+on the VPS's own local Redis. With the app open, a turn never touches it. The
+app-side fallback is what runs today; it was silent when it failed, and that is
+fixed. Removing Upstash entirely (Vercel hands the job to the VPS over HTTP, the
+VPS uses its local Redis) is a clean follow-up, not an emergency.
+
 ## 3. Broken right now — start here
 
 1. **`draft_seo_fixes` blocked by the duplicate guard, and the head lies about
