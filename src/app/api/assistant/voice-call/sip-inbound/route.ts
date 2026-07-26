@@ -22,7 +22,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
 import { isOwnerNumber } from '@/agent/lib/voice-call'
 import { buildOwnerCallFacts } from '@/agent/lib/call-facts'
-import { decideInbound, readDidRoutes, readInboundSettings } from '@/agent/lib/phone-routing'
+import { decideInbound, isKnownCaller, readDidRoutes, readInboundSettings } from '@/agent/lib/phone-routing'
 
 export const runtime = 'nodejs'
 export const maxDuration = 20
@@ -83,11 +83,15 @@ export async function POST(req: NextRequest) {
   // One decision, made by the same function the console's preview screen calls. Both reads
   // are best-effort: an inbound call must never fail because a settings or routing lookup
   // did, and every value falls back to the env var that used to control it.
-  const [settings, routes] = await Promise.all([
+  const [settings, routes, known] = await Promise.all([
     readInboundSettings(),
     readDidRoutes().catch(() => []),
+    // Whether the agent already knows this number decides who picks up: a known caller gets
+    // the assistant straight away, an unknown one gets a human first. Best-effort — a failed
+    // lookup means "unknown", which errs toward a person answering rather than a machine.
+    ownerCalling ? Promise.resolve(true) : isKnownCaller(caller).catch(() => false),
   ])
-  const decision = decideInbound({ caller, did, at: new Date(), owner: ownerCalling, settings, routes })
+  const decision = decideInbound({ caller, did, at: new Date(), owner: ownerCalling, known, settings, routes })
   const cfg = decision.route
 
   // Blocked numbers are refused before anything is answered, so they cost nothing.
@@ -151,6 +155,11 @@ export async function POST(req: NextRequest) {
       callType: ownerCalling ? 'owner' : 'inbound',
       transferMode,
       afterHours: !office.open,
+      // Who picks up, and for how long the team's phones ring first. The gateway resolves an
+      // empty ringGroup to "every browser phone open right now".
+      answerMode: decision.answerMode,
+      ringSecs: decision.ringSecs,
+      ringGroup: decision.ringGroup,
       // Where a live transfer can go. Self-hosted SIP lifted NGS's single-forward limit, so
       // the bot picks per call: customer-service topics reach the business line, and only a
       // caller who genuinely needs the owner reaches his personal number (owner rule

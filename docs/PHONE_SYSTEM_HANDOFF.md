@@ -368,26 +368,46 @@ approved).
 
 ## 8. Next steps, in order
 
-**0. (2026-07-26) The console's Phases 2, 3 and 4 are BUILT.** Three things are owner-pending
-before they are fully live, in this order, and none is optional:
+**0. (2026-07-26) The console's Phases 2, 3 and 4 are BUILT, MERGED, DEPLOYED and VERIFIED
+LIVE** (PR #599, merged as `455b6f15`). What was actually proven on the box, not reasoned
+about:
 
-  a. **Merge, then deploy the worker** (manual dispatch: `gh workflow run deploy-worker.yml`).
-     Until the gateway on the VPS runs the new code, gateway-scoped settings save in the ERP
-     and never arrive — the settings screen will show "এখনো একবারও নেয়নি", which is the truth.
-     Note the gateway pulls from `APP_URL`, which is PRODUCTION, so none of the
-     gateway-scoped half can be proven on a preview.
-  b. **The one-time dialplan step on the VPS** (phase 3): delete the hand-written
-     `[from-staff]` from `/etc/asterisk/extensions.conf`, add
-     `#include "extensions-alma-staff.conf"`, then prove all three contexts exist with
-     `asterisk -rx "dialplan show from-staff"` (and `-mobile`, `-internal`). Until this is
-     done, extension policy saves and has no effect — the generated file is written and
-     nothing includes it. Full instructions: `worker/deploy/asterisk/alma-staff-dialplan.conf`.
-  c. **Verify on real calls after the merge.** Change one gateway-scoped value (ring rounds is
-     the safest), wait a minute, place a PSTN loopback to our own DID `09649777738`, and
-     confirm the hangup counters still match the locked baseline: `underruns ≤ 1 · cushion ≤
-     16f · dropped = 0`. Nothing in steps 2–4 touches the playout or the VAD, so those numbers
-     must be unchanged; if they are not, something else moved and it needs finding. Then place
-     ONE staff browser call, to prove the generated dialplan dials out.
+  - **Config pull landed**: the gateway logged `config pulled: 2/30/45/2/120/alma-hold//bd_all//`
+    and `/health` reports `config.ok=true` with a `pulledAt`. The settings screen shows
+    "শেষবার নিয়েছে …", so a gateway-scoped change can be seen to have arrived.
+  - **The dialplan migration is DONE.** `extensions.conf` now ends with
+    `#include "extensions-alma-staff.conf"` and the hand-written `[from-staff]` (old lines
+    894–914) is gone. Rollback copy on the box:
+    `/root/extensions.conf.pre-console-20260726-063935`. Verified with `dialplan show` for all
+    three contexts plus the `_01XXXXXXXXX`, `_0[2-9]X.` and internal-`1002` patterns.
+  - **The verifier earned its place immediately.** The first strict policy write, done BEFORE
+    the migration, refused with `from-staff-mobile missing after reload` — exactly the silent
+    failure it exists to catch. After the migration the same write returned `{"ok":true}`.
+  - **AUDIO BASELINE INTACT, on a real PSTN loopback to our own DID `09649777738`** (both legs,
+    25 s, recording stored):
+    `outbound: underruns=0 turn-ends=3 cushion=12f dropped=0` ·
+    `inbound: underruns=0 turn-ends=2 cushion=12f dropped=0`.
+    The locked baseline is `underruns ≤ 1 · cushion ≤ 16f · dropped = 0`; the cushion never
+    left its starting 12 frames.
+  - **Per-extension history is right**, checked against the two real staff rows in
+    `Master.csv`: `↗ 01779640373 · 20s ANSWERED` and `↗ 01779640373 · BUSY`.
+
+**TRAP, paid for today: `deploy-worker.yml` CANNOT deploy.** The GitHub runner's egress IP is
+blocked by the VPS firewall, so the workflow dies on its own reachability probe
+("VPS port 22 unreachable from the GitHub runner"). The real deploy path is by hand from a
+Mac whose IP is allowed, doing exactly what the workflow does:
+
+```
+cd /opt/alma-erp && git fetch --all --prune && git clean -fd worker/scripts
+git checkout -f main && git reset --hard origin/main
+cd worker && npm ci --omit=dev
+pm2 restart alma-agent-worker gemini-live-bot alma-sip-gateway --update-env && pm2 save
+```
+
+Restarting `alma-sip-gateway` drops calls in progress — check `core show channels` first.
+
+Still owner-pending, and only this: **one staff browser call from `/agent/phone`**, to prove
+the generated dialplan dials out for a human. Everything else in steps 2–4 is proven.
 
   Phase 5 (trunks) is next. Both config writers built here — hold audio and the staff
   dialplan — follow the same shape: back up, write, reload, prove with a `show` command,

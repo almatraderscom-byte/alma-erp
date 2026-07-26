@@ -71,14 +71,13 @@ export function ExtensionsView() {
           {data.withoutPhone.length > 0 && (
             <Panel title="যাদের এখনো ফোন নেই" badge={String(data.withoutPhone.length)}>
               <p className="mb-3 text-[12px] leading-relaxed text-muted">
-                এদের কেউ ERP-তে ঢুকে ফোন পাতাটা একবার খুললেই নিজের এক্সটেনশন আর পাসওয়ার্ড
-                নিজে থেকে তৈরি হয়ে যাবে — আপনাকে কিছু বানাতে হবে না, লিংকটা পাঠালেই হলো।
+                দুইভাবে হয়। নিচের বোতামে এখনই তার এক্সটেনশন বানিয়ে দিতে পারেন — অথবা সে নিজে
+                ERP-তে ঢুকে ফোন পাতাটা একবার খুললেই নিজে থেকে তৈরি হয়ে যাবে। পাসওয়ার্ড কোনো
+                অবস্থাতেই দেখানো হয় না; তার ব্রাউজার ফোন পাতা খোলার সময় নিজেই নিয়ে নেয়।
               </p>
-              <ul className="flex flex-wrap gap-1.5">
+              <ul className="space-y-1.5">
                 {data.withoutPhone.map((u) => (
-                  <li key={u.id} className="rounded-full border border-border-subtle bg-card/60 px-3 py-1 text-[11px] text-muted">
-                    {u.name}
-                  </li>
+                  <CreateRow key={u.id} user={u} onCreated={reload} />
                 ))}
               </ul>
               <div className="mt-3">
@@ -89,6 +88,49 @@ export function ExtensionsView() {
         </div>
       )}
     </>
+  )
+}
+
+function CreateRow({ user, onCreated }: { user: { id: string; name: string; role: string }; onCreated: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+
+  const create = useCallback(async () => {
+    setBusy(true)
+    setProblem(null)
+    try {
+      const res = await fetch(ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ staffId: user.id, action: 'create', label: user.name }),
+      })
+      const body = (await res.json()) as { ok: boolean; error?: string }
+      if (!res.ok || !body.ok) { setProblem(body.error ?? `HTTP ${res.status}`); return }
+      onCreated()
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }, [user.id, user.name, onCreated])
+
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle bg-card/40 px-3 py-2">
+      <span className="min-w-0 text-[12px] text-cream">
+        {user.name} <span className="text-muted">· {user.role}</span>
+      </span>
+      <span className="flex items-center gap-2">
+        {problem && <span className="text-[11px] text-red-500">{problem}</span>}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void create()}
+          className="shrink-0 rounded-full bg-[#E07A5F] px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-[#E07A5F]/90 disabled:opacity-50"
+        >
+          {busy ? 'বানাচ্ছি…' : 'ফোন বানিয়ে দাও'}
+        </button>
+      </span>
+    </li>
   )
 }
 

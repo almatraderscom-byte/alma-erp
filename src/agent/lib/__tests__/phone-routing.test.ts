@@ -143,6 +143,57 @@ describe('decideInbound', () => {
   })
 })
 
+describe('decideInbound — who picks up first', () => {
+  const routes: DidRoute[] = []
+  const staffFirst = {
+    office_hours_dhaka: '10-21',
+    phone_inbound_answer_mode: 'staff_first',
+    phone_inbound_ring_secs: '30',
+  }
+  const base = { caller: '01712345678', did: '09649777738', owner: false, routes }
+
+  it('rings the team first for an unknown caller in office hours', () => {
+    const d = decideInbound({ ...base, at: dhaka(SUNDAY, '12:00'), settings: staffFirst })
+    expect(d.answerMode).toBe('staff_first')
+    expect(d.ringSecs).toBe(30)
+  })
+
+  it('sends a KNOWN caller straight to the AI — the assistant is what they rang for', () => {
+    for (const who of [{ known: true }, { owner: true }]) {
+      const d = decideInbound({ ...base, ...who, at: dhaka(SUNDAY, '12:00'), settings: staffFirst })
+      expect(d.answerMode).toBe('ai_first')
+      expect(d.known).toBe(true)
+    }
+  })
+
+  it('never rings the team outside office hours — that is a nuisance, not a service', () => {
+    const d = decideInbound({ ...base, at: dhaka(SUNDAY, '23:00'), settings: staffFirst })
+    expect(d.time.open).toBe(false)
+    expect(d.answerMode).toBe('ai_first')
+  })
+
+  it('never rings the team on a holiday either', () => {
+    const d = decideInbound({
+      ...base,
+      at: dhaka(SUNDAY, '12:00'),
+      settings: { ...staffFirst, phone_holidays: SUNDAY },
+    })
+    expect(d.answerMode).toBe('ai_first')
+  })
+
+  it('defaults to the old behaviour when the setting was never touched', () => {
+    const d = decideInbound({ ...base, at: dhaka(SUNDAY, '12:00'), settings: { office_hours_dhaka: '10-21' } })
+    expect(d.answerMode).toBe('ai_first')
+  })
+
+  it('clamps the ring window to something a caller will tolerate', () => {
+    const long = decideInbound({ ...base, at: dhaka(SUNDAY, '12:00'), settings: { ...staffFirst, phone_inbound_ring_secs: '600' } })
+    const short = decideInbound({ ...base, at: dhaka(SUNDAY, '12:00'), settings: { ...staffFirst, phone_inbound_ring_secs: '1' } })
+    expect(long.ringSecs).toBe(60)
+    expect(short.ringSecs).toBe(10)
+  })
+})
+
 describe('applyOutboundRules', () => {
   const plain = { destPolicy: 'bd_all', outboundStrip: '', outboundPrefix: '' }
 

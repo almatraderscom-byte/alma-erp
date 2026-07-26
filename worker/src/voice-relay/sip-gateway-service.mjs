@@ -1113,6 +1113,20 @@ async function onInboundCall(e) {
   if (e.channel?.name) call.chanName = e.channel.name
   calls.set(chanId, call)
   try {
+    // Staff-first (owner ask 2026-07-26): an UNKNOWN caller should reach a human first — the
+    // staff phones ring with our own hold music, and the AI only steps in if nobody picks up.
+    // A caller the agent knows (the owner, staff, a saved contact) skips the wait, because for
+    // those people the assistant is what they rang for. The app decides both; see decideInbound.
+    const dests = await staffFirstTargets(params)
+    if (params.answerMode === 'staff_first' && dests.length) {
+      putCdr(chanId, { direction: 'inbound', from: caller, did, startedAt: Date.now() })
+      await staffFirstAnswer(call, dests, Number(params.ringSecs) || 30)
+      return
+    }
+    if (params.answerMode === 'staff_first') {
+      log(chanId, 'staff-first requested but nobody is reachable — AI answering immediately')
+    }
+
     await ari('POST', `/channels/${chanId}/answer`)
     call.answered = true
     call.answeredAt = Date.now()
@@ -1216,7 +1230,19 @@ async function onAriEvent(e) {
         // Somebody picked up: stop walking the group and drop the hold music, so the two
         // humans hear each other rather than the music.
         const parent = call._transferParent && calls.get(call._transferParent)
-        if (parent) { parent.ringGroup = null; await stopMoh(parent) }
+        if (parent) {
+          parent.ringGroup = null
+          // Staff-first: this leg won the race, so cancel the rest and cancel the AI deadline.
+          // Without this the other phones keep ringing after a colleague has already answered,
+          // and the give-up timer would hand a live conversation to the AI mid-sentence.
+          if (parent.staffFirst) {
+            parent.staffFirst = false
+            parent.staffAnswered = true
+            await hangupRaceLegs(parent, call.channelId)
+            log(parent.channelId, `staff-first: answered by ${call.channelId}`)
+          }
+          await stopMoh(parent)
+        }
         try { await ari('POST', `/bridges/${call._bridgeInto}/addChannel`, { channel: call.channelId }) }
         catch (err) { log(call.channelId, 'forward bridge failed', err?.message) }
         return
@@ -1404,7 +1430,17 @@ password=${s.password}
 ;; 404 Not Found even though the AOR plainly exists (found live 2026-07-25).
 [${s.ext}]
 type=aor
-max_contacts=2
+;; ONE contact, and a new registration evicts the old one immediately.
+;;
+;; It used to be 2, and that is a bug with qualify off. Asterisk never checks whether a
+;; browser's websocket is still alive, so a contact from a closed or reloaded tab lingers —
+;; and a BYE goes to the dialog's contact. Send it down a dead socket and the browser never
+;; learns the call ended: the far end hangs up, Asterisk tears the channel down, and the staff
+;; member's screen keeps counting until they hang up by hand. The owner hit exactly that
+;; (2026-07-26: Asterisk ended the call at 18s while his timer ran to 0:29).
+;;
+;; One tab is one phone, so a second contact can only ever be a stale one.
+max_contacts=1
 remove_existing=yes
 ;; qualify OFF for browsers. A WebRTC contact that fails to answer OPTIONS gets marked
 ;; Unavailable, and Asterisk then refuses to dial it — the same trap that made the trunk
@@ -2071,6 +2107,140 @@ async function transferCall(call, forwardTo) {
   return dialNextInGroup(call)
 }
 
+// ── staff-first inbound (owner ask 2026-07-26) ───────────────────────────────
+/*
+ * An unknown caller should reach a HUMAN first: the staff phones ring for ~30 s with our own
+ * hold music playing, and only if nobody picks up does the AI take the call. A caller the
+ * agent already knows — the owner, a staff member, anyone in his saved contacts — skips that
+ * wait and gets the AI immediately, because for those people the assistant IS the thing they
+ * rang for.
+ *
+ * The app decides WHO is known and WHETHER this mode is on (`answerMode` in the inbound
+ * params); this file only carries it out. Two details that are the whole point:
+ *
+ *  - The staff legs ring SIMULTANEOUSLY, not one after another. A 30-second budget split
+ *    across a growing team gives each person a few seconds, which is the same as nobody
+ *    ringing at all.
+ *  - An internal extension is dialled as `PJSIP/1002`, NOT through the trunk, and the
+ *    caller-ID we present to it is the CUSTOMER'S number. That is what makes the browser
+ *    phone's screen-pop — their name, their orders, what they owe — work on a real customer
+ *    call. It was built long ago and had never once fired, because a customer physically
+ *    could not reach a browser.
+ *
+ * Nothing here touches the playout, the jitter cushion or the VAD.
+ */
+/**
+ * Who rings during the staff-first window.
+ *
+ * An explicit list from the console wins. With no list we ring every staff extension that is
+ * REGISTERED RIGHT NOW — never one that merely exists, because ringing a closed browser for
+ * 30 seconds while a customer listens to music is worse than not trying at all. If that leaves
+ * nobody, the caller goes straight to the AI with no wait.
+ */
+async function staffFirstTargets(params) {
+  const explicit = String(params?.ringGroup || '')
+    .split(',').map((n) => localDial(n.trim())).filter(Boolean)
+  if (explicit.length) return explicit
+  try {
+    const [store, registered] = await Promise.all([readWebrtcStore(), registeredExtensions()])
+    return Object.values(store)
+      .map(staffPolicy)
+      .filter((s) => !s.disabled && !s.dnd && registered.has(s.ext))
+      .map((s) => s.ext)
+  } catch {
+    return []
+  }
+}
+
+async function hangupRaceLegs(call, exceptId) {
+  for (const legId of call._raceLegs || []) {
+    if (legId === exceptId) continue
+    const leg = calls.get(legId)
+    if (leg?.answered) continue
+    calls.delete(legId)
+    await ari('DELETE', `/channels/${legId}`).catch(() => { /* already gone is the goal */ })
+  }
+  call._raceLegs = []
+  if (call._staffTimer) { clearTimeout(call._staffTimer); call._staffTimer = null }
+}
+
+async function staffFirstAnswer(call, dests, ringSecs) {
+  await ari('POST', `/channels/${call.channelId}/answer`)
+  call.answered = true
+  call.answeredAt = Date.now()
+  putCdr(call.channelId, { answered: true, answeredAt: call.answeredAt, status: 'ringing_staff' })
+
+  // Answer, then music: silence while their phone rings tells the caller the line is dead.
+  const bridge = await ari('POST', '/bridges', { type: 'mixing' })
+  call.bridgeId = bridge.id
+  await ari('POST', `/bridges/${call.bridgeId}/addChannel`, { channel: call.channelId })
+  await ari('POST', `/bridges/${call.bridgeId}/moh`, MOH_CLASS ? { mohClass: MOH_CLASS } : undefined)
+    .catch((err) => log(call.channelId, 'staff-first moh failed:', err?.message))
+  call.moh = true
+  call.staffFirst = true
+  call._raceLegs = []
+
+  const customer = call.params?.caller || ''
+  for (const dest of dests) {
+    const internal = /^1\d{3}$/.test(dest)
+    const legId = 'sipring-' + randomUUID()
+    const leg = new Call(legId, {})
+    leg._bridgeInto = call.bridgeId
+    leg._transferParent = call.channelId
+    calls.set(legId, leg)
+    call._raceLegs.push(legId)
+    try {
+      await ari('POST', '/channels', {
+        endpoint: internal ? `PJSIP/${dest}` : `PJSIP/${dest}@${TRUNK_ENDPOINT}`,
+        app: ARI_APP,
+        channelId: legId,
+        timeout: ringSecs,
+        ...(internal
+          ? (customer ? { callerId: customer } : {})
+          : (CALLER_ID ? { callerId: CALLER_ID } : {})),
+      })
+    } catch (err) {
+      // One unreachable member must not stop the others ringing.
+      calls.delete(legId)
+      call._raceLegs = call._raceLegs.filter((x) => x !== legId)
+      log(call.channelId, `staff-first leg ${dest} failed:`, err?.message)
+    }
+  }
+
+  if (!call._raceLegs.length) {
+    log(call.channelId, 'staff-first: no leg could be started — handing the caller to the AI')
+    await staffFirstGiveUp(call, true)
+    return
+  }
+
+  // Our own deadline, because a per-channel `timeout` only bounds each leg. +2 s of slack so
+  // a leg that is about to be answered is not cut off by a race with its own ring timeout.
+  call._staffTimer = setTimeout(() => { void staffFirstGiveUp(call) }, (ringSecs + 2) * 1000)
+  log(call.channelId, `staff-first: ringing ${dests.join(', ')} for ${ringSecs}s with music`)
+}
+
+/** Nobody picked up (or nobody could be rung): the AI takes the call, and says so. */
+async function staffFirstGiveUp(call, immediate = false) {
+  if (call.closed || !call.staffFirst) return
+  call.staffFirst = false
+  await hangupRaceLegs(call)
+  await stopMoh(call)
+  try {
+    call.params = {
+      ...call.params,
+      purpose: immediate
+        ? call.params?.purpose
+        : `${call.params?.purpose || 'ইনকামিং কল'} — টিমকে রিং করা হয়েছিল, কেউ ধরেনি। কলদাতাকে অপেক্ষা করানোর জন্য দুঃখ প্রকাশ করে নিজেই সাহায্য করো; দরকার হলে নাম, নম্বর ও প্রয়োজন লিখে নাও।`,
+    }
+    await bridgeAndStartBot(call)
+    call.armVoicemailFallback()
+    log(call.channelId, immediate ? 'staff-first skipped — AI answering' : 'staff-first: nobody answered — AI took the call')
+  } catch (err) {
+    log(call.channelId, 'staff-first handover to the AI failed:', err?.message)
+    void call.hangup('staff-first handover failed')
+  }
+}
+
 /** How many times to walk the whole ring group before handing the caller back to the AI. */
 let TRANSFER_ROUNDS = Number(process.env.SIP_TRANSFER_ROUNDS || 2)
 /** Music-on-hold class played while hunting for a human. Empty = Asterisk's default. */
@@ -2107,14 +2277,34 @@ async function dialNextInGroup(call) {
   call.ringIndex++
   call.transferring = true
   const fwdId = 'sipfwd-' + randomUUID()
+
+  /*
+   * A ring-group member may be a STAFF EXTENSION (1XXX) as well as a mobile, and the two need
+   * opposite handling.
+   *
+   * Until now every forward went out `PJSIP/<dest>@alma` — through the trunk — so putting
+   * `1002` in the forward list dialled the PSTN asking for a number called "1002" and failed.
+   * That is why the browser softphone's screen-pop (the caller's name, their orders, what they
+   * owe, their last order) had never fired on a real customer call: a transferred customer
+   * physically could not reach a browser. It was built and unreachable.
+   *
+   * And the caller-ID matters as much as the route. For a mobile we must present OUR DID — the
+   * provider rejects a caller-ID it does not recognise. For a staff browser the opposite is
+   * true: the screen-pop looks the INVITE's caller up in the ERP, so sending our own DID would
+   * make every customer call resolve to us. The customer's real number goes to the browser.
+   */
+  const internal = /^1\d{3}$/.test(dest)
+  const customer = call.params?.caller || cdr.get(call.channelId)?.from || ''
   await ari('POST', '/channels', {
-    endpoint: `PJSIP/${dest}@${TRUNK_ENDPOINT}`,
+    endpoint: internal ? `PJSIP/${dest}` : `PJSIP/${dest}@${TRUNK_ENDPOINT}`,
     app: ARI_APP,
     channelId: fwdId,
     // Shorter than a normal call: the caller is on hold listening to ringback, so a long
     // unanswered transfer is worse than falling back to the AI quickly.
     timeout: TRANSFER_RING_TIMEOUT,
-    ...(CALLER_ID ? { callerId: CALLER_ID } : {}),
+    ...(internal
+      ? (customer ? { callerId: customer } : {})
+      : (CALLER_ID ? { callerId: CALLER_ID } : {})),
   })
   // register a minimal Call so its StasisStart bridges into the SAME bridge
   const fwd = new Call(fwdId, {})
