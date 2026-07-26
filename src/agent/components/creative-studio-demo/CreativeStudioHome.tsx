@@ -136,7 +136,7 @@ export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
     if (kind === 'voice') onNavigate({ id: 'desk', desk: 'voice' })
     if (kind === 'audio') onNavigate({ id: 'desk', desk: 'audio' })
     if (kind === 'campaign') onNavigate({ id: 'desk', desk: 'campaign' })
-    if (kind === 'longform') onNavigate({ id: 'editor', kind: 'longform' })
+    if (kind === 'longform') onNavigate({ id: 'project-setup', kind: 'longform' })
   }
 
   return (
@@ -147,6 +147,9 @@ export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
 
       <header className={styles.homeTopbar}>
         <a className={styles.almaIdentity} href="/agent" aria-label="Return to ALMA Agent">
+          <span className={styles.v4HomeBackIcon}>
+            <StudioV2Icon name="arrow-left" size={17} />
+          </span>
           <span className={styles.almaMark}>A</span>
           <span>
             <strong>ALMA</strong>

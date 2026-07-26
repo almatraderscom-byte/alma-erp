@@ -34,6 +34,7 @@ type CreativeStudioCreateLabProps = {
 
 type LabTab = 'explore' | 'history'
 type ImageArchitecture = 'auto' | 'advanced'
+type ImageSourceTray = 'product-gallery' | 'model-library' | 'avatar-library' | null
 
 function AssetArtwork({
   asset,
@@ -255,7 +256,7 @@ function ImageComposer({
   onSelectAvatar: (id: string) => void
   onNavigate: StudioV3Navigate
 }) {
-  const [architecture, setArchitecture] = useState<ImageArchitecture>('advanced')
+  const [architecture, setArchitecture] = useState<ImageArchitecture>('auto')
   const [mode, setMode] = useState<ImageModeId>('product_to_model')
   const [productId, setProductId] = useState(PRODUCTS[0].id)
   const [sourceId, setSourceId] = useState(initialSourceAssetId ?? '')
@@ -282,6 +283,9 @@ function ImageComposer({
   const [placement, setPlacement] = useState('Auto')
   const [autoFamily, setAutoFamily] = useState(false)
   const [autoReel, setAutoReel] = useState(false)
+  const [sourceTray, setSourceTray] = useState<ImageSourceTray>(null)
+  const [localProductName, setLocalProductName] = useState('')
+  const [localModelName, setLocalModelName] = useState('')
   const [localStatus, setLocalStatus] = useState(
     'Configuration is local to this prototype. Nothing has been queued.',
   )
@@ -338,7 +342,10 @@ function ImageComposer({
 
   if (architecture === 'auto') {
     return (
-      <section aria-labelledby="image-composer-title" className={styles.v3Composer}>
+      <section
+        aria-labelledby="image-composer-title"
+        className={`${styles.v3Composer} ${styles.v4FloatingComposer}`}
+      >
         <header className={styles.v3ComposerHeader}>
           <div>
             <span className={styles.eyebrow}>IMAGE COMPOSER</span>
@@ -370,59 +377,174 @@ function ImageComposer({
           </button>
         </div>
 
-        <div className={styles.v3AutoSummary}>
-          <div>
-            <span className={styles.v3AutoStep}>01</span>
-            <div>
-              <strong>Product / mannequin</strong>
-              <small>Required · ERP provenance stays pinned</small>
-            </div>
-          </div>
-          <div className={styles.v3ProductMiniGrid}>
-            {PRODUCTS.map((product) => (
-              <button
-                aria-pressed={productId === product.id}
-                className={productId === product.id ? styles.v3MiniSelected : undefined}
-                key={product.id}
-                onClick={() => setProductId(product.id)}
-                type="button"
-              >
-                <span className={`${styles.v3ProductSwatch} ${styles[`v3Tone_${product.tone}`]}`} />
-                <span>
-                  <strong>{product.name}</strong>
-                  <small>{product.code} · {product.resolution}</small>
-                </span>
-                {product.status === 'needs_reference' && <em>Low source</em>}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className={styles.v3AutoSummary}>
-          <div>
-            <span className={styles.v3AutoStep}>02</span>
-            <div>
-              <strong>Saved model</strong>
-              <small>Default identity can be changed from the rail</small>
-            </div>
-          </div>
-          <div className={styles.v3AutoIdentity}>
-            <span className={`${styles.v3AvatarPortrait} ${styles.v3Tone_ink}`}>
+        <div className={styles.v4AutoSourceGrid}>
+          <section className={styles.v4SourceCard}>
+            <header>
+              <div>
+                <span>PRODUCT</span>
+                <strong>{localProductName || selectedProduct?.name || 'Choose product'}</strong>
+              </div>
+              <em>Required</em>
+            </header>
+            <div className={`${styles.v4SourceArtwork} ${styles.v3Tone_coral}`}>
+              <span>ALMA</span>
               <i />
               <b />
-            </span>
-            <span>
-              <strong>{selectedAvatar?.name ?? 'Choose an avatar'}</strong>
-              <small>{selectedAvatar?.version ?? 'Identity is required'}</small>
-            </span>
-            <button
-              onClick={() => onNavigate({ id: 'gallery', initialType: 'avatar' })}
-              type="button"
-            >
-              Change
-            </button>
-          </div>
+              <small>{localProductName ? 'LOCAL DEMO SOURCE' : selectedProduct?.code}</small>
+            </div>
+            <div className={styles.v4SourceActions}>
+              <button
+                onClick={() => {
+                  setLocalStatus('Clipboard paste is represented locally in this demo.')
+                  setLocalProductName('Pasted product image')
+                }}
+                type="button"
+              >
+                <StudioV2Icon name="projects" size={14} />
+                Paste
+              </button>
+              <label>
+                <input
+                  accept="image/*"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    if (!file) return
+                    setLocalProductName(file.name)
+                    setLocalStatus(`${file.name} staged locally as the product source.`)
+                  }}
+                  type="file"
+                />
+                <StudioV2Icon name="plus" size={14} />
+                Upload
+              </label>
+              <button
+                aria-expanded={sourceTray === 'product-gallery'}
+                onClick={() =>
+                  setSourceTray((current) => current === 'product-gallery' ? null : 'product-gallery')
+                }
+                type="button"
+              >
+                <StudioV2Icon name="grid" size={14} />
+                Gallery
+              </button>
+            </div>
+          </section>
+
+          <section className={styles.v4SourceCard}>
+            <header>
+              <div>
+                <span>MODEL</span>
+                <strong>{localModelName || selectedAvatar?.name || 'Choose model'}</strong>
+              </div>
+              <em>Required</em>
+            </header>
+            <div className={`${styles.v4SourceArtwork} ${styles.v4ModelArtwork} ${styles.v3Tone_ink}`}>
+              <i />
+              <b />
+              <small>{localModelName ? 'NEW LOCAL MODEL' : selectedAvatar?.version}</small>
+            </div>
+            <div className={styles.v4SourceActions}>
+              <button
+                aria-expanded={sourceTray === 'model-library'}
+                onClick={() =>
+                  setSourceTray((current) => current === 'model-library' ? null : 'model-library')
+                }
+                type="button"
+              >
+                <StudioV2Icon name="library" size={14} />
+                Library
+              </button>
+              <label>
+                <input
+                  accept="image/*"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    if (!file) return
+                    setLocalModelName(file.name)
+                    setLocalStatus(`${file.name} staged locally as a new model reference.`)
+                  }}
+                  type="file"
+                />
+                <StudioV2Icon name="plus" size={14} />
+                Upload
+              </label>
+              <button
+                aria-expanded={sourceTray === 'avatar-library'}
+                onClick={() =>
+                  setSourceTray((current) => current === 'avatar-library' ? null : 'avatar-library')
+                }
+                type="button"
+              >
+                <StudioV2Icon name="agent" size={14} />
+                Avatar
+              </button>
+            </div>
+          </section>
         </div>
+
+        {sourceTray && (
+          <section className={styles.v4SourceTray}>
+            <header>
+              <div>
+                <span className={styles.eyebrow}>
+                  {sourceTray === 'product-gallery' ? 'PRODUCT GALLERY' : 'MODEL & AVATAR LIBRARY'}
+                </span>
+                <strong>
+                  {sourceTray === 'product-gallery'
+                    ? 'Choose an ERP-pinned product source'
+                    : 'Choose a saved model or approved avatar'}
+                </strong>
+              </div>
+              <button aria-label="Close source picker" onClick={() => setSourceTray(null)} type="button">
+                <StudioV2Icon name="close" size={16} />
+              </button>
+            </header>
+            <div>
+              {sourceTray === 'product-gallery'
+                ? PRODUCTS.map((product) => (
+                    <button
+                      aria-pressed={productId === product.id && !localProductName}
+                      key={product.id}
+                      onClick={() => {
+                        setProductId(product.id)
+                        setLocalProductName('')
+                        setSourceTray(null)
+                      }}
+                      type="button"
+                    >
+                      <span className={`${styles.v3ProductSwatch} ${styles[`v3Tone_${product.tone}`]}`} />
+                      <span>
+                        <strong>{product.name}</strong>
+                        <small>{product.code} · {product.resolution}</small>
+                      </span>
+                    </button>
+                  ))
+                : AVATARS.map((avatar) => (
+                    <button
+                      aria-pressed={selectedAvatarId === avatar.id && !localModelName}
+                      key={avatar.id}
+                      onClick={() => {
+                        onSelectAvatar(avatar.id)
+                        setLocalModelName('')
+                        setSourceTray(null)
+                      }}
+                      type="button"
+                    >
+                      <span
+                        className={`${styles.v3AvatarPortrait} ${styles[`v3Tone_${avatar.tone}`]}`}
+                      >
+                        <i />
+                        <b />
+                      </span>
+                      <span>
+                        <strong>{avatar.name}</strong>
+                        <small>{avatar.role} · {avatar.version}</small>
+                      </span>
+                    </button>
+                  ))}
+            </div>
+          </section>
+        )}
 
         <label className={styles.v3PromptField}>
           <span>Creative direction <em>optional in Auto</em></span>
@@ -491,7 +613,10 @@ function ImageComposer({
   }
 
   return (
-    <section aria-labelledby="image-composer-title" className={styles.v3Composer}>
+    <section
+      aria-labelledby="image-composer-title"
+      className={`${styles.v3Composer} ${styles.v4FloatingComposer}`}
+    >
       <header className={styles.v3ComposerHeader}>
         <div>
           <span className={styles.eyebrow}>IMAGE COMPOSER</span>
@@ -1358,16 +1483,22 @@ export function CreativeStudioCreateLab({
         </div>
       }
     >
-      <AvatarRail
-        onNavigate={onNavigate}
-        onSelect={(avatar) => setSelectedAvatarId(avatar.id)}
-        selectedId={selectedAvatarId}
-      />
+      {kind === 'video' && (
+        <AvatarRail
+          onNavigate={onNavigate}
+          onSelect={(avatar) => setSelectedAvatarId(avatar.id)}
+          selectedId={selectedAvatarId}
+        />
+      )}
 
       {tab === 'history' ? (
         <HistoryLedger kind={kind} />
       ) : (
-        <div className={styles.v3LabLayout}>
+        <div
+          className={`${styles.v3LabLayout} ${
+            kind === 'image' ? styles.v4LabWithFloatingComposer : ''
+          }`}
+        >
           <section aria-labelledby="lab-template-title" className={styles.v3ExploreBoard}>
             <header className={styles.v3ExploreHeader}>
               <div>

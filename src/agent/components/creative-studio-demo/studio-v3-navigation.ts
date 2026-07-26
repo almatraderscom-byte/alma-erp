@@ -8,10 +8,14 @@ export type StudioV3View =
   | { id: 'gallery'; initialType?: GalleryAssetType | 'all' }
   | { id: 'finishing'; assetId?: string }
   | { id: 'desk'; desk: CapabilityDeskId }
+  | { id: 'project-setup'; kind: 'video' | 'longform' }
   | {
       id: 'editor'
       kind: CreateKind
       project?: StudioProject
+      projectName?: string
+      emptyProject?: boolean
+      canvasPreset?: '9:16' | '1:1' | '4:5' | '16:9'
       openAgent?: boolean
     }
 

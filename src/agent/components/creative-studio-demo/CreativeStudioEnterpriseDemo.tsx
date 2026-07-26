@@ -3,16 +3,29 @@
 import { useState } from 'react'
 import { CreativeStudioCapabilityDesk } from './CreativeStudioCapabilityDesk'
 import { CreativeStudioCreateLab } from './CreativeStudioCreateLab'
+import { CreativeStudioEmptyProjectEditor } from './CreativeStudioEmptyProjectEditor'
 import { CreativeStudioEditor } from './CreativeStudioEditor'
 import { CreativeStudioFinishing } from './CreativeStudioFinishing'
 import { CreativeStudioGallery } from './CreativeStudioGallery'
 import { CreativeStudioHome } from './CreativeStudioHome'
+import { CreativeStudioProjectSetup } from './CreativeStudioProjectSetup'
 import type { StudioV3View } from './studio-v3-navigation'
 
 export function CreativeStudioEnterpriseDemo() {
   const [view, setView] = useState<StudioV3View>({ id: 'home' })
 
   if (view.id === 'editor') {
+    if (view.emptyProject) {
+      return (
+        <CreativeStudioEmptyProjectEditor
+          initialCanvasPreset={view.canvasPreset ?? '16:9'}
+          kind={view.kind === 'video' ? 'video' : 'longform'}
+          onHome={() => setView({ id: 'home' })}
+          projectName={view.projectName ?? 'Untitled project'}
+        />
+      )
+    }
+
     return (
       <CreativeStudioEditor
         entryKind={view.kind}
@@ -20,6 +33,27 @@ export function CreativeStudioEnterpriseDemo() {
         initiallyOpenAgent={view.openAgent}
         onHome={() => setView({ id: 'home' })}
       />
+    )
+  }
+
+  if (view.id === 'project-setup') {
+    return (
+      <>
+        <CreativeStudioHome onNavigate={setView} />
+        <CreativeStudioProjectSetup
+          kind={view.kind}
+          onCancel={() => setView({ id: 'home' })}
+          onCreate={(projectName, canvasPreset) =>
+            setView({
+              id: 'editor',
+              kind: view.kind,
+              projectName,
+              emptyProject: true,
+              canvasPreset,
+            })
+          }
+        />
+      </>
     )
   }
 
