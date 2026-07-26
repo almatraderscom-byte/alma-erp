@@ -45,6 +45,7 @@ import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
 import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
 import { trimToolResultForHistory } from '@/agent/lib/context-trim'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
+import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
 import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
 import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
@@ -998,8 +999,11 @@ export async function* runAgentTurn(
   // normalized path in run-owner-turn; '' when disabled/personal/no match (fail-open).
   const activeSkillsBlock = personalMode ? '' : await buildActiveSkillsBlock(lastUserText)
 
+  // Parity with run-owner-turn: name the dead capabilities before the first step.
+  const deadCapabilityBlock = capabilityPreflightBlock()
   const promptArgs = {
-    projectInstructions: projectSystemInstructions,
+    projectInstructions:
+      [deadCapabilityBlock, projectSystemInstructions].filter(Boolean).join('\n\n') || null,
     pinnedMemories,
     relevantMemories,
     recalledTurns,

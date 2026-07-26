@@ -58,6 +58,7 @@ import { isTurnCancelRequested, getTurnInstructionOrigin } from '@/agent/lib/tur
 import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
 import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUserTextPeek } from '@/agent/lib/history-trim'
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
+import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import {
@@ -862,8 +863,12 @@ async function* runAlternateProviderTurn(
   // The mode's own rules ride with the project instructions. The words explain
   // the mode to the head; the tool filter above is what actually enforces it.
   const modeDirective = chatModeDirective(chatMode)
+  // A broken tool is announced at step 0, not discovered at step 15 (owner watched
+  // the head spend 1m36s and three tools finding out the website DB was unreachable).
+  const deadCapabilityBlock = capabilityPreflightBlock(shippedToolNames)
   const promptArgs = {
-    projectInstructions: [modeDirective, projectSystemInstructions].filter(Boolean).join('\n\n') || null,
+    projectInstructions:
+      [modeDirective, deadCapabilityBlock, projectSystemInstructions].filter(Boolean).join('\n\n') || null,
     pinnedMemories,
     relevantMemories,
     recalledTurns,
