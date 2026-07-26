@@ -81,6 +81,7 @@ import { GRAPH_TOOLS } from './graph-tools'
 import { OPEN_TASK_TOOLS } from './open-task-tools'
 import { BROWSER_TOOLS } from './browser-tools'
 import { BROWSER_LOGIN_TOOLS } from './browser-login-tools'
+import { BROWSER_LIVE_TOOLS } from './browser-live-tools'
 import { BROWSER_RECIPE_TOOLS } from './browser-recipe-tools'
 import { NATIVE_PUSH_TOOLS } from './native-push-tools'
 import { LIVE_BROWSER_TOOLS } from './live-browser-tools'
@@ -498,6 +499,7 @@ export const CORE_AGENT_TOOLS: AgentTool[] = [
   ...OPEN_TASK_TOOLS,
   ...BROWSER_TOOLS,
   ...BROWSER_LOGIN_TOOLS,
+  ...BROWSER_LIVE_TOOLS,
   ...BROWSER_RECIPE_TOOLS,
   ...NATIVE_PUSH_TOOLS,
   ...LIVE_BROWSER_TOOLS,
