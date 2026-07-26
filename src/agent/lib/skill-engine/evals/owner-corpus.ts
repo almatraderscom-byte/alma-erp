@@ -31,7 +31,7 @@ export const OWNER_CORPUS: OwnerCase[] = [
   {
     id: 'seo-audit-full',
     text: 'almatraders.com এর পূর্ণাঙ্গ SEO অডিট করো',
-    expected: 'alma-seo-audit',
+    expected: 'seo-auditing-own-site',
     note: 'AUDIT order. The mirror image of the case above.',
   },
   {
@@ -43,7 +43,7 @@ export const OWNER_CORPUS: OwnerCase[] = [
   {
     id: 'seo-client',
     text: 'client er site example.com er seo dekho',
-    expected: 'alma-client-seo',
+    expected: 'seo-fixing-client-site',
     note: 'Someone else’s site — different tools, no DB access.',
   },
 

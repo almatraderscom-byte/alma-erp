@@ -8,16 +8,16 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 > engine on today would expose exactly one skill (`alma-owner-daily-briefing`).
 > That alone explains why the skills have never done anything.
 
-- Messages that SHOULD pin a skill: **18** — correct top pick: **11** (**61%**)
-- Wrong skill chosen: **5** · nothing chosen: **2**
+- Messages that SHOULD pin a skill: **18** — correct top pick: **10** (**56%**)
+- Wrong skill chosen: **6** · nothing chosen: **2**
 - Messages that should pin NOTHING: **6** — false triggers: **1**
 
 | # | message | expected | picked (top 3) | result |
 |---|---|---|---|---|
 | seo-fix-alt | almatraders.com এর ছবির alt ঠিক করো | seo-fixing-own-site | alma-seo-audit, alma-product-listing | ❌ wrong skill |
-| seo-audit-full | almatraders.com এর পূর্ণাঙ্গ SEO অডিট করো | alma-seo-audit | alma-seo-audit, alma-client-seo | ✅ hit |
+| seo-audit-full | almatraders.com এর পূর্ণাঙ্গ SEO অডিট করো | seo-auditing-own-site | alma-seo-audit, alma-client-seo | ❌ wrong skill |
 | seo-fix-meta | product-code-110 এর meta description লিখে দাও | seo-fixing-own-site | alma-website, alma-meta-campaign-launch, alma-product-listing | ❌ wrong skill |
-| seo-client | client er site example.com er seo dekho | alma-client-seo | alma-seo-audit, alma-client-seo | ❌ wrong skill |
+| seo-client | client er site example.com er seo dekho | seo-fixing-client-site | alma-seo-audit, alma-client-seo | ❌ wrong skill |
 | staff | Mustahid ajke kokhon asche? | alma-staff-dispatch | — | ⬜ nothing picked |
 | listing | notun panjabi ta website e tolo | alma-product-listing | alma-website, alma-client-seo | ❌ wrong skill |
 | finance | ei masher khoroch koto holo? | alma-finance-brief | alma-finance-brief | ✅ hit |
