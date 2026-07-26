@@ -23,16 +23,23 @@ export const dynamic = 'force-dynamic'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+/**
+ * Every field after `name` is optional because a gateway running the PREVIOUS build answers
+ * this endpoint with only the first three. That is not a hypothetical: it is exactly the
+ * state between merging this and deploying the worker, and a screen that read `undefined` as
+ * `false` would spend that window telling the owner every phone is disconnected and every
+ * dial-out limit is unset. Unknown and false are different claims.
+ */
 type GatewayStaff = {
   staffId: string
   ext: string
   name: string
-  disabled: boolean
-  dialOut: 'full' | 'mobile' | 'internal'
-  dnd: boolean
-  forwardTo: string
-  registered: boolean
-  onCall: { state: string | null; with: string | null; since: string | null } | null
+  disabled?: boolean
+  dialOut?: 'full' | 'mobile' | 'internal'
+  dnd?: boolean
+  forwardTo?: string
+  registered?: boolean
+  onCall?: { state: string | null; with: string | null; since: string | null } | null
 }
 
 function gateway(): { base: string; token: string } | null {
@@ -93,6 +100,17 @@ export async function GET() {
       ...s,
       name: byId.get(s.staffId)?.name || s.name || '',
       role: byId.get(s.staffId)?.role ?? null,
+      // Policy defaults match what the gateway itself assumes for an entry that predates the
+      // policy fields, so the screen and the box agree even before the worker is deployed.
+      disabled: s.disabled === true,
+      dialOut: s.dialOut ?? 'full',
+      dnd: s.dnd === true,
+      forwardTo: s.forwardTo ?? '',
+      // …but live state is NOT defaulted. `null` means the gateway did not tell us, and the
+      // screen says "জানা নেই" rather than asserting a disconnected phone.
+      registered: typeof s.registered === 'boolean' ? s.registered : null,
+      onCall: s.onCall ?? null,
+      liveStateKnown: typeof s.registered === 'boolean',
     })),
     withoutPhone: users.filter((u) => !provisioned.has(u.id)).map((u) => ({ id: u.id, name: u.name, role: u.role })),
   })

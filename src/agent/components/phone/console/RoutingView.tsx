@@ -28,6 +28,8 @@ export function RoutingView() {
 
   useEffect(() => { if (data) setRows(data.dids) }, [data])
 
+  const dirty = Boolean(data && rows && JSON.stringify(rows) !== JSON.stringify(data.dids))
+
   const update = useCallback((i: number, patch: Partial<DidRoute>) => {
     setRows((prev) => prev?.map((r, idx) => (idx === i ? { ...r, ...patch } : r)) ?? prev)
     setSaved(false)
@@ -146,11 +148,19 @@ export function RoutingView() {
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <ConsoleButton onClick={() => add()}>নতুন লাইন যোগ করুন</ConsoleButton>
+              {/* Disabled until something actually changed. A live inbound routing table is
+                  not a thing to offer a confident-looking Save button for when the click
+                  would write back exactly what is already there. */}
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || !dirty}
                 onClick={() => void save()}
-                className="rounded-full bg-[#E07A5F] px-4 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-[#E07A5F]/90 disabled:opacity-50"
+                className={cn(
+                  'rounded-full px-4 py-1.5 text-[12px] font-semibold transition-colors',
+                  dirty && !busy
+                    ? 'bg-[#E07A5F] text-white hover:bg-[#E07A5F]/90'
+                    : 'cursor-not-allowed border border-border-subtle bg-card/60 text-muted',
+                )}
               >
                 {busy ? 'সেভ হচ্ছে…' : 'সেভ করুন'}
               </button>

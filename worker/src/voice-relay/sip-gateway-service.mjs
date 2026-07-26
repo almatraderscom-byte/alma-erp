@@ -1643,14 +1643,20 @@ async function extensionHistory(ext, limit = 40) {
   for (let i = lines.length - 1; i >= 0 && rows.length < limit; i--) {
     const r = parseCdrLine(lines[i])
     if (!r) continue
-    const mine = r.src === ext
-      || r.dst === ext
-      || String(r.channel).includes(`PJSIP/${ext}-`)
-      || String(r.dstChannel).includes(`PJSIP/${ext}-`)
-    if (!mine) continue
+    // The extension is identified by its CHANNEL, not by `src`. The staff dialplan rewrites
+    // the caller-ID to our own DID before dialling out (it has to — the provider rejects a
+    // caller-ID it does not recognise), so on every staff outbound row `src` is 09649777738
+    // and only `PJSIP/<ext>-…` says whose call it was. Verified against the real CDR:
+    //   src=09649777738 dst=01779640373 channel=PJSIP/1002-00000027
+    const outbound = String(r.channel).includes(`PJSIP/${ext}-`)
+    const inbound = String(r.dstChannel).includes(`PJSIP/${ext}-`)
+    if (!outbound && !inbound) continue
     rows.push({
-      direction: r.src === ext || String(r.channel).includes(`PJSIP/${ext}-`) ? 'outbound' : 'inbound',
-      other: r.src === ext ? r.dst : r.src,
+      direction: outbound ? 'outbound' : 'inbound',
+      // …which is also why "who was on the other end" must come from the direction rather
+      // than from comparing `src` to the extension: that comparison never matches, and the
+      // screen would have shown our own DID as the person every staff member called.
+      other: outbound ? r.dst : r.src,
       at: r.start || null,
       seconds: r.billsec,
       answered: r.disposition === 'ANSWERED',

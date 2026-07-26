@@ -274,7 +274,7 @@ export function decideInbound(input: {
   } else if (owner) {
     outcome = 'AI ধরবে এবং আপনাকে চিনে পূর্ণ সহকারী মোডে কথা বলবে — অফিস সময় বা ছুটি এখানে কিছু আটকায় না।'
   } else if (!time.open) {
-    outcome = `AI ধরবে (${lineName}), ${time.reason} বলে জানাবে, নাম-নম্বর-প্রয়োজন লিখে নেবে। কাউকে ফোন যুক্ত করবে না।`
+    outcome = `AI ধরবে (${lineName})। এখন অফিস বন্ধ — ${time.reason} — সেটা ভদ্রভাবে জানিয়ে নাম, নম্বর ও প্রয়োজন লিখে নেবে। কাউকে ফোন যুক্ত করবে না।`
   } else if (transferMode === 'ask_first') {
     outcome = `AI ধরবে (${lineName})। মানুষ চাইলে যুক্ত না করে বার্তা নেবে আর সাথে সাথে আপনাকে পুশ পাঠাবে।`
   } else if (forwardSupport || forwardBoss) {

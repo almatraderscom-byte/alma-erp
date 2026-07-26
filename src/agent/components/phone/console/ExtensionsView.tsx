@@ -28,8 +28,10 @@ type Extension = {
   dialOut: 'full' | 'mobile' | 'internal'
   dnd: boolean
   forwardTo: string
-  registered: boolean
+  /** null = the gateway did not report it. Unknown and disconnected are different claims. */
+  registered: boolean | null
   onCall: { state: string | null; with: string | null; since: string | null } | null
+  liveStateKnown: boolean
 }
 
 type Payload = {
@@ -150,13 +152,18 @@ function ExtensionCard({ ext, onChanged }: { ext: Extension; onChanged: () => vo
     }
   }, [ext.staffId, ext.name, ext.ext, onChanged])
 
+  // Order matters, and so does the last case: before the worker is deployed the gateway
+  // reports no live state at all, and claiming "যুক্ত নেই" then would be a screen inventing
+  // a fact. Step 1's whole lesson was that our own belief about the phone is not evidence.
   const state = ext.disabled
     ? <Pill tone="red">বন্ধ করা</Pill>
     : ext.onCall
       ? <Pill tone="coral">কলে আছেন{ext.onCall.with ? ` · ${ext.onCall.with}` : ''}</Pill>
-      : ext.registered
-        ? <Pill tone="green">যুক্ত আছে</Pill>
-        : <Pill tone="slate">যুক্ত নেই</Pill>
+      : !ext.liveStateKnown
+        ? <Pill tone="slate" title="VPS-এ নতুন কোড গেলে এটা দেখা যাবে">জানা নেই</Pill>
+        : ext.registered
+          ? <Pill tone="green">যুক্ত আছে</Pill>
+          : <Pill tone="slate">যুক্ত নেই</Pill>
 
   return (
     <Panel
@@ -244,6 +251,11 @@ function Row({ label, help, children }: { label: string; help: string; children:
   )
 }
 
+/**
+ * The knob carries a border and a shadow rather than relying on being white: this app runs a
+ * light theme off `data-theme`, and a white circle on a near-white card is an invisible
+ * control — which is exactly how it rendered on the first pass.
+ */
 function Toggle({ on, busy, onChange }: { on: boolean; busy: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
@@ -254,10 +266,15 @@ function Toggle({ on, busy, onChange }: { on: boolean; busy: boolean; onChange: 
       onClick={() => onChange(!on)}
       className={cn(
         'relative h-6 w-11 rounded-full border transition-colors disabled:opacity-50',
-        on ? 'border-[#E07A5F]/50 bg-[#E07A5F]' : 'border-border-subtle bg-card/60',
+        on ? 'border-[#E07A5F] bg-[#E07A5F]' : 'border-border-subtle bg-muted/25',
       )}
     >
-      <span className={cn('absolute top-0.5 h-4.5 w-4.5 rounded-full bg-white transition-all', on ? 'left-[1.4rem]' : 'left-0.5')} style={{ height: '1.125rem', width: '1.125rem' }} />
+      <span
+        className={cn(
+          'absolute top-[3px] h-[18px] w-[18px] rounded-full border shadow-sm transition-all',
+          on ? 'left-[23px] border-white bg-white' : 'left-[3px] border-border-subtle bg-card',
+        )}
+      />
     </button>
   )
 }

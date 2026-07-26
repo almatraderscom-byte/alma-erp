@@ -29,6 +29,20 @@ function gateway(): { base: string; token: string } | null {
   return base && token ? { base, token } : null
 }
 
+/**
+ * A gateway running the previous build has no `/api/v1/moh` route and answers `not found`.
+ * That is the normal state between merging this and deploying the worker, and forwarding the
+ * raw English straight to the screen tells the owner nothing he can act on.
+ */
+function explain(status: number, raw: unknown): string {
+  const text = String(raw ?? '')
+  if (status === 404 || /not found/i.test(text)) {
+    return 'VPS-এ এখনো নতুন কোড যায়নি, তাই হোল্ড অডিও এখান থেকে দেখা বা বদলানো যাচ্ছে না। worker deploy হলেই কাজ করবে।'
+  }
+  if (status === 401) return 'গেটওয়ে আমাদের পরিচয় নেয়নি — টোকেন মিলছে না।'
+  return text || `গেটওয়ে ${status} ফেরত দিয়েছে।`
+}
+
 export async function GET() {
   const gate = await requireConsoleOwner()
   if (!gate.ok) return gate.response
@@ -43,7 +57,7 @@ export async function GET() {
       signal: AbortSignal.timeout(15_000),
     })
     const body = (await res.json()) as Record<string, unknown>
-    if (!res.ok) return NextResponse.json({ ok: true, hold: { configured: false, liveClass: null, files: [], busy: false, error: String(body.error ?? `HTTP ${res.status}`) } })
+    if (!res.ok) return NextResponse.json({ ok: true, hold: { configured: false, liveClass: null, files: [], busy: false, error: explain(res.status, body.error) } })
     return NextResponse.json({ ok: true, hold: body })
   } catch (err) {
     return NextResponse.json({
@@ -83,7 +97,7 @@ export async function POST(req: NextRequest) {
     })
     const body = (await res.json()) as { ok?: boolean; error?: string; steps?: unknown; liveClass?: string }
     if (!res.ok || body.ok === false) {
-      return NextResponse.json({ ok: false, error: body.error ?? `HTTP ${res.status}`, steps: body.steps ?? [] }, { status: 400 })
+      return NextResponse.json({ ok: false, error: explain(res.status, body.error), steps: body.steps ?? [] }, { status: 400 })
     }
     return NextResponse.json({ ok: true, steps: body.steps ?? [], liveClass: body.liveClass ?? cls })
   } catch (err) {
