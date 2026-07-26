@@ -70,18 +70,80 @@ so the single-variable claim is the behaviour, not the 28× price.
 
 ---
 
+## SK-7 — `isolation: subagent` (2026-07-27, branch `claude/skills-architecture`)
+
+Built. The measured gap first: **`SYSTEM.md` had sat on disk since SK-5 and no
+code ever opened it**, and `extends: alma-base` was never resolved either. The
+file meant to replace the general prompt was never read, which is why isolation
+"existed" only as a manifest field.
+
+A pinned skill declaring `isolation: subagent` now makes the STABLE prompt
+`compileStableCore()` + alma-base + its `SYSTEM.md` + its `SKILL.md`. The ~25
+business-domain modules are not assembled at all. Only the stable prompt is
+swapped — per-turn state (memory, time, project instructions, dependency
+preflight) is not behavioural prose and an isolated job needs it too.
+
+| | inline (today) | isolated |
+|---|---|---|
+| stable prompt | 99,245 chars | **19,401** (−80%) |
+| unrelated modules present | 22 | **0** |
+
+Enforcement is measured, not asserted: `findPromptLeaks()` searches the prompt
+that was actually built for the text of any non-kernel module. A companion test
+asserts a NORMAL turn still shows 22, so the check cannot pass vacuously. The
+`skill_pinned` SSE event carries `isolated`, so the claim is checkable from
+outside the server.
+
+**Deliberately not `runSubAgent`,** which the plan suggested. That runner caps at
+4 tool iterations and 2048 output tokens, does not stream, and returns a summary
+string — the SEO batch needs 5–7 rounds and the owner asked to watch the work.
+Isolation is the two things that carry the guarantee — own system prompt, own
+tool list — delivered inside the streaming turn.
+
+Gate: `AGENT_SKILL_ISOLATION` (off in prod, auto-on preview) **and** a
+conversation pin. Without a pin the selection can move mid-chat, and swapping
+the system prompt per turn would rewrite the cached prefix every message.
+
+## SK-6 — global hacks into skills (2026-07-27, same branch)
+
+Two slices shipped. The rule applied throughout: **global code keeps what is
+true of every job; a skill keeps what is true of one job.**
+
+1. `buildOwnerRequirementNote` stopped emitting the client-SEO procedure, and
+   `run-owner-turn` stopped hardcoding an injection of `run_website_seo_audit` /
+   `check_website_seo_audit` / `save_artifact`. With a skill pinned that
+   injection is worse than redundant — it hands back tools the skill withheld.
+2. The big one: **6.2 KB (2,993 chars) of client-SEO procedure was living inside
+   the `computer_capabilities` prompt module** and shipped on every turn holding
+   a browser or workbench tool. Now `client_seo_audit_procedure`, its own module,
+   skipped whenever any skill is pinned (`SKILL_OWNED_MODULES`) — and the skip
+   outranks `forceFullPrompt`, so "ship everything for cache stability" cannot
+   resurrect it. The knowledge moved into `seo-fixing-client-site/SKILL.md`.
+
+**Corrections to this file's own candidate list.** The "alt false-positive lore
+in global code" does not exist: it is correct crawler logic in
+`grind/page-measure.ts` and `seo/technical-audit.ts` (code, not prose) plus a
+historical comment in `turn-loop-policy.ts` that changes no behaviour. And the
+durable client-SEO batch machinery is a RUNNER, not task knowledge — it stays,
+by the same line that keeps the skill-pack runner in code.
+
+**What SK-6 cannot finish yet.** "Delete from global code" is staged: the global
+copies still serve the no-skill path, which is production today with the engine
+off. Behaviour there is unchanged, and a test asserts that rather than assuming
+it. When the owner turns the engine on in production, deleting
+`CLIENT_SEO_AUDIT_PROCEDURE` and its registry entry is the whole removal.
+
 ## Not done — start here
 
-1. **SK-6** — move the global hacks into skills and delete them from global code.
-   This is the whole point of the programme and it has not started. Candidates:
-   the fix-vs-audit intent regex, the alt false-positive lore, the SEO parts of
-   the client-seo batch contract.
-2. **`isolation: subagent`** — the lean-system-prompt runner. The field and the
-   plan exist; nothing routes through `runSubAgent` yet, so today a skill is
-   still injected into the big prompt rather than replacing it. **This is the
-   half of his original ask that is still missing.**
+1. **Live proof of SK-7 on preview** — the one thing still outstanding for it.
+   Needs the owner to log in to the preview host (separate cookie origin).
+2. **Eval-gate the isolated path** against the inline baseline with
+   `compareToBaseline()`. The harness is a pure scorer, so it needs real runs —
+   also blocked on the live preview.
 3. **Promote the 16 originals**, one at a time, each with evals — 79 lint
    findings are the work list (`docs/skill-lint-report.md`).
+4. **`isolation: subagent` for the other two SEO skills** — each needs its own
+   `SYSTEM.md` written, and promotion is one at a time, never a batch.
 4. **Router's last 4 misses** — all skill-description gaps, not router gaps.
 5. **Registry budget and the selection trace** are written but never exercised at
    scale; revisit when more than ~10 skills are active.

@@ -69,10 +69,15 @@ the verifier were both corrected. The real problem was meta, and meta is done.
    আছি" with no card in existence.
 3. **Non-stop work is still not real.** He asked for a job that runs ~13 minutes
    without stopping; turns still end early and wait.
-4. **`isolation: subagent` does not exist yet** — half of his original skill ask.
-   A skill is still injected into the big prompt instead of replacing it.
-5. **SK-6 has not started** — moving global hacks into skills, which is the whole
-   point of the skill programme.
+4. ~~**`isolation: subagent` does not exist yet**~~ — **built 2026-07-27 on
+   `claude/skills-architecture`.** A pinned skill now runs on its own system
+   prompt (99,245 → 19,401 chars, 22 unrelated modules → 0). Live proof on
+   preview is the one thing still outstanding.
+5. ~~**SK-6 has not started**~~ — **two slices shipped, same branch.** The
+   biggest was 6.2 KB of client-SEO procedure hiding inside the
+   `computer_capabilities` prompt module. See
+   `docs/roadmap-2-skill-architecture.md` for what moved, what deliberately did
+   not, and why the final deletion waits on the production flag.
 
 ---
 
