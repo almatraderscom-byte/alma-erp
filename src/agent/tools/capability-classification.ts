@@ -55,6 +55,9 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   // Reads or DELETES saved site logins on the VPS. The read is harmless; the
   // clears log the owner out of a site, so it carries the higher risk of the two.
   manage_browser_logins: write('browser', 'medium'),
+  // Opens/closes a watchable browser on the VPS. A direct effect (a real process
+  // starts), gated by its own kill-switch rather than by an approval card.
+  open_live_browser: write('browser', 'medium'),
   list_browser_recipes: read('browser'),
   run_browser_recipe: stage('browser'),
   save_learned_recipe: write('browser'),

@@ -38,8 +38,13 @@ struct AgentHubScreen: View {
               tint: AlmaSwiftTheme.coral, path: "/agent"),
         .init(title: "LIVE Business", subtitle: "মনিটর · কন্ট্রোল রুম", icon: "chart.bar.xaxis",
               tint: Color(red: 0.357, green: 0.549, blue: 1.000), path: "/agent/staff-monitor"),
-        .init(title: "Live Watch", subtitle: "লাইভ ব্রাউজার ফিড", icon: "eye",
+        // Two different browsers, and the old label called both of them "লাইভ
+        // ব্রাউজার" — named apart here so the owner can tell which machine he is
+        // about to watch before he taps.
+        .init(title: "Live Watch", subtitle: "আপনার Chrome-এর ফিড", icon: "eye",
               tint: Color(red: 0.659, green: 0.333, blue: 0.969), path: "/agent/live-watch"),
+        .init(title: "Live Browser", subtitle: "VPS ব্রাউজার · নিজে হাত দিন", icon: "macwindow.on.rectangle",
+              tint: Color(red: 0.878, green: 0.478, blue: 0.372), path: "/agent/browser-live"),
         .init(title: "Creative Studio", subtitle: "ছবি · ভিডিও · কনটেন্ট", icon: "wand.and.stars",
               tint: Color(red: 0.925, green: 0.282, blue: 0.600), path: "/agent/creative-studio"),
         .init(title: "WhatsApp Inbox", subtitle: "কাস্টমার মেসেজ", icon: "message.fill",
