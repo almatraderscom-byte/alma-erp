@@ -13592,10 +13592,16 @@
 }
 
 .v4ComposerAdvanced .v3ComposerBody {
+  align-content: start;
   display: grid;
   gap: 8px;
+  grid-auto-rows: max-content;
   min-height: 0;
   overflow-y: auto;
+}
+
+.v4ComposerAdvanced .v3ComposerBody > .v5ComposerDisclosure {
+  min-height: 46px;
 }
 
 .v4ComposerAdvanced .v3PromptField {
