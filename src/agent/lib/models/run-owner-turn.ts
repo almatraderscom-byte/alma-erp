@@ -67,6 +67,7 @@ import { isTurnCancelRequested, getTurnInstructionOrigin } from '@/agent/lib/tur
 import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
 import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUserTextPeek } from '@/agent/lib/history-trim'
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
+import { normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/lib/plan-first'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
@@ -352,6 +353,11 @@ async function* runAlternateProviderTurn(
   const model = getModel(modelId)
   const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null } = options
   const chatMode = normalizeChatMode(options.chatMode)
+  // PM-1 — the permission axis, read from the conversation row by the caller.
+  // SHADOW in this phase: the head is told, the turn echoes it and every tool
+  // event records it, but nothing is withheld or blocked until PM-2.
+  const permissionMode = normalizePermissionMode(options.permissionMode)
+  const elevationGrant = options.elevationGrant ?? null
   const businessId: AgentBusinessId = personalMode
     ? 'ALMA_LIFESTYLE'
     : normalizeBusinessId(options.businessId)
@@ -1710,6 +1716,13 @@ async function* runAlternateProviderTurn(
   const pendingCardsAtStart = await readPendingCards(conversationId)
   messages = [...messages, { role: 'user', content: buildCardStateNote(pendingCardsAtStart) }]
 
+  // PM-1 — the agent must never be unaware of the mode it is in (owner
+  // requirement 2026-07-27: if he takes a plan and then asks for the work
+  // without switching, it has to say which mode it is in and which one would do
+  // it, instead of answering vaguely). Same slot as the card-state note: after
+  // the cached prefix, marked INTERNAL CONTROL.
+  messages = [...messages, { role: 'user', content: permissionModeNote(permissionMode, elevationGrant) }]
+
   try {
     for (let iteration = 0; iteration < maxIterations; iteration++) {
       if (signal?.aborted) break
@@ -2359,6 +2372,9 @@ async function* runAlternateProviderTurn(
             businessId,
             modelId: model.id,
             turnId,
+            // PM-1: recorded on every tool event so "why did this run / why did
+            // this ask" has an answer later. Not enforced until PM-2.
+            permissionMode,
             turnAuthorization,
             driveClientSeoBatch,
             ownerVoicePref,
@@ -3137,7 +3153,7 @@ async function* runAlternateProviderTurn(
       dedupKey: `chat:msg:${savedMsg.id}`,
     })
 
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode }
   } catch (err) {
     if (signal?.aborted) {
       // The 280s cap aborted mid-round (the adapter stream throws). Salvage what

@@ -151,7 +151,13 @@ export type AgentEvent =
   // needContinue: the turn hit the serverless deadline mid-task (browser work
   // unfinished) — the web client auto-sends a bounded "continue" so a long task
   // finishes end-to-end without the owner typing it every ~4.5 minutes.
-  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number; needContinue?: boolean; apiRounds?: number; roundCostsUsd?: number[]; durationMs?: number }
+  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number; needContinue?: boolean; apiRounds?: number; roundCostsUsd?: number[]; durationMs?: number;
+      /**
+       * PM-1 — the permission mode this turn ACTUALLY ran under, read from the
+       * server. If the chip says one thing and this says another, that is
+       * visible instead of silent — which is the owner's "must sync" condition.
+       */
+      permissionMode?: string }
   | { type: 'error'; message: string }
 
 // ── Mutating tools (conservative: unknown = treat as mutating) ──────────────
@@ -625,6 +631,15 @@ export interface RunAgentTurnOptions {
    * withholding tools — see chat-mode.ts. Absent = 'auto' (today's behaviour).
    */
   chatMode?: import('@/agent/lib/chat-mode').ChatMode | null
+  /**
+   * PM-1 — per-conversation PERMISSION mode: how much the agent may do without
+   * Boss. Absent = 'standard' (today's behaviour). Shadow in PM-1: the turn
+   * reads it, tells the head, echoes it and records it, but nothing is enforced
+   * until PM-2 — so the sync can be watched before it can bite.
+   */
+  permissionMode?: import('@/agent/lib/permission-mode').PermissionMode | null
+  /** The live elevation grant when permissionMode is 'elevated'. */
+  elevationGrant?: import('@/agent/lib/permission-mode').ElevationGrant | null
 }
 
 /** One-time nudge injected when the serverless deadline is close. */

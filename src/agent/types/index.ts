@@ -16,6 +16,11 @@ export interface Conversation {
   modelId: string
   /** Execution mode picker: auto | direct | plan | plan_drive (null = auto). */
   chatMode?: string | null
+  /**
+   * PM-1 permission axis — how MUCH the agent may do without Boss:
+   * plan | careful | standard | supervised | elevated (null = standard).
+   */
+  permissionMode?: string | null
   archived: boolean
   createdAt: Date
   updatedAt: Date

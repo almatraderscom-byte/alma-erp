@@ -125,6 +125,22 @@ export interface ElevationGrant {
   expiresAt: string
 }
 
+/**
+ * Read a grant off the conversation row. Anything malformed is NO grant — a
+ * permission this system cannot fully verify is one it does not hand out.
+ */
+export function parseElevationGrant(raw: unknown): ElevationGrant | null {
+  if (!raw || typeof raw !== 'object') return null
+  const obj = raw as { families?: unknown; expiresAt?: unknown }
+  const expiresAt = typeof obj.expiresAt === 'string' ? obj.expiresAt.trim() : ''
+  if (!expiresAt || !Number.isFinite(Date.parse(expiresAt))) return null
+  const families = Array.isArray(obj.families)
+    ? obj.families.filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
+    : []
+  if (families.length === 0) return null
+  return { families, expiresAt }
+}
+
 export function isElevationGrantLive(grant: ElevationGrant | null | undefined, now: number): boolean {
   if (!grant || !grant.expiresAt || grant.families.length === 0) return false
   const t = Date.parse(grant.expiresAt)

@@ -671,6 +671,8 @@ interface ToolRunContext {
   conversationId?: string
   businessId?: string
   turnId?: string
+  /** PM-1 — the permission mode this call ran under. Recorded, not yet enforced. */
+  permissionMode?: string
   surface?: 'owner' | 'cs' | 'scheduler'
   turnAuthorization?: OwnerTurnAuthorization
   driveClientSeoBatch?: boolean
@@ -741,7 +743,12 @@ export async function runRegisteredTool(
     businessId: ctx.businessId,
     turnId: ctx.turnId,
   }
-  const capDetail = { domain: cap.domain, mode: cap.mode, risk: cap.risk }
+  const capDetail = {
+    domain: cap.domain,
+    mode: cap.mode,
+    risk: cap.risk,
+    ...(ctx.permissionMode ? { permissionMode: ctx.permissionMode } : {}),
+  }
 
   if (!isToolAllowedForOwnerTurn(tool.name, ctx.turnAuthorization)) {
     void logToolEvent({
@@ -1066,6 +1073,7 @@ export async function executeTool(
     conversationId,
     businessId,
     turnId,
+    permissionMode: typeof serverContext.permissionMode === 'string' ? serverContext.permissionMode : undefined,
     turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
     driveClientSeoBatch: serverContext.driveClientSeoBatch === true,
     instructionOrigin: serverContext.instructionOrigin as ToolRunContext['instructionOrigin'],
