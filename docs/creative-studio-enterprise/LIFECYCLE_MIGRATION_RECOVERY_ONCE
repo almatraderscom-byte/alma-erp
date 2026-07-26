@@ -1,0 +1,5 @@
+One-time marker for the audited 20260921130000 preview recovery.
+
+This file is valid only on VERCEL_ENV=preview and
+VERCEL_GIT_COMMIT_REF=codex/cs-v3-lifecycle. Remove it immediately after the
+recovery deployment reaches READY and migration status is proven healthy.
