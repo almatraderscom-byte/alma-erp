@@ -1611,6 +1611,11 @@ async function postResult(base, token, commandId, result) {
   try {
     await fetch(`${base}${RESULT_PATH}`, {
       method: 'POST',
+      // Our own device token is the credential — say so, so no browser cookie is
+      // ever quietly along for the ride. It used to be, and when Chrome stopped
+      // sending it these calls started failing for a reason that had nothing to
+      // do with whether the token was valid.
+      credentials: 'omit',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ commandId, ...result }),
     })
@@ -1627,6 +1632,7 @@ async function pollOnce() {
     const res = await fetch(`${baseUrl}${POLL_PATH}`, {
       method: 'GET',
       cache: 'no-store',
+      credentials: 'omit', // the device token is the credential — never a cookie
       headers: { Authorization: `Bearer ${token}` },
     })
     if (res.status === 401) {
@@ -1805,6 +1811,7 @@ async function pairWithCode(code, baseUrlIn, deviceName) {
   try {
     const res = await fetch(`${base}/api/assistant/live-browser/pair`, {
       method: 'POST',
+      credentials: 'omit', // the one-time code is the credential — never a cookie
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code: String(code || '').trim(), deviceName: deviceName || 'My Chrome' }),
     })
