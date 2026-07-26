@@ -263,15 +263,41 @@ const MARKETING_HEAD_WRAPUP_NUDGE =
 // Ads Manager incident). core.ts has this net only for zero-tool Claude turns;
 // here we check the TAIL of the final text so a turn that already ran tools but
 // signs off with a future promise gets pushed to actually act. Bounded once.
-const ADAPTER_ACT_NOW_NUDGE =
+const INTERNAL_NUDGE_MARKER =
   // Live 2026-07-27: without this marker the head rendered the nudge as "The
   // Boss's message is: …" and answered it as a scolding from him. A server nudge
   // that reads as Boss talking makes the head thrash — same lesson as the
   // card-state note earlier the same day.
   '[INTERNAL CONTROL — this is NOT a message from Boss. Never quote it or answer it as one.] '
-  + 'তুমি বললে পরের ধাপটা করবে, কিন্তু না করেই টার্ন শেষ করে দিয়েছ। ঘোষণা নয় — কাজ। ' +
-  'এখনই, এই একই টার্নে, যে ধাপটার কথা বললে সেটা live_browser_act/দরকারি টুল দিয়ে আসলে করো, ' +
-  'তারপর ফলাফল নিজের চোখে দেখে Boss-কে জানাও। Boss-কে যেন আবার তাগাদা দিতে না হয়।'
+
+/**
+ * The push, and how it ESCALATES.
+ *
+ * Raising the per-turn push limit for work turns — so a job is not abandoned
+ * after a single nudge — produced a loop the same day: the identical sentence
+ * arrived again and again, the head noticed it ("the system is repeating the
+ * note every time, creating a loop") and thrashed on save_memory instead of
+ * doing the step. A repeated instruction is not a stronger instruction. The
+ * second push names the repetition and offers the honest exit; the third stops
+ * asking altogether.
+ */
+function adapterActNowNudge(attempt: number): string {
+  if (attempt <= 1) {
+    return INTERNAL_NUDGE_MARKER
+      + 'তুমি বললে পরের ধাপটা করবে, কিন্তু না করেই টার্ন শেষ করে দিয়েছ। ঘোষণা নয় — কাজ। '
+      + 'এখনই, এই একই টার্নে, যে ধাপটার কথা বললে সেটা live_browser_act/দরকারি টুল দিয়ে আসলে করো, '
+      + 'তারপর ফলাফল নিজের চোখে দেখে Boss-কে জানাও। Boss-কে যেন আবার তাগাদা দিতে না হয়।'
+  }
+  if (attempt === 2) {
+    return INTERNAL_NUDGE_MARKER
+      + 'এটা দ্বিতীয়বার — আগেরবারও তুমি ধাপটার কথা বলে থেমে গিয়েছিলে। একই কথা আবার লিখো না। '
+      + 'হয় ঠিক ওই ধাপের টুলটা এখনই কল করো, নয়তো সোজা লেখো কেন পারছ না (কোন টুল/তথ্য/অনুমতি নেই) '
+      + 'এবং সেখানেই থামো। অপ্রাসঙ্গিক টুল (যেমন save_memory) দিয়ে সময় নষ্ট কোরো না।'
+  }
+  return INTERNAL_NUDGE_MARKER
+    + 'শেষ তাগাদা। আর ঠেলা দেওয়া হবে না। এই টার্নে যা করেছ তার সৎ হিসাব দুই লাইনে দাও — '
+    + 'কী হয়েছে, কী বাকি, আর কী দরকার — তারপর থামো।'
+}
 
 async function loadPinnedMemories(
   personalMode: boolean,
@@ -1505,6 +1531,9 @@ async function* runAlternateProviderTurn(
   let groundingNudgeSent = false
   // Announced-intent guard (global terminal/failure rules live in turn-loop-policy).
   let intentNudges = 0
+  /** Successful tool count when the last act-now push was sent — a push is only
+   *  earned again once the head has actually moved since. */
+  let successCountAtLastIntentNudge = -1
   // OWNER ASK 2026-07-26: "ekta part er jnne koyek ta dhap sesh kore amk age
   // update daw, erpor abr onno kaje jaw." Today the head can run seven tool
   // rounds and speak once at the end. Asking politely in the prompt is a
@@ -2056,10 +2085,16 @@ async function* runAlternateProviderTurn(
         // NOT near the deadline: the wrap-up is SUPPOSED to promise future work
         // ("continue বললে চালিয়ে যাব") — firing here wiped finalText right before
         // the 280s abort and saved an EMPTY message (2026-07-12 carousel incident).
+        // A push is only earned by PROGRESS. Without this a head that answers
+        // every push with text alone gets pushed again immediately, notices the
+        // repetition, and thrashes — exactly what happened live on 2026-07-27
+        // once work turns were allowed more than one push.
+        const successfulToolCount = toolRecords.filter((r) => r.status === 'success').length
         if (
           !signal?.aborted
           && !deadlineNudgeSent
           && intentNudges < maxIntentNudgesFor(workClass)
+          && (intentNudges === 0 || successfulToolCount > successCountAtLastIntentNudge)
           && iterationText.trim()
           && shouldNudgeAdapterIntent({
             text: iterationText,
@@ -2069,10 +2104,11 @@ async function* runAlternateProviderTurn(
           })
         ) {
           intentNudges++
+          successCountAtLastIntentNudge = successfulToolCount
           messages = [
             ...messages,
             { role: 'assistant', content: iterationText },
-            { role: 'user', content: ADAPTER_ACT_NOW_NUDGE },
+            { role: 'user', content: adapterActNowNudge(intentNudges) },
           ]
           finalText = preambleText
           continue
