@@ -661,13 +661,17 @@ function ImageComposer({
           <button
             aria-selected={mode === item.id}
             className={mode === item.id ? styles.v3ModeActive : undefined}
+            data-mode={item.id}
             key={item.id}
             onClick={() => chooseMode(item.id)}
             role="tab"
             type="button"
           >
             <StudioV2Icon name={item.icon} size={16} />
-            <span>{item.label}</span>
+            <span>
+              <strong>{item.label}</strong>
+              <small>{item.shortLabel}</small>
+            </span>
           </button>
         ))}
       </div>
@@ -1161,22 +1165,30 @@ function VideoComposer({
         <span className={styles.v3NoRunBadge}>No API connected</span>
       </header>
 
-      <div className={styles.v5VideoSummaryRail}>
-        <span>
+      <div className={styles.v6VideoStage}>
+        <div className={styles.v6VideoStageArtwork}>
           <AssetArtwork asset={selectedSource ?? sourceOptions[0]} compact />
-          <span>
-            <small>SOURCE</small>
-            <strong>{selectedSource?.title ?? 'Choose a source'}</strong>
+          <span aria-hidden="true">
+            <StudioV2Icon name="video" size={18} />
           </span>
-        </span>
-        <span>
-          <small>MODEL</small>
-          <strong>{model.label}</strong>
-        </span>
-        <span>
-          <small>DELIVERY</small>
-          <strong>{duration}s · {aspect} · {resolution}</strong>
-        </span>
+        </div>
+        <div className={styles.v6VideoStageCopy}>
+          <span>SELECTED SOURCE</span>
+          <strong>{selectedSource?.title ?? 'Choose a source'}</strong>
+          <small>
+            {selectedSource?.subtype ?? 'Gallery media'} · source remains pinned through review
+          </small>
+        </div>
+        <div className={styles.v6VideoStageSpecs}>
+          <span>
+            <small>MODEL</small>
+            <strong>{model.label}</strong>
+          </span>
+          <span>
+            <small>DELIVERY</small>
+            <strong>{duration}s · {aspect} · {resolution}</strong>
+          </span>
+        </div>
       </div>
 
       <details className={styles.v5ComposerDisclosure}>
