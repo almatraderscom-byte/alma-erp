@@ -227,7 +227,44 @@ enforced server-side by the guard, not by the UI.
 6. **Environment is visible (G12).** The chip shows when preview and production
    policy differ instead of drifting silently.
 
-### 3.6 Approval routing and dual control (G8)
+### 3.6 The agent must SEE the mode, and say so (owner requirement, 2026-07-27)
+
+His words: if he leaves the chat in Plan mode, takes the plan, and then — without
+switching — asks for the work to be done, the agent must **see plainly that the
+mode is Plan** and tell him: this needs a different mode. Equally, if he is in
+the wrong mode by accident, the agent should understand the *kind* of work he
+asked for and suggest the mode that fits.
+
+This is not a nicety; it is the difference between a mode system and a trap. A
+mode that silently swallows a request produces exactly the failure he has been
+hitting all week — a confused half-answer instead of a straight one.
+
+Three deterministic mechanisms, none of them relying on the model's goodwill:
+
+1. **The mode is in front of the agent on every turn.** A one-line banner
+   carrying the current mode and what it permits, appended after the cached
+   prefix (the card-state-note pattern, so the prompt cache is untouched, and
+   marked INTERNAL CONTROL so it is never mistaken for a message from him).
+2. **A blocked call answers itself.** When the guard refuses on mode grounds the
+   error is not a generic refusal — it names the current mode, names the
+   **minimum mode that would allow it**, and tells the head to say so and offer
+   the switch:
+   *"এটা প্ল্যান মোডে করা যায় না। **স্বাভাবিক** মোডে দিলে আমি কার্ড পাঠিয়ে করে দেব —
+   মোড বদলাবেন?"*
+   The minimum mode is computed from the risk tier, not guessed.
+3. **A mismatch is caught before the work starts, not after five tool calls.**
+   The turn classifies what he asked for; if the required capability exceeds the
+   current mode, the agent says so in its opening line. The precedent already
+   exists — `capability-preflight.ts` does exactly this for dead capabilities.
+
+Two rules that keep this honest:
+
+- **The agent may suggest a mode; it may never switch one.** Changing the mode is
+  his action, always, and it is audited.
+- **A suggestion is never a nag.** One mention per turn, and never for something
+  the current mode already permits.
+
+### 3.7 Approval routing and dual control (G8)
 
 - Every card carries an expiry and an explicit **on-timeout policy** — default
   `expire` (never auto-approve).
@@ -238,7 +275,7 @@ enforced server-side by the guard, not by the UI.
   task family, on one dashboard. If he overrides a family constantly, that family
   is at the wrong rung and the number says so.
 
-### 3.7 Uncertainty, not just risk (G11)
+### 3.8 Uncertainty, not just risk (G11)
 
 `ActionPolicyRequest.confidence` already exists and is unused. Each mode sets a
 confidence floor: below it, an otherwise-auto action becomes a card with the

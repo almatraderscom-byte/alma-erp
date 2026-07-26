@@ -63,21 +63,71 @@ The real problem was meta descriptions, and that is what got fixed.
 
 ---
 
+## Permission & autonomy modes — APPROVED 2026-07-27, in progress
+
+Design of record: `docs/PERMISSION-MODES-PLAN.md` (v2). Five layers that can only
+tighten downward, five modes with Plan restored as a real permission mode, and R4
+owner-only in every one of them by the tier ceiling rather than by a prompt.
+
+His added requirement, same day: **the agent must SEE the mode and say so.** If
+he takes a plan and then asks for the work without switching, it must name the
+mode it is in, why it cannot, and which mode would do it — and never switch the
+mode itself. Covered in §3.6 and shipped as part of PM-0's advisor.
+
+| Phase | Ships | Status |
+|---|---|---|
+| **PM-0** | `permission-mode.ts` — the table, the advisor, the per-turn banner. Pure, no wiring | **done** — 22 tests |
+| **PM-1** | conversation column, API, composer chip, per-turn echo, mode on every tool event. **Shadow: recorded and shown, nothing enforced** | next |
+| **PM-2** | enforce Plan and Careful (tightening only) + the advisor wired into the guard's refusal | |
+| **PM-3** | allow/ask/deny rules with resource patterns + the organisation-policy tier | |
+| **PM-4** | grants on the card: once / this job / 30 min / always, server-side expiry, revoke screen | |
+| **PM-5** | context inheritance — `turnId` + origin + mode into sub-agents; declared modes for cron/heartbeat/plan-driver | **pull early: this is an open hole today**, not just design |
+| **PM-6** | Supervised mode: on-the-loop + undo + approval batching | |
+| **PM-7** | Elevated mode: time-boxed grants, auto-revocation, elevated logging | |
+| **PM-8** | governance surface: override rate, response time, timeout policy, dual control, "why did this need approval" | |
+
+## Fixed 2026-07-27 (branch only, each live-checked in his Chrome)
+
+1. **`draft_seo_fixes` duplicate-guard false positive.** Root cause was not what
+   this document said: the guard never fired on a genuinely different batch — a
+   different payload hashes to a different key. It claimed the idempotency key on
+   guard-ALLOW, before the handler ran, so a *failed* staging call locked the same
+   batch out for ten minutes. The claim is now released on every failure path.
+2. **"card বানাচ্ছি" was invisible to the verifier** — the whole বানা- family was
+   missing from the card-promise detector, while its synonym তৈরি করছি was covered.
+3. **A staged pending action now counts as a real card**, so a truthful claim
+   after a successful staging call is not punished as an unbacked promise.
+4. **The opening line is a claim too.** Speak-first streams before any tool runs
+   and survives every rewrite, so a promise made there was unfalsifiable. When it
+   promises a card and none exists, the reply must correct it. **Live-proven the
+   same day** — the agent wrote *"(কার্ড তৈরি করতে পারিনি, সেটা সংশোধন করলাম।)"*.
+5. **Card state is read, not asserted.** Every turn carries the server's count of
+   pending cards, and "waiting for approval" with zero cards fails verification.
+6. **A work turn gets a work-sized budget.** A deep turn was allowed 60 rounds
+   while the standard head's tool budget stripped its tools after 8 — and on
+   preview, where he tests, that budget is live by default. The budget now
+   follows the turn class.
+
 ## Still broken — start here
 
-1. **`draft_seo_fixes` blocked by the duplicate guard, and the agent lied about
-   it.** Verified live at the end of this session: the tool returned *"একই কাজ এই
-   টার্নে আগেই হয়েছে/স্টেজ হয়েছে — ডুপ্লিকেট আটকানো হলো"*, no card was created, and
-   the agent still wrote "card বানাচ্ছি"। Two defects in one: the guard fires on a
-   legitimately different batch, and a failed staging call does not stop the
-   claim. **This is the top of the list.**
-2. **The agent asserts card state instead of reading it.** Fixed for the
-   post-approval continuation only; a normal turn still says "অনুমোদনের অপেক্ষায়
-   আছি" with no card in existence.
-3. **Non-stop work is still not real.** He asked for a job that runs 13 minutes
-   without stopping. It still ends turns early and waits.
-4. **The 2 tagless pages** (`7-b`, `mm03`) need a storefront fix, not agent copy.
-5. **Nothing is merged to main.** Everything is on the branch, live-verified
+1. **An announced next step after an ARGUMENT failure is suppressed.** Live
+   2026-07-27: the head said "এখন সঠিকভাবে চালাচ্ছি" and the turn ended.
+   `turn-loop-policy.ts:114` refuses to push when the head names the same tool
+   that just failed — right for hammering a broken call, wrong when the head
+   itself said the *arguments* were wrong. Needs the failure's error class, not
+   its name.
+2. **The turn's work class resets on every follow-up turn.** "পুরো …" earns 60
+   rounds; tapping "হ্যাঁ, এখনই শুরু করুন" earns 8, because the class is derived
+   from the latest message alone. A job must keep its class for its lifetime.
+3. **It asks again after he has already answered once.** The prose-choice rule
+   turned narration containing "(recommended)?" into a second ask card.
+4. **The approval card lies about who approved.** `AgentConfirmCard.tsx:36` shows
+   "আপনি অনুমোদন করেছিলেন" for any row that reaches `executed`, including the SEO
+   audit rows that are created already-approved and never went to him.
+5. **"approved" means "still crawling"** in the audit tool, and the head repeats
+   the raw word to him — it reads as "waiting for your approval".
+6. **The 2 tagless pages** (`7-b`, `mm03`) need a storefront fix, not agent copy.
+7. **Nothing is merged to main.** Everything is on the branch, live-verified
    piece by piece.
 
 ---
