@@ -158,16 +158,25 @@ composition cache, or send actor/role/fingerprint fields to the server.
 
 ## Verification evidence
 
-- Focused Editor/Foundation/API gate: 10 files, 69 tests passed before the
-  adapter commit; the final adapter file has 11 direct contract tests.
+- Final focused Editor/Agent/Foundation/API gate: 12 files, 77 tests passed.
+  The production Foundation adapter has 11 direct contract tests covering
+  load, validate/apply, stale state, idempotency, history, scope/role failures,
+  offline failure, malformed responses, and the paid/external-action boundary.
 - Focused Editor/Agent ESLint: zero warnings.
+- Full repository Vitest gate: 512 files, 4,647 tests passed.
 - TypeScript strict typecheck: passed.
+- Full repository ESLint: exited successfully. Existing warnings remain outside
+  this workstream; the focused Editor/Agent paths pass with zero warnings.
+- Direct production Next.js build (without the repository migration wrapper):
+  passed and generated 389/389 static pages. The build reported only
+  pre-existing OpenTelemetry/Sentry dynamic-dependency warnings and expected
+  local-environment warnings for a transient Google Font timeout, absent
+  `DATABASE_URL`, and unauthenticated approval API collection.
 - Source accessibility contracts cover native controls, input-scoped
   shortcuts, roving tabs, labelled tab panels, responsive focus modes,
   touch-safe controls, and reduced motion.
-- Full repository tests, lint, production build, ancestry, locked-demo diff,
-  and clean/pushed branch are final handoff gates and must be recorded in the
-  branch report after this document commit.
+- Exact base/Foundation ancestry, locked-demo isolation, remote branch parity,
+  diff hygiene, and the clean worktree are verified in the final branch report.
 
 No Vercel deployment, production deployment, main merge, paid generation, voice
 call, render/export, external publish, or feature-flag enablement is part of
