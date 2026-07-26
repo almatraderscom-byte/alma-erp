@@ -346,6 +346,24 @@ Phase 5's "would this trunk change break inbound" belongs in the same shape.
 rules itself rather than trusting the ERP's answer. A gateway that trusted the network for a
 toll-fraud check would be one leaked token away from an expensive night.
 
+**6. Seven defects survived typecheck, build and 44 tests, and died in the browser.** They are
+all the same shape — code that was *reasoned* about instead of *run*. Per-extension history
+showed our own DID as the person every staff member had called, because the dialplan rewrites
+the caller-ID before dialling out so `src` never equals the extension. Live state read
+`undefined` as `false`, so the screen would have insisted every phone was disconnected during
+the whole window between merge and worker deploy. A `h-4.5` class Tailwind does not generate
+made the DND toggle invisible in the light theme. **Verify in the browser and against the real
+box — including the intermediate states a deploy passes through, which is where three of the
+seven lived.**
+
+**7. `deploy-worker.yml` cannot reach the VPS** — the runner's egress IP is firewalled, so the
+workflow fails on its own probe. Deploy by hand from an allowed Mac; the commands are in
+`PHONE_SYSTEM_HANDOFF.md` §8.
+
+**8. Phases 2–4 are verified live** (2026-07-26): config pull landed, the dialplan migration is
+done with a rollback copy on the box, and a PSTN loopback to our own DID measured
+`underruns=0 · cushion=12f · dropped=0` on both legs — the locked audio is untouched.
+
 ### Phase 5 — Trunks
 
 - add / edit / disable a trunk: host, port, transport, username, password, call limit
