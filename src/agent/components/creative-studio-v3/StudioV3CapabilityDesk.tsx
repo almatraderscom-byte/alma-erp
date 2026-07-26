@@ -108,15 +108,23 @@ function ProjectRows({
 
 export function StudioV3CapabilityDesk({
   activeBrand,
+  accessibleProjects,
   desk,
+  foundationReadEnabled,
   initialProjectId,
+  launchingProjectId,
   onNavigate,
+  onOpenComposition,
   port,
 }: {
   activeBrand: StudioBrandProfile | null
+  accessibleProjects: StudioProjectSummary[]
   desk: CreativeStudioV3DeskId
+  foundationReadEnabled: boolean
   initialProjectId: string | null
+  launchingProjectId: string | null
   onNavigate: CreativeStudioV3Navigate
+  onOpenComposition: (project: StudioProjectSummary) => Promise<void>
   port: CreativeStudioV3ProductionPort
 }) {
   const copy = deskCopy[desk]
@@ -133,6 +141,34 @@ export function StudioV3CapabilityDesk({
 
   useEffect(() => {
     if (!['projects', 'systems', 'review', 'campaign'].includes(desk)) {
+      setLoading(false)
+      return
+    }
+    if (!activeBrand) {
+      setProjects([])
+      setRecipes([])
+      setModels([])
+      setReviewItems([])
+      setIssues(['Accessible brand context is unavailable; no project request was sent.'])
+      setLoading(false)
+      return
+    }
+    const scopedProjects = accessibleProjects.filter((project) =>
+      project.brandProfileId === activeBrand.brandProfileId)
+    if (activeBrand.role !== 'owner') {
+      setProjects(scopedProjects)
+      setRecipes([])
+      setModels([])
+      setReviewItems([])
+      setSelectedProjectId((current) =>
+        current && scopedProjects.some((item) => item.id === current)
+          ? current
+          : scopedProjects.find((item) => item.id === initialProjectId)?.id
+            ?? scopedProjects[0]?.id
+            ?? '')
+      setIssues([
+        'Access-scoped projects came from the authenticated server route. Owner-only recipes, models, Gallery candidates, and project-asset enrichment were not requested for this collaborator.',
+      ])
       setLoading(false)
       return
     }
@@ -167,7 +203,7 @@ export function StudioV3CapabilityDesk({
       if (live) setLoading(false)
     })
     return () => { live = false }
-  }, [activeBrand?.brandProfileId, desk, port])
+  }, [accessibleProjects, activeBrand, desk, initialProjectId, port])
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null
 
@@ -207,8 +243,9 @@ export function StudioV3CapabilityDesk({
       <p className={styles.scopeNotice}>
         <StudioV3Icon name="lock" />
         This desk remounted for {activeBrand?.name ?? 'the current access context'}.
-        Projects and recipes use their current owner-only contracts; models and Gallery review
-        candidates expose no brand field ({STUDIO_V3_SCOPE_BOUNDARY.models}).
+        {activeBrand?.role === 'owner'
+          ? ` Projects and recipes use their current owner-only contracts; models and Gallery review candidates expose no brand field (${STUDIO_V3_SCOPE_BOUNDARY.models}).`
+          : ' Projects are the server-derived accessible scope. Legacy owner-only project, model, Gallery, and asset endpoints are not collaborator authority.'}
       </p>
 
       {desk === 'projects' && (
@@ -218,7 +255,12 @@ export function StudioV3CapabilityDesk({
               <div><span className={styles.eyebrow}>Project registry</span><h2>Business-scoped work</h2></div>
               <span className={styles.sectionMeta}>{projects.length} production project{projects.length === 1 ? '' : 's'}</span>
             </header>
-            {loading ? <div className={styles.laneSkeleton} /> : projects.length === 0 ? <p className={styles.emptyState}>No project was returned for the active brand.</p> : (
+            {loading ? <div className={styles.laneSkeleton} /> : projects.length === 0 ? (
+              <p className={styles.emptyState}>
+                No access-scoped project was returned for this brand. The owner-only legacy
+                project endpoint was not used as a fallback.
+              </p>
+            ) : (
               <ProjectRows onSelect={setSelectedProjectId} projects={projects} selectedId={selectedProjectId} />
             )}
           </section>
@@ -237,7 +279,24 @@ export function StudioV3CapabilityDesk({
                 </dl>
                 <div className={styles.detailActions}>
                   <button className={styles.primaryButton} disabled={!ownerActionAvailable} onClick={() => setLibraryProject(selectedProject)} type="button">Open asset library <StudioV3Icon name="arrow" /></button>
-                  <button className={styles.secondaryButton} disabled type="button">Open composition · Foundation hook</button>
+                  <button
+                    className={styles.secondaryButton}
+                    disabled={
+                      selectedProject.readonly
+                      || !foundationReadEnabled
+                      || launchingProjectId !== null
+                    }
+                    onClick={() => void onOpenComposition(selectedProject)}
+                    type="button"
+                  >
+                    {selectedProject.readonly
+                      ? 'Legacy project · Editor unavailable'
+                      : !foundationReadEnabled
+                        ? 'Composition preview · Foundation off'
+                        : launchingProjectId === selectedProject.id
+                          ? 'Opening composition…'
+                          : 'Open composition'}
+                  </button>
                 </div>
               </>
             ) : <p className={styles.emptyState}>Select a project to inspect its production context.</p>}

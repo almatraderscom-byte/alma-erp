@@ -64,6 +64,7 @@ export function EditorWorkbench({
   onRequestPendingAction,
   onTabChange,
   proposal,
+  readOnly,
   regionRef,
   selectedAssetId,
   selection,
@@ -84,6 +85,7 @@ export function EditorWorkbench({
   onRequestPendingAction?: PendingActionRequestHandler
   onTabChange: (tab: EditorWorkbenchTab) => void
   proposal: EditorOperationProposal | null
+  readOnly: boolean
   regionRef: RefObject<HTMLElement>
   selectedAssetId: string | null
   selection: EditorSelection | null
@@ -154,6 +156,7 @@ export function EditorWorkbench({
           <InspectorPanel
             busy={busy}
             onApplyOperations={onApplyOperations}
+            readOnly={readOnly}
             selectedAssetId={selectedAssetId}
             selection={selection}
             snapshot={snapshot}
@@ -173,6 +176,7 @@ export function EditorWorkbench({
             onPlan={onPlan}
             onRequestPendingAction={onRequestPendingAction}
             proposal={proposal}
+            readOnly={readOnly}
             stale={stale}
           />
         )}
@@ -186,12 +190,14 @@ export function EditorWorkbench({
 function InspectorPanel({
   busy,
   onApplyOperations,
+  readOnly,
   selectedAssetId,
   selection,
   snapshot,
 }: {
   busy: boolean
   onApplyOperations: (operations: EditorLocalOperation[], instruction: string) => Promise<void>
+  readOnly: boolean
   selectedAssetId: string | null
   selection: EditorSelection | null
   snapshot: EditorCompositionSnapshot
@@ -343,7 +349,15 @@ function InspectorPanel({
 
   return (
     <div className={styles.inspectorPanel}>
-      <header className={styles.selectionCard}>
+      {readOnly && (
+        <div className={styles.editorReadOnlyNotice} role="status">
+          <EditorIcon name="lock" size={14} />
+          Preview only. Inspector values are canonical, but editing controls are disabled.
+        </div>
+      )}
+      <fieldset className={styles.inspectorFieldset} disabled={readOnly}>
+        <legend className={styles.srOnly}>Composition inspector controls</legend>
+        <header className={styles.selectionCard}>
         <span className={styles.selectionThumb} data-kind={selected.clip.kind}>
           <EditorIcon
             name={
@@ -370,7 +384,7 @@ function InspectorPanel({
         <span className={styles.selectionStatus} data-status={selected.clip.status}>
           {selected.clip.status.replace('_', ' ')}
         </span>
-      </header>
+        </header>
 
       {selected.clip.kind === 'caption' && (
         <section className={styles.inspectorSection}>
@@ -498,7 +512,8 @@ function InspectorPanel({
             <div><dt>Provider / model</dt><dd>{asset.provider ?? 'Not hydrated'} · {asset.engine ?? 'Not hydrated'}</dd></div>
             <div><dt>Requested</dt><dd>{asset.artifact?.requestedTier?.toUpperCase() ?? 'source'} · {asset.artifact?.requestedAspectRatio ?? 'native'}</dd></div>
             <div><dt>Delivered</dt><dd>{artifactDimensionLabel(asset.artifact) ?? 'Descriptor not hydrated'}</dd></div>
-            <div><dt>Reference roles</dt><dd>{asset.referenceContract?.bindings.map((binding) => binding.role).join(' → ') ?? 'No provider reference'}</dd></div>
+            <div><dt>Reference roles</dt><dd>{asset.referenceContract?.bindings.map((binding) => binding.role).join(' → ') ?? 'Reference contract not hydrated'}</dd></div>
+            <div><dt>Source lineage</dt><dd>{asset.lineage?.length ? asset.lineage.map((edge) => `${edge.relationKind}: ${edge.title ?? edge.assetId}`).join(' · ') : 'Lineage not hydrated'}</dd></div>
             <div><dt>QC</dt><dd>{asset.qcLabel ?? 'Not available'}</dd></div>
             <div><dt>Provider cost</dt><dd>{asset.costBdt === null ? 'Not hydrated' : `৳${asset.costBdt} recorded`}</dd></div>
             <div><dt>Local edit</dt><dd>৳0 · reversible</dd></div>
@@ -506,15 +521,16 @@ function InspectorPanel({
         </section>
       )}
 
-      <footer className={styles.inspectorSave}>
-        <span>
-          <EditorIcon name="lock" size={12} />
-          Expected composition v{snapshot.version}
-        </span>
-        <button disabled={busy || !hasChanges || selected.clip.locked} onClick={() => void save()} type="button">
-          {busy ? 'Validating…' : 'Apply local edit'}
-        </button>
-      </footer>
+        <footer className={styles.inspectorSave}>
+          <span>
+            <EditorIcon name="lock" size={12} />
+            Expected composition v{snapshot.version}
+          </span>
+          <button disabled={busy || !hasChanges || selected.clip.locked} onClick={() => void save()} type="button">
+            {busy ? 'Validating…' : 'Apply local edit'}
+          </button>
+        </footer>
+      </fieldset>
     </div>
   )
 }
@@ -526,21 +542,28 @@ function ReviewPanel({
   actor: EditorActor
   snapshot: EditorCompositionSnapshot
 }) {
+  const hydrated = snapshot.hydration?.review === 'hydrated'
   const approvalStale = snapshot.review.approvedVersion !== null
     && snapshot.review.approvedVersion !== snapshot.version
   return (
     <div className={styles.reviewPanel}>
       <header>
         <span>VERSION REVIEW</span>
-        <h3>{snapshot.review.state.replace('_', ' ')}</h3>
+        <h3>
+          {hydrated
+            ? snapshot.review.state.replace('_', ' ')
+            : 'Review not hydrated'}
+        </h3>
         <p>
           Current composition v{snapshot.version}
-          {snapshot.review.approvedVersion
+          {hydrated && snapshot.review.approvedVersion
             ? ` · last approved v${snapshot.review.approvedVersion}`
-            : ' · no approved version'}
+            : hydrated
+              ? ' · no composition-linked approval'
+              : ' · canonical pins remain available'}
         </p>
       </header>
-      {approvalStale && (
+      {hydrated && approvalStale && (
         <div className={styles.reviewWarning} role="status">
           <EditorIcon name="warning" size={16} />
           <span>
@@ -557,34 +580,68 @@ function ReviewPanel({
         </div>
         <em>{actor.role === 'owner' ? 'FINAL' : 'SCOPED'}</em>
       </section>
-      <article className={styles.reviewComment}>
-        <header><strong>Reviewer</strong><time>Open comment</time></header>
-        <p>Bring the first caption forward, but keep the product code visible through the opening beat.</p>
-        <span><EditorIcon name="caption" size={13} />00:01.2 · caption-primary</span>
-      </article>
-      <article className={styles.reviewComment}>
-        <header><strong>Creative Agent</strong><time>Policy</time></header>
-        <p>Local changes may be proposed here. Approval, render and publish remain separate lifecycle commands.</p>
-        <span><EditorIcon name="lock" size={13} />No review mutation in this adapter</span>
-      </article>
+      {hydrated ? (
+        <article className={styles.reviewComment}>
+          <header>
+            <strong>Access-scoped project-asset review</strong>
+            <time>{snapshot.review.openComments} recorded comment{snapshot.review.openComments === 1 ? '' : 's'}</time>
+          </header>
+          <p>
+            {snapshot.review.publishReady
+              ? 'Every hydrated pinned asset is publish-ready in the authoritative review API.'
+              : 'One or more hydrated pinned assets is not publish-ready. No composition approval is inferred.'}
+          </p>
+          <span>
+            <EditorIcon name="review" size={13} />
+            Read-only enrichment · lifecycle commands disabled
+          </span>
+        </article>
+      ) : (
+        <div className={styles.reviewWarning} role="status">
+          <EditorIcon name="warning" size={16} />
+          <span>
+            <strong>No review success state was inferred.</strong>
+            The owner-only asset catalog or access-scoped review feed was unavailable.
+          </span>
+        </div>
+      )}
       <footer className={styles.reviewBoundary}>
-        <button disabled type="button">Request review · Foundation/lifecycle hook</button>
-        <p>Workstream E reads review state only and cannot approve or publish.</p>
+        <button disabled type="button">Lifecycle Review port unavailable</button>
+        <p>Review mutation, approval and publish remain disabled pending the corrective backend integration.</p>
       </footer>
     </div>
   )
 }
 
 function ActivityPanel({ snapshot }: { snapshot: EditorCompositionSnapshot }) {
+  const durableActivityHydrated =
+    snapshot.hydration?.activity === 'hydrated'
+  const durableHistoryHydrated =
+    snapshot.hydration?.history === 'hydrated'
   return (
     <div className={styles.activityPanel}>
       <header>
         <span>APPEND-ONLY ACTIVITY</span>
         <h3>Composition history</h3>
-        <p>Audit IDs arrive from the command port after a committed version.</p>
+        <p>
+          {durableHistoryHydrated
+            ? 'Durable Foundation history is hydrated.'
+            : 'Prior durable composition history is not hydrated; mounted-session receipts remain authoritative.'}
+        </p>
       </header>
-      <ol>
-        {[...snapshot.activity].reverse().map((entry) => (
+      {snapshot.activity.length === 0 ? (
+        <div className={styles.reviewWarning} role="status">
+          <EditorIcon name="activity" size={16} />
+          <span>
+            <strong>No activity was returned.</strong>
+            {durableActivityHydrated
+              ? ' The authoritative feed contains no entries for the hydrated pinned assets.'
+              : ' No fixture or inferred history is shown.'}
+          </span>
+        </div>
+      ) : (
+        <ol>
+          {[...snapshot.activity].reverse().map((entry) => (
           <li key={entry.id}>
             <span className={styles.activityIcon} data-kind={entry.kind}>
               <EditorIcon
@@ -602,12 +659,15 @@ function ActivityPanel({ snapshot }: { snapshot: EditorCompositionSnapshot }) {
             </span>
             <div>
               <strong>{entry.summary}</strong>
-              <small>{entry.actorName} · v{entry.version} · {new Date(entry.createdAt).toLocaleString('bn-BD')}</small>
+              <small>
+                {entry.actorName} · {entry.version === null ? 'asset review' : `v${entry.version}`} · {new Date(entry.createdAt).toLocaleString('bn-BD')}
+              </small>
               <code>{entry.id}</code>
             </div>
           </li>
-        ))}
-      </ol>
+          ))}
+        </ol>
+      )}
     </div>
   )
 }

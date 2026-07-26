@@ -61,7 +61,7 @@ describe('Project Editor presentation contract', () => {
     expect(stageSource).toContain('Composition stage and player')
     expect(stageSource).toContain('activeCaption')
     expect(stageSource).toContain('activeOverlays')
-    expect(stageSource).toContain('Preview proxy')
+    expect(stageSource).toContain('Preview not hydrated')
     expect(timelineSource).toContain('Synchronized multi-track timeline')
     expect(timelineSource).toContain('snapshot.tracks.map')
     expect(timelineSource).toContain('Not complete')

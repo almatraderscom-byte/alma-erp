@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -31,16 +31,25 @@ describe('Creative Studio V3 production source contract', () => {
     expect(combined).not.toMatch(/\bfake success\b/i)
     expect(source('StudioV3Shell.tsx')).not.toContain('>MB<')
     expect(routeSource).not.toContain("platformRoleLabel: 'System administrator'")
+    expect(existsSync(join(
+      process.cwd(),
+      'src/app/agent/creative-studio/visual-check',
+    ))).toBe(false)
+    expect(existsSync(join(
+      process.cwd(),
+      'src/app/agent/creative-studio/editor-visual-check',
+    ))).toBe(false)
   })
 
-  it('leaves unavailable Foundation actions visibly disabled', () => {
+  it('gates the real Foundation editor attachment points with server flags', () => {
     const home = source('StudioV3Home.tsx')
     const desks = source('StudioV3CapabilityDesk.tsx')
     const video = source('StudioV3VideoLab.tsx')
 
-    expect(home).toContain("badge: 'Foundation hook'")
-    expect(home).toContain('disabled: true')
-    expect(desks).toContain('Open composition · Foundation hook')
+    expect(home).toContain("'Foundation off'")
+    expect(home).toContain('onOpenComposition(initialProject)')
+    expect(desks).toContain("'Open composition'")
+    expect(desks).toContain('foundationReadEnabled')
     expect(video).toContain('Foundation adapter required')
   })
 

@@ -59,6 +59,11 @@ export type EditorAssetReference = {
   qcLabel: string | null
   artifact: StudioArtifactDescriptor | null
   referenceContract: StudioReferenceContract | null
+  lineage?: Array<{
+    assetId: string
+    title: string | null
+    relationKind: string
+  }>
 }
 
 export type EditorClip = {
@@ -100,7 +105,8 @@ export type EditorActivityEntry = {
   kind: 'edit' | 'undo' | 'redo' | 'rollback' | 'review' | 'system'
   actorName: string
   summary: string
-  version: number
+  /** Null for authoritative asset-review activity that is not version-linked to the composition. */
+  version: number | null
   createdAt: string
   operationIds: string[]
 }
@@ -128,6 +134,12 @@ export type EditorCompositionSnapshot = {
   activity: EditorActivityEntry[]
   canUndo: boolean
   canRedo: boolean
+  hydration?: {
+    projectAssets: 'hydrated' | 'not_hydrated'
+    review: 'hydrated' | 'not_hydrated'
+    activity: 'hydrated' | 'not_hydrated'
+    history: 'hydrated' | 'not_hydrated'
+  }
 }
 
 export type EditorOperationTarget = {

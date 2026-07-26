@@ -37,15 +37,15 @@ import type {
 } from './ui-types'
 import styles from './ProjectEditor.module.css'
 
-const DEFAULT_INSTRUCTION =
-  'Opening shotটা tighter করো, caption beat-এ আনো, voice-এর নিচে music 12% করো। Paid বা publish কিছু কোরো না।'
-
 export type CreativeProjectEditorProps = {
   actor: EditorActor
   commandPort: CompositionCommandPort
+  embedded?: boolean
   generationProvider?: AgentProviderContext | null
   onExit?: () => void
   onRequestPendingAction?: PendingActionRequestHandler
+  readOnly?: boolean
+  readOnlyReason?: string
   scope: EditorCompositionScope
   voice?: AgentVoiceContext | null
 }
@@ -53,12 +53,16 @@ export type CreativeProjectEditorProps = {
 export function CreativeProjectEditor({
   actor,
   commandPort,
+  embedded = false,
   generationProvider = null,
   onExit,
   onRequestPendingAction,
+  readOnly = false,
+  readOnlyReason,
   scope,
   voice = null,
 }: CreativeProjectEditorProps) {
+  const presentationReadOnly = readOnly || actor.role === 'reviewer'
   const [snapshot, setSnapshot] = useState<EditorCompositionSnapshot | null>(null)
   const [selection, setSelection] = useState<EditorSelection | null>(null)
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
@@ -68,7 +72,7 @@ export function CreativeProjectEditor({
   const [playheadSec, setPlayheadSec] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [timelineZoom, setTimelineZoom] = useState(40)
-  const [instruction, setInstruction] = useState(DEFAULT_INSTRUCTION)
+  const [instruction, setInstruction] = useState('')
   const [proposal, setProposal] = useState<EditorOperationProposal | null>(null)
   const [acknowledged, setAcknowledged] = useState(false)
   const [lastReceipt, setLastReceipt] = useState<EditorCommandReceipt | null>(null)
@@ -104,14 +108,25 @@ export function CreativeProjectEditor({
         : null
       setSelectedAssetId(selected?.clip.assetId ?? loaded.assets[0]?.assetId ?? null)
       setPlayheadSec(0)
-      setNotice(`Composition v${loaded.version} loaded through the command port.`)
+      setNotice(
+        presentationReadOnly
+          ? readOnlyReason
+            ?? `Composition v${loaded.version} loaded in ${actor.role} preview.`
+          : `Composition v${loaded.version} loaded through the command port.`,
+      )
     } catch (reason) {
       setError(commandMessage(reason))
       setNotice('Composition could not be loaded.')
     } finally {
       setLoading(false)
     }
-  }, [commandPort, portScope])
+  }, [
+    actor.role,
+    commandPort,
+    portScope,
+    presentationReadOnly,
+    readOnlyReason,
+  ])
 
   useEffect(() => {
     void load()
@@ -188,6 +203,10 @@ export function CreativeProjectEditor({
     operationInstruction: string,
   ) => {
     if (!snapshot || operations.length === 0) return
+    if (presentationReadOnly) {
+      setNotice(readOnlyReason ?? 'This authenticated role is preview-only.')
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -210,7 +229,14 @@ export function CreativeProjectEditor({
     } finally {
       setBusy(false)
     }
-  }, [actor, commandPort, snapshot, updateFromReceipt])
+  }, [
+    actor,
+    commandPort,
+    presentationReadOnly,
+    readOnlyReason,
+    snapshot,
+    updateFromReceipt,
+  ])
 
   const buildPlan = useCallback(async () => {
     if (!snapshot || instruction.trim().length < 2) return
@@ -253,6 +279,10 @@ export function CreativeProjectEditor({
 
   const applyAgentPlan = useCallback(async () => {
     if (!snapshot || !proposal) return
+    if (presentationReadOnly) {
+      setNotice(readOnlyReason ?? 'This authenticated role is preview-only.')
+      return
+    }
     if (stalePlan) {
       setAcknowledged(false)
       setNotice(`Composition is v${snapshot.version}; re-plan before apply.`)
@@ -294,6 +324,8 @@ export function CreativeProjectEditor({
     actor,
     commandPort,
     proposal,
+    presentationReadOnly,
+    readOnlyReason,
     snapshot,
     stalePlan,
     updateFromReceipt,
@@ -303,6 +335,10 @@ export function CreativeProjectEditor({
     kind: 'undo' | 'redo' | 'rollback',
   ) => {
     if (!snapshot || busy) return
+    if (presentationReadOnly) {
+      setNotice(readOnlyReason ?? 'History commands are disabled in preview.')
+      return
+    }
     if (kind === 'rollback' && !lastAgentBatchId) {
       setNotice('No Agent rollback point is available.')
       return
@@ -336,12 +372,18 @@ export function CreativeProjectEditor({
     busy,
     commandPort,
     lastAgentBatchId,
+    presentationReadOnly,
+    readOnlyReason,
     snapshot,
     updateFromReceipt,
   ])
 
   const splitAtPlayhead = useCallback(async () => {
     if (!snapshot) return
+    if (presentationReadOnly) {
+      setNotice(readOnlyReason ?? 'Split is disabled in preview.')
+      return
+    }
     const selectedVisual = currentSelected
       && (currentSelected.clip.kind === 'video' || currentSelected.clip.kind === 'image')
       ? currentSelected
@@ -388,10 +430,21 @@ export function CreativeProjectEditor({
         },
       },
     ], `Split ${selectedVisual.clip.id} at ${playheadSec}`)
-  }, [applyOperations, currentSelected, playheadSec, snapshot])
+  }, [
+    applyOperations,
+    currentSelected,
+    playheadSec,
+    presentationReadOnly,
+    readOnlyReason,
+    snapshot,
+  ])
 
   const moveSelectedClip = useCallback(async (direction: -1 | 1) => {
     if (!snapshot || !currentSelected) return
+    if (presentationReadOnly) {
+      setNotice(readOnlyReason ?? 'Timeline changes are disabled in preview.')
+      return
+    }
     const nextIndex = currentSelected.index + direction
     if (nextIndex < 0 || nextIndex >= currentSelected.track.clips.length) return
     await applyOperations([
@@ -410,7 +463,13 @@ export function CreativeProjectEditor({
         after: { index: nextIndex },
       },
     ], `Move ${currentSelected.clip.id} to index ${nextIndex}`)
-  }, [applyOperations, currentSelected, snapshot])
+  }, [
+    applyOperations,
+    currentSelected,
+    presentationReadOnly,
+    readOnlyReason,
+    snapshot,
+  ])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -433,12 +492,14 @@ export function CreativeProjectEditor({
       if (editingText) return
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
         event.preventDefault()
-        void runHistory(event.shiftKey ? 'redo' : 'undo')
+        if (!presentationReadOnly) {
+          void runHistory(event.shiftKey ? 'redo' : 'undo')
+        }
         return
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'y') {
         event.preventDefault()
-        void runHistory('redo')
+        if (!presentationReadOnly) void runHistory('redo')
         return
       }
       if (interactive) return
@@ -453,7 +514,7 @@ export function CreativeProjectEditor({
         setPlayheadSec((current) => Math.min(snapshot.canvas.durationSec, Math.round((current + (event.shiftKey ? 1 : 0.1)) * 10) / 10))
       } else if (event.key.toLowerCase() === 's') {
         event.preventDefault()
-        void splitAtPlayhead()
+        if (!presentationReadOnly) void splitAtPlayhead()
       } else if (event.key === '1') {
         setFocusMode('stage')
       } else if (event.key === '2') {
@@ -466,9 +527,9 @@ export function CreativeProjectEditor({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [runHistory, snapshot, splitAtPlayhead])
+  }, [presentationReadOnly, runHistory, snapshot, splitAtPlayhead])
 
-  if (loading) return <EditorLoading />
+  if (loading) return <EditorLoading embedded={embedded} />
   if (!snapshot || error && !snapshot) {
     return (
       <section className={styles.editorFatal} role="alert">
@@ -476,6 +537,7 @@ export function CreativeProjectEditor({
         <h1>Composition Editor could not open.</h1>
         <p>{error ?? 'The Foundation command port returned no composition.'}</p>
         <button onClick={() => void load()} type="button">Retry load</button>
+        {onExit && <button onClick={onExit} type="button">Back to Creative Studio</button>}
       </section>
     )
   }
@@ -484,7 +546,9 @@ export function CreativeProjectEditor({
     <section
       aria-label={`Creative Studio Project Editor for ${snapshot.name}`}
       className={styles.editorShell}
+      data-embedded={embedded ? 'true' : undefined}
       data-focus-mode={focusMode}
+      data-readonly={presentationReadOnly ? 'true' : undefined}
     >
       <a className={styles.skipLink} href="#studio-editor-stage">Skip to canvas</a>
       <a className={styles.skipLink} href="#studio-editor-timeline">Skip to timeline</a>
@@ -518,7 +582,7 @@ export function CreativeProjectEditor({
           <button
             aria-keyshortcuts="Meta+Z Control+Z"
             aria-label="Undo latest local operation"
-            disabled={busy || !snapshot.canUndo}
+            disabled={presentationReadOnly || busy || !snapshot.canUndo}
             onClick={() => void runHistory('undo')}
             type="button"
           >
@@ -527,7 +591,7 @@ export function CreativeProjectEditor({
           <button
             aria-keyshortcuts="Meta+Shift+Z Control+Y"
             aria-label="Redo latest local operation"
-            disabled={busy || !snapshot.canRedo}
+            disabled={presentationReadOnly || busy || !snapshot.canRedo}
             onClick={() => void runHistory('redo')}
             type="button"
           >
@@ -535,7 +599,7 @@ export function CreativeProjectEditor({
           </button>
           <button
             aria-label="Rollback latest Agent batch"
-            disabled={busy || !lastAgentBatchId}
+            disabled={presentationReadOnly || busy || !lastAgentBatchId}
             onClick={() => void runHistory('rollback')}
             type="button"
           >
@@ -551,7 +615,11 @@ export function CreativeProjectEditor({
           }} type="button">
             <EditorIcon name="review" size={15} />
             Review
-            <span>{snapshot.review.openComments}</span>
+            <span>
+              {snapshot.hydration?.review === 'hydrated'
+                ? snapshot.review.openComments
+                : '—'}
+            </span>
           </button>
           <button aria-describedby="editor-export-boundary" disabled type="button">
             Export
@@ -570,7 +638,9 @@ export function CreativeProjectEditor({
         <span>{snapshot.productCode ?? 'No ERP product'} · {snapshot.recipeName ?? 'No recipe'} {snapshot.recipeVersion ? `v${snapshot.recipeVersion}` : ''}</span>
         <span>
           <EditorIcon name="check" size={11} />
-          Local apply: reversible ৳0 only
+          {presentationReadOnly
+            ? `${actor.role} preview · local apply disabled`
+            : 'Local apply: reversible ৳0 only'}
         </span>
         <span>
           Provider · voice · render · publish separated
@@ -601,6 +671,7 @@ export function CreativeProjectEditor({
             regionRef={stageRef}
             selection={selection}
             snapshot={snapshot}
+            readOnly={presentationReadOnly}
           />
           <EditorTimeline
             onMoveClip={(direction) => void moveSelectedClip(direction)}
@@ -611,6 +682,7 @@ export function CreativeProjectEditor({
             regionRef={timelineRef}
             selection={selection}
             snapshot={snapshot}
+            readOnly={presentationReadOnly}
             zoom={timelineZoom}
           />
         </main>
@@ -636,6 +708,7 @@ export function CreativeProjectEditor({
           }
           onTabChange={setWorkbenchTab}
           proposal={proposal}
+          readOnly={presentationReadOnly}
           regionRef={workbenchRef}
           selectedAssetId={selectedAssetId}
           selection={selection}
@@ -671,7 +744,7 @@ export function CreativeProjectEditor({
         <dl>
           <div><dt>Space</dt><dd>Play / pause</dd></div>
           <div><dt>← / →</dt><dd>Move playhead · Shift = 1s</dd></div>
-          <div><dt>S</dt><dd>Split selected visual clip</dd></div>
+          <div><dt>S</dt><dd>{presentationReadOnly ? 'Split disabled in preview' : 'Split selected visual clip'}</dd></div>
           <div><dt>⌘/Ctrl K</dt><dd>Focus media search</dd></div>
           <div><dt>⌘/Ctrl Z</dt><dd>Undo · Shift/Y = redo</dd></div>
           <div><dt>1–4</dt><dd>Responsive focus mode</dd></div>
@@ -697,9 +770,13 @@ export function CreativeProjectEditor({
   )
 }
 
-function EditorLoading() {
+function EditorLoading({ embedded }: { embedded: boolean }) {
   return (
-    <section className={styles.editorLoading} aria-label="Project Editor loading">
+    <section
+      aria-label="Project Editor loading"
+      className={styles.editorLoading}
+      data-embedded={embedded ? 'true' : undefined}
+    >
       <div className={styles.loadingTopbar} />
       <div>
         <span />

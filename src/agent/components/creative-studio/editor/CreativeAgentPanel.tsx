@@ -55,6 +55,7 @@ export function CreativeAgentPanel({
   onPlan,
   onRequestPendingAction,
   proposal,
+  readOnly,
   stale,
 }: {
   acknowledged: boolean
@@ -69,6 +70,7 @@ export function CreativeAgentPanel({
   onPlan: () => void
   onRequestPendingAction?: PendingActionRequestHandler
   proposal: EditorOperationProposal | null
+  readOnly: boolean
   stale: boolean
 }) {
   const shortFingerprint = proposal
@@ -78,7 +80,8 @@ export function CreativeAgentPanel({
     proposal
     && !proposal.requiresClarification
     && !stale
-    && actor.role === 'owner',
+    && !readOnly
+    && actor.role === 'owner'
   )
   const canApply = Boolean(
     proposal
@@ -272,9 +275,11 @@ export function CreativeAgentPanel({
                 <small>Apply only listed reversible ৳0 operations.</small>
               </span>
             </label>
-            {actor.role !== 'owner' && (
+            {readOnly ? (
+              <p role="status">Preview-only rollout: plans stay local and cannot be applied.</p>
+            ) : actor.role !== 'owner' ? (
               <p role="alert">Owner acknowledgement is required; prompt text cannot change this role.</p>
-            )}
+            ) : null}
             <button
               className={styles.agentApplyButton}
               disabled={!canApply}

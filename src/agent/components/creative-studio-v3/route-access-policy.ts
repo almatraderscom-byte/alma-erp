@@ -22,6 +22,22 @@ export type CreativeStudioV3RouteDecision =
         | 'rollout_not_admitted'
     }
 
+export function selectCreativeStudioV3InitialProjectId(input: {
+  accessibleProjects: StudioProjectSummary[]
+  brandProfileId: string
+  requestedProjectId: string | null
+}): string | null {
+  const scoped = input.accessibleProjects.filter((project) =>
+    project.brandProfileId === input.brandProfileId)
+  if (input.requestedProjectId) {
+    return scoped.find((project) => project.id === input.requestedProjectId)?.id
+      ?? null
+  }
+  return scoped.find((project) => !project.readonly)?.id
+    ?? scoped[0]?.id
+    ?? null
+}
+
 /**
  * Pure route admission boundary. `accessibleBrands` and `accessibleProjects`
  * must be produced server-side; query values can select from those rows but
@@ -43,7 +59,9 @@ export function resolveCreativeStudioV3RouteDecision(input: {
   }
 
   if (input.accessibleBrands.length === 0) {
-    return { kind: 'denied', reason: 'no_accessible_brand' }
+    return input.actorIsSystemOwner
+      ? { kind: 'legacy' }
+      : { kind: 'denied', reason: 'no_accessible_brand' }
   }
 
   const brandById = new Map(
