@@ -127,7 +127,7 @@ export function readContextUsage(
   usage: Record<string, unknown> | null,
   modelMatches: boolean,
 ): { tokens: number | null; source: ContextSource; measuredAt: string | null; exact: boolean } {
-  if (!usage || !modelMatches) {
+  if (!usage) {
     return { tokens: null, source: 'awaiting_provider', measuredAt: null, exact: false }
   }
 
@@ -137,7 +137,12 @@ export function readContextUsage(
       tokens: contextTokens,
       source: 'provider_last_round',
       measuredAt: typeof usage.context_measured_at === 'string' ? usage.context_measured_at : null,
-      exact: true,
+      // OWNER BUG 2026-07-26: switching the head mid-chat reset the context meter
+      // to zero. But the conversation did not shrink — the same messages are
+      // still there; only the WINDOW changed. So the measurement carries over and
+      // is re-scaled against the new model's window; it is simply no longer
+      // "exact", because another tokenizer produced it.
+      exact: modelMatches,
     }
   }
 
@@ -153,7 +158,7 @@ export function readContextUsage(
     tokens: legacyTokens,
     source: rounds <= 1 ? 'single_round_legacy' : 'legacy_estimate',
     measuredAt: null,
-    exact: rounds <= 1,
+    exact: modelMatches && rounds <= 1,
   }
 }
 

@@ -751,8 +751,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setActiveConvId(null)
     setMessages([])
     setArtifacts([])
-    setActiveModelId('claude-sonnet-4-6')
+    // A new chat starts on AUTO, the same value this component initialises with.
+    // It used to hard-code Sonnet here, so every "নতুন চ্যাট" silently pinned the
+    // most expensive head no matter what the owner had chosen (owner bug 2026-07-26).
+    setActiveModelId('auto')
     setChatMode(DEFAULT_CHAT_MODE)
+    setPinnedSkill(null)
     pendingProjectIdRef.current = projectId ?? null
     setActiveConvProjectId(projectId ?? null)
     setActivePersonalMode(!!personalProjectId && projectId === personalProjectId)
