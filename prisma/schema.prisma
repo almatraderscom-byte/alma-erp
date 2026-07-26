@@ -2501,7 +2501,14 @@ model AgentPendingAction {
   /// Business scope for routing/filtering ('ALMA_LIFESTYLE' | 'ALMA_TRADING').
   businessId     String    @default("ALMA_LIFESTYLE") @map("business_id")
   createdAt      DateTime  @default(now())
+  /// When the row SETTLED — set by the approve/reject routes AND by the worker's
+  /// job-result callback. It does NOT mean Boss decided anything.
   resolvedAt     DateTime?
+  /// Did BOSS decide this? Only the approve/reject routes set it, and both
+  /// refuse a row that is not 'pending' — so a row created already-approved (a
+  /// read-only crawl, a queued generation) can never be marked his.
+  /// NULL = unknown provenance (history written before this column).
+  ownerDecided   Boolean?  @map("owner_decided")
   result         Json?
   /// Phase 4: canonical WorkflowRun this card belongs to (camelCase column —
   /// this legacy table is camelCase in the DB).

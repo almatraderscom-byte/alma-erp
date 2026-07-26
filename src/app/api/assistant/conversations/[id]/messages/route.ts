@@ -109,7 +109,7 @@ export async function GET(
   // breadcrumbs AND lets us synthesize cards that were never breadcrumbed.
   const allActions = await prisma.agentPendingAction.findMany({
     where: { conversationId: id },
-    select: { id: true, type: true, summary: true, costEstimate: true, status: true, createdAt: true, result: true, resolvedAt: true },
+    select: { id: true, type: true, summary: true, costEstimate: true, status: true, createdAt: true, result: true, ownerDecided: true },
     orderBy: { createdAt: 'asc' },
   })
 
@@ -118,14 +118,16 @@ export async function GET(
   // show WHY). Executors store their error in result.error / result.message.
   const failReasonById = new Map<string, string>()
   // Did BOSS decide this, or did it run under standing authority and never reach
-  // him? The approve route always stamps resolvedAt; a row created already
-  // 'approved' (a read-only crawl, a queued generation) never has one. Without
-  // this the card told him "আপনি অনুমোদন করেছিলেন" about work he never saw —
-  // he caught it himself, 2026-07-27.
-  const ownerDecidedById = new Map<string, boolean>()
+  // him? Only the approve/reject routes set ownerDecided, and both refuse a row
+  // that is not 'pending' — so a row created already-approved (a read-only
+  // crawl, a queued generation) can never be marked his. NULL is UNKNOWN, not
+  // false: history written before the column keeps the old wording rather than
+  // being relabelled by a guess. (resolvedAt looked like the signal and is not:
+  // the worker's job-result callback stamps it on completion.)
+  const ownerDecidedById = new Map<string, boolean | null>()
   for (const a of allActions) {
     statusById.set(a.id, a.status)
-    ownerDecidedById.set(a.id, Boolean(a.resolvedAt))
+    ownerDecidedById.set(a.id, a.ownerDecided ?? null)
     if (a.status === 'failed' && a.result && typeof a.result === 'object') {
       const r = a.result as Record<string, unknown>
       const reason = [r.error, r.message, r.detail].find((v) => typeof v === 'string' && v.trim())
@@ -153,7 +155,7 @@ export async function GET(
       summary: decodeUnicodeEscapes(a.summary ?? ''),
       actionType: a.type,
       status: a.status,
-      ownerDecided: Boolean(a.resolvedAt),
+      ownerDecided: a.ownerDecided ?? undefined,
       failReason: a.status === 'failed' ? failReasonById.get(a.id) : undefined,
     }
     if (a.costEstimate != null) block.costEstimate = a.costEstimate
@@ -248,7 +250,7 @@ export async function GET(
             return [{
               ...b,
               status: statusById.get(b.pendingActionId) ?? 'expired',
-              ownerDecided: ownerDecidedById.get(b.pendingActionId) ?? false,
+              ownerDecided: ownerDecidedById.get(b.pendingActionId) ?? undefined,
               failReason: failReasonById.get(b.pendingActionId),
               // Heal any escaped astral emoji in a persisted breadcrumb summary.
               ...(typeof b.summary === 'string'

@@ -163,9 +163,10 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
             // Persisted/reloaded cards carry their resolved status so the card
             // renders as a settled breadcrumb (✅/❌) instead of a fresh prompt.
             resolvedStatus: cb.status,
-            // False when the row ran under standing authority and never reached
-            // him — the card must not claim he approved it.
-            ownerDecided: cb.ownerDecided !== false,
+            // false → it ran under standing authority and never reached him;
+            // undefined → unknown provenance (history), which keeps the old
+            // wording rather than relabelling it on a guess.
+            ownerDecided: cb.ownerDecided,
             failReason: cb.failReason,
           }))
         : undefined,
