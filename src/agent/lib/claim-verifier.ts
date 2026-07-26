@@ -32,6 +32,8 @@ export type ClaimViolationCategory =
   | 'async_unverified'
   /** The reply named a tool and said it ran, but that tool never ran this turn. */
   | 'tool_not_called'
+  /** The opening line promised something; the work failed and the reply never said so. */
+  | 'stale_promise'
 
 export interface ClaimViolation {
   category: ClaimViolationCategory
@@ -630,6 +632,35 @@ export function detectMissingCardViolation(replyText: string): ClaimViolation[] 
   }]
 }
 
+// ── The opening line is a claim too (owner incident 2026-07-26) ──────────────
+//
+// Speak-first gives Boss an instant line BEFORE any tool runs. That line is
+// streamed straight to his screen, seeded into the transcript, and — by design —
+// survives every verification rewrite. So when the head opened with "SEO ফিক্সের
+// card বানাচ্ছি" and draft_seo_fixes was then blocked, the promise stood on his
+// screen with nothing behind it and no rewrite could reach it.
+//
+// It cannot be unsaid, so it must be CORRECTED. If the opening line promised a
+// card and the turn produced none, the final reply has to say so plainly.
+
+/**
+ * The opening line promised a card, no card exists, and the final reply does not
+ * admit it. Call only when the turn produced zero cards of any kind.
+ */
+export function detectUncorrectedOpeningPromise(openingLine: string, replyText: string): ClaimViolation[] {
+  const opening = openingLine.trim()
+  if (!opening) return []
+  if (detectMissingCardViolation(opening).length === 0) return []
+  // The reply already owns it — "কার্ড তৈরি করতে পারিনি", "card আসেনি"।
+  if (CARD_INABILITY.test(replyText)) return []
+  return [{
+    category: 'stale_promise',
+    ruleId: 'opening_line_card_promise_uncorrected',
+    matchedSnippet: stripWhitespace(opening).slice(0, 120),
+    requiredTools: [],
+  }]
+}
+
 // ── Prose-choice detection (owner rule 2026-07-07, live-hit 2026-07-16) ─────
 //
 // HARD RULE: giving the Boss a choice means an ask_user card — no exceptions.
@@ -903,6 +934,11 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'সাথে যে id / সংখ্যা / ধাপের তালিকা দিয়েছেন সেগুলোও তাহলে বানানো — এটা Boss-এর সবচেয়ে বড় আপত্তি। ' +
     'এখনই আসল tool-টা কল করুন এবং তার আসল ফলাফল থেকে উত্তর দিন; tool না থাকলে find_tool দিয়ে লোড করুন। ' +
     'কল করতে না পারলে সোজা বলুন "পারিনি" — বানানো id বা ধাপ কখনো নয়।',
+  stale_promise:
+    'আপনার প্রথম লাইনে Boss-কে বলেছিলেন কার্ড বানাচ্ছেন/পাঠাচ্ছেন, কিন্তু এই turn-এ কোনো কার্ডই তৈরি হয়নি। ' +
+    'ওই লাইনটা Boss-এর স্ক্রিনে থেকে গেছে — মুছে ফেলা যায় না, তাই উত্তরে স্পষ্ট করে সংশোধন করতে হবে। ' +
+    'এখন হয় সত্যিই কার্ড তৈরির tool কল করুন, নয়তো সরাসরি লিখুন "কার্ড তৈরি করতে পারিনি" এবং কেন — ' +
+    'চুপ করে অন্য কথা বলা চলবে না।',
   general_write:
     'আপনি কাজ সম্পন্ন হওয়ার দাবি করেছেন কিন্তু এই turn-এ কোনো সফল write/action tool call হয়নি। ' +
     'এখনই প্রয়োজনীয় tool call করুন এবং success result পেলে তবেই confirm দিন। ' +

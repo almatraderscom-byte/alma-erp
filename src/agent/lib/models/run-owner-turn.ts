@@ -88,6 +88,7 @@ import {
   countStagedCards,
   detectMissingCardViolation,
   detectProseChoiceViolation,
+  detectUncorrectedOpeningPromise,
   detectFabricatedStatViolations,
   detectRoboticStyleViolations,
   detectAsyncCompletionViolation,
@@ -236,7 +237,12 @@ const CARD_STAGED_WRAPUP_NUDGE =
 const SPEAK_FIRST_INSTRUCTION =
   '[প্রথম লাইন — শুধু এইটুকু] Boss-কে এখনই এক লাইনে বলো তুমি তাঁর কথাটা কী বুঝেছ আর এখন কোথায়/কী দেখতে যাচ্ছ। ' +
   'নিয়ম: ঠিক এক লাইন, "বস," দিয়ে শুরু; কোনো সংখ্যা, উত্তর, তালিকা বা প্রতিশ্রুতি নয় (ডেটা এখনো দেখোনি); ' +
-  '"ঠিক আছে/অবশ্যই/নিশ্চয়ই" দিয়ে শুরু নয়। কাজটা এর পরেই করবে — এখন শুধু ওই এক লাইন লেখো।'
+  '"ঠিক আছে/অবশ্যই/নিশ্চয়ই" দিয়ে শুরু নয়। ' +
+  // This line reaches his screen before a single tool runs and survives every
+  // rewrite — so anything asserted here is unfalsifiable by construction.
+  'বিশেষ করে: কার্ড/approval তৈরি বা পাঠানোর কথা এখানে লিখবে না ("card বানাচ্ছি/পাঠাচ্ছি" নয়) — ' +
+  'কার্ড আদৌ হবে কিনা এখনো জানো না, আর এই লাইনটা পরে আর বদলানো যায় না। ' +
+  'কাজটা এর পরেই করবে — এখন শুধু ওই এক লাইন লেখো।'
 
 const MARKETING_HEAD_WRAPUP_NUDGE =
   'টুল ব্যবহারের বাজেট শেষ। এখন আর নতুন টুল কল কোরো না। ' +
@@ -2056,6 +2062,10 @@ async function* runAlternateProviderTurn(
           if (violations.length === 0 && emittedAskCards.length === 0 && confirmCardsEmitted === 0 && stagedCards === 0) {
             violations.push(...detectMissingCardViolation(iterationText.trim()))
             violations.push(...detectProseChoiceViolation(iterationText.trim()))
+            // The speak-first line is streamed before any tool runs and survives
+            // every rewrite (finalText resets to it below), so a promise made
+            // there can never be corrected by a rewrite — the reply must own it.
+            violations.push(...detectUncorrectedOpeningPromise(preambleText, iterationText.trim()))
           }
           // Queued work is not finished work: block "অডিট সম্পন্ন" while the only
           // evidence is a 200 ms queue insert (owner incident 2026-07-25).
