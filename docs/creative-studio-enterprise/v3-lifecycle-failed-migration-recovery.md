@@ -29,10 +29,12 @@ It aborts unless all of these invariants hold:
 
 1. `_prisma_migrations` contains exactly one unresolved failed record with the
    exact migration name, `42P17`, and PostgreSQL's immutable-index error. The
-   live schema must also contain every table and the final index created before
-   the failed statement, while the failed index and the first later index remain
-   absent. Together these prove the exact failed-statement boundary without
-   assuming Prisma copied the SQL index name into its internal log text.
+   live schema must then match exactly one of two fail-closed shapes: either the
+   entire failed batch was rolled back and none of its tables, columns, types or
+   indexes exist, or every table and the final index created before the failed
+   statement exists while the failed index and first later index remain absent.
+   Mixed state is rejected. This proves the recovery boundary without assuming
+   Prisma copied the SQL index name into its internal log text.
 2. Every lifecycle table created by this migration is absent or contains zero
    rows.
 3. Paid execution and rollout defaults, if their partial tables exist, remain

@@ -307,20 +307,23 @@ async function inspectState(client) {
 }
 
 function assertSafePartialState(state) {
-  const missingPrefixTables = state.tables.filter((entry) => !entry.present)
-  if (missingPrefixTables.length) {
-    throw new Error(
-      `expected failed-prefix lifecycle tables are missing: ${missingPrefixTables.map(
-        (entry) => entry.table,
-      ).join(', ')}`,
-    )
-  }
+  const presentTables = state.tables.filter((entry) => entry.present)
+  const presentColumns = state.addedColumns.filter((entry) => entry.present)
   const prefixIndexNames = new Set(state.indexes.map((entry) => entry.indexname))
-  if (!prefixIndexNames.has('creative_lifecycle_feature_flags_updated_by_id_idx')) {
-    throw new Error('last known pre-failure lifecycle index is missing')
-  }
-  if (prefixIndexNames.has(failedIndexName)) {
-    throw new Error('failed exact-scope index unexpectedly exists')
+  const fullyRolledBack =
+    presentTables.length === 0
+    && presentColumns.length === 0
+    && state.types.length === 0
+    && state.indexes.length === 0
+  const missingPrefixTables = state.tables.filter((entry) => !entry.present)
+  const exactPartialPrefix =
+    missingPrefixTables.length === 0
+    && prefixIndexNames.has('creative_lifecycle_feature_flags_updated_by_id_idx')
+    && !prefixIndexNames.has(failedIndexName)
+  if (!fullyRolledBack && !exactPartialPrefix) {
+    throw new Error(
+      'failed lifecycle schema is neither fully rolled back nor the exact audited partial prefix',
+    )
   }
   const populated = state.tables.filter((entry) => entry.present && entry.rowCount !== 0)
   if (populated.length) {
@@ -351,6 +354,7 @@ function assertSafePartialState(state) {
       ).join(', ')}`,
     )
   }
+  return fullyRolledBack ? 'fully_rolled_back' : 'exact_partial_prefix'
 }
 
 async function removeKnownPartialPrefix(client) {
@@ -451,11 +455,12 @@ async function main() {
   try {
     const failedMigration = await migrationRecord(client)
     const before = await inspectState(client)
-    assertSafePartialState(before)
+    const recoveryShape = assertSafePartialState(before)
     const report = {
       mode: execute ? 'execute' : 'plan',
       database: safeDatabaseLabel(databaseUrl),
       failedMigration,
+      recoveryShape,
       before,
       databaseMutation: execute
         ? 'guarded_schema_cleanup_and_prisma_migration_metadata_update'
@@ -479,7 +484,10 @@ async function main() {
       )
       await migrationRecord(tx)
       const lockedState = await inspectState(tx)
-      assertSafePartialState(lockedState)
+      const lockedRecoveryShape = assertSafePartialState(lockedState)
+      if (lockedRecoveryShape !== recoveryShape) {
+        throw new Error('lifecycle recovery shape changed after acquiring the advisory lock')
+      }
       await removeKnownPartialPrefix(tx)
       assertCleanupComplete(await inspectState(tx))
     }, {

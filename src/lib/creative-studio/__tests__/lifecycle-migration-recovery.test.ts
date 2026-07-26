@@ -80,8 +80,11 @@ describe('Creative Studio lifecycle failed-migration recovery', () => {
     )
     expect(script).toContain('expected exactly one')
     expect(script).toContain('row.finished_at !== null || row.rolled_back_at !== null')
-    expect(script).toContain('last known pre-failure lifecycle index is missing')
-    expect(script).toContain('failed exact-scope index unexpectedly exists')
+    expect(script).toContain("'fully_rolled_back'")
+    expect(script).toContain("'exact_partial_prefix'")
+    expect(script).toContain(
+      'failed lifecycle schema is neither fully rolled back nor the exact audited partial prefix',
+    )
   })
 
   it('proves empty/default-off state and aborts past the known failed prefix', () => {
