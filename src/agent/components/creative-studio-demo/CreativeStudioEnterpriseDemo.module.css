@@ -13347,3 +13347,773 @@
     max-width: calc(100vw - 20px);
   }
 }
+
+/* ── Creative Studio design correction: Aura hierarchy + compact studios ─ */
+
+.studioHome {
+  background:
+    radial-gradient(circle at 82% 2%, rgb(var(--c-accent) / 0.075), transparent 25%),
+    linear-gradient(180deg, rgb(var(--c-card) / 0.26), transparent 34%),
+    rgb(var(--c-surface));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.homeTopbar {
+  background: rgb(var(--c-card) / 0.88);
+  min-height: 68px;
+  position: relative;
+  top: auto;
+}
+
+.homeFrame {
+  height: 100%;
+  max-width: none;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.homeSidebar {
+  background: rgb(var(--c-card) / 0.24);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.homeContent {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-block: 24px 80px;
+  scrollbar-gutter: stable;
+}
+
+.homeHero {
+  margin-bottom: 24px;
+}
+
+.homeHero h1 {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(34px, 3vw, 48px);
+  font-weight: 520;
+  letter-spacing: -0.045em;
+}
+
+.homeHero p {
+  font-size: 13px;
+}
+
+.createGrid {
+  background: rgb(var(--c-card) / 0.62);
+  border: 1px solid var(--border-subtle);
+  border-radius: 22px;
+  gap: 0;
+  overflow: hidden;
+}
+
+.createOption {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  border-right: 1px solid var(--border-subtle);
+  gap: 10px;
+  grid-template-columns: 38px minmax(0, 1fr);
+  min-height: 112px;
+  padding: 16px 13px;
+}
+
+.createOption:last-child {
+  border-right: 0;
+}
+
+.createOption:hover {
+  background: rgb(var(--c-accent) / 0.055);
+  box-shadow: none;
+  transform: none;
+}
+
+.createOptionIcon {
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  height: 38px;
+  width: 38px;
+}
+
+.createOptionCopy {
+  grid-column: 1 / -1;
+}
+
+.createOptionCopy small {
+  line-height: 1.3;
+}
+
+.createOptionCopy em {
+  display: none;
+}
+
+.v3HomeInventory {
+  background: transparent;
+  border-color: var(--border-subtle);
+  border-left: 0;
+  border-radius: 0;
+  border-right: 0;
+  box-shadow: none;
+  margin: 30px 0;
+  padding: 25px 0;
+}
+
+.v3HomeAvatarLane,
+.agentBrief,
+.studioPulseCard,
+.providerIntegrity {
+  background: rgb(var(--c-card) / 0.58);
+  border-color: var(--border-subtle);
+  box-shadow: none;
+}
+
+.projectCard {
+  border-radius: 18px;
+  box-shadow: 0 18px 42px -38px rgb(var(--c-black) / 0.45);
+}
+
+.v4SourceTray > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  max-height: 166px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.v4SourceTray > div > button {
+  flex: initial;
+  width: 100%;
+}
+
+.v5ComposerDisclosure {
+  background: rgb(var(--c-surface) / 0.44);
+  border: 1px solid var(--border-subtle);
+  border-radius: 13px;
+  overflow: hidden;
+}
+
+.v5ComposerDisclosure > summary {
+  align-items: center;
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(140px, auto) minmax(0, 1fr);
+  list-style: none;
+  min-height: 42px;
+  padding: 8px 11px;
+}
+
+.v5ComposerDisclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.v5ComposerDisclosure > summary::after {
+  color: var(--studio-muted);
+  content: '+';
+  font-size: 17px;
+  grid-column: 3;
+}
+
+.v5ComposerDisclosure[open] > summary::after {
+  content: '–';
+}
+
+.v5ComposerDisclosure > summary > span {
+  align-items: center;
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 740;
+  gap: 6px;
+}
+
+.v5ComposerDisclosure > summary > small {
+  color: var(--studio-muted);
+  font-size: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v5DisclosureBody {
+  border-top: 1px solid var(--border-subtle);
+  margin: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.v3Composer.v4FloatingComposer.v4ComposerAdvanced {
+  display: grid;
+  gap: 8px;
+  max-height: min(570px, calc(100dvh - 108px));
+  overflow: hidden;
+  padding: 12px;
+  width: min(760px, calc(100vw - 32px));
+}
+
+.v4ComposerAdvanced .v3ComposerHeader {
+  margin: 0;
+}
+
+.v4ComposerAdvanced .v3ComposerHeader p,
+.v4ComposerAdvanced .v3RecipeScroller {
+  display: none;
+}
+
+.v4ComposerAdvanced .v3ArchitectureSwitch {
+  margin: 0 auto;
+}
+
+.v4ComposerAdvanced .v3ModeScroller {
+  gap: 3px;
+  margin: 0;
+  overflow-x: auto;
+  padding: 2px;
+}
+
+.v4ComposerAdvanced .v3ModeScroller button {
+  flex: 1 0 auto;
+  min-height: 35px;
+}
+
+.v4ComposerAdvanced .v3ModeExplanation {
+  margin: 0;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.v4ComposerAdvanced .v3ComposerBody {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.v4ComposerAdvanced .v3PromptField {
+  margin: 0;
+}
+
+.v4ComposerAdvanced .v3PromptField textarea {
+  font-size: 12px;
+  min-height: 58px;
+}
+
+.v4ComposerAdvanced .v3ComposerReadiness {
+  margin: 0;
+  min-height: 50px;
+  padding: 8px 10px;
+}
+
+.v4ComposerAdvanced .v3ComposerFooter {
+  bottom: auto;
+  margin: 0 -12px -12px;
+  padding: 9px 12px;
+  position: relative;
+}
+
+.v5VideoComposer {
+  display: grid;
+  gap: 8px;
+  max-height: min(560px, calc(100dvh - 108px));
+  overflow: hidden;
+  padding: 12px;
+  width: min(780px, calc(100vw - 32px));
+}
+
+.v5VideoComposer .v3ComposerHeader {
+  margin: 0;
+}
+
+.v5VideoComposer .v3ComposerHeader p {
+  display: none;
+}
+
+.v5VideoSummaryRail {
+  align-items: stretch;
+  background: var(--bg-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 15px;
+  display: grid;
+  gap: 0;
+  grid-template-columns: minmax(240px, 1.3fr) minmax(150px, 0.8fr) minmax(165px, 0.9fr);
+  min-height: 64px;
+  overflow: hidden;
+}
+
+.v5VideoSummaryRail > span {
+  align-items: center;
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  gap: 9px;
+  min-width: 0;
+  padding: 7px 11px;
+}
+
+.v5VideoSummaryRail > span:last-child {
+  border-right: 0;
+}
+
+.v5VideoSummaryRail > span > span,
+.v5VideoSummaryRail > span:not(:first-child) {
+  align-items: flex-start;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.v5VideoSummaryRail small {
+  color: var(--studio-muted);
+  font-size: 7px;
+  font-weight: 760;
+  letter-spacing: 0.1em;
+}
+
+.v5VideoSummaryRail strong {
+  font-size: 9px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v5VideoSummaryRail .v3AssetArtwork {
+  flex: 0 0 auto;
+  height: 48px;
+  min-height: 48px;
+  width: 48px;
+}
+
+.v5VideoComposer > .v3PromptField {
+  margin: 0;
+}
+
+.v5VideoComposer > .v3PromptField textarea {
+  font-size: 12px;
+  min-height: 58px;
+}
+
+.v5VideoComposer .v3ComposerReadiness {
+  margin: 0;
+  min-height: 50px;
+  padding: 8px 10px;
+}
+
+.v5VideoComposer .v3ComposerFooter {
+  background: rgb(var(--c-card) / 0.985);
+  bottom: auto;
+  margin: 0 -12px -12px;
+  padding: 9px 12px;
+  position: relative;
+}
+
+.v5VideoComposer .v3ComposerFooter > div {
+  min-width: 0;
+}
+
+.v5VideoComposer .v3ComposerFooter > div small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v4EditorShell {
+  font-size: 13px;
+}
+
+.v4EditorIdentity small,
+.v4EditorTrustbar,
+.v4EditorTrustbar strong,
+.v4EditorSaveState > span,
+.v4EditorToolrail button,
+.v4Timeline > header strong,
+.v4Timeline > header button,
+.v4EditorNotice {
+  font-size: 9px;
+}
+
+.v4EditorInspector dt,
+.v4EditorInspector dd,
+.v4EditorInspector > label span,
+.v4EditorInspector > section strong,
+.v4EmptyTrack > span,
+.v4EmptyTrack > div small,
+.v4EmptyTrack > div button {
+  font-size: 9px;
+}
+
+.v4EditorInspector > section small {
+  font-size: 8px;
+}
+
+.v4TimelineRuler > div {
+  font-size: 8px;
+}
+
+.v4EditorBody[data-panel='agent'] .v4EditorInspector {
+  display: block;
+}
+
+.v4EditorBody[data-panel='agent'] .v4EditorMediaPanel {
+  border-right-color: #33343a;
+}
+
+.v4ProjectSetupDialog h1 {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 25px;
+  font-weight: 520;
+}
+
+.v4ProjectNameField > span,
+.v4CanvasPresetField legend {
+  font-size: 11px;
+}
+
+.v4CanvasPresetField button strong {
+  font-size: 11px;
+}
+
+.v4CanvasPresetField button small,
+.v4ProjectSetupFacts span {
+  font-size: 9px;
+}
+
+@media (min-width: 701px) and (max-width: 1240px) {
+  .v3TopNav button span {
+    clip: rect(0, 0, 0, 0);
+    display: inline;
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+}
+
+@media (max-width: 1100px) and (min-width: 761px) {
+  .v4EditorBody[data-panel='agent'] .v4EditorInspector {
+    bottom: 238px;
+    box-shadow: 0 24px 70px -30px rgb(0 0 0 / 0.88);
+    display: block;
+    max-width: 320px;
+    position: fixed;
+    right: 12px;
+    top: 98px;
+    width: calc(100vw - 24px);
+    z-index: 30;
+  }
+}
+
+@media (max-width: 760px) {
+  .studioHome {
+    grid-template-rows: 118px minmax(0, 1fr);
+  }
+
+  .homeTopbar {
+    height: 118px;
+    min-height: 118px;
+  }
+
+  .homeFrame {
+    display: grid;
+    grid-template-rows: 55px minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .homeSidebar {
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    position: relative;
+    top: auto;
+  }
+
+  .homeContent {
+    padding: 24px 14px 88px;
+  }
+
+  .homeHero h1 {
+    font-size: 34px;
+  }
+
+  .createGrid {
+    gap: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .createOption {
+    border-bottom: 1px solid var(--border-subtle);
+    min-height: 108px;
+  }
+
+  .createOption:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .createOption:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+
+  .v3Topbar {
+    position: sticky;
+    z-index: 190;
+  }
+
+  .v3BackButton {
+    position: relative;
+    z-index: 210;
+  }
+
+  .v3TopNav {
+    bottom: calc(9px + env(safe-area-inset-bottom));
+    left: 12px;
+    right: 12px;
+    top: auto;
+  }
+
+  .v4LabWithFloatingComposer {
+    padding-bottom: 500px;
+  }
+
+  .v3Composer.v4FloatingComposer.v4ComposerAdvanced,
+  .v3Composer.v4FloatingComposer.v5VideoComposer {
+    bottom: calc(66px + env(safe-area-inset-bottom));
+    max-height: calc(100dvh - 138px);
+    padding: 10px;
+    width: calc(100vw - 16px);
+  }
+
+  .v4ComposerAdvanced .v3ComposerHeader,
+  .v5VideoComposer .v3ComposerHeader {
+    display: none;
+  }
+
+  .v4ComposerAdvanced .v3ArchitectureSwitch {
+    max-width: none;
+    width: 100%;
+  }
+
+  .v4ComposerAdvanced .v3ModeScroller button {
+    min-height: 42px;
+  }
+
+  .v4ComposerAdvanced .v3ModeExplanation p {
+    font-size: 9px;
+  }
+
+  .v5ComposerDisclosure > summary {
+    grid-template-columns: minmax(110px, auto) minmax(0, 1fr);
+    min-height: 44px;
+  }
+
+  .v5DisclosureBody {
+    max-height: 196px;
+  }
+
+  .v4SourceTray > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .v5VideoSummaryRail {
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  }
+
+  .v5VideoSummaryRail > span:nth-child(3) {
+    border-right: 0;
+    display: none;
+  }
+
+  .v5VideoComposer .v3ComposerFooter,
+  .v4ComposerAdvanced .v3ComposerFooter {
+    margin: 0 -10px -10px;
+    overflow-x: auto;
+    padding: 9px 10px;
+  }
+
+  .v5VideoComposer .v3ComposerFooter > div,
+  .v5VideoComposer .v3ComposerFooter .secondaryButton {
+    display: none;
+  }
+
+  .v4EditorShell {
+    grid-template-rows: 56px 30px minmax(0, 1fr) 176px 30px;
+    height: 100dvh;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+    width: 100vw;
+  }
+
+  .v4EditorTopbar {
+    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 0 8px;
+  }
+
+  .v4EditorSaveState,
+  .v4EditorTopActions > button:first-child,
+  .v4EditorIdentity .editorAlmaMark,
+  .v4EditorIdentity small {
+    display: none;
+  }
+
+  .v4EditorIdentity {
+    gap: 5px;
+  }
+
+  .v4EditorTopActions .v4EditorExport {
+    min-height: 36px;
+  }
+
+  .v4EditorTrustbar {
+    gap: 8px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .v4EditorTrustbar span:first-child {
+    display: none;
+  }
+
+  .v4EditorBody {
+    display: grid;
+    grid-template-columns: 50px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 154px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .v4EditorToolrail {
+    grid-column: 1;
+    grid-row: 1 / 3;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 5px 3px;
+  }
+
+  .v4EditorToolrail button {
+    font-size: 8px;
+    min-height: 48px;
+  }
+
+  .v4EditorStage {
+    grid-column: 2;
+    grid-row: 1;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .v4EditorStage > header {
+    gap: 6px;
+    overflow-x: auto;
+    padding: 0 7px;
+  }
+
+  .v4CanvasPresets {
+    flex: 0 0 auto;
+  }
+
+  .v4EditorMediaPanel,
+  .v4EditorInspector {
+    border-left: 0;
+    border-right: 0;
+    border-top: 1px solid #2a2b30;
+    grid-column: 2;
+    grid-row: 2;
+    min-height: 0;
+    padding: 9px;
+  }
+
+  .v4EditorMediaPanel {
+    display: block;
+  }
+
+  .v4EditorBody .v4EditorInspector {
+    display: none;
+  }
+
+  .v4EditorBody[data-panel='agent'] .v4EditorMediaPanel {
+    display: none;
+  }
+
+  .v4EditorBody[data-panel='agent'] .v4EditorInspector {
+    display: block;
+  }
+
+  .v4MediaUpload {
+    min-height: 88px;
+    padding: 9px;
+  }
+
+  .v4MediaEmpty {
+    display: none;
+  }
+
+  .v4EditorAgentPanel p {
+    display: none;
+  }
+
+  .v4EditorAgentPanel textarea {
+    min-height: 54px;
+  }
+
+  .v4EditorAgentPanel > div {
+    display: none;
+  }
+
+  .v4StageSurface {
+    min-height: 0;
+    padding: 10px;
+  }
+
+  .v4EmptyCanvas {
+    max-height: calc(100% - 4px);
+    max-width: 92%;
+  }
+
+  .v4Transport em,
+  .v4Transport > button:last-child {
+    display: none;
+  }
+
+  .v4Timeline {
+    overflow: auto;
+  }
+
+  .v4TimelineRuler,
+  .v4EmptyTrack {
+    min-width: 600px;
+  }
+
+  .v4EditorNotice {
+    font-size: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 420px) {
+  .v5ComposerDisclosure > summary > small {
+    display: none;
+  }
+
+  .v5ComposerDisclosure > summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .v5ComposerDisclosure > summary::after {
+    grid-column: 2;
+  }
+
+  .v4ComposerAdvanced .v3ModeExplanation {
+    display: none;
+  }
+}
