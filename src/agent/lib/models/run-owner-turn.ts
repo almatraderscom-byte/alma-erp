@@ -16,6 +16,7 @@ import {
   dependencyBlockMessage,
   doneGateMessage,
   filterToolsForSkill,
+  skillAllowlist,
   skillDependencyGaps,
   skillDoneMisses,
 } from '@/agent/lib/skill-engine/enforcement'
@@ -886,6 +887,22 @@ async function* runAlternateProviderTurn(
       }
     }
   }
+  // ── The restrictions this turn must keep, even against find_tool ──────────
+  //
+  // FOUND 2026-07-27 while wiring the ask_user withholding below. `find_tool`
+  // resolves ANY tool in the registry by name and pushes it into the live tool
+  // list mid-turn. Every list-time restriction — the skill allowlist included —
+  // was therefore a suggestion: a read-only audit skill could search its way to
+  // a write tool, and the claim "an absent tool is a guarantee" was not true of
+  // this path. I had repeated that claim to Boss; it needed to become true.
+  //
+  // `turnAllowlist` is the pinned skill's allowlist (null = does not narrow);
+  // `turnDenylist` is what this specific turn withheld for a reason of its own.
+  // Both are enforced at the dynamic-load site, so the guarantee survives a
+  // search. find_tool itself is never denied — a skill must never be trapped.
+  const turnAllowlist = activeSkills.manifest ? skillAllowlist(activeSkills.manifest) : null
+  const turnDenylist = new Set<string>()
+
   // ANSWERING A QUESTION IS NOT THE MOMENT TO ASK ANOTHER ONE (owner report
   // 2026-07-27). He answered a card — "এখন কোনো SEO fix কাজ করার দরকার নেই" —
   // and the very next thing he got was a SECOND card, with the work no further
@@ -898,6 +915,7 @@ async function* runAlternateProviderTurn(
   // honest way out: say plainly what it needs and stop, or stage a card. And it
   // is one turn only — the next message can ask again if the fork is real.
   if (!listenMode && explicitAskCardId) {
+    turnDenylist.add('ask_user')
     const before = ownerIntentTools.length
     ownerIntentTools = ownerIntentTools.filter((t) => t.name !== 'ask_user')
     if (ownerIntentTools.length < before) {
@@ -2671,7 +2689,21 @@ async function* runAlternateProviderTurn(
           ...neutralTools.map((t) => t.name),
           ...dynamicNeutralTools.map((t) => t.name),
         ])
-        for (const tool of await resolveToolsByName(matchNames.filter((n) => !already.has(n)))) {
+        // A SEARCH MUST NOT WIDEN WHAT THIS TURN IS ALLOWED TO DO. Without this
+        // the skill allowlist was list-time only: a read-only audit skill could
+        // find_tool its way to a write tool, and "an absent tool is a guarantee"
+        // was untrue exactly where it was quoted most.
+        const permitted = matchNames.filter((n) => {
+          if (already.has(n)) return false
+          if (turnDenylist.has(n)) return false
+          if (turnAllowlist && !turnAllowlist.has(n)) return false
+          return true
+        })
+        const refused = matchNames.filter((n) => !already.has(n) && !permitted.includes(n))
+        if (refused.length > 0) {
+          console.info('[find-tool] refused outside this turn’s permissions', { conversationId, refused })
+        }
+        for (const tool of await resolveToolsByName(permitted)) {
           if (dynamicNeutralTools.length >= MAX_DYNAMIC_TOOLS_PER_TURN) break
           dynamicNeutralTools.push({
             name: tool.name,
