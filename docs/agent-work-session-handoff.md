@@ -138,6 +138,57 @@ env is now in place — and take the proof. Only then merge.**
 
 ---
 
+## The alt-text job was mostly not a job
+
+Before writing a single alt I fetched the live pages myself. The audit's headline
+— "52+ images without alt across the catalogue, hurting Google Images and
+accessibility" — was almost entirely false positives:
+
+```html
+<div class="foot-strip" aria-hidden="true"><img src="…" alt=""/>     <!-- decorative -->
+<button aria-label="সি-গ্রীন কালার পাঞ্জাবী …"><img alt=""/></button> <!-- name already there -->
+```
+
+A decorative image is SUPPOSED to carry `alt=""`, and an image inside a control
+that already has an accessible name would be announced twice if it had one.
+Measured live, old rule vs corrected:
+
+| page | before | real |
+|---|---|---|
+| `/products/product-code-110-men` | 12 / 30 | **0 / 18** |
+| `/products` | 12 / 28 | **0 / 16** |
+| `/products?category=islamic` | 12 / 26 | **0 / 14** |
+| `/` | 34 / 52 | **16 / 40** |
+
+What survives is 16 genuinely unlabelled images in the homepage `.scard` blocks
+— a real but small job, and one that lives in the **storefront repo**, not in
+`product_images.alt_text`. Fixing it the way it was being asked for could never
+have worked. (The Desktop `alma-lifestyle` checkout is stale — 2026-06-07 — so
+`.scard` is not in it; pull before touching that repo.)
+
+Finder (`worker/src/seo/audit.mjs`) and verifier (`grind/page-measure.ts`) now
+share the rule, with tests built from the real markup.
+
+## Two more turn defects the same run exposed
+
+1. **A fix order armed the audit contract again.** `FIX_INTENT_RE` listed exact
+   word forms, so the next thing Boss typed — "alt লিখে সেভ করো" — slipped past
+   it. It matches verb STEMS now, and an explicit ask for the audit/report still
+   wins over the verb.
+2. **A contract demanded a tool the round had taken away.** The head spent its
+   tool budget, the budget strip emptied the list, it then called the contract's
+   `run_website_seo_audit` and the membership gate refused it — "বাধ্যতামূলক ধাপ
+   সফল হয়নি" over a tool the server itself withheld. A contract-required tool now
+   survives the strip.
+
+## How to test the agent (owner correction, 2026-07-26)
+
+Boss watched me test and caught me coaching: my message told the agent which
+steps to take ("আগে গুনে বলো, তারপর ব্যাচে কাজ করো"). *"tmk as owner reply moto
+test kore success niye ashte hobe, ami just normal kaj ta bolbe erpor agent nije
+shob kichu korbe"*. Test with ONE plain sentence, the way he would type it. No
+tool names, no step list. If the agent needs the steps spelled out, it failed.
+
 ## Open items
 
 - **The alt-text job itself is not done.** ~52+ images across the catalogue still
