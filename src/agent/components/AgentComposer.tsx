@@ -34,6 +34,9 @@ interface AgentComposerProps {
   onModelChange?: (modelId: string) => void
   /** Chat mode picker (auto | direct | plan | plan_drive). */
   chatMode?: ChatMode
+  /** SK-3: the skill pinned to this chat, shown as a chip. */
+  pinnedSkill?: { skill: string; source: 'owner' | 'router'; reason: string } | null
+  onClearSkillPin?: () => void
   onChatModeChange?: (mode: ChatMode) => void
   onVoiceStart?: () => void
   /** Pre-fills the input once (e.g. a staff quick-action deep-link). Not auto-sent. */
@@ -50,6 +53,8 @@ export default function AgentComposer({
   isMobile = false,
   activeModelId,
   chatMode = DEFAULT_CHAT_MODE,
+  pinnedSkill = null,
+  onClearSkillPin,
   onChatModeChange,
   onModelChange,
   onVoiceStart,
@@ -368,6 +373,24 @@ export default function AgentComposer({
               onModeChange={onChatModeChange}
               disabled={streaming}
             />
+          )}
+
+          {/* SK-3: which skill is running this job. The owner asked to see it and
+              to be able to change it — tapping clears the pin so the next message
+              re-routes. `source: 'owner'` means he chose it and the router will
+              not revisit it. */}
+          {pinnedSkill && (
+            <button
+              type="button"
+              title={`${pinnedSkill.reason}\n\nচাপ দিলে pin সরে যাবে — পরের মেসেজে আবার বাছা হবে।`}
+              onClick={() => { impactLight(); onClearSkillPin?.() }}
+              disabled={streaming}
+              className="flex shrink-0 items-center gap-1 rounded-full border border-[var(--alma-coral)]/40 bg-[var(--alma-coral)]/10 px-2 py-0.5 text-[11px] text-[var(--alma-coral)] disabled:opacity-60"
+            >
+              <span aria-hidden>🧠</span>
+              <span className="max-w-[130px] truncate">{pinnedSkill.skill}</span>
+              {pinnedSkill.source === 'owner' && <span aria-hidden title="আপনি নিজে বেছেছেন">📌</span>}
+            </button>
           )}
 
           <div className="min-w-0 flex-1" />

@@ -9,7 +9,7 @@ import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATI
 import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
-import { buildActiveSkillsBlock } from '@/agent/lib/skill-engine/runtime'
+import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import { getOfficePulse } from '@/agent/lib/office-pulse'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
@@ -786,7 +786,21 @@ async function* runAlternateProviderTurn(
 
   // Skill Engine V2 (gated OFF by default) — pick ≤3 on-demand skill procedures for
   // this turn from the message text; '' when disabled or nothing matches (fail-open).
-  const activeSkillsBlock = suppressWork ? '' : await buildActiveSkillsBlock(lastUserText)
+  const activeSkills = suppressWork
+    ? { block: '', pinned: null }
+    : await buildActiveSkills(lastUserText, { conversationId })
+  const activeSkillsBlock = activeSkills.block
+  // SK-3: tell the client which skill is pinned, so Boss can see it and change
+  // it. Emitted before any work starts — the point is that he knows up front.
+  if (activeSkills.pinned) {
+    yield {
+      type: 'skill_pinned',
+      skill: activeSkills.pinned.skill,
+      source: activeSkills.pinned.source,
+      layer: activeSkills.pinned.layer,
+      reason: activeSkills.pinned.reason,
+    }
+  }
   let ownerIntentTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
   // A CONTRACT MUST NEVER DEMAND A TOOL THE HEAD DOES NOT HAVE (live prod run
   // 2026-07-25). The state router is only shadow-logging in production, so the

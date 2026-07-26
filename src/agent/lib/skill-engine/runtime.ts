@@ -39,14 +39,50 @@ export function __resetSkillIndexCache(): void {
  * Build the volatile "active skills" prompt block for this turn, or '' when the
  * engine is off / nothing matches / anything throws.
  */
-export async function buildActiveSkillsBlock(lastUserText: string): Promise<string> {
-  if (!(await isSkillEngineEnabled())) return ''
-  if (!lastUserText || !lastUserText.trim()) return ''
+export interface ActiveSkills {
+  block: string
+  /** Set only when a conversation pinned one — feeds the `skill_pinned` event. */
+  pinned: { skill: string; source: 'owner' | 'router'; layer: string; reason: string } | null
+}
+
+/** Thin wrapper for callers that only want the prompt text. */
+export async function buildActiveSkillsBlock(
+  lastUserText: string,
+  opts: { conversationId?: string } = {},
+): Promise<string> {
+  return (await buildActiveSkills(lastUserText, opts)).block
+}
+
+export async function buildActiveSkills(
+  lastUserText: string,
+  opts: { conversationId?: string } = {},
+): Promise<ActiveSkills> {
+  const none: ActiveSkills = { block: '', pinned: null }
+  if (!(await isSkillEngineEnabled())) return none
+  if (!lastUserText || !lastUserText.trim()) return none
   try {
     const index = await getIndex()
-    if (index.skills.length === 0) return ''
-    const picked = selectSkills(index, lastUserText)
-    if (picked.length === 0) return ''
+    if (index.skills.length === 0) return none
+
+    // SK-3: with a conversation, the skill is PINNED — decided once, announced,
+    // and stable for every later turn (one cache write instead of one per turn).
+    // Without one (a worker task, a test), fall back to per-call selection.
+    let picked = selectSkills(index, lastUserText)
+    let pinned: ActiveSkills['pinned'] = null
+    if (opts.conversationId) {
+      const { resolveSkillPin } = await import('@/agent/lib/skill-engine/pin')
+      const pin = await resolveSkillPin(opts.conversationId, lastUserText)
+      picked = pin.skill ? index.skills.filter((s) => s.name === pin.skill) : []
+      if (pin.skill) {
+        pinned = {
+          skill: pin.skill,
+          source: pin.source === 'owner' ? 'owner' : 'router',
+          layer: pin.trace?.layer ?? 'pinned',
+          reason: pin.trace?.reason ?? 'আগে থেকেই এই চ্যাটে pin করা',
+        }
+      }
+    }
+    if (picked.length === 0) return none
 
     const bodies: string[] = []
     for (const meta of picked) {
@@ -55,15 +91,23 @@ export async function buildActiveSkillsBlock(lastUserText: string): Promise<stri
       const body = activated.instructions.slice(0, MAX_SKILL_BODY_CHARS)
       bodies.push(`### ${activated.manifest.name} (v${activated.manifest.version})\n${body}`)
     }
-    if (bodies.length === 0) return ''
+    if (bodies.length === 0) return none
 
-    return (
+    // The owner asked to be TOLD which skill is running, before the work starts.
+    const announce = pinned
+      ? `\nপ্রথম লাইনেই Boss-কে বলো: \`${pinned.skill}\` skill ব্যবহার করছি।\n`
+      : ''
+
+    const block = (
       `\n## সক্রিয় Skill (এই কাজের procedure)\n` +
       `এই কাজের জন্য নিচের skill-এর ধাপ + guardrail হুবহু অনুসরণ করো (freestyle নয়); ` +
-      `শুধু উল্লিখিত Alma tool ব্যবহার করবে, skill নিজে কোনো ক্ষমতা দেয় না — অনুমোদন/টাকা/publish আগের মতোই gated।\n\n` +
+      `শুধু উল্লিখিত Alma tool ব্যবহার করবে, skill নিজে কোনো ক্ষমতা দেয় না — অনুমোদন/টাকা/publish আগের মতোই gated।\n` +
+      announce +
+      `\n` +
       bodies.join('\n\n')
     )
+    return { block, pinned }
   } catch {
-    return ''
+    return none
   }
 }

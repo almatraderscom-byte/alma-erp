@@ -127,6 +127,17 @@ export type AgentEvent =
   // when a tool starts or a draft is rewritten, but this line is something Boss
   // has already read and must survive both.
   | { type: 'preamble'; text: string }
+  // SK-3: the skill pinned for this conversation, and why. The owner asked to be
+  // able to SEE which skill is running and to change it — this is what feeds the
+  // chip beside the model picker. `source: 'owner'` means he chose it himself,
+  // and the router will not revisit it.
+  | {
+      type: 'skill_pinned'
+      skill: string
+      source: 'owner' | 'router'
+      layer: string
+      reason: string
+    }
   | {
       type: 'verification_retry'
       attempt: number
@@ -997,7 +1008,7 @@ export async function* runAgentTurn(
 
   // Skill Engine V2 (gated OFF by default) — same on-demand skill selection as the
   // normalized path in run-owner-turn; '' when disabled/personal/no match (fail-open).
-  const activeSkillsBlock = personalMode ? '' : await buildActiveSkillsBlock(lastUserText)
+  const activeSkillsBlock = personalMode ? '' : await buildActiveSkillsBlock(lastUserText, { conversationId })
 
   // Parity with run-owner-turn: name the dead capabilities before the first step.
   const deadCapabilityBlock = capabilityPreflightBlock()

@@ -304,6 +304,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   // Chat mode picker (auto | direct | plan | plan_drive) — per conversation, so a
   // "plan only" chat stays plan-only after reload.
   const [chatMode, setChatMode] = useState<ChatMode>(DEFAULT_CHAT_MODE)
+  /** SK-3: which skill is pinned to this chat, and why — shown as a chip. */
+  const [pinnedSkill, setPinnedSkill] = useState<{
+    skill: string
+    source: 'owner' | 'router'
+    reason: string
+  } | null>(null)
   const [compacting, setCompacting] = useState(false)
   const [dayShift, setDayShift] = useState<{
     conversationId: string | null
@@ -1031,6 +1037,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           activeTurnIdRef.current = evt.id as string
         } else if (evt.type === 'personal_mode') {
           setActivePersonalMode(evt.active === true)
+        } else if (evt.type === 'skill_pinned') {
+          // SK-3: the owner asked to SEE which skill is running, and to be able
+          // to change it. This is what feeds the chip beside the model picker.
+          setPinnedSkill({
+            skill: String(evt.skill ?? ''),
+            source: evt.source === 'owner' ? 'owner' : 'router',
+            reason: String(evt.reason ?? ''),
+          })
         } else if (evt.type === 'model_info') {
           const variant = (evt.variant as 'claude' | 'qwen' | 'deepseek' | 'default') ?? 'claude'
           setStreamVariant(variant)
@@ -1942,6 +1956,17 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           onModelChange={setActiveModelId}
           chatMode={chatMode}
           onChatModeChange={setChatMode}
+          pinnedSkill={pinnedSkill}
+          onClearSkillPin={() => {
+            const convId = activeConvId
+            setPinnedSkill(null)
+            if (!convId) return
+            void fetch(`/api/assistant/conversations/${convId}/skill`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ skill: null }),
+            }).catch(() => {})
+          }}
           onVoiceStart={() => setVoiceOpen(true)}
           seedText={composerSeed}
         />
