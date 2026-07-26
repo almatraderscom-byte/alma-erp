@@ -2032,6 +2032,11 @@ model AgentConversation {
   /// The time-boxed elevation grant 'elevated' runs under:
   /// { families: string[], expiresAt: ISO }. No expiry ⇒ treated as absent.
   elevationGrant     Json?           @map("elevation_grant")
+  /// The size of the job running in this chat: chat | deep | long_run. Kept for
+  /// the job's lifetime so a two-word answer does not shrink it back to a chat
+  /// reply mid-work. Expires — a class must never leak into next week.
+  workClass          String?         @map("work_class")
+  workClassUntil     DateTime?       @map("work_class_until")
   source             String          @default("web")
   archived           Boolean         @default(false)
   pinned             Boolean         @default(false)

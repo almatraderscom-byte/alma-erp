@@ -68,6 +68,7 @@ import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
 import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUserTextPeek } from '@/agent/lib/history-trim'
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
 import { normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
+import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/lib/plan-first'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
@@ -1594,11 +1595,18 @@ async function* runAlternateProviderTurn(
   // the head's tool budget is. They used to disagree — 60 rounds allowed, tools
   // confiscated at 8 — and the head budget always won (owner: "non-stop kaj
   // ekhono hoy na", 2026-07-26).
-  const workClass: TurnWorkClass = longRunTurn ? 'long_run' : deepTurn ? 'deep' : 'chat'
+  const derivedWorkClass: TurnWorkClass = longRunTurn ? 'long_run' : deepTurn ? 'deep' : 'chat'
+  // A job keeps its size (owner, live 2026-07-27): a two-word answer to the
+  // agent's own card used to shrink a 60-round job back to an 8-round chat reply
+  // at exactly the moment the work began. Inheritance can only WIDEN, and the
+  // memory expires.
+  const rememberedWorkClass = await loadRememberedWorkClass(conversationId)
+  const workClass: TurnWorkClass = effectiveWorkClass(derivedWorkClass, rememberedWorkClass)
+  if (derivedWorkClass !== 'chat') void rememberWorkClass(conversationId, derivedWorkClass)
   let maxIterations =
-    longRunTurn
+    workClass === 'long_run'
       ? LONG_RUN_TURN_MAX_ITERATIONS
-      : deepTurn
+      : workClass === 'deep'
         ? DEEP_TURN_MAX_ITERATIONS
         : MAX_TOOL_ITERATIONS
   const claimedSteeringIds = new Set<string>()
