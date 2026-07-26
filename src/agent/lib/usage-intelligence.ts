@@ -13,7 +13,13 @@ import {
   type Provider,
 } from '@/agent/lib/models/registry'
 
-type ContextSource = 'provider_last_round' | 'single_round_legacy' | 'legacy_estimate' | 'awaiting_provider'
+type ContextSource =
+  | 'provider_last_round'
+  | 'single_round_legacy'
+  | 'legacy_estimate'
+  /** Re-measured from the conversation itself after a mid-chat model switch. */
+  | 'recomputed_for_model'
+  | 'awaiting_provider'
 
 export type ContextBreakdownItem = {
   id: 'messages' | 'system' | 'tools' | 'memory' | 'runtime' | 'free'
@@ -373,8 +379,31 @@ export async function getUsageIntelligence(input: {
   const toolCount = numberFromUsage(costUnits, 'prefix_tool_count')
   const messageTokens = recentMessages.reduce((sum, row) => sum + jsonTokens(row.content), 0)
   const memoryTokens = jsonTokens(conversation?.contextSummary) + jsonTokens(conversation?.tailSummary)
+  const systemTokens = Math.ceil(prefixChars / 4)
+  const toolTokens = toolCount * 180
+
+  // OWNER RULING 2026-07-26: after a mid-chat model switch the meter must be
+  // ACCURATE, not merely non-zero. Carrying the previous head's number over was
+  // the first fix; it kept the meter alive but the figure came from another
+  // tokenizer. So when the head has changed, re-measure the conversation ITSELF
+  // — its messages, system prefix, tools and summaries — which is tokenizer
+  // -independent and describes exactly what the NEW head will be sent. The
+  // provider's own count takes over again as soon as that head completes a round.
+  const contextUsage = contextRead.exact
+    ? contextRead
+    : (() => {
+        const recomputed = messageTokens + systemTokens + toolTokens + memoryTokens
+        if (recomputed <= 0) return contextRead
+        return {
+          tokens: recomputed,
+          source: 'recomputed_for_model' as ContextSource,
+          measuredAt: null,
+          exact: false,
+        }
+      })()
+
   const breakdown = buildContextBreakdown({
-    usedTokens: contextRead.tokens,
+    usedTokens: contextUsage.tokens,
     contextWindow: model?.contextWindow ?? null,
     messageTokens,
     systemTokens: Math.ceil(prefixChars / 4),
@@ -402,8 +431,8 @@ export async function getUsageIntelligence(input: {
   const dailyBudget = budgets.dailyUsd != null && budgets.dailyUsd > 0 ? budgets.dailyUsd : null
   const contextLimit = model?.contextWindow ?? 0
   const contextPercentage =
-    contextRead.tokens != null && contextLimit > 0
-      ? clampPercentage((contextRead.tokens / contextLimit) * 100)
+    contextUsage.tokens != null && contextLimit > 0
+      ? clampPercentage((contextUsage.tokens / contextLimit) * 100)
       : 0
 
   const walletNote = !model
@@ -431,11 +460,11 @@ export async function getUsageIntelligence(input: {
       auto: selectedModelId === AUTO_MODEL_ID,
     },
     context: {
-      usedTokens: contextRead.tokens,
+      usedTokens: contextUsage.tokens,
       percentage: contextPercentage,
-      source: contextRead.source,
-      measuredAt: contextRead.measuredAt ?? latestAssistant?.createdAt.toISOString() ?? null,
-      exact: contextRead.exact,
+      source: contextUsage.source,
+      measuredAt: contextUsage.measuredAt ?? latestAssistant?.createdAt.toISOString() ?? null,
+      exact: contextUsage.exact,
       breakdownSource: 'reconciled_estimate',
       breakdown,
     },

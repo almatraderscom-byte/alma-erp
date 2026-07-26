@@ -67,6 +67,7 @@ import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
 import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUserTextPeek } from '@/agent/lib/history-trim'
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
+import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import {
@@ -801,6 +802,10 @@ async function* runAlternateProviderTurn(
   // SK-4: a skill that declared what it needs gets checked BEFORE step 0, so a
   // dead connection is one honest sentence rather than a paid tour of the
   // failure (15 steps / 1m36s, watched live 2026-07-26).
+  // A head that changed mid-chat must be told it is CONTINUING, not starting.
+  // The history is already there; without this the new model reads the transcript
+  // as its own and re-introduces itself or redoes a finished step.
+  const modelSwitchBlock = suppressWork ? '' : await buildModelSwitchNote(conversationId, model.id)
   const skillDependencyBlock = activeSkills.manifest
     ? dependencyBlockMessage(
         activeSkills.pinned?.skill ?? activeSkills.manifest.name,
@@ -912,7 +917,7 @@ async function* runAlternateProviderTurn(
   const deadCapabilityBlock = capabilityPreflightBlock(shippedToolNames)
   const promptArgs = {
     projectInstructions:
-      [modeDirective, deadCapabilityBlock, skillDependencyBlock, projectSystemInstructions]
+      [modeDirective, deadCapabilityBlock, skillDependencyBlock, modelSwitchBlock, projectSystemInstructions]
         .filter(Boolean).join('\n\n') || null,
     pinnedMemories,
     relevantMemories,
