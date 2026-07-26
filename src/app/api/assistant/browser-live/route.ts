@@ -53,7 +53,9 @@ export async function POST(req: NextRequest) {
       }
       return callLive('/live/start', {
         method: 'POST',
-        body: { startUrl: body.startUrl, goal: body.goal, profile: body.profile },
+        // `stream` carries fps/quality/width — a phone asks for a picture it can
+        // afford, and dropping it here would silently hand it the desktop stream.
+        body: { startUrl: body.startUrl, goal: body.goal, profile: body.profile, stream: body.stream },
         timeoutMs: 45_000,
       })
     }
@@ -72,6 +74,12 @@ export async function POST(req: NextRequest) {
         method: 'POST',
         body: { key: body.key, all: body.all === true, cachesOnly: body.cachesOnly === true },
         timeoutMs: 60_000,
+      })
+    case 'tune':
+      return callLive('/live/tune', {
+        method: 'POST',
+        body: { fps: body.fps, quality: body.quality, width: body.width },
+        timeoutMs: 20_000,
       })
     case 'enforce':
       return callLive('/profiles/enforce', { method: 'POST', timeoutMs: 60_000 })

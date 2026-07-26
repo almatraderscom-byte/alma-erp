@@ -29,9 +29,15 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'browser_live_not_configured' }, { status: 503 })
   }
 
+  // ?fps= lets one viewer take fewer frames than the session produces — a phone
+  // on mobile data. Forwarded, because dropping it here would quietly hand that
+  // phone the full-rate stream it just asked not to get.
+  const fps = new URL(req.url).searchParams.get('fps')
+  const upstreamUrl = `${base}/live/stream${fps ? `?fps=${encodeURIComponent(fps)}` : ''}`
+
   let upstream: Response
   try {
-    upstream = await fetch(`${base}/live/stream`, {
+    upstream = await fetch(upstreamUrl, {
       headers: { Authorization: `Bearer ${process.env.AGENT_INTERNAL_TOKEN ?? ''}` },
       signal: req.signal, // the owner closing the tab tears down the upstream too
       cache: 'no-store',
