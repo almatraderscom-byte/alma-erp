@@ -291,6 +291,7 @@ function ImageComposer({
   const [sourceTray, setSourceTray] = useState<ImageSourceTray>(null)
   const [localProductName, setLocalProductName] = useState('')
   const [localModelName, setLocalModelName] = useState('')
+  const [isExpanded, setIsExpanded] = useState(false)
   const [localStatus, setLocalStatus] = useState(
     'Configuration is local to this prototype. Nothing has been queued.',
   )
@@ -305,8 +306,12 @@ function ImageComposer({
 
   const missingRequirements = useMemo(() => {
     const missing: string[] = []
-    if (activeMode.product === 'required' && !productId) missing.push('product reference')
-    if (activeMode.avatar === 'required' && !selectedAvatarId) missing.push('model / avatar')
+    if (activeMode.product === 'required' && !productId && !localProductName) {
+      missing.push('product reference')
+    }
+    if (activeMode.avatar === 'required' && !selectedAvatarId && !localModelName) {
+      missing.push('model / avatar')
+    }
     if (activeMode.source === 'required' && !sourceId) missing.push('source image')
     if (mode === 'generate' && !prompt.trim()) missing.push('prompt')
     if (mode !== 'reel' && !imageProviderSupports(provider.id, mode, resolution)) {
@@ -314,7 +319,18 @@ function ImageComposer({
     }
     if (mode !== 'reel' && provider.researchOnly) missing.push('commercial policy approval')
     return missing
-  }, [activeMode, mode, productId, prompt, provider, resolution, selectedAvatarId, sourceId])
+  }, [
+    activeMode,
+    localModelName,
+    localProductName,
+    mode,
+    productId,
+    prompt,
+    provider,
+    resolution,
+    selectedAvatarId,
+    sourceId,
+  ])
 
   const estimatedBdt =
     mode === 'reel' || resolution === '4K'
@@ -349,7 +365,10 @@ function ImageComposer({
     return (
       <section
         aria-labelledby="image-composer-title"
-        className={`${styles.v3Composer} ${styles.v4FloatingComposer} ${styles.v4ComposerAuto}`}
+        className={`${styles.v3Composer} ${styles.v4FloatingComposer} ${styles.v4ComposerAuto} ${
+          isExpanded ? styles.v6ComposerExpanded : ''
+        }`}
+        data-workspace={isExpanded ? 'expanded' : 'compact'}
       >
         <div className={styles.v4ComposerRecipes} aria-label="Quick recipes">
           {IMAGE_RECIPES.slice(0, 3).map((item) => (
@@ -389,10 +408,24 @@ function ImageComposer({
               Advanced
             </button>
           </div>
-          <span className={styles.v4LocalOnlyBadge}>
-            <StudioV2Icon name="lock" size={12} />
-            $0 demo
-          </span>
+          <div className={styles.v6ComposerHeaderActions}>
+            <button
+              aria-label={isExpanded ? 'Collapse image workspace' : 'Expand image workspace'}
+              className={styles.v6ComposerExpand}
+              onClick={() => setIsExpanded((current) => !current)}
+              title={isExpanded ? 'Return to compact composer' : 'Open full workspace'}
+              type="button"
+            >
+              <span aria-hidden="true" className={styles.v6ExpandGlyph}>
+                <i />
+                <i />
+              </span>
+            </button>
+            <span className={styles.v4LocalOnlyBadge}>
+              <StudioV2Icon name="lock" size={12} />
+              $0 demo
+            </span>
+          </div>
         </header>
 
         <div className={styles.v4AutoSourceGrid}>
@@ -623,7 +656,10 @@ function ImageComposer({
   return (
     <section
       aria-labelledby="image-composer-title"
-      className={`${styles.v3Composer} ${styles.v4FloatingComposer} ${styles.v4ComposerAdvanced}`}
+      className={`${styles.v3Composer} ${styles.v4FloatingComposer} ${styles.v4ComposerAdvanced} ${
+        isExpanded ? styles.v6ComposerExpanded : ''
+      }`}
+      data-workspace={isExpanded ? 'expanded' : 'compact'}
     >
       <header className={styles.v3ComposerHeader}>
         <div>
@@ -631,7 +667,21 @@ function ImageComposer({
           <h2 id="image-composer-title">Advanced control desk</h2>
           <p>Mode-aware references, provider truth and owner-reviewed cost.</p>
         </div>
-        <span className={styles.v3NoRunBadge}>No API connected</span>
+        <div className={styles.v6ComposerHeaderActions}>
+          <button
+            aria-label={isExpanded ? 'Collapse image workspace' : 'Expand image workspace'}
+            className={styles.v6ComposerExpand}
+            onClick={() => setIsExpanded((current) => !current)}
+            title={isExpanded ? 'Return to compact composer' : 'Open full workspace'}
+            type="button"
+          >
+            <span aria-hidden="true" className={styles.v6ExpandGlyph}>
+              <i />
+              <i />
+            </span>
+          </button>
+          <span className={styles.v3NoRunBadge}>No API connected</span>
+        </div>
       </header>
 
       <div className={styles.v3ArchitectureSwitch} role="tablist" aria-label="Image workflow">
@@ -681,6 +731,184 @@ function ImageComposer({
         <p>{activeMode.description}</p>
       </div>
 
+      <div className={styles.v6AdvancedSourceGrid} aria-label="Advanced image sources">
+        <section
+          className={styles.v4SourceCard}
+          data-required={activeMode.product === 'required'}
+        >
+          <div className={`${styles.v4SourceArtwork} ${styles.v3Tone_coral}`}>
+            <span>PRODUCT</span>
+            <i />
+            <b />
+          </div>
+          <div className={styles.v4SourceContent}>
+            <span>
+              PRODUCT
+              <em>{activeMode.product === 'hidden' ? 'OPTIONAL' : activeMode.product}</em>
+            </span>
+            <strong>{localProductName || selectedProduct?.name || 'Choose product'}</strong>
+            <small>{localProductName ? 'Local demo source' : selectedProduct?.code}</small>
+            <div className={styles.v4SourceActions}>
+              <button
+                onClick={() => {
+                  setLocalStatus('Clipboard paste is represented locally in this demo.')
+                  setLocalProductName('Pasted product image')
+                }}
+                type="button"
+              >
+                <StudioV2Icon name="projects" size={13} />
+                Paste
+              </button>
+              <label>
+                <input
+                  accept="image/*"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    if (!file) return
+                    setLocalProductName(file.name)
+                    setLocalStatus(`${file.name} staged locally as the product source.`)
+                  }}
+                  type="file"
+                />
+                <StudioV2Icon name="plus" size={13} />
+                Upload
+              </label>
+              <button
+                aria-expanded={sourceTray === 'product-gallery'}
+                onClick={() =>
+                  setSourceTray((current) =>
+                    current === 'product-gallery' ? null : 'product-gallery',
+                  )
+                }
+                type="button"
+              >
+                <StudioV2Icon name="grid" size={13} />
+                Gallery
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section
+          className={styles.v4SourceCard}
+          data-required={activeMode.avatar === 'required'}
+        >
+          <div className={`${styles.v4SourceArtwork} ${styles.v4ModelArtwork} ${styles.v3Tone_ink}`}>
+            <span>MODEL</span>
+            <i />
+            <b />
+          </div>
+          <div className={styles.v4SourceContent}>
+            <span>
+              MODEL
+              <em>{activeMode.avatar === 'hidden' ? 'OPTIONAL' : activeMode.avatar}</em>
+            </span>
+            <strong>{localModelName || selectedAvatar?.name || 'Choose model'}</strong>
+            <small>{localModelName ? 'New local model' : selectedAvatar?.version}</small>
+            <div className={styles.v4SourceActions}>
+              <button
+                aria-expanded={sourceTray === 'model-library'}
+                onClick={() =>
+                  setSourceTray((current) => current === 'model-library' ? null : 'model-library')
+                }
+                type="button"
+              >
+                <StudioV2Icon name="library" size={13} />
+                Library
+              </button>
+              <label>
+                <input
+                  accept="image/*"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    if (!file) return
+                    setLocalModelName(file.name)
+                    setLocalStatus(`${file.name} staged locally as a new model reference.`)
+                  }}
+                  type="file"
+                />
+                <StudioV2Icon name="plus" size={13} />
+                Upload
+              </label>
+              <button
+                aria-expanded={sourceTray === 'avatar-library'}
+                onClick={() =>
+                  setSourceTray((current) => current === 'avatar-library' ? null : 'avatar-library')
+                }
+                type="button"
+              >
+                <StudioV2Icon name="agent" size={13} />
+                Avatar
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      {sourceTray && (
+        <section className={`${styles.v4SourceTray} ${styles.v6AdvancedSourceTray}`}>
+          <header>
+            <div>
+              <span className={styles.eyebrow}>
+                {sourceTray === 'product-gallery' ? 'PRODUCT GALLERY' : 'MODEL & AVATAR LIBRARY'}
+              </span>
+              <strong>
+                {sourceTray === 'product-gallery'
+                  ? 'Choose an approved product'
+                  : 'Choose a saved model or avatar'}
+              </strong>
+            </div>
+            <button aria-label="Close source picker" onClick={() => setSourceTray(null)} type="button">
+              <StudioV2Icon name="close" size={16} />
+            </button>
+          </header>
+          <div>
+            {sourceTray === 'product-gallery'
+              ? PRODUCTS.map((product) => (
+                  <button
+                    aria-pressed={productId === product.id && !localProductName}
+                    key={product.id}
+                    onClick={() => {
+                      setProductId(product.id)
+                      setLocalProductName('')
+                      setSourceTray(null)
+                    }}
+                    type="button"
+                  >
+                    <span className={`${styles.v3ProductSwatch} ${styles[`v3Tone_${product.tone}`]}`} />
+                    <span>
+                      <strong>{product.name}</strong>
+                      <small>{product.code} · {product.resolution}</small>
+                    </span>
+                  </button>
+                ))
+              : AVATARS.map((avatar) => (
+                  <button
+                    aria-pressed={selectedAvatarId === avatar.id && !localModelName}
+                    key={avatar.id}
+                    onClick={() => {
+                      onSelectAvatar(avatar.id)
+                      setLocalModelName('')
+                      setSourceTray(null)
+                    }}
+                    type="button"
+                  >
+                    <span
+                      className={`${styles.v3AvatarPortrait} ${styles[`v3Tone_${avatar.tone}`]}`}
+                    >
+                      <i />
+                      <b />
+                    </span>
+                    <span>
+                      <strong>{avatar.name}</strong>
+                      <small>{avatar.role} · {avatar.version}</small>
+                    </span>
+                  </button>
+                ))}
+          </div>
+        </section>
+      )}
+
       <div className={styles.v3RecipeScroller} aria-label="Saved recipe templates">
         {IMAGE_RECIPES.map((item) => (
           <button
@@ -715,7 +943,7 @@ function ImageComposer({
                 : ''}
             </small>
           </summary>
-          <div className={styles.v5DisclosureBody}>
+          <div className={`${styles.v5DisclosureBody} ${styles.v6SourcesControlDeck}`}>
             {activeMode.product !== 'hidden' && (
               <div className={styles.v3ComposerField}>
                 <div className={styles.v3FieldLabel}>
@@ -884,7 +1112,7 @@ function ImageComposer({
               </span>
               <small>{provider.label} · {aspect} · {resolution} · {quality} · {count} output</small>
             </summary>
-            <div className={styles.v5DisclosureBody}>
+            <div className={`${styles.v5DisclosureBody} ${styles.v6ProductionControlDeck}`}>
               <div className={styles.v3ControlGrid}>
                 <label>
                   <span>Provider / model</span>
