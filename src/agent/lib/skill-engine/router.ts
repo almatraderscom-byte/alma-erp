@@ -74,13 +74,31 @@ export function eligibleSkills(index: SkillIndex, ctx: RouteContext = {}): Skill
 
 // ── Layer 2: the decision list ──────────────────────────────────────────────
 
-/** Work verbs — stems, because Bangla inflects (লিখ/লেখো/লিখে). */
+/**
+ * Work verbs — stems, because Bangla inflects (লিখ/লেখো/লিখে).
+ *
+ * OWNER-CAUGHT 2026-07-27: every stem here was Bangla SCRIPT only, and he types
+ * BANGLISH most of the time. "almatraders.com er slug thik koro" — an
+ * unmistakable fix order — matched nothing, so no rule fired, three skills tied
+ * on keyword score and the READ-ONLY audit skill won. A fix order pinned to the
+ * audit skill is the worst outcome the design has: it hands the head no write
+ * tool at all. The romanised forms are not a nicety, they are how he writes.
+ */
 const FIX_VERB =
-  /(ঠিক\s*কর|সমাধান\s*কর|সংশোধন|লিখ|লেখ|সেভ\s*কর|বসাও|বসিয়ে|যোগ\s*কর|আপডেট\s*কর|\bfix\b|\bwrite\b|\bupdate\b|\bapply\b)/i
+  /(ঠিক\s*কর|সমাধান\s*কর|সংশোধন|লিখ|লেখ|সেভ\s*কর|বসাও|বসিয়ে|যোগ\s*কর|আপডেট\s*কর'?|\bfix\b|\bwrite\b|\bupdate\b|\bapply\b)/i
+/** The same verbs as he romanises them. Separate so each side stays readable. */
+const FIX_VERB_BANGLISH =
+  /\b(thik\s*kor|thik\s*kore|thk\s*kor|shomadhan|shongshodhon|likh|likhe|lekh|lekho|save\s*kor|boshao|bosao|jog\s*kor|update\s*kor|thik\s*kore\s*dao)/i
 /** …unless the thing being asked for IS the audit or the report. */
 const AUDIT_ASK =
-  /((?:অডিট|audit)\s*(?:কর|চালাও|দাও|run)|রিপোর্ট\s*(?:বানা|তৈরি|দাও|লিখ)|\breport\b|পূর্ণাঙ্গ\s*seo)/i
-const SEO_TOPIC_CLEAR = /\bseo\b|এসইও|\balt\b|meta\s*(?:description|title|tag)|অডিট|audit|sitemap|canonical/i
+  /((?:অডিট|audit)\s*(?:কর|চালাও|দাও|run|kor|koro|calao|chalao|dao)|রিপোর্ট\s*(?:বানা|তৈরি|দাও|লিখ)|\breport\b|report\s*(?:banao|dao|koro)|পূর্ণাঙ্গ\s*seo|\bdekho\b|\bdekhao\b)/i
+/**
+ * `slug` joins the clear SEO markers for the same reason: it is an on-page SEO
+ * field in this business and nothing else, and its absence is what let the miss
+ * above happen (the sentence carried no `seo`/`alt`/`meta` word at all).
+ */
+const SEO_TOPIC_CLEAR =
+  /\bseo\b|এসইও|\balt\b|meta\s*(?:description|title|tag)|অডিট|audit|sitemap|canonical|\bslug\b|স্লাগ/i
 /**
  * Bare "meta" is the ambiguity SK-0 caught: "meta description লিখে দাও" routed to
  * the Meta ADS campaign skill. One word, two businesses. It only counts as SEO
@@ -126,7 +144,7 @@ export const RULES: RouterRule[] = [
   {
     id: 'own-site-fix',
     skill: 'seo-fixing-own-site',
-    test: (t) => isSeoTopic(t) && FIX_VERB.test(t) && !AUDIT_ASK.test(t),
+    test: (t) => isSeoTopic(t) && (FIX_VERB.test(t) || FIX_VERB_BANGLISH.test(t)) && !AUDIT_ASK.test(t),
     why: 'কাজের ক্রিয়াপদ + SEO বিষয় = ফিক্স, রিপোর্ট নয়',
   },
 ]

@@ -131,7 +131,11 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
 
     // Recorded baseline. These are NOT targets — they are today's truth, asserted
     // so a router or keyword change cannot move them silently.
-    expect(rows).toHaveLength(24)
+    // 24 → 27: three BANGLISH cases added 2026-07-27, after he caught a
+    // romanised fix order ("slug thik koro") landing on the read-only audit
+    // skill. The corpus only tested Bangla script, so the rule layer being
+    // script-only was invisible to it.
+    expect(rows).toHaveLength(27)
     expect(accuracy).toBeLessThanOrEqual(100)
     expect(hits + count('wrong') + count('missed')).toBe(shouldPick.length)
     expect(falseTriggers + count('correctly-silent')).toBe(shouldNotPick.length)

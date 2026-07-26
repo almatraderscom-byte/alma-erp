@@ -8,8 +8,8 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 > engine on today would expose exactly one skill (`alma-owner-daily-briefing`).
 > That alone explains why the skills have never done anything.
 
-- Messages that SHOULD pin a skill: **18** — correct top pick: **12** (**67%**)
-- Wrong skill chosen: **4** · nothing chosen: **2**
+- Messages that SHOULD pin a skill: **21** — correct top pick: **12** (**57%**)
+- Wrong skill chosen: **7** · nothing chosen: **2**
 - Messages that should pin NOTHING: **6** — false triggers: **1**
 
 | # | message | expected | picked (top 3) | result |
@@ -18,6 +18,9 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 | seo-audit-full | almatraders.com এর পূর্ণাঙ্গ SEO অডিট করো | seo-auditing-own-site | alma-seo-audit, seo-fixing-own-site, seo-auditing-own-site | ❌ wrong skill |
 | seo-fix-meta | product-code-110 এর meta description লিখে দাও | seo-fixing-own-site | alma-website, alma-meta-campaign-launch, alma-product-listing | ❌ wrong skill |
 | seo-client | client er site example.com er seo dekho | seo-fixing-client-site | seo-fixing-client-site, seo-fixing-own-site, alma-seo-audit | ✅ hit |
+| seo-fix-slug-banglish | almatraders.com er baki slug problem gulo thik kore dao | seo-fixing-own-site | alma-agent-incident-diagnosis, alma-seo-audit, seo-auditing-own-site | ❌ wrong skill |
+| seo-fix-meta-banglish | almatraders.com er product gulor meta description thik kore dao | seo-fixing-own-site | alma-website, seo-fixing-own-site, alma-meta-campaign-launch | ❌ wrong skill |
+| seo-audit-banglish | almatraders.com er purno seo audit koro | seo-auditing-own-site | alma-seo-audit, seo-auditing-own-site, seo-fixing-own-site | ❌ wrong skill |
 | staff | Mustahid ajke kokhon asche? | alma-staff-dispatch | — | ⬜ nothing picked |
 | listing | notun panjabi ta website e tolo | alma-product-listing | alma-website, alma-client-seo, seo-fixing-client-site | ❌ wrong skill |
 | finance | ei masher khoroch koto holo? | alma-finance-brief | alma-finance-brief | ✅ hit |
