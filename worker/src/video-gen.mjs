@@ -17,6 +17,10 @@ import { readFileSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
+import {
+  assertStudioRunPaidAttempt,
+  authorizeStudioRunExecution,
+} from './studio-run-authorize.mjs'
 
 export const VEO_MODEL = 'veo-3.1-generate-preview'
 
@@ -74,6 +78,17 @@ export async function processVideoGen(job, { supabase, genai, callJobResult }) {
     return
   }
 
+  const authorization = await authorizeStudioRunExecution(pendingActionId, payload)
+  if (!authorization.authorized) {
+    await callJobResult(
+      pendingActionId,
+      'failed',
+      undefined,
+      `studio_run_revalidation_failed:${authorization.error}`,
+    )
+    return
+  }
+
   const {
     prompt,
     referenceImageId,
@@ -121,6 +136,7 @@ export async function processVideoGen(job, { supabase, genai, callJobResult }) {
     }
 
     if (!operation) {
+      await assertStudioRunPaidAttempt(pendingActionId, payload, attempt)
       operation = await genai.models.generateVideos({
         model: VEO_MODEL,
         prompt,
@@ -175,7 +191,11 @@ export async function processVideoGen(job, { supabase, genai, callJobResult }) {
   let qc = null
   let attemptsUsed = 0
   try {
-    for (let attempt = 1; attempt <= MAX_GEN_ATTEMPTS; attempt++) {
+    const authorizedAttempts = Math.min(
+      MAX_GEN_ATTEMPTS,
+      Math.max(1, Number(payload.studioPaidAttemptLimit) || MAX_GEN_ATTEMPTS),
+    )
+    for (let attempt = 1; attempt <= authorizedAttempts; attempt++) {
       attemptsUsed = attempt
       tmpPath = await generateOnce(attempt)
 
@@ -186,7 +206,7 @@ export async function processVideoGen(job, { supabase, genai, callJobResult }) {
       console.warn(`[worker] video-gen ${pendingActionId} — QC critical (attempt ${attempt}): ${qc.critical.join(' | ')}`)
       try { unlinkSync(tmpPath) } catch { /* ignore */ }
       tmpPath = null
-      if (attempt < MAX_GEN_ATTEMPTS) {
+      if (attempt < authorizedAttempts) {
         // fresh paid attempt is DELIBERATE: clear the persisted op first
         await clearPersistedOp(supabase, pendingActionId)
         payload._veoOperation = null

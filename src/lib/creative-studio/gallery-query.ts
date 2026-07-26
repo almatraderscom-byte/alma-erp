@@ -2,7 +2,7 @@ export const GALLERY_PAGE_SIZE = 24
 export const GALLERY_MAX_PAGE_SIZE = 48
 
 export type GalleryMediaFilter = 'all' | 'image' | 'video' | 'audio'
-export type GalleryStateFilter = 'all' | 'ready' | 'qc_failed' | 'draft' | 'processing' | 'failed'
+export type GalleryStateFilter = 'all' | 'ready' | 'review' | 'qc_failed' | 'draft' | 'processing' | 'failed'
 export type GalleryQcFilter = 'all' | 'pass' | 'fail'
 
 export type GalleryFilters = {
@@ -23,7 +23,7 @@ type SearchParamsReader = {
 }
 
 const MEDIA_VALUES = new Set<GalleryMediaFilter>(['all', 'image', 'video', 'audio'])
-const STATE_VALUES = new Set<GalleryStateFilter>(['all', 'ready', 'qc_failed', 'draft', 'processing', 'failed'])
+const STATE_VALUES = new Set<GalleryStateFilter>(['all', 'ready', 'review', 'qc_failed', 'draft', 'processing', 'failed'])
 const QC_VALUES = new Set<GalleryQcFilter>(['all', 'pass', 'fail'])
 
 const PENDING_STATUSES = ['approved', 'pending', 'processing']
@@ -150,6 +150,14 @@ export function buildGalleryWhere(filters: GalleryFilters): Record<string, unkno
     // the SQL condition positive avoids hiding executed legacy rows that have
     // no `qc.pass` JSON key.
     and.push({ status: 'executed' })
+  } else if (filters.state === 'review') {
+    and.push({
+      OR: [
+        { AND: [{ status: 'executed' }, GALLERY_QC_FAILED_WHERE] },
+        { status: { notIn: ['executed', ...PENDING_STATUSES, ...FAILED_STATUSES] } },
+        { status: { in: FAILED_STATUSES } },
+      ],
+    })
   } else if (filters.state === 'qc_failed') {
     and.push({ status: 'executed' }, GALLERY_QC_FAILED_WHERE)
   } else if (filters.state === 'draft') {

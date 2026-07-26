@@ -76,6 +76,8 @@ export async function runImageQcLoop({
   regenerate,
   /** CS10 — surface-specific thresholds ('single_tryon' | 'family' | …) */
   surface,
+  /** Signed V3 receipt pins this ceiling; never let mutable KV raise it. */
+  maxPaidGenerations,
 }) {
   if (qcLevel === 'off') {
     return {
@@ -88,7 +90,11 @@ export async function runImageQcLoop({
   // loop (FASHN, Gemini, fal VTON): preview = score once, NO paid regen;
   // production = bounded regens + hard core-axis gate on pass/fail.
   const pipelineMode = await fetchPipelineMode(supabase)
-  const maxGenerations = pipelineMode === 'preview' ? 1 : MAX_REGEN + 1
+  const policyMax = pipelineMode === 'preview' ? 1 : MAX_REGEN + 1
+  const receiptMax = Number.isInteger(Number(maxPaidGenerations))
+    ? Math.min(MAX_REGEN + 1, Math.max(1, Number(maxPaidGenerations)))
+    : policyMax
+  const maxGenerations = Math.min(policyMax, receiptMax)
   const attempts = []
   let currentPath = initialPath
 

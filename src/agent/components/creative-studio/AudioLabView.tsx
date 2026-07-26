@@ -105,13 +105,13 @@ export function AudioLabView() {
           {confirmation && (
             <>
               <div className="mt-3 rounded-xl bg-[#E07A5F]/10 p-3 text-center">
-                <p className="text-[10px] text-muted">সর্বোচ্চ আনুমানিক খরচ</p>
+                <p className="text-[11px] text-muted">সর্বোচ্চ আনুমানিক খরচ</p>
                 <p className="text-2xl font-extrabold text-[#E07A5F]">৳{confirmation.estimate.costBdt}</p>
-                <p className="text-[9px] text-muted">
+                <p className="text-[11px] text-muted">
                   {confirmation.estimate.provider} · চূড়ান্ত provider charge কম হতে পারে; এই সীমার বেশি Queue হবে না।
                 </p>
               </div>
-              <label className="mt-3 block space-y-1 text-[10px] font-semibold text-muted">
+              <label className="mt-3 block space-y-1 text-[11px] font-semibold text-muted">
                 এই run-এর hard cap (৳)
                 <input
                   type="number"
@@ -129,7 +129,7 @@ export function AudioLabView() {
                 />
               </label>
               {confirmation.estimate.costBdt > confirmation.capBdt && (
-                <p className="mt-2 rounded-lg bg-red-500/10 px-2.5 py-2 text-[10px] font-semibold text-red-300">
+                <p className="mt-2 rounded-lg bg-red-500/10 px-2.5 py-2 text-[11px] font-semibold text-red-300">
                   Estimate hard cap-এর চেয়ে বেশি—cap বাড়ান বা বাতিল করুন।
                 </p>
               )}
@@ -247,7 +247,7 @@ export function AudioLabView() {
         {/* dubbing */}
         <div className={card}>
           <p className="text-[12px] font-bold text-cream">🌐 Dubbing</p>
-          <p className="text-[10px] text-muted">
+          <p className="text-[11px] text-muted">
             Provider: ElevenLabs Dubbing · source voice clone বন্ধ থাকে · Queue করার আগে $1 ceiling-এর ভেতরে estimate দেখাবে।
           </p>
           <div className="flex gap-2">
@@ -296,7 +296,7 @@ export function AudioLabView() {
         {/* voice changer */}
         <div className={card}>
           <p className="text-[12px] font-bold text-cream">🎭 Voice changer → Active owner voice</p>
-          <p className="text-[10px] text-muted">
+          <p className="text-[11px] text-muted">
             Provider: ElevenLabs Voice Changer · emotion/timing থাকবে, voice হবে active owner-only version।
           </p>
           <div className="flex items-center gap-2">

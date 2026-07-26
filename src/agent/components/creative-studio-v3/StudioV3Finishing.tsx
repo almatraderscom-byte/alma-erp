@@ -6,13 +6,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import MaskEditor, { type MaskEditorResult } from '@/agent/components/creative-studio/MaskEditor'
+import { StudioConfirmationDialog } from '@/agent/components/creative-studio/StudioUi'
 import { TimelineLite } from '@/agent/components/creative-studio/TimelineLite'
 import { TranscriptEditor } from '@/agent/components/creative-studio/TranscriptEditor'
 import type {
   GalleryItem,
+  RunPayload,
   StudioBrandProfile,
+  StudioRunEstimateClient,
   VideoFinishTemplates,
 } from '@/agent/components/creative-studio/studio-api'
+import {
+  type StudioProjectSummary,
+} from '@/lib/creative-studio/project-contract'
 import {
   createDefaultVideoEditContract,
   type VideoEditContract,
@@ -45,11 +51,13 @@ function ArtifactPreview({ item, url }: { item: GalleryItem | null; url?: string
 
 export function StudioV3Finishing({
   activeBrand,
+  activeProject,
   assetId,
   onNavigate,
   port,
 }: {
   activeBrand: StudioBrandProfile | null
+  activeProject: StudioProjectSummary | null
   assetId?: string
   onNavigate: CreativeStudioV3Navigate
   port: CreativeStudioV3ProductionPort
@@ -64,6 +72,9 @@ export function StudioV3Finishing({
   const [issues, setIssues] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [resultUrl, setResultUrl] = useState<string | null>(null)
+  const [maskRequest, setMaskRequest] = useState<RunPayload | null>(null)
+  const [maskEstimate, setMaskEstimate] = useState<StudioRunEstimateClient | null>(null)
+  const [maskConfirmOpen, setMaskConfirmOpen] = useState(false)
 
   const [eyebrow, setEyebrow] = useState('')
   const [headline, setHeadline] = useState('')
@@ -93,10 +104,12 @@ export function StudioV3Finishing({
       port.listGallery(
         { media: 'image', state: 'ready', limit: 48 },
         activeBrand?.brandProfileId,
+        activeProject?.id,
       ),
       port.listGallery(
         { media: 'video', state: 'ready', limit: 48 },
         activeBrand?.brandProfileId,
+        activeProject?.id,
       ),
     ]).then(([imageResult, videoResult]) => {
       if (!live) return
@@ -121,18 +134,38 @@ export function StudioV3Finishing({
       if (live) setLoading(false)
     })
     return () => { live = false }
-  }, [activeBrand?.brandProfileId, assetId, port])
+  }, [activeBrand?.brandProfileId, activeProject?.id, assetId, port])
 
   const currentItems = media === 'image' ? images : videos
   const selected = currentItems.find((item) => item.id === selectedId) ?? currentItems[0] ?? null
   const selectedPath = artifactPath(selected)
   const ownerActionAvailable = activeBrand?.role === 'owner'
+  const selectedScope = useMemo(() => (
+    activeBrand
+    && activeProject
+    && selected?.projectAssetId
+    && selected.projectId === activeProject.id
+    && selected.brandProfileId === activeBrand.brandProfileId
+      ? {
+          brandProfileId: activeBrand.brandProfileId,
+          projectId: activeProject.id,
+          projectAssetId: selected.projectAssetId,
+        }
+      : null
+  ), [activeBrand, activeProject, selected])
+  const ownerScopedActionAvailable = Boolean(ownerActionAvailable && selectedScope)
+  const maskActionAvailable = Boolean(
+    activeBrand
+    && activeBrand.role !== 'reviewer'
+    && activeProject
+    && activeProject.brandProfileId === activeBrand.brandProfileId,
+  )
 
   useEffect(() => {
-    if (!ownerActionAvailable || media !== 'video' || !selected?.id) return
+    if (!ownerScopedActionAvailable || media !== 'video' || !selected?.id || !selectedScope) return
     let live = true
     setEditLoading(true)
-    void port.getVideoEditSource(selected.id)
+    void port.getVideoEditSource(selected.id, selectedScope)
       .then((source) => {
         if (live) setEditContract(source.editContract ?? createDefaultVideoEditContract(source.durationSec))
       })
@@ -143,7 +176,7 @@ export function StudioV3Finishing({
         if (live) setEditLoading(false)
       })
     return () => { live = false }
-  }, [media, ownerActionAvailable, port, selected?.id])
+  }, [media, ownerScopedActionAvailable, port, selected?.id, selectedScope])
 
   const switchMedia = (value: 'image' | 'video') => {
     setMedia(value)
@@ -153,8 +186,8 @@ export function StudioV3Finishing({
 
   const finishBrand = async () => {
     if (!selectedPath || !selected) return
-    if (!ownerActionAvailable) {
-      toast.error('Finishing is disabled until the collaborator-safe production adapter is connected.')
+    if (!ownerScopedActionAvailable || !selectedScope) {
+      toast.error('Finishing requires an owner-accessible canonical asset in the active brand and project.')
       return
     }
     setBusy(true)
@@ -172,6 +205,7 @@ export function StudioV3Finishing({
         footer,
         fit,
         pendingActionId: selected.id,
+        ...selectedScope,
       })
       setResultUrl(result.framedUrl)
       toast.success('Server created a separate branded derivative; the original remains preserved.')
@@ -184,22 +218,66 @@ export function StudioV3Finishing({
 
   const runMask = async (result: MaskEditorResult) => {
     if (!selectedPath) return
-    if (!ownerActionAvailable) {
-      toast.error('Mask repair is disabled until the collaborator-safe production adapter is connected.')
+    if (
+      !maskActionAvailable
+      || !activeBrand
+      || !activeProject
+      || !selected
+      || !selected.projectAssetId
+    ) {
+      toast.error('Mask repair requires an editable, canonical project asset in the active brand scope.')
       return
     }
     setBusy(true)
     try {
-      const uploaded = await port.uploadMask(result.maskBlob, selectedPath)
-      const queued = await port.queueMaskedEdit({
+      const uploaded = await port.uploadMask(result.maskBlob, selectedPath, {
+        brandProfileId: activeBrand.brandProfileId,
+        projectId: activeProject.id,
+        projectAssetId: selected.projectAssetId,
+        pendingActionId: selected.id,
+      })
+      const request: RunPayload = {
+        brandProfileId: activeBrand.brandProfileId,
+        projectId: activeProject.id,
+        productId: activeProject.product?.code,
+        sourceAssetIds: [selected.projectAssetId],
+        sourcePendingActionId: selected.id,
+        studioSurface: 'v3',
+        mode: 'edit',
+        provider: 'fashn',
+        vtonEngine: 'fal_flux_fill',
         sourceImagePath: selectedPath,
         maskPath: uploaded.maskPath,
         maskPreset: result.preset,
         prompt: result.detail,
         baseWidth: uploaded.width,
         baseHeight: uploaded.height,
+      }
+      const estimate = await port.estimateRun(request, 500)
+      setMaskRequest(request)
+      setMaskEstimate(estimate)
+      setMaskConfirmOpen(true)
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : 'Mask repair was rejected.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const confirmMask = async () => {
+    if (!maskActionAvailable || !maskRequest || !maskEstimate) {
+      toast.error('Refresh the exact signed estimate before confirming.')
+      return
+    }
+    setBusy(true)
+    try {
+      const queued = await port.confirmRun(maskRequest, maskEstimate, {
+        maxCostBdt: maskEstimate.maxCostBdt,
       })
-      toast.success(`${queued.message} · server estimate $${uploaded.estimatedCostUsd.toFixed(2)} · queued is not complete`)
+      toast.success(`${queued.message} · queued is not complete`)
+      setMaskConfirmOpen(false)
+      setMaskRequest(null)
+      setMaskEstimate(null)
       onNavigate({ id: 'gallery', initialType: 'image' })
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : 'Mask repair was rejected.')
@@ -210,13 +288,13 @@ export function StudioV3Finishing({
 
   const submitTimeline = async () => {
     if (!selected || editContract.rerender.length === 0) return
-    if (!ownerActionAvailable) {
-      toast.error('Timeline rendering is disabled until the collaborator-safe production adapter is connected.')
+    if (!ownerScopedActionAvailable || !selectedScope) {
+      toast.error('Timeline rendering requires an owner-accessible canonical asset in the active scope.')
       return
     }
     setBusy(true)
     try {
-      const result = await port.partiallyFinishVideo(selected.id, editContract)
+      const result = await port.partiallyFinishVideo(selected.id, editContract, selectedScope)
       toast.success(`${result.message} · source remains preserved · queued is not complete`)
       onNavigate({ id: 'gallery', initialType: 'video' })
     } catch (reason) {
@@ -236,13 +314,13 @@ export function StudioV3Finishing({
 
   const submitMotion = async () => {
     if (!selected || Object.keys(motionTemplates).length === 0) return
-    if (!ownerActionAvailable) {
-      toast.error('Motion rendering is disabled until the collaborator-safe production adapter is connected.')
+    if (!ownerScopedActionAvailable || !selectedScope) {
+      toast.error('Motion rendering requires an owner-accessible canonical asset in the active scope.')
       return
     }
     setBusy(true)
     try {
-      const result = await port.finishVideo(selected.id, motionTemplates)
+      const result = await port.finishVideo(selected.id, motionTemplates, selectedScope)
       toast.success(`${result.message} · queued is not complete`)
       onNavigate({ id: 'gallery', initialType: 'video' })
     } catch (reason) {
@@ -272,15 +350,17 @@ export function StudioV3Finishing({
       {issues.length > 0 && <div className={styles.inlineWarning}><StudioV3Icon name="warning" /><span>{issues.join(' · ')}</span></div>}
       <p className={styles.scopeNotice}>
         <StudioV3Icon name="lock" />
-        Brand switch reloaded Finishing sources. The current Gallery contract is owner-only and
-        carries no brand key, so this view does not imply a brand filter.
+        Brand or project changes reload canonical Gallery sources through the authenticated
+        access-scoped API. A query value never grants access.
       </p>
       {!ownerActionAvailable && (
         <div className={styles.truthBoundary}>
           <StudioV3Icon name="lock" />
           <div>
-            <strong>{activeBrand?.role ?? 'Collaborator'} finishing is not connected yet</strong>
-            <p>Preview controls remain available, but derivative, mask and video-render commands stay disabled while the production routes remain owner-only.</p>
+            <strong>{activeBrand?.role ?? 'Collaborator'} finishing permissions</strong>
+            <p>{activeBrand?.role === 'creator'
+              ? 'Canonical mask repair is available within the creator spend threshold; branded derivatives and video-render commands remain owner-only.'
+              : 'Preview controls remain available, while derivative, mask and video-render commands stay read-only.'}</p>
           </div>
         </div>
       )}
@@ -349,9 +429,9 @@ export function StudioV3Finishing({
                   <label className={styles.field}><span>Product name</span><input maxLength={120} onChange={(event) => setProductName(event.target.value)} value={productName} /></label>
                   <fieldset className={styles.optionGroup}><legend>Image fit</legend><div className={styles.chipRow}><button aria-pressed={fit === 'cover'} onClick={() => setFit('cover')} type="button">Cover</button><button aria-pressed={fit === 'contain'} onClick={() => setFit('contain')} type="button">Contain</button></div></fieldset>
                   <label className={styles.toggleRow}><span><strong>Model-overlay footer</strong><small>Optional brand footer for applicable layouts.</small></span><input checked={footer} onChange={(event) => setFooter(event.target.checked)} type="checkbox" /></label>
-                  <button className={styles.primaryButton} disabled={!ownerActionAvailable || busy || !selectedPath || !headline.trim()} onClick={() => void finishBrand()} type="button">{busy ? 'Server checking…' : 'Create branded derivative · local service'} <StudioV3Icon name="arrow" /></button>
+                  <button className={styles.primaryButton} disabled={!ownerScopedActionAvailable || busy || !selectedPath || !headline.trim()} onClick={() => void finishBrand()} type="button">{busy ? 'Server checking…' : 'Create branded derivative · local service'} <StudioV3Icon name="arrow" /></button>
                 </div>
-              ) : ownerActionAvailable && selected?.previewUrl && selectedPath ? (
+              ) : maskActionAvailable && selected?.previewUrl && selectedPath && selected.projectAssetId ? (
                 <div className={styles.maskHost}>
                   <div className={styles.truthBoundary}><StudioV3Icon name="lock" /><div><strong>Paid precision edit</strong><p>Brush/erase, undo, clear, invert, size, feather and preview are exact current tools. Mask dimensions and cost are validated before the provider request.</p></div></div>
                   <MaskEditor imageUrl={selected.previewUrl} onCancel={() => setImageTool('brand')} onRun={(result) => void runMask(result)} running={busy} />
@@ -371,7 +451,7 @@ export function StudioV3Finishing({
                       <TimelineLite onChange={setEditContract} value={editContract} />
                       <TranscriptEditor onChange={setEditContract} value={editContract} />
                       <div className={styles.truthBoundary}><StudioV3Icon name="check" /><div><strong>Selected-track partial rerender · ৳0</strong><p>Trim, reorder, crop, focus, safe zones, volume, captions and cover retain the immutable visual source.</p></div></div>
-                      <button className={styles.primaryButton} disabled={!ownerActionAvailable || busy || !selected || editContract.rerender.length === 0} onClick={() => void submitTimeline()} type="button">{busy ? 'Server checking…' : 'Render selected tracks · ৳0'} <StudioV3Icon name="arrow" /></button>
+                      <button className={styles.primaryButton} disabled={!ownerScopedActionAvailable || busy || !selected || editContract.rerender.length === 0} onClick={() => void submitTimeline()} type="button">{busy ? 'Server checking…' : 'Render selected tracks · ৳0'} <StudioV3Icon name="arrow" /></button>
                     </>
                   )}
                 </div>
@@ -386,13 +466,36 @@ export function StudioV3Finishing({
                   <div className={styles.motionChecklist}>
                     {['Price pop', 'Lower third code/name', 'Logo watermark', 'End card CTA/code/price', 'Countdown days'].map((item) => <span key={item}><StudioV3Icon name="check" /> {item}</span>)}
                   </div>
-                  <button className={styles.primaryButton} disabled={!ownerActionAvailable || busy || !selected || Object.keys(motionTemplates).length === 0} onClick={() => void submitMotion()} type="button">{busy ? 'Server checking…' : 'Queue motion-template render · ৳0'} <StudioV3Icon name="arrow" /></button>
+                  <button className={styles.primaryButton} disabled={!ownerScopedActionAvailable || busy || !selected || Object.keys(motionTemplates).length === 0} onClick={() => void submitMotion()} type="button">{busy ? 'Server checking…' : 'Queue motion-template render · ৳0'} <StudioV3Icon name="arrow" /></button>
                 </div>
               )}
             </>
           )}
         </aside>
       </div>
+      <StudioConfirmationDialog
+        ariaLabel="Review mask repair queue request"
+        confirmDisabled={!maskActionAvailable || !maskEstimate || busy}
+        confirmLabel={busy ? 'Revalidating…' : `Confirm up to ৳${maskEstimate?.maxCostBdt.toLocaleString('en-BD') ?? '—'}`}
+        onCancel={() => {
+          setMaskConfirmOpen(false)
+          setMaskRequest(null)
+          setMaskEstimate(null)
+        }}
+        onConfirm={() => void confirmMask()}
+        open={maskConfirmOpen}
+        summary="The mask upload is a $0 preparation step. This separate confirmation authorizes only the exact source, mask, provider/model selection, whole-taka estimate, and whole-taka hard BDT cap shown below; the server and worker revalidate before the paid call."
+        title="Confirm signed mask-repair estimate?"
+      >
+        <dl className={styles.confirmationFacts}>
+          <div><dt>Provider</dt><dd>{maskEstimate?.selection.provider ?? 'Waiting for server'}</dd></div>
+          <div><dt>Exact model</dt><dd>{maskEstimate?.selection.model ?? 'Waiting for server'}</dd></div>
+          <div><dt>Canonical source</dt><dd>{selected?.projectAssetId ?? 'Unavailable'}</dd></div>
+          <div><dt>Exact authorized ceiling</dt><dd>{maskEstimate ? `৳${maskEstimate.estimateBdt.toLocaleString('en-BD')} of hard cap ৳${maskEstimate.maxCostBdt.toLocaleString('en-BD')}` : 'No receipt issued'}</dd></div>
+          <div><dt>Receipt expires</dt><dd>{maskEstimate ? new Date(maskEstimate.confirmBy).toLocaleTimeString('en-BD') : '—'}</dd></div>
+          <div><dt>Success truth</dt><dd>Queued is not complete; Gallery shows the verified derivative state.</dd></div>
+        </dl>
+      </StudioConfirmationDialog>
     </div>
   )
 }

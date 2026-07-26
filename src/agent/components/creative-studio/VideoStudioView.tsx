@@ -184,7 +184,7 @@ export function VideoStudioView({ onOpenGallery, onOpenStudio }: { onOpenGallery
             <span className="text-lg">🖼️</span>
             <span className="min-w-0 flex-1">
               <span className="block text-[12px] font-semibold text-cream">ছবি থেকে রিল</span>
-              <span className="block text-[10px] text-muted">গ্যালারির যেকোনো ছবি খুলে ৬s/১৬s/২৪s বাটন চাপুন (Veo)</span>
+              <span className="block text-[11px] text-muted">গ্যালারির যেকোনো ছবি খুলে ৬s/১৬s/২৪s বাটন চাপুন (Veo)</span>
             </span>
             <span className="shrink-0 text-[11px] font-semibold text-[#E07A5F]">গ্যালারি →</span>
           </button>
@@ -192,7 +192,7 @@ export function VideoStudioView({ onOpenGallery, onOpenStudio }: { onOpenGallery
             <span className="text-lg">🛍️</span>
             <span className="min-w-0 flex-1">
               <span className="block text-[12px] font-semibold text-cream">নতুন প্রোডাক্টের রিল</span>
-              <span className="block text-[10px] text-muted">স্টুডিওর Auto মোডে &quot;🎬 ছোট রিলও বানাও&quot; টগল অন করুন</span>
+              <span className="block text-[11px] text-muted">স্টুডিওর Auto মোডে &quot;🎬 ছোট রিলও বানাও&quot; টগল অন করুন</span>
             </span>
             <span className="shrink-0 text-[11px] font-semibold text-[#E07A5F]">স্টুডিও →</span>
           </button>
@@ -200,7 +200,7 @@ export function VideoStudioView({ onOpenGallery, onOpenStudio }: { onOpenGallery
             <span className="text-lg">🎞️</span>
             <span className="min-w-0 flex-1">
               <span className="block text-[12px] font-semibold text-cream">নিজের ভিডিও এডিট</span>
-              <span className="block text-[10px] text-muted">নিচে আপলোড করুন — রেসিপি বাছলেই কাট/ক্যাপশন/মিউজিকসহ রেডি রিল</span>
+              <span className="block text-[11px] text-muted">নিচে আপলোড করুন — রেসিপি বাছলেই কাট/ক্যাপশন/মিউজিকসহ রেডি রিল</span>
             </span>
           </div>
         </div>
@@ -219,7 +219,7 @@ export function VideoStudioView({ onOpenGallery, onOpenStudio }: { onOpenGallery
             <div className="h-2 overflow-hidden rounded-full bg-white/10">
               <div className="h-full rounded-full bg-[#E07A5F] transition-all" style={{ width: `${uploadPct}%` }} />
             </div>
-            <p className="mt-1.5 text-[10px] text-muted">বড় ভিডিওতে কয়েক মিনিট লাগতে পারে — পেজ বন্ধ করবেন না।</p>
+            <p className="mt-1.5 text-[11px] text-muted">বড় ভিডিওতে কয়েক মিনিট লাগতে পারে — পেজ বন্ধ করবেন না।</p>
           </div>
         ) : (
           <button
@@ -257,7 +257,7 @@ export function VideoStudioView({ onOpenGallery, onOpenStudio }: { onOpenGallery
                     </span>
                     <span className="min-w-0">
                       <span className="block truncate text-[12px] font-semibold text-cream">{up.name}</span>
-                      <span className="block text-[10px] text-muted">
+                      <span className="block text-[11px] text-muted">
                         {fmtSize(up.sizeBytes)} · {new Date(up.uploadedAt).toLocaleDateString('en-BD')}
                       </span>
                     </span>
@@ -298,7 +298,7 @@ export function VideoStudioView({ onOpenGallery, onOpenStudio }: { onOpenGallery
                   )}
                 >
                   <p className={cn('text-[12px] font-bold', recipeId === r.id ? 'text-[#E07A5F]' : 'text-cream')}>{r.labelBn}</p>
-                  <p className="text-[10px] text-muted">{r.descriptionBn}</p>
+                  <p className="text-[11px] text-muted">{r.descriptionBn}</p>
                 </button>
               ))}
             </div>
@@ -414,7 +414,7 @@ export function VideoStudioView({ onOpenGallery, onOpenStudio }: { onOpenGallery
 
               <label className="flex items-center justify-between">
                 <span className="text-[12px] font-semibold text-cream">
-                  AI হাইলাইট সাজেশন <span className="text-[10px] text-muted">(বিটা)</span>
+                  AI হাইলাইট সাজেশন <span className="text-[11px] text-muted">(বিটা)</span>
                 </span>
                 <input
                   type="checkbox"
@@ -464,7 +464,7 @@ export function VideoStudioView({ onOpenGallery, onOpenStudio }: { onOpenGallery
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[11px] font-semibold text-cream">{j.label}</p>
-                    <p className="truncate text-[10px] text-muted">
+                    <p className="truncate text-[11px] text-muted">
                       {failed
                         ? (st?.error ?? 'ব্যর্থ হয়েছে')
                         : done
@@ -626,7 +626,7 @@ export function VideoFinishPanel({ pendingActionId, onDone }: { pendingActionId:
               <>
                 <TimelineLite value={editContract} onChange={setEditContract} />
                 <TranscriptEditor value={editContract} onChange={setEditContract} />
-                <p className="rounded-lg bg-[#81B29A]/10 px-2.5 py-2 text-[10px] text-[#b8e0cf]">
+                <p className="rounded-lg bg-[#81B29A]/10 px-2.5 py-2 text-[11px] text-[#b8e0cf]">
                   Source regenerate হবে না। Trim/crop local ffmpeg-এ; caption/audio/cover আলাদা track হিসেবে partial render হবে। খরচ ৳0।
                 </p>
                 <button
@@ -719,7 +719,7 @@ function MusicLibrary({ tracks, onChanged }: { tracks: StudioMusicTrack[]; onCha
 
   return (
     <div className="mt-2.5 space-y-2">
-      <p className="text-[10px] text-muted">শুধু আপনার অনুমোদিত ট্র্যাকই রিলে বসে — সিস্টেম নিজে কোথাও থেকে মিউজিক আনে না।</p>
+      <p className="text-[11px] text-muted">শুধু আপনার অনুমোদিত ট্র্যাকই রিলে বসে — সিস্টেম নিজে কোথাও থেকে মিউজিক আনে না।</p>
       <div className="flex items-center gap-1.5">
         {MUSIC_VIBES.map((v) => (
           <button
@@ -755,7 +755,7 @@ function MusicLibrary({ tracks, onChanged }: { tracks: StudioMusicTrack[]; onCha
       {tracks.map((t) => (
         <div key={t.id} className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-1/40 px-2.5 py-1.5">
           <span className="min-w-0 flex-1 truncate text-[11px] text-cream">{t.name}</span>
-          <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[9px] text-muted">
+          <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[11px] text-muted">
             {MUSIC_VIBES.find((v) => v.id === t.vibe)?.labelBn ?? t.vibe}
           </span>
           <button

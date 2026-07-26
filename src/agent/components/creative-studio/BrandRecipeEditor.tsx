@@ -71,7 +71,7 @@ function ToggleGroup({
             disabled={disabled}
             aria-pressed={active}
             onClick={() => onChange(active ? selected.filter((item) => item !== value.id) : [...selected, value.id])}
-            className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${
+            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
               active ? 'bg-[#E07A5F] text-white' : 'bg-white/8 text-muted'
             } disabled:opacity-50`}
           >
@@ -191,7 +191,7 @@ export function BrandRecipeEditor({
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-sm font-bold text-cream">Brand Recipe</h2>
-            <p className="text-[10px] text-muted">Versioned · owner lock · প্রতি asset-এ snapshot থাকবে</p>
+            <p className="text-[11px] text-muted">Versioned · owner lock · প্রতি asset-এ snapshot থাকবে</p>
           </div>
           <button type="button" onClick={onClose} aria-label="বন্ধ করুন" className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-muted">✕</button>
         </div>
@@ -208,7 +208,7 @@ export function BrandRecipeEditor({
                   setSelectedId(null)
                   setDraft(EMPTY_DRAFT)
                 }}
-                className={`shrink-0 rounded-xl px-3 py-2 text-[10px] font-bold ${selectedId === null ? 'bg-[#E07A5F] text-white' : 'bg-white/8 text-muted'}`}
+                className={`shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold ${selectedId === null ? 'bg-[#E07A5F] text-white' : 'bg-white/8 text-muted'}`}
               >
                 + নতুন Recipe
               </button>
@@ -220,7 +220,7 @@ export function BrandRecipeEditor({
                     setSelectedId(recipe.id)
                     setDraft(draftFromRecipe(recipe))
                   }}
-                  className={`shrink-0 rounded-xl px-3 py-2 text-left text-[10px] ${
+                  className={`shrink-0 rounded-xl px-3 py-2 text-left text-[11px] ${
                     selectedId === recipe.id ? 'bg-white/15 text-cream ring-1 ring-[#E07A5F]' : 'bg-white/8 text-muted'
                   }`}
                 >
@@ -237,7 +237,7 @@ export function BrandRecipeEditor({
             )}
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <label className="space-y-1 text-[10px] font-semibold text-muted">
+              <label className="space-y-1 text-[11px] font-semibold text-muted">
                 Recipe নাম
                 <input
                   disabled={locked}
@@ -246,7 +246,7 @@ export function BrandRecipeEditor({
                   className="w-full rounded-xl border border-border-subtle bg-bg-1 px-3 py-2 text-[12px] text-cream disabled:opacity-50"
                 />
               </label>
-              <label className="space-y-1 text-[10px] font-semibold text-muted">
+              <label className="space-y-1 text-[11px] font-semibold text-muted">
                 Scene subset
                 <input
                   disabled={locked}
@@ -257,7 +257,7 @@ export function BrandRecipeEditor({
                 />
               </label>
 
-              <div className="space-y-1.5 text-[10px] font-semibold text-muted">
+              <div className="space-y-1.5 text-[11px] font-semibold text-muted">
                 Model roles
                 <ToggleGroup
                   disabled={locked}
@@ -272,7 +272,7 @@ export function BrandRecipeEditor({
                   ]}
                 />
               </div>
-              <div className="space-y-1.5 text-[10px] font-semibold text-muted">
+              <div className="space-y-1.5 text-[11px] font-semibold text-muted">
                 Aspect pack
                 <ToggleGroup
                   disabled={locked}
@@ -282,19 +282,19 @@ export function BrandRecipeEditor({
                 />
               </div>
 
-              <label className="space-y-1 text-[10px] font-semibold text-muted">
+              <label className="space-y-1 text-[11px] font-semibold text-muted">
                 Finish theme
                 <input disabled={locked} value={draft.finishTheme} onChange={(event) => setDraft({ ...draft, finishTheme: event.target.value })} className="w-full rounded-xl border border-border-subtle bg-bg-1 px-3 py-2 text-[12px] text-cream disabled:opacity-50" />
               </label>
-              <label className="space-y-1 text-[10px] font-semibold text-muted">
+              <label className="space-y-1 text-[11px] font-semibold text-muted">
                 Caption tone
                 <input disabled={locked} value={draft.captionTone} onChange={(event) => setDraft({ ...draft, captionTone: event.target.value })} className="w-full rounded-xl border border-border-subtle bg-bg-1 px-3 py-2 text-[12px] text-cream disabled:opacity-50" />
               </label>
-              <label className="space-y-1 text-[10px] font-semibold text-muted">
+              <label className="space-y-1 text-[11px] font-semibold text-muted">
                 Music vibe
                 <input disabled={locked} value={draft.musicVibe} onChange={(event) => setDraft({ ...draft, musicVibe: event.target.value })} className="w-full rounded-xl border border-border-subtle bg-bg-1 px-3 py-2 text-[12px] text-cream disabled:opacity-50" />
               </label>
-              <label className="space-y-1 text-[10px] font-semibold text-muted">
+              <label className="space-y-1 text-[11px] font-semibold text-muted">
                 QC level
                 <select disabled={locked} value={draft.qcLevel} onChange={(event) => setDraft({ ...draft, qcLevel: event.target.value as Draft['qcLevel'] })} className="w-full rounded-xl border border-border-subtle bg-bg-1 px-3 py-2 text-[12px] text-cream disabled:opacity-50">
                   <option value="strict">Strict</option>
@@ -302,7 +302,7 @@ export function BrandRecipeEditor({
                   <option value="off">Off</option>
                 </select>
               </label>
-              <label className="space-y-1 text-[10px] font-semibold text-muted sm:col-span-2">
+              <label className="space-y-1 text-[11px] font-semibold text-muted sm:col-span-2">
                 Spend ceiling (৳, whole taka)
                 <input type="number" min="0" max="100000" disabled={locked} value={draft.spendCeilingBdt} onChange={(event) => setDraft({ ...draft, spendCeilingBdt: event.target.value })} className="w-full rounded-xl border border-border-subtle bg-bg-1 px-3 py-2 text-[12px] text-cream disabled:opacity-50" />
               </label>

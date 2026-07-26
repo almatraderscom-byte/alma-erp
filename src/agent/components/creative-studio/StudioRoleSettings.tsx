@@ -125,7 +125,7 @@ export function StudioRoleSettings({
       <button
         type="button"
         onClick={show}
-        className="rounded-xl bg-white/10 px-2.5 py-1.5 text-[10px] font-bold text-muted transition hover:text-cream"
+        className="rounded-xl bg-white/10 px-2.5 py-1.5 text-[11px] font-bold text-muted transition hover:text-cream"
       >
         দল ও অনুমতি
       </button>
@@ -143,7 +143,7 @@ export function StudioRoleSettings({
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-sm font-extrabold">{brand.name} · দল ও অনুমতি</h2>
-                <p className="mt-1 text-[10px] text-muted">
+                <p className="mt-1 text-[11px] text-muted">
                   মালিক অনুমোদন দেবেন; নির্মাতা খসড়া/সংশোধন করবেন; পর্যালোচক মন্তব্য ও পরিবর্তন চাইবেন।
                 </p>
               </div>
@@ -158,13 +158,13 @@ export function StudioRoleSettings({
             </div>
 
             {error && (
-              <p role="alert" className="mt-3 rounded-xl bg-red-500/10 p-2.5 text-[10px] text-red-300">
+              <p role="alert" className="mt-3 rounded-xl bg-red-500/10 p-2.5 text-[11px] text-red-300">
                 {error}
               </p>
             )}
 
             <div className="mt-4 rounded-2xl border border-border-subtle bg-bg-1/70 p-3">
-              <label className="text-[10px] font-bold text-muted">
+              <label className="text-[11px] font-bold text-muted">
                 মালিকের অনুমোদন ছাড়া সর্বোচ্চ খরচ
                 <div className="mt-1 flex gap-2">
                   <div className="flex min-w-0 flex-1 items-center rounded-xl border border-border-subtle bg-card px-3">
@@ -182,13 +182,13 @@ export function StudioRoleSettings({
                     type="button"
                     disabled={saving}
                     onClick={() => void saveThreshold()}
-                    className="rounded-xl bg-[#E07A5F] px-4 text-[10px] font-bold text-white disabled:opacity-50"
+                    className="rounded-xl bg-[#E07A5F] px-4 text-[11px] font-bold text-white disabled:opacity-50"
                   >
                     সেভ
                   </button>
                 </div>
               </label>
-              <p className="mt-1.5 text-[9px] text-muted">
+              <p className="mt-1.5 text-[11px] text-muted">
                 এর বেশি খরচের কাজ কেবল মালিক অনুমোদন করতে পারবেন। ০ মানে সব খরচে মালিকের অনুমোদন লাগবে।
               </p>
             </div>
@@ -199,21 +199,21 @@ export function StudioRoleSettings({
                 <div className="flex items-center justify-between rounded-xl border border-[#81B29A]/25 bg-[#81B29A]/10 p-3">
                   <div>
                     <p className="text-[11px] font-bold">আপনি</p>
-                    <p className="text-[9px] text-muted">ব্র্যান্ড মালিক · পূর্ণ অনুমতি</p>
+                    <p className="text-[11px] text-muted">ব্র্যান্ড মালিক · পূর্ণ অনুমতি</p>
                   </div>
-                  <span className="rounded-full bg-[#81B29A]/20 px-2 py-1 text-[9px] font-bold text-[#9fd6bd]">মালিক</span>
+                  <span className="rounded-full bg-[#81B29A]/20 px-2 py-1 text-[11px] font-bold text-[#9fd6bd]">মালিক</span>
                 </div>
                 {loading ? (
                   <div className="h-16 animate-pulse rounded-xl bg-white/[0.05]" />
                 ) : settings.assignments.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-border-subtle p-4 text-center text-[10px] text-muted">
+                  <p className="rounded-xl border border-dashed border-border-subtle p-4 text-center text-[11px] text-muted">
                     এখনো কাউকে ভূমিকা দেওয়া হয়নি। মালিক-শুধু আচরণ সক্রিয় আছে।
                   </p>
                 ) : settings.assignments.map((assignment) => (
                   <div key={assignment.id} className="flex items-center justify-between gap-3 rounded-xl border border-border-subtle bg-bg-1/60 p-3">
                     <div className="min-w-0">
                       <p className="truncate text-[11px] font-bold">{assignment.userName}</p>
-                      <p className="truncate text-[9px] text-muted">
+                      <p className="truncate text-[11px] text-muted">
                         {assignment.userEmail ?? assignment.erpRole} · {assignment.role === 'creator' ? 'নির্মাতা' : 'পর্যালোচক'}
                       </p>
                     </div>
@@ -221,7 +221,7 @@ export function StudioRoleSettings({
                       type="button"
                       disabled={saving}
                       onClick={() => void remove(assignment.userId)}
-                      className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-[9px] font-bold text-red-300 disabled:opacity-40"
+                      className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-[11px] font-bold text-red-300 disabled:opacity-40"
                     >
                       সরান
                     </button>
@@ -236,7 +236,7 @@ export function StudioRoleSettings({
                 <select
                   value={userId}
                   onChange={(event) => setUserId(event.target.value)}
-                  className="min-w-0 rounded-xl border border-border-subtle bg-card px-2.5 py-2 text-[10px] text-cream"
+                  className="min-w-0 rounded-xl border border-border-subtle bg-card px-2.5 py-2 text-[11px] text-cream"
                 >
                   <option value="">ব্যবহারকারী বাছুন</option>
                   {availableUsers.map((user) => (
@@ -246,7 +246,7 @@ export function StudioRoleSettings({
                 <select
                   value={role}
                   onChange={(event) => setRole(event.target.value as Exclude<StudioAccessRole, 'owner'>)}
-                  className="rounded-xl border border-border-subtle bg-card px-2.5 py-2 text-[10px] text-cream"
+                  className="rounded-xl border border-border-subtle bg-card px-2.5 py-2 text-[11px] text-cream"
                 >
                   <option value="creator">নির্মাতা</option>
                   <option value="reviewer">পর্যালোচক</option>
@@ -255,7 +255,7 @@ export function StudioRoleSettings({
                   type="button"
                   disabled={saving || !userId}
                   onClick={() => void assign()}
-                  className="rounded-xl bg-[#E07A5F] px-4 py-2 text-[10px] font-bold text-white disabled:opacity-40"
+                  className="rounded-xl bg-[#E07A5F] px-4 py-2 text-[11px] font-bold text-white disabled:opacity-40"
                 >
                   ভূমিকা দিন
                 </button>

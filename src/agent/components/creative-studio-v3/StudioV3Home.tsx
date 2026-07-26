@@ -64,6 +64,7 @@ function AssetPreview({
 
 export function StudioV3Home({
   activeBrand,
+  activeProject,
   accessibleProjects,
   foundationReadEnabled,
   initialProjectId,
@@ -73,6 +74,7 @@ export function StudioV3Home({
   port,
 }: {
   activeBrand: StudioBrandProfile | null
+  activeProject: StudioProjectSummary | null
   accessibleProjects: StudioProjectSummary[]
   foundationReadEnabled: boolean
   initialProjectId: string | null
@@ -91,27 +93,18 @@ export function StudioV3Home({
       setLoading(false)
       return
     }
-    if (activeBrand.role !== 'owner') {
-      setSnapshot({
-        ...EMPTY_SNAPSHOT,
-        projects: accessibleProjects.filter((project) =>
-          project.brandProfileId === activeBrand.brandProfileId),
-        issues: [{
-          resource: 'owner-only legacy enrichment',
-          message:
-            'Gallery, models, recipes, health and retention were not requested for this collaborator. Projects below are the server-derived accessible scope; compositions use Foundation APIs.',
-        }],
-      })
-      setLoading(false)
-      return
-    }
     setLoading(true)
     try {
-      setSnapshot(await port.loadHome(activeBrand?.brandProfileId))
+      const loaded = await port.loadHome(activeBrand.brandProfileId, activeProject?.id)
+      setSnapshot({
+        ...loaded,
+        projects: accessibleProjects.filter((project) =>
+          project.brandProfileId === activeBrand.brandProfileId),
+      })
     } finally {
       setLoading(false)
     }
-  }, [activeBrand, accessibleProjects, port])
+  }, [activeBrand, activeProject?.id, accessibleProjects, port])
 
   useEffect(() => {
     void load()
@@ -234,9 +227,9 @@ export function StudioV3Home({
       )}
       <p className={styles.scopeNotice}>
         <StudioV3Icon name="lock" />
-        {activeBrand?.role === 'owner'
-          ? `Active brand is selected only from the server-enforced accessible-brand list. Owner project and recipe enrichment re-request that brand; recent assets and identities do not imply brand filtering (${STUDIO_V3_SCOPE_BOUNDARY.gallery}).`
-          : 'Active brand and projects came from the authenticated server route. Legacy owner-only project, recipe, Gallery, model and identity reads were not used for this collaborator.'}
+        Active brand is selected only from the server-enforced accessible-brand list. Project,
+        recipe, Gallery, and identity reads were re-requested for the exact active brand/project;
+        unscoped legacy records are excluded ({STUDIO_V3_SCOPE_BOUNDARY.gallery}).
       </p>
 
       <section aria-labelledby="studio-create-heading" className={styles.section}>

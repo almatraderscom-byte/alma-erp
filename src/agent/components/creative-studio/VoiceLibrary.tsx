@@ -124,7 +124,7 @@ export function VoiceLibrary({ onChanged }: { onChanged?: () => void }) {
     <div className="space-y-3 st-card p-3">
       <div>
         <p className="text-[12px] font-bold text-cream">🧬 Owner Voice Library</p>
-        <p className="text-[10px] text-muted">
+        <p className="text-[11px] text-muted">
           Consent + immutable version + audit history। Active owner voice কখনো autonomous বা customer-facing flow-তে যায় না।
         </p>
       </div>
@@ -136,7 +136,7 @@ export function VoiceLibrary({ onChanged }: { onChanged?: () => void }) {
           onChange={(event) => setConsented(event.target.checked)}
           className="mt-0.5 accent-[#81B29A]"
         />
-        <span className="text-[10px] leading-relaxed text-cream">{CONSENT}</span>
+        <span className="text-[11px] leading-relaxed text-cream">{CONSENT}</span>
       </label>
       <input
         ref={fileRef}
@@ -161,15 +161,15 @@ export function VoiceLibrary({ onChanged }: { onChanged?: () => void }) {
       {cloneDraft && (
         <div className="rounded-xl border border-[#E07A5F]/30 bg-[#E07A5F]/[0.08] p-3">
           <p className="text-[11px] font-bold text-cream">Provider ও খরচ নিশ্চিত করুন</p>
-          <p className="mt-1 text-[10px] text-muted">{cloneDraft.estimate.provider}</p>
+          <p className="mt-1 text-[11px] text-muted">{cloneDraft.estimate.provider}</p>
           <p className="text-lg font-extrabold text-[#E07A5F]">সর্বোচ্চ ৳{cloneDraft.estimate.costBdt}</p>
           <div className="mt-2 flex gap-2">
-            <button type="button" onClick={() => setCloneDraft(null)} className="st-chip flex-1 py-1.5 text-[10px]">বাতিল</button>
+            <button type="button" onClick={() => setCloneDraft(null)} className="st-chip flex-1 py-1.5 text-[11px]">বাতিল</button>
             <button
               type="button"
               disabled={busy !== null}
               onClick={() => void confirmClone()}
-              className="st-btn flex-1 py-1.5 text-[10px]"
+              className="st-btn flex-1 py-1.5 text-[11px]"
             >
               Consent-সহ Queue
             </button>
@@ -180,7 +180,7 @@ export function VoiceLibrary({ onChanged }: { onChanged?: () => void }) {
       {loading ? (
         <div className="h-16 animate-pulse rounded-xl bg-white/[0.05]" />
       ) : voices.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-white/10 px-3 py-3 text-center text-[10px] text-muted">
+        <p className="rounded-lg border border-dashed border-white/10 px-3 py-3 text-center text-[11px] text-muted">
           Lifecycle voice এখনো নেই। পুরনো voice থাকলে সেটি Audio Lab-এ কাজ করবে; নতুন clone এখানে versioned হবে।
         </p>
       ) : (
@@ -188,20 +188,20 @@ export function VoiceLibrary({ onChanged }: { onChanged?: () => void }) {
           <div key={voice.id} className="space-y-2 rounded-xl border border-border-subtle bg-bg-1/40 p-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-cream">{voice.name}</span>
-              <span className="text-[9px] text-muted">{voice.provider} · owner-only</span>
+              <span className="text-[11px] text-muted">{voice.provider} · owner-only</span>
             </div>
             {voice.versions.map((version) => (
               <div key={version.id} className="rounded-lg bg-white/[0.04] px-2 py-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-cream">v{version.version}</span>
-                  <span className="min-w-0 flex-1 text-[9px] text-muted">{statusBn[version.status] ?? version.status}</span>
+                  <span className="text-[11px] font-bold text-cream">v{version.version}</span>
+                  <span className="min-w-0 flex-1 text-[11px] text-muted">{statusBn[version.status] ?? version.status}</span>
                   {version.status === 'ready' && (
-                    <button type="button" disabled={busy !== null} onClick={() => void lifecycle(version.id, 'activate')} className="st-chip px-2 py-1 text-[9px]">
+                    <button type="button" disabled={busy !== null} onClick={() => void lifecycle(version.id, 'activate')} className="st-chip px-2 py-1 text-[11px]">
                       Activate
                     </button>
                   )}
                   {version.status === 'active' && (
-                    <button type="button" disabled={busy !== null} onClick={() => void lifecycle(version.id, 'revoke')} className="st-chip px-2 py-1 text-[9px]">
+                    <button type="button" disabled={busy !== null} onClick={() => void lifecycle(version.id, 'revoke')} className="st-chip px-2 py-1 text-[11px]">
                       Revoke
                     </button>
                   )}
@@ -210,23 +210,23 @@ export function VoiceLibrary({ onChanged }: { onChanged?: () => void }) {
                       type="button"
                       disabled={busy !== null}
                       onClick={() => void lifecycle(version.id, 'delete')}
-                      className="rounded px-2 py-1 text-[9px] font-semibold text-red-300 hover:bg-red-500/10"
+                      className="rounded px-2 py-1 text-[11px] font-semibold text-red-300 hover:bg-red-500/10"
                     >
                       Provider delete
                     </button>
                   )}
                 </div>
-                <p className="mt-1 text-[8px] text-muted">
+                <p className="mt-1 text-[11px] text-muted">
                   Consent {new Date(version.consentRecordedAt).toLocaleString('en-BD')} · hash {version.consentSha256.slice(0, 10)}…
                 </p>
               </div>
             ))}
             {voice.audits.length > 0 && (
               <details>
-                <summary className="cursor-pointer text-[9px] font-semibold text-muted">Audit history ({voice.audits.length})</summary>
+                <summary className="cursor-pointer text-[11px] font-semibold text-muted">Audit history ({voice.audits.length})</summary>
                 <div className="mt-1 space-y-1">
                   {voice.audits.slice(0, 8).map((audit) => (
-                    <p key={audit.id} className="text-[8px] text-muted">
+                    <p key={audit.id} className="text-[11px] text-muted">
                       {new Date(audit.createdAt).toLocaleString('en-BD')} · {audit.action}
                     </p>
                   ))}

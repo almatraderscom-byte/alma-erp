@@ -23,6 +23,7 @@ import type {
   CreativeStudioV3View,
 } from '@/agent/components/creative-studio-v3/types'
 import { selectAccessibleStudioBrand } from '@/agent/components/creative-studio-v3/ui-contract'
+import { setActiveStudioContentContext } from '@/agent/components/creative-studio/studio-api'
 
 const ACTIVE_BRAND_KEY = 'alma-creative-studio-v3-brand'
 
@@ -37,6 +38,7 @@ export function CreativeStudioV3({
   const [view, setView] = useState<CreativeStudioV3View>({ id: 'home' })
   const [brands, setBrands] = useState<Awaited<ReturnType<typeof creativeStudioV3ProductionPort.listBrands>>>([])
   const [activeBrandId, setActiveBrandId] = useState<string | null>(initialContext.brandId)
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(initialContext.projectId)
   const [launchingProjectId, setLaunchingProjectId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -69,11 +71,55 @@ export function CreativeStudioV3({
     () => brands.find((brand) => brand.brandProfileId === activeBrandId) ?? null,
     [activeBrandId, brands],
   )
+  const availableProjects = useMemo(
+    () => initialContext.accessibleProjects.filter((project) =>
+      project.brandProfileId === activeBrandId && !project.readonly),
+    [activeBrandId, initialContext.accessibleProjects],
+  )
+  const activeProject = useMemo(
+    () => availableProjects.find((project) => project.id === activeProjectId)
+      ?? availableProjects[0]
+      ?? null,
+    [activeProjectId, availableProjects],
+  )
+
+  useEffect(() => {
+    setActiveProjectId((current) =>
+      availableProjects.some((project) => project.id === current)
+        ? current
+        : availableProjects[0]?.id ?? null)
+  }, [availableProjects])
+
+  useEffect(() => {
+    if (view.id !== 'gallery' || !view.reviewTarget) return
+    const targetProject = availableProjects.find((project) =>
+      project.id === view.reviewTarget?.projectId
+      && project.brandProfileId === view.reviewTarget?.brandProfileId)
+    if (targetProject) setActiveProjectId(targetProject.id)
+  }, [availableProjects, view])
+
+  useEffect(() => {
+    if (!activeProject || !activeProject.brandProfileId) {
+      setActiveStudioContentContext(null)
+      return
+    }
+    setActiveStudioContentContext({
+      brandProfileId: activeProject.brandProfileId,
+      projectId: activeProject.id,
+      productId: activeProject.product?.code ?? null,
+      recipeId: activeProject.currentRecipeId,
+      folder: activeProject.defaultFolder,
+    })
+    return () => setActiveStudioContentContext(null)
+  }, [activeProject])
 
   const changeBrand = useCallback((brandId: string) => {
     const brand = brands.find((item) => item.brandProfileId === brandId)
     if (!brand) return
     setActiveBrandId(brandId)
+    const firstProject = initialContext.accessibleProjects.find((project) =>
+      project.brandProfileId === brandId && !project.readonly)
+    setActiveProjectId(firstProject?.id ?? null)
     setView({ id: 'home' })
     window.localStorage.setItem(ACTIVE_BRAND_KEY, brandId)
     window.dispatchEvent(new CustomEvent('alma-studio-brand-context', { detail: brand }))
@@ -81,7 +127,17 @@ export function CreativeStudioV3({
     query.set('brand', brandId)
     query.delete('project')
     router.replace(`${pathname}?${query.toString()}`, { scroll: false })
-  }, [brands, pathname, router, searchParams])
+  }, [brands, initialContext.accessibleProjects, pathname, router, searchParams])
+
+  const changeProject = useCallback((projectId: string) => {
+    const project = availableProjects.find((item) => item.id === projectId)
+    if (!project) return
+    setActiveProjectId(project.id)
+    const query = new URLSearchParams(searchParams.toString())
+    query.set('brand', project.brandProfileId!)
+    query.set('project', project.id)
+    router.replace(`${pathname}?${query.toString()}`, { scroll: false })
+  }, [availableProjects, pathname, router, searchParams])
 
   const openComposition = useCallback(async (
     requestedProject: StudioProjectSummary,
@@ -179,6 +235,7 @@ export function CreativeStudioV3({
       <StudioV3ImageLab
         key={`image-${activeBrandId ?? 'unscoped'}`}
         activeBrand={activeBrand}
+        activeProject={activeProject}
         initialAvatarId={view.avatarId}
         initialSourceAssetId={view.sourceAssetId}
         onNavigate={setView}
@@ -190,6 +247,7 @@ export function CreativeStudioV3({
       <StudioV3VideoLab
         key={`video-${activeBrandId ?? 'unscoped'}`}
         activeBrand={activeBrand}
+        activeProject={activeProject}
         initialAvatarId={view.avatarId}
         initialSourceAssetId={view.sourceAssetId}
         onNavigate={setView}
@@ -199,17 +257,26 @@ export function CreativeStudioV3({
   } else if (view.id === 'gallery') {
     content = (
       <StudioV3Gallery
-        key={`gallery-${activeBrandId ?? 'unscoped'}`}
+        key={[
+          'gallery',
+          activeBrandId ?? 'unscoped',
+          view.reviewTarget?.projectAssetId ?? 'browse',
+          view.reviewTarget?.currentVersionId ?? 'current',
+          view.reviewTarget?.expectedSequence ?? 'sequence',
+        ].join('-')}
         activeBrand={activeBrand}
+        activeProject={activeProject}
         initialType={view.initialType}
         onNavigate={setView}
         port={creativeStudioV3ProductionPort}
+        reviewTarget={view.reviewTarget}
       />
     )
   } else if (view.id === 'finishing') {
     content = (
       <StudioV3Finishing
         activeBrand={activeBrand}
+        activeProject={activeProject}
         assetId={view.assetId}
         key={`finishing-${activeBrandId ?? 'unscoped'}`}
         onNavigate={setView}
@@ -236,6 +303,7 @@ export function CreativeStudioV3({
     content = (
       <StudioV3Home
         activeBrand={activeBrand}
+        activeProject={activeProject}
         accessibleProjects={initialContext.accessibleProjects}
         foundationReadEnabled={initialContext.foundation.readEnabled}
         initialProjectId={initialContext.projectId}
@@ -251,11 +319,14 @@ export function CreativeStudioV3({
   return (
     <StudioV3Shell
       activeBrandId={activeBrandId}
+      activeProjectId={activeProject?.id ?? null}
       accountLabel={initialContext.accountLabel}
       brands={brands}
+      projects={availableProjects}
       currentView={view}
       immersive={view.id === 'editor'}
       onBrandChange={changeBrand}
+      onProjectChange={changeProject}
       onNavigate={setView}
       legacyAllowed={initialContext.legacyAllowed}
       studioRole={initialContext.studioRole}

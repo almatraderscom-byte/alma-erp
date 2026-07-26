@@ -179,7 +179,7 @@
   border-radius: var(--radius-pill);
   color: color-mix(in srgb, var(--success) 76%, var(--studio-ink));
   background: color-mix(in srgb, var(--success) 8%, var(--studio-surface));
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 750;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -217,7 +217,7 @@
   border-radius: var(--radius-pill);
   color: var(--studio-accent-strong);
   background: var(--studio-accent-wash);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 800;
   white-space: nowrap;
 }
@@ -314,7 +314,7 @@
 .sidebarLabel {
   margin: 0 10px 8px;
   color: var(--studio-quiet);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -343,12 +343,12 @@
 }
 
 .sidebarTrust strong {
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .sidebarTrust span {
   color: var(--studio-muted);
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -401,7 +401,7 @@
   display: block;
   margin-bottom: 5px;
   color: var(--studio-accent-strong);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.13em;
   text-transform: uppercase;
@@ -487,7 +487,7 @@
 
 .sectionMeta {
   color: var(--studio-muted);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.45;
   text-align: right;
 }
@@ -567,7 +567,7 @@
   margin: 0 0 20px;
   padding: 11px 13px;
   border-radius: var(--radius-md);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -577,7 +577,7 @@
   gap: 7px;
   margin: -8px 0 18px;
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -762,13 +762,13 @@
 
 .createCard small {
   color: var(--studio-muted);
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.48;
 }
 
 .createCard em {
   color: var(--studio-quiet);
-  font-size: 8px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 750;
   letter-spacing: 0.05em;
@@ -842,13 +842,13 @@
 
 .inventoryAssets > header span {
   color: var(--studio-muted);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .identityPanel > header button {
   color: var(--studio-accent-strong);
   background: transparent;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -930,7 +930,7 @@
 .assetCopy strong,
 .libraryCopy strong {
   overflow: hidden;
-  font-size: 10px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -939,7 +939,7 @@
 .libraryCopy small {
   overflow: hidden;
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1024,7 +1024,7 @@
 .ownedList strong,
 .reviewQueue strong {
   overflow: hidden;
-  font-size: 10px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1036,7 +1036,7 @@
 .reviewQueue small {
   overflow: hidden;
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1044,7 +1044,7 @@
 .identityList em,
 .deskList em {
   color: var(--studio-accent-strong);
-  font-size: 8px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 750;
 }
@@ -1110,7 +1110,7 @@
 
 .pulseCard > header > div small {
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .pulseCard > header button {
@@ -1149,7 +1149,7 @@
   gap: 12px;
   padding: 8px 0;
   border-top: 1px solid var(--border-subtle);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .pulseCard dt,
@@ -1171,7 +1171,7 @@
 .integrityCard > p {
   margin: 9px 0 0;
   color: var(--studio-muted);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .integrityCard ul {
@@ -1187,7 +1187,7 @@
   justify-content: space-between;
   gap: 10px;
   color: var(--studio-muted);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .integrityCard li em {
@@ -1204,7 +1204,7 @@
   border-top: 1px solid var(--border-subtle);
   color: var(--studio-accent-strong);
   background: transparent;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -1225,7 +1225,7 @@
   border-radius: var(--radius-pill);
   color: var(--studio-muted);
   background: transparent;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -1335,7 +1335,7 @@
 .sourceModeGrid small {
   overflow: hidden;
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1368,7 +1368,7 @@
   border-radius: var(--radius-pill);
   color: var(--studio-accent-strong);
   background: var(--studio-accent-wash);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -1401,14 +1401,14 @@
 .mediaChoice strong,
 .mediaChoiceActive strong {
   margin-top: 8px;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .mediaChoice small,
 .mediaChoiceActive small {
   margin-top: 3px;
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .identityLane {
@@ -1446,7 +1446,7 @@
 .identityLane strong,
 .recipeLane strong {
   overflow: hidden;
-  font-size: 9px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1455,7 +1455,7 @@
 .recipeLane small {
   overflow: hidden;
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1463,7 +1463,7 @@
 
 .identityLane em {
   color: var(--studio-accent-strong);
-  font-size: 7px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 800;
   text-transform: uppercase;
@@ -1485,7 +1485,7 @@
   margin: 10px 0 0;
   padding: 8px 10px;
   border-radius: 10px;
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -1516,7 +1516,7 @@
   min-width: 0;
   justify-content: space-between;
   gap: 12px;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .selectionSummary span {
@@ -1546,12 +1546,12 @@
 }
 
 .toggleRow strong {
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .toggleRow small {
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.4;
 }
 
@@ -1605,7 +1605,7 @@
 .resolutionTruth strong,
 .sourceIntegrity strong,
 .referenceReceipt strong {
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .readiness span,
@@ -1613,7 +1613,7 @@
 .sourceIntegrity span,
 .referenceReceipt span {
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.45;
 }
 
@@ -1630,13 +1630,13 @@
   display: block;
   margin-bottom: 7px;
   color: var(--studio-muted);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 750;
 }
 
 .field > span em {
   color: var(--danger);
-  font-size: 7px;
+  font-size: 11px;
   font-style: normal;
   text-transform: uppercase;
 }
@@ -1670,7 +1670,7 @@
   border-radius: var(--radius-pill);
   color: var(--studio-muted);
   background: var(--studio-soft);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -1714,18 +1714,18 @@
 }
 
 .engineList strong {
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .engineList small {
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .engineList em {
   flex: 0 0 auto;
   color: var(--success);
-  font-size: 7px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 750;
 }
@@ -1740,7 +1740,7 @@
 .fidelityCard > span {
   display: block;
   color: var(--info);
-  font-size: 7px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1749,7 +1749,7 @@
 .fidelityCard strong {
   display: block;
   margin-top: 4px;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .fidelityCard p,
@@ -1757,7 +1757,7 @@
   display: block;
   margin: 4px 0 0;
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.45;
 }
 
@@ -1781,7 +1781,7 @@
   padding: 10px 11px;
   border-radius: var(--radius-md);
   resize: vertical;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -1789,7 +1789,7 @@
 .inlineFields select {
   padding: 0 30px 0 10px;
   border-radius: 10px;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .resolutionGrid > button,
@@ -1815,7 +1815,7 @@
 .resolutionGrid strong,
 .frameGrid strong,
 .recipeCards strong {
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .resolutionGrid small,
@@ -1823,7 +1823,7 @@
 .recipeCards small,
 .recipeCards em {
   color: var(--studio-muted);
-  font-size: 7px;
+  font-size: 11px;
   font-style: normal;
   line-height: 1.4;
 }
@@ -1837,7 +1837,7 @@
 .optionHelp {
   margin: 7px 0 0;
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.45;
 }
 
@@ -1889,7 +1889,7 @@
   display: grid;
   height: 100%;
   place-items: center;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .historyPanel {
@@ -1937,8 +1937,8 @@
   white-space: nowrap;
 }
 
-.historyGrid strong { font-size: 9px; }
-.historyGrid small { color: var(--studio-muted); font-size: 8px; }
+.historyGrid strong { font-size: 11px; }
+.historyGrid small { color: var(--studio-muted); font-size: 11px; }
 
 .truthBoundary {
   display: flex;
@@ -1958,13 +1958,13 @@
 }
 
 .truthBoundary strong {
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .truthBoundary p {
   margin: 3px 0 0;
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -1998,7 +1998,7 @@
   border-radius: var(--radius-pill);
   color: var(--studio-muted);
   background: transparent;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -2034,7 +2034,7 @@
   min-width: 0;
   border: 0;
   background: transparent;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .gallerySearch button {
@@ -2043,7 +2043,7 @@
   border-radius: var(--radius-pill);
   color: #fff;
   background: var(--studio-accent-strong);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -2076,7 +2076,7 @@
 .galleryFilters select {
   max-width: 130px;
   padding: 0 26px 0 10px;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .densityControl {
@@ -2194,7 +2194,7 @@
   border-radius: var(--radius-pill);
   color: #fff;
   background: color-mix(in srgb, var(--c-black) 65%, transparent);
-  font-size: 6px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 800;
   letter-spacing: 0.04em;
@@ -2208,7 +2208,7 @@
   gap: 6px;
   margin-top: 3px;
   color: var(--studio-quiet);
-  font-size: 7px;
+  font-size: 11px;
 }
 
 .libraryCopy em {
@@ -2260,7 +2260,7 @@
 .galleryEmpty p {
   max-width: 390px;
   margin: 7px 0 0;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -2361,7 +2361,7 @@
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 9px;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .finishingSources > header span {
@@ -2421,8 +2421,8 @@
   white-space: nowrap;
 }
 
-.finishSourceList strong { font-size: 8px; }
-.finishSourceList small { color: var(--studio-muted); font-size: 7px; }
+.finishSourceList strong { font-size: 11px; }
+.finishSourceList small { color: var(--studio-muted); font-size: 11px; }
 
 .finishCanvas {
   display: grid;
@@ -2463,7 +2463,7 @@
 
 .finishingPreview > header > span {
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .finishCanvas img,
@@ -2490,7 +2490,7 @@
 
 .layoutOverlay span,
 .layoutOverlay em {
-  font-size: clamp(8px, 1vw, 12px);
+  font-size: clamp(11px, 1vw, 12px);
   font-style: normal;
   font-weight: 700;
 }
@@ -2503,7 +2503,7 @@
 }
 
 .layoutOverlay small {
-  font-size: clamp(10px, 1.6vw, 19px);
+  font-size: clamp(11px, 1.6vw, 19px);
 }
 
 .finishInspector > header {
@@ -2554,7 +2554,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: 11px;
   background: var(--studio-soft);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .motionChecklist > span svg {
@@ -2600,7 +2600,7 @@
 
 .deskDetail > p {
   color: var(--studio-muted);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.55;
 }
 
@@ -2676,14 +2676,14 @@
   display: block;
   margin: 0;
   color: var(--studio-muted);
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
 .systemCards em,
 .modelGrid em {
   color: var(--studio-accent-strong);
-  font-size: 7px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 750;
 }
@@ -2702,12 +2702,12 @@
 
 .systemCards dt {
   color: var(--studio-muted);
-  font-size: 7px;
+  font-size: 11px;
 }
 
 .systemCards dd {
   margin: 0;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -2745,7 +2745,7 @@
 .operationsIntro p {
   margin: 0;
   color: var(--studio-muted);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.55;
 }
 
@@ -2925,7 +2925,7 @@
   .mobileNav .navItemActive span {
     display: block;
     max-width: 100%;
-    font-size: 7px;
+    font-size: 11px;
   }
 
   .mobileNav .navItem svg,

@@ -1,12 +1,20 @@
 import { createHash } from 'node:crypto'
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
-import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { audioCostBdt, audioProviderLabel } from '@/lib/creative-studio/audio-lab'
 import { checkStudioCostConfirmation, normalizeStudioRunCap } from '@/lib/creative-studio/studio-policy'
 import { isWithinPaidPreviewCeiling, OWNER_STUDIO_USAGE_CONTEXT } from '@/lib/creative-studio/voice-policy'
+import {
+  authenticateStudioRequest,
+  studioAccessErrorResponse,
+  type StudioActor,
+} from '@/lib/creative-studio/studio-access'
+import {
+  filterStudioResourcesToScope,
+  requireStudioResourceContext,
+  studioResourceScopeKey,
+} from '@/lib/creative-studio/studio-resource-scope'
 
 export const runtime = 'nodejs'
 
@@ -15,26 +23,53 @@ const db = prisma as any
 const DEFAULT_CONSENT =
   'আমি নিশ্চিত করছি যে এটি আমার নিজের কণ্ঠ, আমি এই নমুনা দিয়ে ব্যক্তিগত Creative Studio voice clone তৈরির অনুমতি দিচ্ছি, এবং এটি কেবল আমার owner-only Studio কাজে ব্যবহার হবে।'
 
-async function ownerId(req: NextRequest): Promise<string | Response> {
-  const disabled = requireAgentEnabled()
-  if (disabled) return disabled
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
-  return token.sub
+async function ownerActor(req: NextRequest): Promise<StudioActor | Response> {
+  const actor = await authenticateStudioRequest(req)
+  if (actor instanceof Response) return actor
+  if (!isSystemOwner(actor.erpRole)) {
+    return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
+  return actor
 }
 
 export async function GET(req: NextRequest) {
-  const owner = await ownerId(req)
-  if (owner instanceof Response) return owner
-  const voices = await db.creativeVoice.findMany({
-    where: { ownerId: owner },
+  const actor = await authenticateStudioRequest(req)
+  if (actor instanceof Response) return actor
+  const brandProfileId = req.nextUrl.searchParams.get('brandProfileId')
+  const projectId = req.nextUrl.searchParams.get('projectId')
+  let ownerId: string
+  let scope: Awaited<ReturnType<typeof requireStudioResourceContext>> | null = null
+  if (brandProfileId || projectId) {
+    try {
+      scope = await requireStudioResourceContext(actor, {
+        brandProfileId,
+        projectId,
+      })
+      ownerId = scope.access.ownerId
+    } catch (error) {
+      return studioAccessErrorResponse(error, 'creative-voices-list')
+    }
+  } else {
+    if (!isSystemOwner(actor.erpRole)) {
+      return Response.json({ error: 'forbidden' }, { status: 403 })
+    }
+    ownerId = actor.userId
+  }
+  const ownerVoices = await db.creativeVoice.findMany({
+    where: { ownerId },
     orderBy: { updatedAt: 'desc' },
     include: {
       versions: { orderBy: { version: 'desc' } },
       audits: { orderBy: { createdAt: 'desc' }, take: 50 },
     },
   })
+  const voices = scope
+    ? await filterStudioResourcesToScope('voice', ownerVoices, {
+        ownerId,
+        brandProfileId: scope.brandProfileId,
+        projectId: scope.projectId,
+      })
+    : ownerVoices
   return Response.json({
     voices: voices.map((voice: Record<string, unknown>) => ({
       ...voice,
@@ -50,8 +85,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const owner = await ownerId(req)
-  if (owner instanceof Response) return owner
+  const actor = await ownerActor(req)
+  if (actor instanceof Response) return actor
+  const owner = actor.userId
 
   let body: {
     name?: string
@@ -60,11 +96,21 @@ export async function POST(req: NextRequest) {
     intent?: 'estimate' | 'queue'
     confirmedCostBdt?: number
     costCapBdt?: number
+    brandProfileId?: string
+    projectId?: string
   }
   try {
     body = await req.json()
   } catch {
     return Response.json({ error: 'invalid_json' }, { status: 400 })
+  }
+  let resourceContext: Awaited<ReturnType<typeof requireStudioResourceContext>> | null = null
+  if (body.brandProfileId || body.projectId) {
+    try {
+      resourceContext = await requireStudioResourceContext(actor, body)
+    } catch (error) {
+      return studioAccessErrorResponse(error, 'creative-voice-create')
+    }
   }
 
   const paths = (body.samplePaths ?? [])
@@ -164,12 +210,34 @@ export async function POST(req: NextRequest) {
           voiceId: voice.id,
           voiceVersionId: version.id,
           costUsd: costBdt / 125,
+          ...(resourceContext
+            ? {
+                brandProfileId: resourceContext.brandProfileId,
+                projectId: resourceContext.projectId,
+              }
+            : {}),
         },
         summary,
         costEstimate: costBdt / 125,
         status: 'approved',
       },
     })
+    if (resourceContext) {
+      const scopeRecord = {
+        version: 1 as const,
+        ownerId: resourceContext.access.ownerId,
+        brandProfileId: resourceContext.brandProfileId,
+        projectId: resourceContext.projectId,
+        createdById: actor.userId,
+        createdAt: new Date().toISOString(),
+      }
+      const scopeKey = studioResourceScopeKey('voice', voice.id)
+      await tx.agentKvSetting.upsert({
+        where: { key: scopeKey },
+        create: { key: scopeKey, value: JSON.stringify(scopeRecord) },
+        update: { value: JSON.stringify(scopeRecord) },
+      })
+    }
     await tx.creativeVoiceAudit.create({
       data: {
         voiceId: voice.id,

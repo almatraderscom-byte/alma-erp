@@ -169,10 +169,10 @@ function ModelChooserSheet({
                       </span>
                     )}
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4">
-                      <span className="block truncate text-left text-[10px] font-bold text-white">{m.name}</span>
+                      <span className="block truncate text-left text-[11px] font-bold text-white">{m.name}</span>
                     </div>
                     {active && (
-                      <span className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-[#E07A5F] text-[10px] text-white shadow">
+                      <span className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-[#E07A5F] text-[11px] text-white shadow">
                         ✓
                       </span>
                     )}
@@ -181,7 +181,7 @@ function ModelChooserSheet({
               })}
             </div>
             {onUpload && (
-              <div className="my-3 flex items-center gap-2 text-[10px] text-muted">
+              <div className="my-3 flex items-center gap-2 text-[11px] text-muted">
                 <span className="h-px flex-1 bg-border-subtle" /> অথবা <span className="h-px flex-1 bg-border-subtle" />
               </div>
             )}
@@ -540,7 +540,7 @@ function FamilyRoleChecklist({
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-[12px] font-semibold text-cream">{roleLabelBn(r)}</p>
-                <p className="truncate text-[10px] text-muted">{m ? m.name : 'সেভ করা নেই'}</p>
+                <p className="truncate text-[11px] text-muted">{m ? m.name : 'সেভ করা নেই'}</p>
               </div>
               {m ? (
                 <span className="shrink-0 text-[13px] text-emerald-400">✓</span>
@@ -811,6 +811,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
     try {
       const result = await runAutoStudioJob({
         productImagePath: productPath,
+        modelId: defaultModel.id,
         includeFamily: includeFamily && familyAvailable,
         includeReel,
       })
@@ -1183,7 +1184,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                   >
                     🎯 Precision Edit — মাস্ক এঁকে শুধু সেই জায়গা বদলান (FLUX Fill)
                   </button>
-                  <p className="text-[10px] leading-snug text-muted" role="status">
+                  <p className="text-[11px] leading-snug text-muted" role="status">
                     {getResolutionContract('fal_flux_fill').labelBn} · {getResolutionContract('fal_flux_fill').detailBn}
                     {' '}2K/4K নির্বাচন প্রযোজ্য নয়।
                   </p>
@@ -1237,7 +1238,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                         type="button"
                         onClick={() => applyTemplate(t)}
                         title={t.hintBn}
-                        className="shrink-0 rounded-full border border-[#E07A5F]/30 bg-[#E07A5F]/10 px-2.5 py-1 text-[10px] font-semibold text-cream"
+                        className="shrink-0 rounded-full border border-[#E07A5F]/30 bg-[#E07A5F]/10 px-2.5 py-1 text-[11px] font-semibold text-cream"
                       >
                         ⚡ {t.labelBn}
                       </button>
@@ -1279,7 +1280,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                         type="button"
                         onClick={() => setFamilyPreset(p.id)}
                         className={cn(
-                          'rounded-full px-2.5 py-1 text-[10px] font-semibold',
+                          'rounded-full px-2.5 py-1 text-[11px] font-semibold',
                           familyPreset === p.id ? 'bg-[#E07A5F] text-white' : 'border border-border bg-card/80',
                         )}
                       >
@@ -1414,7 +1415,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                               ))}
                             </select>
                           ) : (
-                            <span className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[10px] text-muted">
+                            <span className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px] text-muted">
                               অনুপাত: সোর্স ছবির মতো
                             </span>
                           )}
@@ -1435,7 +1436,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                         <div
                           role="status"
                           className={cn(
-                            'min-w-[15rem] rounded-lg border px-2.5 py-1.5 text-[10px] leading-snug',
+                            'min-w-[15rem] rounded-lg border px-2.5 py-1.5 text-[11px] leading-snug',
                             resolutionUiState.kind === 'unsupported'
                               ? 'border-amber-400/50 bg-amber-50/10 text-amber-700'
                               : 'border-border bg-card/80 text-muted',
@@ -1498,7 +1499,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                   )}
                 </div>
                 {mode !== 'image_to_video' && resolutionUiState.kind === 'tiered' && (
-                  <p className="mb-2 rounded-lg border border-border bg-card/50 px-2.5 py-1.5 text-[10px] leading-snug text-muted" role="status">
+                  <p className="mb-2 rounded-lg border border-border bg-card/50 px-2.5 py-1.5 text-[11px] leading-snug text-muted" role="status">
                     <span className="font-bold text-cream">ফাইনাল আউটপুট: {resolutionUiState.labelBn}</span>
                     {' · '}
                     {resolutionUiState.detailBn}
@@ -1511,9 +1512,9 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                   <label className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-border bg-card/60 px-3 py-2">
                     <span className="text-[11px] leading-snug text-muted">
                       🛡 প্রোটেক্টেড কম্পোজিট{' '}
-                      <span className="rounded bg-[#81B29A]/15 px-1 py-px text-[9px] font-bold text-[#2d6a4f]">নতুন</span>
+                      <span className="rounded bg-[#81B29A]/15 px-1 py-px text-[11px] font-bold text-[#2d6a4f]">নতুন</span>
                       <br />
-                      <span className="text-[10px]">
+                      <span className="text-[11px]">
                         অনুমোদিত মুখ/গার্মেন্ট আর রিজেনারেট হয় না — কাটআউট বসিয়ে শুধু কিনারা+ছায়া মেলানো হয়
                       </span>
                     </span>
@@ -1566,7 +1567,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                     </>
                   )}
                 </motion.button>
-                <p className="mt-1.5 text-center text-[10px] text-muted">
+                <p className="mt-1.5 text-center text-[11px] text-muted">
                   {xaiWillRun
                     ? isFamilyMerge
                       ? 'Grok Imagine: দুই ছবির সবাইকে এক ফ্রেমে — মুখ/পোশাক হুবহু রেখে'
@@ -1653,7 +1654,7 @@ function AutoPanel({
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-semibold text-cream">মডেল: {defaultModel.name}</p>
-              <p className="text-[10px] text-muted">{`🟢 ${defaultEngineLabel} — ডিফল্ট ইঞ্জিন চালু`}</p>
+              <p className="text-[11px] text-muted">{`🟢 ${defaultEngineLabel} — ডিফল্ট ইঞ্জিন চালু`}</p>
             </div>
             <span className="shrink-0 rounded-full bg-[#E07A5F]/12 px-2.5 py-1 text-[11px] font-semibold text-[#E07A5F]">বদলান</span>
           </button>
@@ -1688,7 +1689,7 @@ function AutoPanel({
           >
             <div>
               <p className="text-[13px] font-semibold text-cream">পরিবার ভ্যারিয়েন্টও বানাও</p>
-              <p className="text-[10px] text-muted">বাবা+ছেলে / মা+মেয়ে — যাদের মডেল সেভ আছে</p>
+              <p className="text-[11px] text-muted">বাবা+ছেলে / মা+মেয়ে — যাদের মডেল সেভ আছে</p>
             </div>
             <span
               className={cn('relative h-6 w-10 shrink-0 rounded-full transition-colors', includeFamily ? 'bg-[#E07A5F]' : 'bg-white/15')}
@@ -1714,7 +1715,7 @@ function AutoPanel({
         >
           <div>
             <p className="text-[13px] font-semibold text-cream">🎬 ছোট রিলও বানাও</p>
-            <p className="text-[10px] text-muted">৬ সেকেন্ড 9:16 প্রোডাক্ট রিল (Veo 3.1) · আলাদা খরচ</p>
+            <p className="text-[11px] text-muted">৬ সেকেন্ড 9:16 প্রোডাক্ট রিল (Veo 3.1) · আলাদা খরচ</p>
           </div>
           <span className={cn('relative h-6 w-10 shrink-0 rounded-full transition-colors', includeReel ? 'bg-[#E07A5F]' : 'bg-white/15')}>
             <span
@@ -1742,7 +1743,7 @@ function AutoPanel({
             <>✨ Generate</>
           )}
         </motion.button>
-        <p className="text-center text-[10px] text-muted">
+        <p className="text-center text-[11px] text-muted">
           ইঞ্জিন: {defaultEngineLabel} · সাপ্লায়ার ছবির প্লেট/টেক্সট অটো-ক্লিন
           {includeReel ? ' · রিলে আলাদা ভিডিও খরচ' : ''}
         </p>

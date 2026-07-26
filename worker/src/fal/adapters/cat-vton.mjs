@@ -19,6 +19,10 @@ import {
   makeContractReferenceReceipt,
   validateOrderedReferenceContract,
 } from '../../image/reference-contract.mjs'
+import {
+  assertStudioRunPaidAttempt,
+  requiresStudioRunPaidAttemptAuthorization,
+} from '../../studio-run-authorize.mjs'
 
 export const CAT_VTON_ENDPOINT = 'fal-ai/cat-vton'
 
@@ -95,6 +99,9 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
       seed: input.seed ?? null,
       qcAttempt: qcAttempt ?? 1,
     })
+    if (requiresStudioRunPaidAttemptAuthorization(payload)) {
+      await assertStudioRunPaidAttempt(pendingActionId, payload, qcAttempt ?? 1)
+    }
     const out = await runFalQueueJob({
       supabase,
       pendingActionId,
@@ -165,6 +172,7 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
         productType: null,
         productImagePath,
         personImagePath: rawModelImagePath,
+        maxPaidGenerations: payload.studioPaidAttemptLimit,
         regenerate: async (_fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum)
           paths.push(retry.storagePath)

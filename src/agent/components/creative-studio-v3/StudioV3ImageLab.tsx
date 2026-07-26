@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import type {
   GalleryItem,
@@ -10,6 +10,8 @@ import type {
   StudioBrandProfile,
   StudioConfig,
   StudioSettings,
+  StudioRunEstimateClient,
+  RunPayload,
 } from '@/agent/components/creative-studio/studio-api'
 import {
   ASPECT_RATIOS,
@@ -33,6 +35,7 @@ import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 import type {
   StudioBrandRecipe,
   StudioProductOption,
+  StudioProjectSummary,
 } from '@/lib/creative-studio/project-contract'
 import {
   buildStudioResolutionUiState,
@@ -120,12 +123,14 @@ function ImageTile({
 
 export function StudioV3ImageLab({
   activeBrand,
+  activeProject,
   initialAvatarId,
   initialSourceAssetId,
   onNavigate,
   port,
 }: {
   activeBrand: StudioBrandProfile | null
+  activeProject: StudioProjectSummary | null
   initialAvatarId?: string
   initialSourceAssetId?: string
   onNavigate: CreativeStudioV3Navigate
@@ -150,38 +155,27 @@ export function StudioV3ImageLab({
   const [numImages, setNumImages] = useState(1)
   const [includeFamily, setIncludeFamily] = useState(false)
   const [includeReel, setIncludeReel] = useState(false)
-  const [uploading, setUploading] = useState<string | null>(null)
-  const [uploaded, setUploaded] = useState<{
-    product?: { path: string; preview: string }
-    person?: { path: string; preview: string }
-    source?: { path: string; preview: string }
-  }>({})
   const [reviewOpen, setReviewOpen] = useState(false)
+  const [reviewEstimate, setReviewEstimate] = useState<StudioRunEstimateClient | null>(null)
+  const [reviewRequest, setReviewRequest] = useState<(RunPayload & {
+    auto?: boolean
+    includeFamily?: boolean
+    includeReel?: boolean
+  }) | null>(null)
+  const [estimating, setEstimating] = useState(false)
   const [queueing, setQueueing] = useState(false)
-  const uploadInput = useRef<HTMLInputElement>(null)
-  const uploadKind = useRef<'product' | 'person' | 'source'>('source')
-  const uploadedRef = useRef(uploaded)
-
-  useEffect(() => {
-    uploadedRef.current = uploaded
-  }, [uploaded])
-
-  useEffect(() => () => {
-    Object.values(uploadedRef.current).forEach((item) => {
-      if (item?.preview.startsWith('blob:')) URL.revokeObjectURL(item.preview)
-    })
-  }, [])
 
   useEffect(() => {
     let live = true
     setLoading(true)
     void Promise.allSettled([
-      port.listProducts(),
-      port.listModels(activeBrand?.brandProfileId),
+      Promise.resolve(activeProject?.product ? [activeProject.product] : []),
+      port.listModels(activeBrand?.brandProfileId, activeProject?.id),
       port.listRecipes(activeBrand?.brandProfileId),
       port.listGallery(
         { media: 'image', state: 'ready', limit: 24 },
         activeBrand?.brandProfileId,
+        activeProject?.id,
       ),
       port.getConfig(),
       port.getSettings(),
@@ -218,18 +212,25 @@ export function StudioV3ImageLab({
       if (live) setLoading(false)
     })
     return () => { live = false }
-  }, [activeBrand?.brandProfileId, port])
+  }, [activeBrand?.brandProfileId, activeProject, port])
 
   const selectedProduct = data.products.find((product) => product.code === selectedProductCode) ?? null
   const selectedModel = data.models.find((model) => model.id === selectedModelId) ?? null
   const selectedSource = data.sources.find((asset) => asset.id === selectedSourceId) ?? null
   const selectedRecipe = data.recipes.find((recipe) => recipe.id === recipeId) ?? null
   const requirements = fieldRequirement(mode)
-  const capability = getAdvancedModeCapability(engine, mode)
+  const multiPerson = familyPreset !== 'single'
+    && (mode === 'product_to_model' || mode === 'try_on')
+  const selectedEngine = STUDIO_ENGINES.find((item) => item.id === engine)
+  const capability = multiPerson && selectedEngine?.singlePersonOnly
+    ? undefined
+    : getAdvancedModeCapability(engine, mode)
 
   const engines = useMemo(
-    () => STUDIO_ENGINES.filter((item) => getAdvancedModeCapability(item.id, mode)),
-    [mode],
+    () => STUDIO_ENGINES.filter((item) =>
+      getAdvancedModeCapability(item.id, mode)
+      && !(multiPerson && item.singlePersonOnly)),
+    [mode, multiPerson],
   )
 
   useEffect(() => {
@@ -273,12 +274,17 @@ export function StudioV3ImageLab({
     }
   }, [aspectRatio, resolution, resolutionState])
 
-  const productPath = uploaded.product?.path ?? selectedProduct?.sourceImage ?? null
-  const personPath = uploaded.person?.path ?? null
-  const sourcePath = uploaded.source?.path ?? sourceImage(selectedSource)
+  const productPath = selectedProduct?.sourceImage ?? null
+  const personPath = selectedModel?.imagePath ?? null
+  const sourcePath = sourceImage(selectedSource)
   const needsPrompt = mode === 'generate' || mode === 'edit'
   const hasPerson = Boolean(selectedModelId || personPath)
-  const ownerActionAvailable = activeBrand?.role === 'owner'
+  const creationAvailable = Boolean(
+    activeBrand
+    && activeBrand.role !== 'reviewer'
+    && activeProject
+    && activeProject.brandProfileId === activeBrand.brandProfileId,
+  )
   const ready =
     (!requirements.needsProduct || Boolean(productPath))
     && (!requirements.needsModel || hasPerson)
@@ -290,73 +296,90 @@ export function StudioV3ImageLab({
     && engine !== 'fal_flux_fill'
 
   const openUpload = (kind: 'product' | 'person' | 'source') => {
-    if (!ownerActionAvailable) return
-    uploadKind.current = kind
-    uploadInput.current?.click()
+    void kind
+    toast.error('Use a canonical project product, scoped identity, or project Gallery asset. Unscoped uploads cannot enter a paid run.')
   }
 
-  const uploadFile = async (file: File | undefined) => {
-    if (!file) return
-    if (!ownerActionAvailable) {
-      toast.error('Upload is disabled until the collaborator-safe production adapter is connected.')
+  const buildRequest = (): RunPayload & {
+    auto?: boolean
+    includeFamily?: boolean
+    includeReel?: boolean
+  } => {
+    if (!activeBrand || !activeProject) throw new Error('Choose an accessible brand project.')
+    const scope = {
+      brandProfileId: activeBrand.brandProfileId,
+      projectId: activeProject.id,
+      productId: selectedProduct?.code,
+      sourceAssetIds: selectedSource?.projectAssetId ? [selectedSource.projectAssetId] : [],
+      studioSurface: 'v3' as const,
+    }
+    if (architecture === 'auto') {
+      if (!productPath || !selectedModel) {
+        throw new Error('Choose the active project product and a scoped identity.')
+      }
+      return {
+        ...scope,
+        auto: true,
+        mode: 'try_on',
+        productImagePath: productPath,
+        modelId: selectedModel.id,
+        includeFamily,
+        includeReel,
+      }
+    }
+    const provider: StudioProvider = engine === 'gemini' ? 'gemini' : 'fashn'
+    const isVton = mode === 'product_to_model' || mode === 'try_on'
+    return {
+      ...scope,
+      mode,
+      provider,
+      vtonEngine: engine === 'xai_imagine' || isVton ? engine : undefined,
+      productImagePath: productPath ?? undefined,
+      modelId: selectedModelId || undefined,
+      sourceImagePath: sourcePath ?? undefined,
+      sourcePendingActionId: selectedSource?.id,
+      familyPreset: isVton ? familyPreset : undefined,
+      prompt: prompt.trim() || undefined,
+      backgroundPrompt: BACKGROUND_PRESETS.find((item) => item.id === backgroundId)?.prompt || prompt.trim() || undefined,
+      ...resolutionFieldsForRun(resolutionState),
+      generationMode,
+      numImages,
+    }
+  }
+
+  const openReview = async () => {
+    if (!creationAvailable) {
+      toast.error('Choose an accessible project. Reviewers cannot create paid runs.')
       return
     }
-    const kind = uploadKind.current
-    setUploading(kind)
+    setEstimating(true)
     try {
-      const path = await port.uploadImage(file, `studio-v3-${kind}`)
-      const preview = URL.createObjectURL(file)
-      setUploaded((current) => {
-        const previous = current[kind]
-        if (previous?.preview.startsWith('blob:')) URL.revokeObjectURL(previous.preview)
-        return { ...current, [kind]: { path, preview } }
-      })
-      toast.success('Source uploaded. It is not queued for generation.')
+      const request = buildRequest()
+      const estimate = await port.estimateRun(request, 500)
+      setReviewRequest(request)
+      setReviewEstimate(estimate)
+      setReviewOpen(true)
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : 'Upload failed')
+      toast.error(reason instanceof Error ? reason.message : 'The server could not issue an exact estimate.')
     } finally {
-      setUploading(null)
-      if (uploadInput.current) uploadInput.current.value = ''
+      setEstimating(false)
     }
   }
 
   const queue = async () => {
-    if (!ownerActionAvailable) {
-      toast.error('Generation is disabled until the collaborator-safe production adapter is connected.')
+    if (!creationAvailable || !reviewRequest || !reviewEstimate) {
+      toast.error('Refresh the exact server estimate before confirming.')
       return
     }
     setQueueing(true)
     try {
-      if (architecture === 'auto') {
-        if (!productPath) throw new Error('Choose an ERP product or upload a product source.')
-        const result = await port.queueAutoImage({
-          productImagePath: productPath,
-          includeFamily,
-          includeReel,
-        })
-        toast.success(result.message)
-      } else {
-        const provider: StudioProvider = engine === 'gemini' ? 'gemini' : 'fashn'
-        const isVton = mode === 'product_to_model' || mode === 'try_on'
-        const result = await port.queueAdvancedImage({
-          mode,
-          provider,
-          vtonEngine: engine === 'xai_imagine' || isVton ? engine : undefined,
-          productImagePath: productPath ?? undefined,
-          modelImagePath: personPath ?? undefined,
-          modelId: selectedModelId || undefined,
-          sourceImagePath: sourcePath ?? undefined,
-          sourcePendingActionId: selectedSource?.id,
-          familyPreset: isVton ? familyPreset : undefined,
-          prompt: prompt.trim() || undefined,
-          backgroundPrompt: BACKGROUND_PRESETS.find((item) => item.id === backgroundId)?.prompt || prompt.trim() || undefined,
-          ...resolutionFieldsForRun(resolutionState),
-          generationMode,
-          numImages,
-        })
-        toast.success(result.message)
-      }
+      const result = await port.confirmRun(reviewRequest, reviewEstimate, {
+        maxCostBdt: reviewEstimate.maxCostBdt,
+      })
+      toast.success(result.message)
       setReviewOpen(false)
+      setReviewEstimate(null)
+      setReviewRequest(null)
       onNavigate({ id: 'gallery' })
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : 'The server rejected the queue request.')
@@ -365,21 +388,11 @@ export function StudioV3ImageLab({
     }
   }
 
-  const selectedAvailability = engineAvailability(data.config, engine)
   const selectedEngineDefinition = STUDIO_ENGINES.find((item) => item.id === engine)
   const autoReady = Boolean(productPath && selectedModel)
 
   return (
     <div className={styles.page}>
-      <input
-        accept="image/heic,image/heif,image/jpeg,image/png,image/webp,.heic,.heif,.jpg,.jpeg,.png,.webp"
-        className="sr-only"
-        disabled={!ownerActionAvailable}
-        onChange={(event) => void uploadFile(event.target.files?.[0])}
-        ref={uploadInput}
-        type="file"
-      />
-
       <header className={styles.workspaceHeader}>
         <div className={styles.workspaceTitle}>
           <span><StudioV3Icon name="image" /></span>
@@ -403,15 +416,15 @@ export function StudioV3ImageLab({
       )}
       <p className={styles.scopeNotice}>
         <StudioV3Icon name="lock" />
-        Brand switch reloaded this Lab. Gallery and saved identities remain explicitly owner-only:
+        Brand or project changes reload this Lab through authenticated access-scoped APIs:
         {' '}{STUDIO_V3_SCOPE_BOUNDARY.gallery}; {STUDIO_V3_SCOPE_BOUNDARY.models}.
       </p>
-      {!ownerActionAvailable && (
+      {!creationAvailable && (
         <div className={styles.truthBoundary}>
           <StudioV3Icon name="lock" />
           <div>
-            <strong>{activeBrand?.role ?? 'Collaborator'} creation is not connected yet</strong>
-            <p>The V3 journey is available, but the current upload and generation routes remain owner-only. Controls stay disabled until an access-safe adapter is wired.</p>
+            <strong>{activeBrand?.role ?? 'Unassigned'} cannot create in this scope</strong>
+            <p>Choose an accessible project. Reviewers remain read-only; owner/creator requests still require the server spend threshold and signed confirmation gate.</p>
           </div>
         </div>
       )}
@@ -449,37 +462,36 @@ export function StudioV3ImageLab({
             </div>
 
             <section className={styles.sourceSection}>
-              <header><div><span className={styles.eyebrow}>ERP catalog</span><h2>Product source</h2></div><button disabled={!ownerActionAvailable || Boolean(uploading)} onClick={() => openUpload('product')} type="button">{uploading === 'product' ? 'Uploading…' : 'Upload source'}</button></header>
+              <header><div><span className={styles.eyebrow}>Project product</span><h2>Canonical product source</h2></div><button disabled onClick={() => openUpload('product')} type="button">Project sources only</button></header>
               {loading ? <div className={styles.laneSkeleton} /> : data.products.length === 0 ? (
-                <p className={styles.emptyState}>The ERP product API returned no catalog options. Upload remains server validated.</p>
+                <p className={styles.emptyState}>The active project has no canonical product snapshot. Add one from Projects before generation.</p>
               ) : (
                 <div className={styles.mediaLane}>
                   {data.products.slice(0, 14).map((product) => (
                     <ImageTile
-                      active={!uploaded.product && selectedProductCode === product.code}
+                      active={selectedProductCode === product.code}
                       image={product.previewImage ?? product.sourceImage}
                       key={product.code}
                       label={product.name}
                       meta={`${product.code} · ৳${product.priceBdt.toLocaleString('en-BD')}`}
-                      onClick={() => { setSelectedProductCode(product.code); setUploaded((current) => ({ ...current, product: undefined })) }}
+                      onClick={() => setSelectedProductCode(product.code)}
                     />
                   ))}
                 </div>
               )}
-              {uploaded.product && <p className={styles.uploadReceipt}><StudioV3Icon name="check" /> Uploaded product source · server storage path received</p>}
             </section>
 
             <section className={styles.sourceSection}>
-              <header><div><span className={styles.eyebrow}>Brand-isolated identity</span><h2>Avatar / saved model</h2></div><button disabled={!ownerActionAvailable || Boolean(uploading)} onClick={() => openUpload('person')} type="button">{uploading === 'person' ? 'Uploading…' : 'Upload reference'}</button></header>
+              <header><div><span className={styles.eyebrow}>Brand-isolated identity</span><h2>Avatar / saved model</h2></div><button disabled onClick={() => openUpload('person')} type="button">Scoped identities only</button></header>
               {data.models.length === 0 ? (
-                <p className={styles.emptyState}>No saved model is available. Add one in Recipes & Models or upload a reference.</p>
+                <p className={styles.emptyState}>No saved model is available in this brand and project. Add a scoped identity from Recipes &amp; Models.</p>
               ) : (
                 <div className={styles.identityLane}>
                   {data.models.map((model) => (
                     <button
-                      aria-pressed={!uploaded.person && selectedModelId === model.id}
+                      aria-pressed={selectedModelId === model.id}
                       key={model.id}
-                      onClick={() => { setSelectedModelId(model.id); setUploaded((current) => ({ ...current, person: undefined })) }}
+                      onClick={() => setSelectedModelId(model.id)}
                       type="button"
                     >
                       <span>{model.imageUrl ? <img alt="" src={model.imageUrl} /> : <StudioV3Icon name="voice" />}</span>
@@ -490,24 +502,23 @@ export function StudioV3ImageLab({
                   ))}
                 </div>
               )}
-              {uploaded.person && <p className={styles.uploadReceipt}><StudioV3Icon name="check" /> Uploaded person reference · no saved identity claim</p>}
             </section>
 
             {architecture === 'advanced' && requirements.needsSource && (
               <section className={styles.sourceSection}>
-                <header><div><span className={styles.eyebrow}>Gallery source</span><h2>Source image</h2></div><button disabled={!ownerActionAvailable || Boolean(uploading)} onClick={() => openUpload('source')} type="button">{uploading === 'source' ? 'Uploading…' : 'Upload source'}</button></header>
+                <header><div><span className={styles.eyebrow}>Project Gallery source</span><h2>Canonical source image</h2></div><button disabled onClick={() => openUpload('source')} type="button">Project assets only</button></header>
                 {data.sources.length === 0 ? (
                   <p className={styles.emptyState}>No ready Gallery image is available for this mode.</p>
                 ) : (
                   <div className={styles.mediaLane}>
                     {data.sources.map((asset) => (
                       <ImageTile
-                        active={!uploaded.source && selectedSourceId === asset.id}
+                        active={selectedSourceId === asset.id}
                         image={asset.thumbUrl ?? asset.previewUrl}
                         key={asset.id}
                         label={asset.summary ?? asset.mode}
                         meta={`${asset.provider} · ${asset.originalVariant ? `${asset.originalVariant.width}×${asset.originalVariant.height}` : asset.assetState}`}
-                        onClick={() => { setSelectedSourceId(asset.id); setUploaded((current) => ({ ...current, source: undefined })) }}
+                        onClick={() => setSelectedSourceId(asset.id)}
                       />
                     ))}
                   </div>
@@ -542,7 +553,7 @@ export function StudioV3ImageLab({
             {architecture === 'auto' ? (
               <div className={styles.composerBody}>
                 <div className={styles.selectionSummary}>
-                  <div><span>Product</span><strong>{selectedProduct?.name ?? (uploaded.product ? 'Uploaded source' : 'Required')}</strong></div>
+                  <div><span>Product</span><strong>{selectedProduct?.name ?? 'Required'}</strong></div>
                   <div><span>Identity</span><strong>{selectedModel?.name ?? 'Default saved model required'}</strong></div>
                   <div><span>Engine path</span><strong>{data.config?.singleVtonDefault ?? 'Server default unavailable'}</strong></div>
                 </div>
@@ -561,8 +572,8 @@ export function StudioV3ImageLab({
                     <span>{autoReady ? 'The server will recompute engine, readiness and cost policy.' : 'Choose a product with a source image and a saved default identity.'}</span>
                   </div>
                 </div>
-                <button className={styles.primaryButton} disabled={!ownerActionAvailable || !autoReady} onClick={() => setReviewOpen(true)} type="button">
-                  Review queue request <StudioV3Icon name="arrow" />
+              <button className={styles.primaryButton} disabled={!creationAvailable || !autoReady || estimating} onClick={() => void openReview()} type="button">
+                {estimating ? 'Getting exact estimate…' : 'Review exact estimate'} <StudioV3Icon name="arrow" />
                 </button>
               </div>
             ) : (
@@ -683,8 +694,8 @@ export function StudioV3ImageLab({
                     Open Mask Repair <StudioV3Icon name="arrow" />
                   </button>
                 ) : (
-                  <button className={styles.primaryButton} disabled={!ownerActionAvailable || !ready} onClick={() => setReviewOpen(true)} type="button">
-                    Review queue request <StudioV3Icon name="arrow" />
+                  <button className={styles.primaryButton} disabled={!creationAvailable || !ready || estimating} onClick={() => void openReview()} type="button">
+                    {estimating ? 'Getting exact estimate…' : 'Review exact estimate'} <StudioV3Icon name="arrow" />
                   </button>
                 )}
                 {!ready && engine !== 'fal_flux_fill' && (
@@ -700,20 +711,22 @@ export function StudioV3ImageLab({
 
       <StudioConfirmationDialog
         ariaLabel="Review image generation queue request"
-        confirmDisabled={!ownerActionAvailable || queueing || (architecture === 'auto' ? !autoReady : !ready)}
-        confirmLabel={queueing ? 'Server checking…' : 'Confirm and send to server gate'}
-        onCancel={() => setReviewOpen(false)}
+        confirmDisabled={!creationAvailable || !reviewEstimate || queueing || (architecture === 'auto' ? !autoReady : !ready)}
+        confirmLabel={queueing ? 'Revalidating…' : `Confirm up to ৳${reviewEstimate?.maxCostBdt.toLocaleString('en-BD') ?? '—'}`}
+        onCancel={() => { setReviewOpen(false); setReviewEstimate(null); setReviewRequest(null) }}
         onConfirm={() => void queue()}
         open={reviewOpen}
-        summary="This action may create paid provider jobs. The authenticated server re-validates actor and brand access, engine/mode references, capability, cost caps and kill switches before any provider call."
-        title="Queue production generation?"
+        summary="This is the exact signed whole-taka server estimate for the current brand, project, product, sources and resolved provider/model. Confirmation is separate; the server and worker revalidate the same whole-taka hard cap before any provider call."
+        title="Confirm signed production estimate?"
       >
         <dl className={styles.confirmationFacts}>
           <div><dt>Architecture</dt><dd>{architecture}</dd></div>
           <div><dt>Mode</dt><dd>{architecture === 'auto' ? 'server-selected Auto path' : mode}</dd></div>
-          <div><dt>Engine</dt><dd>{architecture === 'auto' ? data.config?.singleVtonDefault ?? 'server default' : selectedEngineDefinition?.label ?? engine}</dd></div>
+          <div><dt>Engine</dt><dd>{reviewEstimate?.selection.provider ?? 'Waiting for server'}</dd></div>
+          <div><dt>Exact model</dt><dd>{reviewEstimate?.selection.model ?? 'Waiting for server'}</dd></div>
           <div><dt>Resolution</dt><dd>{architecture === 'auto' ? 'server-selected' : resolutionState.kind === 'tiered' ? `${resolutionState.resolution?.toUpperCase()} requested; delivered pixels verified later` : resolutionState.labelBn}</dd></div>
-          <div><dt>Cost</dt><dd>{architecture === 'auto' ? 'server policy estimate' : selectedAvailability?.approxCost ?? 'server-calculated'}</dd></div>
+          <div><dt>Exact authorized ceiling</dt><dd>{reviewEstimate ? `৳${reviewEstimate.estimateBdt.toLocaleString('en-BD')} of hard cap ৳${reviewEstimate.maxCostBdt.toLocaleString('en-BD')}` : 'No receipt issued'}</dd></div>
+          <div><dt>Receipt expires</dt><dd>{reviewEstimate ? new Date(reviewEstimate.confirmBy).toLocaleTimeString('en-BD') : '—'}</dd></div>
           <div><dt>Success truth</dt><dd>Queued is not complete; Gallery shows verified result state.</dd></div>
         </dl>
       </StudioConfirmationDialog>

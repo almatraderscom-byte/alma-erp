@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 type ActionRow = {
   id: string
+  dedupeKey?: string
   conversationId: string | null
   type: string
   payload: Record<string, unknown>
@@ -25,6 +26,7 @@ type ActionRow = {
 const actions: ActionRow[] = []
 const kv = new Map<string, string>()
 let idCounter = 0
+const recoveryState = vi.hoisted(() => ({ gateCalls: 0 }))
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
@@ -40,8 +42,32 @@ vi.mock('@/lib/prisma', () => ({
         return row
       },
       findMany: async () => [...actions].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
-      findUnique: async ({ where }: { where: { id: string } }) =>
-        actions.find((a) => a.id === where.id) ?? null,
+      findUnique: async ({
+        where,
+      }: {
+        where: { id?: string; dedupeKey?: string }
+      }) => actions.find((a) =>
+        (where.id && a.id === where.id)
+        || (where.dedupeKey && a.dedupeKey === where.dedupeKey),
+      ) ?? null,
+      upsert: async ({
+        where,
+        create,
+      }: {
+        where: { dedupeKey: string }
+        create: Omit<ActionRow, 'id' | 'createdAt' | 'result'>
+      }) => {
+        const existing = actions.find((a) => a.dedupeKey === where.dedupeKey)
+        if (existing) return existing
+        const row: ActionRow = {
+          ...create,
+          id: `action-${++idCounter}`,
+          result: null,
+          createdAt: new Date(Date.now() + idCounter),
+        }
+        actions.push(row)
+        return row
+      },
     },
     agentKvSetting: {
       findUnique: async ({ where }: { where: { key: string } }) =>
@@ -56,6 +82,12 @@ vi.mock('@/lib/prisma', () => ({
         return data
       },
     },
+  },
+}))
+
+vi.mock('@/lib/creative-studio/studio-run-execution-gate', () => ({
+  assertStudioRunExecutionGate: async () => {
+    recoveryState.gateCalls += 1
   },
 }))
 
@@ -79,14 +111,73 @@ vi.mock('@/lib/tryon/model-library', () => ({
 }))
 
 import {
-  startFamilyChain,
-  startSingleRescueChain,
+  startFamilyChain as startFamilyChainAuthorized,
+  startSingleRescueChain as startSingleRescueChainAuthorized,
   advanceFamilyChain,
   getChainProgress,
-  FamilyChainModelError,
   type FamilyChainState,
 } from '@/lib/tryon/family-chain'
 import { BD_SCENES, pickScene } from '@/lib/tryon/scene-pool'
+import {
+  issueStudioRunEstimate,
+  verifyStudioRunEstimateReceipt,
+} from '@/lib/creative-studio/studio-run-authorization'
+import { withStudioRunExecutionContext } from '@/lib/creative-studio/studio-run-context'
+
+function issueAuthorizedRun() {
+  const estimate = issueStudioRunEstimate({
+    scope: {
+      actorUserId: 'owner-1',
+      ownerId: 'owner-1',
+      role: 'owner',
+      brandProfileId: 'brand-1',
+      projectId: 'project-1',
+      productId: 'product-1',
+      sourceAssetIds: ['asset-1'],
+      familyModelPins: Object.values(modelLibrary).map((model) => ({
+        role: model.role as 'father' | 'mother' | 'son' | 'daughter',
+        modelId: model.id,
+        modelImagePath: model.imagePath,
+        sourceImagePath: model.imagePath,
+        modelName: model.name,
+      })),
+    },
+    request: { mode: 'product_to_model' },
+    selection: {
+      mode: 'product_to_model',
+      architecture: 'advanced',
+      provider: 'gemini',
+      model: 'gemini-2.5-flash-image',
+      providers: ['google', 'fashn', 'fal'],
+      models: ['gemini-2.5-flash-image', 'tryon-max'],
+      plan: ['family_chain'],
+      paidAttemptLimit: 3,
+    },
+    estimateBdt: 500,
+    requestedCapBdt: 500,
+  })
+  const claims = verifyStudioRunEstimateReceipt(estimate.receipt, {
+    phase: 'execute',
+  })
+  return { claims, receipt: estimate.receipt }
+}
+
+async function withAuthorizedRun<T>(run: () => Promise<T>): Promise<T> {
+  const authorized = issueAuthorizedRun()
+  return withStudioRunExecutionContext({
+    claims: authorized.claims,
+    receipt: authorized.receipt,
+    idempotencyKey: `family-chain-test:${authorized.claims.receiptId}`,
+  }, run)
+}
+
+const startFamilyChain = (
+  input: Parameters<typeof startFamilyChainAuthorized>[0],
+) => withAuthorizedRun(() => startFamilyChainAuthorized(input))
+
+const startSingleRescueChain = (
+  input: Parameters<typeof startSingleRescueChainAuthorized>[0],
+) => withAuthorizedRun(() => startSingleRescueChainAuthorized(input))
 
 function seedModels(roles: string[]) {
   for (const role of roles) {
@@ -125,9 +216,12 @@ async function passPrep(): Promise<ActionRow> {
 }
 
 beforeEach(() => {
+  process.env.CREATIVE_STUDIO_RUN_CONFIRMATION_SECRET =
+    'test-only-studio-run-confirmation-secret'
   actions.length = 0
   kv.clear()
   idCounter = 0
+  recoveryState.gateCalls = 0
   for (const k of Object.keys(modelLibrary)) delete modelLibrary[k]
 })
 
@@ -143,6 +237,54 @@ describe('scene pool', () => {
 })
 
 describe('startFamilyChain', () => {
+  it('consumes the signed family paths even if the global role rows change before construction', async () => {
+    seedModels(['father', 'son'])
+    const authorized = issueAuthorizedRun()
+    modelLibrary.father.imagePath = 'models/reassigned-father.jpg'
+    modelLibrary.son.imagePath = 'models/reassigned-son.jpg'
+
+    await withStudioRunExecutionContext({
+      claims: authorized.claims,
+      receipt: authorized.receipt,
+      idempotencyKey: `family-pins:${authorized.claims.receiptId}`,
+    }, () => startFamilyChainAuthorized({
+      variant: 'father_son',
+      productImagePath: 'uploads/panjabi.jpg',
+    }))
+
+    const state = chainState(lastAction())
+    expect(state.adultModelPath).toBe('models/father.jpg')
+    expect(state.childModelPath).toBe('models/son.jpg')
+  })
+
+  it('recovers the exact first family step after a crash even when the retry picks another scene', async () => {
+    seedModels(['father', 'son'])
+    const authorized = issueAuthorizedRun()
+    const run = () => withStudioRunExecutionContext({
+      claims: authorized.claims,
+      receipt: authorized.receipt,
+      idempotencyKey: `family-recovery:${authorized.claims.receiptId}`,
+    }, () => startFamilyChainAuthorized({
+      variant: 'father_son',
+      productImagePath: 'uploads/panjabi.jpg',
+    }))
+    const random = vi.spyOn(Math, 'random')
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0.999999)
+    try {
+      const first = await run()
+      const originalScene = chainState(actions[0]).scene
+      const recovered = await run()
+
+      expect(recovered.jobs[0].pendingActionId).toBe(first.jobs[0].pendingActionId)
+      expect(actions).toHaveLength(1)
+      expect(chainState(actions[0]).scene).toEqual(originalScene)
+      expect(recoveryState.gateCalls).toBe(1)
+    } finally {
+      random.mockRestore()
+    }
+  })
+
   it('throws FamilyChainModelError naming missing roles instead of silently using an adult', async () => {
     seedModels(['father'])
     await expect(
@@ -435,7 +577,7 @@ describe('owner directive 2026-07-17 — chain VTON on Fal', () => {
     expect(row.payload.modelImagePath).toBe('models/father.jpg')
     expect(row.payload.productImagePath).toBe('uploads/panjabi.jpg')
 
-    let nextId = await completeStep(row, 'generated/adult.png')
+    const nextId = await completeStep(row, 'generated/adult.png')
     row = actions.find((a) => a.id === nextId)!
     // child tryon = fal with the SAME adult garment (no AI child garment)
     expect(row.payload.provider).toBe('fal')

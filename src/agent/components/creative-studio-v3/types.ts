@@ -20,11 +20,23 @@ export type CreativeStudioV3LibraryType =
   | 'avatar'
   | 'project'
 
+export type CreativeStudioV3ReviewTarget = {
+  brandProfileId: string
+  projectId: string
+  projectAssetId: string
+  currentVersionId: string
+  expectedSequence: number
+}
+
 export type CreativeStudioV3View =
   | { id: 'home' }
   | { id: 'image-lab'; sourceAssetId?: string; avatarId?: string }
   | { id: 'video-lab'; sourceAssetId?: string; avatarId?: string }
-  | { id: 'gallery'; initialType?: CreativeStudioV3LibraryType }
+  | {
+      id: 'gallery'
+      initialType?: CreativeStudioV3LibraryType
+      reviewTarget?: CreativeStudioV3ReviewTarget
+    }
   | { id: 'finishing'; assetId?: string }
   | { id: 'desk'; desk: CreativeStudioV3DeskId; projectId?: string }
   | {
@@ -71,10 +83,8 @@ export type CreativeStudioV3ReviewQueueItem = {
 }
 
 /**
- * Missing list boundary for CSE6. The existing review endpoint can open an
- * exact project asset, but no access-scoped queue currently returns the
- * canonical IDs required to do that safely. The UI must not derive these IDs
- * from legacy Gallery jobs.
+ * Access-scoped canonical CSE6 queue boundary. IDs, sequence and version come
+ * from the server; the UI never derives review authority from Gallery jobs.
  */
 export interface CreativeStudioV3ReviewQueuePort {
   listReviewQueue(input: {

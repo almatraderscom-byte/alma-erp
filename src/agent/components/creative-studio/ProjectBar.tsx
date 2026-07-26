@@ -72,8 +72,10 @@ export function ProjectBar({
     window.localStorage.setItem(ACTIVE_PROJECT_KEY, active.id)
     setActiveStudioContentContext(active.readonly
       ? null
-      : {
+        : {
+          brandProfileId: active.brandProfileId!,
           projectId: active.id,
+          productId: active.product?.code ?? null,
           recipeId: active.currentRecipeId,
           folder: active.defaultFolder,
         })
@@ -147,7 +149,7 @@ export function ProjectBar({
             +
           </button>
           {active && (
-            <button type="button" onClick={() => onOpenLibrary(active)} className="shrink-0 rounded-xl bg-[#E07A5F]/15 px-3 py-2 text-[10px] font-bold text-[#E07A5F]">
+            <button type="button" onClick={() => onOpenLibrary(active)} className="shrink-0 rounded-xl bg-[#E07A5F]/15 px-3 py-2 text-[11px] font-bold text-[#E07A5F]">
               Assets
             </button>
           )}
@@ -155,21 +157,21 @@ export function ProjectBar({
 
         {active && !active.readonly && (
           <div className="mt-2 flex min-w-0 items-center gap-2 overflow-x-auto">
-            <button type="button" onClick={() => setProductOpen(true)} className="shrink-0 rounded-full bg-white/[0.06] px-2.5 py-1 text-[9px] font-semibold text-muted">
+            <button type="button" onClick={() => setProductOpen(true)} className="shrink-0 rounded-full bg-white/[0.06] px-2.5 py-1 text-[11px] font-semibold text-muted">
               {active.product ? `📦 ${active.product.code} · ৳${active.product.priceBdt.toLocaleString('bn-BD')}` : '+ ERP প্রোডাক্ট'}
             </button>
-            <button type="button" onClick={() => setRecipeOpen(true)} className="shrink-0 rounded-full bg-white/[0.06] px-2.5 py-1 text-[9px] font-semibold text-muted">
+            <button type="button" onClick={() => setRecipeOpen(true)} className="shrink-0 rounded-full bg-white/[0.06] px-2.5 py-1 text-[11px] font-semibold text-muted">
               {active.currentRecipe
                 ? `${active.currentRecipe.locked ? '🔒' : '📝'} ${active.currentRecipe.name} v${active.currentRecipe.version}`
                 : '+ Brand Recipe'}
             </button>
-            <span className="truncate text-[9px] text-muted">Folder: {active.defaultFolder}</span>
+            <span className="truncate text-[11px] text-muted">Folder: {active.defaultFolder}</span>
           </div>
         )}
         {active?.readonly && (
-          <p className="mt-1.5 text-[9px] text-muted">Legacy read-only · কোনো পুরোনো Creative হারাবে না</p>
+          <p className="mt-1.5 text-[11px] text-muted">Legacy read-only · কোনো পুরোনো Creative হারাবে না</p>
         )}
-        {error && <p role="alert" className="mt-1 text-[9px] text-red-300">{error}</p>}
+        {error && <p role="alert" className="mt-1 text-[11px] text-red-300">{error}</p>}
       </div>
 
       {createOpen && (
@@ -180,15 +182,15 @@ export function ProjectBar({
               <button type="button" onClick={() => setCreateOpen(false)} className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-muted">✕</button>
             </div>
             <div className="mt-4 space-y-3">
-              <label className="block space-y-1 text-[10px] font-semibold text-muted">
+              <label className="block space-y-1 text-[11px] font-semibold text-muted">
                 Project নাম
                 <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="যেমন: Eid 2026 Launch" className="w-full rounded-xl border border-border-subtle bg-bg-1 px-3 py-2.5 text-[12px] text-cream" />
               </label>
-              <label className="block space-y-1 text-[10px] font-semibold text-muted">
+              <label className="block space-y-1 text-[11px] font-semibold text-muted">
                 Brand
                 <input value={brandName} onChange={(event) => setBrandName(event.target.value)} className="w-full rounded-xl border border-border-subtle bg-bg-1 px-3 py-2.5 text-[12px] text-cream" />
               </label>
-              <label className="block space-y-1 text-[10px] font-semibold text-muted">
+              <label className="block space-y-1 text-[11px] font-semibold text-muted">
                 সংক্ষিপ্ত লক্ষ্য
                 <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} className="w-full resize-none rounded-xl border border-border-subtle bg-bg-1 px-3 py-2.5 text-[12px] text-cream" />
               </label>

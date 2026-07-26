@@ -106,6 +106,18 @@ function initialView(): CreativeCompositionView {
     document: projected.document,
     documentHash: projected.documentHash,
     accessRole: 'owner',
+    history: {
+      canUndo: false,
+      canRedo: false,
+      undoDepth: 0,
+      redoDepth: 0,
+      currentUndoBatchId: null,
+      currentRedoBatchId: null,
+      latestAgentBatchId: null,
+      canRollbackLatestAgentBatch: false,
+      rollbackPoints: [],
+      activity: [],
+    },
   }
 }
 
@@ -405,6 +417,43 @@ export class FoundationApiHarness {
     const before = structuredClone(this.view.document)
     const rollbackPointId = `crp_${plan.batchId.slice(4)}`
     this.rollbackDocuments.set(rollbackPointId, before)
+    const kind = plan.kind.toLowerCase() as 'apply' | 'undo' | 'redo' | 'rollback'
+    const origin = kind === 'apply'
+      ? String(plan.idempotencyKey).startsWith('editor-agent-apply-')
+        ? 'agent' as const
+        : 'human' as const
+      : 'system' as const
+    const activity = [
+      ...this.view.history.activity,
+      {
+        id: plan.batchId,
+        kind,
+        origin,
+        actorId: this.actor.userId,
+        actorName: 'Authenticated Studio actor',
+        actorRole: this.actor.role,
+        resultVersion: plan.resultVersion,
+        targetBatchId,
+        rollbackPointId,
+        createdAt: `2026-07-26T00:${String(plan.resultVersion).padStart(2, '0')}:00.000Z`,
+        operationIds: plan.operations.map((operation) => operation.operationId),
+      },
+    ]
+    const rollbackPoints = [
+      ...this.view.history.rollbackPoints,
+      { batchId: plan.batchId, rollbackPointId },
+    ]
+    const latestAgentBatchId = origin === 'agent'
+      ? plan.batchId
+      : this.view.history.latestAgentBatchId
+    const undoDepth = kind === 'undo'
+      ? Math.max(0, this.view.history.undoDepth - 1)
+      : this.view.history.undoDepth + 1
+    const redoDepth = kind === 'undo'
+      ? this.view.history.redoDepth + 1
+      : kind === 'redo'
+        ? Math.max(0, this.view.history.redoDepth - 1)
+        : 0
     this.view = {
       ...this.view,
       currentVersion: plan.resultVersion,
@@ -413,6 +462,22 @@ export class FoundationApiHarness {
       document: structuredClone(plan.document),
       documentHash: plan.documentHash,
       accessRole: this.actor.role,
+      history: {
+        canUndo: undoDepth > 0,
+        canRedo: redoDepth > 0,
+        undoDepth,
+        redoDepth,
+        currentUndoBatchId: undoDepth > 0 ? plan.batchId : null,
+        currentRedoBatchId: redoDepth > 0 ? targetBatchId : null,
+        latestAgentBatchId,
+        canRollbackLatestAgentBatch: Boolean(
+          latestAgentBatchId
+          && rollbackPoints.some((entry) =>
+            entry.batchId === latestAgentBatchId),
+        ),
+        rollbackPoints,
+        activity,
+      },
     }
     return {
       idempotent: false,

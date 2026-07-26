@@ -97,6 +97,10 @@ export class TestCompositionCommandPort implements CompositionCommandPort {
     ]
     after.canUndo = true
     after.canRedo = false
+    if (request.proposal.origin === 'agent') {
+      after.latestAgentBatchId = batchId
+      after.canRollbackLatestAgentBatch = true
+    }
     after.concurrencyToken = nextToken(after)
 
     this.undoStack.push({

@@ -144,7 +144,7 @@ export function StudioSettingsView() {
           {config && (
             <span
               className={cn(
-                'rounded-full px-2 py-0.5 text-[9px] font-semibold',
+                'rounded-full px-2 py-0.5 text-[11px] font-semibold',
                 config.falConfigured ? 'bg-[#81B29A]/15 text-[#2d6a4f]' : 'bg-amber-100 text-amber-800',
               )}
             >
@@ -152,7 +152,7 @@ export function StudioSettingsView() {
             </span>
           )}
         </div>
-        <p className="mb-2 mt-0.5 text-[10px] text-muted">
+        <p className="mb-2 mt-0.5 text-[11px] text-muted">
           এখন শুধু প্রস্তুতি — Try-On ইঞ্জিন বাছাই (CS6) ও মাস্ক-এডিট (CS7) এলে এগুলো কাজে লাগবে। আজকের রেন্ডার আগের মতোই চলবে।
         </p>
         <label className="flex items-center justify-between gap-2 py-1">
@@ -167,7 +167,7 @@ export function StudioSettingsView() {
         <label className="flex items-center justify-between gap-2 py-1">
           <span className="text-[11px] text-muted">
             IDM-VTON{' '}
-            <span className="rounded bg-amber-100 px-1 py-px text-[9px] font-bold text-amber-800">পরীক্ষামূলক · research-only</span>
+            <span className="rounded bg-amber-100 px-1 py-px text-[11px] font-bold text-amber-800">পরীক্ষামূলক · research-only</span>
           </span>
           <input
             type="checkbox"
@@ -190,7 +190,7 @@ export function StudioSettingsView() {
           <span className="text-[11px] text-muted">
             Grok Imagine (xAI) — Generate + সব মোড
             {config && !config.xaiConfigured && (
-              <span className="ml-1 rounded bg-amber-100 px-1 py-px text-[9px] font-bold text-amber-800">XAI_API_KEY নেই</span>
+              <span className="ml-1 rounded bg-amber-100 px-1 py-px text-[11px] font-bold text-amber-800">XAI_API_KEY নেই</span>
             )}
           </span>
           <input
@@ -225,7 +225,7 @@ export function StudioSettingsView() {
             <p className="text-[12px] font-bold text-cream">🚦 ইঞ্জিন হেলথ (শেষ {health.windowDays} দিন)</p>
             <span
               className={cn(
-                'rounded-full px-2 py-0.5 text-[9px] font-semibold',
+                'rounded-full px-2 py-0.5 text-[11px] font-semibold',
                 health.worker.state === 'healthy' && 'bg-[#81B29A]/15 text-[#2d6a4f]',
                 health.worker.state === 'delayed' && 'bg-amber-100 text-amber-800',
                 health.worker.state === 'offline' && 'bg-red-100 text-red-700',
@@ -235,17 +235,17 @@ export function StudioSettingsView() {
               Worker {health.worker.labelBn}
             </span>
           </div>
-          <p className="mt-1 text-[9px] text-muted">
+          <p className="mt-1 text-[11px] text-muted">
             Queue signal: {health.worker.lastSeenBn} · Turn consumer: {health.turnConsumer.labelBn} ({health.turnConsumer.lastSeenBn})
           </p>
           <div className="mt-1.5 space-y-1">
             {health.engines.slice(0, 6).map((e) => (
               <div key={e.engine} className="flex items-center justify-between gap-2">
-                <p className="min-w-0 flex-1 truncate text-[10px] leading-snug text-muted-hi">
+                <p className="min-w-0 flex-1 truncate text-[11px] leading-snug text-muted-hi">
                   {e.labelBn}: {e.jobs} কাজ · ব্যর্থ {e.errorRatePct}%{e.qcPassRatePct !== null ? ` · QC পাস ${e.qcPassRatePct}%` : ''}
                   {e.p95LatencyMs ? ` · p95 ${Math.round(e.p95LatencyMs / 1000)}s` : ''} · $${e.spendUsd}
                 </p>
-                <label className="flex shrink-0 items-center gap-1 text-[9px] text-muted">
+                <label className="flex shrink-0 items-center gap-1 text-[11px] text-muted">
                   বন্ধ
                   <input
                     type="checkbox"
@@ -267,7 +267,7 @@ export function StudioSettingsView() {
             ))}
           </div>
           {health.balances.length > 0 && (
-            <p className="mt-1.5 text-[10px] text-muted">
+            <p className="mt-1.5 text-[11px] text-muted">
               ব্যালেন্স: {health.balances.map((b) => b.label + ' ' + (b.balanceUsd !== null ? '$' + b.balanceUsd : '—')).join(' · ')}
             </p>
           )}
@@ -279,16 +279,16 @@ export function StudioSettingsView() {
           <div className="flex items-center justify-between gap-2">
             <div>
               <p className="text-[12px] font-bold text-cream">🗄️ Drive archive ও retention</p>
-              <p className="mt-0.5 text-[9px] text-muted">
+              <p className="mt-0.5 text-[11px] text-muted">
                 Durable Drive verification ছাড়া original কখনো delete হবে না।
               </p>
             </div>
-            <span className="rounded-full bg-[#81B29A]/10 px-2 py-0.5 text-[9px] text-[#a7d7bf]">
+            <span className="rounded-full bg-[#81B29A]/10 px-2 py-0.5 text-[11px] text-[#a7d7bf]">
               {retention.stats.verifiedReceipts}/{retention.stats.totalReceipts} verified
             </span>
           </div>
           <div className="mt-2 space-y-2">
-            <label className="flex items-center justify-between gap-2 text-[10px] text-muted">
+            <label className="flex items-center justify-between gap-2 text-[11px] text-muted">
               Drive archive চালু
               <input
                 type="checkbox"
@@ -300,7 +300,7 @@ export function StudioSettingsView() {
                 className="h-4 w-4 accent-[#E07A5F]"
               />
             </label>
-            <label className="flex items-center justify-between gap-2 text-[10px] text-muted">
+            <label className="flex items-center justify-between gap-2 text-[11px] text-muted">
               Verified copy-এর পর original cleanup
               <input
                 type="checkbox"
@@ -313,7 +313,7 @@ export function StudioSettingsView() {
               />
             </label>
             <div className="grid grid-cols-2 gap-2">
-              <label className="space-y-1 text-[9px] font-semibold text-muted">
+              <label className="space-y-1 text-[11px] font-semibold text-muted">
                 Retention দিন (7–3650)
                 <input
                   type="number"
@@ -327,10 +327,10 @@ export function StudioSettingsView() {
                       retentionDays: Number(event.target.value),
                     },
                   })}
-                  className="w-full rounded-lg border border-border-subtle bg-bg-1 px-2 py-1.5 text-[10px] text-cream"
+                  className="w-full rounded-lg border border-border-subtle bg-bg-1 px-2 py-1.5 text-[11px] text-cream"
                 />
               </label>
-              <label className="space-y-1 text-[9px] font-semibold text-muted">
+              <label className="space-y-1 text-[11px] font-semibold text-muted">
                 Verification grace ঘণ্টা
                 <input
                   type="number"
@@ -344,11 +344,11 @@ export function StudioSettingsView() {
                       verificationGraceHours: Number(event.target.value),
                     },
                   })}
-                  className="w-full rounded-lg border border-border-subtle bg-bg-1 px-2 py-1.5 text-[10px] text-cream"
+                  className="w-full rounded-lg border border-border-subtle bg-bg-1 px-2 py-1.5 text-[11px] text-cream"
                 />
               </label>
             </div>
-            <p className="text-[9px] text-muted">
+            <p className="text-[11px] text-muted">
               Deleted {retention.stats.deletedOriginals} · failed {retention.stats.failedReceipts}
               {' '}· oldest unverified {retention.stats.oldestUnverifiedAgeHours}h
             </p>
@@ -365,7 +365,7 @@ export function StudioSettingsView() {
                   .catch((error) => toast.error(error instanceof Error ? error.message : 'হয়নি'))
                   .finally(() => setRetentionSaving(false))
               }}
-              className="w-full rounded-lg bg-white/10 px-3 py-2 text-[10px] font-bold text-cream disabled:opacity-40"
+              className="w-full rounded-lg bg-white/10 px-3 py-2 text-[11px] font-bold text-cream disabled:opacity-40"
             >
               {retentionSaving ? 'সেভ হচ্ছে…' : 'Archive policy সেভ'}
             </button>
@@ -387,12 +387,12 @@ export function StudioSettingsView() {
                 .catch((e) => toast.error(e instanceof Error ? e.message : 'হয়নি'))
                 .finally(() => setEvalRunning(false))
             }}
-            className="rounded-full bg-[#E07A5F] px-3 py-1 text-[10px] font-bold text-white disabled:opacity-40"
+            className="rounded-full bg-[#E07A5F] px-3 py-1 text-[11px] font-bold text-white disabled:opacity-40"
           >
             {evalRunning ? 'পাঠানো হচ্ছে…' : 'টেস্ট চালাও'}
           </button>
         </div>
-        <p className="mt-0.5 text-[10px] text-muted">
+        <p className="mt-0.5 text-[11px] text-muted">
           {goldenEval?.cases?.length
             ? `${goldenEval.cases.length}টি গোল্ডেন কেস — ৩ ইঞ্জিনে একই ছবি চালিয়ে সংখ্যায় তুলনা`
             : 'গোল্ডেন কেস এখনো নেই — evaluations API দিয়ে case যোগ করুন'}
@@ -400,7 +400,7 @@ export function StudioSettingsView() {
         {goldenEval?.comparison && (
           <div className="mt-1.5 space-y-1">
             {goldenEval.comparison.rankings.map((r) => (
-              <p key={r.engine} className="text-[10px] leading-snug text-muted-hi">
+              <p key={r.engine} className="text-[11px] leading-snug text-muted-hi">
                 {r.reasonBn}
               </p>
             ))}
@@ -419,7 +419,7 @@ export function StudioSettingsView() {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={g.url} alt="" className="h-14 w-11 rounded-md object-cover ring-1 ring-white/15" />
                 ) : (
-                  <div className="grid h-14 w-11 place-items-center rounded-md bg-white/10 text-[9px] text-muted">{g.role}</div>
+                  <div className="grid h-14 w-11 place-items-center rounded-md bg-white/10 text-[11px] text-muted">{g.role}</div>
                 )}
                 <button
                   type="button"
@@ -434,7 +434,7 @@ export function StudioSettingsView() {
                       )
                       .catch(() => toast.error('হয়নি'))
                   }}
-                  className="absolute -right-1 -top-1 grid h-4 w-4 place-items-center rounded-full bg-red-500 text-[9px] text-white"
+                  className="absolute -right-1 -top-1 grid h-4 w-4 place-items-center rounded-full bg-red-500 text-[11px] text-white"
                 >
                   ✕
                 </button>

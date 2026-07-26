@@ -53,12 +53,18 @@ describe('Creative Studio V3 production source contract', () => {
     expect(video).toContain('Foundation adapter required')
   })
 
-  it('keeps collaborator calls off owner-only production routes', () => {
-    for (const file of ['StudioV3ImageLab.tsx', 'StudioV3VideoLab.tsx', 'StudioV3Finishing.tsx']) {
+  it('uses signed scoped run contracts for creators and keeps reviewers read-only', () => {
+    for (const file of ['StudioV3ImageLab.tsx', 'StudioV3VideoLab.tsx']) {
       const content = source(file)
-      expect(content).toContain("activeBrand?.role === 'owner'")
-      expect(content).toContain('ownerActionAvailable')
+      expect(content).toContain("activeBrand.role !== 'reviewer'")
+      expect(content).toContain('estimateRun')
+      expect(content).toContain('confirmRun')
+      expect(content).not.toMatch(/queue(?:Advanced|Auto|Owned)/)
     }
+    const finishing = source('StudioV3Finishing.tsx')
+    expect(finishing).toContain("activeBrand?.role === 'owner'")
+    expect(finishing).toContain('ownerScopedActionAvailable')
+    expect(finishing).toContain('projectAssetId')
     expect(source('types.ts')).toContain('CreativeStudioV3ReviewQueuePort')
   })
 })

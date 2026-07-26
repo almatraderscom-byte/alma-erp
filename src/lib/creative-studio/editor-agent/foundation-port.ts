@@ -372,17 +372,46 @@ export class FoundationCompositionCommandPort implements CompositionCommandPort 
     }
     const envelope = record(payload)
     const view = parseFoundationCompositionView(envelope.composition)
-    const context = structuredClone(
+    const loadedContext = structuredClone(
       this.loadSnapshotContext
         ? await this.loadSnapshotContext(structuredClone(view))
         : {},
     )
+    const durableActivity: EditorActivityEntry[] = view.history.activity.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind === 'apply' ? 'edit' : entry.kind,
+      actorName: entry.actorName,
+      summary: `Foundation ${entry.kind} batch committed as composition v${entry.resultVersion}.`,
+      version: entry.resultVersion,
+      createdAt: entry.createdAt,
+      operationIds: [...entry.operationIds],
+    }))
+    const activityById = new Map(
+      [...durableActivity, ...(loadedContext.activity ?? [])]
+        .map((entry) => [entry.id, entry] as const),
+    )
+    const context: FoundationEditorSnapshotContext = {
+      ...loadedContext,
+      activity: [...activityById.values()].sort((left, right) =>
+        left.createdAt.localeCompare(right.createdAt)),
+      canUndo: view.history.canUndo,
+      canRedo: view.history.canRedo,
+      latestAgentBatchId: view.history.latestAgentBatchId,
+      canRollbackLatestAgentBatch:
+        view.history.canRollbackLatestAgentBatch,
+      hydration: {
+        projectAssets: loadedContext.hydration?.projectAssets ?? 'not_hydrated',
+        review: loadedContext.hydration?.review ?? 'not_hydrated',
+        activity: loadedContext.hydration?.activity ?? 'not_hydrated',
+        history: 'hydrated',
+      },
+    }
     const previous = this.states.get(scopeKey(scope))
     const sameVersion = previous
       && previous.view.currentVersion === view.currentVersion
       && previous.view.concurrencyToken === view.concurrencyToken
-    const undoDepth = sameVersion ? previous.undoDepth : 0
-    const redoDepth = sameVersion ? previous.redoDepth : 0
+    const undoDepth = view.history.undoDepth
+    const redoDepth = view.history.redoDepth
     const projectedContext: FoundationEditorSnapshotContext = {
       ...context,
       canUndo: context.canUndo ?? undoDepth > 0,
@@ -400,12 +429,18 @@ export class FoundationCompositionCommandPort implements CompositionCommandPort 
       accessRole: view.accessRole,
       undoDepth,
       redoDepth,
-      rollbackPointByBatch: sameVersion
-        ? previous.rollbackPointByBatch
-        : new Map(),
-      editorOperationIdsByBatch: sameVersion
-        ? previous.editorOperationIdsByBatch
-        : new Map(),
+      rollbackPointByBatch: new Map(
+        view.history.rollbackPoints.map((entry) => [
+          entry.batchId,
+          entry.rollbackPointId,
+        ]),
+      ),
+      editorOperationIdsByBatch: new Map(
+        view.history.activity.map((entry) => [
+          entry.id,
+          [...entry.operationIds],
+        ]),
+      ),
       preparedApplyByFingerprint: sameVersion
         ? previous.preparedApplyByFingerprint
         : new Map(),
@@ -434,7 +469,10 @@ export class FoundationCompositionCommandPort implements CompositionCommandPort 
         {
           expectedVersion: request.proposal.expectedVersion,
           expectedConcurrencyToken: request.proposal.expectedConcurrencyToken,
-          idempotencyKey: this.applyIdempotencyKey(request.proposal.fingerprint),
+          idempotencyKey: this.applyIdempotencyKey(
+            request.proposal.fingerprint,
+            request.proposal.origin,
+          ),
           brandProfileId: request.proposal.scope.brandProfileId,
           operations: prepared.operations,
         },
@@ -457,6 +495,7 @@ export class FoundationCompositionCommandPort implements CompositionCommandPort 
       'applied',
       operationIds,
       request.proposal.pendingActions.map((action) => action.id),
+      request.proposal.origin === 'agent' ? result.batch.id : undefined,
     )
   }
 
@@ -561,7 +600,10 @@ export class FoundationCompositionCommandPort implements CompositionCommandPort 
         {
           expectedVersion: request.proposal.expectedVersion,
           expectedConcurrencyToken: request.proposal.expectedConcurrencyToken,
-          idempotencyKey: this.applyIdempotencyKey(request.proposal.fingerprint),
+          idempotencyKey: this.applyIdempotencyKey(
+            request.proposal.fingerprint,
+            request.proposal.origin,
+          ),
           brandProfileId: request.proposal.scope.brandProfileId,
           operations,
         },
@@ -735,12 +777,15 @@ export class FoundationCompositionCommandPort implements CompositionCommandPort 
     return payload
   }
 
-  private applyIdempotencyKey(fingerprint: string): string {
+  private applyIdempotencyKey(
+    fingerprint: string,
+    origin: 'human' | 'agent',
+  ): string {
     const digest = fingerprint.replace(/^csplan-v1-/, '')
     if (!/^[a-f0-9]{64}$/.test(digest)) {
       throw new CompositionCommandError('fingerprint_mismatch')
     }
-    return `editor-apply-${digest}`
+    return `editor-${origin}-apply-${digest}`
   }
 
   private async historyIdempotencyKey(
@@ -765,6 +810,7 @@ export class FoundationCompositionCommandPort implements CompositionCommandPort 
     status: EditorCommandReceipt['status'],
     operationIds: string[],
     pendingActionIds: string[],
+    latestAgentBatchId?: string,
   ): EditorCommandReceipt {
     const committedAt = this.now()
     const nextView = parseFoundationCompositionView({
@@ -819,6 +865,11 @@ export class FoundationCompositionCommandPort implements CompositionCommandPort 
       activity: [...state.snapshot.activity, activity],
       canUndo: state.undoDepth > 0,
       canRedo: state.redoDepth > 0,
+      latestAgentBatchId:
+        latestAgentBatchId ?? state.snapshot.latestAgentBatchId,
+      canRollbackLatestAgentBatch:
+        Boolean(latestAgentBatchId)
+        || state.snapshot.canRollbackLatestAgentBatch,
     }
     const snapshot = projectFoundationCompositionToEditor(nextView, scope, context)
     state.view = nextView
@@ -826,6 +877,9 @@ export class FoundationCompositionCommandPort implements CompositionCommandPort 
       ...state.context,
       review,
       activity: snapshot.activity,
+      latestAgentBatchId: snapshot.latestAgentBatchId,
+      canRollbackLatestAgentBatch:
+        snapshot.canRollbackLatestAgentBatch,
     }
     state.snapshot = snapshot
     state.preparedApplyByFingerprint.clear()

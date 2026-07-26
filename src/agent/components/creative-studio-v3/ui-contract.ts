@@ -2,11 +2,15 @@ import type { StudioBrandProfile } from '@/agent/components/creative-studio/stud
 import type { StudioProjectSummary } from '@/lib/creative-studio/project-contract'
 import type {
   StudioV3GalleryDensity,
+  StudioV3LibraryItem,
   StudioV3Lifecycle,
 } from '@/agent/components/creative-studio-v3/gallery-model'
 import type {
   CreativeStudioV3DeskId,
   CreativeStudioV3LibraryType,
+  CreativeStudioV3ReviewQueueItem,
+  CreativeStudioV3ReviewTarget,
+  CreativeStudioV3View,
 } from '@/agent/components/creative-studio-v3/types'
 
 export const STUDIO_V3_GALLERY_CATEGORIES = [
@@ -67,4 +71,35 @@ export function scopeProjectsToBrand(
 ): StudioProjectSummary[] {
   if (!brandProfileId) return projects
   return projects.filter((project) => project.brandProfileId === brandProfileId)
+}
+
+export function galleryViewForReviewItem(
+  item: CreativeStudioV3ReviewQueueItem,
+): CreativeStudioV3View {
+  return {
+    id: 'gallery',
+    reviewTarget: {
+      brandProfileId: item.brandProfileId,
+      projectId: item.projectId,
+      projectAssetId: item.projectAssetId,
+      currentVersionId: item.currentVersionId,
+      expectedSequence: item.expectedSequence,
+    },
+  }
+}
+
+/**
+ * Review Inspect is a version-pinned handoff, not a Gallery search. A missing
+ * or stale tuple has no presentation fallback: the API error remains visible
+ * and no different/current asset may silently become selected.
+ */
+export function exactReviewLibraryItem(
+  items: StudioV3LibraryItem[],
+  target: CreativeStudioV3ReviewTarget,
+): StudioV3LibraryItem | null {
+  return items.find((item) =>
+    item.galleryItem?.projectAssetId === target.projectAssetId
+    && item.galleryItem.assetVersionId === target.currentVersionId
+    && item.galleryItem.reviewSequence === target.expectedSequence,
+  ) ?? null
 }

@@ -40,16 +40,16 @@ export function TranscriptEditor({
       <div className="flex items-center justify-between gap-2">
         <div>
           <p className="text-[12px] font-bold text-cream">📝 Transcript + timing</p>
-          <p className="text-[9px] text-muted">Caption ও voiceover আলাদা track; সময় সরাসরি বদলান।</p>
+          <p className="text-[11px] text-muted">Caption ও voiceover আলাদা track; সময় সরাসরি বদলান।</p>
         </div>
         <div className="flex gap-1">
-          <button type="button" onClick={() => add('caption')} className="st-chip px-2 py-1 text-[9px]">+ Caption</button>
-          <button type="button" onClick={() => add('voiceover')} className="st-chip px-2 py-1 text-[9px]">+ Voice</button>
+          <button type="button" onClick={() => add('caption')} className="st-chip px-2 py-1 text-[11px]">+ Caption</button>
+          <button type="button" onClick={() => add('voiceover')} className="st-chip px-2 py-1 text-[11px]">+ Voice</button>
         </div>
       </div>
 
       {value.transcript.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-[10px] text-muted">
+        <p className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-[11px] text-muted">
           এখনো কোনো timed line নেই।
         </p>
       ) : (
@@ -57,7 +57,7 @@ export function TranscriptEditor({
           {value.transcript.map((cue, index) => (
             <div key={cue.id} className="grid grid-cols-[58px_1fr_24px] gap-1.5 rounded-lg bg-white/[0.04] p-2">
               <div className="space-y-1">
-                <span className="block rounded bg-white/10 px-1 py-0.5 text-center text-[8px] font-bold text-muted">
+                <span className="block rounded bg-white/10 px-1 py-0.5 text-center text-[11px] font-bold text-muted">
                   {cue.track === 'caption' ? 'CAPTION' : 'VOICE'}
                 </span>
                 <input
@@ -68,7 +68,7 @@ export function TranscriptEditor({
                   step={0.1}
                   value={cue.startSec}
                   onChange={(event) => update(cue.id, { startSec: Number(event.target.value) })}
-                  className="w-full rounded bg-black/30 px-1 py-1 text-[10px] text-cream"
+                  className="w-full rounded bg-black/30 px-1 py-1 text-[11px] text-cream"
                 />
                 <input
                   aria-label={`লাইন ${index + 1} শেষ`}
@@ -78,7 +78,7 @@ export function TranscriptEditor({
                   step={0.1}
                   value={cue.endSec}
                   onChange={(event) => update(cue.id, { endSec: Number(event.target.value) })}
-                  className="w-full rounded bg-black/30 px-1 py-1 text-[10px] text-cream"
+                  className="w-full rounded bg-black/30 px-1 py-1 text-[11px] text-cream"
                 />
               </div>
               <textarea

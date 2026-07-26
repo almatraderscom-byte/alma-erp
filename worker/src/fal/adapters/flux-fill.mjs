@@ -24,6 +24,10 @@ import {
 } from '../../image/reference-contract.mjs'
 import { uploadImageArtifact } from '../../image-artifact.mjs'
 import { sourceDimensionsContract } from '../../image-resolution-contract.mjs'
+import {
+  assertStudioRunPaidAttempt,
+  requiresStudioRunPaidAttemptAuthorization,
+} from '../../studio-run-authorize.mjs'
 
 export const FLUX_FILL_ENDPOINT = 'fal-ai/flux-pro/v1/fill'
 
@@ -139,6 +143,9 @@ export async function processFluxFill({ supabase, pendingActionId, payload, logC
     seed: input.seed ?? null,
   })
 
+  if (requiresStudioRunPaidAttemptAuthorization(payload)) {
+    await assertStudioRunPaidAttempt(pendingActionId, payload, 1)
+  }
   const out = await runFalQueueJob({
     supabase,
     pendingActionId,

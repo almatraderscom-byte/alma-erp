@@ -54,6 +54,20 @@ describe('Creative Studio Gallery query', () => {
     expect(json).toContain('"path":["qc","pass"],"equals":true')
   })
 
+  it('keeps the complete server-side review lifecycle union', () => {
+    const json = JSON.stringify(buildGalleryWhere({
+      media: 'all',
+      state: 'review',
+      qc: 'all',
+      query: '',
+      includeTest: false,
+    }))
+    expect(json).toContain('"status":"executed"')
+    expect(json).toContain('"path":["qc","pass"],"equals":false')
+    expect(json).toContain('"notIn":["executed","approved","pending","processing","failed","error","rejected"]')
+    expect(json).toContain('"in":["failed","error","rejected"]')
+  })
+
   it('classifies only explicit test artifacts and preserves legacy rows', () => {
     expect(isGalleryTestArtifact({ payload: { creativeStudio: true }, summary: 'Real image' })).toBe(false)
     expect(isGalleryTestArtifact({ payload: { creativeStudio: true, testArtifact: false }, summary: 'Real image' })).toBe(false)

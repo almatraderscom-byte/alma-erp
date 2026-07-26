@@ -7,6 +7,11 @@ import {
   createProject,
   listProjects,
 } from '@/lib/creative-studio/project-service'
+import {
+  authenticateStudioRequest,
+  requireStudioBrandAccess,
+  studioAccessErrorResponse,
+} from '@/lib/creative-studio/studio-access'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -29,6 +34,20 @@ function errorResponse(error: unknown) {
 }
 
 export async function GET(req: NextRequest) {
+  const brandProfileId = req.nextUrl.searchParams.get('brandProfileId')
+  if (brandProfileId) {
+    const actor = await authenticateStudioRequest(req)
+    if (actor instanceof Response) return actor
+    try {
+      const access = await requireStudioBrandAccess(actor, brandProfileId)
+      return Response.json({
+        projects: (await listProjects(access.ownerId)).filter((project) =>
+          project.brandProfileId === brandProfileId),
+      })
+    } catch (error) {
+      return studioAccessErrorResponse(error, 'creative-projects-list')
+    }
+  }
   const owner = await ownerId(req)
   if (owner instanceof Response) return owner
   try {

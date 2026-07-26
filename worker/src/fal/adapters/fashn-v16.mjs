@@ -16,6 +16,10 @@ import {
   validateOrderedReferenceContract,
 } from '../../image/reference-contract.mjs'
 import { FAL_FASHN_V16_CONTRACT } from '../../image-resolution-contract.mjs'
+import {
+  assertStudioRunPaidAttempt,
+  requiresStudioRunPaidAttemptAuthorization,
+} from '../../studio-run-authorize.mjs'
 
 export const FASHN_V16_ENDPOINT = 'fal-ai/fashn/tryon/v1.6'
 
@@ -98,6 +102,9 @@ export async function processFashnV16({ supabase, pendingActionId, payload, logC
       seed: input.seed ?? null,
       qcAttempt: qcAttempt ?? 1,
     })
+    if (requiresStudioRunPaidAttemptAuthorization(payload)) {
+      await assertStudioRunPaidAttempt(pendingActionId, payload, qcAttempt ?? 1)
+    }
     const out = await runFalQueueJob({
       supabase,
       pendingActionId,
@@ -168,6 +175,7 @@ export async function processFashnV16({ supabase, pendingActionId, payload, logC
         productType: null,
         productImagePath,
         personImagePath: rawModelImagePath,
+        maxPaidGenerations: payload.studioPaidAttemptLimit,
         regenerate: async (_fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum)
           paths.push(retry.storagePath)

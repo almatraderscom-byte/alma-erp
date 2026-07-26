@@ -22,6 +22,11 @@ import {
   artifactFieldsFromResult,
   type StudioArtifactDescriptor,
 } from '@/lib/creative-studio/artifact-metadata'
+import {
+  authenticateStudioRequest,
+  requireStudioBrandAccess,
+  StudioAccessError,
+} from '@/lib/creative-studio/studio-access'
 
 export const runtime = 'nodejs'
 
@@ -95,9 +100,132 @@ export async function GET(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  const brandProfileId = req.nextUrl.searchParams.get('brandProfileId')?.trim() ?? ''
+  const projectId = req.nextUrl.searchParams.get('projectId')?.trim() ?? ''
+  const archivedOnly = req.nextUrl.searchParams.get('archived') === '1'
+  const projectAssetId = req.nextUrl.searchParams.get('projectAssetId')?.trim() ?? ''
+  const assetVersionId = req.nextUrl.searchParams.get('assetVersionId')?.trim() ?? ''
+  const rawReviewSequence = req.nextUrl.searchParams.get('reviewSequence')
+  const reviewSequence = rawReviewSequence == null
+    ? null
+    : Number(rawReviewSequence)
+  const exactReviewTarget = Boolean(
+    projectAssetId
+    || assetVersionId
+    || rawReviewSequence != null,
+  )
+  if (
+    exactReviewTarget
+    && (
+      !brandProfileId
+      || !projectId
+      || !projectAssetId
+      || !assetVersionId
+      || !Number.isInteger(reviewSequence)
+      || Number(reviewSequence) < 0
+    )
+  ) {
+    return Response.json(
+      { error: 'review_asset_snapshot_required' },
+      { status: 422 },
+    )
+  }
+  type Canonical = {
+    projectAssetId: string
+    projectId: string
+    brandProfileId: string
+    assetVersionId: string | null
+    reviewSequence: number
+    archived: boolean
+  }
+  const canonicalByActionId = new Map<string, Canonical>()
+  if (brandProfileId || projectId || archivedOnly || exactReviewTarget) {
+    if (!brandProfileId) {
+      return Response.json({ error: 'brand_scope_required' }, { status: 422 })
+    }
+    const actor = await authenticateStudioRequest(req)
+    if (actor instanceof Response) return actor
+    try {
+      const access = await requireStudioBrandAccess(actor, brandProfileId)
+      const assets = await (prisma as any).creativeProjectAsset.findMany({
+        where: {
+          ...(projectAssetId ? { id: projectAssetId } : {}),
+          ...(reviewSequence != null ? { reviewSequence } : {}),
+          project: {
+            ownerId: access.ownerId,
+            brandProfileId,
+            ...(projectId ? { id: projectId } : {}),
+          },
+        },
+        select: {
+          id: true,
+          projectId: true,
+          pendingActionId: true,
+          reviewSequence: true,
+          project: { select: { brandProfileId: true, archivedAt: true } },
+          versions: {
+            orderBy: { version: 'desc' },
+            select: {
+              id: true,
+              archiveReceipts: {
+                select: { id: true, archivedAt: true, originalDeletedAt: true },
+              },
+            },
+          },
+        },
+      })
+      for (const asset of assets as Array<{
+        id: string
+        projectId: string
+        pendingActionId: string | null
+        reviewSequence: number
+        project: { brandProfileId: string | null; archivedAt: Date | null }
+        versions: Array<{
+          id: string
+          archiveReceipts: Array<{ id: string }>
+        }>
+      }>) {
+        if (!asset.pendingActionId || asset.project.brandProfileId !== brandProfileId) continue
+        if (
+          exactReviewTarget
+          && asset.versions[0]?.id !== assetVersionId
+        ) continue
+        // Archive is version-specific and durable. Inspect every version so an
+        // older archived original remains discoverable after a newer derivative
+        // becomes the current version.
+        const archived = Boolean(
+          asset.project.archivedAt
+          || asset.versions.some((version) => version.archiveReceipts.length > 0),
+        )
+        if (archivedOnly && !archived) continue
+        canonicalByActionId.set(asset.pendingActionId, {
+          projectAssetId: asset.id,
+          projectId: asset.projectId,
+          brandProfileId,
+          assetVersionId: asset.versions[0]?.id ?? null,
+          reviewSequence: asset.reviewSequence,
+          archived,
+        })
+      }
+      if (exactReviewTarget && canonicalByActionId.size !== 1) {
+        return Response.json(
+          {
+            error: 'review_asset_snapshot_changed',
+            message: 'The requested review asset/version/sequence is no longer current. Refresh Review before inspecting.',
+          },
+          { status: 409 },
+        )
+      }
+    } catch (error) {
+      const status = error instanceof StudioAccessError ? error.status : 403
+      const code = error instanceof StudioAccessError ? error.code : 'forbidden'
+      return Response.json({ error: code }, { status })
+    }
+  } else {
+    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+    if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
 
   const page = Math.max(1, Number(req.nextUrl.searchParams.get('page') ?? 1))
   const limit = normalizeGalleryLimit(req.nextUrl.searchParams.get('limit'))
@@ -110,7 +238,15 @@ export async function GET(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
-  const baseWhere = buildGalleryWhere(filters)
+  const rawWhere = buildGalleryWhere(filters)
+  const baseWhere = brandProfileId
+    ? {
+        AND: [
+          rawWhere,
+          { id: { in: [...canonicalByActionId.keys()] } },
+        ],
+      }
+    : rawWhere
   // Cursor pagination is stable when new jobs arrive while the owner is
   // scrolling. `page`/skip remains as a backwards-compatible fallback.
   const legacySkip = cursor ? 0 : (page - 1) * limit
@@ -257,15 +393,22 @@ export async function GET(req: NextRequest) {
       ?? (brandedDriveAvailable
         ? `/api/assistant/creative-studio/drive-file?id=${encodeURIComponent(row.id)}&path=${encodeURIComponent(brandedPath!)}`
         : null)
+    const canonical = canonicalByActionId.get(row.id)
+    const visibleStatus = canonical?.archived ? 'archived' : row.status
     const policyInput = {
-      status: row.status,
+      status: visibleStatus,
       result,
       hasArtifact: Boolean(storagePath),
     }
     return {
       id: row.id,
+      projectAssetId: canonical?.projectAssetId ?? null,
+      assetVersionId: canonical?.assetVersionId ?? null,
+      reviewSequence: canonical?.reviewSequence ?? null,
+      projectId: canonical?.projectId ?? null,
+      brandProfileId: canonical?.brandProfileId ?? null,
       type: row.type,
-      status: row.status,
+      status: visibleStatus,
       assetState: classifyStudioAsset(policyInput),
       publishable: isStudioAssetPublishable(policyInput),
       summary: row.summary,
