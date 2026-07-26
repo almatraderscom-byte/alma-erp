@@ -15,7 +15,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { discoverSkills } from '@/agent/lib/skill-engine/loader'
-import { routeSkill, type RouteDecision } from '@/agent/lib/skill-engine/router'
+import { applyRules, routeSkill, type RouteDecision } from '@/agent/lib/skill-engine/router'
 import path from 'path'
 
 const SKILLS_ROOT = path.join(process.cwd(), 'src', 'agent', 'skills')
@@ -58,11 +58,35 @@ export async function resolveSkillPin(
 
     if (conv?.pinnedSkill) {
       const stored = conv.skillRouteTrace as StoredTrace | null
-      return {
-        skill: conv.pinnedSkill,
-        source: stored?.source === 'owner' ? 'owner' : 'router',
-        trace: null,
+      const source = stored?.source === 'owner' ? 'owner' : 'router'
+
+      // THE JOB CAN CHANGE INSIDE ONE CHAT (found live 2026-07-27). He audits the
+      // site, reads the result, then says "ekhon thik koro" — same conversation,
+      // different job. With the pin frozen for the whole chat, that fix order
+      // stayed under `seo-auditing-own-site`, whose allowlist holds no write
+      // tool: the agent announced "draft_seo_fixes চালিয়ে batch ready করছি" and
+      // could not possibly do it. "One chat, one job" was the wrong half of the
+      // rule to keep rigid.
+      //
+      // Only the RULE layer may re-pin. Rules are the deterministic cases —
+      // "ঠিক করো" is a fix, "অডিট করো" is an audit — the ones SK-3 deliberately
+      // never sends to a model. Keyword drift must NOT move a pin: that would
+      // re-pick every turn and destroy the cached prefix the pin exists to
+      // protect. And an OWNER pin is never overridden by anything.
+      const rule = source === 'owner' ? null : applyRules(lastUserText)
+      if (rule && rule.skill !== conv.pinnedSkill) {
+        const decision: RouteDecision = {
+          skill: rule.skill,
+          layer: 'rule',
+          reason: `${rule.id}: ${rule.why} — কাজ বদলেছে, তাই skill বদলালাম`,
+          candidates: [{ name: rule.skill, score: Infinity }],
+          needsModel: false,
+        }
+        await writePin(conversationId, rule.skill, decision, 'router')
+        return { skill: rule.skill, source: 'router', trace: decision }
       }
+
+      return { skill: conv.pinnedSkill, source, trace: null }
     }
 
     const index = await discoverSkills(SKILLS_ROOT, { includeDraft: opts.includeDraft })
