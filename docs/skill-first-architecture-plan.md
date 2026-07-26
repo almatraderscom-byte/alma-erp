@@ -422,6 +422,43 @@ description's negative half ("Not for producing an audit") as a claimed purpose.
 **Still outstanding:** `isolation: subagent` (the lean-system-prompt runner),
 SK-6, and promoting the 16 original skills one at a time with evals.
 
+### Did the skill actually help? — live, 2026-07-26
+
+Not an exam. The owner's instruction was to carry on with the real SEO job and
+let that be the test: *"tmi ager je kaj chilo seo edit ba fix kora seta continue
+koro, ete kore skill test o hobe."*
+
+Same site, same job, same message shape. The no-skill run earlier that day is the
+baseline.
+
+| | no skill | with `seo-fixing-own-site` |
+|---|---|---|
+| turn 1 | 1m 5s · 9 steps · **$0.2743** | 41s · 5 steps · **$0.0098** |
+| turn 2 | — | 1m 24s · 7 steps · **$0.0226** |
+| batch staged | **1 product** | **10 products**, labelled "ব্যাচ ১" |
+| needed a nudge not to stop | yes | no |
+| wasted a call on placeholder URLs | yes | no |
+| what remains | not stated | "আরও ~৩২টা প্রোডাক্ট বাকি" |
+
+The decisive moment is not the numbers. Asked to fix alt text, the agent
+verified before working and wrote:
+
+> *"Boss, I fetched a live product page to verify — and **the skill warned me
+> about this exact situation**. Audit shows 42 products with issues, but zero of
+> them are alt text problems."*
+>
+> *"প্রোডাক্ট ছবির alt text-এ কোথাও কোনো সমস্যা নেই বস … **আসল সমাধান দরকার**:
+> ৪২টা প্রোডাক্টের meta description + ২টার product description ঠিক করা।"*
+
+It reached, unprompted and in under a minute, the conclusion that cost me a
+morning of hand-checking live HTML — because that morning's finding was written
+into `traps.md`. Then it redirected the job to the work that actually matters and
+staged a ten-product batch.
+
+**Verdict: helped.** It stopped Boss paying for work that did not need doing,
+and it did not regress any dimension. The cost gap is partly DeepSeek vs Sonnet,
+so the honest single-variable claim is the behaviour, not the 28× price.
+
 ## 6. What stays global, deliberately
 
 Skills own **task knowledge**. Global code keeps only what is true for every
