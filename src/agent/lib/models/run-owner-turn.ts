@@ -69,6 +69,7 @@ import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUser
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
 import { normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
+import { stripLeakedToolCalls } from '@/agent/lib/strip-leaked-tool-calls'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/lib/plan-first'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
@@ -1961,6 +1962,25 @@ async function* runAlternateProviderTurn(
             totalActualCostUsd = (totalActualCostUsd ?? 0) + ev.costUsd
             roundCostsUsd.push(roundUsd(ev.costUsd))
           }
+        }
+      }
+
+      // A tool call is not a sentence (owner saw this twice, 2026-07-27). Some
+      // OpenRouter-hosted heads fall back to an XML-ish tool dialect the adapter
+      // does not recognise, and it lands in the chat as prose:
+      //   <get_website_catalog> <arg_key>scope</arg_key> … </tool_call>
+      // Text deltas are buffered rather than streamed, so removing it here keeps
+      // it off his screen entirely. The names are kept for the record — a claim
+      // built on a call that only LOOKED like it ran must still be catchable.
+      if (iterationText) {
+        const stripped = stripLeakedToolCalls(iterationText)
+        if (stripped.count > 0) {
+          console.warn('[run-owner-turn] leaked tool-call text removed:', {
+            model: model.id,
+            count: stripped.count,
+            tools: stripped.toolNames,
+          })
+          iterationText = stripped.text
         }
       }
 
