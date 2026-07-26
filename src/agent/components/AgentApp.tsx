@@ -97,8 +97,29 @@ type MessageRow = {
   createdAt?: string
 }
 
+/**
+ * OWNER REPORT 2026-07-27 — answering a question card read like "ami ekta sms
+ * disi": the choice appeared as a loose chat bubble while the question it
+ * answered was nowhere near it.
+ *
+ * The card already renders itself answered (question + the chosen answer). So
+ * the separate user row that IS that same answer is a duplicate, and dropping it
+ * leaves exactly one record of the exchange — the card — the way a professional
+ * agent app shows it. Only an EXACT match against the card's own recorded
+ * `selectedOption`, and only for the row right after it: anything the owner
+ * genuinely typed keeps its bubble.
+ */
+function dropDuplicateAskAnswers(msgs: ChatMessage[]): ChatMessage[] {
+  return msgs.filter((m, i) => {
+    if (m.role !== 'user') return true
+    const prev = msgs[i - 1]
+    const answer = prev?.askCard?.selectedOption
+    return !(answer && answer.trim() === m.text.trim())
+  })
+}
+
 function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
-  return rows.map((r, rowIdx) => {
+  return dropDuplicateAskAnswers(rows.map((r, rowIdx) => {
     const textBlocks = r.content.filter((b) => b.type === 'text')
     const storedText = textBlocks.map((b) => b.text ?? '').join('')
     const settledText = r.role === 'assistant'
@@ -176,7 +197,7 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
           }
         : undefined,
     }
-  })
+  }))
 }
 
 // ── Live activity-timeline builders ─────────────────────────────────────────
@@ -931,10 +952,34 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           path: fileRefs[idx]?.path,
         })),
       }
-      setMessages((prev) => [
-        ...prev.map((m) => (m.askCard ? { ...m, askCard: undefined } : m)),
-        userMsg,
-      ])
+      // OWNER REPORT 2026-07-27: answering a question card used to DELETE the
+      // card and drop the choice in as a plain chat bubble — "mone hoy je ami
+      // ekta sms disi". The question vanished, so the thread no longer showed
+      // what was asked, only a loose word he had apparently typed.
+      //
+      // The card already knows how to render itself answered (AgentAskCard's
+      // settled breadcrumb: question on top, the chosen answer beneath). So mark
+      // it answered instead of removing it, and — when the send CAME from the
+      // card — skip the user bubble, because the card is now the record of both
+      // the question and his answer. A free-text reply typed in the composer
+      // still gets its own bubble; only the cards go settled.
+      setMessages((prev) => {
+        const settled = prev.map((m) => {
+          if (!m.askCard) return m
+          const isAnswered = askCardId != null && m.askCard.id === askCardId
+          return {
+            ...m,
+            askCard: {
+              ...m.askCard,
+              status: 'answered',
+              // The one he actually answered shows his choice; any other open
+              // card goes settled-stale rather than staying armed under a new turn.
+              ...(isAnswered ? { selectedOption: text } : { staleInChat: true }),
+            },
+          }
+        })
+        return askCardId ? settled : [...settled, userMsg]
+      })
     }
 
     const assistantMsgId = nextId('streaming')

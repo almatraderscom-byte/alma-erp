@@ -62,10 +62,55 @@ async function workerTurnConsumerAlive(): Promise<boolean> {
   }
 }
 
+/**
+ * SILENCE IS THE BUG (owner incident 2026-07-27). He approved an SEO batch, the
+ * card said "✅ সম্পন্ন", and the agent never spoke again. Every later message he
+ * saw came from someone else typing — my own test question was what woke it,
+ * which is how the fault survived a "verified" session.
+ *
+ * The cause is not one branch: the inline continuation is capped at 90 s, and
+ * BOTH failure modes below used to end in a `console.warn` the owner can never
+ * see, with nothing written into the conversation.
+ *
+ *   1. it throws or the 90 s abort fires mid-turn — nothing persisted;
+ *   2. it completes cleanly having produced NO assistant text — a "success"
+ *      that says nothing, which looks exactly like the agent giving up.
+ *
+ * Both now end in a visible line. An honest "আমি আটকে গেছি, এই কারণে" is a far
+ * better outcome than silence: the owner can act on it, and it can never be
+ * mistaken for the work being finished.
+ *
+ * Why not simply raise the cap: the approve route's maxDuration is 120 s, so 90 s
+ * is the headroom, not a guess. The real repair for the timeout is the worker
+ * queue — which is down for an unrelated reason (Upstash request quota
+ * exhausted, 2026-07-27), and that is exactly when this fallback has to hold.
+ */
+async function postSilenceBreaker(
+  conversationId: string,
+  reason: 'failed' | 'empty',
+  detail: string,
+): Promise<void> {
+  try {
+    const { appendAssistantNote } = await import('@/agent/lib/conversation-note')
+    const text =
+      reason === 'empty'
+        ? 'বস, approve হওয়া কাজটার পরের ধাপে নিজে থেকে এগোতে গিয়ে আমি কিছুই ফেরত দিতে পারিনি — '
+          + 'কাজটা যেখানে ছিল সেখানেই আছে, শেষ হয়নি। "চালিয়ে যাও" বললে আমি ওখান থেকেই ধরব।'
+        : 'বস, approve হওয়া কাজটার পরের ধাপে নিজে থেকে এগোতে গিয়ে আমি আটকে গেছি — '
+          + `কারণ: ${detail}। কাজটা শেষ হয়নি। "চালিয়ে যাও" বললে আমি ওখান থেকেই ধরব।`
+    await appendAssistantNote(conversationId, text)
+  } catch (err) {
+    // Last resort only — if even the note fails there is nothing further to try,
+    // but it must never turn an approval into an error for the owner.
+    console.warn('[approval-continuation] silence-breaker note failed:', err instanceof Error ? err.message : err)
+  }
+}
+
 /** Run the continuation turn in-process (revise-route pattern): persist the directive
  * as a user message, drain one runOwnerTurn pass (it persists its own reply/cards),
- * then finalize the turn row so the app's resume spinner settles. Best-effort. */
-async function runContinuationInline(opts: { conversationId: string; message: string }, turnId: string | null): Promise<void> {
+ * then finalize the turn row so the app's resume spinner settles. Never silent. */
+export async function runContinuationInline(opts: { conversationId: string; message: string }, turnId: string | null): Promise<void> {
+  let spoke = false
   try {
     const { runOwnerTurn } = await import('@/agent/lib/models/run-owner-turn')
     const controller = new AbortController()
@@ -76,6 +121,10 @@ async function runContinuationInline(opts: { conversationId: string; message: st
         projectSystemInstructions:
           `[INTERNAL WORKFLOW CONTINUATION — NOT an owner-authored message and never display/quote it as one.]\n${opts.message}`,
       })) {
+        // A card counts as speaking too — an approval that stages the next card
+        // has visibly moved the job on, even with no prose.
+        if (ev.type === 'text_delta' && ev.delta.trim()) spoke = true
+        if (ev.type === 'ask_card' || ev.type === 'confirm_card') spoke = true
         if (ev.type === 'error') {
           console.warn('[approval-continuation] inline turn error event:', ev.message)
         }
@@ -84,9 +133,23 @@ async function runContinuationInline(opts: { conversationId: string; message: st
       clearTimeout(timer)
     }
     if (turnId) await finalizeTurnIfRunning(turnId, 'done')
+    if (!spoke) {
+      console.warn('[approval-continuation] inline continuation produced no reply')
+      await postSilenceBreaker(opts.conversationId, 'empty', '')
+    }
   } catch (err) {
-    console.warn('[approval-continuation] inline continuation failed:', err instanceof Error ? err.message : err)
+    const detail = err instanceof Error ? err.message : String(err)
+    console.warn('[approval-continuation] inline continuation failed:', detail)
     if (turnId) await finalizeTurnIfRunning(turnId, 'error')
+    // Text already streamed and persisted is not silence — only add the note when
+    // the owner would otherwise be left with nothing.
+    if (!spoke) {
+      await postSilenceBreaker(
+        opts.conversationId,
+        'failed',
+        detail.includes('abort') ? 'সময়সীমা পেরিয়ে গেছে (৯০ সেকেন্ড)' : detail.slice(0, 160),
+      )
+    }
   }
 }
 
