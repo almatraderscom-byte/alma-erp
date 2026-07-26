@@ -74,6 +74,19 @@ export function RoutingView() {
       {error && <div className="mb-3"><ErrorNote>{error}</ErrorNote></div>}
       {loading && !data && <Panel><EmptyState>আনা হচ্ছে…</EmptyState></Panel>}
 
+      {/* What the rules would do to a call arriving RIGHT NOW. Without this the console cannot be
+          tested honestly: the owner spent an evening concluding the system was broken because he
+          tested at 21:01, when the after-hours rule was quietly doing exactly its job. */}
+      {data?.now && (
+        <div className={cn('mb-3 rounded-2xl border px-4 py-3', data.now.open ? 'tone-green' : 'tone-amber')}>
+          <p className="text-[12px] font-semibold">
+            {data.now.open ? 'এখন অফিস খোলা' : 'এখন অফিস বন্ধ'} · {data.now.reason}
+          </p>
+          <p className="mt-1 text-[12px] leading-relaxed opacity-90">{data.now.effect}</p>
+          <p className="mt-1 text-[11px] leading-relaxed opacity-75">{data.now.note}</p>
+        </div>
+      )}
+
       {data && rows && (
         <div className="space-y-3">
           <Panel title="যেসব নম্বরে কল আসে">
