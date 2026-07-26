@@ -2768,7 +2768,10 @@ function mohClassName(raw) {
  * classes' files at random from either — the welcome tune turning up mid-transfer.
  */
 function mohDirFor(cls, conf) {
-  const declared = conf.match(new RegExp(`^\\[${cls}\\][^\\[]*?^directory\\s*=\\s*(.+)$`, 'ms'))
+  // `[^\r\n]+` for the value, and NO `s` flag: with `s` the `.` in a trailing `(.+)$` swallows
+  // newlines and the captured "directory" came back as "/var/lib/asterisk/moh-alma\nsort=random\n".
+  // Caught live — the hold-audio file list went empty because the path had a newline in it.
+  const declared = conf.match(new RegExp(`^\\[${cls}\\][^\\[]*?^directory[ \\t]*=[ \\t]*([^\\r\\n]+)`, 'm'))
   if (declared) return declared[1].trim()
   return `${MOH_DIR_BASE}/${cls}`
 }
