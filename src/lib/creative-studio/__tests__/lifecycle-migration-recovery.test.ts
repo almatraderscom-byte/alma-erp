@@ -75,8 +75,13 @@ describe('Creative Studio lifecycle failed-migration recovery', () => {
     expect(script).toContain("'20260921130000_creative_lifecycle_production'")
     expect(script).toContain("'creative_lifecycle_feature_flags_exact_scope_key'")
     expect(script).toContain("logs.includes('42P17')")
+    expect(script).toContain(
+      "logs.includes('functions in index expression must be marked IMMUTABLE')",
+    )
     expect(script).toContain('expected exactly one')
     expect(script).toContain('row.finished_at !== null || row.rolled_back_at !== null')
+    expect(script).toContain('last known pre-failure lifecycle index is missing')
+    expect(script).toContain('failed exact-scope index unexpectedly exists')
   })
 
   it('proves empty/default-off state and aborts past the known failed prefix', () => {

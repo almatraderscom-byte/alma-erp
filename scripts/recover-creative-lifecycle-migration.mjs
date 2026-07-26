@@ -95,6 +95,7 @@ const requiredDefaults = {
 }
 
 const postFailureSentinels = [
+  'creative_lifecycle_flag_audit_events_owner_id_idempotency_key_key',
   'creative_compositions_id_owner_id_brand_profile_id_project_id_key',
   'creative_lifecycle_jobs_composition_scope_fkey',
   'creative_lifecycle_ready_receipt_validate',
@@ -158,8 +159,14 @@ async function migrationRecord(client) {
   if (row.finished_at !== null || row.rolled_back_at !== null) {
     throw new Error('migration record is not an unresolved failed attempt')
   }
-  if (!logs.includes('42P17') || !logs.includes(failedIndexName)) {
-    throw new Error('failed migration log does not match the audited 42P17 exact-scope index failure')
+  const hasSqlState = logs.includes('42P17')
+  const hasImmutableIndexError =
+    logs.includes('functions in index expression must be marked IMMUTABLE')
+  if (!hasSqlState || !hasImmutableIndexError) {
+    throw new Error(
+      `failed migration log does not match the audited immutable-index failure `
+      + `(sqlState42P17=${hasSqlState}, immutableIndexError=${hasImmutableIndexError})`,
+    )
   }
   return {
     migrationName: row.migration_name,
@@ -169,7 +176,9 @@ async function migrationRecord(client) {
     appliedStepsCount: row.applied_steps_count,
     errorProof: {
       sqlState42P17: true,
+      immutableIndexError: true,
       failedIndexName,
+      failedIndexConfirmedBySchemaBoundary: true,
     },
   }
 }
@@ -298,6 +307,21 @@ async function inspectState(client) {
 }
 
 function assertSafePartialState(state) {
+  const missingPrefixTables = state.tables.filter((entry) => !entry.present)
+  if (missingPrefixTables.length) {
+    throw new Error(
+      `expected failed-prefix lifecycle tables are missing: ${missingPrefixTables.map(
+        (entry) => entry.table,
+      ).join(', ')}`,
+    )
+  }
+  const prefixIndexNames = new Set(state.indexes.map((entry) => entry.indexname))
+  if (!prefixIndexNames.has('creative_lifecycle_feature_flags_updated_by_id_idx')) {
+    throw new Error('last known pre-failure lifecycle index is missing')
+  }
+  if (prefixIndexNames.has(failedIndexName)) {
+    throw new Error('failed exact-scope index unexpectedly exists')
+  }
   const populated = state.tables.filter((entry) => entry.present && entry.rowCount !== 0)
   if (populated.length) {
     throw new Error(`lifecycle tables contain data: ${populated.map((entry) => entry.table).join(', ')}`)
