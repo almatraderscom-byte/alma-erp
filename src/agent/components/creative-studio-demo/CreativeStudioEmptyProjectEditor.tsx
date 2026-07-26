@@ -5,7 +5,15 @@ import styles from './CreativeStudioEnterpriseDemo.module.css'
 import { StudioV2Icon, type StudioIconName } from './StudioV2Icon'
 
 type CanvasPreset = '9:16' | '1:1' | '4:5' | '16:9'
+type CanvasSelection = CanvasPreset | 'custom'
 type EmptyEditorPanel = 'media' | 'text' | 'voice' | 'music' | 'agent'
+type LocalMediaItem = {
+  id: string
+  name: string
+  kind: 'image' | 'video' | 'audio'
+  width?: number
+  height?: number
+}
 
 type CreativeStudioEmptyProjectEditorProps = {
   projectName: string
@@ -28,11 +36,39 @@ const PANEL_TOOLS: ReadonlyArray<{
 
 const CANVAS_PRESETS: readonly CanvasPreset[] = ['9:16', '1:1', '4:5', '16:9']
 
-function canvasResolution(preset: CanvasPreset): string {
-  if (preset === '9:16') return '1080 × 1920'
-  if (preset === '1:1') return '1080 × 1080'
-  if (preset === '4:5') return '1080 × 1350'
-  return '1920 × 1080'
+const CANVAS_SIZES: Record<CanvasPreset, { width: number; height: number }> = {
+  '9:16': { width: 1080, height: 1920 },
+  '1:1': { width: 1080, height: 1080 },
+  '4:5': { width: 1080, height: 1350 },
+  '16:9': { width: 1920, height: 1080 },
+}
+
+function readMediaDimensions(file: File): Promise<Pick<LocalMediaItem, 'width' | 'height'>> {
+  if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+    return Promise.resolve({})
+  }
+
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file)
+    const finish = (width?: number, height?: number) => {
+      URL.revokeObjectURL(objectUrl)
+      resolve(width && height ? { width, height } : {})
+    }
+
+    if (file.type.startsWith('image/')) {
+      const image = new window.Image()
+      image.onload = () => finish(image.naturalWidth, image.naturalHeight)
+      image.onerror = () => finish()
+      image.src = objectUrl
+      return
+    }
+
+    const video = document.createElement('video')
+    video.preload = 'metadata'
+    video.onloadedmetadata = () => finish(video.videoWidth, video.videoHeight)
+    video.onerror = () => finish()
+    video.src = objectUrl
+  })
 }
 
 export function CreativeStudioEmptyProjectEditor({
@@ -41,9 +77,12 @@ export function CreativeStudioEmptyProjectEditor({
   kind,
   onHome,
 }: CreativeStudioEmptyProjectEditorProps) {
-  const [canvasPreset, setCanvasPreset] = useState(initialCanvasPreset)
+  const [canvasPreset, setCanvasPreset] = useState<CanvasSelection>(initialCanvasPreset)
+  const [canvasSize, setCanvasSize] = useState(CANVAS_SIZES[initialCanvasPreset])
+  const [customDraft, setCustomDraft] = useState(CANVAS_SIZES[initialCanvasPreset])
   const [activePanel, setActivePanel] = useState<EmptyEditorPanel>('media')
-  const [mediaNames, setMediaNames] = useState<string[]>([])
+  const [mediaItems, setMediaItems] = useState<LocalMediaItem[]>([])
+  const [selectedMediaId, setSelectedMediaId] = useState('')
   const [agentBrief, setAgentBrief] = useState(
     'Build a clean edit plan from the media I add. Do not generate, export or publish.',
   )
@@ -52,15 +91,63 @@ export function CreativeStudioEmptyProjectEditor({
   )
 
   const canvasStyle = useMemo(
-    () => ({ aspectRatio: canvasPreset.replace(':', ' / ') }),
-    [canvasPreset],
+    () => ({ aspectRatio: `${canvasSize.width} / ${canvasSize.height}` }),
+    [canvasSize],
   )
+  const canvasResolution = `${canvasSize.width} × ${canvasSize.height}`
 
-  function handleMediaSelection(files: FileList | null) {
+  function chooseCanvasPreset(preset: CanvasPreset) {
+    const size = CANVAS_SIZES[preset]
+    setCanvasPreset(preset)
+    setCanvasSize(size)
+    setCustomDraft(size)
+    setNotice(`${preset} canvas selected inside the project.`)
+  }
+
+  function applyCustomCanvas() {
+    const width = Math.max(240, Math.min(7680, Math.round(customDraft.width)))
+    const height = Math.max(240, Math.min(7680, Math.round(customDraft.height)))
+    const size = { width, height }
+    setCanvasPreset('custom')
+    setCanvasSize(size)
+    setCustomDraft(size)
+    setNotice(`Custom ${width} × ${height} canvas applied locally.`)
+  }
+
+  function applyMediaCanvas(item: LocalMediaItem) {
+    if (!item.width || !item.height) return
+    const size = { width: item.width, height: item.height }
+    setSelectedMediaId(item.id)
+    setCanvasPreset('custom')
+    setCanvasSize(size)
+    setCustomDraft(size)
+    setNotice(`${item.name} dimensions are now the current canvas.`)
+  }
+
+  async function handleMediaSelection(files: FileList | null) {
     if (!files?.length) return
-    const names = Array.from(files, (file) => file.name)
-    setMediaNames((current) => [...current, ...names])
-    setNotice(`${names.length} local file${names.length > 1 ? 's' : ''} staged in this browser demo only.`)
+    const selectedFiles = Array.from(files)
+    const selectionBatchId = Date.now()
+    const items = await Promise.all(
+      selectedFiles.map(async (file, index): Promise<LocalMediaItem> => {
+        const dimensions = await readMediaDimensions(file)
+        return {
+          id: `${selectionBatchId}-${file.lastModified}-${index}`,
+          name: file.name,
+          kind: file.type.startsWith('image/')
+            ? 'image'
+            : file.type.startsWith('video/')
+              ? 'video'
+              : 'audio',
+          ...dimensions,
+        }
+      }),
+    )
+    setMediaItems((current) => [...current, ...items])
+    setSelectedMediaId(items[0]?.id ?? '')
+    setNotice(
+      `${items.length} local file${items.length > 1 ? 's' : ''} staged. Image/video dimensions are ready for canvas use.`,
+    )
   }
 
   return (
@@ -122,7 +209,7 @@ export function CreativeStudioEmptyProjectEditor({
           Owner workspace · brand isolated
         </span>
         <span>{kind === 'longform' ? 'Long-form project' : 'Video project'}</span>
-        <span>{canvasResolution(canvasPreset)} · 30 fps</span>
+        <span>{canvasResolution} · 30 fps</span>
         <strong>PROTOTYPE · ৳0</strong>
       </div>
 
@@ -162,7 +249,7 @@ export function CreativeStudioEmptyProjectEditor({
                 <input
                   accept="image/*,video/*,audio/*"
                   multiple
-                  onChange={(event) => handleMediaSelection(event.target.files)}
+                  onChange={(event) => void handleMediaSelection(event.target.files)}
                   type="file"
                 />
                 <span>
@@ -171,22 +258,52 @@ export function CreativeStudioEmptyProjectEditor({
                 <strong>Add image, video or audio</strong>
                 <small>Browse files · local demo only</small>
               </label>
-              {mediaNames.length ? (
+              {mediaItems.length ? (
                 <div className={styles.v4MediaList}>
-                  {mediaNames.map((name, index) => (
-                    <button
-                      key={`${name}-${index}`}
-                      onClick={() => setNotice(`${name} selected. Drag it to Video 1 to begin.`)}
-                      type="button"
+                  {mediaItems.map((item) => (
+                    <article
+                      className={selectedMediaId === item.id ? styles.v6MediaItemSelected : undefined}
+                      key={item.id}
                     >
-                      <span>
-                        <StudioV2Icon name="video" size={16} />
-                      </span>
-                      <span>
-                        <strong>{name}</strong>
-                        <small>Local source · ready to place</small>
-                      </span>
-                    </button>
+                      <button
+                        aria-pressed={selectedMediaId === item.id}
+                        onClick={() => {
+                          setSelectedMediaId(item.id)
+                          setNotice(`${item.name} selected. Drag it to Video 1 to begin.`)
+                        }}
+                        type="button"
+                      >
+                        <span>
+                          <StudioV2Icon
+                            name={
+                              item.kind === 'image'
+                                ? 'image'
+                                : item.kind === 'video'
+                                  ? 'video'
+                                  : 'audio'
+                            }
+                            size={16}
+                          />
+                        </span>
+                        <span>
+                          <strong>{item.name}</strong>
+                          <small>
+                            {item.width && item.height
+                              ? `${item.width} × ${item.height} · local source`
+                              : 'Local source · ready to place'}
+                          </small>
+                        </span>
+                      </button>
+                      {item.width && item.height ? (
+                        <button
+                          className={styles.v6UseMediaCanvas}
+                          onClick={() => applyMediaCanvas(item)}
+                          type="button"
+                        >
+                          Use as canvas
+                        </button>
+                      ) : null}
+                    </article>
                   ))}
                 </div>
               ) : (
@@ -218,21 +335,70 @@ export function CreativeStudioEmptyProjectEditor({
           <header>
             <div>
               <span>CANVAS</span>
-              <strong>{canvasPreset}</strong>
-              <small>{canvasResolution(canvasPreset)}</small>
+              <strong>{canvasPreset === 'custom' ? 'CUSTOM' : canvasPreset}</strong>
+              <small>{canvasResolution}</small>
             </div>
-            <div className={styles.v4CanvasPresets} role="group" aria-label="Canvas size presets">
-              {CANVAS_PRESETS.map((preset) => (
+            <div className={styles.v6CanvasToolbar}>
+              <div className={styles.v4CanvasPresets} role="group" aria-label="Canvas size presets">
+                {CANVAS_PRESETS.map((preset) => (
+                  <button
+                    aria-pressed={canvasPreset === preset}
+                    className={canvasPreset === preset ? styles.v4CanvasPresetActive : undefined}
+                    key={preset}
+                    onClick={() => chooseCanvasPreset(preset)}
+                    type="button"
+                  >
+                    {preset}
+                  </button>
+                ))}
                 <button
-                  aria-pressed={canvasPreset === preset}
-                  className={canvasPreset === preset ? styles.v4CanvasPresetActive : undefined}
-                  key={preset}
-                  onClick={() => setCanvasPreset(preset)}
+                  aria-expanded={canvasPreset === 'custom'}
+                  aria-pressed={canvasPreset === 'custom'}
+                  className={canvasPreset === 'custom' ? styles.v4CanvasPresetActive : undefined}
+                  onClick={() => setCanvasPreset('custom')}
                   type="button"
                 >
-                  {preset}
+                  Custom
                 </button>
-              ))}
+              </div>
+              {canvasPreset === 'custom' ? (
+                <div className={styles.v6CustomCanvasFields}>
+                  <label>
+                    <span>Width</span>
+                    <input
+                      aria-label="Custom canvas width"
+                      max={7680}
+                      min={240}
+                      onChange={(event) =>
+                        setCustomDraft((current) => ({
+                          ...current,
+                          width: Number(event.target.value),
+                        }))
+                      }
+                      type="number"
+                      value={customDraft.width}
+                    />
+                  </label>
+                  <span>×</span>
+                  <label>
+                    <span>Height</span>
+                    <input
+                      aria-label="Custom canvas height"
+                      max={7680}
+                      min={240}
+                      onChange={(event) =>
+                        setCustomDraft((current) => ({
+                          ...current,
+                          height: Number(event.target.value),
+                        }))
+                      }
+                      type="number"
+                      value={customDraft.height}
+                    />
+                  </label>
+                  <button onClick={applyCustomCanvas} type="button">Apply</button>
+                </div>
+              ) : null}
             </div>
           </header>
 
@@ -247,7 +413,7 @@ export function CreativeStudioEmptyProjectEditor({
                 <input
                   accept="image/*,video/*"
                   multiple
-                  onChange={(event) => handleMediaSelection(event.target.files)}
+                  onChange={(event) => void handleMediaSelection(event.target.files)}
                   type="file"
                 />
                 Choose media
@@ -320,11 +486,11 @@ export function CreativeStudioEmptyProjectEditor({
               <dl>
                 <div>
                   <dt>Canvas</dt>
-                  <dd>{canvasPreset}</dd>
+                  <dd>{canvasPreset === 'custom' ? 'Custom / media' : canvasPreset}</dd>
                 </div>
                 <div>
                   <dt>Resolution</dt>
-                  <dd>{canvasResolution(canvasPreset)}</dd>
+                  <dd>{canvasResolution}</dd>
                 </div>
                 <div>
                   <dt>Frame rate</dt>
@@ -390,7 +556,7 @@ export function CreativeStudioEmptyProjectEditor({
               <strong>{label}</strong>
             </span>
             <div>
-              {mediaNames.length && label === 'Video 1' ? (
+              {mediaItems.length && label === 'Video 1' ? (
                 <button
                   onClick={() => setNotice('Fixture clip placed locally. Render remains disconnected.')}
                   type="button"

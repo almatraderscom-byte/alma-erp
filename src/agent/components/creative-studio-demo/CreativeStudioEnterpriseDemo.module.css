@@ -14878,3 +14878,642 @@
     display: grid;
   }
 }
+
+/* ── V4 owner correction: expandable workspace + project-first canvas ── */
+
+.v6ComposerHeaderActions {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+  justify-content: flex-end;
+}
+
+.v6ComposerExpand {
+  align-items: center;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.94), rgb(var(--c-card) / 0.72));
+  border: 1px solid rgb(var(--c-ink) / 0.1);
+  border-radius: 10px;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.94) inset;
+  color: var(--studio-muted);
+  cursor: pointer;
+  display: inline-flex;
+  height: 30px;
+  justify-content: center;
+  transition:
+    border-color 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+  width: 30px;
+}
+
+.v6ComposerExpand:hover {
+  border-color: rgb(var(--c-accent) / 0.4);
+  color: var(--studio-accent-dim);
+  transform: translateY(-1px);
+}
+
+.v6ExpandGlyph {
+  display: block;
+  height: 14px;
+  position: relative;
+  width: 14px;
+}
+
+.v6ExpandGlyph i {
+  border-color: currentColor;
+  border-style: solid;
+  height: 6px;
+  position: absolute;
+  width: 6px;
+}
+
+.v6ExpandGlyph i:first-child {
+  border-width: 1.5px 0 0 1.5px;
+  left: 0;
+  top: 0;
+}
+
+.v6ExpandGlyph i:last-child {
+  border-width: 0 1.5px 1.5px 0;
+  bottom: 0;
+  right: 0;
+}
+
+.v6ComposerExpanded .v6ExpandGlyph i:first-child {
+  border-width: 0 1.5px 1.5px 0;
+  left: 0;
+  top: 0;
+}
+
+.v6ComposerExpanded .v6ExpandGlyph i:last-child {
+  border-width: 1.5px 0 0 1.5px;
+  bottom: 0;
+  right: 0;
+}
+
+.v6AdvancedSourceGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.v6AdvancedSourceGrid .v4SourceCard {
+  grid-template-columns: 62px minmax(0, 1fr);
+  min-height: 76px;
+  padding: 6px;
+}
+
+.v6AdvancedSourceGrid .v4SourceArtwork {
+  height: 62px;
+  width: 62px;
+}
+
+.v6AdvancedSourceGrid .v4SourceContent > span {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.v6AdvancedSourceGrid .v4SourceContent > span em {
+  color: var(--studio-muted);
+  font-size: 6px;
+  font-style: normal;
+  letter-spacing: 0.08em;
+}
+
+.v6AdvancedSourceGrid .v4SourceCard[data-required='true'] {
+  border-color: rgb(var(--c-accent) / 0.3);
+}
+
+.v6AdvancedSourceGrid .v4SourceActions {
+  margin-top: 4px;
+}
+
+.v6AdvancedSourceGrid .v4SourceActions button,
+.v6AdvancedSourceGrid .v4SourceActions label {
+  min-height: 25px;
+}
+
+.v4ComposerAdvanced:not(.v6ComposerExpanded) .v6AdvancedSourceTray {
+  bottom: auto;
+  left: 14px;
+  right: 14px;
+  top: 68px;
+}
+
+.v4ComposerAdvanced .v3RecipeScroller {
+  display: none;
+}
+
+.v4ComposerAdvanced .v3ArchitectureSwitch {
+  max-width: 280px;
+  padding: 3px;
+}
+
+.v4ComposerAdvanced .v3ArchitectureSwitch button {
+  min-height: 32px;
+}
+
+.v4ComposerAdvanced .v3ModeScroller {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 1px 0 3px;
+  scrollbar-width: thin;
+}
+
+.v4ComposerAdvanced .v3ModeScroller button,
+.v4ComposerAdvanced .v3ModeScroller button:hover {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  gap: 6px;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 11px;
+  transform: none;
+}
+
+.v4ComposerAdvanced .v3ModeScroller button > svg {
+  background: transparent;
+  border: 0;
+  box-sizing: border-box;
+  height: 14px;
+  padding: 0;
+  width: 14px;
+}
+
+.v4ComposerAdvanced .v3ModeScroller button > span {
+  display: block;
+}
+
+.v4ComposerAdvanced .v3ModeScroller button strong {
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.v4ComposerAdvanced .v3ModeScroller button small {
+  display: none;
+}
+
+.v4ComposerAdvanced .v3ModeExplanation {
+  border-radius: 11px;
+  min-height: 36px;
+  padding: 6px 10px;
+}
+
+.v4ComposerAdvanced .v3ComposerBody {
+  gap: 8px;
+}
+
+.v6ProductionControlDeck {
+  display: grid;
+  gap: 11px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.v6ProductionControlDeck > .v3ControlGrid,
+.v6ProductionControlDeck > .v3OptionGroup {
+  background: rgb(255 255 255 / 0.54);
+  border: 1px solid rgb(var(--c-ink) / 0.075);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.v6ProductionControlDeck > .v3ControlGrid:first-child,
+.v6ProductionControlDeck > .v3ControlGrid:last-child {
+  grid-column: 1 / -1;
+}
+
+.v6ProductionControlDeck select {
+  background: rgb(var(--c-card) / 0.9);
+  border-radius: 9px;
+  min-height: 36px;
+}
+
+.v6ProductionControlDeck .v3OptionRow button,
+.v6SourcesControlDeck .v3SegmentedWrap button {
+  border-radius: 8px;
+  min-height: 31px;
+}
+
+.v6ProjectStartFlow {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 6px 22px 18px;
+}
+
+.v6ProjectStartFlow > div {
+  background:
+    radial-gradient(circle at 0 0, rgb(255 255 255 / 0.9), transparent 45%),
+    var(--bg-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  min-height: 108px;
+  padding: 13px;
+}
+
+.v6ProjectStartFlow span {
+  color: var(--studio-accent-dim);
+  font-family: var(--font-mono-nums);
+  font-size: 8px;
+  font-weight: 760;
+}
+
+.v6ProjectStartFlow strong {
+  font-size: 11px;
+  margin-top: 18px;
+}
+
+.v6ProjectStartFlow small {
+  color: var(--studio-muted);
+  font-size: 8px;
+  line-height: 1.45;
+  margin-top: 4px;
+}
+
+.v6CanvasToolbar {
+  align-items: center;
+  display: flex;
+  position: relative;
+}
+
+.v6CustomCanvasFields {
+  align-items: flex-end;
+  background: #222328;
+  border: 1px solid #3a3b42;
+  border-radius: 11px;
+  box-shadow: 0 22px 55px -25px rgb(0 0 0 / 0.9);
+  display: grid;
+  gap: 7px;
+  grid-template-columns: 82px auto 82px auto;
+  padding: 9px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 7px);
+  z-index: 20;
+}
+
+.v6CustomCanvasFields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.v6CustomCanvasFields label span {
+  color: #8d8f96;
+  font-size: 6px;
+  letter-spacing: 0.06em;
+}
+
+.v6CustomCanvasFields input {
+  background: #17181b;
+  border: 1px solid #3a3b42;
+  border-radius: 7px;
+  color: #f0f0f2;
+  font-size: 8px;
+  height: 30px;
+  padding: 0 7px;
+  width: 82px;
+}
+
+.v6CustomCanvasFields > span {
+  color: #72747b;
+  margin-bottom: 8px;
+}
+
+.v6CustomCanvasFields > button {
+  background: #f1f1f3;
+  border: 0;
+  border-radius: 7px;
+  color: #15161a;
+  font-size: 8px;
+  font-weight: 730;
+  height: 30px;
+  padding: 0 10px;
+}
+
+.v4MediaList article {
+  align-items: center;
+  background: #222328;
+  border: 1px solid #303137;
+  border-radius: 9px;
+  display: grid;
+  gap: 5px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 4px;
+}
+
+.v4MediaList article > button:first-child {
+  background: transparent;
+  border: 0;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  min-width: 0;
+}
+
+.v4MediaList .v6MediaItemSelected {
+  background: rgb(226 124 98 / 0.08);
+  border-color: rgb(226 124 98 / 0.38);
+}
+
+.v4MediaList .v6UseMediaCanvas {
+  align-items: center;
+  background: #303138;
+  border: 1px solid #414249;
+  border-radius: 7px;
+  color: #d8d9dd;
+  display: inline-flex;
+  font-size: 6px;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 7px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.v4MediaList .v6UseMediaCanvas:hover {
+  border-color: rgb(226 124 98 / 0.54);
+  color: #f09a84;
+}
+
+.v3Composer.v4FloatingComposer.v6ComposerExpanded {
+  background:
+    radial-gradient(circle at 50% 34%, rgb(var(--c-accent) / 0.09), transparent 36%),
+    linear-gradient(145deg, rgb(var(--c-card) / 0.99), rgb(var(--c-surface) / 0.97));
+  border: 0;
+  border-radius: 0;
+  bottom: 0;
+  box-shadow: none;
+  height: 100dvh;
+  inset: 0;
+  left: 0;
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 18px clamp(18px, 3vw, 48px);
+  right: 0;
+  top: 0;
+  transform: none;
+  width: 100vw;
+  z-index: 360;
+}
+
+.v6ComposerExpanded.v4ComposerAuto {
+  display: grid;
+  gap: 12px;
+  grid-template-rows: auto auto minmax(240px, 1fr) auto auto auto;
+}
+
+.v6ComposerExpanded .v4ComposerRecipes {
+  bottom: auto;
+  justify-self: center;
+  left: auto;
+  max-width: min(1080px, 100%);
+  padding: 0;
+  position: static;
+}
+
+.v6ComposerExpanded .v4ComposerHeader,
+.v6ComposerExpanded > .v3ComposerHeader {
+  justify-self: center;
+  margin: 0;
+  max-width: 1180px;
+  width: 100%;
+}
+
+.v6ComposerExpanded .v4AutoSourceGrid,
+.v6ComposerExpanded .v6AdvancedSourceGrid {
+  align-self: center;
+  gap: clamp(18px, 4vw, 64px);
+  justify-self: center;
+  max-width: 1040px;
+  width: 100%;
+}
+
+.v6ComposerExpanded .v4SourceCard,
+.v6ComposerExpanded .v6AdvancedSourceGrid .v4SourceCard {
+  background:
+    radial-gradient(circle at 0 0, rgb(255 255 255 / 0.96), transparent 44%),
+    linear-gradient(145deg, rgb(var(--c-card) / 0.9), rgb(var(--c-surface) / 0.72));
+  border-radius: 25px;
+  box-shadow:
+    0 34px 80px -42px rgb(var(--c-black) / 0.65),
+    0 1px 0 rgb(255 255 255 / 0.96) inset;
+  grid-template-columns: 156px minmax(0, 1fr);
+  min-height: 176px;
+  padding: 10px;
+}
+
+.v6ComposerExpanded .v4SourceArtwork,
+.v6ComposerExpanded .v6AdvancedSourceGrid .v4SourceArtwork {
+  border-radius: 19px;
+  height: 156px;
+  width: 156px;
+}
+
+.v6ComposerExpanded .v4SourceContent > strong {
+  font-size: 15px;
+}
+
+.v6ComposerExpanded .v4SourceContent > small {
+  font-size: 9px;
+}
+
+.v6ComposerExpanded .v4SourceActions {
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.v6ComposerExpanded .v4SourceActions button,
+.v6ComposerExpanded .v4SourceActions label {
+  border-radius: 11px;
+  font-size: 9px;
+  min-height: 36px;
+}
+
+.v6ComposerExpanded.v4ComposerAuto > .v3PromptField,
+.v6ComposerExpanded.v4ComposerAuto > .v4ComposerFooter,
+.v6ComposerExpanded.v4ComposerAuto > .v4ComposerStatus {
+  justify-self: center;
+  max-width: 1080px;
+  width: 100%;
+}
+
+.v6ComposerExpanded.v4ComposerAuto > .v3PromptField {
+  border-radius: 21px;
+}
+
+.v6ComposerExpanded.v4ComposerAuto > .v3PromptField textarea {
+  min-height: 72px;
+}
+
+.v6ComposerExpanded .v4SourceTray {
+  bottom: auto;
+  left: 50%;
+  max-height: min(520px, calc(100dvh - 80px));
+  max-width: 880px;
+  position: fixed;
+  right: auto;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: calc(100vw - 36px);
+  z-index: 390;
+}
+
+.v6ComposerExpanded.v4ComposerAdvanced {
+  gap: 9px;
+}
+
+.v6ComposerExpanded.v4ComposerAdvanced > :not(.v4SourceTray) {
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 1080px;
+  width: 100%;
+}
+
+.v6ComposerExpanded.v4ComposerAdvanced .v3ArchitectureSwitch {
+  margin-bottom: 0;
+}
+
+.v6ComposerExpanded.v4ComposerAdvanced .v6AdvancedSourceGrid {
+  min-height: 220px;
+}
+
+.v6ComposerExpanded.v4ComposerAdvanced .v3ComposerBody {
+  display: grid;
+  gap: 9px;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.52fr);
+}
+
+.v6ComposerExpanded.v4ComposerAdvanced .v3ComposerBody > .v3PromptField {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.v6ComposerExpanded.v4ComposerAdvanced .v3ComposerBody > details {
+  min-width: 0;
+}
+
+.v6ComposerExpanded.v4ComposerAdvanced .v5DisclosureBody {
+  max-height: min(340px, 34dvh);
+}
+
+@media (max-width: 760px) {
+  .v6ProjectStartFlow {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 4px 16px 14px;
+  }
+
+  .v6ProjectStartFlow > div {
+    min-height: 72px;
+  }
+
+  .v6ProjectStartFlow strong {
+    margin-top: 9px;
+  }
+
+  .v3Composer.v4FloatingComposer.v6ComposerExpanded {
+    border-radius: 0;
+    bottom: 0;
+    height: 100dvh;
+    padding: 10px;
+    width: 100vw;
+  }
+
+  .v4ComposerAdvanced:not(.v6ComposerExpanded) > .v3ComposerHeader {
+    display: flex;
+    justify-content: flex-end;
+    margin: 0;
+    padding: 0;
+  }
+
+  .v4ComposerAdvanced:not(.v6ComposerExpanded) > .v3ComposerHeader > div:first-child {
+    display: none;
+  }
+
+  .v6ComposerExpanded .v4ComposerHeader,
+  .v6ComposerExpanded > .v3ComposerHeader {
+    display: grid;
+  }
+
+  .v6ComposerExpanded .v4ComposerHeader {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .v6ComposerExpanded .v4ComposerTabs {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: stretch;
+  }
+
+  .v6ComposerExpanded .v4ComposerTabs button {
+    flex: 1 1 50%;
+  }
+
+  .v6ComposerExpanded .v4AutoSourceGrid,
+  .v6ComposerExpanded .v6AdvancedSourceGrid {
+    gap: 9px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .v6ComposerExpanded .v4SourceCard,
+  .v6ComposerExpanded .v6AdvancedSourceGrid .v4SourceCard {
+    border-radius: 18px;
+    grid-template-columns: 82px minmax(0, 1fr);
+    min-height: 94px;
+    padding: 6px;
+  }
+
+  .v6ComposerExpanded .v4SourceArtwork,
+  .v6ComposerExpanded .v6AdvancedSourceGrid .v4SourceArtwork {
+    border-radius: 14px;
+    height: 82px;
+    width: 82px;
+  }
+
+  .v6ComposerExpanded .v4SourceActions {
+    margin-top: 5px;
+  }
+
+  .v6ComposerExpanded .v4SourceActions button,
+  .v6ComposerExpanded .v4SourceActions label {
+    font-size: 8px;
+    min-height: 28px;
+  }
+
+  .v6ComposerExpanded.v4ComposerAdvanced .v6AdvancedSourceGrid {
+    min-height: auto;
+  }
+
+  .v6ComposerExpanded.v4ComposerAdvanced .v3ComposerBody {
+    display: flex;
+  }
+
+  .v6ProductionControlDeck {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .v6ProductionControlDeck > .v3ControlGrid:first-child,
+  .v6ProductionControlDeck > .v3ControlGrid:last-child {
+    grid-column: auto;
+  }
+
+  .v6CustomCanvasFields {
+    right: 0;
+  }
+
+  .v4MediaList article {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .v4MediaList .v6UseMediaCanvas {
+    min-height: 24px;
+  }
+}

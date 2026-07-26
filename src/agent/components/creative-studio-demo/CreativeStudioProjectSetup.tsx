@@ -13,26 +13,13 @@ type CreativeStudioProjectSetupProps = {
   onCreate: (projectName: string, canvasPreset: CanvasPreset) => void
 }
 
-const CANVAS_PRESETS: ReadonlyArray<{
-  id: CanvasPreset
-  label: string
-  detail: string
-}> = [
-  { id: '9:16', label: 'Vertical', detail: 'Reels · Stories' },
-  { id: '1:1', label: 'Square', detail: 'Social post' },
-  { id: '4:5', label: 'Portrait', detail: 'Feed campaign' },
-  { id: '16:9', label: 'Landscape', detail: 'Film · YouTube' },
-]
-
 export function CreativeStudioProjectSetup({
   kind,
   onCancel,
   onCreate,
 }: CreativeStudioProjectSetupProps) {
   const [projectName, setProjectName] = useState('')
-  const [canvasPreset, setCanvasPreset] = useState<CanvasPreset>(
-    kind === 'longform' ? '16:9' : '9:16',
-  )
+  const editorDefault: CanvasPreset = kind === 'longform' ? '16:9' : '9:16'
 
   return (
     <div className={styles.v4ProjectSetupBackdrop}>
@@ -51,7 +38,7 @@ export function CreativeStudioProjectSetup({
             <h1 id="new-project-title">
               {kind === 'longform' ? 'Create a long-form project' : 'Create a video project'}
             </h1>
-            <p>Name the project and choose an initial canvas. The editor opens completely empty.</p>
+            <p>Name the project first. Canvas and media setup now happen inside the editor.</p>
           </div>
           <button aria-label="Close new project setup" onClick={onCancel} type="button">
             <StudioV2Icon name="close" size={18} />
@@ -69,24 +56,23 @@ export function CreativeStudioProjectSetup({
           <small>You can rename it later. Nothing is generated or uploaded at this step.</small>
         </label>
 
-        <fieldset className={styles.v4CanvasPresetField}>
-          <legend>Starting canvas</legend>
+        <section aria-label="Project creation flow" className={styles.v6ProjectStartFlow}>
           <div>
-            {CANVAS_PRESETS.map((preset) => (
-              <button
-                aria-pressed={canvasPreset === preset.id}
-                className={canvasPreset === preset.id ? styles.v4CanvasPresetSelected : undefined}
-                key={preset.id}
-                onClick={() => setCanvasPreset(preset.id)}
-                type="button"
-              >
-                <span data-ratio={preset.id} />
-                <strong>{preset.label}</strong>
-                <small>{preset.id} · {preset.detail}</small>
-              </button>
-            ))}
+            <span>01</span>
+            <strong>Open project</strong>
+            <small>Name and enter a clean workspace.</small>
           </div>
-        </fieldset>
+          <div>
+            <span>02</span>
+            <strong>Set canvas inside</strong>
+            <small>Choose a preset, custom size, or media dimensions.</small>
+          </div>
+          <div>
+            <span>03</span>
+            <strong>Add media</strong>
+            <small>Your files stay local in this owner demo.</small>
+          </div>
+        </section>
 
         <div className={styles.v4ProjectSetupFacts}>
           <span>
@@ -110,10 +96,10 @@ export function CreativeStudioProjectSetup({
           <button
             className={styles.primaryButton}
             disabled={!projectName.trim()}
-            onClick={() => onCreate(projectName.trim(), canvasPreset)}
+            onClick={() => onCreate(projectName.trim(), editorDefault)}
             type="button"
           >
-            Create empty project
+            Open empty project
             <StudioV2Icon name="chevron-right" size={17} />
           </button>
         </footer>
