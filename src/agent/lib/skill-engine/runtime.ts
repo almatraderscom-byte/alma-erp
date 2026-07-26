@@ -98,16 +98,19 @@ export async function buildActiveSkills(
     if (bodies.length === 0) return none
 
     // The owner asked to be TOLD which skill is running, before the work starts.
-    // The first line already belongs to the speak-first rule ("বস, … বুঝেছি —
-    // … দেখছি")। Asking for a SECOND first line just made the two rules fight,
-    // and the skill name lost every time (owner watched it, 2026-07-26). So it
-    // rides INSIDE the line that already exists rather than competing with it.
+    // Owner correction 2026-07-26: my first attempt told the head to write the
+    // skill name as its own first line, which collided with the speak-first rule
+    // — and then my "fix" forbade an extra line, which was a restriction he never
+    // asked for. His point stands: the opening line can hold the address, the
+    // skill and the understanding at once. Nothing about those three conflicts.
     //
-    // The guaranteed announcement is the system line the UI draws from the
-    // `skill_pinned` event; this only makes the agent's own sentence match it.
+    // So this ADDS an ingredient; it does not constrain the shape. The guaranteed
+    // announcement is the system line the UI draws from `skill_pinned` — this only
+    // lets the agent's own words match it.
     const announce = pinned
-      ? `\nতোমার প্রথম লাইনটাতেই (\`বস, … দেখছি\`) skill-এর নাম জুড়ে দাও — `
-        + `যেমন: "বস, … — \`${pinned.skill}\` skill ধরে করছি।" আলাদা করে বাড়তি লাইন লিখো না।\n`
+      ? `\nএই কাজটা \`${pinned.skill}\` skill ধরে করছ — Boss-কে সেটা জানিয়ে দাও। `
+        + `তোমার শুরুর লাইনেই সম্বোধন, skill-এর নাম আর কী বুঝেছ — তিনটাই একসাথে বলা যায়, `
+        + `যেমন: "বস, ৪২টা প্রোডাক্টের meta ঠিক করতে বলছেন — \`${pinned.skill}\` skill ধরে শুরু করছি।"\n`
       : ''
 
     const block = (
