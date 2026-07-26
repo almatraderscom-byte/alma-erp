@@ -13823,11 +13823,14 @@
 
   .homeFrame {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 55px minmax(0, 1fr);
     min-height: 0;
   }
 
   .homeSidebar {
+    grid-column: 1;
+    grid-row: 1;
     min-height: 0;
     overflow-x: auto;
     overflow-y: hidden;
@@ -13836,6 +13839,8 @@
   }
 
   .homeContent {
+    grid-column: 1;
+    grid-row: 2;
     padding: 24px 14px 88px;
   }
 
