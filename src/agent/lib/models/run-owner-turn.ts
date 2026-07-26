@@ -967,6 +967,8 @@ async function* runAlternateProviderTurn(
     activePlaybook,
     activeSkillsBlock,
     isolatedSkill: activeSkills.isolated ?? undefined,
+    // SK-6: with a skill pinned, global modules that narrate a JOB step aside.
+    skillPinned: Boolean(activeSkills.pinned),
     intakeContextBlock,
     outcomeLearnings,
     ownerDecisions,

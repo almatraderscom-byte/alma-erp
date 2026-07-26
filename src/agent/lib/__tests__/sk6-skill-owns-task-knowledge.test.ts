@@ -5,6 +5,7 @@ import {
   buildOwnerRequirementNote,
   deriveOwnerTurnRequirements,
 } from '@/agent/lib/owner-turn-requirements'
+import { buildSystemPromptBlocks, PROMPT_MODULES } from '@/agent/lib/system-prompt'
 
 /**
  * SK-6 — task knowledge belongs to the skill, not to global code.
@@ -56,6 +57,35 @@ describe('SK-6 — the SEO procedure leaves the global requirement note', () => 
   })
 })
 
+describe('SK-6 — the job procedure leaves the global prompt', () => {
+  const jobModule = () => {
+    const m = PROMPT_MODULES.find((x) => x.id === 'client_seo_audit_procedure')
+    expect(m, 'the extracted module must exist').toBeTruthy()
+    return m!.text.trim().slice(0, 120)
+  }
+  const stableText = (skillPinned?: boolean) =>
+    buildSystemPromptBlocks({ forceFullPrompt: true, skillPinned })
+      .stable.map((b) => b.text).join('')
+
+  it('no skill pinned → it still ships, exactly as before', () => {
+    expect(stableText()).toContain(jobModule())
+  })
+
+  it('a skill pinned → global code stops narrating the job', () => {
+    expect(stableText(true)).not.toContain(jobModule())
+  })
+
+  it('skipping beats forceFullPrompt — "ship everything" must not resurrect it', () => {
+    // forceFullPrompt is on in BOTH cases above; that is the point of this test.
+    expect(stableText(true).length).toBeLessThan(stableText().length)
+  })
+
+  it('it is a MOVE: computer_capabilities no longer carries the job', () => {
+    const cc = PROMPT_MODULES.find((x) => x.id === 'computer_capabilities')!
+    expect(cc.text).not.toContain('যেকোনো ওয়েবসাইট SEO অডিট')
+  })
+})
+
 describe('SK-6 — the knowledge actually landed in the skill', () => {
   it('seo-fixing-client-site carries the per-target and delivery rules', async () => {
     const body = await fs.readFile(
@@ -67,6 +97,23 @@ describe('SK-6 — the knowledge actually landed in the skill', () => {
     expect(body).toContain('save_artifact')
     expect(body).toContain('ডেলিভারি **নয়**')
     // the live-Chrome depth rule, in the skill's own words
-    expect(body).toContain('৫টা আলাদা')
+    expect(body).toContain('৫-৮টা পেজ')
+  })
+
+  /**
+   * The big one: 6.2 KB of client-SEO procedure lived inside the
+   * `computer_capabilities` prompt module and shipped on every turn carrying a
+   * browser or workbench tool. It is now a module of its own that a pinned skill
+   * displaces, and the knowledge is in the skill file.
+   */
+  it('carries the report/compare/storage rules that were in computer_capabilities', async () => {
+    const body = await fs.readFile(
+      path.join(process.cwd(), 'src', 'agent', 'skills', 'seo-fixing-client-site', 'SKILL.md'),
+      'utf8',
+    )
+    expect(body).toContain('read: "report"')   // the report IS the file card
+    expect(body).toContain('read: "compare"')  // before/after proof after a fix
+    expect(body).toContain('private')          // storage paths, never via workbench
+    expect(body).toContain('approved')         // still crawling ≠ executed
   })
 })
