@@ -83,3 +83,20 @@ describe('chat mode', () => {
     expect(CHAT_MODES).toHaveLength(4)
   })
 })
+
+// Owner question 2026-07-26: "tmi non-stop 1 hour+ kaj koro — amr model keno
+// parche na?" It was never the model: a turn was capped at 8 tool rounds. A turn
+// he has put in প্ল্যান-ড্রাইভ is a work session and gets the long-run budget.
+describe('long-run work sessions', () => {
+  it('plan-drive keeps every tool, so a long session is not crippled mid-way', () => {
+    expect(toolPolicyFor('plan_drive')).toBe('all')
+  })
+
+  it('the long-run budget is far above the ordinary chat cap', async () => {
+    const { LONG_RUN_TURN_MAX_ITERATIONS, MAX_TOOL_ITERATIONS, DEEP_TURN_MAX_ITERATIONS } =
+      await import('@/agent/config')
+    expect(MAX_TOOL_ITERATIONS).toBeLessThanOrEqual(8)
+    expect(DEEP_TURN_MAX_ITERATIONS).toBeGreaterThanOrEqual(60)
+    expect(LONG_RUN_TURN_MAX_ITERATIONS).toBeGreaterThanOrEqual(120)
+  })
+})

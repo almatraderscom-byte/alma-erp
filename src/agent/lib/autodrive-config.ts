@@ -69,11 +69,14 @@ export const DEFAULT_AUTODRIVE_BATCH_SIZE = 10
  */
 export const DEFAULT_AUTODRIVE_GATE_MODEL = 'or-deepseek-v4-flash'
 /**
- * Driver head model. Owner decision (recorded): Qwen orchestrates each step as the
- * head — NOT Sonnet (`sonnet apatoto ekhane dorkar nei`). DeepSeek does sub-agent
- * work via delegate_to_specialist when the head chooses to hand off.
+ * Driver head model — DeepSeek V4 Flash ONLY (owner order 2026-07-26).
+ *
+ * It was Qwen. A live plan step cost ৳43 in ONE round and a two-step plan spent
+ * ৳84 against a ৳50 cap, which makes an 79-step campaign arithmetically
+ * impossible. Boss's instruction was exact: "must deepseek v4 flash only plan
+ * driver model hobe". Still KV-overridable, but nothing else is the default.
  */
-export const DEFAULT_AUTODRIVE_DRIVER_MODEL = 'or-qwen3-max'
+export const DEFAULT_AUTODRIVE_DRIVER_MODEL = 'or-deepseek-v4-flash'
 /** Default minutes to wait before re-driving the same plan. */
 export const DEFAULT_AUTODRIVE_BACKOFF_MIN = 3
 /** Two self-corrections, then a human looks. */

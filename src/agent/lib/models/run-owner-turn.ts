@@ -5,7 +5,7 @@
  */
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET } from '@/agent/config'
 import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
@@ -1444,10 +1444,16 @@ async function* runAlternateProviderTurn(
   // UI task is 15–30 look→act rounds and must not die silently at the default cap.
   // Deep/full work and server-driven delivery turns get the same treatment: the
   // crawl → poll → report → links → present chain does not fit in 8 rounds.
+  // A turn Boss put in a working mode (প্ল্যান-ড্রাইভ) is a WORK SESSION, not a
+  // chat reply: it gets the long-run budget so it can grind a real job to the
+  // end in one visible session instead of being chopped into engine steps.
+  const longRunTurn = chatMode === 'plan_drive'
   let maxIterations =
-    ownerRequirements.deepWork || driveClientSeoBatch || isJobDeliveryDirective(projectSystemInstructions)
-      ? DEEP_TURN_MAX_ITERATIONS
-      : MAX_TOOL_ITERATIONS
+    longRunTurn
+      ? LONG_RUN_TURN_MAX_ITERATIONS
+      : ownerRequirements.deepWork || driveClientSeoBatch || isJobDeliveryDirective(projectSystemInstructions)
+        ? DEEP_TURN_MAX_ITERATIONS
+        : MAX_TOOL_ITERATIONS
   const claimedSteeringIds = new Set<string>()
 
   // LG-3: the action graph staged a card (thread paused at its interrupt) —

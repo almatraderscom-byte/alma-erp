@@ -66,7 +66,7 @@ const config: AutodriveConfig = {
   maxAttempts: 5,
   batchSize: 10,
   gateModel: 'gate',
-  driverModel: 'driver',
+  driverModel: 'or-deepseek-v4-flash',
   backoffMin: 3,
   autoRepair: false,
   maxRepairSteps: 2,
