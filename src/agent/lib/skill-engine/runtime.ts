@@ -98,8 +98,16 @@ export async function buildActiveSkills(
     if (bodies.length === 0) return none
 
     // The owner asked to be TOLD which skill is running, before the work starts.
+    // The first line already belongs to the speak-first rule ("বস, … বুঝেছি —
+    // … দেখছি")। Asking for a SECOND first line just made the two rules fight,
+    // and the skill name lost every time (owner watched it, 2026-07-26). So it
+    // rides INSIDE the line that already exists rather than competing with it.
+    //
+    // The guaranteed announcement is the system line the UI draws from the
+    // `skill_pinned` event; this only makes the agent's own sentence match it.
     const announce = pinned
-      ? `\nপ্রথম লাইনেই Boss-কে বলো: \`${pinned.skill}\` skill ব্যবহার করছি।\n`
+      ? `\nতোমার প্রথম লাইনটাতেই (\`বস, … দেখছি\`) skill-এর নাম জুড়ে দাও — `
+        + `যেমন: "বস, … — \`${pinned.skill}\` skill ধরে করছি।" আলাদা করে বাড়তি লাইন লিখো না।\n`
       : ''
 
     const block = (

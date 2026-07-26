@@ -1044,11 +1044,20 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         } else if (evt.type === 'skill_pinned') {
           // SK-3: the owner asked to SEE which skill is running, and to be able
           // to change it. This is what feeds the chip beside the model picker.
-          setPinnedSkill({
+          const pin = {
             skill: String(evt.skill ?? ''),
-            source: evt.source === 'owner' ? 'owner' : 'router',
+            source: (evt.source === 'owner' ? 'owner' : 'router') as 'owner' | 'router',
             reason: String(evt.reason ?? ''),
-          })
+          }
+          setPinnedSkill(pin)
+          // …and stamp it on the message being built, so the thread shows a system
+          // line before the work — the ChatGPT shape Boss asked for. Left to the
+          // prompt it lost every time to the speak-first rule.
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? { ...m, skill: { name: pin.skill, source: pin.source, reason: pin.reason } }
+              : m,
+          ))
         } else if (evt.type === 'model_info') {
           const variant = (evt.variant as 'claude' | 'qwen' | 'deepseek' | 'default') ?? 'claude'
           setStreamVariant(variant)

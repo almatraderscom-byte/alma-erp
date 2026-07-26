@@ -120,6 +120,13 @@ export interface ChatMessage {
     summary?: string
     toolsUsed?: string[]
   }>
+  /**
+   * The skill pinned for this turn. Rendered as a system line above the work —
+   * NOT left to the model to remember to say. Boss asked for the ChatGPT shape
+   * ("`openai-docs` skill ব্যবহার করছি" before the work starts), and a prompt rule
+   * competing with the speak-first rule lost that fight every time.
+   */
+  skill?: { name: string; source: 'owner' | 'router'; reason?: string }
   /** Live extended-thinking stream — how the agent reasoned before answering. */
   thinking?: string
   /** Seconds spent thinking (set once the reply text begins). */
@@ -1539,8 +1546,18 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     // Chronological mode: the timeline carries the reply text too, so
                     // render ONE interleaved flow (text → steps → text) and skip the
                     // separate steps-card + body blocks below.
+                    const skillLine = msg.skill ? (
+                      <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-muted">
+                        <span aria-hidden>🧠</span>
+                        <span>
+                          <code className="rounded bg-muted/10 px-1 py-px text-[11px] text-cream">{msg.skill.name}</code>
+                          {' '}skill ব্যবহার করছি
+                          {msg.skill.source === 'owner' ? ' (আপনার বেছে দেওয়া)' : ''}
+                        </span>
+                      </div>
+                    ) : null
                     const chrono = (msg.timeline ?? []).some((e) => e.t === 'text')
-                    if (chrono) return <ChronoFlow msg={msg} onOpenFile={(id) => onArtifactOpen(id)} />
+                    if (chrono) return <>{skillLine}<ChronoFlow msg={msg} onOpenFile={(id) => onArtifactOpen(id)} /></>
                     // A RUNNING turn always shows the process section, even before
                     // there is anything in it (owner bug, verified live 2026-07-26:
                     // the first 10–20 seconds drew nothing at all, so there was
@@ -1554,6 +1571,8 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       || (msg.toolActivity && msg.toolActivity.length > 0)
                     ) {
                       return (
+                        <>
+                        {skillLine}
                         <ActivityTimeline
                           timeline={msg.timeline}
                           thinking={msg.thinking}
@@ -1561,6 +1580,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                           toolActivity={msg.toolActivity}
                           live={Boolean(msg.streaming)}
                         />
+                        </>
                       )
                     }
                     return null
