@@ -831,6 +831,23 @@ export async function runRegisteredTool(
   // Phase 64: the autonomy ladder task class this call maps to (agent-initiated
   // effects only), captured so the outcome can be fed back after execution.
   let ladderTaskClass: string | undefined
+  // The duplicate-suppression key this call claimed, if any. An allowed call is
+  // NOT a completed effect: if the handler fails, the claim must be handed back
+  // or an identical legitimate retry is refused as a duplicate for 10 minutes
+  // (owner incident 2026-07-26 — draft_seo_fixes staged nothing, then "একই কাজ
+  // এই টার্নে আগেই হয়েছে").
+  let claimedKey: string | undefined
+  const releaseClaimOnFailure = async () => {
+    if (!claimedKey) return
+    const key = claimedKey
+    claimedKey = undefined
+    try {
+      const { releaseEffectClaim } = await import('@/agent/lib/policy/tool-guard')
+      releaseEffectClaim(key)
+    } catch (err) {
+      console.warn('[registry] claim release failed:', err instanceof Error ? err.message : err)
+    }
+  }
   {
     const { guardToolCall } = await import('@/agent/lib/policy/tool-guard')
     const guard = await guardToolCall(tool.name, input ?? {}, cap, {
@@ -873,6 +890,7 @@ export async function runRegisteredTool(
       return { success: false, error: guard.error, errorCode: guard.errorCode ?? 'guard_blocked', retryable: false }
     }
     guardEnvelope = guard.envelope
+    claimedKey = guard.claimedKey
     // Shadow observability: when the constitution wanted a stricter path than
     // we enforce today, record it — Phase 57 readiness is computed from these.
     if (!guard.enforced || guard.ladderStage) {
@@ -923,6 +941,7 @@ export async function runRegisteredTool(
       const effectResult: ToolResult = outcome.ok
         ? { success: true, data: outcome.result }
         : { success: false, error: outcome.error, errorCode: outcome.errorCode ?? 'effect_failed', retryable: outcome.state === 'failed_retryable' }
+      if (!effectResult.success) await releaseClaimOnFailure()
       void logToolEvent({
         ...baseEvent,
         success: effectResult.success,
@@ -979,6 +998,10 @@ export async function runRegisteredTool(
       }
       return result
     }
+    // The handler said no — nothing was staged, nothing was written. Hand the
+    // duplicate-suppression key back so the head's corrected (or identical)
+    // retry is judged on its own merits.
+    await releaseClaimOnFailure()
     // Failed live-browser act → record it so the §H navigation guard permits a
     // retry of the same target (fail-open bookkeeping).
     if (ctx.conversationId && tool.name === 'live_browser_act') {
@@ -998,6 +1021,7 @@ export async function runRegisteredTool(
     })
     return { ...result, errorCode, retryable }
   } catch (err) {
+    await releaseClaimOnFailure()
     const errorCode = classifyErrorCode(String(err))
     void logToolEvent({
       ...baseEvent,
