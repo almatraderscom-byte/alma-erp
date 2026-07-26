@@ -1675,6 +1675,16 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     }
   }
 
+  /** Tear down the approval loader — used when an approval fails after the click. */
+  function stopResultPolling() {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+    setMessages((prev) => prev.filter((m) => !m.streaming))
+    setStreamMode('settled')
+  }
+
   function startResultPolling(convId: string) {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current)
     let attempts = 0
@@ -1924,6 +1934,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             conversationId={activeConvId}
             onArtifactOpen={(id) => { if (id) setArtifactFocus((f) => ({ id, n: (f?.n ?? 0) + 1 })); setArtifactsOpen(true) }}
             onActionApproved={() => { if (activeConvId) startResultPolling(activeConvId) }}
+            // The loader must appear on the CLICK, not after the write finishes:
+            // approving a ten-product batch writes every product live, and for
+            // those seconds the thread was blank (owner report 2026-07-26).
+            onApprovePending={(pending: boolean) => {
+              if (!activeConvId) return
+              if (pending) startResultPolling(activeConvId)
+              else stopResultPolling()
+            }}
             onQuickSend={(text, askCardId) => { if (!streaming) void handleSend(text, [], undefined, undefined, askCardId) }}
             onModelSwitchResolve={(opts) => { if (!streaming) void handleSend('', [], opts) }}
             onStartVoiceSession={() => setVoiceOpen(true)}

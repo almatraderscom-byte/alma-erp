@@ -169,6 +169,8 @@ interface AgentThreadProps {
   /** Open the artifacts panel; pass an artifact id to focus that file. */
   onArtifactOpen: (id?: string) => void
   onActionApproved?: () => void
+  /** Fired on the Approve CLICK, before the server round-trip. */
+  onApprovePending?: (pending: boolean) => void
   /** `askCardId` marks the message as the ANSWER to that card (web parity with native). */
   onQuickSend?: (text: string, askCardId?: string) => void
   /** Owner answered a model-upgrade approval card → rerun the paused turn. */
@@ -1276,7 +1278,7 @@ function LiveWorkTimer({ startedAt }: { startedAt: string }) {
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onApprovePending, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
@@ -1599,6 +1601,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     <AgentConfirmCardGroup
                       actions={msg.pendingActions}
                       onQuickSend={onQuickSend}
+                      onApprovePending={onApprovePending}
                       onResolved={(status) => {
                         // Approve always posts a result note. For a delegation,
                         // Reject ALSO posts one (Sonnet's own answer), so poll then too.

@@ -69,6 +69,14 @@ const TERMINAL_NOTES: Record<string, string> = {
 interface AgentConfirmCardProps {
   action: PendingAction
   onResolved: (status: 'approved' | 'rejected') => void
+  /**
+   * Fired the INSTANT Approve is pressed, before the server round-trip.
+   * Approving a batch writes every product live, which takes seconds — and for
+   * all of them the thread showed nothing at all, so it looked like the agent
+   * had gone to sleep (owner report 2026-07-26). `false` means the approval
+   * failed and whatever the parent started should be torn down again.
+   */
+  onApprovePending?: (pending: boolean) => void
   onUpdated?: (summary: string, meta: Partial<PendingAction>) => void
   /**
    * Owner's "আমার মত" (my opinion) path: reject this pending action AND feed the
@@ -87,7 +95,7 @@ const EDIT_FIELDS: Record<string, string> = {
   note: '📝 নোট',
 }
 
-export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuickSend }: AgentConfirmCardProps) {
+export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuickSend, onApprovePending }: AgentConfirmCardProps) {
   const [phase, setPhase] = useState<CardPhase>('idle')
   const [loadingDecision, setLoadingDecision] = useState<'approve' | 'reject' | 'revise' | null>(null)
   const [summary, setSummary] = useState(action.summary)
@@ -145,6 +153,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
     if (phase !== 'idle' && phase !== 'editing') return
     setPhase('loading')
     setLoadingDecision(decision)
+    if (decision === 'approve') onApprovePending?.(true)
     try {
       const res = await fetch(`/api/assistant/actions/${meta.id}/${decision}`, { method: 'POST' })
       if (!res.ok) {
@@ -175,6 +184,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
       notifyTodosChanged()
     } catch (err) {
       notifyError()
+      if (decision === 'approve') onApprovePending?.(false)
       toast.error(`সমস্যা: ${err instanceof Error ? err.message : String(err)}`)
       setPhase('idle')
       setLoadingDecision(null)
