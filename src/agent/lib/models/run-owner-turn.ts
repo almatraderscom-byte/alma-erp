@@ -856,6 +856,34 @@ async function* runAlternateProviderTurn(
       })
     }
     ownerIntentTools = gated.tools
+    // SK-7 (found on the first live isolated run, 2026-07-27): the allowlist
+    // FILTERS, it never ADDS — so a skill was narrowed to tools the router had
+    // not selected in the first place. Watched live: `seo-fixing-own-site` was
+    // pinned, `audit_product_seo` and `draft_seo_fixes` were absent, and the
+    // head spent a whole round on find_tool to reach its OWN declared tools.
+    //
+    // A skill declaring a capability is a statement that the job needs it. Same
+    // principle as the requirement-contract rule below — whatever the selector
+    // decides, a declared requirement brings its own tools. It cannot widen
+    // anything: every name added is one the allowlist already permits.
+    const missing = (activeSkills.manifest.requiredCapabilities ?? []).filter(
+      (n) => !ownerIntentTools.some((t) => t.name === n),
+    )
+    if (missing.length) {
+      try {
+        const extra = await resolveToolsByName(missing)
+        ownerIntentTools = [
+          ...ownerIntentTools,
+          ...extra.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema })),
+        ]
+        console.info('[skill-allowlist] supplied', {
+          skill: activeSkills.manifest.name,
+          added: extra.map((t) => t.name),
+        })
+      } catch (err) {
+        console.warn('[skill-allowlist] tool supply failed:', err instanceof Error ? err.message : err)
+      }
+    }
   }
   // A CONTRACT MUST NEVER DEMAND A TOOL THE HEAD DOES NOT HAVE (live prod run
   // 2026-07-25). The state router is only shadow-logging in production, so the
