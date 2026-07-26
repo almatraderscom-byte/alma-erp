@@ -51,6 +51,11 @@ const NON_TOOL_ALLOWLIST = new Set([
   'proactive_call_approval_stuck_min', 'proactive_call_urgent_stuck_min', 'urgent_notify',
   // PA-5R inbound-transfer KV key + its mode values (documented for update_setting)
   'inbound_transfer_mode', 'ask_first',
+  // Browser driver values the prompt must name so the head can pass them
+  // (run_browser_task `driver`): vps / vps_live / companion.
+  'vps_live',
+  // manage_browser_logins action values.
+  'clear_cache', 'clear_site', 'clear_all',
 ])
 
 function snakeTokens(text: string): string[] {
