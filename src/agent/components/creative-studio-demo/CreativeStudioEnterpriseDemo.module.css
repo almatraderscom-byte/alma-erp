@@ -14125,3 +14125,750 @@
     display: none;
   }
 }
+
+/* ── V4 ElevenLabs-level composer polish ──────────────────────────────── */
+
+.v3Composer.v4FloatingComposer {
+  -webkit-backdrop-filter: blur(30px) saturate(150%);
+  backdrop-filter: blur(30px) saturate(150%);
+  background:
+    radial-gradient(circle at 16% -18%, rgb(255 255 255 / 0.96), transparent 42%),
+    linear-gradient(145deg, rgb(var(--c-card) / 0.94), rgb(var(--c-surface) / 0.84));
+  border: 1px solid rgb(255 255 255 / 0.82);
+  border-radius: 27px;
+  box-shadow:
+    0 36px 110px -34px rgb(31 25 28 / 0.5),
+    0 14px 42px -28px rgb(var(--c-accent) / 0.52),
+    0 1px 0 rgb(255 255 255 / 0.96) inset,
+    0 -1px 0 rgb(var(--c-ink) / 0.045) inset;
+  isolation: isolate;
+  padding: 14px;
+  width: min(880px, calc(100vw - 36px));
+}
+
+.v3Composer.v4FloatingComposer::before {
+  background:
+    linear-gradient(90deg, transparent, rgb(255 255 255 / 0.8), transparent);
+  border-radius: inherit;
+  content: '';
+  height: 1px;
+  left: 9%;
+  opacity: 0.92;
+  pointer-events: none;
+  position: absolute;
+  right: 9%;
+  top: 0;
+  z-index: 2;
+}
+
+:global(:root[data-theme='dark']) .v3Composer.v4FloatingComposer {
+  background:
+    radial-gradient(circle at 18% -22%, rgb(255 255 255 / 0.09), transparent 44%),
+    linear-gradient(145deg, rgb(26 27 30 / 0.95), rgb(17 18 21 / 0.9));
+  border-color: rgb(255 255 255 / 0.14);
+}
+
+.v4ComposerRecipes {
+  gap: 8px;
+  padding: 1px 3px 7px;
+}
+
+.v4ComposerRecipes button {
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.94), rgb(var(--c-card) / 0.78));
+  border-color: rgb(255 255 255 / 0.78);
+  border-radius: 12px;
+  box-shadow:
+    0 14px 34px -24px rgb(var(--c-black) / 0.68),
+    0 1px 0 rgb(255 255 255 / 0.9) inset;
+  font-size: 9px;
+  min-height: 34px;
+  padding: 0 12px;
+}
+
+.v4ComposerRecipes button[aria-pressed='true'] {
+  background:
+    linear-gradient(180deg, rgb(var(--c-accent) / 0.14), rgb(255 255 255 / 0.82));
+  border-color: rgb(var(--c-accent) / 0.38);
+  box-shadow:
+    0 15px 32px -25px rgb(var(--c-accent) / 0.74),
+    0 1px 0 rgb(255 255 255 / 0.96) inset;
+}
+
+.v4ComposerHeader {
+  border-bottom: 1px solid rgb(var(--c-ink) / 0.065);
+  gap: 12px;
+  min-height: 42px;
+  padding: 0 2px 10px;
+}
+
+.v4ComposerHeader h2 {
+  font-size: 15px;
+  font-weight: 760;
+}
+
+.v4ComposerTabs {
+  background: rgb(var(--c-ink) / 0.045);
+  border-color: rgb(var(--c-ink) / 0.075);
+  border-radius: 13px;
+  padding: 4px;
+}
+
+.v4ComposerTabs button {
+  border-radius: 10px;
+  font-size: 9px;
+  min-height: 30px;
+  padding: 0 14px;
+}
+
+.v4ComposerTabs .v4ComposerTabActive {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.98), rgb(var(--c-card) / 0.86));
+  box-shadow:
+    0 8px 20px -15px rgb(var(--c-black) / 0.68),
+    0 1px 0 rgb(255 255 255 / 0.95) inset;
+}
+
+.v4LocalOnlyBadge {
+  background:
+    linear-gradient(180deg, rgb(233 249 241 / 0.94), rgb(224 242 233 / 0.76));
+  border-color: rgb(34 135 95 / 0.16);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.9) inset;
+  min-height: 30px;
+}
+
+.v4AutoSourceGrid {
+  gap: 10px;
+}
+
+.v4SourceCard {
+  background:
+    radial-gradient(circle at 0 0, rgb(255 255 255 / 0.9), transparent 46%),
+    linear-gradient(145deg, rgb(var(--c-card) / 0.76), rgb(var(--c-surface) / 0.66));
+  border-color: rgb(var(--c-ink) / 0.09);
+  border-radius: 19px;
+  box-shadow:
+    0 18px 38px -34px rgb(var(--c-black) / 0.62),
+    0 1px 0 rgb(255 255 255 / 0.9) inset;
+  gap: 11px;
+  grid-template-columns: 92px minmax(0, 1fr);
+  min-height: 104px;
+  padding: 7px;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.v4SourceCard:hover,
+.v4SourceCard:focus-within {
+  border-color: rgb(var(--c-accent) / 0.28);
+  box-shadow:
+    0 24px 48px -34px rgb(var(--c-accent) / 0.42),
+    0 1px 0 rgb(255 255 255 / 0.96) inset;
+  transform: translateY(-1px);
+}
+
+.v4SourceArtwork {
+  border-color: rgb(255 255 255 / 0.56);
+  border-radius: 15px;
+  box-shadow:
+    0 14px 28px -20px rgb(var(--c-black) / 0.72),
+    0 1px 0 rgb(255 255 255 / 0.54) inset;
+  height: 90px;
+  width: 90px;
+}
+
+.v4SourceArtwork::after {
+  background: linear-gradient(130deg, rgb(255 255 255 / 0.35), transparent 42%);
+  content: '';
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.v4SourceContent > span {
+  font-size: 7px;
+}
+
+.v4SourceContent > strong {
+  font-size: 11px;
+  letter-spacing: -0.01em;
+}
+
+.v4SourceContent > small {
+  font-size: 8px;
+}
+
+.v4SourceActions {
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.v4SourceActions button,
+.v4SourceActions label {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.92), rgb(var(--c-card) / 0.68));
+  border-color: rgb(var(--c-ink) / 0.09);
+  border-radius: 9px;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.9) inset;
+  font-size: 8px;
+  min-height: 29px;
+}
+
+.v4ComposerAuto .v3PromptField {
+  background:
+    radial-gradient(circle at 8% 0, rgb(255 255 255 / 0.9), transparent 36%),
+    rgb(var(--c-surface) / 0.48);
+  border: 1px solid rgb(var(--c-ink) / 0.08);
+  border-radius: 17px;
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.92) inset,
+    0 14px 34px -34px rgb(var(--c-black) / 0.58);
+  margin-top: 1px;
+  padding: 2px 10px;
+}
+
+.v4ComposerAuto .v3PromptField::before {
+  color: var(--studio-accent-dim);
+  content: 'CREATIVE DIRECTION';
+  display: block;
+  font-size: 7px;
+  font-weight: 780;
+  letter-spacing: 0.11em;
+  padding: 8px 4px 0;
+}
+
+.v4ComposerAuto .v3PromptField textarea {
+  font-size: 12px;
+  min-height: 54px;
+  padding: 6px 4px 8px;
+}
+
+.v4ComposerFooter {
+  border-top-color: rgb(var(--c-ink) / 0.07);
+  min-height: 42px;
+  padding-top: 9px;
+}
+
+.v4ComposerControls button,
+.v4ComposerControls label {
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-size: 8px;
+  min-height: 30px;
+}
+
+.v4ComposerControls button:hover,
+.v4ComposerControls label:hover,
+.v4ComposerControls label:has(input:checked) {
+  background: rgb(255 255 255 / 0.74);
+  border-color: rgb(var(--c-ink) / 0.075);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.94) inset;
+}
+
+.v4ComposerSave,
+.v4ComposerSubmit {
+  box-shadow:
+    0 10px 20px -15px rgb(var(--c-black) / 0.74),
+    0 1px 0 rgb(255 255 255 / 0.36) inset;
+  height: 36px;
+  width: 36px;
+}
+
+.v4ComposerSubmit {
+  background: linear-gradient(145deg, #2e2d32, #111216);
+}
+
+.v4SourceTray {
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
+  backdrop-filter: blur(24px) saturate(145%);
+  background:
+    linear-gradient(145deg, rgb(255 255 255 / 0.95), rgb(var(--c-card) / 0.86));
+  border-color: rgb(255 255 255 / 0.82);
+  border-radius: 21px;
+  box-shadow:
+    0 32px 84px -32px rgb(var(--c-black) / 0.66),
+    0 1px 0 rgb(255 255 255 / 0.95) inset;
+}
+
+.v3Composer.v4FloatingComposer.v4ComposerAdvanced {
+  background:
+    radial-gradient(circle at 18% -10%, rgb(255 255 255 / 0.98), transparent 40%),
+    linear-gradient(145deg, rgb(var(--c-card) / 0.95), rgb(var(--c-surface) / 0.86));
+  gap: 10px;
+  max-height: min(670px, calc(100dvh - 96px));
+  padding: 15px;
+  width: min(940px, calc(100vw - 36px));
+}
+
+.v4ComposerAdvanced .v3ComposerHeader {
+  align-items: center;
+  border-bottom: 1px solid rgb(var(--c-ink) / 0.065);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0 2px 10px;
+}
+
+.v4ComposerAdvanced .v3ComposerHeader h2 {
+  font-size: 16px;
+  letter-spacing: -0.025em;
+}
+
+.v4ComposerAdvanced .v3ArchitectureSwitch {
+  background: rgb(var(--c-ink) / 0.045);
+  border: 1px solid rgb(var(--c-ink) / 0.07);
+  border-radius: 14px;
+  max-width: 340px;
+  padding: 4px;
+}
+
+.v4ComposerAdvanced .v3ArchitectureSwitch button {
+  border-radius: 10px;
+  min-height: 38px;
+}
+
+.v4ComposerAdvanced .v3ArchitectureSwitch button[aria-selected='true'] {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.98), rgb(var(--c-card) / 0.8));
+  box-shadow:
+    0 9px 22px -17px rgb(var(--c-black) / 0.72),
+    0 1px 0 rgb(255 255 255 / 0.96) inset;
+}
+
+.v4ComposerAdvanced .v3ModeScroller {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  overflow: visible;
+  padding: 0;
+}
+
+.v4ComposerAdvanced .v3ModeScroller button {
+  align-items: flex-start;
+  background:
+    linear-gradient(155deg, rgb(255 255 255 / 0.86), rgb(var(--c-surface) / 0.62));
+  border: 1px solid rgb(var(--c-ink) / 0.08);
+  border-radius: 15px;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.92) inset;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  justify-content: space-between;
+  min-height: 78px;
+  padding: 10px;
+  text-align: left;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.v4ComposerAdvanced .v3ModeScroller button > svg {
+  background: rgb(var(--c-ink) / 0.055);
+  border: 1px solid rgb(var(--c-ink) / 0.06);
+  border-radius: 9px;
+  box-sizing: content-box;
+  color: var(--studio-muted);
+  padding: 7px;
+}
+
+.v4ComposerAdvanced .v3ModeScroller button > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.v4ComposerAdvanced .v3ModeScroller button strong {
+  color: var(--studio-ink);
+  font-size: 9px;
+  line-height: 1.15;
+}
+
+.v4ComposerAdvanced .v3ModeScroller button small {
+  color: var(--studio-muted);
+  font-size: 7px;
+  line-height: 1.25;
+  margin-top: 3px;
+  white-space: normal;
+}
+
+.v4ComposerAdvanced .v3ModeScroller button:hover {
+  border-color: rgb(var(--c-accent) / 0.26);
+  box-shadow:
+    0 18px 34px -30px rgb(var(--c-accent) / 0.56),
+    0 1px 0 rgb(255 255 255 / 0.96) inset;
+  transform: translateY(-1px);
+}
+
+.v4ComposerAdvanced .v3ModeScroller button[aria-selected='true'] {
+  background:
+    radial-gradient(circle at 0 0, rgb(255 255 255 / 0.94), transparent 47%),
+    linear-gradient(145deg, rgb(var(--c-accent) / 0.16), rgb(var(--c-card) / 0.9));
+  border-color: rgb(var(--c-accent) / 0.44);
+  box-shadow:
+    0 16px 34px -28px rgb(var(--c-accent) / 0.78),
+    0 0 0 1px rgb(var(--c-accent) / 0.06),
+    0 1px 0 rgb(255 255 255 / 0.98) inset;
+}
+
+.v4ComposerAdvanced .v3ModeScroller button[aria-selected='true'] > svg {
+  background: rgb(var(--c-accent) / 0.14);
+  border-color: rgb(var(--c-accent) / 0.16);
+  color: var(--studio-accent-dim);
+}
+
+.v4ComposerAdvanced .v3ModeExplanation {
+  align-items: center;
+  background:
+    linear-gradient(90deg, rgb(var(--c-accent) / 0.08), rgb(var(--c-card) / 0.62));
+  border: 1px solid rgb(var(--c-accent) / 0.12);
+  border-radius: 13px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  min-height: 44px;
+  padding: 8px 12px;
+}
+
+.v4ComposerAdvanced .v3ModeExplanation span {
+  border-right: 1px solid rgb(var(--c-accent) / 0.16);
+  padding-right: 12px;
+}
+
+.v4ComposerAdvanced .v3ModeExplanation p {
+  font-size: 9px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.v5ComposerDisclosure {
+  background:
+    linear-gradient(145deg, rgb(255 255 255 / 0.72), rgb(var(--c-surface) / 0.48));
+  border-color: rgb(var(--c-ink) / 0.08);
+  border-radius: 15px;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.9) inset;
+}
+
+.v5ComposerDisclosure > summary {
+  min-height: 46px;
+  padding: 9px 12px;
+}
+
+.v5ComposerDisclosure[open] {
+  border-color: rgb(var(--c-accent) / 0.2);
+  box-shadow:
+    0 18px 36px -34px rgb(var(--c-accent) / 0.6),
+    0 1px 0 rgb(255 255 255 / 0.94) inset;
+}
+
+.v5DisclosureBody {
+  background: rgb(var(--c-card) / 0.54);
+  max-height: 270px;
+  padding: 12px;
+}
+
+.v4ComposerAdvanced .v3PromptField,
+.v5VideoComposer > .v3PromptField {
+  background:
+    radial-gradient(circle at 5% 0, rgb(255 255 255 / 0.92), transparent 34%),
+    rgb(var(--c-surface) / 0.46);
+  border: 1px solid rgb(var(--c-ink) / 0.08);
+  border-radius: 15px;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.92) inset;
+  padding: 9px 11px 7px;
+}
+
+.v4ComposerAdvanced .v3PromptField textarea,
+.v5VideoComposer > .v3PromptField textarea {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  line-height: 1.45;
+  min-height: 54px;
+  padding: 7px 0 3px;
+  resize: none;
+}
+
+.v4ComposerAdvanced .v3ComposerReadiness,
+.v5VideoComposer .v3ComposerReadiness {
+  background:
+    linear-gradient(90deg, rgb(232 246 239 / 0.62), rgb(var(--c-card) / 0.68));
+  border-color: rgb(34 135 95 / 0.12);
+  border-radius: 14px;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.9) inset;
+}
+
+.v4ComposerAdvanced .v3ComposerFooter,
+.v5VideoComposer .v3ComposerFooter {
+  background:
+    linear-gradient(180deg, rgb(var(--c-card) / 0.72), rgb(var(--c-card) / 0.96));
+  border-top-color: rgb(var(--c-ink) / 0.07);
+  min-height: 52px;
+}
+
+.v5VideoComposer {
+  background:
+    radial-gradient(circle at 12% -18%, rgb(255 255 255 / 0.98), transparent 42%),
+    linear-gradient(145deg, rgb(var(--c-card) / 0.95), rgb(var(--c-surface) / 0.86));
+  gap: 10px;
+  max-height: min(680px, calc(100dvh - 96px));
+  padding: 15px;
+  width: min(920px, calc(100vw - 36px));
+}
+
+.v5VideoComposer .v3ComposerHeader {
+  align-items: center;
+  border-bottom: 1px solid rgb(var(--c-ink) / 0.065);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0 2px 10px;
+}
+
+.v5VideoComposer .v3ComposerHeader h2 {
+  font-size: 16px;
+  letter-spacing: -0.025em;
+}
+
+.v6VideoStage {
+  background:
+    radial-gradient(circle at 16% 22%, rgb(var(--c-accent) / 0.28), transparent 32%),
+    linear-gradient(135deg, #252329, #111216 62%, #262129);
+  border: 1px solid rgb(255 255 255 / 0.11);
+  border-radius: 19px;
+  box-shadow:
+    0 22px 46px -34px rgb(0 0 0 / 0.88),
+    0 1px 0 rgb(255 255 255 / 0.1) inset;
+  color: #f5f2f2;
+  display: grid;
+  gap: 13px;
+  grid-template-columns: 86px minmax(0, 1fr) auto;
+  min-height: 92px;
+  overflow: hidden;
+  padding: 9px 12px 9px 9px;
+  position: relative;
+}
+
+.v6VideoStage::after {
+  background:
+    linear-gradient(105deg, transparent 30%, rgb(255 255 255 / 0.055), transparent 62%);
+  content: '';
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.v6VideoStageArtwork {
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 13px;
+  min-height: 72px;
+  overflow: hidden;
+  position: relative;
+}
+
+.v6VideoStageArtwork .v3AssetArtwork {
+  height: 72px;
+  min-height: 72px;
+  width: 100%;
+}
+
+.v6VideoStageArtwork > span {
+  align-items: center;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  background: rgb(12 13 16 / 0.62);
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: 50%;
+  color: white;
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  left: calc(50% - 17px);
+  position: absolute;
+  top: calc(50% - 17px);
+  width: 34px;
+}
+
+.v6VideoStageCopy {
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.v6VideoStageCopy > span,
+.v6VideoStageSpecs small {
+  color: rgb(255 255 255 / 0.52);
+  font-size: 7px;
+  font-weight: 760;
+  letter-spacing: 0.11em;
+}
+
+.v6VideoStageCopy strong {
+  font-size: 13px;
+  letter-spacing: -0.015em;
+  margin-top: 3px;
+}
+
+.v6VideoStageCopy small {
+  color: rgb(255 255 255 / 0.56);
+  font-size: 8px;
+  margin-top: 3px;
+}
+
+.v6VideoStageSpecs {
+  align-items: stretch;
+  align-self: stretch;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(130px, 1fr));
+}
+
+.v6VideoStageSpecs > span {
+  align-items: flex-start;
+  border-left: 1px solid rgb(255 255 255 / 0.1);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 16px;
+}
+
+.v6VideoStageSpecs strong {
+  font-size: 9px;
+  margin-top: 4px;
+  white-space: nowrap;
+}
+
+.v5VideoComposer .v3ModelCards button {
+  background:
+    linear-gradient(145deg, rgb(255 255 255 / 0.86), rgb(var(--c-surface) / 0.58));
+  border-color: rgb(var(--c-ink) / 0.08);
+  border-radius: 14px;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.92) inset;
+}
+
+.v5VideoComposer .v3ModelCards button[aria-pressed='true'] {
+  background:
+    radial-gradient(circle at 0 0, rgb(255 255 255 / 0.96), transparent 46%),
+    linear-gradient(145deg, rgb(var(--c-accent) / 0.14), rgb(var(--c-card) / 0.86));
+  border-color: rgb(var(--c-accent) / 0.4);
+  box-shadow:
+    0 16px 32px -28px rgb(var(--c-accent) / 0.68),
+    0 1px 0 rgb(255 255 255 / 0.96) inset;
+}
+
+@media (max-width: 980px) {
+  .v4ComposerAdvanced .v3ModeScroller {
+    display: flex;
+    gap: 7px;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scrollbar-width: thin;
+  }
+
+  .v4ComposerAdvanced .v3ModeScroller button {
+    flex: 0 0 112px;
+  }
+
+  .v6VideoStageSpecs {
+    grid-template-columns: minmax(120px, 1fr);
+  }
+
+  .v6VideoStageSpecs > span:last-child {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .v3Composer.v4FloatingComposer,
+  .v3Composer.v4FloatingComposer.v4ComposerAdvanced,
+  .v3Composer.v4FloatingComposer.v5VideoComposer {
+    border-radius: 22px;
+    padding: 10px;
+    width: calc(100vw - 16px);
+  }
+
+  .v4ComposerHeader {
+    min-height: 38px;
+    padding-bottom: 8px;
+  }
+
+  .v4SourceCard {
+    grid-template-columns: 72px minmax(0, 1fr);
+    min-height: 84px;
+    padding: 6px;
+  }
+
+  .v4SourceArtwork {
+    height: 70px;
+    width: 70px;
+  }
+
+  .v4SourceContent > strong {
+    font-size: 10px;
+  }
+
+  .v4SourceActions {
+    margin-top: 5px;
+  }
+
+  .v4ComposerAuto .v3PromptField textarea {
+    min-height: 48px;
+  }
+
+  .v4ComposerAdvanced .v3ModeScroller button {
+    flex-basis: 104px;
+    min-height: 72px;
+  }
+
+  .v4ComposerAdvanced .v3ModeExplanation {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .v4ComposerAdvanced .v3ModeExplanation span {
+    border-right: 0;
+    padding-right: 0;
+  }
+
+  .v6VideoStage {
+    gap: 9px;
+    grid-template-columns: 72px minmax(0, 1fr);
+    min-height: 82px;
+    padding: 7px;
+  }
+
+  .v6VideoStageArtwork,
+  .v6VideoStageArtwork .v3AssetArtwork {
+    height: 66px;
+    min-height: 66px;
+  }
+
+  .v6VideoStageCopy small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .v6VideoStageSpecs {
+    display: none;
+  }
+
+  .v5VideoComposer .v3ComposerFooter .v3DisconnectedButton {
+    display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .v4ComposerAdvanced .v3ModeScroller button {
+    flex-basis: 96px;
+  }
+
+  .v4ComposerAdvanced .v3ModeScroller button small {
+    display: none;
+  }
+
+  .v4ComposerAdvanced .v3ModeExplanation {
+    display: grid;
+  }
+}
