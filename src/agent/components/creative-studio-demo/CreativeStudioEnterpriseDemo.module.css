@@ -12694,6 +12694,13 @@
 
 /* ── Owner-locked reference correction: compact viewport composer ─────── */
 
+.v3Workspace {
+  height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .v4LabWithFloatingComposer {
   display: block;
   padding-bottom: 360px;
