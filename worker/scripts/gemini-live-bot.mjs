@@ -356,6 +356,7 @@ class Call {
     this.outText = ''            // rolling model transcript (for hang-up detection)
     this.spoken = ''             // longer rolling transcript (for a tool call read aloud)
     this._spokenToolFired = false
+    this._muteTurn = false      // silence the rest of a turn that leaked a tool call
     this.hangingUp = false
     this.callerSpoke = false     // arm the goodbye→hangup only after the caller has spoken once
     this.callerWantsEnd = false  // the OTHER side asked to finish — see CALLER_END_RE
@@ -461,6 +462,8 @@ class Call {
     if (m.goAway) console.log(`[glive] ${this.id} goAway — reconnect will follow`)
     if (m.toolCall?.functionCalls?.length) void this.handleToolCalls(m.toolCall.functionCalls)
     const sc = m.serverContent
+    // A new turn starts clean: the mute belongs to the turn that leaked, not to the call.
+    if (sc?.turnComplete || sc?.interrupted) this._muteTurn = false
     if (sc?.interrupted) { // native barge-in — drop everything queued, re-buffer fresh
       console.log(`[glive] ${this.id} <barge-in> flush`)
       this.out = Buffer.alloc(0); this.playing = false
@@ -470,6 +473,10 @@ class Call {
       const d = p.inlineData?.data
       if (!d) continue
       if (!this._loggedRate) { this._loggedRate = true; console.log(`[glive] ${this.id} out mime=${p.inlineData.mimeType}`) }
+      // The model is reading a tool call out loud. Drop the REST of the turn, not just what
+      // was already queued: flushing once and then letting the following chunks through is
+      // why the caller still heard "forward_call reason target support" after the first fix.
+      if (this._muteTurn) continue
       this.out = Buffer.concat([this.out, pcm16ToMuLaw(this.down24to8(Buffer.from(d, 'base64')))])
     }
     if (sc?.outputTranscription?.text) {
@@ -762,7 +769,12 @@ class Call {
   catchSpokenToolCall() {
     if (this._spokenToolFired || this.forwarding || this.closed) return
     const said = this.spoken || ''
-    if (!/forward_call/i.test(said)) return
+    // Fire on the FIRST recognisable fragment rather than the whole signature. The transcript
+    // arrives in chunks and the audio for it is already on its way, so waiting for the closing
+    // bracket means the caller hears most of it. `forward_ca` is enough to be sure — no Bangla
+    // sentence contains it — and `target=` / `reason=` catch the shapes where the model names
+    // the arguments without the function.
+    if (!/forward_ca|target\s*[=:]\s*["']?(support|boss)|reason\s*[=:]\s*["']/i.test(said)) return
 
     this._spokenToolFired = true
     const target = /target\s*[=:]\s*["']?boss/i.test(said) ? 'boss' : 'support'
@@ -770,7 +782,9 @@ class Call {
       || 'কলদাতা মানুষের সাথে কথা বলতে চাইছেন (এজেন্ট টুলটা মুখে বলে ফেলেছিল)'
 
     console.log(`[glive] ${this.id} SPOKEN tool call detected -> forwarding to ${target}`)
-    // Stop the spoken function signature from playing any further.
+    // Stop the spoken function signature from playing any further: drop what is queued AND
+    // everything else this turn produces.
+    this._muteTurn = true
     this.out = Buffer.alloc(0)
     this.playing = false
     try { this.sendNgs({ event: 'clear', [this.streamKey]: this.streamSid }) } catch { /* best effort */ }
@@ -780,6 +794,7 @@ class Call {
       console.log(`[glive] ${this.id} spoken-tool forward failed: ${res?.error || 'unknown'}`)
       // Let the model try again properly rather than leaving the caller in silence.
       this._spokenToolFired = false
+      this._muteTurn = false
     }
   }
 
