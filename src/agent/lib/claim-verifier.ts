@@ -563,7 +563,13 @@ export function detectAsyncCompletionViolation(
 // A card noun, optionally qualified (approval/confirm/question/অনুমোদন/প্রশ্ন…).
 const CARD_NOUN = '(?:approval|approve|confirm(?:ation)?|question|yes[\\s/-]*no|অনুমোদন(?:ের)?|নিশ্চিতকরণ|প্রশ্ন|হ্যাঁ[\\s/-]*না)?\\s*(?:card|কার্ড)'
 // Present/near-future "it is in front of the owner now" delivery verbs.
-const CARD_DELIVERY = '(?:পাঠা(?:চ্ছি|লাম|চ্ছে|নো\\s*হ[য়ছ][েি]|নো\\s*হচ্ছে)|পাঠিয়ে(?:ছি|\\s*দিয়েছি|\\s*দিলাম)?|দিচ্ছি|দিলাম|দিয়ে\\s*দিলাম|দিয়েছি|আসবে|আসছে|এসেছে|দেখতে\\s*পাবেন|পাবেন|নিচে\\s*(?:দেখুন|আছে|দিলাম|পাবেন)|তৈরি\\s*কর[ছিলােয]+|surfac|show|sent|sending|pathacchi|pathalam|pathiyechi|dilam|diyechi)'
+//
+// Owner hit 2026-07-26: the head wrote "card বানাচ্ছি", draft_seo_fixes was
+// blocked, no card existed — and this detector said nothing, because the whole
+// বানা- family (বানাচ্ছি / বানালাম / বানিয়েছি / বানাব) was missing while its
+// synonym তৈরি করছি was covered. Making a card IS delivering it here: the owner
+// is told something is now in front of him either way.
+const CARD_DELIVERY = '(?:পাঠা(?:চ্ছি|লাম|চ্ছে|নো\\s*হ[য়ছ][েি]|নো\\s*হচ্ছে)|পাঠিয়ে(?:ছি|\\s*দিয়েছি|\\s*দিলাম)?|দিচ্ছি|দিলাম|দিয়ে\\s*দিলাম|দিয়েছি|আসবে|আসছে|এসেছে|দেখতে\\s*পাবেন|পাবেন|নিচে\\s*(?:দেখুন|আছে|দিলাম|পাবেন)|তৈরি\\s*(?:কর[ছিলােয]+|হ(?:চ্ছে|য়েছে|ল))|বানা(?:চ্ছি|চ্ছে|লাম|বো?|নো\\s*হ(?:চ্ছে|য়েছে|ল))|বানিয়ে(?:ছি|\\s*দিয়েছি|\\s*দিলাম|\\s*ফেললাম)?|surfac|show|sent|sending|creat(?:e|ed|ing)|pathacchi|pathalam|pathiyechi|dilam|diyechi|banacchi|banalam|baniyechi)'
 
 const CARD_PROMISE = new RegExp(
   `${CARD_NOUN}[^।.!?\\n]{0,45}?${CARD_DELIVERY}`,
@@ -574,7 +580,7 @@ const CARD_PROMISE_REV = new RegExp(
   'i',
 )
 // Honest "I couldn't surface it / it isn't showing" — never a violation.
-const CARD_INABILITY = /(?:card|কার্ড)[^।.!?\n]{0,30}?(?:আসেনি|আসছে\s*না|দেখা\s*যাচ্ছে\s*না|পারিনি|পারলাম\s*না|পারছি\s*না|failed|আসেনা)|(?:card|কার্ড)\s*(?:তৈরি|surface|show)[^।.!?\n]{0,20}?(?:পারিনি|পারলাম\s*না)/i
+const CARD_INABILITY = /(?:card|কার্ড)[^।.!?\n]{0,30}?(?:আসেনি|আসছে\s*না|দেখা\s*যাচ্ছে\s*না|হয়নি|পারিনি|পারলাম\s*না|পারছি\s*না|failed|আসেনা)|(?:card|কার্ড)\s*(?:তৈরি|বানা(?:তে|নো)|surface|show)[^।.!?\n]{0,20}?(?:পারিনি|পারলাম\s*না|হয়নি)/i
 
 /**
  * Detects an unbacked owner-facing card promise: the reply says an approval/
