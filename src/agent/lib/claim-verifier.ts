@@ -36,6 +36,8 @@ export type ClaimViolationCategory =
   | 'stale_promise'
   /** The reply asserts a card is waiting for Boss when no card exists. */
   | 'phantom_card_state'
+  /** Boss just answered a question and the reply asks him another one. */
+  | 'redundant_question'
 
 export interface ClaimViolation {
   category: ClaimViolationCategory
@@ -746,6 +748,34 @@ export function detectProseChoiceViolation(replyText: string): ClaimViolation[] 
     requiredTools: ['ask_user'],
   }]
 }
+
+/**
+ * He answered — now do the work (owner, live 2026-07-27).
+ *
+ * He planned the job, tapped an option, and the very next turn asked him a
+ * near-identical question again. Worse, the prose-choice rule above made that
+ * second question into a real card: the rule's remedy is "turn your prose
+ * question into a tappable card", which is the right answer when a question is
+ * genuinely needed and precisely the wrong one when it is not. That is the drip
+ * of cards he has been objecting to all week, manufactured by a safety rule.
+ *
+ * So on a turn that ANSWERS an ask card, this replaces the prose-choice rule.
+ * Same detection, opposite remedy: stop asking, start working.
+ */
+export function detectRedundantQuestionAfterAnswer(replyText: string): ClaimViolation[] {
+  const text = replyText.trim()
+  if (text.length < 12) return []
+  const ask = DECISION_ASK.exec(text)
+  const options = PROSE_OPTIONS.exec(text)
+  const hit = ask ?? (options && /\?/.test(text) ? options : null)
+  if (!hit) return []
+  return [{
+    category: 'redundant_question',
+    ruleId: 'asked_again_right_after_an_answer',
+    matchedSnippet: stripWhitespace(hit[0]).slice(0, 120),
+    requiredTools: [],
+  }]
+}
 // ── Ask-guard (owner escalation 2026-07-16: "agent card diye ask kore na") ──
 // The HARD RULE (2026-07-07) says every owner-facing choice = ask_user card;
 // this detector ENFORCES it: a prose choice-question without an ask_user call
@@ -980,6 +1010,12 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'ওই লাইনটা Boss-এর স্ক্রিনে থেকে গেছে — মুছে ফেলা যায় না, তাই উত্তরে স্পষ্ট করে সংশোধন করতে হবে। ' +
     'এখন হয় সত্যিই কার্ড তৈরির tool কল করুন, নয়তো সরাসরি লিখুন "কার্ড তৈরি করতে পারিনি" এবং কেন — ' +
     'চুপ করে অন্য কথা বলা চলবে না।',
+  redundant_question:
+    'Boss এইমাত্র আপনার প্রশ্নের উত্তর দিয়েছেন — আর আপনি আবার তাঁকেই জিজ্ঞেস করছেন। ' +
+    'এটাই তাঁর সবচেয়ে পুরোনো অভিযোগ: এক প্রশ্নের উত্তর দিলে পরের কার্ড, তার উত্তর দিলে আরেকটা। ' +
+    'তিনি যা বেছে দিয়েছেন সেটা ধরেই এখনই কাজ শুরু করুন — প্রশ্নটা বাদ দিন। ' +
+    'সত্যিই এমন কিছু জানতে হলে যেটা তিনি এখনো বলেননি, তবেই একটাই ask_user কার্ডে ' +
+    'সব প্রশ্ন একসাথে দিন; নাহলে কাজ করে ফলটা জানান।',
   phantom_card_state:
     'আপনি বলেছেন কিছু একটা Boss-এর অনুমোদনের অপেক্ষায় আছে — কিন্তু সার্ভারে এই চ্যাটে কোনো pending card নেই। ' +
     'Boss তাহলে এমন একটা বোতামের জন্য বসে থাকবেন যেটা কোথাও নেই, অথবা যে কাজ ইতিমধ্যে হয়ে গেছে সেটা আবার approve করতে যাবেন। ' +

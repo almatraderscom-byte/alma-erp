@@ -91,6 +91,7 @@ import {
   countStagedCards,
   detectMissingCardViolation,
   detectProseChoiceViolation,
+  detectRedundantQuestionAfterAnswer,
   detectUncorrectedOpeningPromise,
   detectPhantomApprovalWait,
   detectFabricatedStatViolations,
@@ -2102,7 +2103,12 @@ async function* runAlternateProviderTurn(
           const stagedCards = countStagedCards(toolRecords)
           if (violations.length === 0 && emittedAskCards.length === 0 && confirmCardsEmitted === 0 && stagedCards === 0) {
             violations.push(...detectMissingCardViolation(iterationText.trim()))
-            violations.push(...detectProseChoiceViolation(iterationText.trim()))
+            // On a turn that ANSWERS one of his cards, a prose question must not
+            // be promoted into ANOTHER card — that safety rule was manufacturing
+            // the very drip he objects to. Same detection, opposite remedy.
+            violations.push(...(matchedAskCard
+              ? detectRedundantQuestionAfterAnswer(iterationText.trim())
+              : detectProseChoiceViolation(iterationText.trim())))
             // The speak-first line is streamed before any tool runs and survives
             // every rewrite (finalText resets to it below), so a promise made
             // there can never be corrected by a rewrite — the reply must own it.
