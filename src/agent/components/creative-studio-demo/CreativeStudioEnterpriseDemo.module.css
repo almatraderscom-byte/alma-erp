@@ -13867,6 +13867,9 @@
   }
 
   .v3Topbar {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: rgb(var(--c-card) / 0.98);
     position: sticky;
     z-index: 190;
   }
