@@ -310,6 +310,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     source: 'owner' | 'router'
     reason: string
   } | null>(null)
+  /** Live SSE for a worker-run continuation after an approval (SK/owner 2026-07-26). */
+  const approvalStreamRef = useRef<EventSource | null>(null)
   const [compacting, setCompacting] = useState(false)
   const [dayShift, setDayShift] = useState<{
     conversationId: string | null
@@ -1686,6 +1688,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
   /** Tear down the approval loader — used when an approval fails after the click. */
   function stopResultPolling() {
+    approvalStreamRef.current?.close()
+    approvalStreamRef.current = null
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current)
       pollTimerRef.current = null
@@ -1709,11 +1713,51 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setStreamVariant('claude')
     setMessages((prev) => [...prev.filter((m) => !m.streaming), loader])
 
+    // OWNER CATCH 2026-07-26: after an approval the loader sat on "কাজ শুরু করছি…"
+    // for 40 seconds with no thinking behind it, and my claim that reasoning would
+    // fill it in was simply false. The continuation runs on the WORKER, and this
+    // path only polled for messages — thinking events never reached the client at
+    // all. The durable turn already streams the same events over
+    // /api/assistant/turn/<id>/stream, so subscribe to it and show the real thing.
+    let liveThinking = ''
+    let attachedTurnId: string | null = null
+
+    function attachTurnStream(turnId: string) {
+      if (attachedTurnId === turnId) return
+      attachedTurnId = turnId
+      const es = new EventSource(`/api/assistant/turn/${turnId}/stream`)
+      approvalStreamRef.current?.close()
+      approvalStreamRef.current = es
+      es.onmessage = (ev) => {
+        try {
+          const evt = JSON.parse(ev.data) as { type?: string; delta?: string; name?: string }
+          if (evt.type === 'thinking_delta' && typeof evt.delta === 'string') {
+            liveThinking += evt.delta
+            setMessages((prev) => prev.map((m) => (m.id === loaderId ? { ...m, thinking: liveThinking } : m)))
+          } else if (evt.type === 'tool_start' && evt.name) {
+            setMessages((prev) => prev.map((m) => (
+              m.id === loaderId
+                ? { ...m, toolActivity: [...(m.toolActivity ?? []), { id: `${Date.now()}`, name: evt.name as string, done: false }] }
+                : m
+            )))
+          } else if (evt.type === 'done' || evt.type === 'error') {
+            es.close()
+            approvalStreamRef.current = null
+          }
+        } catch { /* a malformed frame must not break the loader */ }
+      }
+      es.onerror = () => { es.close(); approvalStreamRef.current = null }
+    }
+
     async function poll() {
       let running = false
       try {
         const sres = await fetch(`/api/assistant/conversations/${convId}/turn-status`)
-        if (sres.ok) running = ((await sres.json()) as { status?: string }).status === 'running'
+        if (sres.ok) {
+          const st = (await sres.json()) as { status?: string; turnId?: string | null }
+          running = st.status === 'running'
+          if (running && st.turnId) attachTurnStream(st.turnId)
+        }
       } catch {
         running = sawRunning // transient status error → keep the loader as-is
       }
@@ -1728,7 +1772,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           // approval note shows while the agent is still working, then the spinner
           // drops as the continuation reply lands. (!sawRunning guards the brief
           // race before the freshly-created turn registers as running.)
-          setMessages(running || !sawRunning ? [...mapped, loader] : mapped)
+          const pinned = liveThinking ? { ...loader, thinking: liveThinking } : loader
+          setMessages(running || !sawRunning ? [...mapped, pinned] : mapped)
         }
       } catch { /* ignore a transient fetch error */ }
 
