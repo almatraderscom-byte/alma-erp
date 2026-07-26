@@ -44,8 +44,28 @@ export const BROWSER_TURN_MAX_ITERATIONS = Math.max(
  * placeholder instead of the report (incident 2026-07-25). Env-tunable.
  */
 export const DEEP_TURN_MAX_ITERATIONS = Math.max(
-  Number(process.env.DEEP_TURN_MAX_ITERATIONS) || 20,
+  Number(process.env.DEEP_TURN_MAX_ITERATIONS) || 60,
   Number(process.env.MAX_TOOL_ITERATIONS) || 8,
+)
+
+/**
+ * LONG-RUN turns — the answer to the owner's question of 2026-07-26: *"ami jodi
+ * tmk claude app e ei same task ta ditam, tmi non-stop 1 hour+ kaj korte paro —
+ * amr model keno parche na?"*
+ *
+ * It was never the model. A turn was capped at MAX_TOOL_ITERATIONS = 8 tool
+ * rounds and (by default) 280 seconds, so anything bigger HAD to be broken into
+ * Plan-Drive steps. That is why finishing an SEO job needed a whole second
+ * engine. A turn Boss has explicitly put in a working mode (plan-drive / a deep
+ * "do the whole thing" request) now gets a real working budget instead, and the
+ * existing auto-continue chains past even this when a job is genuinely huge.
+ *
+ * Still bounded: iterations are finite, every tool call still goes through the
+ * guard, and the cost ledger records every round.
+ */
+export const LONG_RUN_TURN_MAX_ITERATIONS = Math.max(
+  Number(process.env.LONG_RUN_TURN_MAX_ITERATIONS) || 120,
+  Number(process.env.DEEP_TURN_MAX_ITERATIONS) || 60,
 )
 
 /**

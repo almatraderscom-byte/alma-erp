@@ -552,8 +552,12 @@ export async function POST(req: NextRequest) {
   // match — long browser/content turns stop dying at the old 280s ceiling. The
   // Math.min guard keeps a mismatched env from ever exceeding the function's
   // real budget (cap always ≥20s under maxDuration for the final persist).
+  // 2026-07-26: the default was 280s while maxDuration is 800s — so a turn died
+  // at 4.7 minutes even though the function had 13. That gap is most of the
+  // reason long work had to be pushed into Plan-Drive at all. Use the budget the
+  // function actually has; the Math.min still guarantees a clean final persist.
   const TURN_HARD_CAP_MS = Math.min(
-    Number(process.env.AGENT_TURN_HARD_CAP_MS) || 280_000,
+    Number(process.env.AGENT_TURN_HARD_CAP_MS) || 760_000,
     (maxDuration - 20) * 1000,
   )
   const turnAbort = new AbortController()
