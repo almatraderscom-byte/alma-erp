@@ -39,7 +39,7 @@ import net from 'node:net'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
-import { readFile, unlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { WebSocket } from 'ws'
@@ -274,9 +274,48 @@ function outcomeFromCause(answered, cause) {
 
 // Cost + abuse guard: a runaway loop (or a stolen control-API key) must not be able to
 // dial dozens of PSTN legs. Owner-tunable; refuses politely past the cap.
-const MAX_CONCURRENT = Number(process.env.SIP_MAX_CONCURRENT_CALLS || 4)
+// `let`, not `const`, from the console's step 2 on: the ERP owns this value now and pushes
+// it down through pullOwnerConfig(). The env stays the fallback, so a gateway that cannot
+// reach the app behaves exactly as it did before.
+let MAX_CONCURRENT = Number(process.env.SIP_MAX_CONCURRENT_CALLS || 4)
 // Only these destinations may be dialled (BD mobile/landline in local or +880 form).
 const DEST_ALLOW = new RegExp(process.env.SIP_DEST_ALLOW || '^(0\\d{9,10}|880\\d{9,10})$')
+/*
+ * Console step 4 — the owner's outbound rules, pulled with the rest of the config.
+ *
+ * These sit IN FRONT of DEST_ALLOW, they never replace it. DEST_ALLOW is an env-pinned
+ * backstop that no screen and no network call can widen: if a pulled policy were ever wrong,
+ * the worst it can do is refuse calls, never permit an international one. Toll fraud is the
+ * expensive direction, so the guard that cannot be changed remotely is the permissive one's
+ * ceiling.
+ */
+let DEST_POLICY = process.env.SIP_DEST_POLICY || 'bd_all'
+let OUTBOUND_STRIP = process.env.SIP_OUTBOUND_STRIP || ''
+let OUTBOUND_PREFIX = process.env.SIP_OUTBOUND_PREFIX || ''
+
+/**
+ * Mirror of applyOutboundRules() in src/agent/lib/phone-settings.ts, which is what the
+ * console's outbound preview runs. Duplicated deliberately: the ERP's copy answers "what
+ * WOULD happen", this one decides what DOES, and a gateway that trusted the app for a
+ * permission check would be trusting the network for toll-fraud protection.
+ */
+function outboundRules(raw) {
+  let n = localDial(String(raw ?? '').trim()).replace(/[^\d]/g, '')
+  if (!n) return { allowed: false, dialled: '', reason: 'no number' }
+
+  const strip = String(OUTBOUND_STRIP).replace(/\D/g, '')
+  if (strip && n.startsWith(strip)) n = n.slice(strip.length)
+  if (OUTBOUND_PREFIX) n = String(OUTBOUND_PREFIX).replace(/[^\d]/g, '') + n
+
+  const internal = /^1\d{3}$/.test(n)
+  const mobile = /^01\d{9}$/.test(n)
+  if (internal) return { allowed: true, dialled: n, reason: 'internal' }
+  if (DEST_POLICY === 'internal_only') return { allowed: false, dialled: n, reason: 'policy: internal only' }
+  if (DEST_POLICY === 'bd_mobile' && !mobile) return { allowed: false, dialled: n, reason: 'policy: mobiles only' }
+  // The backstop, last and always.
+  if (!DEST_ALLOW.test(n)) return { allowed: false, dialled: n, reason: 'destination not allowed' }
+  return { allowed: true, dialled: n, reason: 'ok' }
+}
 // Hourly originate ceiling across the whole gateway.
 const MAX_PER_HOUR = Number(process.env.SIP_MAX_CALLS_PER_HOUR || 30)
 const recentOriginates = []
@@ -305,7 +344,7 @@ const RECORD_DIR = process.env.SIP_RECORD_DIR || '/var/spool/asterisk/recording'
 const VOICEMAIL_ENABLED = process.env.SIP_VOICEMAIL_ENABLED !== '0'
 const VOICEMAIL_PROMPT = process.env.SIP_VOICEMAIL_PROMPT || '/var/lib/asterisk/sounds/alma-voicemail'
 const VOICEMAIL_AFTER_SECS = Number(process.env.SIP_VOICEMAIL_AFTER_SECS || 8)
-const VOICEMAIL_MAX_SECS = Number(process.env.SIP_VOICEMAIL_MAX_SECS || 120)
+let VOICEMAIL_MAX_SECS = Number(process.env.SIP_VOICEMAIL_MAX_SECS || 120)
 
 // Length of the barge-in fade, in 20 ms frames. Two frames (40 ms) is long enough to be
 // click-free and short enough that the caller still experiences an immediate interruption.
@@ -407,7 +446,7 @@ function fadeOutFrames(frames) {
  * and cut. Both failed calls ended at exactly 30.000s with hangup cause 0 (our own cancel),
  * which is what identified it. 45s matches the Twilio path's Timeout.
  */
-const RING_TIMEOUT = Number(process.env.SIP_RING_TIMEOUT || 45)
+let RING_TIMEOUT = Number(process.env.SIP_RING_TIMEOUT || 45)
 // How long to stay on the line waiting for a keypress after a confirmation message.
 const CONFIRM_WAIT_SECS = Number(process.env.SIP_CONFIRM_WAIT_SECS || 12)
 
@@ -1101,13 +1140,19 @@ function isOwnerCaller(number) {
     .some((n) => n === target)
 }
 
-/** Is this caller on the gateway's own blocklist (SIP_BLOCKLIST, last 9 digits)? */
+/**
+ * Is this caller on the gateway's own blocklist (last 9 digits)?
+ *
+ * The list comes from the owner's console (KV `blocked_callers`, pulled with the rest of the
+ * config) and falls back to `SIP_BLOCKLIST`. It is checked here, on our own box, BEFORE we
+ * ask the app anything — blocking a nuisance caller must not depend on Vercel being
+ * reachable, and refusing before answering means the call costs nothing at all.
+ */
 function isBlockedLocally(number) {
   const tail = (n) => String(n || '').replace(/\D/g, '').slice(-9)
   const target = tail(number)
   if (!target) return false
-  return (process.env.SIP_BLOCKLIST || '')
-    .split(',').map(tail).filter(Boolean).includes(target)
+  return LOCAL_BLOCKLIST.split(',').map(tail).filter(Boolean).includes(target)
 }
 
 /** BD numbers arrive as +8801… or 8801… or 01… — normalise to +E.164 for owner matching. */
@@ -1300,13 +1345,45 @@ async function writeWebrtcStore(store) {
   await writeFile(WEBRTC_STORE, JSON.stringify(store, null, 2), { mode: 0o600 })
 }
 
+/**
+ * Console step 3 — per-extension policy, with sane defaults for the entries that predate it.
+ *
+ * `disabled` is enforced by leaving the endpoint OUT of the generated config entirely: a
+ * disabled extension cannot register at all, which is a far stronger statement than a
+ * dialplan that refuses its calls. `dialOut` picks which generated context the endpoint
+ * lands in, so what a stolen browser credential can reach is decided by config rather than
+ * by a check someone might forget to write.
+ */
+const STAFF_DIALPLAN = process.env.SIP_STAFF_DIALPLAN || '/etc/asterisk/extensions-alma-staff.conf'
+/*
+ * The caller-ID a staff member's outbound call presents. It must be our own DID: setting it
+ * to anything the provider does not recognise changes the failure mode from a working call
+ * to an immediate reject (proven live on 2026-07-25 with NGS's internal id `2323`, which is
+ * valid inside their panel and not on the wire).
+ */
+const STAFF_CALLER_ID = (process.env.SIP_CALLER_ID || process.env.SIP_FROM || '09649777738').replace(/[^\d+]/g, '')
+
+function staffPolicy(s) {
+  const dialOut = ['full', 'mobile', 'internal'].includes(s.dialOut) ? s.dialOut : 'full'
+  return {
+    ext: String(s.ext),
+    name: s.name || '',
+    disabled: s.disabled === true,
+    dialOut,
+    dnd: s.dnd === true,
+    forwardTo: typeof s.forwardTo === 'string' ? s.forwardTo.replace(/[^\d+]/g, '') : '',
+  }
+}
+
+const STAFF_CONTEXT = { full: 'from-staff', mobile: 'from-staff-mobile', internal: 'from-staff-internal' }
+
 /** Rewrite the pjsip include file from the store and reload, so config always matches state. */
-async function renderWebrtcConfig(store) {
-  const blocks = Object.values(store).map((s) => `
+async function renderWebrtcConfig(store, { strict = false } = {}) {
+  const blocks = Object.values(store).filter((s) => !staffPolicy(s).disabled).map((s) => `
 [${s.ext}]
 type=endpoint
 transport=transport-ws
-context=from-staff
+context=${STAFF_CONTEXT[staffPolicy(s).dialOut]}
 disallow=all
 allow=ulaw,alaw
 auth=${s.ext}-auth
@@ -1338,6 +1415,116 @@ qualify_frequency=0
   await writeFile(WEBRTC_CONF, `;; GENERATED by sip-gateway-service — do not edit by hand.\n${blocks}`, { mode: 0o640 })
   try { await execFileAsync('chown', ['asterisk:asterisk', WEBRTC_CONF]) } catch { /* best effort */ }
   await asteriskCli('module reload res_pjsip')
+
+  // Non-strict by default. This runs on PROVISIONING too — a staff member opening the phone
+  // page for the first time — and a CLI blip while regenerating the dialplan must not be the
+  // reason nobody can get a phone. The console's policy endpoints pass strict:true, because
+  // there the whole point of the request IS the dialplan and a silent failure would show the
+  // owner a saved setting that never took effect.
+  try {
+    await renderStaffDialplan(store)
+  } catch (err) {
+    if (strict) throw err
+    log('staff dialplan render failed (provisioning continues):', err?.message)
+  }
+}
+
+/**
+ * The staff dialplan, generated from the same store, so what a staff member may dial and
+ * what happens when someone dials THEM are one source of truth.
+ *
+ * It replaces the hand-written `[from-staff]` block — extensions.conf on the VPS gets a
+ * `#include extensions-alma-staff.conf` once, and after that this file owns it. That is the
+ * roadmap's "one writer for Asterisk config": a screen must never be able to leave the
+ * dialplan in a state nobody verified, so this writes, reloads, VERIFIES with
+ * `dialplan show`, and restores the previous file if the contexts do not come back.
+ *
+ * The patterns themselves are unchanged and deliberately narrow. This dialplan IS the guard
+ * for browser-originated calls — the gateway's own allowlist only covers its control API —
+ * so a stolen credential must not reach a premium or international number. BD mobiles are
+ * ELEVEN digits (`_01XXXXXXXXX`); the ten-X version matched nothing anyone would dial, and
+ * `_0[2-9]X.` is what keeps a 00-prefixed international number out.
+ */
+async function renderStaffDialplan(store) {
+  const staff = Object.values(store).map(staffPolicy).filter((s) => !s.disabled)
+
+  // Someone dialling a colleague's extension. DND and forward-to-mobile are per person, so
+  // they are written per extension rather than checked at runtime.
+  const internalLines = staff.map((s) => {
+    if (s.dnd) {
+      return `exten => ${s.ext},1,NoOp(=== ${s.ext} DND ===)\n same => n,Busy(5)\n same => n,Hangup()`
+    }
+    const ring = `exten => ${s.ext},1,NoOp(=== STAFF INTERNAL -> ${s.ext} ===)\n same => n,Dial(PJSIP/${s.ext},${s.forwardTo ? 20 : 30})`
+    if (!s.forwardTo) return `${ring}\n same => n,Hangup()`
+    // Their browser did not pick up: try their mobile before giving up on the caller.
+    return `${ring}\n same => n,NoOp(=== ${s.ext} forward -> ${s.forwardTo} ===)\n same => n,Set(CALLERID(num)=${STAFF_CALLER_ID})\n same => n,Dial(PJSIP/${s.forwardTo}@${TRUNK_ENDPOINT},30)\n same => n,Hangup()`
+  }).join('\n')
+
+  const outbound = `
+;; BD mobiles are ELEVEN digits (01 + 9).
+exten => _01XXXXXXXXX,1,NoOp(=== STAFF OUTBOUND \${CALLERID(num)} -> \${EXTEN} ===)
+ same => n,Set(CALLERID(num)=${STAFF_CALLER_ID})
+ same => n,Dial(PJSIP/\${EXTEN}@${TRUNK_ENDPOINT},45)
+ same => n,Hangup()
+`
+  const landline = `
+;; BD landlines: 0 + area code 2-9 + subscriber. The [2-9] class is what keeps this from
+;; matching a 00-prefixed international number, which is the whole toll-fraud risk here.
+exten => _0[2-9]X.,1,NoOp(=== STAFF OUTBOUND(landline) \${CALLERID(num)} -> \${EXTEN} ===)
+ same => n,Set(CALLERID(num)=${STAFF_CALLER_ID})
+ same => n,Dial(PJSIP/\${EXTEN}@${TRUNK_ENDPOINT},45)
+ same => n,Hangup()
+`
+  const refuse = `
+;; This context is reached by an extension the owner has limited. Say so with a real SIP
+;; response rather than "extension not found", which reads to a staff member as a bug.
+exten => _X.,1,NoOp(=== STAFF OUTBOUND REFUSED (policy) \${CALLERID(num)} -> \${EXTEN} ===)
+ same => n,Playback(ss-noservice)
+ same => n,Hangup(63)
+`
+
+  const body = `;; GENERATED by sip-gateway-service — do not edit by hand.
+;; Owned by the phone console (step 3). Edits here are overwritten on the next change.
+
+[from-staff-internal]
+${internalLines}
+${refuse}
+
+[from-staff-mobile]
+${internalLines}
+${outbound}
+${refuse}
+
+[from-staff]
+${internalLines}
+${outbound}
+${landline}
+`
+  let backup = null
+  try {
+    backup = await readFile(STAFF_DIALPLAN, 'utf8')
+  } catch { /* first run — there is nothing to restore to */ }
+
+  await writeFile(STAFF_DIALPLAN, body, { mode: 0o640 })
+  try { await execFileAsync('chown', ['asterisk:asterisk', STAFF_DIALPLAN]) } catch { /* best effort */ }
+  await asteriskCli('dialplan reload')
+
+  // Verify, because a reload's exit code has lied here before. Every context we just wrote
+  // must come back from Asterisk, or the previous file goes back and we reload again.
+  try {
+    for (const ctx of ['from-staff', 'from-staff-mobile', 'from-staff-internal']) {
+      const out = await asteriskCli(`dialplan show ${ctx}`)
+      if (!out.includes(`[ Context '${ctx}'`)) throw new Error(`${ctx} missing after reload`)
+    }
+  } catch (err) {
+    log('staff dialplan verify FAILED, restoring:', err?.message)
+    if (backup != null) {
+      await writeFile(STAFF_DIALPLAN, backup, { mode: 0o640 })
+      await asteriskCli('dialplan reload').catch(() => {})
+    }
+    throw err
+  }
+  log(`staff dialplan rendered for ${staff.length} extension(s)`)
 }
 
 /** Get (or create) the extension + password for one staff member. */
@@ -1388,6 +1575,114 @@ function readBody(req) {
   })
 }
 function json(res, code, obj) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
+async function readJsonBody(req) {
+  try { return JSON.parse((await readBody(req)) || '{}') } catch { return {} }
+}
+
+/**
+ * Which staff extensions are registered RIGHT NOW, read from Asterisk rather than believed.
+ *
+ * WebRTC AORs run with qualify off — a browser that misses an OPTIONS poll gets marked
+ * Unavailable and Asterisk then refuses to dial it — so `pjsip show contacts` is the honest
+ * source: a contact exists exactly while a browser holds the websocket.
+ */
+async function registeredExtensions() {
+  const out = new Set()
+  try {
+    const text = await asteriskCli('pjsip show contacts')
+    for (const line of text.split('\n')) {
+      const m = line.match(/Contact:\s+(\d{3,6})\//)
+      if (m) out.add(m[1])
+    }
+  } catch { /* an unreachable CLI means "we do not know", not "nobody is registered" */ }
+  return out
+}
+
+/**
+ * One extension's recent calls, from ASTERISK'S OWN call log.
+ *
+ * A staff member's calls never pass through this gateway: their browser registers directly
+ * to Asterisk and the dialplan dials out, so `agent_voice_calls` has no row for any of them.
+ * The only place those calls exist is Asterisk's CDR, and the cheapest honest way to read it
+ * is the CSV backend's file — no new database, no new subsystem, and it is already being
+ * written on every call if `cdr_csv` is loaded.
+ *
+ * If it is NOT loaded the list comes back empty with a reason, rather than as a silent blank
+ * that reads like "this person has made no calls".
+ */
+const CDR_CSV = process.env.SIP_CDR_CSV || '/var/log/asterisk/cdr-csv/Master.csv'
+
+function parseCdrLine(line) {
+  // Asterisk's CSV is quoted fields, commas inside quotes allowed.
+  const cells = []
+  let cur = ''
+  let inQuotes = false
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]
+    if (c === '"') { inQuotes = !inQuotes; continue }
+    if (c === ',' && !inQuotes) { cells.push(cur); cur = ''; continue }
+    cur += c
+  }
+  cells.push(cur)
+  if (cells.length < 15) return null
+  // Standard cdr_csv column order.
+  const [, src, dst, , clid, channel, dstChannel, , , start, answer, , duration, billsec, disposition] = cells
+  return { src, dst, clid, channel, dstChannel, start, answered: Boolean(answer), duration: Number(duration) || 0, billsec: Number(billsec) || 0, disposition }
+}
+
+async function extensionHistory(ext, limit = 40) {
+  let text = ''
+  try {
+    text = await readFile(CDR_CSV, 'utf8')
+  } catch (err) {
+    return { rows: [], error: `Asterisk-এর কল-লগ পড়া যায়নি (${err?.code || err?.message}) — cdr_csv চালু আছে কি না দেখুন।` }
+  }
+  const lines = text.split('\n').filter(Boolean)
+  const rows = []
+  // Newest first, and stop as soon as we have enough — this file grows for the life of the box.
+  for (let i = lines.length - 1; i >= 0 && rows.length < limit; i--) {
+    const r = parseCdrLine(lines[i])
+    if (!r) continue
+    // The extension is identified by its CHANNEL, not by `src`. The staff dialplan rewrites
+    // the caller-ID to our own DID before dialling out (it has to — the provider rejects a
+    // caller-ID it does not recognise), so on every staff outbound row `src` is 09649777738
+    // and only `PJSIP/<ext>-…` says whose call it was. Verified against the real CDR:
+    //   src=09649777738 dst=01779640373 channel=PJSIP/1002-00000027
+    const outbound = String(r.channel).includes(`PJSIP/${ext}-`)
+    const inbound = String(r.dstChannel).includes(`PJSIP/${ext}-`)
+    if (!outbound && !inbound) continue
+    rows.push({
+      direction: outbound ? 'outbound' : 'inbound',
+      // …which is also why "who was on the other end" must come from the direction rather
+      // than from comparing `src` to the extension: that comparison never matches, and the
+      // screen would have shown our own DID as the person every staff member called.
+      other: outbound ? r.dst : r.src,
+      at: r.start || null,
+      seconds: r.billsec,
+      answered: r.disposition === 'ANSWERED',
+      disposition: r.disposition,
+    })
+  }
+  return { rows, error: null }
+}
+
+/** Extension -> what it is on a call with, for the console's live view of a person. */
+async function extensionsOnCalls() {
+  const busy = new Map()
+  try {
+    const channels = await ari('GET', '/channels')
+    for (const ch of channels || []) {
+      const m = String(ch.name || '').match(/^PJSIP\/(\d{3,6})-/)
+      if (!m) continue
+      busy.set(m[1], {
+        state: ch.state || null,
+        with: ch.connected?.number || ch.dialplan?.exten || null,
+        since: ch.creationtime || null,
+      })
+    }
+  } catch { /* the console shows "unknown" rather than inventing an idle line */ }
+  return busy
+}
 
 // Local-only format like ngsDialFormat: BD mobiles terminate on 01XXXXXXXXX.
 function localDial(n) {
@@ -1415,11 +1710,95 @@ const ctrlServer = http.createServer(async (req, res) => {
   if (url.pathname === '/api/v1/webrtc/list' && req.method === 'GET') {
     if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
     const store = await readWebrtcStore()
-    // Extensions and names only — passwords never leave this process.
+    // Extensions, names and POLICY — passwords never leave this process, not even hashed.
+    // "Reveal password" is deliberately not a feature we copy from the old panel: a browser
+    // phone gets its credential by logging in, and a secret that is never displayed cannot
+    // be screenshotted, pasted into a chat, or left on a desk.
+    const [registered, busy] = await Promise.all([registeredExtensions(), extensionsOnCalls()])
     return json(res, 200, {
       ok: true,
-      staff: Object.entries(store).map(([staffId, s]) => ({ staffId, ext: s.ext, name: s.name || '' })),
+      staff: Object.entries(store).map(([staffId, s]) => {
+        const p = staffPolicy(s)
+        return {
+          staffId,
+          ext: p.ext,
+          name: p.name,
+          disabled: p.disabled,
+          dialOut: p.dialOut,
+          dnd: p.dnd,
+          forwardTo: p.forwardTo,
+          registered: registered.has(p.ext),
+          onCall: busy.get(p.ext) ?? null,
+        }
+      }),
     })
+  }
+  if (url.pathname === '/api/v1/webrtc/history' && req.method === 'GET') {
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const ext = String(url.searchParams.get('ext') || '').replace(/\D/g, '')
+    if (!ext) return json(res, 400, { error: 'need ext' })
+    return json(res, 200, { ok: true, ...(await extensionHistory(ext)) })
+  }
+  if (url.pathname === '/api/v1/webrtc/policy' && req.method === 'POST') {
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const parsed = await readJsonBody(req)
+    const staffId = String(parsed.staffId || '').trim()
+    const store = await readWebrtcStore()
+    if (!staffId || !store[staffId]) return json(res, 404, { error: 'no such extension' })
+    const entry = store[staffId]
+    if (['full', 'mobile', 'internal'].includes(parsed.dialOut)) entry.dialOut = parsed.dialOut
+    if (typeof parsed.dnd === 'boolean') entry.dnd = parsed.dnd
+    if (typeof parsed.disabled === 'boolean') entry.disabled = parsed.disabled
+    if (typeof parsed.forwardTo === 'string') {
+      const to = parsed.forwardTo.replace(/[^\d+]/g, '')
+      // Only a real BD destination, and only one. This number is written straight into the
+      // dialplan, so anything else would be a way to make our trunk dial arbitrary places.
+      if (to && !/^(\+?880|0)\d{9,10}$/.test(to)) return json(res, 400, { error: 'forward number must be a BD number' })
+      entry.forwardTo = to
+    }
+    try {
+      await writeWebrtcStore(store)
+      await renderWebrtcConfig(store, { strict: true })
+    } catch (err) {
+      return json(res, 500, { error: err?.message || String(err) })
+    }
+    log(`extension ${entry.ext} policy updated (dialOut=${entry.dialOut || 'full'} dnd=${entry.dnd ? 'y' : 'n'} disabled=${entry.disabled ? 'y' : 'n'})`)
+    return json(res, 200, { ok: true })
+  }
+  if (url.pathname === '/api/v1/webrtc/rotate' && req.method === 'POST') {
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const parsed = await readJsonBody(req)
+    const staffId = String(parsed.staffId || '').trim()
+    const store = await readWebrtcStore()
+    if (!staffId || !store[staffId]) return json(res, 404, { error: 'no such extension' })
+    store[staffId].password = randomUUID().replace(/-/g, '')
+    try {
+      await writeWebrtcStore(store)
+      await renderWebrtcConfig(store, { strict: true })
+    } catch (err) {
+      return json(res, 500, { error: err?.message || String(err) })
+    }
+    // The new secret is NOT returned. Their browser picks it up the next time they open the
+    // phone page, which is the only place it is ever needed.
+    log(`extension ${store[staffId].ext} password rotated`)
+    return json(res, 200, { ok: true, ext: store[staffId].ext })
+  }
+  if (url.pathname === '/api/v1/webrtc/remove' && req.method === 'POST') {
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const parsed = await readJsonBody(req)
+    const staffId = String(parsed.staffId || '').trim()
+    const store = await readWebrtcStore()
+    if (!staffId || !store[staffId]) return json(res, 404, { error: 'no such extension' })
+    const ext = store[staffId].ext
+    delete store[staffId]
+    try {
+      await writeWebrtcStore(store)
+      await renderWebrtcConfig(store, { strict: true })
+    } catch (err) {
+      return json(res, 500, { error: err?.message || String(err) })
+    }
+    log(`extension ${ext} removed`)
+    return json(res, 200, { ok: true })
   }
   if (url.pathname === '/api/v1/click2call' && req.method === 'POST') {
     if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
@@ -1427,9 +1806,16 @@ const ctrlServer = http.createServer(async (req, res) => {
     let parsed = {}
     try { parsed = JSON.parse(body || '{}') } catch { /* */ }
     const ext = String(parsed.ext || '').trim()
-    const to = localDial(parsed.to)
-    if (!ext || !to) return json(res, 400, { error: 'need ext and to' })
-    if (!DEST_ALLOW.test(to)) return json(res, 403, { error: 'destination not allowed' })
+    if (!ext || !parsed.to) return json(res, 400, { error: 'need ext and to' })
+    const rule = outboundRules(parsed.to)
+    if (!rule.allowed) return json(res, 403, { error: rule.reason })
+    const to = rule.dialled
+    // The staff member's OWN context, so a click-to-call obeys the same per-extension
+    // policy as a call they dial by hand. Sending every click2call through `from-staff`
+    // would have been a hole straight past the limits the console just set.
+    const store = await readWebrtcStore()
+    const owner = Object.values(store).find((x) => String(x.ext) === ext)
+    const ctx = owner ? STAFF_CONTEXT[staffPolicy(owner).dialOut] : 'from-staff'
     try {
       // If their browser is not registered there is nothing to ring, and ARI would answer
       // with an opaque "Allocation failed". Say so plainly instead.
@@ -1443,7 +1829,7 @@ const ctrlServer = http.createServer(async (req, res) => {
       // answer to silence while we chase the staff member.
       const chan = await ari('POST', '/channels', {
         endpoint: `PJSIP/${ext}`,
-        context: 'from-staff',
+        context: ctx,
         extension: to,
         priority: '1',
         timeout: String(RING_TIMEOUT),
@@ -1498,8 +1884,23 @@ const ctrlServer = http.createServer(async (req, res) => {
       softphone: { healthy: wsState.healthy, status: wsState.lastStatus, repairs: wsState.repairs },
     })
   }
+  if (url.pathname === '/api/v1/moh' && req.method === 'GET') {
+    // What the hold audio actually IS right now, read out of Asterisk rather than assumed.
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    return json(res, 200, { ok: true, ...(await mohState()) })
+  }
+  if (url.pathname === '/api/v1/moh' && req.method === 'POST') {
+    // Raw audio bytes in the body; the class name rides in a header so the body stays a file.
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const bytes = await readBinaryBody(req, MOH_MAX_BYTES)
+    if (!bytes) return json(res, 413, { error: 'upload too large' })
+    const result = await installMohAudio(bytes, req.headers['x-moh-class'])
+    return json(res, result.ok ? 200 : 409, result)
+  }
   if (url.pathname === '/health') {
-    return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size, registration: { registered: regState.registered, status: regState.lastStatus, failures: regState.consecutiveFailures }, softphone: { healthy: wsState.healthy, status: wsState.lastStatus, repairs: wsState.repairs } })
+    // `config` says whether the owner's settings are actually reaching this box. Without it,
+    // "I changed it and nothing happened" has no answer that is not an SSH session.
+    return json(res, 200, { ok: true, service: 'alma-sip-gateway', ariReady: ARI_READY, active: calls.size, maxConcurrent: MAX_CONCURRENT, cdr: cdr.size, registration: { registered: regState.registered, status: regState.lastStatus, failures: regState.consecutiveFailures }, softphone: { healthy: wsState.healthy, status: wsState.lastStatus, repairs: wsState.repairs }, config: { pulledAt: configState.at || null, ok: configState.ok, error: configState.error } })
   }
   if (!m) return json(res, 404, { error: 'not found' })
   if (!authOk(req)) {
@@ -1531,7 +1932,7 @@ const ctrlServer = http.createServer(async (req, res) => {
       try { body = JSON.parse(bodyRaw || '{}') } catch {
         const p = new URLSearchParams(bodyRaw); body = { to: p.get('to'), from: p.get('from') }
       }
-      const to = localDial(body.to)
+      let to = localDial(body.to)
       if (!to) return json(res, 400, { error: 'missing to' })
       const params = body.params || {}
       // One-way message call: no bot, just speak this audio and hang up (NGS <Play> parity).
@@ -1545,11 +1946,13 @@ const ctrlServer = http.createServer(async (req, res) => {
       // Destination allowlist. Toll fraud is only profitable against expensive international
       // destinations; this business only ever calls Bangladeshi numbers, so anything else is
       // refused outright rather than rate-limited.
-      if (!DEST_ALLOW.test(to)) {
-        log(`REFUSED originate -> ${to}: destination not allowed`)
+      const rule = outboundRules(to)
+      if (!rule.allowed) {
+        log(`REFUSED originate -> ${to}: ${rule.reason}`)
         void alertOwner('ফোন লাইনে সন্দেহজনক কল আটকানো হয়েছে', `অনুমোদিত নয় এমন নম্বরে কল দেওয়ার চেষ্টা হয়েছিল: ${to}`)
-        return json(res, 403, { error: 'destination not allowed' })
+        return json(res, 403, { error: rule.reason })
       }
+      to = rule.dialled
       // Hourly ceiling on top of the concurrency cap: a stolen key cannot burn the balance
       // slowly either. Legitimate volume is a handful of calls an hour.
       const nowMs = Date.now()
@@ -1669,9 +2072,13 @@ async function transferCall(call, forwardTo) {
 }
 
 /** How many times to walk the whole ring group before handing the caller back to the AI. */
-const TRANSFER_ROUNDS = Number(process.env.SIP_TRANSFER_ROUNDS || 2)
+let TRANSFER_ROUNDS = Number(process.env.SIP_TRANSFER_ROUNDS || 2)
 /** Music-on-hold class played while hunting for a human. Empty = Asterisk's default. */
-const MOH_CLASS = process.env.SIP_MOH_CLASS || ''
+let MOH_CLASS = process.env.SIP_MOH_CLASS || ''
+/** How long each member of the ring group is given before we move to the next one. */
+let TRANSFER_RING_TIMEOUT = Number(process.env.SIP_TRANSFER_RING_TIMEOUT || 30)
+/** Numbers refused before we answer, so a nuisance caller costs nothing. */
+let LOCAL_BLOCKLIST = process.env.SIP_BLOCKLIST || ''
 
 /** Stop hold music (safe to call when it was never started). */
 async function stopMoh(call) {
@@ -1706,7 +2113,7 @@ async function dialNextInGroup(call) {
     channelId: fwdId,
     // Shorter than a normal call: the caller is on hold listening to ringback, so a long
     // unanswered transfer is worse than falling back to the AI quickly.
-    timeout: Number(process.env.SIP_TRANSFER_RING_TIMEOUT || 30),
+    timeout: TRANSFER_RING_TIMEOUT,
     ...(CALLER_ID ? { callerId: CALLER_ID } : {}),
   })
   // register a minimal Call so its StasisStart bridges into the SAME bridge
@@ -2050,6 +2457,207 @@ function attachWsProxy(server) {
   })
 }
 
+// ── owner-editable settings, pulled from the ERP ─────────────────────────────
+/*
+ * Half the phone system's settings are read HERE, on the VPS, not on Vercel — ring rounds,
+ * ring timeouts, the concurrency cap, voicemail length, the hold-music class and the
+ * pre-answer blocklist. Every one of them used to be an env var behind SSH, which made the
+ * console's promise ("change settings without SSH") only half true.
+ *
+ * A PULL, deliberately, not a push: it needs no inbound port, it re-syncs by itself after a
+ * restart or a network blip, and a failure leaves the last known-good values in place rather
+ * than a half-applied config. On any error we simply keep what we have — which on a fresh
+ * boot is the env, i.e. exactly the behaviour that shipped before this existed.
+ *
+ * The call-audio tuning is NOT pulled and must never be. Those values are code defaults in
+ * git with no remote override precisely so the voice the owner approved on 2026-07-26 cannot
+ * be changed by anything reachable over the network (CLAUDE.md hard rule #1).
+ */
+const CONFIG_PULL_SECS = Number(process.env.SIP_CONFIG_PULL_SECS || 60)
+let configState = { at: 0, ok: false, error: null }
+
+async function pullOwnerConfig() {
+  if (!APP_URL || !INTERNAL_TOKEN) return
+  try {
+    const res = await fetch(`${APP_URL}/api/assistant/internal/phone-config`, {
+      headers: { Authorization: `Bearer ${INTERNAL_TOKEN}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const body = await res.json()
+    const c = body?.config
+    if (!c || typeof c !== 'object') throw new Error('no config in response')
+
+    // Each value is range-checked here as well as in the ERP. A bad number reaching the
+    // playout side of this process is not a screen bug, it is a dead line — and this file
+    // is the last thing standing between the two.
+    const clamp = (v, lo, hi, current) => {
+      const n = Number(v)
+      return Number.isFinite(n) && n >= lo && n <= hi ? Math.round(n) : current
+    }
+    const before = `${TRANSFER_ROUNDS}/${TRANSFER_RING_TIMEOUT}/${RING_TIMEOUT}/${MAX_CONCURRENT}/${VOICEMAIL_MAX_SECS}/${MOH_CLASS}/${LOCAL_BLOCKLIST}/${DEST_POLICY}/${OUTBOUND_STRIP}/${OUTBOUND_PREFIX}`
+
+    TRANSFER_ROUNDS = clamp(c.transferRounds, 1, 4, TRANSFER_ROUNDS)
+    TRANSFER_RING_TIMEOUT = clamp(c.transferRingTimeout, 10, 60, TRANSFER_RING_TIMEOUT)
+    RING_TIMEOUT = clamp(c.ringTimeout, 20, 90, RING_TIMEOUT)
+    MAX_CONCURRENT = clamp(c.maxConcurrent, 1, 8, MAX_CONCURRENT)
+    VOICEMAIL_MAX_SECS = clamp(c.voicemailMaxSecs, 30, 300, VOICEMAIL_MAX_SECS)
+    if (typeof c.mohClass === 'string' && /^[A-Za-z0-9_-]{0,40}$/.test(c.mohClass)) MOH_CLASS = c.mohClass
+    if (typeof c.blocklist === 'string') LOCAL_BLOCKLIST = c.blocklist
+    if (['bd_all', 'bd_mobile', 'internal_only'].includes(c.destPolicy)) DEST_POLICY = c.destPolicy
+    // Digits only, and short. These go into a dial string; a dial string is not the place to
+    // discover what a stray character does.
+    if (typeof c.outboundStrip === 'string' && /^\d{0,6}$/.test(c.outboundStrip)) OUTBOUND_STRIP = c.outboundStrip
+    if (typeof c.outboundPrefix === 'string' && /^\d{0,6}$/.test(c.outboundPrefix)) OUTBOUND_PREFIX = c.outboundPrefix
+
+    const after = `${TRANSFER_ROUNDS}/${TRANSFER_RING_TIMEOUT}/${RING_TIMEOUT}/${MAX_CONCURRENT}/${VOICEMAIL_MAX_SECS}/${MOH_CLASS}/${LOCAL_BLOCKLIST}/${DEST_POLICY}/${OUTBOUND_STRIP}/${OUTBOUND_PREFIX}`
+    // Only log a CHANGE. A line a minute, forever, is how a log directory reaches 21 GB.
+    if (after !== before) log(`config pulled: ${after}`)
+    configState = { at: Date.now(), ok: true, error: null }
+  } catch (err) {
+    configState = { at: configState.at, ok: false, error: err?.message || String(err) }
+  }
+}
+
+// ── hold audio: the one config write this gateway performs ───────────────────
+/*
+ * Roadmap §3.1 — a screen must never write Asterisk config directly; it calls a control-plane
+ * endpoint that validates, backs up, writes, reloads the right module, VERIFIES and rolls
+ * back. This is that endpoint, and hold audio is a good first citizen for it because the
+ * failure mode is already documented (trap #16): `moh reload` and `module reload` both report
+ * success and both leave a new class missing. Only a full unload + load picks it up, and the
+ * only honest proof is `moh show classes` afterwards.
+ *
+ * It refuses while any call is up. Unloading res_musiconhold mid-call cuts the music out from
+ * under whoever is on hold, and "the owner changed the hold tune and a customer's line went
+ * quiet" is not a trade worth making for a setting nobody needs to change urgently.
+ */
+const MOH_DIR_BASE = process.env.SIP_MOH_DIR || '/var/lib/asterisk/moh-alma'
+const MOH_CONF = process.env.SIP_MOH_CONF || '/etc/asterisk/musiconhold.conf'
+const MOH_MAX_BYTES = 8 * 1024 * 1024
+
+function mohClassName(raw) {
+  const name = String(raw || MOH_CLASS || 'alma-hold').trim()
+  return /^[A-Za-z0-9_-]{1,40}$/.test(name) ? name : null
+}
+
+/** What Asterisk itself says is loaded — not what we believe we wrote. */
+async function mohState() {
+  const out = { configured: Boolean(MOH_CLASS), liveClass: null, files: [], busy: calls.size > 0, error: null }
+  try {
+    const classes = await asteriskCli('moh show classes')
+    const wanted = MOH_CLASS || 'alma-hold'
+    out.liveClass = new RegExp(`Class:\\s*${wanted}\\b`, 'i').test(classes) ? wanted : null
+  } catch (err) {
+    out.error = err?.message || String(err)
+  }
+  try {
+    for (const name of await readdir(MOH_DIR_BASE)) {
+      const info = await stat(`${MOH_DIR_BASE}/${name}`).catch(() => null)
+      if (!info?.isFile()) continue
+      // .sln is raw 8 kHz signed-linear: two bytes per sample, so the duration is arithmetic.
+      out.files.push({ name, bytes: info.size, seconds: name.endsWith('.sln') ? Math.round(info.size / 16000) : null })
+    }
+  } catch { /* the directory not existing yet is a normal first-run state, not an error */ }
+  return out
+}
+
+/**
+ * Install an uploaded recording as the hold audio and prove it took.
+ * Returns { ok, steps } — the steps are shown on screen, because "it worked" about an
+ * Asterisk reload has been wrong here before.
+ */
+async function installMohAudio(bytes, rawClass) {
+  const steps = []
+  const cls = mohClassName(rawClass)
+  if (!cls) return { ok: false, error: 'class name must be letters, numbers, - or _', steps }
+  if (calls.size > 0) return { ok: false, error: `line is busy (${calls.size} call(s)) — a swap would cut the audio`, steps }
+  if (!bytes?.length) return { ok: false, error: 'empty upload', steps }
+  if (bytes.length > MOH_MAX_BYTES) return { ok: false, error: 'file too large', steps }
+
+  const src = `${tmpdir()}/moh-upload-${randomUUID()}`
+  const wav = `${MOH_DIR_BASE}/${cls}.wav`
+  const sln = `${MOH_DIR_BASE}/${cls}.sln`
+  const backup = `${tmpdir()}/moh-backup-${randomUUID()}`
+  let confBackup = null
+
+  try {
+    await writeFile(src, bytes)
+    await mkdir(MOH_DIR_BASE, { recursive: true })
+
+    // Back up whatever is live, so a failed install can put the owner's previous recording
+    // back rather than leaving the class pointing at nothing.
+    await mkdir(backup, { recursive: true })
+    for (const [path, name] of [[wav, `${cls}.wav`], [sln, `${cls}.sln`]]) {
+      await copyFile(path, `${backup}/${name}`).catch(() => {})
+    }
+
+    // 8 kHz mono, both extensions off one basename: Asterisk picks the best match for the
+    // channel and treats them as ONE file, so the loop does not play the recording twice.
+    await execFileAsync('ffmpeg', ['-y', '-nostdin', '-loglevel', 'error', '-i', src,
+      '-ac', '1', '-ar', '8000', '-acodec', 'pcm_s16le', wav], { timeout: 120_000 })
+    await execFileAsync('ffmpeg', ['-y', '-nostdin', '-loglevel', 'error', '-i', src,
+      '-ac', '1', '-ar', '8000', '-f', 's16le', '-acodec', 'pcm_s16le', sln], { timeout: 120_000 })
+    await execFileAsync('chown', ['-R', 'asterisk:asterisk', MOH_DIR_BASE]).catch(() => {})
+    const info = await stat(sln).catch(() => null)
+    steps.push({ step: 'convert', ok: true, detail: `${cls}.wav + ${cls}.sln · ~${info ? Math.round(info.size / 16000) : '?'}s` })
+
+    // Declare the class if it is not already in the file. Backed up first — this is a live
+    // PBX's config, and an unparseable musiconhold.conf takes hold music out entirely.
+    const conf = await readFile(MOH_CONF, 'utf8').catch(() => '')
+    if (!new RegExp(`^\\[${cls}\\]`, 'm').test(conf)) {
+      confBackup = `${MOH_CONF}.alma-bak-${Date.now()}`
+      await copyFile(MOH_CONF, confBackup).catch(() => { confBackup = null })
+      await writeFile(MOH_CONF, `${conf.replace(/\s*$/, '')}\n\n[${cls}]\nmode=files\ndirectory=${MOH_DIR_BASE}\nsort=random\n`)
+      steps.push({ step: 'declare-class', ok: true, detail: `[${cls}] added to musiconhold.conf` })
+    } else {
+      steps.push({ step: 'declare-class', ok: true, detail: 'already declared' })
+    }
+
+    // The whole reason this is an endpoint and not a text editor: a reload lies here.
+    await asteriskCli('module unload res_musiconhold.so').catch(() => {})
+    await asteriskCli('module load res_musiconhold.so')
+    const classes = await asteriskCli('moh show classes')
+    const loaded = new RegExp(`Class:\\s*${cls}\\b`, 'i').test(classes)
+    steps.push({ step: 'reload', ok: loaded, detail: loaded ? `${cls} is loaded` : 'class did not appear in `moh show classes`' })
+
+    if (!loaded) throw new Error('module reloaded but the class did not appear')
+
+    MOH_CLASS = cls
+    log(`hold audio installed: ${cls} (${bytes.length} bytes)`)
+    return { ok: true, steps, liveClass: cls }
+  } catch (err) {
+    // Roll back both halves: the audio files and, if we touched it, the config.
+    for (const name of [`${cls}.wav`, `${cls}.sln`]) {
+      await copyFile(`${backup}/${name}`, `${MOH_DIR_BASE}/${name}`).catch(() => {})
+    }
+    if (confBackup) await copyFile(confBackup, MOH_CONF).catch(() => {})
+    await asteriskCli('module unload res_musiconhold.so').catch(() => {})
+    await asteriskCli('module load res_musiconhold.so').catch(() => {})
+    steps.push({ step: 'rollback', ok: true, detail: 'previous hold audio and config restored' })
+    log('hold audio install FAILED, rolled back:', err?.message)
+    return { ok: false, error: err?.message || String(err), steps }
+  } finally {
+    await unlink(src).catch(() => {})
+    await rm(backup, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+/** Binary request body. `readBody` returns a string and would corrupt audio bytes. */
+function readBinaryBody(req, maxBytes) {
+  return new Promise((resolve) => {
+    const chunks = []
+    let size = 0
+    req.on('data', (c) => {
+      size += c.length
+      if (size > maxBytes) { req.destroy(); resolve(null); return }
+      chunks.push(c)
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks)))
+    req.on('error', () => resolve(null))
+  })
+}
+
 for (const addr of CTRL_BIND) {
   // One server per address. A missing Docker bridge must not stop the loopback listener,
   // so a failed bind is logged and skipped rather than crashing the gateway.
@@ -2058,6 +2666,10 @@ for (const addr of CTRL_BIND) {
   srv.on('error', (err) => log(`control API bind ${addr}:${CTRL_PORT} failed: ${err.message}`))
   srv.listen(CTRL_PORT, addr, () => log(`control API listening ${addr}:${CTRL_PORT}`))
 }
+// Pull the owner's settings once at boot and then on a timer. Before the first pull returns,
+// every value is the env — i.e. the system behaves exactly as it did before this existed.
+void pullOwnerConfig()
+setInterval(() => { void pullOwnerConfig() }, CONFIG_PULL_SECS * 1000).unref()
 startAri()
 if (ARI_READY) {
   void checkRegistration()

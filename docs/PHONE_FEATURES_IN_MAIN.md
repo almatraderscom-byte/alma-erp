@@ -9,8 +9,13 @@ changed by asking the agent or by hand) · **env** = a variable on the VPS or Ve
 or the Vercel dashboard · **conf** = a file on the VPS, needs SSH · **none** = code only.
 
 **Changed 2026-07-26 (PR #585):** the PBX console shipped, so the "no screen at all" half of
-this document is no longer true for *seeing* things — see §F. Every CONTROL below is still
-exactly where it was; changing settings without SSH is Phase 2.
+this document is no longer true for *seeing* things — see §F.
+
+**Changed again 2026-07-26 (console step 2):** and no longer true for *changing* them either.
+Rows marked **UI²** below are now edited from `/agent/phone-console/settings`. The env vars
+they used to read are still the fallback, so nothing changes until the owner changes it. A
+row marked **UI² (gw)** is read on the VPS and arrives within a minute of being saved, via the
+gateway's config pull; the rest apply to the very next call.
 
 ---
 
@@ -24,26 +29,26 @@ exactly where it was; changing settings without SSH is Phase 2.
 | One-way message call (speak and hang up) | ✅ | `outbound_phone_call` tool | — |
 | Owner's own todo/ERP reads mid-call | ✅ | `ERP_FN_DECLS` + `erp-tool` allowlist | none (code) |
 | Staff names + today's attendance sent WITH the call | ✅ | `buildOwnerCallFacts()` | none (code) |
-| Voice: male Charon default, female only on request | ✅ | `voice-provider-intent.ts` | none (code) |
-| Daily call cap (outbound that actually connected) | ✅ | `callsPlacedToday()` | env `VOICE_CALL_DAILY_CAP` |
+| Voice: male Charon default, female only on request | ✅ | `voice-provider-intent.ts` | **LOCKED** — code default, shown read-only in the UI |
+| Daily call cap (outbound that actually connected) | ✅ | `callsPlacedToday()` | **UI²** — সীমা ও ক্যাপ |
 | Runaway-loop backstop (3× the cap in attempts) | ✅ | `callAttemptsToday()` | none |
-| BD-only destinations, no international | ✅ | `from-staff` dialplan | **conf** |
-| Concurrency cap (matches the trunk's limit of 2) | ✅ | gateway | env `SIP_MAX_CONCURRENT_CALLS` |
+| BD-only destinations, no international | ✅ | generated dialplan + gateway rules | **UI²** — আউটবাউন্ড নিয়ম (env backstop stays) |
+| Concurrency cap (matches the trunk's limit of 2) | ✅ | gateway | **UI² (gw)** — সীমা ও ক্যাপ |
 
 ## B. What happens during a call
 
 | Feature | Works | Lives in | Controlled by |
 |---|---|---|---|
-| Transfer to a human when asked, or when it matters | ✅ | `forward_call` tool in the bot | env `SIP_FORWARD_SUPPORT` / `SIP_FORWARD_BOSS` |
-| Press 0 for a human | ✅ built, 👤 unproven live | gateway DTMF handler | env (same two) |
-| Ring group, 2 rounds, then back to the AI | ✅ | `dialNextInGroup()` | env `SIP_TRANSFER_ROUNDS` |
-| **Hold audio — the owner's own recording** | ✅ | `alma-hold` MOH class | env `SIP_MOH_CLASS` + **conf** |
-| Voicemail when the AI cannot speak | ✅ | `sip-voicemail/route.ts` | env `SIP_VOICEMAIL_MAX_SECS` |
-| Office-hours routing | ✅ | `sip-inbound` | **KV** `office_hours_dhaka` |
-| Ask-first vs direct transfer | ✅ | bot `requestForward()` | **KV** `inbound_transfer_mode` |
-| Spam/blocked callers refused before answering | ✅ | `isBlockedCaller()` | **KV** `blocked_callers`, env `SIP_BLOCKLIST` |
+| Transfer to a human when asked, or when it matters | ✅ | `forward_call` tool in the bot | **UI²** — ফরওয়ার্ড ও ট্রান্সফার |
+| Press 0 for a human | ✅ built, 👤 unproven live | gateway DTMF handler | **UI²** (same two numbers) |
+| Ring group, 2 rounds, then back to the AI | ✅ | `dialNextInGroup()` | **UI² (gw)** — ফরওয়ার্ড ও ট্রান্সফার |
+| **Hold audio — the owner's own recording** | ✅ | `alma-hold` MOH class | **UI² (gw)** — হোল্ড অডিও (আপলোড + যাচাই) |
+| Voicemail when the AI cannot speak | ✅ | `sip-voicemail/route.ts` | **UI² (gw)** — সীমা ও ক্যাপ |
+| Office-hours routing + holidays, weekly off-days, Ramadan-style special hours | ✅ | `decideInbound()` | **UI²** — অফিস সময় |
+| Ask-first vs direct transfer | ✅ | bot `requestForward()` | **UI²** — ফরওয়ার্ড ও ট্রান্সফার |
+| Spam/blocked callers refused before answering | ✅ | `isBlockedCaller()` | **UI²** — ব্লকলিস্ট (দুই দিকেই এক তালিকা) |
 | Barge-in (interrupt the AI mid-sentence) | ✅ | gateway fade + bot | env `SIP_BARGE_FADE_FRAMES` |
-| Turn detection (how fast it replies) | ✅ new | bot `vadCfg()` | env `GLIVE_VAD_SILENCE_MS` |
+| Turn detection (how fast it replies) | ✅ | bot `vadCfg()` | **LOCKED** — code default, shown read-only in the UI |
 | Jitter cushion + overrun recovery | ✅ new | gateway playout | env `SIP_JITTER_*`, `SIP_QUEUE_*` |
 
 ## C. After the call
@@ -71,7 +76,10 @@ exactly where it was; changing settings without SSH is Phase 2.
 | Screen-pop: caller's orders, dues, recent calls | ✅ built, 👤 unproven live | `phone/caller/route.ts` | UI |
 | Colleague directory + free staff-to-staff calls | ✅ | `phone/dial/route.ts` | UI |
 | Click-to-call from the ERP | ✅ | gateway `click2call` | UI |
-| Staff extension provisioning (create/rotate) | ✅ API only | `phone/credentials/route.ts` | **none — no screen** |
+| Staff extension provisioning (create/rotate/disable) | ✅ | `phone/credentials/route.ts` + gateway | **UI²** — এক্সটেনশন |
+| Per-extension dial-out limit, DND, forward-to-mobile | ✅ new | generated dialplan contexts | **UI²** — এক্সটেনশন |
+| Who is registered right now / on a call | ✅ new | `pjsip show contacts` + ARI channels | **UI²** — এক্সটেনশন |
+| Per-extension call history | ✅ new | Asterisk's own CDR CSV on the VPS | **UI²** — এক্সটেনশন |
 | Softphone stack watchdog + self-heal | ✅ | gateway `checkSoftphoneStack()` | env `SIP_WS_CHECK_SECS` |
 
 ## E. The line itself
@@ -84,7 +92,8 @@ exactly where it was; changing settings without SSH is Phase 2.
 | Line status, binding seconds, concurrency, softphone health | ✅ new | gateway `/api/v1/active` | **UI** — লাইন ও ট্রাঙ্ক |
 | SIP port firewall, survives reboot | ✅ | nftables + systemd | **conf** |
 | Toll-fraud guards (signed calls, BD-only, key checks) | ✅ | gateway | env |
-| Provider cost / balance / rate plan | ❌ **not in ALMA at all** | provider's own panel | their website |
+| Provider cost / balance / rate plan | ❌ **not in ALMA at all** | provider's own panel | their website (Phase 6) |
+| Provider's own registration table (who holds the binding) | ✅ new | amarip.net, credential encrypted at rest | **UI²** — প্রোভাইডার |
 
 ---
 
@@ -99,21 +108,46 @@ exactly where it was; changing settings without SSH is Phase 2.
 | অডিও কোয়ালিটি | our own counters AND the network's loss/jitter, per day and worst calls | `…/quality` |
 | লাইন ও ট্রাঙ্ক | registration, seconds left on the binding, concurrency, softphone stack | `…/line` |
 
-Owner-only, read-only, enforced in the section layout. The staff softphone at `/agent/phone`
-is unchanged.
+### Settings (added 2026-07-26, step 2 — these WRITE)
+
+| Screen | What it changes | Where |
+|---|---|---|
+| ফরওয়ার্ড ও ট্রান্সফার | forward numbers / ring group, direct vs ask-first, rounds, per-member ring | `…/settings` |
+| অফিস সময় | the daily window, and holidays that close the whole day | `…/settings/hours` |
+| ব্লকলিস্ট | numbers refused before the call is answered, so they cost nothing | `…/settings/blocklist` |
+| সীমা ও ক্যাপ | concurrency, daily outbound cap, ring timeout, voicemail length + the LOCKED audio values, read-only | `…/settings/limits` |
+| হোল্ড অডিও | upload a recording and make it live, verified in Asterisk | `…/settings/hold` |
+| প্রোভাইডার | amarip.net's own registration table — who holds the binding | `…/settings/provider` |
+| পরিবর্তনের ইতিহাস | who changed what, from what, and one-click revert | `…/settings/history` |
+
+### Extensions and routing (added 2026-07-26, steps 3 + 4)
+
+| Screen | What it changes | Where |
+|---|---|---|
+| এক্সটেনশন | who has a phone, is it connected/on a call, dial-out limit, DND, forward-to-mobile, disable, rotate | `…/extensions` |
+| ইনবাউন্ড লাইন | which DID answers as which persona, per-line forward overrides, never-transfer lines | `…/routing` |
+| আউটবাউন্ড নিয়ম | what may be dialled, strip/prefix rewriting | `…/routing/outbound` |
+| রাউটিং পরীক্ষা | "a call from X at 21:30 would reach …" — run by the code that actually decides | `…/routing/preview` |
+
+Owner-only, enforced in the section layout AND re-checked in every route. The staff softphone
+at `/agent/phone` is unchanged.
 
 ---
 
 ## The honest summary
 
-**Everything above works, and now the owner can SEE it.** What he still cannot do from the ERP
-is CHANGE it. From the original list:
+**Everything above works, the owner can SEE it, and he can now CHANGE most of it** without
+SSH. From the original list:
 
 - ~~see whether the line is registered, or who is on a call right now~~ — ✅ done
 - ~~read call logs, listen to recordings, or see why a call failed~~ — ✅ done
+- ~~change the forward numbers, office hours, blocklist, hold audio, caps~~ — ✅ done
+- ~~see who actually holds the registration binding, on the provider's own side~~ — ✅ done
+- ~~add, disable or limit a staff extension; see who is connected right now~~ — ✅ done
+- ~~decide which incoming number answers as what, and test it before a customer does~~ — ✅ done
+- the AI's voice and how fast it replies — **deliberately not editable**; the tuning the
+  owner approved on 2026-07-26 is locked in code (CLAUDE.md hard rule #1) and shown read-only
 - see what a call cost, or what is left with the provider — Phase 6
-- change the forward numbers, office hours, blocklist, or the AI's voice — Phase 2
-- add or disable a staff extension — Phase 3
 - add, edit or check a trunk — Phase 5
 
 One more thing that was never on the list and now is: **an audio regression shows up as a

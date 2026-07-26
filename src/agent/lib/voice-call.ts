@@ -273,6 +273,24 @@ export async function callAttemptsToday(): Promise<number> {
 /** Attempts are allowed to run this many times over the cap before we stop dialling at all. */
 const ATTEMPT_CEILING_MULTIPLIER = 3
 
+/**
+ * The daily cap as the owner has set it in the phone console, falling back to the env-derived
+ * value the config already carries.
+ *
+ * Read here rather than in `getVoiceCallConfig()` because that function is synchronous and
+ * used on paths that must not touch the database. A cap lookup must never be the reason a
+ * call cannot be placed, so any failure keeps the existing value.
+ */
+async function dailyCapFromSettings(fallback: number): Promise<number> {
+  try {
+    const { readSetting } = await import('@/agent/lib/phone-settings')
+    const n = Number(await readSetting('phone_daily_call_cap'))
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : fallback
+  } catch {
+    return fallback
+  }
+}
+
 export interface PlaceCallInput {
   toNumber: string
   recipientName?: string
@@ -322,16 +340,20 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
   const toNumber = normalizeOutboundPhone(input.toNumber)
   if (!toNumber) return { ok: false, error: 'নম্বরটি ঠিক নয় — 01XXXXXXXXX বা +880… ফরম্যাটে দিন।' }
 
+  // The cap is owner-editable from the phone console; the env value it used to read is the
+  // fallback, so an untouched settings table gives exactly the number it gave before.
+  const dailyCap = await dailyCapFromSettings(config.dailyCap)
+
   const placedToday = await callsPlacedToday()
-  if (placedToday >= config.dailyCap) {
-    return { ok: false, error: `আজকের কল লিমিট শেষ (${config.dailyCap}টি)। কাল আবার চেষ্টা করুন।` }
+  if (placedToday >= dailyCap) {
+    return { ok: false, error: `আজকের কল লিমিট শেষ (${dailyCap}টি)। কাল আবার চেষ্টা করুন।` }
   }
 
   // Failures no longer consume the cap, so the cap alone can no longer stop a retry loop
   // dialling a broken trunk all day. This does — and it says WHY, because "limit finished"
   // on a day when almost nothing connected is a misleading thing to read.
   const attemptsToday = await callAttemptsToday()
-  const attemptCeiling = config.dailyCap * ATTEMPT_CEILING_MULTIPLIER
+  const attemptCeiling = dailyCap * ATTEMPT_CEILING_MULTIPLIER
   if (attemptsToday >= attemptCeiling) {
     return {
       ok: false,

@@ -21,6 +21,8 @@ type Item = {
   icon: (p: SVGProps<SVGSVGElement>) => ReactNode
   /** Set on entries that later steps deliver; rendered visibly disabled, never clickable. */
   soon?: string
+  /** For a group's landing page, whose href is a prefix of its siblings' (`/settings`). */
+  exact?: boolean
 }
 
 const BASE = '/agent/phone-console'
@@ -40,17 +42,42 @@ const GROUPS: Array<{ title: string; items: Item[] }> = [
     title: 'সিস্টেম',
     items: [
       { href: `${BASE}/line`, label: 'লাইন ও ট্রাঙ্ক', icon: IconLink },
-      { href: `${BASE}/extensions`, label: 'এক্সটেনশন', icon: IconUsers, soon: 'ধাপ ৩' },
-      { href: `${BASE}/routing`, label: 'রাউটিং', icon: IconRoute, soon: 'ধাপ ৪' },
-      { href: `${BASE}/settings`, label: 'সেটিংস', icon: IconGear, soon: 'ধাপ ২' },
+      { href: `${BASE}/extensions`, label: 'এক্সটেনশন', icon: IconUsers },
       { href: `${BASE}/cost`, label: 'খরচ', icon: IconCoin, soon: 'ধাপ ৬' },
+    ],
+  },
+  // Step 4. The preview is a peer of the tables it tests, not a button hidden inside one:
+  // it is the only place that answers "what would actually happen", and it should be as
+  // easy to reach as the settings that make it necessary.
+  {
+    title: 'রাউটিং',
+    items: [
+      { href: `${BASE}/routing`, label: 'ইনবাউন্ড লাইন', icon: IconRoute, exact: true },
+      { href: `${BASE}/routing/outbound`, label: 'আউটবাউন্ড নিয়ম', icon: IconOut },
+      { href: `${BASE}/routing/preview`, label: 'রাউটিং পরীক্ষা', icon: IconBeaker },
+    ],
+  },
+  // Step 2. Settings is a GROUP, not one page: eight unrelated things stacked on a single
+  // scroll is the shape the owner rejected in step 1, and each of these is a separate job
+  // with its own reason to open it.
+  {
+    title: 'সেটিংস',
+    items: [
+      { href: `${BASE}/settings`, label: 'ফরওয়ার্ড ও ট্রান্সফার', icon: IconForward, exact: true },
+      { href: `${BASE}/settings/hours`, label: 'অফিস সময়', icon: IconClock },
+      { href: `${BASE}/settings/blocklist`, label: 'ব্লকলিস্ট', icon: IconBlock },
+      { href: `${BASE}/settings/limits`, label: 'সীমা ও ক্যাপ', icon: IconGear },
+      { href: `${BASE}/settings/hold`, label: 'হোল্ড অডিও', icon: IconMusic },
+      { href: `${BASE}/settings/provider`, label: 'প্রোভাইডার', icon: IconCloud },
+      { href: `${BASE}/settings/history`, label: 'পরিবর্তনের ইতিহাস', icon: IconHistory },
     ],
   },
 ]
 
 export function ConsoleShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
-  const isActive = (href: string) => (href === BASE ? pathname === BASE : pathname.startsWith(href))
+  const isActive = (item: Item) =>
+    item.href === BASE || item.exact ? pathname === item.href : pathname.startsWith(item.href)
 
   return (
     <div className="flex h-full min-h-0">
@@ -58,13 +85,13 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
         <div className="border-b border-border-subtle px-4 py-4" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
           <Link href="/agent" className="text-[11px] text-muted transition-colors hover:text-cream">← এজেন্ট</Link>
           <p className="mt-1.5 text-sm font-bold text-cream">ফোন <span className="text-[#E07A5F]">কনসোল</span></p>
-          <p className="text-[10px] text-muted">ALMA PBX · শুধু-দেখা</p>
+          <p className="text-[10px] text-muted">ALMA PBX · মালিকের নিজস্ব</p>
         </div>
         <nav className="flex-1 space-y-4 px-2 py-3">
           {GROUPS.map((g) => (
             <div key={g.title}>
               <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted">{g.title}</p>
-              {g.items.map((i) => <NavRow key={i.href} item={i} active={isActive(i.href)} />)}
+              {g.items.map((i) => <NavRow key={i.href} item={i} active={isActive(i)} />)}
             </div>
           ))}
         </nav>
@@ -84,7 +111,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
           </div>
           <div className="flex gap-1.5 overflow-x-auto px-3 pb-2">
             {GROUPS.flatMap((g) => g.items).map((i) => (
-              <NavChip key={i.href} item={i} active={isActive(i.href)} />
+              <NavChip key={i.href} item={i} active={isActive(i)} />
             ))}
           </div>
         </div>
@@ -171,4 +198,28 @@ function IconGear(p: SVGProps<SVGSVGElement>) {
 }
 function IconCoin(p: SVGProps<SVGSVGElement>) {
   return <svg viewBox="0 0 24 24" {...stroke} {...p}><circle cx="12" cy="12" r="9" /><path d="M12 7v10M9.5 9.5h5M9.5 14.5h5" /></svg>
+}
+function IconForward(p: SVGProps<SVGSVGElement>) {
+  return <svg viewBox="0 0 24 24" {...stroke} {...p}><path d="M4 17V9a3 3 0 013-3h11" /><path d="M15 3l3.5 3L15 9" /></svg>
+}
+function IconClock(p: SVGProps<SVGSVGElement>) {
+  return <svg viewBox="0 0 24 24" {...stroke} {...p}><circle cx="12" cy="12" r="9" /><path d="M12 7v5.5l3.5 2" /></svg>
+}
+function IconBlock(p: SVGProps<SVGSVGElement>) {
+  return <svg viewBox="0 0 24 24" {...stroke} {...p}><circle cx="12" cy="12" r="9" /><path d="M5.6 5.6l12.8 12.8" /></svg>
+}
+function IconMusic(p: SVGProps<SVGSVGElement>) {
+  return <svg viewBox="0 0 24 24" {...stroke} {...p}><path d="M9 18V6l11-2v12" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="17.5" cy="16" r="2.5" /></svg>
+}
+function IconCloud(p: SVGProps<SVGSVGElement>) {
+  return <svg viewBox="0 0 24 24" {...stroke} {...p}><path d="M7 18a4 4 0 01-.4-8A5.5 5.5 0 0117.6 10 3.9 3.9 0 0117 18z" /></svg>
+}
+function IconOut(p: SVGProps<SVGSVGElement>) {
+  return <svg viewBox="0 0 24 24" {...stroke} {...p}><path d="M5 12h12" /><path d="M13 7l5 5-5 5" /><path d="M20 4v16" /></svg>
+}
+function IconBeaker(p: SVGProps<SVGSVGElement>) {
+  return <svg viewBox="0 0 24 24" {...stroke} {...p}><path d="M9 3h6M10 3v6L5 18a2 2 0 001.8 3h10.4A2 2 0 0019 18l-5-9V3" /><path d="M7.5 14h9" /></svg>
+}
+function IconHistory(p: SVGProps<SVGSVGElement>) {
+  return <svg viewBox="0 0 24 24" {...stroke} {...p}><path d="M3.5 12a8.5 8.5 0 103-6.5" /><path d="M3 3v4h4" /><path d="M12 8v4.5l3 1.8" /></svg>
 }
