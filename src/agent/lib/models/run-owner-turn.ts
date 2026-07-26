@@ -5,7 +5,7 @@
  */
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET, PROGRESS_UPDATE_EVERY, MAX_PROGRESS_NUDGES } from '@/agent/config'
 import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
@@ -1457,6 +1457,13 @@ async function* runAlternateProviderTurn(
   let groundingNudgeSent = false
   // Announced-intent guard (global terminal/failure rules live in turn-loop-policy).
   let intentNudges = 0
+  // OWNER ASK 2026-07-26: "ekta part er jnne koyek ta dhap sesh kore amk age
+  // update daw, erpor abr onno kaje jaw." Today the head can run seven tool
+  // rounds and speak once at the end. Asking politely in the prompt is a
+  // request; counting rounds is a guarantee. These track how many tool rounds
+  // have passed with nothing said to Boss, and cap how often we intervene.
+  let roundsSinceOwnerUpdate = 0
+  let progressNudges = 0
   let requirementRetries = 0
   let finalText = ''
   let delegationAwaiting = false
@@ -1898,6 +1905,8 @@ async function* runAlternateProviderTurn(
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + iterationText
         yield { type: 'text_delta', delta: sep + iterationText }
+        // Boss heard something this round — the progress clock starts over.
+        roundsSinceOwnerUpdate = 0
         // First-line contract: the model spoke to Boss BEFORE running tools —
         // exactly the Claude-app shape he asked for. Recorded so the backstop
         // below stays quiet and telemetry can score compliance per model.
@@ -2468,6 +2477,39 @@ async function* runAlternateProviderTurn(
       }
 
       messages = appendToolExchange(messages, calls, toolResults)
+
+      // ── Progress updates between phases (owner ask 2026-07-26) ─────────────
+      // "ekta part er jnne koyek ta dhap sesh kore amk age update daw, erpor abr
+      // onno kaje jaw." Today the head can run seven tool rounds and speak once,
+      // at the end — Boss watches a spinner and learns nothing until it is over.
+      //
+      // Counting rounds is the guarantee; asking in the prompt was the request
+      // that never held. After PROGRESS_UPDATE_EVERY silent tool rounds the head
+      // is told to write two lines and carry on. Bounded, so a long job gets a
+      // handful of updates rather than a running commentary, and the ask is
+      // explicitly NOT a stop: it must keep working in the same turn.
+      roundsSinceOwnerUpdate++
+      if (
+        !signal?.aborted
+        && !nearDeadline
+        && roundsSinceOwnerUpdate >= PROGRESS_UPDATE_EVERY
+        && progressNudges < MAX_PROGRESS_NUDGES
+      ) {
+        progressNudges++
+        roundsSinceOwnerUpdate = 0
+        messages = [
+          ...messages,
+          {
+            role: 'user',
+            content:
+              `[সিস্টেম নোট] Boss ${PROGRESS_UPDATE_EVERY}টা ধাপ ধরে তোমার কাছ থেকে কিছু শোনেননি — `
+              + 'এখন দুই লাইনে বলো: এ পর্যন্ত কী পেলে/করলে, আর এরপর কী করছ। '
+              + 'সংখ্যা থাকলে সংখ্যা দাও। এটা থামার সংকেত নয় — বলেই কাজ চালিয়ে যাও, '
+              + 'আর অনুমতি চাইতে হবে না।',
+          },
+        ]
+        continue
+      }
 
       // ── First-line contract (owner rule 2026-07-25) ────────────────────────
       // Boss wants what the Claude app does: understand the message, SAY the
