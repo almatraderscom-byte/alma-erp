@@ -600,24 +600,6 @@ const COMPUTER_CAPABILITIES_RULE = `
 **কখনো থেমো না চুপচাপ:** কোনো লম্বা কাজ হয় প্রমাণসহ সফল, নয় checkpoint-সহ ব্যর্থ — কখনো নীরবে মাঝপথে থেমো না। আটকে গেলে অবস্থাটা \`save_task_checkpoint\`-এ লিখে বসকে জানাও, যাতে তার পরের reply-তেই ঠিক ওখান থেকে ধরা যায়।
 `
 
-/**
- * SK-6 — ONE JOB’S PROCEDURE, pulled out of `computer_capabilities`.
- *
- * 6.2 KB teaching the client-SEO audit end to end — crawl, poll, deliver the
- * report file, the before/after compare, the live-Chrome site walk — sat inside
- * a module about computer capabilities, and shipped on every turn that carried a
- * browser or workbench tool. That is the owner’s complaint in one constant:
- * teaching the agent this job meant editing text that every other job also read.
- *
- * The knowledge now lives in `seo-fixing-client-site/SKILL.md`. This copy stays
- * for the path where no skill is pinned (production today, engine off) and is
- * SKIPPED the moment one is — see `skipModules`. When the owner turns the engine
- * on in production, deleting this constant and its registry entry is the whole
- * removal.
- */
-const CLIENT_SEO_AUDIT_PROCEDURE = `
-**যেকোনো ওয়েবসাইট SEO অডিট:** বস কোনো সাইটের লিংক দিয়ে "SEO অডিট করো / ফুললি রিসার্চ করো" বললে \`run_website_seo_audit\` দিয়ে পুরো সাইট ক্রল+অডিট চালাও (read-only), তারপর \`check_website_seo_audit\` দিয়ে poll করে স্কোর+issue+report নাও, তারপর অগ্রাধিকার অনুযায়ী করণীয় দাও। **রিপোর্ট ডেলিভারি বাধ্যতামূলক:** status executed হলে \`check_website_seo_audit\`-কে read:"report" দিয়ে আবার ডেকে **পুরো client-grade রিপোর্ট** নাও (executive summary + স্কোরকার্ড + প্রতিটি issue-র প্রমাণ/করণীয় + অ্যাকশন প্ল্যান সহ), read:"report" ডাকলেই রিপোর্টটা **নিজে থেকে চ্যাটে FILE হয়ে যায়** (file card — বস ক্লিক করলে পুরো রিপোর্ট খুলবে, ডাউনলোড/শেয়ারও করতে পারবেন)। অডিট executed হলে server নিজেই markdown রিপোর্ট, issues CSV আর **live HTML ড্যাশবোর্ড** বানিয়ে চ্যাটে file card করে রাখে — তুমি ওগুলো আবার বানাবে না। তোমার reply-তে দিতে হবে **পুরো ব্যাখ্যা**: স্কোর, প্রতিটি critical/high issue + তার প্রমাণ ও সমাধান, কোনটা আগে করতে হবে, আর read:"links"-এর ডাউনলোড লিংকগুলো। এক-দুই লাইনে "রিপোর্ট ফাইলে আছে" বলে থেমে যাওয়া নিষেধ — বস চ্যাটেই বুঝতে চান, ফাইল তার প্রমাণ। এই রিপোর্ট বস client-কে দিয়ে deal করেন, তাই কোনো পয়েন্ট বাদ দেওয়া বা রিপোর্ট-ফাইল না দিয়ে "কাজ শেষ/সম্পন্ন" বলা সম্পূর্ণ নিষেধ। **Client-এর fix শেষ হলে আগে-পরে প্রমাণ:** fix করার পর একই সাইটে নতুন run_website_seo_audit চালাও, executed হলে read:"compare" ডাকো — এটা আগের audit-এর সাথে মিলিয়ে স্কোর-পরিবর্তন + সমাধান-হওয়া প্রতিটি issue প্রমাণসহ before/after ফাইল বানায়; সারাংশ + লিংক বসকে দাও (বস এটাই client-কে প্রমাণ হিসেবে পাঠান)। storage path গুলো private — workbench-এর curl/cat দিয়ে ওগুলো পড়ার চেষ্টা কখনো করবে না; একমাত্র রাস্তা read:"report"। **বস "live browser / আমার Chrome দিয়ে অডিট করো" বললে — মানুষের মতো সাইট-ওয়াক বাধ্যতামূলক (crawler দিয়ে বদলে দেওয়া নিষেধ):** তার Chrome-এ \`live_browser_act\` navigate দিয়ে সাইটের HOME খোলো → \`live_browser_look\` (screenshot+read_dom) → মেনু থেকে গুরুত্বপূর্ণ পেজগুলো বেছে একে একে ঘোরো (home, about, services/products, contact, blog — ৫-৮টা পেজ) → **প্রতিটা পেজে** দেখো ও নোট নাও: চোখে দেখা টাইটেল/হেডিং, লেআউট/ডিজাইন সমস্যা, ভাঙা ছবি/সেকশন, পপআপ-জ্বালা, লোড-অনুভূতি, মোবাইল-বান্ধবতা, কনটেন্টের মান, CTA/যোগাযোগ সহজ কিনা। এই চোখে-দেখা পর্যবেক্ষণগুলো রিপোর্টে **"🧑‍💻 লাইভ ব্রাউজ পর্যবেক্ষণ" সেকশন** হিসেবে (পেজ-ধরে, প্রমাণসহ) যোগ করো। সাথে গভীর টেকনিক্যাল ডেটার জন্য \`run_website_seo_audit\`-ও চালাও — দুটো মিলিয়েই পূর্ণ অডিট। ওয়াক না করে শুধু crawler চালিয়ে "Chrome দিয়ে করেছি" বলা সম্পূর্ণ নিষেধ; আবার live_browser টুল আসলে call না করে "আপনার Chrome দিয়ে করছি" দাবি করাও নিষেধ। **id মনে না থাকলে \`check_website_seo_audit\` id ছাড়াই ডাকো — এই কথোপকথনের সর্বশেষ audit নিজেই দেখাবে; নতুন করে audit চালিয়ো না। status "executed" মানে হয়ে গেছে (result-এ score+report আছে), "approved" মানে এখনো ক্রল হচ্ছে (একটু পর আবার check করো)।** fix করার সময় নিরাপদ অংশ (copy/meta/alt/schema) তুমি প্রস্তুত করো (owner-gated proposal/PR), কিন্তু **login/DNS/hosting/publish/critical সব বসের হাতে দাও — client সাইটে তুমি কখনো লগইন করবে না, password টাইপ করবে না, CAPTCHA পার করবে না।**
-`
 
 /**
  * Lifestyle-mode prompt — head (always-on identity + honesty + finance/salah
@@ -805,7 +787,6 @@ export const PROMPT_MODULES: PromptModule[] = [
   { id: 'check_sources', cls: 'workflow_policy', version: '2026.07.14', text: CHECK_SOURCES_RULE },
   { id: 'live_browser', cls: 'domain_role', version: '2026.07.14', text: LIVE_BROWSER_RULE },
   { id: 'computer_capabilities', cls: 'domain_role', version: '2026.07.14', text: COMPUTER_CAPABILITIES_RULE },
-  { id: 'client_seo_audit_procedure', cls: 'domain_role', version: '2026.07.27', text: CLIENT_SEO_AUDIT_PROCEDURE },
   { id: 'knowledge_graph', cls: 'memory_context', version: '2026.07.14', text: KNOWLEDGE_GRAPH_RULE },
   { id: 'planning_block', cls: 'workflow_policy', version: '2026.07.15', text: LIFESTYLE_PLANNING_BLOCK, core: true },
   { id: 'operations', cls: 'business_context', version: '2026.07.14', text: OPERATIONS_RULE },
@@ -866,22 +847,12 @@ const LIFESTYLE_HEAD_ORDER: Array<{ id: string; groups?: ToolGroupName[]; tools?
       'open_live_browser',
     ],
   },
-  // SK-6: the client-SEO job, extracted from `computer_capabilities`. The tool
-  // gate is deliberately the SAME one it lived under, so with no skill pinned it
-  // still ships on exactly the turns it used to — same content, same conditions.
-  // The only difference is position: it now sits after the rest of that module
-  // instead of in the middle of it. (The gate it DESERVES is the SEO tools; that
-  // correction belongs with the deletion, not with the move.)
-  {
-    id: 'client_seo_audit_procedure',
-    tools: [
-      'run_workbench_task',
-      'run_browser_task',
-      'allow_browser_for_this_chat',
-      'manage_browser_logins',
-      'open_live_browser',
-    ],
-  },
+  // SK-6 complete, 2026-07-27: `client_seo_audit_procedure` — 6.2 KB of one
+  // job's procedure, extracted from `computer_capabilities` on the way out —
+  // is now DELETED. `seo-fixing-client-site/SKILL.md` is the only place that
+  // describes that job. Measured before removing it: on ten client-SEO
+  // phrasings the router pins a skill on all ten, so the "no skill pinned but
+  // the job is client-SEO" case this text existed to cover did not occur.
   { id: 'knowledge_graph' },
 ]
 
@@ -906,8 +877,15 @@ const LIFESTYLE_TAIL_ORDER: Array<{ id: string; groups?: ToolGroupName[] }> = [
  * the moment a skill is responsible for one. Skipping outranks `forceFullPrompt`,
  * because "ship every module for cache stability" must not resurrect the very
  * text the skill replaced.
+ *
+ * EMPTY as of 2026-07-27 — `client_seo_audit_procedure` was the last entry and
+ * it is now deleted rather than skipped. The mechanism stays because it is the
+ * one that makes the next migration cheap: move a job's text into a skill, list
+ * the module id here, prove it in production, then delete. Keeping it costs one
+ * Set lookup per module and keeps the pattern documented in code rather than in
+ * someone's memory.
  */
-const SKILL_OWNED_MODULES = new Set(['client_seo_audit_procedure'])
+const SKILL_OWNED_MODULES = new Set<string>([])
 
 function compileOrdered(
   order: Array<{ id: string; groups?: ToolGroupName[]; tools?: string[] }>,

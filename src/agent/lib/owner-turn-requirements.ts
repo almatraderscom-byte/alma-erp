@@ -122,6 +122,22 @@ export function deriveOwnerTurnRequirements(text: string): OwnerTurnRequirements
  * The generic lines — ordered targets, live Chrome, remember, deep work — stay
  * unconditionally. They are true of any job, which is the test §6 of the plan
  * sets for what may remain global.
+ *
+ * ── Why these two survived the 2026-07-27 deletion, deliberately ────────────
+ *
+ * The 6.2 KB `client_seo_audit_procedure` prompt module was DELETED that day;
+ * these two lines were not, and that is a judgement, not an oversight.
+ *
+ * The measurement said the gap is theoretical — ten client-SEO phrasings, ten
+ * pins. But it rests on the skill engine being ON. The engine is a KV switch the
+ * owner can flip in a second, and if it goes off, nothing pins and every
+ * client-SEO turn would then carry no procedure at all. These two sentences are
+ * ~150 characters and they are the floor under that: with a skill pinned they
+ * stay silent (the skill says it better), and with no skill they still tell the
+ * head that a crawl per target and a real artifact are required.
+ *
+ * Delete them when the engine has been on in production long enough that
+ * switching it off is not a plausible Tuesday — not before.
  */
 export function buildOwnerRequirementNote(
   req: OwnerTurnRequirements,
