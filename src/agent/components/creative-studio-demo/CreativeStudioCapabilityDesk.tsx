@@ -200,9 +200,13 @@ function ProjectsDesk({ onNavigate }: { onNavigate: StudioV3Navigate }) {
             value={search}
           />
         </label>
-        <button className={styles.secondaryButton} disabled type="button">
+        <button
+          className={styles.secondaryButton}
+          onClick={() => onNavigate({ id: 'project-setup', kind: 'longform' })}
+          type="button"
+        >
           <StudioV2Icon name="plus" size={16} />
-          New project · prototype
+          New empty project
         </button>
       </div>
 
