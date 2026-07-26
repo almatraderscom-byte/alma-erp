@@ -37,3 +37,6 @@ src/agent/replay/fixtures-drafts/
 
 # Background sub-agent git worktrees (transient; auto-cleaned by the harness)
 .claude/worktrees/
+
+# Saved browser logins (per-site Chromium profiles) — data, never source.
+worker/data/browser-profiles/
