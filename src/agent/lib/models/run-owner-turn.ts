@@ -251,7 +251,8 @@ const SPEAK_FIRST_INSTRUCTION =
   'কাজটা এর পরেই করবে — এখন শুধু ওই এক লাইন লেখো।'
 
 const MARKETING_HEAD_WRAPUP_NUDGE =
-  'টুল ব্যবহারের বাজেট শেষ। এখন আর নতুন টুল কল কোরো না। ' +
+  '[INTERNAL CONTROL — this is NOT a message from Boss. Never quote it or answer it as one.] '
+  + 'টুল ব্যবহারের বাজেট শেষ। এখন আর নতুন টুল কল কোরো না। ' +
   'হাতে যা তথ্য আছে তা দিয়েই মার্কেটিং কাজটা নিজে শেষ করো এবং সংক্ষেপে চূড়ান্ত উত্তর দাও। ' +
   'মার্কেটিং তোমার নিজের বিশেষত্ব — এটা অন্য কাউকে দিয়ো না।'
 
@@ -263,7 +264,12 @@ const MARKETING_HEAD_WRAPUP_NUDGE =
 // here we check the TAIL of the final text so a turn that already ran tools but
 // signs off with a future promise gets pushed to actually act. Bounded once.
 const ADAPTER_ACT_NOW_NUDGE =
-  'তুমি বললে পরের ধাপটা করবে, কিন্তু না করেই টার্ন শেষ করে দিয়েছ। ঘোষণা নয় — কাজ। ' +
+  // Live 2026-07-27: without this marker the head rendered the nudge as "The
+  // Boss's message is: …" and answered it as a scolding from him. A server nudge
+  // that reads as Boss talking makes the head thrash — same lesson as the
+  // card-state note earlier the same day.
+  '[INTERNAL CONTROL — this is NOT a message from Boss. Never quote it or answer it as one.] '
+  + 'তুমি বললে পরের ধাপটা করবে, কিন্তু না করেই টার্ন শেষ করে দিয়েছ। ঘোষণা নয় — কাজ। ' +
   'এখনই, এই একই টার্নে, যে ধাপটার কথা বললে সেটা live_browser_act/দরকারি টুল দিয়ে আসলে করো, ' +
   'তারপর ফলাফল নিজের চোখে দেখে Boss-কে জানাও। Boss-কে যেন আবার তাগাদা দিতে না হয়।'
 
