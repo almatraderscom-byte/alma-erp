@@ -10,6 +10,14 @@ import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-to
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
+import {
+  claimsCompletion,
+  dependencyBlockMessage,
+  doneGateMessage,
+  filterToolsForSkill,
+  skillDependencyGaps,
+  skillDoneMisses,
+} from '@/agent/lib/skill-engine/enforcement'
 import { getOfficePulse } from '@/agent/lib/office-pulse'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
@@ -787,9 +795,18 @@ async function* runAlternateProviderTurn(
   // Skill Engine V2 (gated OFF by default) — pick ≤3 on-demand skill procedures for
   // this turn from the message text; '' when disabled or nothing matches (fail-open).
   const activeSkills = suppressWork
-    ? { block: '', pinned: null }
+    ? { block: '', pinned: null, manifest: null }
     : await buildActiveSkills(lastUserText, { conversationId })
   const activeSkillsBlock = activeSkills.block
+  // SK-4: a skill that declared what it needs gets checked BEFORE step 0, so a
+  // dead connection is one honest sentence rather than a paid tour of the
+  // failure (15 steps / 1m36s, watched live 2026-07-26).
+  const skillDependencyBlock = activeSkills.manifest
+    ? dependencyBlockMessage(
+        activeSkills.pinned?.skill ?? activeSkills.manifest.name,
+        skillDependencyGaps(activeSkills.manifest),
+      )
+    : ''
   // SK-3: tell the client which skill is pinned, so Boss can see it and change
   // it. Emitted before any work starts — the point is that he knows up front.
   if (activeSkills.pinned) {
@@ -802,6 +819,19 @@ async function* runAlternateProviderTurn(
     }
   }
   let ownerIntentTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
+  // SK-4: the pinned skill's allowlist. This is the enforcement that actually
+  // holds — a read-only audit skill is handed no write tool, so it cannot write
+  // whatever it decides. A skill with no declared capabilities does not narrow.
+  if (activeSkills.manifest) {
+    const gated = filterToolsForSkill(ownerIntentTools, activeSkills.manifest)
+    if (gated.removed.length > 0) {
+      console.info('[skill-allowlist] withheld', {
+        skill: activeSkills.manifest.name,
+        removed: gated.removed.length,
+      })
+    }
+    ownerIntentTools = gated.tools
+  }
   // A CONTRACT MUST NEVER DEMAND A TOOL THE HEAD DOES NOT HAVE (live prod run
   // 2026-07-25). The state router is only shadow-logging in production, so the
   // legacy selector picked the tools — and for "Do a Deep SEO Audit -
@@ -882,7 +912,8 @@ async function* runAlternateProviderTurn(
   const deadCapabilityBlock = capabilityPreflightBlock(shippedToolNames)
   const promptArgs = {
     projectInstructions:
-      [modeDirective, deadCapabilityBlock, projectSystemInstructions].filter(Boolean).join('\n\n') || null,
+      [modeDirective, deadCapabilityBlock, skillDependencyBlock, projectSystemInstructions]
+        .filter(Boolean).join('\n\n') || null,
     pinnedMemories,
     relevantMemories,
     recalledTurns,
@@ -2681,6 +2712,22 @@ async function* runAlternateProviderTurn(
         ' — পরের টার্নে এগুলো আবার কোরো না, ঠিক পরের ধাপ থেকে ধরো।'
       finalText += footer
       yield { type: 'text_delta', delta: footer }
+    }
+    // SK-4 — the pinned skill's `done:` list, checked against what the turn
+    // ACTUALLY did. A skill that declares its finish line makes "হয়ে গেছে" a
+    // claim that can be false, instead of a sentence the model may emit at will.
+    // It appends rather than rewrites: Boss keeps the work, and gains the truth
+    // about what is still outstanding.
+    if (activeSkills.manifest?.done?.length && claimsCompletion(finalText)) {
+      const misses = skillDoneMisses(
+        activeSkills.manifest,
+        toolRecords.map((r) => ({ toolName: r.toolName, status: r.status })),
+      )
+      if (misses.length > 0) {
+        const gate = `\n\n${doneGateMessage(activeSkills.pinned?.skill ?? activeSkills.manifest.name, misses)}`
+        finalText += gate
+        yield { type: 'text_delta', delta: gate }
+      }
     }
     // OWNER RULING 2026-07-26 — the agent sets its OWN wake-up. Hitting the
     // hosting deadline is the agent's problem to handle, not a reason to sit and

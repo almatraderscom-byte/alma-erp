@@ -71,22 +71,10 @@ export interface EvalResult {
   passed: boolean
 }
 
-/**
- * Bangla + English completion claims. Deliberately narrow: it must catch "কাজ
- * শেষ", "হয়ে গেছে", "done" — and NOT catch "শেষ হয়নি", which is the honest
- * report we spent this week teaching the agent to produce.
- */
-const CLAIMS_DONE_RE =
-  /(হয়ে\s*গে(ছে|লো)|কাজ\s*শেষ|সম্পন্ন\s*হয়েছে|শেষ\s*করেছি|করে\s*দিয়েছি|আপডেট\s*হয়েছে|\bdone\b|\bcompleted\b|\bfinished\b)/i
-const DENIES_DONE_RE =
-  /(শেষ\s*হয়নি|হয়নি|পারিনি|করা\s*যায়নি|আটকে|বাকি\s*আছে|not\s+(?:done|complete)|could\s*not|failed)/i
-
-export function claimsCompletion(text: string): boolean {
-  const t = text.trim()
-  if (!t) return false
-  if (DENIES_DONE_RE.test(t)) return false
-  return CLAIMS_DONE_RE.test(t)
-}
+// The runtime gate (skill-engine/enforcement) and this harness must judge a
+// completion claim the SAME way, or a skill can pass evals and fail live.
+import { claimsCompletion } from '@/agent/lib/skill-engine/enforcement'
+export { claimsCompletion }
 
 const ok = (tools: EvalToolRecord[], name: string) =>
   tools.some((t) => t.toolName === name && t.status === 'success')

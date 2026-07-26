@@ -13,7 +13,7 @@
 import path from 'path'
 import { discoverSkills, selectSkills, activateSkill } from '@/agent/lib/skill-engine/loader'
 import { isSkillEngineEnabled } from '@/agent/lib/skill-engine/enabled'
-import type { SkillIndex } from '@/agent/lib/skill-engine/types'
+import type { SkillIndex, SkillManifest } from '@/agent/lib/skill-engine/types'
 
 const SKILLS_ROOT = path.join(process.cwd(), 'src', 'agent', 'skills')
 const MAX_SKILL_BODY_CHARS = 6000 // roadmap: activated SKILL.md ≤ ~5k tokens
@@ -43,6 +43,8 @@ export interface ActiveSkills {
   block: string
   /** Set only when a conversation pinned one — feeds the `skill_pinned` event. */
   pinned: { skill: string; source: 'owner' | 'router'; layer: string; reason: string } | null
+  /** SK-4: the pinned skill's manifest — allowlist, dependencies, done gate. */
+  manifest: SkillManifest | null
 }
 
 /** Thin wrapper for callers that only want the prompt text. */
@@ -57,7 +59,7 @@ export async function buildActiveSkills(
   lastUserText: string,
   opts: { conversationId?: string } = {},
 ): Promise<ActiveSkills> {
-  const none: ActiveSkills = { block: '', pinned: null }
+  const none: ActiveSkills = { block: '', pinned: null, manifest: null }
   if (!(await isSkillEngineEnabled())) return none
   if (!lastUserText || !lastUserText.trim()) return none
   try {
@@ -85,9 +87,11 @@ export async function buildActiveSkills(
     if (picked.length === 0) return none
 
     const bodies: string[] = []
+    let manifest: SkillManifest | null = null
     for (const meta of picked) {
       const activated = await activateSkill(meta)
       if (!activated) continue
+      manifest = manifest ?? activated.manifest
       const body = activated.instructions.slice(0, MAX_SKILL_BODY_CHARS)
       bodies.push(`### ${activated.manifest.name} (v${activated.manifest.version})\n${body}`)
     }
@@ -106,7 +110,7 @@ export async function buildActiveSkills(
       `\n` +
       bodies.join('\n\n')
     )
-    return { block, pinned }
+    return { block, pinned, manifest }
   } catch {
     return none
   }
