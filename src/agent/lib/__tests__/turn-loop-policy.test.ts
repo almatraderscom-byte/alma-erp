@@ -115,6 +115,19 @@ describe('a read-only turn that ran NO tool must not end on an announcement', ()
     })).toBe(true)
   })
 
+  // Owner test, 2026-07-26. He typed one plain sentence — "almatraders.com এর
+  // ছবির alt ঠিক করো" — the head read the catalogue, said it was going to find
+  // the right tool, and ended the turn at 25 seconds. One successful read had
+  // made noToolRan false and the turn was not mutation-authorised, so the guard
+  // let it stop mid-step.
+  it('nudges a turn abandoned mid-step, even after a successful read', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, catalog-এ ৫০টা live product দেখা গেছে — এখন alt text update-এর জন্য সঠিক SEO tool খুঁজছি।',
+      toolRecords: [{ status: 'success' }],
+      ownerRequestedAction: false,
+    })).toBe(true)
+  })
+
   it('still exempts a finished read turn that already used a tool', () => {
     expect(shouldNudgeAdapterIntent({
       text: 'বস, আজ ৫টা অর্ডার পেন্ডিং। পরের ধাপে dispatch দেখব।',
