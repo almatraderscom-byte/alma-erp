@@ -42,7 +42,14 @@ const TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 /** SIP gateway control API, used only to ask whether a call is up right now. */
 const SIP_BASE = (process.env.SIP_GATEWAY_BASE ?? '').replace(/\/$/, '')
 
-const FRAME_INTERVAL_MS = 200 // ~5 fps
+const FRAME_INTERVAL_MS = 200 // ~5 fps ceiling while the page is actually moving
+/**
+ * Floor for a page that is NOT moving. CDP only emits a screencast frame when
+ * something repaints, so a finished, static page produces nothing at all — a
+ * viewer who connects at that moment would sit staring at an empty panel. This
+ * interval is how often we capture one ourselves to keep the picture true.
+ */
+const STATIC_CAPTURE_MS = 1000
 const JPEG_QUALITY = 50
 const VIEWPORT = { width: 1280, height: 800 }
 const IDLE_PAUSE_MS = 60_000
@@ -133,6 +140,9 @@ async function startSession({ startUrl, goal }) {
     cdp,
     clients: new Set(),
     lastFrameSentAt: 0,
+    /** Most recent JPEG (base64). Sent to a viewer the moment it connects, so
+     *  arriving at a finished page shows the page rather than nothing. */
+    lastFrame: null,
     lastActivityAt: Date.now(),
     startedAt: Date.now(),
     paused: false,
@@ -148,8 +158,26 @@ async function startSession({ startUrl, goal }) {
     const now = Date.now()
     if (now - session.lastFrameSentAt < FRAME_INTERVAL_MS) return
     session.lastFrameSentAt = now
+    session.lastFrame = data
     broadcast('frame', { data })
   })
+
+  // Static-page floor. Only runs while someone is actually watching — an
+  // unwatched session must not spend CPU next to a live call for nobody.
+  session.timers.push(
+    setInterval(async () => {
+      if (!session || session.paused || session.clients.size === 0) return
+      if (Date.now() - session.lastFrameSentAt < STATIC_CAPTURE_MS) return
+      try {
+        const buf = await session.page.screenshot({ type: 'jpeg', quality: JPEG_QUALITY })
+        session.lastFrameSentAt = Date.now()
+        session.lastFrame = buf.toString('base64')
+        broadcast('frame', { data: session.lastFrame })
+      } catch {
+        /* mid-navigation screenshots can fail; the next tick covers it */
+      }
+    }, STATIC_CAPTURE_MS),
+  )
 
   await cdp.send('Page.startScreencast', {
     format: 'jpeg',
@@ -371,6 +399,10 @@ const server = http.createServer(async (req, res) => {
         connection: 'keep-alive',
       })
       res.write(`event: hello\ndata: ${JSON.stringify(status())}\n\n`)
+      // Show the page immediately instead of waiting for the next repaint.
+      if (session.lastFrame) {
+        res.write(`event: frame\ndata: ${JSON.stringify({ data: session.lastFrame })}\n\n`)
+      }
       session.clients.add(res)
       const keepAlive = setInterval(() => {
         try {
