@@ -82,6 +82,8 @@ type MessageRow = {
   cacheCreation: number | null
   cacheRead: number | null
   costUsd: string | null
+  /** How long the agent worked on this reply (ms) — owner ask 2026-07-26. */
+  durationMs?: number | null
   /** Provider API calls in this reply (= rows on the OpenRouter Logs page). */
   apiRounds?: number
   /** Per-round billed cost (USD) when the provider reported actuals. */
@@ -146,6 +148,7 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       cacheCreation: r.cacheCreation ?? undefined,
       cacheRead: r.cacheRead ?? undefined,
       costUsd: r.costUsd != null ? parseFloat(r.costUsd) : undefined,
+      durationMs: r.durationMs ?? undefined,
       apiRounds: r.apiRounds ?? undefined,
       roundCostsUsd: r.roundCostsUsd ?? undefined,
       pendingActions: confirmBlocks.length
@@ -1255,6 +1258,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   cacheCreation: evt.cacheCreation as number,
                   cacheRead: evt.cacheRead as number,
                   costUsd: evt.costUsd as number,
+                  durationMs: evt.durationMs as number | undefined,
                   apiRounds: (evt.apiRounds as number | undefined) ?? undefined,
                   roundCostsUsd: (evt.roundCostsUsd as number[] | undefined) ?? undefined,
                 }

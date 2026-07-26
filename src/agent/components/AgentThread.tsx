@@ -145,6 +145,8 @@ export interface ChatMessage {
     fallbackModelId: string
   }
   tokensIn?: number
+  /** How long the agent worked on this reply (ms) — shown next to the tokens. */
+  durationMs?: number
   tokensOut?: number
   cacheCreation?: number
   cacheRead?: number
@@ -1243,6 +1245,37 @@ function isJamaatQuestion(text?: string): boolean {
   return /জামাত/.test(text) && /একা/.test(text) && text.includes('?')
 }
 
+/**
+ * "24m 20s" — the working time, the way Boss reads it on my own badge.
+ * Owner ask 2026-07-26: he wants the clock running from the moment work starts,
+ * and the total kept next to the tokens once the reply lands.
+ */
+function fmtDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  const rest = s % 60
+  if (m < 60) return rest ? `${m}m ${rest}s` : `${m}m`
+  const h = Math.floor(m / 60)
+  return `${h}h ${m % 60}m`
+}
+
+/** Ticking elapsed time for the turn that is running right now. */
+function LiveWorkTimer({ startedAt }: { startedAt: string }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const started = new Date(startedAt).getTime()
+  if (!Number.isFinite(started)) return null
+  return (
+    <span className="ml-2 text-[10px] tabular-nums text-muted" title="এই কাজটা কতক্ষণ ধরে চলছে">
+      {fmtDuration(now - started)}
+    </span>
+  )
+}
+
 export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1405,6 +1438,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                 role: m.role,
                 text: m.text,
                 costUsd: m.costUsd,
+                durationMs: m.durationMs,
               }))}
               renderUserMessage={(msg) => (
                 <div className="mb-4 flex justify-end">
@@ -1550,11 +1584,15 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       (NOT on streamStatus) so a momentary empty label can't make
                       it flicker out; it disappears only when the turn is `done`. */}
                   {msg.streaming && msg.id === messages[messages.length - 1]?.id && (
-                    <AgentThinkingIndicator
-                      mode={streamMode ?? 'thinking'}
-                      variant={streamVariant ?? 'claude'}
-                      className="mt-3"
-                    />
+                    <div className="mt-3 flex items-center">
+                      <AgentThinkingIndicator
+                        mode={streamMode ?? 'thinking'}
+                        variant={streamVariant ?? 'claude'}
+                      />
+                      {/* The clock starts when the work starts (owner ask
+                          2026-07-26) — not only after it finishes. */}
+                      {msg.createdAt && <LiveWorkTimer startedAt={msg.createdAt} />}
+                    </div>
                   )}
 
                   {msg.pendingActions && msg.pendingActions.length > 0 && (
@@ -1679,7 +1717,12 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                             {`Σ${fmtTok(total)} · ↑${fmtTok(tin)}`}
                             {cw > 0 && ` ⚡${fmtTok(cw)}`}
                             {cr > 0 && ` ♻${fmtTok(cr)}`}
-                            {` ↓${fmtTok(tout)}`}{' '}
+                            {` ↓${fmtTok(tout)}`}
+                            {msg.durationMs != null && msg.durationMs > 0 && (
+                              <span className="text-muted" title="এই উত্তরটা তৈরি করতে যত সময় লেগেছে">
+                                {` · ⏱ ${fmtDuration(msg.durationMs)}`}
+                              </span>
+                            )}{' '}
                             {msg.costUsd != null && (
                               <span
                                 className="text-[#E07A5F]/60"
