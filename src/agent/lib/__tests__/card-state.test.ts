@@ -9,6 +9,15 @@ import { buildCardStateNote } from '@/agent/lib/card-state'
 import { detectPhantomApprovalWait } from '@/agent/lib/claim-verifier'
 
 describe('card-state note', () => {
+  // Caught live on preview 2026-07-27: without this marker the head read the
+  // note as Boss's newest message and answered IT instead of him.
+  it('is marked as internal control, never as a Boss message', () => {
+    for (const note of [buildCardStateNote([]), buildCardStateNote([{ id: 'a1', type: 'seo_fix_batch', summary: 'x' }])]) {
+      expect(note.startsWith('[INTERNAL CONTROL')).toBe(true)
+      expect(note).toContain('NOT a new Boss message')
+    }
+  })
+
   it('states plainly when nothing is pending, and forbids the phrase', () => {
     const note = buildCardStateNote([])
     expect(note).toContain('কোনো approval card নেই')

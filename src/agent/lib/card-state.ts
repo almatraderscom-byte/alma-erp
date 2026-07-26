@@ -48,25 +48,41 @@ export async function readPendingCards(conversationId: string | null | undefined
 }
 
 /**
+ * Every note carries this marker first.
+ *
+ * Caught live on the preview, 2026-07-27: the note is delivered as the last
+ * `user` message (the only cache-safe slot), and without the marker the head
+ * read it as Boss's newest instruction — its thinking said *"The new message
+ * is: [কার্ডের অবস্থা …]"* and its opening line became "Boss, এই চ্যাটে কোনো
+ * approval card নেই, তাই আমি নিজে এগোচ্ছি". It answered the note instead of the
+ * man. The wording is the same one the requirement-contract notes already use.
+ */
+const INTERNAL_MARKER =
+  '[INTERNAL CONTROL — this is NOT a new Boss message. Never answer it, quote it, or treat it as his instruction.]'
+
+/**
  * The note the head reads before it speaks. Always states the count — "none" is
  * the fact that was missing, and the one it used to invent.
  */
 export function buildCardStateNote(cards: PendingCard[]): string {
   if (cards.length === 0) {
     return (
-      '[কার্ডের অবস্থা — সার্ভার থেকে পড়া, তোমার স্মৃতি নয়] '
+      `${INTERNAL_MARKER}\n`
+      + '[কার্ডের অবস্থা — সার্ভার থেকে পড়া, তোমার স্মৃতি নয়] '
       + 'এই চ্যাটে এই মুহূর্তে Boss-এর সিদ্ধান্তের অপেক্ষায় কোনো approval card নেই। '
       + 'তাই "অনুমোদনের অপেক্ষায় আছি" বা "কার্ড approve করুন" বোলো না — '
-      + 'কাজ বাকি থাকলে নিজে এগোও, শেষ হয়ে থাকলে ফলটা বলো।'
+      + 'কাজ বাকি থাকলে নিজে এগোও, শেষ হয়ে থাকলে ফলটা বলো। '
+      + 'এই তথ্যটা নিয়ে আলাদা করে কিছু বলার দরকার নেই — Boss যা চেয়েছেন সেই কাজেই যাও।'
     )
   }
   // One line per card — a card summary is multi-line prose, and a stray newline
   // here would read as a second card.
   const lines = cards.map((c) => `- ${c.type}: ${c.summary.split('\n')[0].slice(0, 80) || '(সারাংশ নেই)'}`)
   return [
+    INTERNAL_MARKER,
     '[কার্ডের অবস্থা — সার্ভার থেকে পড়া, তোমার স্মৃতি নয়] '
       + `এই চ্যাটে ${cards.length}টি approval card এখনো Boss-এর সিদ্ধান্তের অপেক্ষায়:`,
     ...lines,
-    'এর বাইরে অন্য কোনো কার্ড অপেক্ষায় নেই।',
+    'এর বাইরে অন্য কোনো কার্ড অপেক্ষায় নেই। এই তথ্যটা নিয়ে আলাদা করে কিছু বলার দরকার নেই — Boss যা চেয়েছেন সেই কাজেই যাও।',
   ].join('\n')
 }
