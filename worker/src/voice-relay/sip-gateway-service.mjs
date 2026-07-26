@@ -2841,6 +2841,7 @@ async function installMohAudio(bytes, rawClass) {
   const dir = mohDirFor(cls, confNow)
   const wav = `${dir}/${cls}.wav`
   const sln = `${dir}/${cls}.sln`
+  const ulaw = `${dir}/${cls}.ulaw`
   const backup = `${tmpdir()}/moh-backup-${randomUUID()}`
   let confBackup = null
 
@@ -2851,20 +2852,70 @@ async function installMohAudio(bytes, rawClass) {
     // Back up whatever is live, so a failed install can put the owner's previous recording
     // back rather than leaving the class pointing at nothing.
     await mkdir(backup, { recursive: true })
-    for (const [path, name] of [[wav, `${cls}.wav`], [sln, `${cls}.sln`]]) {
+    for (const [path, name] of [[wav, `${cls}.wav`], [sln, `${cls}.sln`], [ulaw, `${cls}.ulaw`]]) {
       await copyFile(path, `${backup}/${name}`).catch(() => {})
     }
 
-    // 8 kHz mono, both extensions off one basename: Asterisk picks the best match for the
-    // channel and treats them as ONE file, so the loop does not play the recording twice.
-    await execFileAsync('ffmpeg', ['-y', '-nostdin', '-loglevel', 'error', '-i', src,
-      '-ac', '1', '-ar', '8000', '-acodec', 'pcm_s16le', wav], { timeout: 120_000 })
-    await execFileAsync('ffmpeg', ['-y', '-nostdin', '-loglevel', 'error', '-i', src,
-      '-ac', '1', '-ar', '8000', '-f', 's16le', '-acodec', 'pcm_s16le', sln], { timeout: 120_000 })
+    /*
+     * TELEPHONY-GRADE CONVERSION, and an honest note about what it does and does not fix.
+     *
+     * The owner reported the hold music breaking up. Measured on the live file rather than
+     * guessed at, and most of the obvious suspects are NOT it: no gaps inside the audio
+     * (silencedetect finds one 137 ms tail and nothing else), no clipping (2 peak samples),
+     * level fine at -19 dB mean, one file entry in `moh show files` so `sort=random` is not
+     * jumping between takes, load 0.6 on 2 cores. The loop seam is already smooth too — the
+     * first 20 ms measure -61 dB and the last 250 ms -37 dB.
+     *
+     * (A wrong turn worth recording: `-t` is an OUTPUT option, so `ffmpeg -t 0.25 -i x -af
+     * volumedetect` still measures the WHOLE file. Read that way the file looked like it began
+     * at full volume, which produced a confident and completely wrong diagnosis. Put the `-t`
+     * or `-ss` BEFORE `-i` to measure a slice.)
+     *
+     * So this is not a proven fix for what he heard; it is the set of things that are
+     * measurably better regardless:
+     *
+     *  - `.ulaw` alongside `.sln`/`.wav`. The trunk is mu-law, so a caller now hears the file
+     *    with NO transcoding step at all. On a 2-core box that is the one change here with a
+     *    real chance of smoothing playback.
+     *  - Band-limit BEFORE the resample. Telephony is 8 kHz; anything above ~3.5 kHz has to go
+     *    somewhere, and letting the resampler fold it back is what makes downsampled music
+     *    sound rough.
+     *  - 60 ms fade in, 300 ms fade out. Insurance on the loop seam, not a cure: 60 ms is short
+     *    enough not to eat the first consonant when the "music" is a spoken line.
+     *
+     * If it still breaks up, the next measurement is that call's RTP loss and jitter on the
+     * quality page — which is exactly the hop a recording can never show.
+     */
+    const probe = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1', src], { timeout: 30_000 }).catch(() => null)
+    const seconds = Number(probe?.stdout?.trim()) || 0
+    const fadeOut = seconds > 1 ? Math.min(0.3, seconds / 4) : 0
+    const chain = [
+      'highpass=f=90',
+      'lowpass=f=3500',
+      'aresample=8000:resampler=soxr:precision=28',
+      'afade=t=in:st=0:d=0.06',
+      ...(fadeOut ? [`afade=t=out:st=${(seconds - fadeOut).toFixed(3)}:d=${fadeOut.toFixed(3)}`] : []),
+    ].join(',')
+
+    // Three encodings of one basename. Asterisk treats them as ONE file and picks the best
+    // match for the channel, so the loop never plays the recording twice — and `.ulaw` means a
+    // caller on the mu-law trunk hears it with no transcoding step at all.
+    const enc = (args, out) => execFileAsync('ffmpeg',
+      ['-y', '-nostdin', '-loglevel', 'error', '-i', src, '-ac', '1', '-af', chain, ...args, out],
+      { timeout: 120_000 })
+    await enc(['-acodec', 'pcm_s16le'], wav)
+    await enc(['-f', 's16le', '-acodec', 'pcm_s16le'], sln)
+    await enc(['-f', 'mulaw', '-acodec', 'pcm_mulaw'], ulaw)
+
     await execFileAsync('chown', ['-R', 'asterisk:asterisk', MOH_DIR_BASE]).catch(() => {})
     await execFileAsync('chown', ['-R', 'asterisk:asterisk', dir]).catch(() => {})
     const info = await stat(sln).catch(() => null)
-    steps.push({ step: 'convert', ok: true, detail: `${cls}.wav + ${cls}.sln · ~${info ? Math.round(info.size / 16000) : '?'}s` })
+    steps.push({
+      step: 'convert',
+      ok: true,
+      detail: `${cls}.wav + .sln + .ulaw · ~${info ? Math.round(info.size / 16000) : '?'}s · লুপের জোড়া মসৃণ করা হয়েছে`,
+    })
 
     // Declare the class if it is not already in the file. Backed up first — this is a live
     // PBX's config, and an unparseable musiconhold.conf takes hold music out entirely.
@@ -2893,7 +2944,7 @@ async function installMohAudio(bytes, rawClass) {
     return { ok: true, steps, liveClass: cls }
   } catch (err) {
     // Roll back both halves: the audio files and, if we touched it, the config.
-    for (const name of [`${cls}.wav`, `${cls}.sln`]) {
+    for (const name of [`${cls}.wav`, `${cls}.sln`, `${cls}.ulaw`]) {
       await copyFile(`${backup}/${name}`, `${dir}/${name}`).catch(() => {})
     }
     if (confBackup) await copyFile(confBackup, MOH_CONF).catch(() => {})
