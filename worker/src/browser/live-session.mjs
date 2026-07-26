@@ -51,7 +51,23 @@ const TOKEN = process.env.AGENT_INTERNAL_TOKEN ?? ''
 /** SIP gateway control API, used only to ask whether a call is up right now. */
 const SIP_BASE = (process.env.SIP_GATEWAY_BASE ?? '').replace(/\/$/, '')
 
-const FRAME_INTERVAL_MS = 200 // ~5 fps ceiling while the page is actually moving
+/**
+ * Stream shape — tunable, because one setting cannot serve both clients.
+ *
+ * Measured on the first build: a 1280×800 JPEG at quality 50 is ~145 KB per
+ * frame, so 5 fps is ~5.8 Mbit/s. That is fine over wifi on a laptop and plainly
+ * unacceptable on a phone's mobile data — it is the owner's own money and his
+ * own battery. So the capture is parameterised and the caller says what it can
+ * afford: a desktop asks for the full picture, a phone asks for a tenth of it.
+ *
+ * The knobs are on the CAPTURE, not on the encoder-per-viewer, because this box
+ * has two cores and also carries the phone calls — re-encoding one frame per
+ * viewer would spend exactly the CPU the call audio needs. A viewer wanting
+ * fewer frames than the session produces simply drops the extras.
+ */
+const STREAM_DEFAULTS = { fps: 5, quality: 50, width: 1280, height: 800 }
+/** Bounds — a bad number from a client must not be able to melt the box. */
+const STREAM_LIMITS = { fps: [1, 10], quality: [20, 80], width: [480, 1600] }
 /**
  * Floor for a page that is NOT moving. CDP only emits a screencast frame when
  * something repaints, so a finished, static page produces nothing at all — a
@@ -59,7 +75,7 @@ const FRAME_INTERVAL_MS = 200 // ~5 fps ceiling while the page is actually movin
  * interval is how often we capture one ourselves to keep the picture true.
  */
 const STATIC_CAPTURE_MS = 1000
-const JPEG_QUALITY = 50
+/** The page's own viewport stays fixed; only the picture we SEND is scaled. */
 const VIEWPORT = { width: 1280, height: 800 }
 const IDLE_PAUSE_MS = 60_000
 const ABSOLUTE_MAX_MS = 20 * 60_000
@@ -67,6 +83,33 @@ const CALL_CHECK_INTERVAL_MS = 5_000
 
 /** The single live session, or null. One at a time is a hard rule, not a default. */
 let session = null
+
+/** Clamp one stream knob into its safe range; undefined keeps the current value. */
+function clampStream(input, current) {
+  const out = { ...current }
+  const pick = (key, limits) => {
+    const n = Number(input?.[key])
+    if (!Number.isFinite(n)) return
+    out[key] = Math.round(Math.min(Math.max(n, limits[0]), limits[1]))
+  }
+  pick('fps', STREAM_LIMITS.fps)
+  pick('quality', STREAM_LIMITS.quality)
+  pick('width', STREAM_LIMITS.width)
+  // Height follows width so the picture never distorts — the page's own viewport
+  // is unchanged, we are only choosing how big a copy of it to send.
+  out.height = Math.round((out.width * VIEWPORT.height) / VIEWPORT.width)
+  return out
+}
+
+/** Start (or restart) the screencast with the session's current stream settings. */
+async function applyScreencast() {
+  if (!session) return
+  const { quality, width, height } = session.stream
+  await session.cdp.send('Page.stopScreencast').catch(() => {})
+  await session.cdp
+    .send('Page.startScreencast', { format: 'jpeg', quality, maxWidth: width, maxHeight: height, everyNthFrame: 1 })
+    .catch(() => {})
+}
 
 function log(...args) {
   console.log('[browser-live]', ...args)
@@ -140,7 +183,7 @@ async function callInProgress({ strict = false } = {}) {
 
 // ─── session lifecycle ───────────────────────────────────────────────────────
 
-async function startSession({ startUrl, goal, profile }) {
+async function startSession({ startUrl, goal, profile, stream }) {
   if (session) return { ok: false, error: 'a live session is already running' }
   // Strict here: opening a browser is new load on a two-core box that also runs
   // the phone system, so an unverifiable gateway means "not now".
@@ -194,6 +237,7 @@ async function startSession({ startUrl, goal, profile }) {
     page,
     cdp,
     clients: new Set(),
+    stream: clampStream(stream, STREAM_DEFAULTS),
     lastFrameSentAt: 0,
     /** Most recent JPEG (base64). Sent to a viewer the moment it connects, so
      *  arriving at a finished page shows the page rather than nothing. */
@@ -205,13 +249,13 @@ async function startSession({ startUrl, goal, profile }) {
     timers: [],
   }
 
-  // Frames: throttled to FRAME_INTERVAL_MS. Every frame is ACKed even when it is
-  // dropped — Chromium stops sending until the previous one is acknowledged.
+  // Frames are throttled to the session's fps. Every frame is ACKed even when it
+  // is dropped — Chromium stops sending until the previous one is acknowledged.
   cdp.on('Page.screencastFrame', ({ data, sessionId }) => {
     cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {})
     if (!session || session.paused) return
     const now = Date.now()
-    if (now - session.lastFrameSentAt < FRAME_INTERVAL_MS) return
+    if (now - session.lastFrameSentAt < 1000 / session.stream.fps) return
     session.lastFrameSentAt = now
     session.lastFrame = data
     broadcast('frame', { data })
@@ -224,7 +268,7 @@ async function startSession({ startUrl, goal, profile }) {
       if (!session || session.paused || session.clients.size === 0) return
       if (Date.now() - session.lastFrameSentAt < STATIC_CAPTURE_MS) return
       try {
-        const buf = await session.page.screenshot({ type: 'jpeg', quality: JPEG_QUALITY })
+        const buf = await session.page.screenshot({ type: 'jpeg', quality: session.stream.quality })
         session.lastFrameSentAt = Date.now()
         session.lastFrame = buf.toString('base64')
         broadcast('frame', { data: session.lastFrame })
@@ -234,13 +278,7 @@ async function startSession({ startUrl, goal, profile }) {
     }, STATIC_CAPTURE_MS),
   )
 
-  await cdp.send('Page.startScreencast', {
-    format: 'jpeg',
-    quality: JPEG_QUALITY,
-    maxWidth: VIEWPORT.width,
-    maxHeight: VIEWPORT.height,
-    everyNthFrame: 1,
-  })
+  await applyScreencast()
 
   if (startUrl) {
     await page.goto(startUrl, { timeout: 30_000, waitUntil: 'domcontentloaded' }).catch((err) => {
@@ -295,15 +333,7 @@ function resume() {
   session.paused = false
   session.pauseReason = null
   session.lastActivityAt = Date.now()
-  session.cdp
-    .send('Page.startScreencast', {
-      format: 'jpeg',
-      quality: JPEG_QUALITY,
-      maxWidth: VIEWPORT.width,
-      maxHeight: VIEWPORT.height,
-      everyNthFrame: 1,
-    })
-    .catch(() => {})
+  void applyScreencast()
   broadcast('resumed', {})
   log('resumed')
 }
@@ -332,7 +362,15 @@ function broadcast(event, payload) {
 
 function broadcastTo(target, event, payload) {
   const chunk = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`
+  const now = Date.now()
   for (const client of target.clients) {
+    // A viewer may ask for fewer frames than the session produces (a phone on
+    // mobile data). Non-frame events are never dropped — a pause or an ending is
+    // not something a slow client should miss.
+    if (event === 'frame' && client.minFrameGapMs) {
+      if (now - (client.lastFrameAt ?? 0) < client.minFrameGapMs) continue
+      client.lastFrameAt = now
+    }
     try {
       client.write(chunk)
     } catch {
@@ -410,6 +448,7 @@ function status() {
     sessionId: session.id,
     goal: session.goal,
     profile: session.profileKey,
+    stream: session.stream,
     paused: session.paused,
     pauseReason: session.pauseReason,
     viewers: session.clients.size,
@@ -435,6 +474,17 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse((await readBody(req)) || '{}')
       const result = await startSession(body)
       return json(res, result.ok ? 200 : 409, result)
+    }
+
+    // Change the picture mid-session — a phone joining a session a laptop
+    // started should not have to tear it down to get a stream it can afford.
+    if (url.pathname === '/live/tune' && req.method === 'POST') {
+      if (!session) return json(res, 409, { error: 'no live session' })
+      const body = JSON.parse((await readBody(req)) || '{}')
+      session.stream = clampStream(body, session.stream)
+      if (!session.paused) await applyScreencast()
+      log(`stream tuned: ${session.stream.fps}fps q${session.stream.quality} ${session.stream.width}px`)
+      return json(res, 200, { ok: true, stream: session.stream })
     }
 
     if (url.pathname === '/live/stop' && req.method === 'POST') {
@@ -482,6 +532,14 @@ const server = http.createServer(async (req, res) => {
         'cache-control': 'no-cache, no-transform',
         connection: 'keep-alive',
       })
+      // ?fps=N lets one viewer take fewer frames than the session produces.
+      // It can only ask for LESS: raising the session rate is a capture change,
+      // and one viewer must not be able to spend the whole box's CPU.
+      const wantFps = Number(url.searchParams.get('fps'))
+      res.minFrameGapMs =
+        Number.isFinite(wantFps) && wantFps > 0 && wantFps < session.stream.fps ? 1000 / wantFps : 0
+      res.lastFrameAt = 0
+
       res.write(`event: hello\ndata: ${JSON.stringify(status())}\n\n`)
       // Show the page immediately instead of waiting for the next repaint.
       if (session.lastFrame) {
