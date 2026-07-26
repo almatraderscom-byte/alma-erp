@@ -202,9 +202,9 @@ export function ErrorNote({ children }: { children: ReactNode }) {
   return <p className="tone-red rounded-xl border px-3 py-2 text-[12px]">{children}</p>
 }
 
-export function Pill({ tone, children }: { tone: Tone; children: ReactNode }) {
+export function Pill({ tone, children, title }: { tone: Tone; children: ReactNode; title?: string }) {
   return (
-    <span className={cn('inline-block whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium', TONE_RING[tone])}>
+    <span title={title} className={cn('inline-block whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium', TONE_RING[tone])}>
       {children}
     </span>
   )

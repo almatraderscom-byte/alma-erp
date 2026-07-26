@@ -51,6 +51,14 @@ const NON_TOOL_ALLOWLIST = new Set([
   'proactive_call_approval_stuck_min', 'proactive_call_urgent_stuck_min', 'urgent_notify',
   // PA-5R inbound-transfer KV key + its mode values (documented for update_setting)
   'inbound_transfer_mode', 'ask_first',
+  // Browser driver values the prompt must name so the head can pass them
+  // (run_browser_task `driver`): vps / vps_live / companion.
+  'vps_live',
+  // manage_browser_logins action values.
+  'clear_cache', 'clear_site', 'clear_all',
+  // The three browser kill-switches the prompt must name apart, because "live
+  // browser" in Bangla means two different machines and the head has to pick one.
+  'live_browser_enabled', 'browser_live_view_enabled', 'browser_agent_enabled',
 ])
 
 function snakeTokens(text: string): string[] {

@@ -126,8 +126,13 @@ export default function SoftphonePanel() {
           <>
             {/* Who is on the line */}
             <div className="text-center">
+              {/* Once the call is up neither "ইনকামিং কল" nor "কল যাচ্ছে" is true any more —
+                  the ringing is over and they are talking. Leaving "কল যাচ্ছে" on screen for the
+                  whole conversation is a small lie the owner spotted immediately. */}
               <p className="text-xs uppercase tracking-widest text-muted">
-                {state.incoming ? 'ইনকামিং কল' : 'কল যাচ্ছে'}
+                {state.status === 'in-call'
+                  ? (state.incoming ? 'ইনকামিং কল · কথা চলছে' : 'কথা চলছে')
+                  : state.incoming ? 'ইনকামিং কল' : 'কল যাচ্ছে'}
               </p>
               <p className="mt-1 text-2xl font-semibold text-cream">{caller?.name || state.peer}</p>
               {caller?.name ? <p className="text-sm text-muted-hi">{state.peer}</p> : null}
@@ -258,6 +263,8 @@ export default function SoftphonePanel() {
               কল করুন
             </button>
 
+            <CallHistory onDial={(n) => void dial(n)} />
+
             {colleagues.length ? (
               <div className="mt-5">
                 <p className="mb-2 text-[10px] uppercase tracking-widest text-muted">সহকর্মী — ফ্রি কল</p>
@@ -281,6 +288,73 @@ export default function SoftphonePanel() {
           </p>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Recent calls, the way a mobile phone shows them: who, when, how long.
+ *
+ * The phone page had no history at all — after a call there was no way to see the number you
+ * had just spoken to. Tapping a row redials it, which is the one action this list is for.
+ *
+ * Deliberately just a list. Recordings, transcripts and other people's calls live in the
+ * owner's console, where the permissions for them belong; putting them here would quietly hand
+ * every staff member the whole call archive.
+ */
+function CallHistory({ onDial }: { onDial: (number: string) => void }) {
+  const [rows, setRows] = useState<Array<{
+    direction: string; other: string; at: string | null; seconds: number; answered: boolean
+  }>>([])
+  const [note, setNote] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      try {
+        const res = await fetch('/api/assistant/phone/history', { cache: 'no-store' })
+        const body = (await res.json()) as { rows?: typeof rows; error?: string | null }
+        if (!alive) return
+        setRows(body.rows ?? [])
+        setNote(body.error ?? null)
+      } catch {
+        if (alive) setNote('কল ইতিহাস আনা যায়নি।')
+      }
+    })()
+    return () => { alive = false }
+  }, [])
+
+  if (!rows.length) {
+    // Say nothing at all rather than showing an empty box, unless there is a reason worth
+    // showing — "no calls yet" and "the log could not be read" are different facts.
+    return note ? <p className="mt-5 text-[11px] text-muted">{note}</p> : null
+  }
+
+  return (
+    <div className="mt-5">
+      <p className="mb-2 text-[10px] uppercase tracking-widest text-muted">সাম্প্রতিক কল</p>
+      <ul className="divide-y divide-border-subtle/60 overflow-hidden rounded-xl border border-border-subtle">
+        {rows.map((r, i) => (
+          <li key={`${r.at}-${i}`}>
+            <button
+              onClick={() => r.other && onDial(r.other)}
+              className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition hover:bg-bg-2"
+              title="আবার কল করুন"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <span className={r.direction === 'inbound' ? 'text-success' : 'text-gold'}>
+                  {r.direction === 'inbound' ? '↙' : '↗'}
+                </span>
+                <span className="truncate text-sm text-cream">{r.other || 'অজানা নম্বর'}</span>
+              </span>
+              <span className="shrink-0 text-right text-[11px] text-muted">
+                <span className="tabular-nums">{r.answered ? mmss(r.seconds) : 'ধরেনি'}</span>
+                {r.at ? <><br />{r.at.replace(/^\d{4}-/, '').slice(0, 11)}</> : null}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

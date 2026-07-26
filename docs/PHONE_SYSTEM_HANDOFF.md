@@ -24,10 +24,46 @@ layer on top. Everything below is built, merged to `main`, and running.
   click-to-call. Registration proven end-to-end.
 - Registration watchdog, per-call CDR, outcome sweep, concurrency + hourly caps, BD-only
   destination allowlist, SIP port firewall.
-- **The PBX console at `/agent/phone-console`** (owner-only, read-only, shipped 2026-07-26 in
-  PR #585): dashboard, live channels, call log with hangup causes and recordings, audio
-  quality including per-call packet loss and jitter, and the line/trunk view. Plan and status:
+- **The PBX console at `/agent/phone-console`** (owner-only, shipped 2026-07-26 in PR #585):
+  dashboard, live channels, call log with hangup causes and recordings, audio quality
+  including per-call packet loss and jitter, and the line/trunk view. Plan and status:
   `ALMA_PBX_CONSOLE_ROADMAP.md`; what ships vs what has a screen: `PHONE_FEATURES_IN_MAIN.md`.
+- **Its settings section** (step 2, same day): forward numbers and ring group, office hours
+  and holidays, transfer mode, blocklist, caps, hold-audio upload, the provider's own
+  registration table, and an audited history with revert. **Two config planes, and they
+  behave differently — know which one you are on:**
+  - *App-scoped* values are read by `sip-inbound` while a call is being set up and apply to
+    the very next call.
+  - *Gateway-scoped* values are read on the VPS. The gateway PULLS
+    `GET /api/assistant/internal/phone-config` every `SIP_CONFIG_PULL_SECS` (60) with the
+    shared `AGENT_INTERNAL_TOKEN`, and falls back to its own env on any failure — so the
+    endpoint being down changes nothing about how calls behave. **It pulls from `APP_URL`,
+    which is PRODUCTION**, so gateway-scoped settings cannot be tested on a preview.
+  - The call-audio tuning is in NEITHER plane and must stay that way: those values are code
+    defaults in git with no remote override, so the approved voice cannot be changed by
+    anything reachable over the network. A unit test asserts the pull payload's exact key set.
+- **Extensions and routing** (steps 3 and 4, same day):
+  - `/agent/phone-console/extensions` — who has a phone, whether their browser is registered
+    right now (`pjsip show contacts`; WebRTC AORs run with qualify off, so a contact exists
+    exactly while a browser holds the websocket), who is on a call (ARI channels), and per
+    person: dial-out level, DND, forward-to-mobile, disable, rotate. **The SIP password is
+    never returned by any route, on any action** — a browser fetches its own when the staff
+    member opens the phone page.
+  - Per-extension policy is enforced by **generated dialplan contexts**, written by the
+    gateway into `/etc/asterisk/extensions-alma-staff.conf`. This needs a ONE-TIME VPS step:
+    delete the hand-written `[from-staff]` from `extensions.conf` and add
+    `#include "extensions-alma-staff.conf"`. Leaving both is the one bad outcome — the last
+    definition wins and the console appears to change nothing. Instructions and a rollback
+    copy live in `worker/deploy/asterisk/alma-staff-dialplan.conf`.
+  - `/agent/phone-console/routing` — the DID table (out of `SIP_DID_MAP`, into KV), outbound
+    destination policy with strip/prefix, and a **preview** that answers "a call from
+    01712345678 at 21:30 would reach …" by calling the same `decideInbound()` the live
+    inbound route calls. Nothing on that page re-derives a rule.
+  - Outbound rules sit IN FRONT of the env-pinned `SIP_DEST_ALLOW` backstop and never replace
+    it: a wrong pulled policy can only refuse calls, never permit an international one.
+  - Staff calls never touch the gateway (browser registers straight to Asterisk, dialplan
+    dials out), so `agent_voice_calls` has no row for them. Per-extension history is read
+    from Asterisk's own CDR CSV, and the screen says so when that log is unavailable.
 - **The call audio the owner approved on 2026-07-26 is LOCKED — CLAUDE.md hard rule #1.** Read
   it before touching anything near the playout, the jitter cushion or the VAD.
 
@@ -332,11 +368,50 @@ approved).
 
 ## 8. Next steps, in order
 
-**0. (2026-07-26) The console's Phase 2 — settings without SSH — is the next piece of work.**
-See `ALMA_PBX_CONSOLE_ROADMAP.md`. It is the first phase that writes, so §3's rules there
-(one writer for config, secrets never leave the VPS, KV not env, every change audited and
-reversible) start applying in earnest. The provider's own registration table moves into it,
-because reading it needs an amarip.net credential the owner supplies himself.
+**0. (2026-07-26) The console's Phases 2, 3 and 4 are BUILT, MERGED, DEPLOYED and VERIFIED
+LIVE** (PR #599, merged as `455b6f15`). What was actually proven on the box, not reasoned
+about:
+
+  - **Config pull landed**: the gateway logged `config pulled: 2/30/45/2/120/alma-hold//bd_all//`
+    and `/health` reports `config.ok=true` with a `pulledAt`. The settings screen shows
+    "শেষবার নিয়েছে …", so a gateway-scoped change can be seen to have arrived.
+  - **The dialplan migration is DONE.** `extensions.conf` now ends with
+    `#include "extensions-alma-staff.conf"` and the hand-written `[from-staff]` (old lines
+    894–914) is gone. Rollback copy on the box:
+    `/root/extensions.conf.pre-console-20260726-063935`. Verified with `dialplan show` for all
+    three contexts plus the `_01XXXXXXXXX`, `_0[2-9]X.` and internal-`1002` patterns.
+  - **The verifier earned its place immediately.** The first strict policy write, done BEFORE
+    the migration, refused with `from-staff-mobile missing after reload` — exactly the silent
+    failure it exists to catch. After the migration the same write returned `{"ok":true}`.
+  - **AUDIO BASELINE INTACT, on a real PSTN loopback to our own DID `09649777738`** (both legs,
+    25 s, recording stored):
+    `outbound: underruns=0 turn-ends=3 cushion=12f dropped=0` ·
+    `inbound: underruns=0 turn-ends=2 cushion=12f dropped=0`.
+    The locked baseline is `underruns ≤ 1 · cushion ≤ 16f · dropped = 0`; the cushion never
+    left its starting 12 frames.
+  - **Per-extension history is right**, checked against the two real staff rows in
+    `Master.csv`: `↗ 01779640373 · 20s ANSWERED` and `↗ 01779640373 · BUSY`.
+
+**TRAP, paid for today: `deploy-worker.yml` CANNOT deploy.** The GitHub runner's egress IP is
+blocked by the VPS firewall, so the workflow dies on its own reachability probe
+("VPS port 22 unreachable from the GitHub runner"). The real deploy path is by hand from a
+Mac whose IP is allowed, doing exactly what the workflow does:
+
+```
+cd /opt/alma-erp && git fetch --all --prune && git clean -fd worker/scripts
+git checkout -f main && git reset --hard origin/main
+cd worker && npm ci --omit=dev
+pm2 restart alma-agent-worker gemini-live-bot alma-sip-gateway --update-env && pm2 save
+```
+
+Restarting `alma-sip-gateway` drops calls in progress — check `core show channels` first.
+
+Still owner-pending, and only this: **one staff browser call from `/agent/phone`**, to prove
+the generated dialplan dials out for a human. Everything else in steps 2–4 is proven.
+
+  Phase 5 (trunks) is next. Both config writers built here — hold audio and the staff
+  dialplan — follow the same shape: back up, write, reload, prove with a `show` command,
+  restore on failure. Use it, and keep the proof a `show`, never an exit code.
 
 1. **Owner + provider**: one precise question now, not a vague complaint — why does a fresh
    REGISTER take ~100 s to become routable? (§5 has the wording and the numbers.)

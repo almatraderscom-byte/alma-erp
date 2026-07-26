@@ -81,6 +81,33 @@ export function useSoftphone() {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
   }, [])
 
+  /**
+   * Get the websocket back, then let `onConnect` re-register.
+   *
+   * Backed off and capped: a laptop waking after an hour should still find its phone, and a
+   * gateway that is genuinely down should not be hammered once a second all day. `closingRef`
+   * stops us fighting a deliberate hang-up-and-disconnect.
+   */
+  const reconnectRef = useRef<{ tries: number; timer: ReturnType<typeof setTimeout> | null }>({ tries: 0, timer: null })
+  const closingRef = useRef(false)
+  const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const reconnect = useCallback(() => {
+    const ua = uaRef.current
+    const st = reconnectRef.current
+    if (!ua || closingRef.current || st.timer) return
+    st.tries += 1
+    const delay = Math.min(30_000, 1000 * 2 ** Math.min(st.tries, 5))
+    st.timer = setTimeout(() => {
+      st.timer = null
+      if (!uaRef.current || closingRef.current) return
+      uaRef.current.reconnect().then(
+        () => { reconnectRef.current.tries = 0 },
+        () => { reconnect() },
+      )
+    }, delay)
+  }, [])
+
   const wireSession = useCallback((session: Session, peer: string, incoming: boolean) => {
     sessionRef.current = session
     patch({ peer, incoming, status: 'ringing', seconds: 0, error: null })
@@ -121,13 +148,60 @@ export function useSoftphone() {
       if (!uri) throw new Error('bad SIP address')
       const ua = new UserAgent({
         uri,
-        transportOptions: { server: cred.wsUrl },
+        /*
+         * KEEP THE SOCKET WARM. This is the fix for a call that would not hang up.
+         *
+         * During a call the websocket carries no SIP at all — the audio is RTP on a different
+         * path — so the connection sits idle for the whole conversation. The proxy chain in
+         * front of Asterisk (Traefik, then socat, then the gateway) drops an idle connection,
+         * and neither end notices: the browser still shows a phone, Asterisk still shows a
+         * contact, and the TCP is half-open. Then the far end hangs up, Asterisk tries to send
+         * BYE, and it fails with TRANSPORT_ERROR — measured on the box on 2026-07-26, where an
+         * INVITE to a freshly registered extension died in 2 ms with `Inv State: DISCONNCTD,
+         * Source of transaction state change is TRANSPORT_ERROR, Response 503`.
+         *
+         * The owner's symptom was exactly that: he hung up from his mobile after 15 s, Asterisk
+         * ended the channel (CDR billsec=14) and his screen counted on to 0:32.
+         *
+         * Traffic every 20 s stops the path idling out, and a failed write surfaces the death
+         * so `onDisconnect` can reconnect and re-register instead of leaving a phone that looks
+         * fine and cannot be reached.
+         */
+        transportOptions: { server: cred.wsUrl, keepAliveInterval: 20 },
         authorizationUsername: cred.extension,
         authorizationPassword: cred.password,
         displayName: cred.displayName || `ALMA ${cred.extension}`,
         // Audio only: this is a phone, and asking for camera permission would be alarming.
         sessionDescriptionHandlerFactoryOptions: { constraints: { audio: true, video: false } },
         delegate: {
+          /*
+           * RE-REGISTER ON EVERY RECONNECT. This is not housekeeping — without it the phone
+           * goes half-dead and says nothing.
+           *
+           * Asterisk cannot OPEN a websocket; it can only accept one. So the contact it stores
+           * at registration time is bound to that exact socket, and when the socket dies —
+           * a gateway restart, a network blip, a laptop lid — anything Asterisk needs to SEND
+           * lands nowhere: an incoming call never rings, and the BYE at the end of a call
+           * never arrives. Meanwhile everything the browser INITIATES still works over the new
+           * socket, so the phone looks fine. The owner hit precisely this on 2026-07-26: his
+           * outgoing call connected, the far end hung up, Asterisk tore the channel down at
+           * 18 s, and his screen kept counting to 0:29 until he hung up by hand.
+           *
+           * Registering again is what replaces the stale contact (the AOR is max_contacts=1,
+           * remove_existing=yes, so the new one evicts it).
+           */
+          onConnect: () => {
+            // Null on the very first connect — connect() happens inside ua.start(), before the
+            // Registerer exists, and that first registration is done explicitly below.
+            void registererRef.current?.register().catch(() => { /* the retry loop covers it */ })
+            patch({ error: null })
+          },
+          onDisconnect: () => {
+            // Never keep claiming "registered" while the socket is gone: a screen that asserts
+            // a working phone is worse than one that admits it is reconnecting.
+            patch({ status: 'connecting', error: null })
+            reconnect()
+          },
           onInvite: (invitation: Invitation) => {
             // Only one call at a time: a second one is rejected rather than silently ignored,
             // so the caller hears busy instead of ringing into nothing.
@@ -137,22 +211,46 @@ export function useSoftphone() {
         },
       })
       uaRef.current = ua
+      closingRef.current = false
       await ua.start()
-      const registerer = new Registerer(ua)
+      // A short expiry is the belt to the reconnect handler's braces: even if a reconnect is
+      // ever missed, Asterisk's contact goes stale for three minutes rather than for the ten
+      // that sip.js defaults to. The trunk taught this lesson expensively — a binding is only
+      // as honest as its refresh interval.
+      const registerer = new Registerer(ua, { expires: 180 })
       registererRef.current = registerer
       registerer.stateChange.addListener((s) => {
-        if (s === RegistererState.Registered) patch({ status: 'registered', extension: cred.extension })
-        if (s === RegistererState.Unregistered) patch({ status: 'idle' })
+        if (s === RegistererState.Registered) patch({ status: 'registered', extension: cred.extension, error: null })
+        // Only report "off" for a deliberate unregister. Losing the socket is a reconnect, not
+        // an idle phone, and onDisconnect has already put the UI in 'connecting'.
+        if (s === RegistererState.Unregistered && closingRef.current) patch({ status: 'idle' })
       })
       await registerer.register()
+
+      /*
+       * Our own keep-alive on top of the transport's, because sip.js marks `keepAliveInterval`
+       * as internal and it may quietly do nothing. A double CRLF is the SIP idiom for "still
+       * here" — Asterisk ignores the content and the bytes are what matter. A rejected write is
+       * the earliest honest signal that the socket is gone, and it hands straight to reconnect.
+       */
+      if (keepAliveRef.current) clearInterval(keepAliveRef.current)
+      keepAliveRef.current = setInterval(() => {
+        const t = uaRef.current?.transport
+        if (!t || closingRef.current) return
+        void Promise.resolve(t.send('\r\n\r\n')).catch(() => reconnect())
+      }, 25_000)
     } catch (err) {
       uaRef.current = null
       patch({ status: 'error', error: err instanceof Error ? err.message : String(err) })
     }
-  }, [patch, wireSession])
+  }, [patch, reconnect, wireSession])
 
   const disconnect = useCallback(async () => {
     stopTimer()
+    closingRef.current = true
+    if (reconnectRef.current.timer) { clearTimeout(reconnectRef.current.timer); reconnectRef.current.timer = null }
+    if (keepAliveRef.current) { clearInterval(keepAliveRef.current); keepAliveRef.current = null }
+    reconnectRef.current.tries = 0
     try { await registererRef.current?.unregister() } catch { /* */ }
     try { await uaRef.current?.stop() } catch { /* */ }
     registererRef.current = null

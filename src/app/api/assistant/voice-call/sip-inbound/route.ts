@@ -22,7 +22,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
 import { isOwnerNumber } from '@/agent/lib/voice-call'
 import { buildOwnerCallFacts } from '@/agent/lib/call-facts'
-import { dhakaHour } from '@/agent/lib/quiet-hours'
+import { decideInbound, isKnownCaller, readDidRoutes, readInboundSettings } from '@/agent/lib/phone-routing'
 
 export const runtime = 'nodejs'
 export const maxDuration = 20
@@ -45,64 +45,14 @@ function secretOk(provided: string): boolean {
   }
 }
 
-/**
- * Multi-DID (owner ask): each incoming DID can answer with its own persona and its own
- * forward number — the boss line runs the full assistant, a support/staff line answers as
- * the shop and forwards elsewhere. Configured without a redeploy via SIP_DID_MAP, e.g.
- *   SIP_DID_MAP={"09649777738":{"line":"boss"},"09649777739":{"line":"support","forward":"01XXXXXXXXX"}}
- * Unknown/absent DIDs fall back to the default assistant behaviour.
+/*
+ * Multi-DID and the time rules used to live here as three private helpers. They moved to
+ * `phone-routing.ts` in the console's step 4 for one reason: the ROUTING PREVIEW screen has
+ * to answer "a call from 01712345678 at 21:30 would reach …", and a preview that
+ * re-implements the rules is a second set of rules. The moment the two disagree the screen
+ * is lying — about the one thing (routing) whose bugs are invisible until a customer hits
+ * them. So the preview and this route now call the same `decideInbound()`.
  */
-type DidConfig = { line?: string; forward?: string; forwardBoss?: string; forwardSupport?: string; label?: string }
-function didConfig(did: string): DidConfig {
-  try {
-    const map = JSON.parse(process.env.SIP_DID_MAP ?? '{}') as Record<string, DidConfig>
-    const tail = (n: string) => n.replace(/\D/g, '').slice(-9)
-    if (map[did]) return map[did]
-    const hit = Object.entries(map).find(([k]) => tail(k) === tail(did))
-    return hit?.[1] ?? {}
-  } catch {
-    return {}
-  }
-}
-
-/**
- * Is the shop open right now (Asia/Dhaka)? Outside these hours the AI still answers — a
- * caller should never hear a dead line — but it says the office is closed and takes a
- * message instead of ringing staff who are not there. Owner-tunable without a redeploy via
- * the KV key `office_hours_dhaka` (e.g. "10-21"); env SIP_OFFICE_HOURS is the fallback.
- */
-async function officeOpenNow(): Promise<{ open: boolean; window: string }> {
-  let window = process.env.SIP_OFFICE_HOURS ?? '10-21'
-  try {
-    const kv = await db.agentKvSetting.findUnique({ where: { key: 'office_hours_dhaka' } })
-    if (typeof kv?.value === 'string' && /^\d{1,2}-\d{1,2}$/.test(kv.value.trim())) window = kv.value.trim()
-  } catch { /* env fallback */ }
-  const [fromRaw, toRaw] = window.split('-').map((x) => Number(x))
-  const from = Number.isFinite(fromRaw) ? fromRaw : 10
-  const to = Number.isFinite(toRaw) ? toRaw : 21
-  const h = dhakaHour()
-  // A window that wraps midnight (e.g. 22-6) is still handled correctly.
-  const open = from <= to ? h >= from && h < to : h >= from || h < to
-  return { open, window }
-}
-
-/**
- * Numbers we refuse outright. Nuisance callers should not reach the assistant at all —
- * every answered call costs Gemini minutes and, for a repeat caller, the owner's attention.
- * KV `blocked_callers` (comma-separated, matched on the last 9 digits so prefixes and
- * formatting cannot be used to slip past it); env SIP_BLOCKLIST is the fallback.
- */
-async function isBlockedCaller(caller: string): Promise<boolean> {
-  const tail = (n: string) => n.replace(/\D/g, '').slice(-9)
-  const target = tail(caller)
-  if (!target) return false
-  let raw = process.env.SIP_BLOCKLIST ?? ''
-  try {
-    const kv = await db.agentKvSetting.findUnique({ where: { key: 'blocked_callers' } })
-    if (typeof kv?.value === 'string' && kv.value.trim()) raw = kv.value
-  } catch { /* env fallback */ }
-  return raw.split(',').map((n) => tail(n)).filter(Boolean).includes(target)
-}
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -125,31 +75,33 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as { caller?: string; did?: string }
   const caller = String(body.caller ?? '').trim() || 'unknown'
   const did = String(body.did ?? '').trim()
-  const cfg = didConfig(did)
 
   // The whole reason for self-hosting: a REAL caller number, so the boss calling his own
   // line gets the full assistant (ERP tools + submit_boss_instruction), not the receptionist.
   const ownerCalling = caller !== 'unknown' && isOwnerNumber(caller)
 
+  // One decision, made by the same function the console's preview screen calls. Both reads
+  // are best-effort: an inbound call must never fail because a settings or routing lookup
+  // did, and every value falls back to the env var that used to control it.
+  const [settings, routes, known] = await Promise.all([
+    readInboundSettings(),
+    readDidRoutes().catch(() => []),
+    // Whether the agent already knows this number decides who picks up: a known caller gets
+    // the assistant straight away, an unknown one gets a human first. Best-effort — a failed
+    // lookup means "unknown", which errs toward a person answering rather than a machine.
+    ownerCalling ? Promise.resolve(true) : isKnownCaller(caller).catch(() => false),
+  ])
+  const decision = decideInbound({ caller, did, at: new Date(), owner: ownerCalling, known, settings, routes })
+  const cfg = decision.route
+
   // Blocked numbers are refused before anything is answered, so they cost nothing.
-  if (!ownerCalling && await isBlockedCaller(caller)) {
+  if (decision.blocked) {
     console.warn('[sip-inbound] blocked caller refused:', caller)
     return NextResponse.json({ ok: true, reject: true, reason: 'blocked' })
   }
 
-  // Human-PA point 7: transfer policy. 'direct' dials the team number; 'ask_first' makes
-  // the bot take a message + ping the boss instead of blind-transferring (KV-flipped).
-  let transferMode = 'direct'
-  try {
-    const kv = await db.agentKvSetting.findUnique({ where: { key: 'inbound_transfer_mode' } })
-    if (kv?.value === 'ask_first') transferMode = 'ask_first'
-  } catch { /* default */ }
-
-  // Outside office hours nobody is at the support line, so a blind transfer would ring an
-  // empty desk and drop the customer. Take the message instead — the boss himself is always
-  // allowed through, since he is calling his own assistant.
-  const office = await officeOpenNow()
-  if (!office.open && !ownerCalling) transferMode = 'ask_first'
+  const transferMode = decision.transferMode
+  const office = decision.time
 
   // Pre-create the row so the bot's post-call report has a target + the owner gets a summary.
   let recordId: string
@@ -173,13 +125,16 @@ export async function POST(req: NextRequest) {
   const exp = Date.now() + 15 * 60_000
   const t = createHmac('sha256', internalToken).update(`relay:${recordId}:${exp}`).digest('hex')
 
+  const lineLabel = cfg?.label ? ` (${cfg.label} লাইন)` : ''
   const purpose = ownerCalling
     ? 'Boss নিজে ফোন করেছেন — পূর্ণ সহকারী মোডে সালাম দিয়ে জিজ্ঞেস করো কী লাগবে; তথ্য চাইলে টুল দিয়ে দাও, কাজের নির্দেশ দিলে submit_boss_instruction-এ পাঠাও।'
     : !office.open
-      ? `ইনকামিং কল — এখন অফিস সময়ের বাইরে (অফিস সময় প্রতিদিন ${office.window} টা)। বিনয়ের সাথে সালাম দিয়ে বলো এখন অফিস বন্ধ, তারপর গ্রাহকের নাম, নম্বর ও প্রয়োজনটা মন দিয়ে জেনে নাও এবং আশ্বস্ত করো অফিস খুললেই টিম যোগাযোগ করবে। কাউকে ফোন যুক্ত করার প্রতিশ্রুতি দেবে না।`
-    : cfg.line === 'support'
-      ? `ইনকামিং কল${cfg.label ? ` (${cfg.label} লাইন)` : ''} — ALMA-র সাপোর্ট সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও।`
-      : 'ইনকামিং কল — ব্যবসার সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও'
+      // The AI now says WHY it is closed — "আজ ছুটির দিন" reads very differently from
+      // "এখন অফিস সময়ের বাইরে" to a customer, and the routing rules already know which.
+      ? `ইনকামিং কল${lineLabel} — এখন অফিস বন্ধ (${office.reason})। বিনয়ের সাথে সালাম দিয়ে সেটা জানাও, তারপর গ্রাহকের নাম, নম্বর ও প্রয়োজনটা মন দিয়ে জেনে নাও এবং আশ্বস্ত করো অফিস খুললেই টিম যোগাযোগ করবে। কাউকে ফোন যুক্ত করার প্রতিশ্রুতি দেবে না।`
+      : cfg?.line === 'support'
+        ? `ইনকামিং কল${lineLabel} — ALMA-র সাপোর্ট সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও।`
+        : 'ইনকামিং কল — ব্যবসার সহকারী হিসেবে সাহায্য করো এবং কী দরকার জেনে নাও'
 
   // The owner asks about his staff on these calls, and a name must never be improvised: a
   // mid-call tool round-trip is unreliable (Gemini Live drops a functionResponse that lands
@@ -200,14 +155,23 @@ export async function POST(req: NextRequest) {
       callType: ownerCalling ? 'owner' : 'inbound',
       transferMode,
       afterHours: !office.open,
+      // Who picks up, and for how long the team's phones ring first. The gateway resolves an
+      // empty ringGroup to "every browser phone open right now".
+      answerMode: decision.answerMode,
+      ringSecs: decision.ringSecs,
+      ringGroup: decision.ringGroup,
       // Where a live transfer can go. Self-hosted SIP lifted NGS's single-forward limit, so
       // the bot picks per call: customer-service topics reach the business line, and only a
       // caller who genuinely needs the owner reaches his personal number (owner rule
       // 2026-07-25 — a routine order question must never ring the boss's phone).
-      forwardSupport: cfg.forwardSupport ?? process.env.SIP_FORWARD_SUPPORT ?? '',
-      forwardBoss: cfg.forwardBoss ?? process.env.SIP_FORWARD_BOSS ?? process.env.NGS_FORWARD_NUMBER ?? '',
+      // A DID-specific override still wins; otherwise the console's setting, which itself
+      // falls back to the env vars these used to read directly.
+      // Resolved by decideInbound(): a DID-specific override wins, otherwise the console's
+      // setting, which itself falls back to the env vars these used to read directly.
+      forwardSupport: decision.forwardSupport,
+      forwardBoss: decision.forwardBoss,
       // Legacy single-target field, still honoured as a fallback by the bot.
-      ...(cfg.forward ? { forwardNumber: cfg.forward } : {}),
+      ...(cfg?.forward ? { forwardNumber: cfg.forward } : {}),
     },
   })
 }

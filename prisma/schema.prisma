@@ -2792,6 +2792,28 @@ model AgentKvSetting {
   @@map("agent_kv_settings")
 }
 
+/// The SIP provider's own panel credential, for the ONE thing only their side can answer:
+/// which PBX currently holds the registration binding. Our own Asterisk has reported
+/// "Registered (exp. 3227s)" while their table did not list us at all, and believing our
+/// side cost roughly half of all outbound calls for days.
+///
+/// Deliberately NOT in `agent_kv_settings`: the agent's own `get_settings` tool dumps that
+/// whole table, and a third party's password has no business passing through a model's
+/// context. The secret is stored AES-256-GCM encrypted and is never returned by any route.
+model PhoneProviderCredential {
+  id          String    @id @default("amarip")
+  username    String
+  secretEnc   String    @map("secret_enc") @db.Text
+  loginUrl    String?   @map("login_url")
+  statusUrl   String?   @map("status_url")
+  lastCheckAt DateTime? @map("last_check_at")
+  lastCheckOk Boolean?  @map("last_check_ok")
+  lastError   String?   @map("last_error") @db.Text
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@map("phone_provider_credentials")
+}
+
 // Skill Engine V2 (B4): one row per imported GitHub skill VERSION (pinned commit).
 // A `block`-verdict import is quarantined (status 'blocked') and never goes live;
 // clean imports move draft → reviewed → canary → active, with rollback via `supersedes`.

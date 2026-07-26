@@ -96,6 +96,9 @@ enum AlmaNativeRouter {
         case "/agent/whatsapp": return host(AgentWhatsappScreen(openWeb: openWebForced), "WhatsApp inbox")
         case "/agent/catalog-images": return host(CatalogImagesScreen(openWeb: openWebForced), "Product Images")
         case "/agent/creative-studio": return host(CreativeStudioScreen(openWeb: openWebForced), "Creative Studio")
+        // The VPS browser, live. Distinct from /agent/live-watch, which watches the
+        // companion inside the owner's OWN Chrome — different machine, different feed.
+        case "/agent/browser-live": return host(BrowserLiveScreen(), "Live Browser")
         case "/agent/trading-staff": return host(TradingStaffScreen(openWeb: openWebForced), "Trading staff")
         case "/agent/known-people": return host(KnownPeopleScreen(openWeb: openWebForced), "Known people")
         case "/agent/growth": return host(AgentGrowthScreen(openWeb: openWebForced), "Growth")
