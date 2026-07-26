@@ -43,6 +43,18 @@ export async function POST(req: NextRequest) {
       // One owner gesture — a click, a keystroke, a scroll. Passed straight
       // through; the VPS side is what validates and applies it.
       return callLive('/live/input', { method: 'POST', body: body.event ?? {}, timeoutMs: 15_000 })
+    case 'profiles':
+      return callLive('/profiles', { method: 'GET', timeoutMs: 20_000 })
+    case 'purge':
+      // Clearing saved logins is the owner's call, and deliberately reachable:
+      // a cleanup he cannot trigger himself is a cleanup he cannot trust.
+      return callLive('/profiles/purge', {
+        method: 'POST',
+        body: { key: body.key, all: body.all === true, cachesOnly: body.cachesOnly === true },
+        timeoutMs: 60_000,
+      })
+    case 'enforce':
+      return callLive('/profiles/enforce', { method: 'POST', timeoutMs: 60_000 })
     default:
       return Response.json({ error: `unknown action: ${action || '(none)'}` }, { status: 400 })
   }

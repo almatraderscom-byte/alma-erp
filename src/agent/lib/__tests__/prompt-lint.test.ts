@@ -54,6 +54,8 @@ const NON_TOOL_ALLOWLIST = new Set([
   // Browser driver values the prompt must name so the head can pass them
   // (run_browser_task `driver`): vps / vps_live / companion.
   'vps_live',
+  // manage_browser_logins action values.
+  'clear_cache', 'clear_site', 'clear_all',
 ])
 
 function snakeTokens(text: string): string[] {

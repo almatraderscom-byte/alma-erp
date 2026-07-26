@@ -52,6 +52,9 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   // (it takes effect immediately, no card of its own) and medium risk, because
   // what it changes is how much of the approval gate applies to later tasks.
   allow_browser_for_this_chat: write('browser', 'medium'),
+  // Reads or DELETES saved site logins on the VPS. The read is harmless; the
+  // clears log the owner out of a site, so it carries the higher risk of the two.
+  manage_browser_logins: write('browser', 'medium'),
   list_browser_recipes: read('browser'),
   run_browser_recipe: stage('browser'),
   save_learned_recipe: write('browser'),

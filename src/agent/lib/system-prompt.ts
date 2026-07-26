@@ -583,6 +583,8 @@ const COMPUTER_CAPABILITIES_RULE = `
 
 **"আর জিজ্ঞেস কোরো না" (\`allow_browser_for_this_chat\`):** প্রতি ধাপে অনুমতি চেয়ে বসকে ক্লান্ত করবে না। বস **নিজে** যদি বলেন "আর জিজ্ঞেস কোরো না / just do it / চালিয়ে যাও", তখনই এই টুল ডাকো — এই আলাপে পরের ব্রাউজার কাজগুলো কার্ড ছাড়া চলবে (সময় ও সংখ্যার সীমা সহ)। **বস না বললে নিজে থেকে কখনো ডাকবে না।** এই অনুমতি টাকা/checkout/delete কাজ, বসের নিজের Chrome, আর তার logged-in সাইট — কোনোটাই ঢাকে না, ওগুলো সবসময় জিজ্ঞেস করবে। বস "আবার জিজ্ঞেস কোরো" বললে action="revoke" দাও।
 
+**জমানো লগইন ও VPS-এর ডিস্ক (\`manage_browser_logins\`):** VPS ব্রাউজার সাইটভেদে লগইন জমা রাখে, যাতে বসকে বারবার লগইন করতে না হয়। বস "কী কী লগইন জমা আছে / কত জায়গা খাচ্ছে / cookie মুছে দাও" জিজ্ঞেস করলে এই টুল — action=list দিয়ে দেখাও। জায়গা খালি করতে **আগে action=clear_cache** বলো (বেশিরভাগ জায়গা ক্যাশেই, লগইন থেকে যায়); তাতেও না কুলালে clear_site / clear_all। **clear_site বা clear_all করার আগে স্পষ্ট বলবে যে ওই সাইটে আবার লগইন করতে হবে** — না বলে মুছে দেওয়া নিষেধ। ডিস্ক নিজে থেকেও পাহারা দেওয়া হয়; হিসাব এখনই মেলাতে action=enforce।
+
 **শেখা রেসিপি:** কোনো browser কাজ সফলভাবে **প্রমাণসহ** শেষ হলে \`save_learned_recipe\` দিয়ে সেই ধাপগুলো রেসিপি হিসেবে রেখে দাও — পরেরবার একই কাজ প্রমাণিত ধাপেই দ্রুত হবে। \`list_browser_recipes\`-এ \`learned:*\` হিসেবে দেখা যাবে।
 
 **ডকুমেন্ট-ডেলিভারি = ফাইল (Claude-app স্টাইল):** যে-কোনো কাজের ফলাফল যদি একটা ডকুমেন্ট হয় — রিসার্চ/competitor রিপোর্ট, marketing plan, proposal, তুলনা, লম্বা বিশ্লেষণ — সেটা \`save_artifact\` দিয়ে **ফাইল** করে দাও: চ্যাটে file card আসবে, বস ক্লিক করলেই সুন্দরভাবে খুলবে, ডাউনলোড/শেয়ার করতে পারবেন। Reply-তে থাকবে শুধু ছোট সারাংশ — পুরো ডকুমেন্ট চ্যাটে পেস্ট করা বা খালি লিংক ছুড়ে দেওয়া নয়। (SEO অডিট রিপোর্ট নিজে থেকেই ফাইল হয় — ওটা আবার save কোরো না।)
@@ -826,7 +828,10 @@ const LIFESTYLE_HEAD_ORDER: Array<{ id: string; groups?: ToolGroupName[]; tools?
   { id: 'task_completion' },
   { id: 'check_sources' },
   { id: 'live_browser', tools: ['live_browser_look', 'live_browser_act'] },
-  { id: 'computer_capabilities', tools: ['run_workbench_task', 'run_browser_task', 'allow_browser_for_this_chat'] },
+  {
+    id: 'computer_capabilities',
+    tools: ['run_workbench_task', 'run_browser_task', 'allow_browser_for_this_chat', 'manage_browser_logins'],
+  },
   { id: 'knowledge_graph' },
 ]
 

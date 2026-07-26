@@ -34,6 +34,15 @@
  */
 import http from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
+import {
+  ensureProfile,
+  enforceProfileBudget,
+  listProfiles,
+  purgeAllProfiles,
+  purgeProfile,
+  totalBytes,
+  trimProfileCaches,
+} from './profile-store.mjs'
 
 const PORT = Number(process.env.BROWSER_LIVE_PORT ?? 8781)
 const BIND = process.env.BROWSER_LIVE_BIND ?? '0.0.0.0'
@@ -112,7 +121,7 @@ async function callInProgress() {
 
 // ─── session lifecycle ───────────────────────────────────────────────────────
 
-async function startSession({ startUrl, goal }) {
+async function startSession({ startUrl, goal, profile }) {
   if (session) return { ok: false, error: 'a live session is already running' }
   if (await callInProgress()) {
     return { ok: false, error: 'a call is in progress — live browsing is paused so the call audio stays clean' }
@@ -125,16 +134,41 @@ async function startSession({ startUrl, goal }) {
     return { ok: false, error: 'playwright_not_installed' }
   }
 
-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] })
-  const context = await browser.newContext({ viewport: VIEWPORT })
-  const page = await context.newPage()
+  const launchArgs = ['--no-sandbox', '--disable-dev-shm-usage']
+  let context
+  let close
+  let profileKey = null
+  let budget = null
+
+  if (profile) {
+    // A named profile keeps its cookies between sessions — that is what makes
+    // "log in once" mean anything. The budget is enforced inside ensureProfile,
+    // BEFORE the directory is used, so a new login cannot fill the disk.
+    const prepared = await ensureProfile(profile)
+    profileKey = prepared.key
+    budget = prepared.budget
+    context = await chromium.launchPersistentContext(prepared.dir, {
+      headless: true,
+      args: launchArgs,
+      viewport: VIEWPORT,
+    })
+    close = () => context.close()
+  } else {
+    const browser = await chromium.launch({ headless: true, args: launchArgs })
+    context = await browser.newContext({ viewport: VIEWPORT })
+    close = () => browser.close()
+  }
+
+  const page = context.pages()[0] ?? (await context.newPage())
+  await page.setViewportSize(VIEWPORT).catch(() => {})
   const cdp = await context.newCDPSession(page)
 
   const id = `live_${Date.now().toString(36)}`
   session = {
     id,
     goal: String(goal ?? ''),
-    browser,
+    profileKey,
+    close,
     context,
     page,
     cdp,
@@ -223,7 +257,7 @@ async function startSession({ startUrl, goal }) {
   )
 
   log(`session ${id} started${startUrl ? ` at ${startUrl}` : ''}`)
-  return { ok: true, sessionId: id, viewport: VIEWPORT }
+  return { ok: true, sessionId: id, viewport: VIEWPORT, profile: profileKey, budget }
 }
 
 function pause(reason) {
@@ -266,7 +300,7 @@ async function stopSession(reason) {
       /* client already gone */
     }
   }
-  await current.browser.close().catch(() => {})
+  await current.close().catch(() => {})
   log(`session ${current.id} closed — ${reason ?? 'closed'}`)
   return { ok: true }
 }
@@ -354,6 +388,7 @@ function status() {
     running: true,
     sessionId: session.id,
     goal: session.goal,
+    profile: session.profileKey,
     paused: session.paused,
     pauseReason: session.pauseReason,
     viewers: session.clients.size,
@@ -389,6 +424,34 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse((await readBody(req)) || '{}')
       const result = await applyInput(body)
       return json(res, result.ok ? 200 : 400, result)
+    }
+
+    // ── saved logins on disk ─────────────────────────────────────────────────
+    // A cleanup the owner cannot trigger himself is a cleanup he cannot trust,
+    // so what is stored, what it costs, and how to drop it are all first-class.
+    if (url.pathname === '/profiles' && req.method === 'GET') {
+      const profiles = await listProfiles()
+      return json(res, 200, {
+        profiles: profiles.map(({ key, bytes, lastUsedAt }) => ({ key, bytes, lastUsedAt })),
+        totalBytes: profiles.reduce((s, p) => s + p.bytes, 0),
+      })
+    }
+
+    if (url.pathname === '/profiles/purge' && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}')
+      // A profile in use by the running session would come back half-deleted.
+      if (session?.profileKey && (body.all || session.profileKey === body.key)) {
+        await stopSession('profile cleared by the owner')
+      }
+      if (body.all) return json(res, 200, await purgeAllProfiles())
+      if (!body.key) return json(res, 400, { error: 'key or all is required' })
+      // 'cachesOnly' is the gentle option: frees the bulk, keeps the login.
+      const freed = body.cachesOnly ? await trimProfileCaches(body.key) : await purgeProfile(body.key)
+      return json(res, 200, { freed, key: body.key, keptLogin: Boolean(body.cachesOnly) })
+    }
+
+    if (url.pathname === '/profiles/enforce' && req.method === 'POST') {
+      return json(res, 200, { ...(await enforceProfileBudget()), totalBytes: await totalBytes() })
     }
 
     if (url.pathname === '/live/stream' && req.method === 'GET') {
