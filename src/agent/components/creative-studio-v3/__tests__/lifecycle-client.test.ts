@@ -3,7 +3,10 @@ import {
   createStudioV3LifecycleClient,
   type StudioV3LifecycleWorkspace,
 } from '@/agent/components/creative-studio-v3/lifecycle-client'
-import { lifecyclePresentation } from '@/agent/components/creative-studio-v3/lifecycle-policy'
+import {
+  lifecyclePresentation,
+  lifecycleReviewReadiness,
+} from '@/agent/components/creative-studio-v3/lifecycle-policy'
 
 const rollout = {
   enabled: true,
@@ -186,9 +189,10 @@ describe('Creative Studio V3 Lifecycle client', () => {
         },
       }, 201))
     const client = createStudioV3LifecycleClient()
-    await client.previewLocal({ ...pinned, kind: 'render' })
+    await client.previewLocal({ ...pinned, actorRole: 'owner', kind: 'render' })
     await client.queueLocal({
       ...pinned,
+      actorRole: 'owner',
       kind: 'export',
       idempotencyKey: 'lifecycle:export:test-1',
     })
@@ -206,7 +210,73 @@ describe('Creative Studio V3 Lifecycle client', () => {
       expect(body).not.toHaveProperty('confirmedPaidExecution')
       expect(body).not.toHaveProperty('provider')
       expect(body).not.toHaveProperty('publish')
+      expect(body).not.toHaveProperty('actorRole')
     }
+  })
+
+  it('keeps the client role as presentation-only and omits it from owner flag mutations', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValueOnce(response({
+      idempotent: false,
+      flag: { id: 'flag-1', enabled: false },
+    }, 201))
+    const client = createStudioV3LifecycleClient()
+    await client.configureFlag({
+      ...scope,
+      actorRole: 'owner',
+      role: 'creator',
+      capability: 'preview',
+      enabled: false,
+      canaryPercent: 0,
+      dualReadEnabled: false,
+      legacyFallbackEnabled: true,
+      idempotencyKey: 'lifecycle:owner:flag-1',
+    })
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+    expect(body).toMatchObject({
+      role: 'creator',
+      capability: 'preview',
+      enabled: false,
+    })
+    expect(body).not.toHaveProperty('actorRole')
+  })
+
+  it('uses the owner-only Lifecycle Review route with exact pins and no serialized role', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValueOnce(response({
+      review: {
+        assetId: 'asset-1',
+        currentState: 'approved',
+        currentSequence: 8,
+        publishReady: true,
+      },
+    }))
+    const client = createStudioV3LifecycleClient()
+    await client.transitionReview({
+      ...scope,
+      actorRole: 'owner',
+      assetId: 'asset-1',
+      targetState: 'approved',
+      expectedSequence: 7,
+      note: 'Exact pin approved',
+      compositionId: 'composition-1',
+      compositionVersionId: 'composition-version-4',
+    })
+
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      '/api/assistant/creative-studio/lifecycle/review/asset-1',
+    )
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'PATCH' })
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+    expect(body).toEqual({
+      brandProfileId: 'brand-1',
+      targetState: 'approved',
+      expectedSequence: 7,
+      note: 'Exact pin approved',
+      compositionId: 'composition-1',
+      compositionVersionId: 'composition-version-4',
+    })
+    expect(body).not.toHaveProperty('actorRole')
   })
 
   it('has no live-publish execution method and blocks live flag enable before fetch', async () => {
@@ -217,6 +287,7 @@ describe('Creative Studio V3 Lifecycle client', () => {
     expect(client).not.toHaveProperty('voice')
     await expect(client.configureFlag({
       ...scope,
+      actorRole: 'owner',
       role: 'owner',
       capability: 'live_publish',
       enabled: true,
@@ -229,6 +300,83 @@ describe('Creative Studio V3 Lifecycle client', () => {
     })
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  it.each(['creator', 'reviewer'] as const)(
+    'rejects every %s mutation before issuing a public request while preserving GET methods',
+    async (actorRole) => {
+      const fetchMock = vi.mocked(fetch)
+      const client = createStudioV3LifecycleClient()
+      const pinned = {
+        ...scope,
+        actorRole,
+        compositionId: 'composition-1',
+        compositionVersionId: 'composition-version-4',
+        sourceArtifactVersionId: 'asset-version-7',
+      }
+
+      await expect(client.previewLocal({
+        ...pinned,
+        kind: 'render',
+      })).rejects.toMatchObject({
+        code: 'lifecycle_owner_required',
+        status: 403,
+      })
+      await expect(client.transitionReview({
+        ...scope,
+        actorRole,
+        assetId: 'asset-1',
+        targetState: 'approved',
+        expectedSequence: 7,
+        compositionId: 'composition-1',
+        compositionVersionId: 'composition-version-4',
+      })).rejects.toMatchObject({ code: 'lifecycle_owner_required' })
+      await expect(client.queueLocal({
+        ...pinned,
+        kind: 'render',
+        idempotencyKey: `lifecycle:${actorRole}:render-1`,
+      })).rejects.toMatchObject({ code: 'lifecycle_owner_required' })
+      await expect(client.queueLocal({
+        ...pinned,
+        kind: 'export',
+        idempotencyKey: `lifecycle:${actorRole}:export-1`,
+      })).rejects.toMatchObject({ code: 'lifecycle_owner_required' })
+      await expect(client.controlJob({
+        actorRole,
+        jobId: 'job-owner-1',
+        intent: 'cancel',
+        idempotencyKey: `lifecycle:${actorRole}:cancel-1`,
+      })).rejects.toMatchObject({ code: 'lifecycle_owner_required' })
+      await expect(client.controlJob({
+        actorRole,
+        jobId: 'job-owner-1',
+        intent: 'retry',
+        idempotencyKey: `lifecycle:${actorRole}:retry-1`,
+      })).rejects.toMatchObject({ code: 'lifecycle_owner_required' })
+      await expect(client.configureFlag({
+        ...scope,
+        actorRole,
+        role: actorRole,
+        capability: 'preview',
+        enabled: false,
+        canaryPercent: 0,
+        dualReadEnabled: false,
+        legacyFallbackEnabled: true,
+        idempotencyKey: `lifecycle:${actorRole}:flag-1`,
+      })).rejects.toMatchObject({ code: 'lifecycle_owner_required' })
+
+      expect(fetchMock).not.toHaveBeenCalled()
+      fetchMock.mockResolvedValueOnce(response(workspace()))
+      await expect(client.loadWorkspace(scope)).resolves.toMatchObject({
+        jobs: [],
+        operations: { queuedJobs: 0 },
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock.mock.calls[0][1]).toMatchObject({
+        method: 'GET',
+        cache: 'no-store',
+      })
+    },
+  )
 })
 
 describe('Lifecycle role presentation', () => {
@@ -241,6 +389,7 @@ describe('Lifecycle role presentation', () => {
       workspace: loaded,
     })).toMatchObject({
       enabled: true,
+      executable: false,
       ownerMutation: false,
       status: 'Read only',
     })
@@ -250,6 +399,7 @@ describe('Lifecycle role presentation', () => {
       workspace: loaded,
     })).toMatchObject({
       enabled: true,
+      executable: false,
       ownerMutation: false,
       status: 'Read only',
     })
@@ -278,5 +428,35 @@ describe('Lifecycle role presentation', () => {
       executable: false,
       status: 'Hard off',
     })
+  })
+})
+
+describe('Lifecycle Review readiness presentation', () => {
+  it('renders a missing composition pin as explicitly not publish-ready', () => {
+    expect(lifecycleReviewReadiness({
+      publishReady: false,
+      approvalInvalidatedReason: 'composition_pin_missing',
+    })).toEqual({
+      status: 'Pin missing · not publish-ready',
+      invalidation: 'Composition pin missing',
+    })
+    expect(lifecycleReviewReadiness({
+      publishReady: true,
+      approvalInvalidatedReason: 'composition_pin_missing',
+    }).status).not.toBe('Exact pin current')
+  })
+
+  it('uses exact-current copy only for an uninvalidated publish-ready pin', () => {
+    expect(lifecycleReviewReadiness({
+      publishReady: true,
+      approvalInvalidatedReason: null,
+    })).toEqual({
+      status: 'Exact pin current',
+      invalidation: 'None reported',
+    })
+    expect(lifecycleReviewReadiness({
+      publishReady: false,
+      approvalInvalidatedReason: 'approved_composition_version_stale',
+    }).status).toBe('Not publish-ready')
   })
 })

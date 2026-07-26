@@ -128,6 +128,21 @@ function cleanNote(value: unknown, required = false): string | null {
   return note || null
 }
 
+function hasCompleteCompositionPin(input: {
+  approvedCompositionId: string | null
+  approvedCompositionVersionId: string | null
+  approvedCompositionVersion: number | null
+  approvedCompositionDocumentHash: string | null
+}): boolean {
+  return Boolean(
+    input.approvedCompositionId?.trim()
+    && input.approvedCompositionVersionId?.trim()
+    && Number.isInteger(input.approvedCompositionVersion)
+    && Number(input.approvedCompositionVersion) > 0
+    && /^[a-f0-9]{64}$/i.test(input.approvedCompositionDocumentHash ?? ''),
+  )
+}
+
 export function normalizeStudioReviewState(value: unknown): StudioReviewState {
   return reviewState(value)
 }
@@ -267,6 +282,13 @@ function serializeThread(
   const approvedCompositionVersionId = approvalEvent?.approvedCompositionVersionId ?? null
   const approvedCompositionVersion = approvalEvent?.approvedCompositionVersion ?? null
   const approvedCompositionDocumentHash = approvalEvent?.approvedCompositionDocumentHash ?? null
+  const compositionPinComplete = hasCompleteCompositionPin({
+    approvedCompositionId,
+    approvedCompositionVersionId,
+    approvedCompositionVersion,
+    approvedCompositionDocumentHash,
+  })
+  const compositionPinMissing = currentState === 'approved' && !compositionPinComplete
 
   return {
     assetId: String(row.id),
@@ -283,10 +305,13 @@ function serializeThread(
     approvedCompositionVersionId,
     approvedCompositionVersion,
     approvedCompositionDocumentHash,
-    approvalInvalidatedReason: null,
+    approvalInvalidatedReason: compositionPinMissing
+      ? 'composition_pin_missing'
+      : null,
     publishReady: currentState === 'approved'
       && Boolean(latestVersionId)
-      && latestVersionId === approvedVersionId,
+      && latestVersionId === approvedVersionId
+      && compositionPinComplete,
     role: access.role,
     approvalSpendThresholdBdt: access.approvalSpendThresholdBdt,
     capabilities: {
@@ -318,14 +343,7 @@ export async function getStudioReviewThread(
 ): Promise<StudioReviewThread> {
   const { row, access } = await loadReviewContext(actor, assetId, brandProfileId)
   const thread = serializeThread(row, access)
-  if (!thread.approvedCompositionId && !thread.approvedCompositionVersionId) return thread
-  if (!thread.approvedCompositionId || !thread.approvedCompositionVersionId) {
-    return {
-      ...thread,
-      publishReady: false,
-      approvalInvalidatedReason: 'approval_composition_pin_incomplete',
-    }
-  }
+  if (!hasCompleteCompositionPin(thread)) return thread
   const [composition, version] = await Promise.all([
     db.creativeComposition.findUnique({ where: { id: thread.approvedCompositionId } }),
     db.creativeCompositionVersion.findUnique({

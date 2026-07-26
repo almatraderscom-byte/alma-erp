@@ -18,6 +18,7 @@ import {
   type StudioV3LifecycleWorkspace,
 } from '@/agent/components/creative-studio-v3/lifecycle-client'
 import {
+  lifecycleReviewReadiness,
   studioV3LifecycleIdempotencyKey,
   STUDIO_V3_LIFECYCLE_ROLE_LABEL,
 } from '@/agent/components/creative-studio-v3/lifecycle-policy'
@@ -193,6 +194,7 @@ export function StudioV3LifecycleReview({
       : null
   ), [activeBrand.brandProfileId, pin, project.id, review])
   const owner = activeBrand.role === 'owner'
+  const reviewReadiness = lifecycleReviewReadiness(review)
   const canApprove = owner
     && Boolean(review?.capabilities.approve)
     && (review?.currentState === 'draft' || review?.currentState === 'revised')
@@ -218,6 +220,7 @@ export function StudioV3LifecycleReview({
     setError(null)
     try {
       const updated = await port.transitionReview({
+        actorRole: activeBrand.role,
         assetId: reviewItem.projectAssetId,
         brandProfileId: activeBrand.brandProfileId,
         targetState,
@@ -241,11 +244,15 @@ export function StudioV3LifecycleReview({
   }
 
   const previewLocal = async (kind: 'render' | 'export') => {
-    if (!pinnedRequest) return
+    if (!pinnedRequest || !owner) return
     setBusy(`preview:${kind}`)
     setError(null)
     try {
-      setPreview(await port.previewLocal({ ...pinnedRequest, kind }))
+      setPreview(await port.previewLocal({
+        ...pinnedRequest,
+        actorRole: activeBrand.role,
+        kind,
+      }))
     } catch (reason) {
       setPreview(null)
       setError(reason instanceof Error ? reason.message : 'Lifecycle preview failed.')
@@ -261,6 +268,7 @@ export function StudioV3LifecycleReview({
     try {
       await port.queueLocal({
         ...pinnedRequest,
+        actorRole: activeBrand.role,
         kind,
         idempotencyKey: studioV3LifecycleIdempotencyKey(
           `${kind}:${pin?.compositionVersionId ?? 'current'}`,
@@ -328,11 +336,11 @@ export function StudioV3LifecycleReview({
 
       <dl className={styles.lifecycleFacts}>
         <div><dt>Review state</dt><dd>{review?.currentState.replace('_', ' ') ?? 'Not hydrated'}</dd></div>
-        <div><dt>Publish ready</dt><dd>{review?.publishReady ? 'Exact pin current' : 'No'}</dd></div>
+        <div><dt>Publish ready</dt><dd>{reviewReadiness.status}</dd></div>
         <div><dt>Composition version</dt><dd>{pin?.compositionVersionId ?? 'Pin not validated'}</dd></div>
         <div><dt>Artifact version</dt><dd>{pin?.artifactVersionId ?? reviewItem.currentVersionId}</dd></div>
         <div><dt>Approval event</dt><dd>{latestPinnedApproval(review)?.id ?? 'No current pinned approval'}</dd></div>
-        <div><dt>Invalidation</dt><dd>{review?.approvalInvalidatedReason ?? 'None reported'}</dd></div>
+        <div><dt>Invalidation</dt><dd>{reviewReadiness.invalidation}</dd></div>
       </dl>
 
       {!owner && (
@@ -386,7 +394,7 @@ export function StudioV3LifecycleReview({
       <div className={styles.lifecycleActions}>
         <button
           className={styles.secondaryButton}
-          disabled={!pinnedRequest || !workspace?.rollouts.preview.enabled || busy !== null}
+          disabled={!owner || !pinnedRequest || !workspace?.rollouts.preview.enabled || busy !== null}
           onClick={() => void previewLocal('render')}
           type="button"
         >

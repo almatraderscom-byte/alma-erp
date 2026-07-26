@@ -151,9 +151,17 @@ uses focused production ports for:
   them;
 - access-scoped Foundation composition discovery and a server-resolved exact
   composition/artifact pin;
-- owner-only approval with the exact current composition version; the
-  authoritative Review API reports `approved_composition_version_stale` after
-  an edit, and V3 disables Lifecycle actions rather than inferring approval;
+- owner-only V3 Lifecycle approval through the dedicated authenticated
+  `/lifecycle/review/[asset]` boundary, which re-derives brand access before
+  requiring a primitive validated transition state, an explicit non-negative
+  integer sequence and, for approval, both non-empty composition pin IDs before
+  delegating to the durable CSE6 workflow;
+  the shared CSE6 Creator-draft/revise and Reviewer-comment/request-changes
+  routes remain unchanged. The authoritative Review API reports
+  `composition_pin_missing` for legacy or partial approvals and
+  `approved_composition_version_stale` after an edit; both states are not
+  publish-ready and V3 disables Lifecycle actions rather than inferring
+  approval;
 - server-side zero-effect preview and owner-only zero-cost local
   render/export job creation using only the registered
   `composition-manifest-v1` JSON renderer;
@@ -161,8 +169,10 @@ uses focused production ports for:
   reads and mutations, and owner-only cancel/retry controls.
 
 Creator and reviewer desks are read-only. They can inspect exact pins,
-rollouts, jobs, missing telemetry, and a no-job preview, but V3 exposes no
-review, queue, control, or flag mutation to them.
+rollouts, jobs, and missing telemetry, but V3 exposes no preview command,
+review, queue, control, or flag mutation to them. The public Lifecycle service
+re-derives that owner boundary server-side; the client role check is only a
+fail-fast presentation guard.
 
 Preview, render, export, dry run, schedule, and live publish remain visibly
 distinct. Dry run and schedule truthfully report that the accepted typed intent

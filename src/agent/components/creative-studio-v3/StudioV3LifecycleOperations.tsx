@@ -98,6 +98,7 @@ export function StudioV3LifecycleOperations({
     setError(null)
     try {
       const result = await port.configureFlag({
+        actorRole: activeBrand.role,
         brandProfileId: activeBrand.brandProfileId,
         projectId: project.id,
         role: targetRole,
@@ -125,6 +126,7 @@ export function StudioV3LifecycleOperations({
     setError(null)
     try {
       await port.controlJob({
+        actorRole: activeBrand.role,
         jobId: job.id,
         intent,
         idempotencyKey: studioV3LifecycleIdempotencyKey(`${intent}:${job.id}`),

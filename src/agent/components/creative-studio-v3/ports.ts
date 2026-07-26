@@ -15,7 +15,6 @@ import type {
   StudioHealth,
   StudioMusicTrack,
   StudioRetentionDashboard,
-  StudioReviewState,
   StudioReviewThread,
   StudioSettings,
   StudioRunEstimateClient,
@@ -71,15 +70,6 @@ export interface CreativeStudioV3ProductionPort
     projectId: string
   }): Promise<CreativeCompositionSummary[]>
   getReview(assetId: string, brandProfileId: string): Promise<StudioReviewThread>
-  transitionReview(input: {
-    assetId: string
-    brandProfileId: string
-    targetState: StudioReviewState
-    expectedSequence: number
-    note?: string
-    compositionId?: string
-    compositionVersionId?: string
-  }): Promise<StudioReviewThread>
   listModels(brandProfileId?: string | null, projectId?: string | null): Promise<SavedStudioModel[]>
   listGallery(query?: GalleryQuery, brandProfileId?: string | null, projectId?: string | null): Promise<GalleryPage>
   listVoices(brandProfileId?: string | null, projectId?: string | null): Promise<CreativeVoiceClient[]>

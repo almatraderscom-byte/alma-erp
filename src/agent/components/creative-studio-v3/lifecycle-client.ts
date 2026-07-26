@@ -7,6 +7,8 @@ import type { StudioLifecycleRolloutDecision } from '@/lib/creative-studio/lifec
 import {
   StudioClientError,
   studioRequest,
+  type StudioReviewState,
+  type StudioReviewThread,
 } from '@/agent/components/creative-studio/studio-api'
 
 export const STUDIO_V3_LIFECYCLE_CAPABILITIES = [
@@ -95,14 +97,27 @@ export type StudioV3LifecycleClient = {
     compositionId: string
     artifactVersionId: string
   }): Promise<StudioCompositionPin>
+  transitionReview(input: {
+    actorRole: StudioV3LifecycleRole
+    assetId: string
+    brandProfileId: string
+    targetState: StudioReviewState
+    expectedSequence: number
+    note?: string
+    compositionId?: string
+    compositionVersionId?: string
+  }): Promise<StudioReviewThread>
   previewLocal(input: StudioV3LifecyclePinnedRequest & {
+    actorRole: StudioV3LifecycleRole
     kind: StudioV3LifecycleJobKind
   }): Promise<StudioV3LifecyclePreview>
   queueLocal(input: StudioV3LifecyclePinnedRequest & {
+    actorRole: StudioV3LifecycleRole
     kind: StudioV3LifecycleJobKind
     idempotencyKey: string
   }): Promise<{ job: LifecycleJobView; idempotent: boolean }>
   controlJob(input: {
+    actorRole: StudioV3LifecycleRole
     jobId: string
     intent: 'cancel' | 'retry'
     idempotencyKey: string
@@ -114,6 +129,7 @@ export type StudioV3LifecycleClient = {
     capability: StudioV3LifecycleCapability
   }): Promise<StudioV3LifecycleFlagsResponse>
   configureFlag(input: {
+    actorRole: StudioV3LifecycleRole
     brandProfileId: string
     projectId: string
     role: StudioV3LifecycleRole
@@ -174,6 +190,18 @@ function assertJobScope(
   return job
 }
 
+function assertOwnerClientMutation(actorRole: StudioV3LifecycleRole): void {
+  // This is presentation fail-fast only. The server always re-derives the
+  // authenticated actor's exact brand role and remains the authority.
+  if (actorRole !== 'owner') {
+    throw new StudioClientError(
+      'Lifecycle mutations require Owner access.',
+      403,
+      'lifecycle_owner_required',
+    )
+  }
+}
+
 function pinnedBody(
   input: StudioV3LifecyclePinnedRequest & {
     kind: StudioV3LifecycleJobKind
@@ -232,7 +260,33 @@ export function createStudioV3LifecycleClient(): StudioV3LifecycleClient {
       return pin
     },
 
+    async transitionReview(input) {
+      assertOwnerClientMutation(input.actorRole)
+      const response = await studioRequest<{ review: StudioReviewThread }>(
+        `${LIFECYCLE_API}/review/${encodeURIComponent(input.assetId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            brandProfileId: input.brandProfileId,
+            targetState: input.targetState,
+            expectedSequence: input.expectedSequence,
+            ...(input.note ? { note: input.note } : {}),
+            ...(input.compositionId
+              ? { compositionId: input.compositionId }
+              : {}),
+            ...(input.compositionVersionId
+              ? { compositionVersionId: input.compositionVersionId }
+              : {}),
+          }),
+        },
+        'lifecycle_review_transition_failed',
+      )
+      return response.review
+    },
+
     async previewLocal(input) {
+      assertOwnerClientMutation(input.actorRole)
       const response = await studioRequest<{ preview: StudioV3LifecyclePreview }>(
         LIFECYCLE_API,
         {
@@ -264,6 +318,7 @@ export function createStudioV3LifecycleClient(): StudioV3LifecycleClient {
     },
 
     async queueLocal(input) {
+      assertOwnerClientMutation(input.actorRole)
       const response = await studioRequest<{
         job: LifecycleJobView
         idempotent: boolean
@@ -295,7 +350,8 @@ export function createStudioV3LifecycleClient(): StudioV3LifecycleClient {
       return { ...response, job }
     },
 
-    controlJob(input) {
+    async controlJob(input) {
+      assertOwnerClientMutation(input.actorRole)
       return studioRequest(
         `${LIFECYCLE_API}/${encodeURIComponent(input.jobId)}`,
         {
@@ -320,6 +376,7 @@ export function createStudioV3LifecycleClient(): StudioV3LifecycleClient {
     },
 
     async configureFlag(input) {
+      assertOwnerClientMutation(input.actorRole)
       if (input.capability === 'live_publish' && input.enabled) {
         throw new StudioClientError(
           'Live publish stays hard-disabled in the V3 zero-cost rollout.',
@@ -332,7 +389,17 @@ export function createStudioV3LifecycleClient(): StudioV3LifecycleClient {
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(input),
+          body: JSON.stringify({
+            brandProfileId: input.brandProfileId,
+            projectId: input.projectId,
+            role: input.role,
+            capability: input.capability,
+            enabled: input.enabled,
+            canaryPercent: input.canaryPercent,
+            dualReadEnabled: input.dualReadEnabled,
+            legacyFallbackEnabled: input.legacyFallbackEnabled,
+            idempotencyKey: input.idempotencyKey,
+          }),
         },
         'lifecycle_flag_update_failed',
       )

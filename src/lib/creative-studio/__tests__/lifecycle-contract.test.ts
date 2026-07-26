@@ -43,9 +43,24 @@ const foundation: StudioFoundationLifecyclePort = {
 
 describe('V3 lifecycle boundary', () => {
   it('enforces role capabilities before the Foundation port is used', () => {
-    expect(() => assertStudioLifecycleCapability('reviewer', 'render')).toThrow('studio_lifecycle_forbidden')
-    expect(() => assertStudioLifecycleCapability('creator', 'live_publish')).toThrow(StudioLifecycleError)
+    for (const role of ['creator', 'reviewer'] as const) {
+      for (const capability of [
+        'preview',
+        'render',
+        'export',
+        'cancel',
+        'retry',
+        'live_publish',
+      ] as const) {
+        expect(() => assertStudioLifecycleCapability(role, capability))
+          .toThrow('studio_lifecycle_forbidden')
+      }
+      expect(() => assertStudioLifecycleCapability(role, 'inspect_operations'))
+        .not.toThrow()
+    }
     expect(() => assertStudioLifecycleCapability('owner', 'live_publish')).not.toThrow()
+    expect(() => assertStudioLifecycleCapability('creator', 'render'))
+      .toThrow(StudioLifecycleError)
   })
 
   it('pins review to exact artifact and composition versions', () => {

@@ -54,33 +54,64 @@ export function lifecyclePresentation(input: {
 }) {
   const rollout = input.workspace?.rollouts[input.capability] ?? null
   const externalLocked = input.capability === 'live_publish'
-  const executable = (
+  const executableMode = (
     input.capability === 'preview'
     || input.capability === 'render'
     || input.capability === 'export'
   )
-  const ownerMutation = (
-    input.role === 'owner'
-    && (input.capability === 'render' || input.capability === 'export')
-  )
+  const ownerMutation = input.role === 'owner' && executableMode
+  const executable = ownerMutation && !externalLocked
   return {
     enabled: Boolean(rollout?.enabled) && !externalLocked,
-    executable: executable && !externalLocked,
+    executable,
     ownerMutation,
     status: externalLocked
       ? 'Hard off'
       : !rollout
         ? 'Not loaded'
         : rollout.enabled
-          ? executable
-            ? input.capability === 'preview'
-              ? 'Read admitted'
-              : input.role === 'owner'
-                ? 'Local queue admitted'
-                : 'Read only'
+          ? executableMode
+            ? input.role === 'owner'
+              ? input.capability === 'preview'
+                ? 'Owner preview admitted'
+                : 'Owner local queue admitted'
+              : 'Read only'
             : 'Flag admitted · adapter unavailable'
           : rollout.reason === 'duplicate_scope_ambiguous'
             ? 'Ambiguous · fail closed'
             : 'Default off',
+  }
+}
+
+export function lifecycleReviewReadiness(
+  review: {
+    publishReady: boolean
+    approvalInvalidatedReason: string | null
+  } | null,
+): {
+  status: string
+  invalidation: string
+} {
+  if (!review) {
+    return {
+      status: 'Not hydrated',
+      invalidation: 'Not reported',
+    }
+  }
+  if (review.approvalInvalidatedReason === 'composition_pin_missing') {
+    return {
+      status: 'Pin missing · not publish-ready',
+      invalidation: 'Composition pin missing',
+    }
+  }
+  if (review.publishReady && !review.approvalInvalidatedReason) {
+    return {
+      status: 'Exact pin current',
+      invalidation: 'None reported',
+    }
+  }
+  return {
+    status: 'Not publish-ready',
+    invalidation: review.approvalInvalidatedReason ?? 'None reported',
   }
 }

@@ -70,6 +70,7 @@ describe('Creative Studio V3 production source contract', () => {
 
   it('wires Lifecycle through a zero-cost typed port with no paid or external command', () => {
     const client = source('lifecycle-client.ts')
+    const adapter = source('production-adapter.ts')
     const review = source('StudioV3LifecycleReview.tsx')
     const operations = source('StudioV3LifecycleOperations.tsx')
     const route = readFileSync(
@@ -84,6 +85,11 @@ describe('Creative Studio V3 production source contract', () => {
     expect(client).toContain('estimatedCostBdt: 0')
     expect(client).toContain("capability === 'live_publish' && input.enabled")
     expect(client).not.toMatch(/\b(?:publish|schedule|voice|paidRender)\s*\(/)
+    expect(client).toContain('/review/${encodeURIComponent(input.assetId)}')
+    expect(adapter).toContain(
+      'transitionReview: studioV3LifecycleClient.transitionReview',
+    )
+    expect(adapter).not.toContain('transitionStudioReview')
     expect(review).toContain('Approve exact pin')
     expect(review).toContain('V3 does not expose review, queue, control or flag mutations to collaborators.')
     expect(operations).toContain('This does not prove a VPS loop is running.')

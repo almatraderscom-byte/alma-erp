@@ -104,6 +104,12 @@ function assertLifecycleRuntimeEnabled(): void {
   if (!isAgentEnabled()) throw new LifecycleServiceError('agent_disabled', 503)
 }
 
+function assertLifecycleMutationOwner(access: StudioBrandAccess): void {
+  if (access.role !== 'owner') {
+    throw new LifecycleServiceError('lifecycle_owner_required', 403)
+  }
+}
+
 function object(value: unknown): Row {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Row : {}
 }
@@ -790,6 +796,7 @@ export async function previewLifecycleJob(
   const input = object(value)
   return serializableLifecycleTransaction(async (tx) => {
     const context = await lifecycleContext(actor, input, tx)
+    assertLifecycleMutationOwner(context.access)
     assertStudioLifecycleCapability(context.access.role, 'preview')
     await requireLifecycleFlag(context, 'preview', tx)
     return buildLifecycleJobPreview(context, input)
@@ -812,6 +819,7 @@ export async function createLifecycleJob(
         const context = await lifecycleContext(actor, input, tx)
         const jobKind = kind(input.kind)
         const capability = jobKind === 'render' ? 'render' : 'export'
+        assertLifecycleMutationOwner(context.access)
         assertStudioLifecycleCapability(context.access.role, capability)
         await requireLifecycleFlag(context, capability, tx)
         const classification = effectClass(input.effectClass)
@@ -983,6 +991,7 @@ export async function controlLifecycleJob(
     || project.ownerId !== access.ownerId
     || project.brandProfileId !== access.brandProfileId
   ) throw new LifecycleServiceError('project_scope_mismatch', 403)
+  assertLifecycleMutationOwner(access)
   assertStudioLifecycleCapability(access.role, intent)
   const requestFingerprint = lifecycleFingerprint({
     kind: 'creative_lifecycle_control_v1',

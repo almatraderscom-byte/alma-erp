@@ -109,8 +109,8 @@ export function assertStudioLifecycleCapability(
 ): void {
   const allowed: Record<StudioLifecycleRole, readonly StudioLifecycleCapability[]> = {
     owner: ['preview', 'render', 'export', 'dry_run', 'schedule', 'live_publish', 'cancel', 'retry', 'inspect_operations'],
-    creator: ['preview', 'render', 'export'],
-    reviewer: ['preview'],
+    creator: ['inspect_operations'],
+    reviewer: ['inspect_operations'],
   }
   if (!allowed[role].includes(capability)) {
     throw new StudioLifecycleError('studio_lifecycle_forbidden', 403)

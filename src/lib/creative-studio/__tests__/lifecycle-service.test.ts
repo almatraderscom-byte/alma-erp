@@ -423,6 +423,7 @@ import {
   controlLifecycleJob,
   createLifecycleJob,
   listLifecycleFeatureFlags,
+  listLifecycleJobs,
   previewLifecycleJob,
   recordLifecycleWorkerResult,
   resolveLifecycleCompositionPin,
@@ -433,6 +434,16 @@ const owner = {
   name: 'Owner',
   email: null,
   erpRole: 'SUPER_ADMIN',
+}
+const creator = {
+  ...owner,
+  userId: 'creator-1',
+  erpRole: 'STAFF',
+}
+const reviewer = {
+  ...owner,
+  userId: 'reviewer-1',
+  erpRole: 'STAFF',
 }
 
 function request(overrides: Record<string, unknown> = {}) {
@@ -487,11 +498,8 @@ describe('V3 lifecycle production service', () => {
       'lifecycle_capability_disabled',
     )
     lifecycleHarness.state.flagsEnabled = true
-    await expect(createLifecycleJob({
-      ...owner,
-      userId: 'reviewer-1',
-      erpRole: 'STAFF',
-    }, request())).rejects.toThrow('studio_lifecycle_forbidden')
+    await expect(createLifecycleJob(reviewer, request()))
+      .rejects.toThrow('lifecycle_owner_required')
     await expect(createLifecycleJob(owner, request({
       brandProfileId: 'brand-other',
     }))).rejects.toThrow('brand_scope_mismatch')
@@ -499,6 +507,53 @@ describe('V3 lifecycle production service', () => {
       projectId: 'project-other',
     }))).rejects.toThrow('project_scope_mismatch')
   })
+
+  it.each([
+    ['Creator', creator],
+    ['Reviewer', reviewer],
+  ] as const)(
+    'keeps %s GET discovery readable but rejects preview, render/export creation, and control',
+    async (_label, actor) => {
+      lifecycleHarness.insertRunning('job-owner-visible')
+      lifecycleHarness.state.jobs.get('job-owner-visible')!.status = 'QUEUED'
+
+      await expect(listLifecycleJobs(actor, {
+        brandProfileId: 'brand-1',
+        projectId: 'project-1',
+      })).resolves.toEqual([
+        expect.objectContaining({
+          id: 'job-owner-visible',
+          brandProfileId: 'brand-1',
+          projectId: 'project-1',
+        }),
+      ])
+
+      await expect(previewLifecycleJob(actor, request()))
+        .rejects.toThrow('lifecycle_owner_required')
+      await expect(createLifecycleJob(actor, request({
+        idempotencyKey: `lifecycle:${actor.userId}:render-1`,
+      }))).rejects.toThrow('lifecycle_owner_required')
+      await expect(createLifecycleJob(actor, request({
+        kind: 'export',
+        idempotencyKey: `lifecycle:${actor.userId}:export-1`,
+      }))).rejects.toThrow('lifecycle_owner_required')
+      await expect(controlLifecycleJob(actor, {
+        jobId: 'job-owner-visible',
+        intent: 'cancel',
+        idempotencyKey: `lifecycle:${actor.userId}:cancel-1`,
+      })).rejects.toThrow('lifecycle_owner_required')
+      await expect(controlLifecycleJob(actor, {
+        jobId: 'job-owner-visible',
+        intent: 'retry',
+        idempotencyKey: `lifecycle:${actor.userId}:retry-1`,
+      })).rejects.toThrow('lifecycle_owner_required')
+
+      expect(lifecycleHarness.prisma.creativeLifecycleJob.create).not.toHaveBeenCalled()
+      expect(lifecycleHarness.state.jobs.get('job-owner-visible')).toMatchObject({
+        status: 'QUEUED',
+      })
+    },
+  )
 
   it('deduplicates owner+render fingerprint and conflicts on changed key/target/cost', async () => {
     const first = await createLifecycleJob(owner, request())
@@ -708,11 +763,12 @@ describe('V3 lifecycle production service', () => {
       ...command,
       enabled: false,
     })).rejects.toThrow('idempotency_conflict')
-    await expect(configureLifecycleFeatureFlag({
-      ...owner,
-      userId: 'reviewer-1',
-      erpRole: 'STAFF',
-    }, command)).rejects.toThrow('lifecycle_flag_owner_required')
+    await expect(configureLifecycleFeatureFlag(reviewer, command))
+      .rejects.toThrow('lifecycle_flag_owner_required')
+    await expect(configureLifecycleFeatureFlag(creator, {
+      ...command,
+      idempotencyKey: 'lifecycle:flag:creator-1',
+    })).rejects.toThrow('lifecycle_flag_owner_required')
     await expect(configureLifecycleFeatureFlag(owner, {
       ...command,
       projectId: 'project-other',

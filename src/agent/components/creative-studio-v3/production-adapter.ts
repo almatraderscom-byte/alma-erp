@@ -21,7 +21,6 @@ import {
   confirmStudioJob,
   estimateStudioJob,
   partiallyFinishVideo,
-  transitionStudioReview,
   uploadFillMask,
   uploadStudioFile,
   uploadStudioVideo,
@@ -89,7 +88,7 @@ export const creativeStudioV3ProductionPort: CreativeStudioV3ProductionPort = {
   listProducts: fetchErpProducts,
   listCompositions: creativeStudioV3CompositionClient.listCompositions,
   getReview: fetchStudioReview,
-  transitionReview: transitionStudioReview,
+  transitionReview: studioV3LifecycleClient.transitionReview,
   // V3 reads require both brand and project. Server routes validate the actor's
   // assignment and exclude every unscoped legacy resource.
   listModels: async (brandProfileId, projectId) =>
