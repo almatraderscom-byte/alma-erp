@@ -41,9 +41,12 @@ export async function POST(req: NextRequest) {
         return Response.json(
           {
             error: 'browser_live_disabled',
+            // "লাইভ ব্রাউজার" alone is ambiguous — the owner's own Chrome is called
+            // that too, and it has its own separate switch. Name the machine.
             message:
-              'লাইভ ব্রাউজার এখন বন্ধ আছে, Boss। চালু করতে বলুন — "লাইভ ব্রাউজার চালু করো" ' +
-              `(settings: ${LIVE_VIEW_ENABLED_KEY} = true)।`,
+              'VPS ব্রাউজার এখন বন্ধ আছে, Boss। চালু করতে বলুন — "VPS ব্রাউজার চালু করো" ' +
+              `(settings: ${LIVE_VIEW_ENABLED_KEY} = true)। ` +
+              'এটা আপনার Mac-এর Chrome নয় — সেটার সুইচ আলাদা (live_browser_enabled)।',
           },
           { status: 403 },
         )
