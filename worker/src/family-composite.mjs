@@ -20,6 +20,10 @@ import {
 } from './fal/client.mjs'
 import { falInputFingerprint } from './fal/fingerprint.mjs'
 import { uploadImageArtifact } from './image-artifact.mjs'
+import {
+  assertStudioRunPaidAttempt,
+  requiresStudioRunPaidAttemptAuthorization,
+} from './studio-run-authorize.mjs'
 
 export const FLUX_FILL_ENDPOINT = 'fal-ai/flux-pro/v1/fill'
 
@@ -239,6 +243,9 @@ export async function processFamilyComposite({ supabase, pendingActionId, payloa
         placement,
         purpose: 'family_harmonize',
       })
+      if (requiresStudioRunPaidAttemptAuthorization(payload)) {
+        await assertStudioRunPaidAttempt(pendingActionId, payload, 1)
+      }
       const out = await runFalQueueJob({
         supabase,
         pendingActionId,
@@ -278,9 +285,13 @@ export async function processFamilyComposite({ supabase, pendingActionId, payloa
   }
 
   // 5. Exact member count — 100% rule. Mismatch = honest failure, never a
-  // wrong family shipped silently.
+  // wrong family shipped silently. Signed runs do not add an unestimated
+  // Gemini call here; their protected composite preserves member count by
+  // construction and the paid plan covers only the optional harmonizer.
   const expected = Number(c.expectedMembers ?? 0) || null
-  const counted = expected ? await countPeople(composited) : null
+  const counted = expected && payload.studioSurface !== 'v3'
+    ? await countPeople(composited)
+    : null
   if (expected && counted !== null && counted !== expected) {
     throw new Error(`ফ্যামিলি সদস্য সংখ্যা মেলেনি — দরকার ${expected} জন, ছবিতে ${counted} জন। আবার চালান বা সোর্স ছবি বদলান।`)
   }

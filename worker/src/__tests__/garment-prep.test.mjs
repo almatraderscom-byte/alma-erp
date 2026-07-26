@@ -4,7 +4,10 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { connectedComponents } from '../garment-prep.mjs'
+import {
+  connectedComponents,
+  detectPersonBoxesForPrep,
+} from '../garment-prep.mjs'
 
 function maskFromRows(rows) {
   const height = rows.length
@@ -54,4 +57,31 @@ test('diagonal-only contact does NOT merge (4-connectivity)', () => {
     '.#',
   ])
   assert.equal(connectedComponents(mask, width, height).length, 2)
+})
+
+test('signed local/free garment prep cannot call paid Gemini person detection', async () => {
+  const priorKey = process.env.GEMINI_API_KEY
+  const priorFetch = globalThis.fetch
+  let paidCalls = 0
+  process.env.GEMINI_API_KEY = 'test-gemini-key'
+  globalThis.fetch = async () => {
+    paidCalls += 1
+    throw new Error('paid Gemini call must be unreachable')
+  }
+  try {
+    const debug = []
+    const boxes = await detectPersonBoxesForPrep(Buffer.from('not-an-image'), {
+      allowPaidCleanup: false,
+      onDebug: (event) => debug.push(event),
+    })
+    assert.deepEqual(boxes, [])
+    assert.equal(paidCalls, 0)
+    assert.deepEqual(debug, [{
+      reason: 'signed_run_uses_local_person_split_only',
+    }])
+  } finally {
+    globalThis.fetch = priorFetch
+    if (priorKey === undefined) delete process.env.GEMINI_API_KEY
+    else process.env.GEMINI_API_KEY = priorKey
+  }
 })

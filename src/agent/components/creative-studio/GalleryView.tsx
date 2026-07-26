@@ -96,7 +96,7 @@ function GeneratingTile({ createdAt, label = 'তৈরি হচ্ছে…' }
         <span className="text-[28px] font-extrabold leading-none tabular-nums text-cream drop-shadow">
           {toBanglaDigits(Math.round(pct))}%
         </span>
-        <span className="text-[10px] font-medium text-muted">{label}</span>
+        <span className="text-[11px] font-medium text-muted">{label}</span>
       </div>
     </div>
   )
@@ -300,7 +300,7 @@ export function GalleryView() {
       <div className="mb-3 flex items-center justify-between">
         <div>
           <h2 className="text-sm font-bold">Gallery</h2>
-          <p className="text-[10px] text-muted">
+          <p className="text-[11px] text-muted">
             {total}টি ফলাফল · {items.length}টি দেখা যাচ্ছে
           </p>
         </div>
@@ -318,7 +318,7 @@ export function GalleryView() {
           className="w-full rounded-lg border border-border-subtle bg-bg-1 px-3 py-2 text-[12px] text-cream placeholder:text-muted/60"
         />
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          <label className="space-y-1 text-[9px] font-semibold text-muted">
+          <label className="space-y-1 text-[11px] font-semibold text-muted">
             ধরন
             <select
               value={mediaFilter}
@@ -331,7 +331,7 @@ export function GalleryView() {
               <option value="audio">অডিও</option>
             </select>
           </label>
-          <label className="space-y-1 text-[9px] font-semibold text-muted">
+          <label className="space-y-1 text-[11px] font-semibold text-muted">
             অবস্থা
             <select
               value={stateFilter}
@@ -346,7 +346,7 @@ export function GalleryView() {
               <option value="failed">ব্যর্থ</option>
             </select>
           </label>
-          <label className="space-y-1 text-[9px] font-semibold text-muted">
+          <label className="space-y-1 text-[11px] font-semibold text-muted">
             QC
             <select
               value={qcFilter}
@@ -359,7 +359,7 @@ export function GalleryView() {
             </select>
           </label>
         </div>
-        <label className="flex items-center gap-2 text-[10px] text-muted">
+        <label className="flex items-center gap-2 text-[11px] text-muted">
           <input
             type="checkbox"
             checked={includeTest}
@@ -385,7 +385,7 @@ export function GalleryView() {
             <span className="text-sm">☁️</span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[12px] font-semibold text-emerald-300">Google Drive যুক্ত — ছবি/ভিডিও অটো সেভ হচ্ছে</p>
-              {drive.email && <p className="truncate text-[10px] text-emerald-400/70">{drive.email}</p>}
+              {drive.email && <p className="truncate text-[11px] text-emerald-400/70">{drive.email}</p>}
             </div>
             <button
               type="button"
@@ -403,7 +403,7 @@ export function GalleryView() {
             <span className="text-sm">☁️</span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[12px] font-semibold text-[#E07A5F]">Google Drive যুক্ত করুন</p>
-              <p className="truncate text-[10px] text-[#E07A5F]/70">ছবি/ভিডিও আপনার Drive-এ অটো সেভ + জায়গা খালি রাখুন</p>
+              <p className="truncate text-[11px] text-[#E07A5F]/70">ছবি/ভিডিও আপনার Drive-এ অটো সেভ + জায়গা খালি রাখুন</p>
             </div>
             <span className="shrink-0 rounded-lg bg-[#E07A5F] px-2.5 py-1 text-[11px] font-bold text-white">যুক্ত করুন</span>
           </a>
@@ -446,7 +446,7 @@ export function GalleryView() {
                       isAudio ? (
                         <div className="flex h-full flex-col items-center justify-center gap-1.5 p-2 text-center">
                           <span className="text-3xl">🎵</span>
-                          <span className="line-clamp-3 text-[10px] text-muted">{item.summary}</span>
+                          <span className="line-clamp-3 text-[11px] text-muted">{item.summary}</span>
                         </div>
                       ) : isVideo ? (
                         // eslint-disable-next-line jsx-a11y/media-has-caption
@@ -477,7 +477,7 @@ export function GalleryView() {
                       <div className="flex h-full flex-col items-center justify-center gap-2 p-2 text-center">
                         {failed ? (
                           <span className="flex flex-col items-center gap-1.5">
-                            <span className="text-[10px] font-medium text-red-400">
+                            <span className="text-[11px] font-medium text-red-400">
                               ব্যর্থ
                               {item.error ? ` · ${item.error.slice(0, 40)}` : ''}
                             </span>
@@ -493,19 +493,19 @@ export function GalleryView() {
                                   })
                                   .catch((err) => toast.error(err instanceof Error ? err.message : 'হয়নি'))
                               }}
-                              className="rounded-full bg-[#E07A5F] px-2.5 py-1 text-[10px] font-bold text-white"
+                              className="rounded-full bg-[#E07A5F] px-2.5 py-1 text-[11px] font-bold text-white"
                             >
                               🔁 আবার চালাও
                             </span>
                           </span>
                         ) : (
-                          <span className="text-[10px] text-muted">{item.status}</span>
+                          <span className="text-[11px] text-muted">{item.status}</span>
                         )}
                       </div>
                     )}
                     <span
                       className={cn(
-                        'absolute left-1.5 top-1.5 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase',
+                        'absolute left-1.5 top-1.5 rounded-md px-1.5 py-0.5 text-[11px] font-bold uppercase',
                         item.status === 'executed' ? 'bg-[#81B29A]/90 text-white' : 'bg-black/50 text-white',
                       )}
                     >
@@ -529,7 +529,7 @@ export function GalleryView() {
                               : item.provider}
                     </span>
                     {item.brandedUrl && (
-                      <span className="absolute right-1.5 top-1.5 rounded-md bg-[#E07A5F]/90 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
+                      <span className="absolute right-1.5 top-1.5 rounded-md bg-[#E07A5F]/90 px-1.5 py-0.5 text-[11px] font-bold uppercase text-white">
                         Social {artifactDimensionLabel(item.brandedVariant) ?? '1080px'}
                       </span>
                     )}
@@ -541,8 +541,8 @@ export function GalleryView() {
                     )}
                   </div>
                   <div className="p-2">
-                    <p className="truncate text-[10px] font-semibold">{item.mode}</p>
-                    <p className="text-[9px] text-muted">{new Date(item.createdAt).toLocaleString('en-BD')}</p>
+                    <p className="truncate text-[11px] font-semibold">{item.mode}</p>
+                    <p className="text-[11px] text-muted">{new Date(item.createdAt).toLocaleString('en-BD')}</p>
                   </div>
                 </motion.button>
               )
@@ -625,7 +625,7 @@ export function GalleryView() {
                 onClick={(e) => e.stopPropagation()}
                 className="absolute left-4 top-[calc(1rem+env(safe-area-inset-top))] flex max-w-[70vw] flex-wrap items-center gap-1.5"
               >
-                <span className="rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-bold text-white ring-1 ring-white/25">
+                <span className="rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-bold text-white ring-1 ring-white/25">
                   {selected.engine === 'fal_idm_vton'
                     ? 'IDM-VTON'
                     : selected.engine === 'fal_fashn_v16'
@@ -635,31 +635,31 @@ export function GalleryView() {
                         : selected.engine}
                 </span>
                 {selected.researchOnly && (
-                  <span className="rounded-full bg-amber-500/90 px-2.5 py-1 text-[10px] font-bold text-white">⚠ পরীক্ষামূলক</span>
+                  <span className="rounded-full bg-amber-500/90 px-2.5 py-1 text-[11px] font-bold text-white">⚠ পরীক্ষামূলক</span>
                 )}
                 {typeof selected.seed === 'number' && (
-                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/85">seed {selected.seed}</span>
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[11px] text-white/85">seed {selected.seed}</span>
                 )}
                 {typeof selected.latencyMs === 'number' && (
-                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/85">
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[11px] text-white/85">
                     {Math.round(selected.latencyMs / 100) / 10}s
                   </span>
                 )}
                 {typeof selected.costUsd === 'number' && selected.costUsd > 0 && (
-                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/85">${selected.costUsd.toFixed(3)}</span>
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[11px] text-white/85">${selected.costUsd.toFixed(3)}</span>
                 )}
                 {selected.requestId && (
-                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/60" title={selected.requestId}>
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[11px] text-white/60" title={selected.requestId}>
                     req {selected.requestId.slice(0, 8)}
                   </span>
                 )}
                 {selected.qc?.flagged && (
-                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-amber-300">{selected.qc.flagged}</span>
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[11px] text-amber-300">{selected.qc.flagged}</span>
                 )}
                 {selected.referenceReceipt && (
                   <span
                     className={cn(
-                      'rounded-full px-2 py-1 text-[10px] font-bold',
+                      'rounded-full px-2 py-1 text-[11px] font-bold',
                       selected.referenceReceipt.allRequiredSent
                         && selected.referenceReceipt.sentCount === selected.referenceReceipt.expectedCount
                         ? 'bg-emerald-500/80 text-white'
@@ -672,7 +672,7 @@ export function GalleryView() {
                 )}
                 {/* CS10 — plain-Bangla QC/protection summary */}
                 {selected.qcDetailsBn && (
-                  <span className="w-full rounded-lg bg-black/50 px-2.5 py-1 text-[10px] leading-snug text-white/85">
+                  <span className="w-full rounded-lg bg-black/50 px-2.5 py-1 text-[11px] leading-snug text-white/85">
                     {selected.qcDetailsBn}
                   </span>
                 )}
@@ -681,7 +681,7 @@ export function GalleryView() {
             {/* CS9/CS10 — composites carry no engine field; still show details */}
             {!selected.engine && selected.qcDetailsBn && (
               <div onClick={(e) => e.stopPropagation()} className="absolute left-4 top-[calc(1rem+env(safe-area-inset-top))] max-w-[70vw]">
-                <span className="rounded-lg bg-black/50 px-2.5 py-1 text-[10px] leading-snug text-white/85">{selected.qcDetailsBn}</span>
+                <span className="rounded-lg bg-black/50 px-2.5 py-1 text-[11px] leading-snug text-white/85">{selected.qcDetailsBn}</span>
               </div>
             )}
             {displayedDimensionLabel
@@ -689,7 +689,7 @@ export function GalleryView() {
               && (
                 <div
                   onClick={(event) => event.stopPropagation()}
-                  className="absolute right-4 top-[calc(4rem+env(safe-area-inset-top))] rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-bold text-white ring-1 ring-white/20"
+                  className="absolute right-4 top-[calc(4rem+env(safe-area-inset-top))] rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-bold text-white ring-1 ring-white/20"
                 >
                   {showBranded ? 'Social derivative' : 'Verified original'} · {displayedDimensionLabel}
                 </div>
@@ -845,7 +845,7 @@ export function GalleryView() {
                 {/* V2: reel cover picker — FB/IG reels need a cover frame */}
                 {(selected.coverOptions?.length ?? 0) > 0 && (
                   <div className="flex items-center gap-1.5 rounded-2xl bg-black/60 p-1.5 ring-1 ring-white/15 backdrop-blur-md">
-                    <span className="px-1 text-[10px] font-semibold text-white/80">কভার:</span>
+                    <span className="px-1 text-[11px] font-semibold text-white/80">কভার:</span>
                     {selected.coverOptions!.map((c) => (
                       <button
                         key={c.path}

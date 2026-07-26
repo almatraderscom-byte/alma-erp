@@ -154,11 +154,11 @@ export function ProjectLibraryView({
       <div className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-card/90 px-3 py-3 backdrop-blur-md">
         <div className="min-w-0">
           <h2 className="truncate text-sm font-bold">{project.name} · Asset Library</h2>
-          <p className="text-[10px] text-muted">{assets.length}টি asset · folders, tags, version ও lineage</p>
+          <p className="text-[11px] text-muted">{assets.length}টি asset · folders, tags, version ও lineage</p>
         </div>
         <div className="flex items-center gap-2">
           {!project.readonly && (
-            <button type="button" onClick={() => void openLegacy()} className="rounded-xl bg-white/10 px-3 py-2 text-[10px] font-bold text-cream">
+            <button type="button" onClick={() => void openLegacy()} className="rounded-xl bg-white/10 px-3 py-2 text-[11px] font-bold text-cream">
               Legacy থেকে যোগ
             </button>
           )}
@@ -167,13 +167,13 @@ export function ProjectLibraryView({
       </div>
 
       <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-border-subtle px-3 py-2">
-        <select value={folderFilter} onChange={(event) => setFolderFilter(event.target.value)} aria-label="Folder filter" className="rounded-lg border border-border-subtle bg-card px-2 py-1.5 text-[10px] text-cream">
+        <select value={folderFilter} onChange={(event) => setFolderFilter(event.target.value)} aria-label="Folder filter" className="rounded-lg border border-border-subtle bg-card px-2 py-1.5 text-[11px] text-cream">
           {folders.map((item) => <option key={item}>{item}</option>)}
         </select>
-        <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} aria-label="Tag filter" className="rounded-lg border border-border-subtle bg-card px-2 py-1.5 text-[10px] text-cream">
+        <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} aria-label="Tag filter" className="rounded-lg border border-border-subtle bg-card px-2 py-1.5 text-[11px] text-cream">
           {allTags.map((item) => <option key={item}>{item}</option>)}
         </select>
-        <button type="button" onClick={() => void load()} className="rounded-lg bg-white/8 px-3 py-1.5 text-[10px] font-semibold text-muted">রিফ্রেশ</button>
+        <button type="button" onClick={() => void load()} className="rounded-lg bg-white/8 px-3 py-1.5 text-[11px] font-semibold text-muted">রিফ্রেশ</button>
       </div>
 
       {error && <p role="alert" className="mx-3 mt-2 rounded-xl bg-red-500/10 p-2.5 text-[11px] text-red-300">{error}</p>}
@@ -194,12 +194,12 @@ export function ProjectLibraryView({
               <button key={asset.id} type="button" onClick={() => setSelected(asset)} className="overflow-hidden rounded-xl border border-border-subtle bg-card text-left transition hover:border-[#E07A5F]/60">
                 <div className="aspect-[4/5] overflow-hidden"><AssetPreview asset={asset} /></div>
                 <div className="space-y-1 p-2">
-                  <p className="line-clamp-2 text-[10px] font-semibold text-cream">{asset.title ?? 'Untitled asset'}</p>
-                  <div className="flex items-center justify-between gap-1 text-[9px] text-muted">
+                  <p className="line-clamp-2 text-[11px] font-semibold text-cream">{asset.title ?? 'Untitled asset'}</p>
+                  <div className="flex items-center justify-between gap-1 text-[11px] text-muted">
                     <span>{asset.folder}</span>
                     <span>{statusLabel(asset.status)}</span>
                   </div>
-                  {asset.tags.length > 0 && <p className="truncate text-[8px] text-[#E07A5F]">#{asset.tags.map((tag) => tag.name).join(' #')}</p>}
+                  {asset.tags.length > 0 && <p className="truncate text-[11px] text-[#E07A5F]">#{asset.tags.map((tag) => tag.name).join(' #')}</p>}
                 </div>
               </button>
             ))}
@@ -213,7 +213,7 @@ export function ProjectLibraryView({
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h3 className="truncate text-sm font-bold">{selected.title ?? 'Asset detail'}</h3>
-                <p className="text-[9px] text-muted">Created by {selected.createdById} · {new Date(selected.createdAt).toLocaleString('bn-BD')}</p>
+                <p className="text-[11px] text-muted">Created by {selected.createdById} · {new Date(selected.createdAt).toLocaleString('bn-BD')}</p>
               </div>
               <button type="button" onClick={() => setSelected(null)} className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-muted">✕</button>
             </div>
@@ -224,11 +224,11 @@ export function ProjectLibraryView({
 
             {!project.readonly && (
               <div className="mt-4 grid gap-3 rounded-xl border border-border-subtle bg-bg-1/70 p-3 sm:grid-cols-2">
-                <label className="space-y-1 text-[10px] font-semibold text-muted">
+                <label className="space-y-1 text-[11px] font-semibold text-muted">
                   Folder
                   <input value={folder} onChange={(event) => setFolder(event.target.value)} className="w-full rounded-lg border border-border-subtle bg-card px-2.5 py-2 text-[11px] text-cream" />
                 </label>
-                <label className="space-y-1 text-[10px] font-semibold text-muted">
+                <label className="space-y-1 text-[11px] font-semibold text-muted">
                   Tags (comma)
                   <input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="approved, eid, hero" className="w-full rounded-lg border border-border-subtle bg-card px-2.5 py-2 text-[11px] text-cream" />
                 </label>
@@ -262,11 +262,11 @@ export function ProjectLibraryView({
               <div className="mt-2 space-y-2">
                 {selected.versions.map((version) => (
                   <div key={version.id} className="rounded-xl border border-border-subtle bg-bg-1/70 p-3">
-                    <div className="flex items-center justify-between text-[10px]">
+                    <div className="flex items-center justify-between text-[11px]">
                       <span className="font-bold text-cream">Version {version.version}</span>
                       <span className="text-muted">{new Date(version.createdAt).toLocaleString('bn-BD')}</span>
                     </div>
-                    <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[9px] text-muted">
+                    <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-muted">
                       <span>Recipe</span><span className="text-cream">{version.recipeName ? `${version.recipeName} · v${version.recipeVersion}` : 'Legacy / none'}</span>
                       <span>Provider / engine</span><span className="text-cream">{version.provider ?? '—'} / {version.engine ?? '—'}</span>
                       <span>Job</span><span className="truncate font-mono text-cream">{version.jobId ?? '—'}</span>
@@ -274,7 +274,7 @@ export function ProjectLibraryView({
                       <span>QC</span><span className="text-cream">{version.qc ? JSON.stringify(version.qc) : 'Not recorded'}</span>
                     </div>
                     {version.sources.length > 0 && (
-                      <div className="mt-2 border-t border-border-subtle pt-2 text-[9px] text-muted">
+                      <div className="mt-2 border-t border-border-subtle pt-2 text-[11px] text-muted">
                         Source: {version.sources.map((source) => source.title ?? source.pendingActionId ?? source.id).join(' · ')}
                       </div>
                     )}
@@ -292,7 +292,7 @@ export function ProjectLibraryView({
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold">Legacy থেকে asset যোগ</h3>
-                <p className="text-[10px] text-muted">Original job/data অক্ষত থাকবে; project record ও version snapshot তৈরি হবে।</p>
+                <p className="text-[11px] text-muted">Original job/data অক্ষত থাকবে; project record ও version snapshot তৈরি হবে।</p>
               </div>
               <button type="button" onClick={() => setLegacyOpen(false)} className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-muted">✕</button>
             </div>
@@ -304,8 +304,8 @@ export function ProjectLibraryView({
                   <div key={asset.id} className="overflow-hidden rounded-xl border border-border-subtle bg-bg-1">
                     <div className="aspect-[4/5]"><AssetPreview asset={asset} /></div>
                     <div className="p-2">
-                      <p className="line-clamp-2 text-[9px] font-semibold">{asset.title ?? 'Legacy asset'}</p>
-                      <button type="button" disabled={attaching !== null} onClick={() => void importLegacy(asset)} className="mt-2 w-full rounded-lg bg-[#E07A5F] py-1.5 text-[9px] font-bold text-white disabled:opacity-40">
+                      <p className="line-clamp-2 text-[11px] font-semibold">{asset.title ?? 'Legacy asset'}</p>
+                      <button type="button" disabled={attaching !== null} onClick={() => void importLegacy(asset)} className="mt-2 w-full rounded-lg bg-[#E07A5F] py-1.5 text-[11px] font-bold text-white disabled:opacity-40">
                         {attaching === asset.id ? 'যোগ হচ্ছে…' : 'এই Project-এ যোগ'}
                       </button>
                     </div>

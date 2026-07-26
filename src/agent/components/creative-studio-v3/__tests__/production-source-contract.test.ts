@@ -53,12 +53,55 @@ describe('Creative Studio V3 production source contract', () => {
     expect(video).toContain('Foundation adapter required')
   })
 
-  it('keeps collaborator calls off owner-only production routes', () => {
-    for (const file of ['StudioV3ImageLab.tsx', 'StudioV3VideoLab.tsx', 'StudioV3Finishing.tsx']) {
+  it('uses signed scoped run contracts for creators and keeps reviewers read-only', () => {
+    for (const file of ['StudioV3ImageLab.tsx', 'StudioV3VideoLab.tsx']) {
       const content = source(file)
-      expect(content).toContain("activeBrand?.role === 'owner'")
-      expect(content).toContain('ownerActionAvailable')
+      expect(content).toContain("activeBrand.role !== 'reviewer'")
+      expect(content).toContain('estimateRun')
+      expect(content).toContain('confirmRun')
+      expect(content).not.toMatch(/queue(?:Advanced|Auto|Owned)/)
     }
+    const finishing = source('StudioV3Finishing.tsx')
+    expect(finishing).toContain("activeBrand?.role === 'owner'")
+    expect(finishing).toContain('ownerScopedActionAvailable')
+    expect(finishing).toContain('projectAssetId')
     expect(source('types.ts')).toContain('CreativeStudioV3ReviewQueuePort')
+  })
+
+  it('wires Lifecycle through a zero-cost typed port with no paid or external command', () => {
+    const client = source('lifecycle-client.ts')
+    const adapter = source('production-adapter.ts')
+    const review = source('StudioV3LifecycleReview.tsx')
+    const operations = source('StudioV3LifecycleOperations.tsx')
+    const route = readFileSync(
+      join(
+        process.cwd(),
+        'src/app/api/assistant/creative-studio/lifecycle/route.ts',
+      ),
+      'utf8',
+    )
+
+    expect(client).toContain("effectClass: 'zero_cost_local'")
+    expect(client).toContain('estimatedCostBdt: 0')
+    expect(client).toContain("capability === 'live_publish' && input.enabled")
+    expect(client).not.toMatch(/\b(?:publish|schedule|voice|paidRender)\s*\(/)
+    expect(client).toContain('/review/${encodeURIComponent(input.assetId)}')
+    expect(adapter).toContain(
+      'transitionReview: studioV3LifecycleClient.transitionReview',
+    )
+    expect(adapter).not.toContain('transitionStudioReview')
+    expect(review).toContain('Approve exact pin')
+    expect(review).toContain('V3 does not expose review, queue, control or flag mutations to collaborators.')
+    expect(operations).toContain('This does not prove a VPS loop is running.')
+    for (const capability of [
+      'preview',
+      'render',
+      'export',
+      'dry_run',
+      'schedule',
+      'live_publish',
+    ]) {
+      expect(route).toContain(`'${capability}'`)
+    }
   })
 })

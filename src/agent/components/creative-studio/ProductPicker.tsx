@@ -49,7 +49,7 @@ export function ProductPicker({
         <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
           <div>
             <h2 className="text-sm font-bold text-cream">ERP প্রোডাক্ট বেছে নিন</h2>
-            <p className="text-[10px] text-muted">Read-only · Studio থেকে ERP data বদলাবে না</p>
+            <p className="text-[11px] text-muted">Read-only · Studio থেকে ERP data বদলাবে না</p>
           </div>
           <button type="button" onClick={onClose} aria-label="বন্ধ করুন" className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-muted">
             ✕
@@ -98,8 +98,8 @@ export function ProductPicker({
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[12px] font-bold text-cream">{product.name}</p>
-                  <p className="mt-0.5 text-[10px] font-semibold text-[#E07A5F]">{product.code}</p>
-                  <p className="mt-1 text-[10px] text-muted">
+                  <p className="mt-0.5 text-[11px] font-semibold text-[#E07A5F]">{product.code}</p>
+                  <p className="mt-1 text-[11px] text-muted">
                     ৳{product.priceBdt.toLocaleString('bn-BD')}
                     {product.available !== null ? ` · Available ${product.available.toLocaleString('bn-BD')}` : ''}
                   </p>

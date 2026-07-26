@@ -102,6 +102,37 @@ export type CreativeCompositionView = CreativeCompositionSummary & {
   document: CreativeCompositionDocument
   documentHash: string
   accessRole: StudioBrandAccess['role']
+  history: CreativeCompositionHistoryView
+}
+
+export type CreativeCompositionHistoryActivity = {
+  id: string
+  kind: 'apply' | 'undo' | 'redo' | 'rollback'
+  origin: 'human' | 'agent' | 'system'
+  actorId: string
+  actorName: string
+  actorRole: StudioBrandAccess['role']
+  resultVersion: number
+  targetBatchId: string | null
+  rollbackPointId: string
+  createdAt: string
+  operationIds: string[]
+}
+
+export type CreativeCompositionHistoryView = {
+  canUndo: boolean
+  canRedo: boolean
+  undoDepth: number
+  redoDepth: number
+  currentUndoBatchId: string | null
+  currentRedoBatchId: string | null
+  latestAgentBatchId: string | null
+  canRollbackLatestAgentBatch: boolean
+  rollbackPoints: Array<{
+    batchId: string
+    rollbackPointId: string
+  }>
+  activity: CreativeCompositionHistoryActivity[]
 }
 
 export type CreativeCompositionProjectionView = {
@@ -452,11 +483,17 @@ export async function getCreativeComposition(
 ): Promise<CreativeCompositionView> {
   const { row, access, versionRow } = await compositionAccess(actor, compositionId)
   assertStudioBrandScope(String(row.brandProfileId), requestedBrandProfileId)
+  const history = await getCompositionHistory(
+    db,
+    String(row.id),
+    Number(row.currentVersion),
+  )
   return {
     ...summary(row),
     document: assertVersionCoherence(row, versionRow),
     documentHash: String(versionRow.documentHash),
     accessRole: access.role,
+    history,
   }
 }
 
@@ -587,6 +624,7 @@ export async function createCreativeComposition(
         document: projected.document,
         documentHash: projected.documentHash,
         accessRole: context.access.role,
+        history: emptyCompositionHistory(),
       },
       idempotent: false,
     }
@@ -1076,6 +1114,7 @@ function assertOperationRowsComplete(target: AnyRecord, rows: unknown[]): void {
 type CompositionHistoryStacks = {
   undo: AnyRecord[]
   redo: AnyRecord[]
+  activity: AnyRecord[]
 }
 
 async function reconstructCompositionHistoryStacks(
@@ -1088,6 +1127,17 @@ async function reconstructCompositionHistoryStacks(
       compositionId,
       resultVersion: { lte: throughVersion },
       kind: { in: ['APPLY', 'UNDO', 'REDO', 'ROLLBACK'] },
+    },
+    include: {
+      actor: { select: { id: true, name: true, email: true } },
+      operations: {
+        orderBy: [{ sequence: 'asc' }],
+        select: { id: true },
+      },
+      rollbackPointsCreated: {
+        select: { id: true },
+        take: 1,
+      },
     },
     orderBy: [{ resultVersion: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
   })
@@ -1139,7 +1189,98 @@ async function reconstructCompositionHistoryStacks(
   if (lastResultVersion !== throughVersion) {
     throw new CompositionServiceError('composition_history_invalid', 500)
   }
-  return { undo, redo }
+  return { undo, redo, activity: history.map(object) }
+}
+
+function emptyCompositionHistory(): CreativeCompositionHistoryView {
+  return {
+    canUndo: false,
+    canRedo: false,
+    undoDepth: 0,
+    redoDepth: 0,
+    currentUndoBatchId: null,
+    currentRedoBatchId: null,
+    latestAgentBatchId: null,
+    canRollbackLatestAgentBatch: false,
+    rollbackPoints: [],
+    activity: [],
+  }
+}
+
+function serializeCompositionHistory(
+  stacks: CompositionHistoryStacks,
+): CreativeCompositionHistoryView {
+  const activity = stacks.activity.map((batch): CreativeCompositionHistoryActivity => {
+    const kind = String(batch.kind).toLowerCase()
+    if (!['apply', 'undo', 'redo', 'rollback'].includes(kind)) {
+      throw new CompositionServiceError('composition_history_invalid', 500)
+    }
+    const actor = object(batch.actor)
+    const operations = Array.isArray(batch.operations) ? batch.operations : []
+    const rollbackPoints = Array.isArray(batch.rollbackPointsCreated)
+      ? batch.rollbackPointsCreated
+      : []
+    const rollbackPoint = object(rollbackPoints[0])
+    if (!rollbackPoint.id) {
+      throw new CompositionServiceError('composition_audit_incomplete', 500)
+    }
+    return {
+      id: String(batch.id),
+      kind: kind as CreativeCompositionHistoryActivity['kind'],
+      origin: kind === 'apply'
+        ? String(batch.idempotencyKey ?? '').startsWith('editor-agent-apply-')
+          ? 'agent'
+          : 'human'
+        : 'system',
+      actorId: String(batch.actorId),
+      actorName: String(actor.name ?? actor.email ?? 'Studio user'),
+      actorRole: String(batch.actorRole).toLowerCase() as StudioBrandAccess['role'],
+      resultVersion: Number(batch.resultVersion),
+      targetBatchId: typeof batch.targetBatchId === 'string'
+        ? batch.targetBatchId
+        : null,
+      rollbackPointId: String(rollbackPoint.id),
+      createdAt: iso(batch.createdAt),
+      operationIds: operations.map((operation) => String(object(operation).id)),
+    }
+  })
+  const rollbackPoints = activity.map((entry) => ({
+    batchId: entry.id,
+    rollbackPointId: entry.rollbackPointId,
+  }))
+  const latestAgentBatchId = activity
+    .filter((entry) => entry.kind === 'apply' && entry.origin === 'agent')
+    .at(-1)?.id ?? null
+  return {
+    canUndo: stacks.undo.length > 0,
+    canRedo: stacks.redo.length > 0,
+    undoDepth: stacks.undo.length,
+    redoDepth: stacks.redo.length,
+    currentUndoBatchId: stacks.undo.at(-1)?.id
+      ? String(stacks.undo.at(-1)!.id)
+      : null,
+    currentRedoBatchId: stacks.redo.at(-1)?.id
+      ? String(stacks.redo.at(-1)!.id)
+      : null,
+    latestAgentBatchId,
+    canRollbackLatestAgentBatch: Boolean(
+      latestAgentBatchId
+      && rollbackPoints.some((entry) => entry.batchId === latestAgentBatchId),
+    ),
+    rollbackPoints,
+    activity,
+  }
+}
+
+async function getCompositionHistory(
+  client: DbClient,
+  compositionId: string,
+  currentVersion: number,
+): Promise<CreativeCompositionHistoryView> {
+  if (currentVersion <= 1) return emptyCompositionHistory()
+  return serializeCompositionHistory(
+    await reconstructCompositionHistoryStacks(client, compositionId, currentVersion),
+  )
 }
 
 async function resolveUndoOrRedo(

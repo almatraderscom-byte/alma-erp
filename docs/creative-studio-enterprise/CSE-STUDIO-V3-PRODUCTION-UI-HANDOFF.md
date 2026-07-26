@@ -4,8 +4,10 @@
 
 Workstream U adds the production presentation/client layer under
 `src/agent/components/creative-studio-v3/` and the minimum route/middleware
-integration. It does not change Prisma, migrations, workers, provider adapters,
-composition services, publish/retention services, or the locked demo route.
+integration. The final integration merge also preserves the independently
+accepted Lifecycle commit, including its additive schema, service, API, and
+worker changes. UI-specific edits do not duplicate Lifecycle operations inside
+the presentation adapter, and the locked demo route remains unchanged.
 
 The legacy Studio remains the immediate owner-only fallback.
 
@@ -69,8 +71,9 @@ misleading empty project state.
 ## Foundation composition and Editor integration
 
 The accepted Editor/Foundation SHA
-`8e89f2082d229b5e3f0d12c83064cf514869f2a3` is a true parent of the integration
-merge `ed747bb9233c8ab8667d16353833a7236719d800`.
+`8e89f2082d229b5e3f0d12c83064cf514869f2a3` is a true ancestor of the
+pre-Lifecycle UI integration merge
+`ed747bb9233c8ab8667d16353833a7236719d800`.
 
 Foundation remains separately default-off:
 
@@ -123,32 +126,65 @@ only from existing production reads:
 - immutable source-lineage edges;
 - recorded provider, engine, QC, and cost metadata;
 - access-scoped review/activity only after canonical project asset IDs exist.
+- durable Foundation undo/redo/rollback depth, activity, rollback points, and
+  the authoritative latest Agent batch ID.
 
 If owner-only asset enrichment rejects a collaborator, canonical Foundation
 pins remain visible and project assets, review, activity, and durable history
-are explicitly marked `not_hydrated`. No placeholder artwork, comments,
-approval, activity, or success count is substituted. Foundation GET does not
-yet expose a durable paginated history/depth feed, so prior history is always
-labelled not hydrated; mounted-session receipts remain authoritative.
+retain their independently reported hydration states. No placeholder artwork,
+comments, approval, activity, history, or success count is substituted.
+Foundation GET is authoritative for durable history; a reload returns the exact
+latest Agent batch ID and rollback eligibility rather than relying on session
+state.
 
 ## Remaining exact integration hooks
 
-### Review queue
+### Lifecycle Review and Operations (integrated)
 
-Implement `CreativeStudioV3ReviewQueuePort.listReviewQueue` with server-enforced
-brand/project access. Every row must return the canonical:
+The accepted Lifecycle implementation at
+`28c8c34d9753f022c9938ab33c964cb3d178ea0a` is merged with ancestry. V3 now
+uses focused production ports for:
 
-- `projectAssetId`
-- `projectId`
-- `brandProfileId`
-- `currentVersionId`
-- `expectedSequence`
-- review `state`
+- an access-scoped Review registry containing canonical `projectAssetId`,
+  `projectId`, `brandProfileId`, `currentVersionId`, `expectedSequence`, and
+  review `state`; approved rows are returned only when V3 explicitly requests
+  them;
+- access-scoped Foundation composition discovery and a server-resolved exact
+  composition/artifact pin;
+- owner-only V3 Lifecycle approval through the dedicated authenticated
+  `/lifecycle/review/[asset]` boundary, which re-derives brand access before
+  requiring a primitive validated transition state, an explicit non-negative
+  integer sequence and, for approval, both non-empty composition pin IDs before
+  delegating to the durable CSE6 workflow;
+  the shared CSE6 Creator-draft/revise and Reviewer-comment/request-changes
+  routes remain unchanged. The authoritative Review API reports
+  `composition_pin_missing` for legacy or partial approvals and
+  `approved_composition_version_stale` after an edit; both states are not
+  publish-ready and V3 disables Lifecycle actions rather than inferring
+  approval;
+- server-side zero-effect preview and owner-only zero-cost local
+  render/export job creation using only the registered
+  `composition-manifest-v1` JSON renderer;
+- access-scoped job/operations reads, exact owner project/role/capability flag
+  reads and mutations, and owner-only cancel/retry controls.
 
-The existing exact-asset review endpoint can then open/transition the returned
-asset. Gallery job IDs must never be substituted for project asset or version
-IDs. Lifecycle Review and Operations mutations remain disabled until the
-corrective backend task supplies these exact ports.
+Creator and reviewer desks are read-only. They can inspect exact pins,
+rollouts, jobs, and missing telemetry, but V3 exposes no preview command,
+review, queue, control, or flag mutation to them. The public Lifecycle service
+re-derives that owner boundary server-side; the client role check is only a
+fail-fast presentation guard.
+
+Preview, render, export, dry run, schedule, and live publish remain visibly
+distinct. Dry run and schedule truthfully report that the accepted typed intent
+contract has no mounted production execution adapter. Live publish flag enable,
+paid rendering, voice providers, schedule execution, and external Meta publish
+methods are absent from the V3 client. Legacy fallback is displayed only from
+the server rollout decision and is never automatically executed.
+
+The Operations worker card reports only whether the app-side
+`STUDIO_LIFECYCLE_LOCAL_WORKER_ENABLED` flag is present. It explicitly does not
+claim the VPS loop is running; worker heartbeat remains `unknown` until an
+authoritative telemetry source is wired.
 
 ### Collaborator-safe content reads and commands
 
@@ -170,15 +206,17 @@ remove only the matching owner-only UI disablement.
 
 ### Remaining capability gaps
 
-- Gallery archive listing needs an access-scoped cursor/lifecycle contract.
-- Video end-frame and explicit mute/generated-audio controls need declared
-  provider capabilities.
+- Lifecycle worker heartbeat/VPS deployment health has no authoritative
+  telemetry source yet. A flag alone is not readiness.
+- Dry-run and schedule execution need their own durable command/receipt
+  adapters. Live Meta stays independently hard-disabled.
+- Rich media render/export needs a separately registered, costed adapter. V3
+  currently exposes only the deterministic local JSON manifest renderer at
+  `৳0`.
 - Collaborator asset hydration needs an access-scoped project-asset list; the
   current owner-only read is optional enrichment only.
-- Foundation GET needs durable history/depth and paginated activity contracts
-  before those states can be hydrated across sessions.
-- Publish/retention commands remain outside this workstream and must continue to
-  use their existing server gates.
+- Publish/retention commands remain separate and continue to use their own
+  server gates. No Lifecycle UI control calls them.
 
 ## Visual evidence
 
@@ -199,14 +237,22 @@ visualizations workspace.
 
 ## Verification performed
 
-- Targeted V3/Editor/Foundation contracts: 11 files / 62 tests passed.
-- Complete Creative Studio suite: 51 files / 334 tests passed.
-- Complete repository suite: 520 files / 4,692 tests passed.
+- Targeted Lifecycle/security/cost contracts: 21 files / 112 tests passed;
+  one database-backed file and two tests skipped without `TEST_DATABASE_URL`.
+- Complete Creative Studio suite: 69 files / 433 tests passed; one file and two
+  tests skipped without the optional database fixture.
+- Complete worker suite: 105 tests passed.
+- Complete repository suite: 538 files / 4,793 tests passed; one file and two
+  tests skipped.
+- Prisma schema validation and client generation: passed.
+- Lifecycle additive-DDL static preflight and fixture migration reconciliation:
+  passed without a network or database connection.
 - Targeted ESLint: passed without findings.
 - Repository `npm run lint`: passed; existing unrelated warnings remain.
 - `npm run type-check`: passed.
-- Optimized `next build`: passed. Existing OpenTelemetry/Sentry dynamic-import
-  warnings and missing local `DATABASE_URL` notices were non-fatal.
+- Optimized `next build`: passed with local migration execution explicitly
+  skipped. Existing OpenTelemetry/Sentry dynamic-import warnings were
+  non-fatal.
 - The React checklist passed for hook stability, stable port lifetime,
   semantic controls, disabled reviewer mutations, error recovery, focus
   management, responsive layout, and reduced motion.

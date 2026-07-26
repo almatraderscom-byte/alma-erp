@@ -9,6 +9,7 @@ import type {
   CreativeStudioV3View,
 } from '@/agent/components/creative-studio-v3/types'
 import type { StudioAccessRole } from '@/lib/creative-studio/studio-access'
+import type { StudioProjectSummary } from '@/lib/creative-studio/project-contract'
 import styles from '@/agent/components/creative-studio-v3/creative-studio-v3.module.css'
 
 type NavItem = {
@@ -52,7 +53,10 @@ export function StudioV3Shell({
   onNavigate,
   brands,
   activeBrandId,
+  activeProjectId,
   onBrandChange,
+  onProjectChange,
+  projects,
   accountLabel,
   immersive,
   legacyAllowed,
@@ -63,14 +67,52 @@ export function StudioV3Shell({
   onNavigate: CreativeStudioV3Navigate
   brands: StudioBrandProfile[]
   activeBrandId: string | null
+  activeProjectId: string | null
   onBrandChange: (brandId: string) => void
+  onProjectChange: (projectId: string) => void
+  projects: StudioProjectSummary[]
   accountLabel: string
   immersive: boolean
   legacyAllowed: boolean
   studioRole: StudioAccessRole
 }) {
   const activeBrand = brands.find((brand) => brand.brandProfileId === activeBrandId) ?? brands[0] ?? null
-  const legacyHref = '/agent/creative-studio?studio=legacy'
+  const legacyQuery = new URLSearchParams({ studio: 'legacy' })
+  if (activeBrandId) legacyQuery.set('brand', activeBrandId)
+  if (activeProjectId) legacyQuery.set('project', activeProjectId)
+  if (currentView.id === 'home') {
+    legacyQuery.set('mode', 'home')
+  } else if (currentView.id === 'image-lab') {
+    legacyQuery.set('mode', 'image')
+    if (currentView.sourceAssetId) legacyQuery.set('asset', currentView.sourceAssetId)
+    if (currentView.avatarId) legacyQuery.set('avatar', currentView.avatarId)
+  } else if (currentView.id === 'video-lab') {
+    legacyQuery.set('mode', 'video')
+    if (currentView.sourceAssetId) legacyQuery.set('asset', currentView.sourceAssetId)
+    if (currentView.avatarId) legacyQuery.set('avatar', currentView.avatarId)
+  } else if (currentView.id === 'gallery') {
+    legacyQuery.set('mode', 'gallery')
+    if (currentView.initialType) legacyQuery.set('type', currentView.initialType)
+    if (currentView.reviewTarget) {
+      legacyQuery.set('brand', currentView.reviewTarget.brandProfileId)
+      legacyQuery.set('project', currentView.reviewTarget.projectId)
+      legacyQuery.set('asset', currentView.reviewTarget.projectAssetId)
+      legacyQuery.set('version', currentView.reviewTarget.currentVersionId)
+      legacyQuery.set('sequence', String(currentView.reviewTarget.expectedSequence))
+    }
+  } else if (currentView.id === 'finishing') {
+    legacyQuery.set('mode', 'finishing')
+    if (currentView.assetId) legacyQuery.set('asset', currentView.assetId)
+  } else if (currentView.id === 'desk') {
+    legacyQuery.set('mode', currentView.desk)
+    legacyQuery.set('desk', currentView.desk)
+    if (currentView.projectId) legacyQuery.set('project', currentView.projectId)
+  } else {
+    legacyQuery.set('mode', 'editor')
+    legacyQuery.set('composition', currentView.compositionId)
+    legacyQuery.set('project', currentView.projectId)
+  }
+  const legacyHref = `/agent/creative-studio?${legacyQuery.toString()}`
   const accessLabel = activeBrand
     ? `${activeBrand.role.slice(0, 1).toUpperCase()}${activeBrand.role.slice(1)}`
     : `${studioRole.slice(0, 1).toUpperCase()}${studioRole.slice(1)}`
@@ -121,6 +163,20 @@ export function StudioV3Shell({
               ))}
             </select>
           </label>
+          <label className={styles.brandSelect}>
+            <span className="sr-only">Active project</span>
+            <select
+              aria-label="Active Creative Studio project"
+              disabled={projects.length === 0}
+              onChange={(event) => onProjectChange(event.target.value)}
+              value={activeProjectId ?? ''}
+            >
+              {projects.length === 0 && <option value="">No accessible project</option>}
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+          </label>
           <span className={styles.guardBadge}><StudioV3Icon name="lock" /> Server gated</span>
           {legacyAllowed && <Link className={styles.legacyLink} href={legacyHref}>Legacy Studio</Link>}
           <span
@@ -136,10 +192,10 @@ export function StudioV3Shell({
 
       <div className={`${styles.shellBody} ${immersive ? styles.shellBodyImmersive : ''}`}>
         <aside aria-label="Creative Studio sections" className={styles.sidebar}>
-          <nav className={styles.sidebarNav}>{primaryNav.map(navButton)}</nav>
+          <nav aria-label="Creative Studio navigation" className={styles.sidebarNav}>{primaryNav.map(navButton)}</nav>
           <div className={styles.sidebarDivider} />
           <p className={styles.sidebarLabel}>Capability desks</p>
-          <nav className={styles.sidebarNav}>{capabilityNav.map(navButton)}</nav>
+          <nav aria-label="Creative Studio capability navigation" className={styles.sidebarNav}>{capabilityNav.map(navButton)}</nav>
           <div className={styles.sidebarTrust}>
             <StudioV3Icon name="lock" />
             <div>

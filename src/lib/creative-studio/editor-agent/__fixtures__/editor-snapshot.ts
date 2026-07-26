@@ -363,5 +363,7 @@ export function createEditorFixtureSnapshot(): EditorCompositionSnapshot {
     ],
     canUndo: false,
     canRedo: false,
+    latestAgentBatchId: null,
+    canRollbackLatestAgentBatch: false,
   }
 }

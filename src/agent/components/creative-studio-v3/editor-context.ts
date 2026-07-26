@@ -238,6 +238,29 @@ function reviewActivity(threads: StudioReviewThread[]): EditorActivityEntry[] {
     left.createdAt.localeCompare(right.createdAt))
 }
 
+function durableHistoryActivity(
+  view: CreativeCompositionView,
+): EditorActivityEntry[] {
+  return view.history.activity.map((entry) => ({
+    id: entry.id,
+    kind: entry.kind === 'apply' ? 'edit' : entry.kind,
+    actorName: entry.actorName,
+    summary: `Foundation ${entry.kind} batch committed as composition v${entry.resultVersion}.`,
+    version: entry.resultVersion,
+    createdAt: entry.createdAt,
+    operationIds: [...entry.operationIds],
+  }))
+}
+
+function mergeActivity(
+  ...groups: EditorActivityEntry[][]
+): EditorActivityEntry[] {
+  const byId = new Map<string, EditorActivityEntry>()
+  for (const entry of groups.flat()) byId.set(entry.id, entry)
+  return [...byId.values()].sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt))
+}
+
 async function loadReviewThreads(
   assets: EditorAssetReference[],
   brandProfileId: string,
@@ -253,8 +276,9 @@ async function loadReviewThreads(
 
 /**
  * Read-only presentation enrichment. The Foundation view keeps identity,
- * scope, version and command authority; owner-only project asset hydration is
- * optional and collaborator failures deliberately fall back to canonical pins.
+ * scope, version and command authority; access-scoped project asset hydration
+ * is optional and any enrichment failure deliberately falls back to canonical
+ * Foundation pins and durable history.
  */
 export async function loadCreativeStudioV3EditorSnapshotContext(
   view: CreativeCompositionView,
@@ -270,11 +294,14 @@ export async function loadCreativeStudioV3EditorSnapshotContext(
   ) {
     return {
       brandName: input.brandName,
+      activity: durableHistoryActivity(view),
+      canUndo: view.history.canUndo,
+      canRedo: view.history.canRedo,
       hydration: {
         projectAssets: 'not_hydrated',
         review: 'not_hydrated',
         activity: 'not_hydrated',
-        history: 'not_hydrated',
+        history: 'hydrated',
       },
     }
   }
@@ -285,11 +312,14 @@ export async function loadCreativeStudioV3EditorSnapshotContext(
   } catch {
     return {
       brandName: input.brandName,
+      activity: durableHistoryActivity(view),
+      canUndo: view.history.canUndo,
+      canRedo: view.history.canRedo,
       hydration: {
         projectAssets: 'not_hydrated',
         review: 'not_hydrated',
         activity: 'not_hydrated',
-        history: 'not_hydrated',
+        history: 'hydrated',
       },
     }
   }
@@ -303,19 +333,22 @@ export async function loadCreativeStudioV3EditorSnapshotContext(
   return {
     brandName: input.brandName,
     assets,
+    canUndo: view.history.canUndo,
+    canRedo: view.history.canRedo,
     ...(reviewHydrated
       ? {
           review: reviewSummary(threads),
-          activity: reviewActivity(threads),
+          activity: mergeActivity(
+            durableHistoryActivity(view),
+            reviewActivity(threads),
+          ),
         }
-      : {}),
+      : { activity: durableHistoryActivity(view) }),
     hydration: {
       projectAssets: 'hydrated',
       review: reviewHydrated ? 'hydrated' : 'not_hydrated',
       activity: reviewHydrated ? 'hydrated' : 'not_hydrated',
-      // Foundation GET does not yet expose durable undo/redo depth or a
-      // paginated operation feed. Session receipts may still enable controls.
-      history: 'not_hydrated',
+      history: 'hydrated',
     },
   }
 }

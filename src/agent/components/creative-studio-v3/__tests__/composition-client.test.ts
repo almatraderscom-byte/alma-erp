@@ -49,11 +49,29 @@ function composition(
     document: projected.document,
     documentHash: projected.documentHash,
     accessRole: role,
+    history: {
+      canUndo: false,
+      canRedo: false,
+      undoDepth: 0,
+      redoDepth: 0,
+      currentUndoBatchId: null,
+      currentRedoBatchId: null,
+      latestAgentBatchId: null,
+      canRollbackLatestAgentBatch: false,
+      rollbackPoints: [],
+      activity: [],
+    },
   }
 }
 
 function summary(view: CreativeCompositionView): CreativeCompositionSummary {
-  const { document: _document, documentHash: _hash, accessRole: _role, ...row } = view
+  const {
+    document: _document,
+    documentHash: _hash,
+    accessRole: _role,
+    history: _history,
+    ...row
+  } = view
   return row
 }
 

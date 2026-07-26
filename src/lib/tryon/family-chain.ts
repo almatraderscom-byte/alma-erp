@@ -23,10 +23,9 @@
  * callback) queues the next step when one finishes. No new job types, no new
  * tables — caches live in agent_kv_settings like the garment classifier's.
  */
-import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { getOrClassifyGarment, normalizeGarmentType, type GarmentAttrs } from '@/lib/tryon/art-director'
-import { listModelsByRole, type SavedModel } from '@/lib/tryon/model-library'
+import type { SavedModel } from '@/lib/tryon/model-library'
 import { pickScene, pickSceneWeighted, toSceneRef, type SceneRef } from '@/lib/tryon/scene-pool'
 import type {
   GenericImageModel,
@@ -34,6 +33,16 @@ import type {
   StudioReferenceContract,
 } from '@/lib/creative-studio/advanced-image-capabilities'
 import type { StudioModeId } from '@/lib/creative-studio/constants'
+import {
+  currentStudioRunExecutionContext,
+  recoveredStudioRunJobId,
+  studioRunAuthorizedJobFields,
+} from '@/lib/creative-studio/studio-run-context'
+import type {
+  StudioRunEstimateReceiptClaims,
+  StudioRunFamilyModelPin,
+} from '@/lib/creative-studio/studio-run-authorization'
+import { assertStudioRunExecutionGate } from '@/lib/creative-studio/studio-run-execution-gate'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -118,6 +127,10 @@ export type FamilyChainState = {
    */
   vtonEngine?: 'fashn' | 'fal_fashn_v16'
   conversationId?: string | null
+  runAuthorization: {
+    claims: StudioRunEstimateReceiptClaims
+    receipt: string
+  }
 }
 
 export type ChainJobRef = { pendingActionId: string; label: string; type: 'image_gen' }
@@ -545,15 +558,44 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
 
 async function createStepAction(state: FamilyChainState, step: ChainStepKind): Promise<string> {
   const { payload, summary, costEstimate } = buildStepAction(state, step)
-  const row = await db.agentPendingAction.create({
-    data: {
+  const authorized = studioRunAuthorizedJobFields(payload, {
+    claims: state.runAuthorization.claims,
+    receipt: state.runAuthorization.receipt,
+    dedupePart: `family:${state.chainId}:${state.stepIndex}`,
+  })
+  const existing = await db.agentPendingAction.findUnique({
+    where: { dedupeKey: authorized.dedupeKey },
+    select: {
+      id: true,
+      status: true,
+      dedupeKey: true,
+      payload: true,
+    },
+  })
+  const recoveredId = recoveredStudioRunJobId({
+    existing,
+    dedupeKey: authorized.dedupeKey,
+    payload: authorized.payload,
+  })
+  if (recoveredId) return recoveredId
+  await assertStudioRunExecutionGate({
+    receipt: state.runAuthorization.receipt,
+    payload: authorized.payload,
+    expectedClaims: state.runAuthorization.claims,
+    checkProviderAvailability: payload.provider !== 'family_composite',
+  })
+  const row = await db.agentPendingAction.upsert({
+    where: { dedupeKey: authorized.dedupeKey },
+    create: {
       conversationId: state.conversationId ?? null,
+      dedupeKey: authorized.dedupeKey,
       type: 'image_gen',
-      payload,
+      payload: authorized.payload,
       summary,
       costEstimate,
       status: 'approved',
     },
+    update: {},
   })
   return row.id as string
 }
@@ -604,6 +646,22 @@ function requiredRoles(variant: FamilyChainVariant): Array<'father' | 'mother' |
   return ['father', 'mother', 'son', 'daughter']
 }
 
+function savedModelsFromPins(
+  pins: StudioRunFamilyModelPin[],
+): Partial<Record<'father' | 'mother' | 'son' | 'daughter', SavedModel>> {
+  return Object.fromEntries(pins.map((pin) => [
+    pin.role,
+    {
+      id: pin.modelId,
+      name: pin.modelName,
+      imagePath: pin.sourceImagePath,
+      isDefault: false,
+      role: pin.role,
+      ...(pin.modelNotes ? { notes: pin.modelNotes } : {}),
+    },
+  ]))
+}
+
 async function startPairChain(opts: {
   variant: Exclude<FamilyChainVariant, 'full_family'>
   productImagePath: string
@@ -620,6 +678,8 @@ async function startPairChain(opts: {
   vtonEngine?: 'fashn' | 'fal_fashn_v16'
   conversationId?: string | null
 }): Promise<ChainJobRef> {
+  const execution = currentStudioRunExecutionContext()
+  if (!execution) throw new Error('studio_run_authorization_required')
   const roles = VARIANT_ROLES[opts.variant]
   const adult = opts.models[roles.adult]!
   const child = opts.models[roles.child]!
@@ -636,7 +696,7 @@ async function startPairChain(opts: {
   const plan: ChainStepKind[] = ['garment_prep', 'adult_tryon', 'child_tryon', finalStep]
 
   const state: FamilyChainState = {
-    chainId: randomUUID(),
+    chainId: `${execution.claims.receiptId}:${opts.variant}`,
     groupId: opts.groupId,
     variant: opts.variant,
     scene: opts.scene,
@@ -658,6 +718,10 @@ async function startPairChain(opts: {
     generationMode: opts.generationMode,
     imageModel: opts.imageModel,
     conversationId: opts.conversationId ?? null,
+    runAuthorization: {
+      claims: execution.claims,
+      receipt: execution.receipt,
+    },
   }
 
   const id = await createStepAction(state, plan[0])
@@ -675,10 +739,14 @@ export async function startFamilyChain(input: StartFamilyChainInput): Promise<{
   jobs: ChainJobRef[]
   sceneLabel: string
 }> {
+  const execution = currentStudioRunExecutionContext()
+  if (!execution) throw new Error('studio_run_authorization_required')
   const productImagePath = input.productImagePath?.trim()
   if (!productImagePath) throw new Error('product_image_required')
 
-  const models = await listModelsByRole()
+  const models = savedModelsFromPins(
+    execution.claims.scope.familyModelPins ?? [],
+  )
   const missing = requiredRoles(input.variant).filter((r) => !models[r])
   if (missing.length) throw new FamilyChainModelError(missing)
 
@@ -703,7 +771,7 @@ export async function startFamilyChain(input: StartFamilyChainInput): Promise<{
   }
 
   if (input.variant === 'full_family') {
-    const groupId = randomUUID()
+    const groupId = `${execution.claims.receiptId}:full-family`
     const [a, b] = await Promise.all([
       startPairChain({ ...common, variant: 'father_son', groupId }),
       startPairChain({ ...common, variant: 'mother_daughter', groupId }),
@@ -728,12 +796,14 @@ export async function startSingleRescueChain(opts: {
   vtonEngine?: 'fashn' | 'fal_fashn_v16'
   conversationId?: string | null
 }): Promise<ChainJobRef> {
+  const execution = currentStudioRunExecutionContext()
+  if (!execution) throw new Error('studio_run_authorization_required')
   const picked = pickScene()
   const scene = toSceneRef(picked)
   const attrs = await getOrClassifyGarment(opts.productImagePath)
 
   const state: FamilyChainState = {
-    chainId: randomUUID(),
+    chainId: `${execution.claims.receiptId}:single`,
     variant: 'single',
     scene,
     productImagePath: opts.productImagePath,
@@ -752,6 +822,10 @@ export async function startSingleRescueChain(opts: {
     generationMode: opts.generationMode ?? 'balanced',
     imageModel: opts.imageModel,
     conversationId: opts.conversationId ?? null,
+    runAuthorization: {
+      claims: execution.claims,
+      receipt: execution.receipt,
+    },
   }
 
   const id = await createStepAction(state, state.plan[0])
@@ -803,7 +877,7 @@ async function tryStartGroupMerge(state: FamilyChainState): Promise<string | nul
   const useComposite = Boolean(state.protectedComposite)
   const mergeState: FamilyChainState = {
     ...state,
-    chainId: randomUUID(),
+    chainId: `${state.groupId}:merge`,
     variant: 'full_family',
     plan: [useComposite ? 'group_composite' : 'group_merge'],
     stepIndex: 0,
@@ -829,15 +903,44 @@ async function tryStartGroupMerge(state: FamilyChainState): Promise<string | nul
       } satisfies StudioReferenceContract
     }
   }
-  const row = await db.agentPendingAction.create({
-    data: {
+  const authorized = studioRunAuthorizedJobFields(payload, {
+    claims: mergeState.runAuthorization.claims,
+    receipt: mergeState.runAuthorization.receipt,
+    dedupePart: `family:${mergeState.chainId}:${mergeState.stepIndex}`,
+  })
+  const existing = await db.agentPendingAction.findUnique({
+    where: { dedupeKey: authorized.dedupeKey },
+    select: {
+      id: true,
+      status: true,
+      dedupeKey: true,
+      payload: true,
+    },
+  })
+  const recoveredId = recoveredStudioRunJobId({
+    existing,
+    dedupeKey: authorized.dedupeKey,
+    payload: authorized.payload,
+  })
+  if (recoveredId) return recoveredId
+  await assertStudioRunExecutionGate({
+    receipt: mergeState.runAuthorization.receipt,
+    payload: authorized.payload,
+    expectedClaims: mergeState.runAuthorization.claims,
+    checkProviderAvailability: payload.provider !== 'family_composite',
+  })
+  const row = await db.agentPendingAction.upsert({
+    where: { dedupeKey: authorized.dedupeKey },
+    create: {
       conversationId: state.conversationId ?? null,
+      dedupeKey: authorized.dedupeKey,
       type: 'image_gen',
-      payload,
+      payload: authorized.payload,
       summary,
       costEstimate,
       status: 'approved',
     },
+    update: {},
   })
   return row.id as string
 }

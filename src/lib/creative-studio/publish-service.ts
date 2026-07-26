@@ -4,6 +4,14 @@ import {
   requireStudioBrandAccess,
   type StudioActor,
 } from '@/lib/creative-studio/studio-access'
+import {
+  lifecycleFingerprint,
+  normalizeLifecycleScheduleAt,
+} from '@/lib/creative-studio/lifecycle-contract'
+import {
+  evaluateStudioLifecycleRollout,
+  type StudioLifecycleFlagScope,
+} from '@/lib/creative-studio/lifecycle-rollout'
 
 // Prisma Client is generated during build after the phase migration exists.
 // Keeping this structural mirrors the earlier CSE services and lets the pure
@@ -36,6 +44,13 @@ export type StudioPublishPreview = {
   projectId: string
   brandProfileId: string
   campaignPackId: string | null
+  compositionId: string | null
+  compositionVersionId: string | null
+  compositionVersion: number | null
+  compositionDocumentHash: string | null
+  operationBatchId: string | null
+  reviewFingerprint: string | null
+  renderFingerprint: string | null
   sceneKey: string
   mediaStoragePath: string
   estimatedCostUsd: 0
@@ -56,6 +71,13 @@ export type StudioPublishDeliveryView = {
   assetId: string
   assetVersionId: string
   campaignPackId: string | null
+  compositionId: string | null
+  compositionVersionId: string | null
+  compositionVersion: number | null
+  compositionDocumentHash: string | null
+  operationBatchId: string | null
+  reviewFingerprint: string | null
+  renderFingerprint: string | null
   sceneKey: string
   platform: StudioPublishPlatform
   pageRef: string
@@ -166,6 +188,61 @@ function normalizeAdId(value: unknown): string | null {
   return adId
 }
 
+async function requireCompositionPublishCapability(input: {
+  ownerId: string
+  brandProfileId: string
+  projectId: string
+  intent: unknown
+}): Promise<void> {
+  const capability: StudioLifecycleFlagScope['capability'] = input.intent === 'publish_now'
+    ? 'live_publish'
+    : input.intent === 'schedule'
+      ? 'schedule'
+      : 'dry_run'
+  const rows = await db.creativeLifecycleFeatureFlag.findMany({
+    where: {
+      ownerId: input.ownerId,
+      capability,
+      OR: [{ brandProfileId: null }, { brandProfileId: input.brandProfileId }],
+    },
+  })
+  const decision = evaluateStudioLifecycleRollout({
+    scope: {
+      ownerId: input.ownerId,
+      brandProfileId: input.brandProfileId,
+      projectId: input.projectId,
+      role: 'owner',
+      capability,
+    },
+    flags: rows.map((row: AnyRecord) => ({
+      id: String(row.id),
+      scope: {
+        ownerId: String(row.ownerId),
+        ...(typeof row.brandProfileId === 'string' ? { brandProfileId: row.brandProfileId } : {}),
+        ...(typeof row.projectId === 'string' ? { projectId: row.projectId } : {}),
+        ...(row.role ? { role: String(row.role).toLowerCase() as 'owner' } : {}),
+        capability: String(row.capability) as StudioLifecycleFlagScope['capability'],
+      },
+      enabled: row.enabled === true,
+      dualReadEnabled: row.dualReadEnabled === true,
+      legacyFallbackEnabled: row.legacyFallbackEnabled !== false,
+      canaryPercent: Number(row.canaryPercent ?? 0),
+      canarySalt: typeof row.canarySalt === 'string' ? row.canarySalt : undefined,
+    })),
+  })
+  if (!decision.enabled) {
+    throw new StudioPublishError('v3_publish_capability_disabled', 409, {
+      capability,
+      legacyFallbackAvailable: decision.legacyFallbackAvailable,
+      fallbackExecution: decision.fallbackExecution,
+    })
+  }
+  if (
+    capability === 'live_publish'
+    && process.env.CREATIVE_STUDIO_V3_LIVE_PUBLISH_ENABLED !== 'true'
+  ) throw new StudioPublishError('v3_live_publish_disabled', 409)
+}
+
 export function normalizeScheduledFor(value: unknown, now = new Date()): Date {
   const parsed = value ? new Date(String(value)) : now
   if (!Number.isFinite(parsed.getTime())) throw new StudioPublishError('invalid_publish_schedule')
@@ -182,6 +259,13 @@ export function publishRequestFingerprint(input: {
   caption: string
   scheduledFor: Date | string
   adId?: string | null
+  compositionId?: string | null
+  compositionVersionId?: string | null
+  compositionVersion?: number | null
+  compositionDocumentHash?: string | null
+  operationBatchId?: string | null
+  reviewFingerprint?: string | null
+  renderFingerprint?: string | null
 }): string {
   const canonical = JSON.stringify({
     ownerId: input.ownerId,
@@ -191,6 +275,13 @@ export function publishRequestFingerprint(input: {
     caption: input.caption,
     scheduledFor: iso(input.scheduledFor),
     adId: input.adId ?? null,
+    compositionId: input.compositionId ?? null,
+    compositionVersionId: input.compositionVersionId ?? null,
+    compositionVersion: input.compositionVersion ?? null,
+    compositionDocumentHash: input.compositionDocumentHash ?? null,
+    operationBatchId: input.operationBatchId ?? null,
+    reviewFingerprint: input.reviewFingerprint ?? null,
+    renderFingerprint: input.renderFingerprint ?? null,
   })
   return createHash('sha256').update(canonical).digest('hex')
 }
@@ -261,6 +352,13 @@ async function loadApprovedPublishContext(
   assetVersionId: string
   recipeId: string | null
   campaignPackId: string | null
+  compositionId: string | null
+  compositionVersionId: string | null
+  compositionVersion: number | null
+  compositionDocumentHash: string | null
+  operationBatchId: string | null
+  reviewFingerprint: string | null
+  renderFingerprint: string | null
   sceneKey: string
   approvedReviewEventId: string
   mediaStoragePath: string
@@ -294,6 +392,9 @@ async function loadApprovedPublishContext(
   }
   const access = await requireStudioBrandAccess(actor, brandProfileId)
   if (access.role !== 'owner') throw new StudioPublishError('studio_publish_forbidden', 403)
+  if (project.ownerId !== access.ownerId) {
+    throw new StudioPublishError('project_scope_mismatch', 403)
+  }
 
   const versions = Array.isArray(asset.versions) ? asset.versions : []
   const latestVersion = versions[0] ? record(versions[0]) : null
@@ -308,7 +409,7 @@ async function loadApprovedPublishContext(
   ) {
     throw new StudioPublishError('approved_version_required', 409)
   }
-  const mediaStoragePath = cleanText(latestVersion.storagePath ?? asset.latestStoragePath, 2_000)
+  let mediaStoragePath = cleanText(latestVersion.storagePath ?? asset.latestStoragePath, 2_000)
   if (!mediaStoragePath) throw new StudioPublishError('publish_media_required', 409)
 
   const action = latestVersion.jobId
@@ -325,6 +426,149 @@ async function loadApprovedPublishContext(
     80,
   ) || 'unclassified'
 
+  const requestedCompositionId = cleanText(input.compositionId, 128)
+  const requestedCompositionVersionId = cleanText(input.compositionVersionId, 128)
+  if (Boolean(requestedCompositionId) !== Boolean(requestedCompositionVersionId)) {
+    throw new StudioPublishError('composition_publish_pin_incomplete')
+  }
+  let compositionId: string | null = null
+  let compositionVersionId: string | null = null
+  let compositionVersion: number | null = null
+  let compositionDocumentHash: string | null = null
+  let operationBatchId: string | null = null
+  let reviewFingerprint: string | null = null
+  let renderFingerprint: string | null = null
+  if (requestedCompositionId && requestedCompositionVersionId) {
+    const [composition, version] = await Promise.all([
+      db.creativeComposition.findUnique({ where: { id: requestedCompositionId } }),
+      db.creativeCompositionVersion.findUnique({
+        where: { id: requestedCompositionVersionId },
+      }),
+    ])
+    if (
+      !composition
+      || composition.archivedAt
+      || composition.ownerId !== access.ownerId
+      || composition.brandProfileId !== brandProfileId
+      || composition.projectId !== project.id
+    ) throw new StudioPublishError('composition_scope_mismatch', 403)
+    if (
+      !version
+      || version.compositionId !== composition.id
+      || Number(version.version) !== Number(composition.currentVersion)
+    ) throw new StudioPublishError('stale_composition_version', 409)
+    await requireCompositionPublishCapability({
+      ownerId: access.ownerId,
+      brandProfileId,
+      projectId: String(project.id),
+      intent: input.intent,
+    })
+    if (
+      approvalEvent.compositionId !== composition.id
+      || approvalEvent.compositionVersionId !== version.id
+      || Number(approvalEvent.compositionVersion) !== Number(version.version)
+      || approvalEvent.compositionDocumentHash !== version.documentHash
+      || approvalEvent.approvedArtifactVersionId !== latestVersion.id
+    ) throw new StudioPublishError('approved_composition_version_required', 409)
+    const requestedApprovedArtifactVersionId = cleanText(input.approvedArtifactVersionId, 128)
+    if (
+      requestedApprovedArtifactVersionId
+      && requestedApprovedArtifactVersionId !== latestVersion.id
+    ) throw new StudioPublishError('approved_artifact_version_mismatch', 409)
+    const requestedReviewEventId = cleanText(input.approvedReviewEventId, 128)
+    if (requestedReviewEventId && requestedReviewEventId !== approvalEvent.id) {
+      throw new StudioPublishError('approved_review_event_mismatch', 409)
+    }
+    compositionId = String(composition.id)
+    compositionVersionId = String(version.id)
+    compositionVersion = Number(version.version)
+    compositionDocumentHash = String(version.documentHash)
+    reviewFingerprint = lifecycleFingerprint({
+      reviewEventId: approvalEvent.id,
+      assetVersionId: latestVersion.id,
+      compositionId,
+      compositionVersionId,
+      compositionVersion,
+      compositionDocumentHash,
+    })
+    const requestedReviewFingerprint = cleanText(input.reviewFingerprint, 128)
+    if (requestedReviewFingerprint && requestedReviewFingerprint !== reviewFingerprint) {
+      throw new StudioPublishError('review_fingerprint_mismatch', 409)
+    }
+    const requestedOperationBatchId = cleanText(input.operationBatchId, 128)
+    if (requestedOperationBatchId) {
+      const operationBatch = await db.creativeOperationBatch.findUnique({
+        where: { id: requestedOperationBatchId },
+      })
+      if (
+        !operationBatch
+        || operationBatch.compositionId !== compositionId
+        || Number(operationBatch.resultVersion) !== compositionVersion
+      ) throw new StudioPublishError('operation_batch_version_mismatch', 409)
+      operationBatchId = String(operationBatch.id)
+    } else if (typeof version.operationBatchId === 'string') {
+      operationBatchId = version.operationBatchId
+    }
+    const requestedRenderFingerprint = cleanText(input.renderFingerprint, 128)
+    if (requestedRenderFingerprint) {
+      const renderJob = await db.creativeLifecycleJob.findUnique({
+        where: {
+          ownerId_renderFingerprint: {
+            ownerId: access.ownerId,
+            renderFingerprint: requestedRenderFingerprint,
+          },
+        },
+      })
+      const renderArtifact = renderJob?.resultArtifactVersionId
+        ? await db.creativeAssetVersion.findUnique({
+            where: { id: String(renderJob.resultArtifactVersionId) },
+            include: { asset: true },
+          })
+        : null
+      const renderArtifactMetadata = record(renderArtifact?.metadata)
+      const renderLineage = record(renderArtifactMetadata.lifecycle)
+      if (
+        !renderJob
+        || renderJob.status !== 'READY'
+        || !renderJob.verifiedAt
+        || !renderJob.resultStoragePath
+        || !renderJob.resultChecksum
+        || !renderJob.resultArtifactVersionId
+        || !renderArtifact
+        || record(renderArtifact.asset).projectId !== project.id
+        || renderArtifact.storagePath !== renderJob.resultStoragePath
+        || renderArtifactMetadata.checksumSha256 !== renderJob.resultChecksum
+        || renderJob.kind !== 'RENDER'
+        || !['png', 'jpg', 'jpeg', 'webp', 'mp4'].includes(String(renderJob.outputFormat).toLowerCase())
+        || renderJob.brandProfileId !== brandProfileId
+        || renderJob.projectId !== project.id
+        || renderJob.compositionId !== compositionId
+        || renderJob.compositionVersionId !== compositionVersionId
+        || Number(renderJob.compositionVersion) !== compositionVersion
+        || renderJob.compositionDocumentHash !== compositionDocumentHash
+        || (renderJob.operationBatchId ?? null) !== (operationBatchId ?? null)
+        || renderJob.sourceArtifactVersionId !== latestVersion.id
+        || renderJob.approvedReviewEventId !== approvalEvent.id
+        || renderJob.approvedArtifactVersionId !== latestVersion.id
+        || renderJob.reviewFingerprint !== reviewFingerprint
+        || renderLineage.jobId !== renderJob.id
+        || renderLineage.compositionVersionId !== compositionVersionId
+        || renderLineage.sourceArtifactVersionId !== latestVersion.id
+        || renderLineage.renderFingerprint !== requestedRenderFingerprint
+      ) throw new StudioPublishError('verified_render_receipt_required', 409)
+      renderFingerprint = requestedRenderFingerprint
+      mediaStoragePath = String(renderJob.resultStoragePath)
+    }
+  } else if (
+    input.operationBatchId
+    || input.reviewFingerprint
+    || input.renderFingerprint
+    || input.approvedArtifactVersionId
+    || input.approvedReviewEventId
+  ) {
+    throw new StudioPublishError('composition_publish_pin_required')
+  }
+
   return {
     ownerId: access.ownerId,
     brandProfileId,
@@ -333,6 +577,13 @@ async function loadApprovedPublishContext(
     assetVersionId: String(latestVersion.id),
     recipeId: typeof latestVersion.recipeId === 'string' ? latestVersion.recipeId : null,
     campaignPackId,
+    compositionId,
+    compositionVersionId,
+    compositionVersion,
+    compositionDocumentHash,
+    operationBatchId,
+    reviewFingerprint,
+    renderFingerprint,
     sceneKey,
     approvedReviewEventId: String(approvalEvent.id),
     mediaStoragePath,
@@ -352,12 +603,23 @@ async function buildPreview(
   const platform = normalizePublishPlatform(input.platform)
   const pageRef = normalizePageRef(input.pageRef)
   const caption = normalizeCaption(input.caption, platform)
-  const scheduledFor = normalizeScheduledFor(input.scheduledFor)
+  if (input.intent === 'schedule' && (typeof input.scheduledFor !== 'string' || !input.scheduledFor.trim())) {
+    throw new StudioPublishError('publish_schedule_required')
+  }
+  let normalizedRequestedSchedule: string | null = null
+  if (input.scheduledFor != null) {
+    try {
+      normalizedRequestedSchedule = normalizeLifecycleScheduleAt(input.scheduledFor)
+    } catch {
+      throw new StudioPublishError('invalid_publish_schedule')
+    }
+  }
+  const scheduledFor = normalizeScheduledFor(normalizedRequestedSchedule)
   // Fingerprint the owner's canonical request, not the moving execution-time
   // clamp. Otherwise two retries of the same past/immediate request produce
   // different `now` values and falsely trip the idempotency conflict gate.
-  const fingerprintScheduledFor = input.scheduledFor
-    ? new Date(String(input.scheduledFor))
+  const fingerprintScheduledFor = normalizedRequestedSchedule
+    ? new Date(normalizedRequestedSchedule)
     : new Date(0)
   const idempotencyKey = normalizePublishIdempotencyKey(input.idempotencyKey)
   const adId = normalizeAdId(input.adId)
@@ -369,6 +631,13 @@ async function buildPreview(
     caption,
     scheduledFor: fingerprintScheduledFor,
     adId,
+    compositionId: context.compositionId,
+    compositionVersionId: context.compositionVersionId,
+    compositionVersion: context.compositionVersion,
+    compositionDocumentHash: context.compositionDocumentHash,
+    operationBatchId: context.operationBatchId,
+    reviewFingerprint: context.reviewFingerprint,
+    renderFingerprint: context.renderFingerprint,
   })
   return {
     dryRun: true,
@@ -418,6 +687,19 @@ function serializeDelivery(row: AnyRecord): StudioPublishDeliveryView {
     assetId: String(row.assetId),
     assetVersionId: String(row.assetVersionId),
     campaignPackId: typeof row.campaignPackId === 'string' ? row.campaignPackId : null,
+    compositionId: typeof row.compositionId === 'string' ? row.compositionId : null,
+    compositionVersionId: typeof row.compositionVersionId === 'string'
+      ? row.compositionVersionId
+      : null,
+    compositionVersion: Number.isInteger(row.compositionVersion)
+      ? Number(row.compositionVersion)
+      : null,
+    compositionDocumentHash: typeof row.compositionDocumentHash === 'string'
+      ? row.compositionDocumentHash
+      : null,
+    operationBatchId: typeof row.operationBatchId === 'string' ? row.operationBatchId : null,
+    reviewFingerprint: typeof row.reviewFingerprint === 'string' ? row.reviewFingerprint : null,
+    renderFingerprint: typeof row.renderFingerprint === 'string' ? row.renderFingerprint : null,
     sceneKey: String(row.sceneKey ?? 'unclassified'),
     platform: String(row.platform).toLowerCase() as StudioPublishPlatform,
     pageRef: String(row.pageRef),
@@ -476,6 +758,13 @@ export async function scheduleStudioPublish(
         assetVersionId: preview.assetVersionId,
         recipeId: preview.recipeId,
         campaignPackId: preview.campaignPackId,
+        compositionId: preview.compositionId,
+        compositionVersionId: preview.compositionVersionId,
+        compositionVersion: preview.compositionVersion,
+        compositionDocumentHash: preview.compositionDocumentHash,
+        operationBatchId: preview.operationBatchId,
+        reviewFingerprint: preview.reviewFingerprint,
+        renderFingerprint: preview.renderFingerprint,
         sceneKey: preview.sceneKey,
         approvedReviewEventId: preview.approvedReviewEventId,
         createdById: actor.userId,
@@ -492,6 +781,12 @@ export async function scheduleStudioPublish(
           scheduledBy: actor.userId,
           approvedReviewEventId: preview.approvedReviewEventId,
           approvedVersionPinned: true,
+          compositionVersionPinned: Boolean(preview.compositionVersionId),
+          compositionId: preview.compositionId,
+          compositionVersionId: preview.compositionVersionId,
+          operationBatchId: preview.operationBatchId,
+          reviewFingerprint: preview.reviewFingerprint,
+          renderFingerprint: preview.renderFingerprint,
           externalEffect: false,
         },
         costUsd: 0,
@@ -649,6 +944,13 @@ export async function processDueStudioPublishes(input: {
   }
 
   for (const row of rows) {
+    if (
+      row.compositionId
+      && process.env.CREATIVE_STUDIO_V3_LIVE_PUBLISH_ENABLED !== 'true'
+    ) {
+      summary.skippedDisabled += 1
+      continue
+    }
     if (!(await isStudioMetaPublishingEnabled(String(row.ownerId)))) {
       summary.skippedDisabled += 1
       continue

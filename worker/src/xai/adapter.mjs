@@ -14,6 +14,12 @@ import {
   uploadImageArtifact,
 } from '../image-artifact.mjs'
 import { resolveXaiImageRequest } from '../image-resolution-contract.mjs'
+import {
+  allowPaidGarmentPrepCleanup,
+  assertStudioRunPaidAttempt,
+  requiresStudioRunPaidAttemptAuthorization,
+  studioRunProviderMaxAttempts,
+} from '../studio-run-authorize.mjs'
 
 const XAI_BASE = 'https://api.x.ai/v1'
 
@@ -153,11 +159,25 @@ export async function saveXaiImage(supabase, image, pendingActionId, {
  *  - 'person' → dark-plate cleanup (reseller model photos carry text plates).
  * Both fail OPEN to the raw image — prep must never block a paid run.
  */
-async function prepareReferencePath({ supabase, path, role, isFamilyPair, pendingActionId, logCost }) {
+async function prepareReferencePath({
+  supabase,
+  path,
+  role,
+  isFamilyPair,
+  pendingActionId,
+  logCost,
+  allowPaidCleanup,
+}) {
   try {
     if (role === 'garment' && !isFamilyPair) {
       const { prepSupplierPhoto } = await import('../garment-prep.mjs')
-      const prep = await prepSupplierPhoto({ supabase, imagePath: path, pendingActionId, logCost })
+      const prep = await prepSupplierPhoto({
+        supabase,
+        imagePath: path,
+        pendingActionId,
+        logCost,
+        allowPaidCleanup,
+      })
       if (prep?.adultGarmentPath) return prep.adultGarmentPath
       return path
     }
@@ -201,6 +221,7 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
       isFamilyPair,
       pendingActionId,
       logCost,
+      allowPaidCleanup: allowPaidGarmentPrepCleanup(payload),
     })
     preparedPaths.push(prepared)
     referenceDataUris.push(await storagePathToNormalizedDataUri(supabase, prepared))
@@ -227,7 +248,12 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
       n: 1,
     })
     const started = Date.now()
-    const result = await callXai(path, body)
+    if (requiresStudioRunPaidAttemptAuthorization(payload)) {
+      await assertStudioRunPaidAttempt(pendingActionId, payload, qcAttempt ?? 1)
+    }
+    const result = await callXai(path, body, {
+      maxRetries: studioRunProviderMaxAttempts(payload, 3),
+    })
     const image = extractXaiImage(result)
     if (!image) throw new Error('xai: no image in response')
     const suffix = qcAttempt && qcAttempt > 1 ? `qc${qcAttempt}` : ''
@@ -280,6 +306,7 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
         personImagePath: payload.referenceContract?.bindings?.find((binding) => binding.role === 'person')?.path
           ?? payload.modelImagePath
           ?? null,
+        maxPaidGenerations: payload.studioPaidAttemptLimit,
         regenerate: async (fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum, fixHint)
           paths.push(retry.storagePath)

@@ -17,6 +17,10 @@ import {
 } from './client.mjs'
 import { uploadImageArtifact } from '../image-artifact.mjs'
 import { resolveDirectFashnImageRequest } from '../image-resolution-contract.mjs'
+import {
+  assertStudioRunPaidAttempt,
+  requiresStudioRunPaidAttemptAuthorization,
+} from '../studio-run-authorize.mjs'
 
 const PRED_KEY = (id) => `cs_fashn_pred:${id}`
 
@@ -199,6 +203,9 @@ export async function processFashnImageGen({ supabase, pendingActionId, payload,
 
   validateFashnReferenceContract(fashnInputs, payload.referenceContract)
   const inputs = await resolveFashnImageInputs(supabase, fashnInputs)
+  if (requiresStudioRunPaidAttemptAuthorization(payload)) {
+    await assertStudioRunPaidAttempt(pendingActionId, payload, 1)
+  }
   const done = await runOrResumeFashn(supabase, pendingActionId, fashnModel, inputs, resolvedFashnOptions)
   const outputs = extractFashnOutputs(done.output)
   if (!outputs.length) throw new Error('FASHN empty output')
@@ -248,8 +255,12 @@ export async function processFashnImageGen({ supabase, pendingActionId, payload,
         productType,
         productImagePath,
         personImagePath,
+        maxPaidGenerations: payload.studioPaidAttemptLimit,
         regenerate: async (_fixHint, attemptNum) => {
           regenAttempt = attemptNum
+          if (requiresStudioRunPaidAttemptAuthorization(payload)) {
+            await assertStudioRunPaidAttempt(pendingActionId, payload, attemptNum)
+          }
           // fresh prediction for the retry (don't resume the old one)
           await clearPredictionId(supabase, pendingActionId)
           const retry = await runOrResumeFashn(supabase, pendingActionId, fashnModel, inputs, resolvedFashnOptions)

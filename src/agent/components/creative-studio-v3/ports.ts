@@ -1,4 +1,7 @@
 import type {
+  CreativeStudioV3ReviewQueuePort,
+} from '@/agent/components/creative-studio-v3/types'
+import type {
   AudioLabStatus,
   CreativeVoiceClient,
   GalleryItem,
@@ -6,23 +9,27 @@ import type {
   GalleryQuery,
   RunPayload,
   SavedStudioModel,
+  StudioAssetScope,
   StudioBrandProfile,
   StudioConfig,
   StudioHealth,
   StudioMusicTrack,
   StudioRetentionDashboard,
+  StudioReviewThread,
   StudioSettings,
+  StudioRunEstimateClient,
   StudioVideoUpload,
   VideoEditSource,
   VideoFinishTemplates,
-  VideoRunOptions,
 } from '@/agent/components/creative-studio/studio-api'
 import type {
   StudioBrandRecipe,
   StudioProductOption,
   StudioProjectSummary,
 } from '@/lib/creative-studio/project-contract'
+import type { CreativeCompositionSummary } from '@/lib/creative-studio/composition-service'
 import type { VideoEditContract } from '@/lib/creative-studio/video-edit-contract'
+import type { StudioV3LifecycleClient } from '@/agent/components/creative-studio-v3/lifecycle-client'
 
 export type StudioV3DataIssue = {
   resource: string
@@ -31,12 +38,12 @@ export type StudioV3DataIssue = {
 
 export const STUDIO_V3_SCOPE_BOUNDARY = {
   accessibleBrands: 'Server-enforced accessible-brand list',
-  projects: 'Legacy owner-only endpoint; successful rows are presentation-filtered by canonical brandProfileId',
-  recipes: 'Legacy owner-only endpoint; its brandProfileId filter is server-enforced for the owner',
-  gallery: 'Legacy owner-only endpoint; no brand field/filter exists in the current contract',
-  models: 'Legacy owner-only endpoint; no brand field/filter exists in the current contract',
-  voices: 'Legacy owner-only endpoint; no brand field/filter exists in the current contract',
-  ownedMedia: 'Legacy owner-only endpoint; no brand field/filter exists in the current contract',
+  projects: 'Server-derived route context is authoritative for collaborator projects',
+  recipes: 'Server-enforced brand recipe filter where the endpoint admits the actor',
+  gallery: 'Canonical project-asset and version lineage, filtered by server brand/project access',
+  models: 'Server-filtered resource-scope registry; unscoped legacy identities are excluded',
+  voices: 'Server-filtered resource-scope registry; unscoped legacy voices are excluded',
+  ownedMedia: 'Server-filtered resource-scope registry; unscoped legacy media is excluded',
 } as const
 
 export type StudioV3HomeSnapshot = {
@@ -51,50 +58,39 @@ export type StudioV3HomeSnapshot = {
   issues: StudioV3DataIssue[]
 }
 
-export interface CreativeStudioV3ProductionPort {
-  loadHome(brandProfileId?: string | null): Promise<StudioV3HomeSnapshot>
+export interface CreativeStudioV3ProductionPort
+  extends CreativeStudioV3ReviewQueuePort, StudioV3LifecycleClient {
+  loadHome(brandProfileId?: string | null, projectId?: string | null): Promise<StudioV3HomeSnapshot>
   listBrands(): Promise<StudioBrandProfile[]>
   listProjects(brandProfileId?: string | null): Promise<StudioProjectSummary[]>
   listRecipes(brandProfileId?: string | null): Promise<StudioBrandRecipe[]>
   listProducts(query?: string): Promise<StudioProductOption[]>
-  listModels(brandProfileId?: string | null): Promise<SavedStudioModel[]>
-  listGallery(query?: GalleryQuery, brandProfileId?: string | null): Promise<GalleryPage>
-  listVoices(brandProfileId?: string | null): Promise<CreativeVoiceClient[]>
-  listVideoUploads(brandProfileId?: string | null): Promise<StudioVideoUpload[]>
-  listMusicTracks(brandProfileId?: string | null): Promise<StudioMusicTrack[]>
+  listCompositions(input: {
+    brandProfileId: string
+    projectId: string
+  }): Promise<CreativeCompositionSummary[]>
+  getReview(assetId: string, brandProfileId: string): Promise<StudioReviewThread>
+  listModels(brandProfileId?: string | null, projectId?: string | null): Promise<SavedStudioModel[]>
+  listGallery(query?: GalleryQuery, brandProfileId?: string | null, projectId?: string | null): Promise<GalleryPage>
+  listVoices(brandProfileId?: string | null, projectId?: string | null): Promise<CreativeVoiceClient[]>
+  listVideoUploads(brandProfileId?: string | null, projectId?: string | null): Promise<StudioVideoUpload[]>
+  listMusicTracks(brandProfileId?: string | null, projectId?: string | null): Promise<StudioMusicTrack[]>
   getConfig(): Promise<StudioConfig>
   getSettings(): Promise<StudioSettings>
   getHealth(): Promise<StudioHealth>
   getAudioStatus(): Promise<AudioLabStatus>
   uploadImage(file: File, folder: string): Promise<string>
   uploadVideo(file: File, onProgress?: (percent: number) => void): Promise<StudioVideoUpload>
-  queueAdvancedImage(payload: RunPayload): Promise<{
-    jobs: Array<{ pendingActionId: string; label: string }>
-    provider: string
-    actualModel?: string
-    message: string
-  }>
-  queueAutoImage(input: {
-    productImagePath: string
-    includeFamily?: boolean
-    includeReel?: boolean
-  }): Promise<{
-    jobs: Array<{ pendingActionId: string; label: string }>
-    provider: string
-    message: string
-  }>
-  queueOwnedVideo(input: {
-    videoPath: string
-    videoName: string
-    recipeId: string
-    targets: number[]
-    aspect: string
-    options?: VideoRunOptions
-  }): Promise<{
-    jobs: Array<{ pendingActionId: string; label: string; targetSec: number }>
-    message: string
-  }>
-  getVideoEditSource(pendingActionId: string): Promise<VideoEditSource>
+  estimateRun(
+    payload: RunPayload & { auto?: boolean; includeFamily?: boolean; includeReel?: boolean },
+    maxCostBdt?: number,
+  ): Promise<StudioRunEstimateClient>
+  confirmRun(
+    payload: RunPayload & { auto?: boolean; includeFamily?: boolean; includeReel?: boolean },
+    estimate: StudioRunEstimateClient,
+    input: { maxCostBdt: number; idempotencyKey?: string },
+  ): ReturnType<typeof import('@/agent/components/creative-studio/studio-api').confirmStudioJob>
+  getVideoEditSource(pendingActionId: string, scope?: StudioAssetScope): Promise<VideoEditSource>
   finishImage(input: {
     storagePath: string
     hook: string
@@ -108,33 +104,34 @@ export interface CreativeStudioV3ProductionPort {
     footer?: boolean
     fit?: 'cover' | 'contain'
     pendingActionId?: string
+    brandProfileId?: string
+    projectId?: string
+    projectAssetId?: string
   }): Promise<{
     framedPath: string
     framedUrl: string
   }>
-  queueMaskedEdit(input: {
-    sourceImagePath: string
-    maskPath: string
-    maskPreset: string
-    prompt: string
-    baseWidth: number
-    baseHeight: number
-  }): Promise<{
-    jobs: Array<{ pendingActionId: string; label: string }>
-    message: string
-  }>
-  uploadMask(maskBlob: Blob, basePath: string): Promise<{
+  uploadMask(
+    maskBlob: Blob,
+    basePath: string,
+    scope?: {
+      brandProfileId: string
+      projectId: string
+      projectAssetId: string
+      pendingActionId: string
+    },
+  ): Promise<{
     maskPath: string
     width: number
     height: number
     coveragePct: number
     estimatedCostUsd: number
   }>
-  finishVideo(pendingActionId: string, templates: VideoFinishTemplates): Promise<{
+  finishVideo(pendingActionId: string, templates: VideoFinishTemplates, scope?: StudioAssetScope): Promise<{
     pendingActionId: string
     message: string
   }>
-  partiallyFinishVideo(pendingActionId: string, editContract: VideoEditContract): Promise<{
+  partiallyFinishVideo(pendingActionId: string, editContract: VideoEditContract, scope?: StudioAssetScope): Promise<{
     pendingActionId: string
     message: string
   }>

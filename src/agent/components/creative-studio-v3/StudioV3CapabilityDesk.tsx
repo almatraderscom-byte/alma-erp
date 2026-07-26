@@ -4,16 +4,13 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import type {
-  GalleryItem,
   SavedStudioModel,
   StudioBrandProfile,
 } from '@/agent/components/creative-studio/studio-api'
 import { AudioLabView } from '@/agent/components/creative-studio/AudioLabView'
 import { BrandRecipeEditor } from '@/agent/components/creative-studio/BrandRecipeEditor'
 import { CampaignPackPanel } from '@/agent/components/creative-studio/CampaignPackPanel'
-import { PerformanceView } from '@/agent/components/creative-studio/PerformanceView'
 import { ProjectLibraryView } from '@/agent/components/creative-studio/ProjectLibraryView'
-import { StudioSettingsView } from '@/agent/components/creative-studio/StudioSettingsView'
 import { VoiceLibrary } from '@/agent/components/creative-studio/VoiceLibrary'
 import { setActiveStudioContentContext } from '@/agent/components/creative-studio/studio-api'
 import type {
@@ -28,7 +25,10 @@ import {
 import type {
   CreativeStudioV3DeskId,
   CreativeStudioV3Navigate,
+  CreativeStudioV3ReviewQueueItem,
 } from '@/agent/components/creative-studio-v3/types'
+import { StudioV3LifecycleOperations } from '@/agent/components/creative-studio-v3/StudioV3LifecycleOperations'
+import { StudioV3LifecycleReview } from '@/agent/components/creative-studio-v3/StudioV3LifecycleReview'
 import styles from '@/agent/components/creative-studio-v3/creative-studio-v3.module.css'
 
 const deskCopy: Record<CreativeStudioV3DeskId, {
@@ -132,7 +132,8 @@ export function StudioV3CapabilityDesk({
   const [projects, setProjects] = useState<StudioProjectSummary[]>([])
   const [recipes, setRecipes] = useState<StudioBrandRecipe[]>([])
   const [models, setModels] = useState<SavedStudioModel[]>([])
-  const [reviewItems, setReviewItems] = useState<GalleryItem[]>([])
+  const [reviewItems, setReviewItems] = useState<CreativeStudioV3ReviewQueueItem[]>([])
+  const [selectedReviewId, setSelectedReviewId] = useState('')
   const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId ?? '')
   const [libraryProject, setLibraryProject] = useState<StudioProjectSummary | null>(null)
   const [recipeOpen, setRecipeOpen] = useState(false)
@@ -140,7 +141,7 @@ export function StudioV3CapabilityDesk({
   const [issues, setIssues] = useState<string[]>([])
 
   useEffect(() => {
-    if (!['projects', 'systems', 'review', 'campaign'].includes(desk)) {
+    if (!['projects', 'systems', 'review', 'operations', 'campaign'].includes(desk)) {
       setLoading(false)
       return
     }
@@ -155,41 +156,41 @@ export function StudioV3CapabilityDesk({
     }
     const scopedProjects = accessibleProjects.filter((project) =>
       project.brandProfileId === activeBrand.brandProfileId)
-    if (activeBrand.role !== 'owner') {
-      setProjects(scopedProjects)
-      setRecipes([])
-      setModels([])
-      setReviewItems([])
-      setSelectedProjectId((current) =>
-        current && scopedProjects.some((item) => item.id === current)
-          ? current
-          : scopedProjects.find((item) => item.id === initialProjectId)?.id
-            ?? scopedProjects[0]?.id
-            ?? '')
-      setIssues([
-        'Access-scoped projects came from the authenticated server route. Owner-only recipes, models, Gallery candidates, and project-asset enrichment were not requested for this collaborator.',
-      ])
-      setLoading(false)
-      return
-    }
+    const scopedProjectId = (
+      selectedProjectId
+      && scopedProjects.some((item) => item.id === selectedProjectId)
+    )
+      ? selectedProjectId
+      : scopedProjects.find((item) => item.id === initialProjectId)?.id
+        ?? scopedProjects[0]?.id
+        ?? ''
     let live = true
     setLoading(true)
     void Promise.allSettled([
-      port.listProjects(activeBrand?.brandProfileId),
+      port.listProjects(activeBrand.brandProfileId),
       port.listRecipes(activeBrand?.brandProfileId),
-      port.listModels(activeBrand?.brandProfileId),
-      port.listGallery(
-        { state: 'qc_failed', limit: 48 },
-        activeBrand?.brandProfileId,
-      ),
+      scopedProjectId
+        ? port.listModels(activeBrand.brandProfileId, scopedProjectId)
+        : Promise.resolve([]),
+      scopedProjectId && desk === 'review'
+        ? port.listReviewQueue({
+            brandProfileId: activeBrand.brandProfileId,
+            projectId: scopedProjectId,
+            includeApproved: true,
+          })
+        : Promise.resolve({ items: [], nextCursor: null }),
     ]).then(([projectResult, recipeResult, modelResult, reviewResult]) => {
       if (!live) return
       const nextIssues: string[] = []
-      const nextProjects = projectResult.status === 'fulfilled' ? projectResult.value : []
+      const nextProjects = projectResult.status === 'fulfilled'
+        ? projectResult.value
+        : scopedProjects
       const nextRecipes = recipeResult.status === 'fulfilled' ? recipeResult.value : []
       const nextModels = modelResult.status === 'fulfilled' ? modelResult.value : []
-      const nextReview = reviewResult.status === 'fulfilled' ? reviewResult.value.items : []
-      if (projectResult.status === 'rejected') nextIssues.push(projectResult.reason instanceof Error ? projectResult.reason.message : 'Projects unavailable')
+      const nextReview = reviewResult.status === 'fulfilled'
+        ? reviewResult.value.items
+        : []
+      if (projectResult.status === 'rejected') nextIssues.push(projectResult.reason instanceof Error ? projectResult.reason.message : 'Access-scoped projects unavailable; using the authenticated route snapshot')
       if (recipeResult.status === 'rejected') nextIssues.push(recipeResult.reason instanceof Error ? recipeResult.reason.message : 'Recipes unavailable')
       if (modelResult.status === 'rejected') nextIssues.push(modelResult.reason instanceof Error ? modelResult.reason.message : 'Models unavailable')
       if (reviewResult.status === 'rejected') nextIssues.push(reviewResult.reason instanceof Error ? reviewResult.reason.message : 'Review queue unavailable')
@@ -197,28 +198,56 @@ export function StudioV3CapabilityDesk({
       setRecipes(nextRecipes)
       setModels(nextModels)
       setReviewItems(nextReview)
-      setSelectedProjectId((current) => current && nextProjects.some((item) => item.id === current) ? current : nextProjects[0]?.id ?? '')
+      setSelectedReviewId((current) =>
+        current && nextReview.some((item) => item.projectAssetId === current)
+          ? current
+          : nextReview[0]?.projectAssetId ?? '')
+      setSelectedProjectId((current) =>
+        current && nextProjects.some((item) => item.id === current)
+          ? current
+          : nextProjects.find((item) => item.id === scopedProjectId)?.id
+            ?? nextProjects[0]?.id
+            ?? '')
       setIssues(nextIssues)
     }).finally(() => {
       if (live) setLoading(false)
     })
     return () => { live = false }
-  }, [accessibleProjects, activeBrand, desk, initialProjectId, port])
+  }, [accessibleProjects, activeBrand, desk, initialProjectId, port, selectedProjectId])
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null
+  const selectedReviewItem = reviewItems.find(
+    (item) => item.projectAssetId === selectedReviewId,
+  ) ?? reviewItems[0] ?? null
+
+  const reloadReviewQueue = async () => {
+    if (!activeBrand || !selectedProject) return
+    const page = await port.listReviewQueue({
+      brandProfileId: activeBrand.brandProfileId,
+      projectId: selectedProject.id,
+      includeApproved: true,
+    })
+    setReviewItems(page.items)
+    setSelectedReviewId((current) =>
+      current && page.items.some((item) => item.projectAssetId === current)
+        ? current
+        : page.items[0]?.projectAssetId ?? '')
+  }
 
   useEffect(() => {
-    if (!selectedProject || desk !== 'campaign') return
+    if (!selectedProject) return
     setActiveStudioContentContext({
+      brandProfileId: selectedProject.brandProfileId!,
       projectId: selectedProject.id,
+      productId: selectedProject.product?.code ?? null,
       recipeId: selectedProject.currentRecipeId,
       folder: selectedProject.defaultFolder,
     })
-  }, [desk, selectedProject])
+  }, [selectedProject])
 
   useEffect(() => () => {
-    if (desk === 'campaign') setActiveStudioContentContext(null)
-  }, [desk])
+    setActiveStudioContentContext(null)
+  }, [])
 
   const recipesForBrand = useMemo(
     () => recipes.filter((recipe) => !activeBrand || recipe.brandProfileId === activeBrand.brandProfileId),
@@ -244,9 +273,23 @@ export function StudioV3CapabilityDesk({
         <StudioV3Icon name="lock" />
         This desk remounted for {activeBrand?.name ?? 'the current access context'}.
         {activeBrand?.role === 'owner'
-          ? ` Projects and recipes use their current owner-only contracts; models and Gallery review candidates expose no brand field (${STUDIO_V3_SCOPE_BOUNDARY.models}).`
-          : ' Projects are the server-derived accessible scope. Legacy owner-only project, model, Gallery, and asset endpoints are not collaborator authority.'}
+          ? ` Projects come from the authenticated route context; recipes, models and review rows are reloaded for the exact brand/project (${STUDIO_V3_SCOPE_BOUNDARY.models}).`
+          : ' Projects are server-derived; recipes, identities and canonical review rows use authenticated brand/project filters. Unscoped legacy data is excluded.'}
       </p>
+
+      {(desk === 'review' || desk === 'operations') && projects.length > 0 && (
+        <label className={styles.lifecycleScopePicker}>
+          <span>Exact project scope</span>
+          <select
+            onChange={(event) => setSelectedProjectId(event.target.value)}
+            value={selectedProjectId}
+          >
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>{project.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
 
       {desk === 'projects' && (
         <div className={styles.deskLayout}>
@@ -355,54 +398,64 @@ export function StudioV3CapabilityDesk({
       )}
 
       {desk === 'review' && (
-        <div className={styles.deskLayout}>
+        <div className={styles.lifecycleReviewLayout}>
           <section className={styles.deskPrimary}>
             <header className={styles.sectionHeading}>
-              <div><span className={styles.eyebrow}>Server-classified queue</span><h2>Needs review</h2></div>
-              <span className={styles.sectionMeta}>{reviewItems.length} QC/draft result{reviewItems.length === 1 ? '' : 's'}</span>
+              <div><span className={styles.eyebrow}>Server-classified registry</span><h2>Project review assets</h2></div>
+              <span className={styles.sectionMeta}>{reviewItems.length} canonical asset{reviewItems.length === 1 ? '' : 's'}</span>
             </header>
-            {reviewItems.length === 0 ? <p className={styles.emptyState}>No QC-failed production artifact is currently returned.</p> : (
+            {reviewItems.length === 0 ? <p className={styles.emptyState}>No canonical project asset with a durable version is currently returned.</p> : (
               <div className={styles.reviewQueue}>
                 {reviewItems.map((item) => (
-                  <article key={item.id}>
+                  <article
+                    data-selected={selectedReviewItem?.projectAssetId === item.projectAssetId}
+                    key={item.projectAssetId}
+                  >
                     <span>{item.previewUrl ? <img alt="" src={item.previewUrl} /> : <StudioV3Icon name="image" />}</span>
-                    <div><h3>{item.summary ?? item.mode}</h3><p>{item.provider} · {item.qcDetailsBn ?? item.error ?? item.assetState}</p><small>{new Date(item.createdAt).toLocaleString('en-BD')}</small></div>
-                    <button onClick={() => onNavigate({ id: 'gallery', initialType: item.type.includes('video') ? 'video' : 'image' })} type="button">Inspect</button>
+                    <div><h3>{item.title ?? 'Untitled project asset'}</h3><p>{item.state.replace('_', ' ')} · version {item.currentVersionId}</p><small>Sequence {item.expectedSequence} · canonical asset {item.projectAssetId}</small></div>
+                    <button
+                      aria-pressed={selectedReviewItem?.projectAssetId === item.projectAssetId}
+                      onClick={() => setSelectedReviewId(item.projectAssetId)}
+                      type="button"
+                    >
+                      {selectedReviewItem?.projectAssetId === item.projectAssetId ? 'Selected' : 'Review'}
+                    </button>
                   </article>
                 ))}
               </div>
             )}
           </section>
-          <aside className={styles.deskDetail}>
-            <span className={styles.eyebrow}>Integration boundary</span>
-            <h2>Version-pinned review threads</h2>
-            <p>The current API reads a review by exact project-asset ID and brand ID; it does not expose a complete queue endpoint. This desk therefore does not invent comments, approvals or project-asset IDs from Gallery jobs.</p>
-            <div className={styles.truthBoundary}><StudioV3Icon name="lock" /><div><strong>No client authority</strong><p>Owner/Creator/Reviewer transitions remain enforced in the existing review route. The Foundation queue adapter must return canonical project asset/version IDs.</p></div></div>
-            <button className={styles.secondaryButton} onClick={() => onNavigate({ id: 'desk', desk: 'projects' })} type="button">Open a project asset library</button>
+          <aside className={styles.lifecycleReviewPanel}>
+            {activeBrand && selectedProject ? (
+              <StudioV3LifecycleReview
+                activeBrand={activeBrand}
+                onNavigate={onNavigate}
+                onReviewChanged={reloadReviewQueue}
+                port={port}
+                project={selectedProject}
+                reviewItem={selectedReviewItem}
+              />
+            ) : (
+              <p className={styles.emptyState}>
+                An access-scoped project is required before Lifecycle Review can load.
+              </p>
+            )}
           </aside>
         </div>
       )}
 
       {desk === 'operations' && (
-        <div className={styles.operationsLayout}>
-          <section className={styles.operationsIntro}>
-            <article><StudioV3Icon name="lock" /><div><strong>Generation policy</strong><p>Engine readiness, kill switches, QC and cost caps are server-owned.</p></div></article>
-            <article><StudioV3Icon name="review" /><div><strong>Distribution boundary</strong><p>Dry run, schedule and live publish remain separate commands.</p></div></article>
-            <article><StudioV3Icon name="archive" /><div><strong>Retention truth</strong><p>Original deletion requires a verified Drive archive receipt and fetch-back.</p></div></article>
-          </section>
-          {activeBrand?.role === 'owner' ? (
-            <div className={styles.embeddedLegacySurface}><StudioSettingsView /></div>
-          ) : (
-            <div className={styles.truthBoundary}>
-              <StudioV3Icon name="lock" />
-              <div>
-                <strong>Owner controls are read-only for this brand role</strong>
-                <p>{activeBrand?.role ?? 'Unknown'} access cannot change provider, spend, retention or kill-switch settings. The server remains authoritative.</p>
-              </div>
-            </div>
-          )}
-          {activeBrand && <div className={styles.embeddedLegacySurface}><PerformanceView brandProfileId={activeBrand.brandProfileId} /></div>}
-        </div>
+        activeBrand && selectedProject ? (
+          <StudioV3LifecycleOperations
+            activeBrand={activeBrand}
+            port={port}
+            project={selectedProject}
+          />
+        ) : (
+          <p className={styles.emptyState}>
+            An access-scoped project is required before Lifecycle Operations can load.
+          </p>
+        )
       )}
 
       {desk === 'voice' && (

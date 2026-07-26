@@ -248,7 +248,7 @@ export default function MaskEditor({
           />
           {/* red tint preview of painted area */}
           {showMask && (
-            <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/60 px-2 py-0.5 text-[10px] text-white/90">
+            <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/60 px-2 py-0.5 text-[11px] text-white/90">
               সাদা-আঁকা জায়গাই বদলাবে · {presetDef.hintBn}
             </div>
           )}
@@ -351,7 +351,7 @@ export default function MaskEditor({
             <>Run — FLUX Fill{estCost !== null ? ` · আনুমানিক $${estCost.toFixed(2)}` : ''}</>
           )}
         </button>
-        <p className="text-center text-[10px] text-white/50">
+        <p className="text-center text-[11px] text-white/50">
           শুধু মাস্ক-করা জায়গা বদলাবে — মুখ/গার্মেন্টের বাকি পিক্সেল অপরিবর্তিত থাকবে
         </p>
       </div>

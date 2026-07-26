@@ -43,10 +43,11 @@ async function volumeProposal(
   snapshot: EditorCompositionSnapshot,
   after: number,
   pendingActions: EditorPendingAction[] = [],
+  origin: 'human' | 'agent' = 'human',
 ) {
   const { track, clip } = musicClip(snapshot)
   return createOperationProposal({
-    origin: 'human',
+    origin,
     snapshot,
     actor: OWNER,
     instruction: `Set music to ${Math.round(after * 100)}%`,
@@ -335,7 +336,7 @@ describe('Foundation-backed CompositionCommandPort', () => {
     expect(apply?.body).toEqual({
       expectedVersion: 1,
       expectedConcurrencyToken: snapshot.concurrencyToken,
-      idempotencyKey: `editor-apply-${proposal.fingerprint.replace('csplan-v1-', '')}`,
+      idempotencyKey: `editor-human-apply-${proposal.fingerprint.replace('csplan-v1-', '')}`,
       brandProfileId: 'brand-alma',
       operations: expect.any(Array),
     })
@@ -471,6 +472,46 @@ describe('Foundation-backed CompositionCommandPort', () => {
     expect(captionClip(rolledBack.snapshot).clip.text).toBe('ঈদের নতুন গল্প')
     expect(api.requests.at(-1)?.body).toMatchObject({
       rollbackPointId: expect.stringMatching(/^crp_[a-f0-9]{32}$/),
+    })
+  })
+
+  it('hydrates the latest Agent rollback target after reload and rolls it back', async () => {
+    const api = new FoundationApiHarness()
+    const firstPort = createFoundationCompositionCommandPort({ fetcher: api.fetch })
+    const initial = await firstPort.load(SCOPE)
+    const proposal = await volumeProposal(initial, 0.45, [], 'agent')
+    const applied = await firstPort.applyLocal({
+      proposal,
+      actor: OWNER,
+      acknowledgement: {
+        fingerprint: proposal.fingerprint,
+        scope: proposal.scope,
+        expectedVersion: proposal.expectedVersion,
+        acknowledgedByUserId: OWNER.userId,
+        acknowledgedByRole: 'owner',
+        acknowledgedAt: '2026-07-26T06:00:00.000Z',
+      },
+    })
+
+    const reloadedPort = createFoundationCompositionCommandPort({
+      fetcher: api.fetch,
+    })
+    const reloaded = await reloadedPort.load(SCOPE)
+    expect(reloaded).toMatchObject({
+      latestAgentBatchId: applied.batchId,
+      canRollbackLatestAgentBatch: true,
+    })
+
+    const rolledBack = await reloadedPort.rollback({
+      scope: SCOPE,
+      expectedVersion: reloaded.version,
+      expectedConcurrencyToken: reloaded.concurrencyToken,
+      actor: OWNER,
+      batchId: reloaded.latestAgentBatchId!,
+    })
+    expect(rolledBack.status).toBe('rolled_back')
+    expect(api.requests.at(-1)?.body).toMatchObject({
+      rollbackPointId: `crp_${applied.batchId.slice(4)}`,
     })
   })
 

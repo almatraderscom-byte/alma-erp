@@ -46,9 +46,9 @@ export function PerformanceView({
       <div className="flex items-center justify-between gap-3">
         <div>
           <h4 className="text-[12px] font-bold text-cream">📈 ফলাফল ও attribution</h4>
-          <p className="text-[9px] text-muted">Meta receipt → campaign pack → exact asset version → deterministic weight</p>
+          <p className="text-[11px] text-muted">Meta receipt → campaign pack → exact asset version → deterministic weight</p>
         </div>
-        <button type="button" onClick={() => void load()} className="rounded-lg bg-white/10 px-2 py-1 text-[9px] font-semibold text-muted">
+        <button type="button" onClick={() => void load()} className="rounded-lg bg-white/10 px-2 py-1 text-[11px] font-semibold text-muted">
           রিফ্রেশ
         </button>
       </div>
@@ -58,7 +58,7 @@ export function PerformanceView({
           {Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-12 animate-pulse rounded-lg bg-white/[0.05]" />)}
         </div>
       ) : error ? (
-        <p role="alert" className="mt-3 rounded-lg bg-red-500/10 p-2 text-[9px] text-red-300">{error}</p>
+        <p role="alert" className="mt-3 rounded-lg bg-red-500/10 p-2 text-[11px] text-red-300">{error}</p>
       ) : dashboard ? (
         <>
           <div className="mt-3 grid grid-cols-3 gap-2">
@@ -72,14 +72,14 @@ export function PerformanceView({
             ].map(([label, value]) => (
               <div key={String(label)} className="rounded-lg bg-card/70 p-2 text-center">
                 <p className="text-[13px] font-extrabold text-cream">{Number(value).toLocaleString('bn-BD')}</p>
-                <p className="text-[8px] text-muted">{label}</p>
+                <p className="text-[11px] text-muted">{label}</p>
               </div>
             ))}
           </div>
 
           <div className="mt-3 rounded-xl border border-border-subtle bg-card/60 p-2.5">
-            <p className="text-[10px] font-bold text-cream">Operations signals</p>
-            <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[8px]">
+            <p className="text-[11px] font-bold text-cream">Operations signals</p>
+            <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
               <span className="text-muted">Queue age</span>
               <span className={healthTone(dashboard.observability.queueAgeSec, 300, 900)}>
                 {dashboard.observability.queueAgeSec}s
@@ -113,11 +113,11 @@ export function PerformanceView({
 
           {dashboard.weights.length > 0 && (
             <div className="mt-3">
-              <p className="text-[10px] font-bold text-cream">Deterministic recipe weights</p>
-              <p className="mt-0.5 text-[8px] text-muted">শুধু measurable winner · ≥100 impressions · ≥10% margin · সপ্তাহে সর্বোচ্চ এক update</p>
+              <p className="text-[11px] font-bold text-cream">Deterministic recipe weights</p>
+              <p className="mt-0.5 text-[11px] text-muted">শুধু measurable winner · ≥100 impressions · ≥10% margin · সপ্তাহে সর্বোচ্চ এক update</p>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {dashboard.weights.map((weight) => (
-                  <span key={`${weight.recipeId}:${weight.sceneKey}`} className="rounded-full bg-[#81B29A]/10 px-2 py-1 text-[8px] text-[#a7d7bf]">
+                  <span key={`${weight.recipeId}:${weight.sceneKey}`} className="rounded-full bg-[#81B29A]/10 px-2 py-1 text-[11px] text-[#a7d7bf]">
                     {weight.sceneKey} · {weight.weight} · n={weight.sampleCount}
                   </span>
                 ))}
@@ -128,15 +128,15 @@ export function PerformanceView({
           <div className="mt-3 space-y-1.5">
             {dashboard.deliveries.map((delivery) => (
               <div key={delivery.id} className="rounded-lg border border-border-subtle bg-card/60 p-2">
-                <div className="flex items-center justify-between gap-2 text-[8px]">
+                <div className="flex items-center justify-between gap-2 text-[11px]">
                   <span className="font-semibold text-cream">{delivery.platform} · {delivery.status}</span>
                   <span className="text-muted">{delivery.sceneKey}</span>
                 </div>
-                <p className="mt-1 truncate font-mono text-[7px] text-muted">
+                <p className="mt-1 truncate font-mono text-[11px] text-muted">
                   pack {delivery.campaignPackId ?? 'standalone'} · version {delivery.assetVersionId}
                 </p>
                 {delivery.latestSnapshot && (
-                  <p className="mt-1 text-[8px] text-[#a7d7bf]">
+                  <p className="mt-1 text-[11px] text-[#a7d7bf]">
                     Reach {delivery.latestSnapshot.reach} · engagement {delivery.latestSnapshot.engagements}
                     {' '}· clicks {delivery.latestSnapshot.clicks}
                   </p>

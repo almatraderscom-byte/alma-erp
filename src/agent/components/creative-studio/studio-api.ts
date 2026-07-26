@@ -77,7 +77,9 @@ export async function studioRequest<T>(input: RequestInfo | URL, init: RequestIn
 // ── CSE3: active Content OS context ─────────────────────────────────────────
 
 export type StudioContentContext = {
+  brandProfileId: string
   projectId: string
+  productId: string | null
   recipeId: string | null
   folder: string
   tags?: string[]
@@ -264,9 +266,13 @@ async function linkQueuedStudioJobs(
   }
 }
 
-export async function fetchStudioProjects(): Promise<StudioProjectSummary[]> {
+export async function fetchStudioProjects(
+  brandProfileId?: string | null,
+): Promise<StudioProjectSummary[]> {
+  const query = new URLSearchParams()
+  if (brandProfileId) query.set('brandProfileId', brandProfileId)
   const data = await studioRequest<{ projects: StudioProjectSummary[] }>(
-    '/api/assistant/creative-studio/projects',
+    `/api/assistant/creative-studio/projects${query.size ? `?${query.toString()}` : ''}`,
     undefined,
     'projects_failed',
   )
@@ -459,6 +465,11 @@ export type StudioReviewThread = {
   currentSequence: number
   latestVersionId: string | null
   approvedVersionId: string | null
+  approvedCompositionId: string | null
+  approvedCompositionVersionId: string | null
+  approvedCompositionVersion: number | null
+  approvedCompositionDocumentHash: string | null
+  approvalInvalidatedReason: string | null
   publishReady: boolean
   role: StudioAccessRole
   approvalSpendThresholdBdt: number
@@ -486,6 +497,10 @@ export type StudioReviewThread = {
     actorRole: StudioAccessRole
     note: string | null
     approvedVersionId: string | null
+    approvedCompositionId: string | null
+    approvedCompositionVersionId: string | null
+    approvedCompositionVersion: number | null
+    approvedCompositionDocumentHash: string | null
     createdAt: string
   }>
 }
@@ -571,6 +586,37 @@ export async function fetchStudioReview(
   return data.review
 }
 
+export type StudioReviewQueueClientItem = {
+  projectAssetId: string
+  projectId: string
+  brandProfileId: string
+  currentVersionId: string
+  expectedSequence: number
+  state: StudioReviewState
+  title: string | null
+  previewUrl: string | null
+}
+
+export async function fetchStudioReviewQueue(input: {
+  brandProfileId: string
+  projectId?: string | null
+  cursor?: string | null
+  includeApproved?: boolean
+}): Promise<{
+  items: StudioReviewQueueClientItem[]
+  nextCursor: string | null
+}> {
+  const query = new URLSearchParams({ brandProfileId: input.brandProfileId })
+  if (input.projectId) query.set('projectId', input.projectId)
+  if (input.cursor) query.set('cursor', input.cursor)
+  if (input.includeApproved) query.set('includeApproved', 'true')
+  return studioRequest(
+    `/api/assistant/creative-studio/reviews?${query.toString()}`,
+    undefined,
+    'studio_review_queue_failed',
+  )
+}
+
 export async function addStudioReviewComment(input: {
   assetId: string
   brandProfileId: string
@@ -594,6 +640,8 @@ export async function transitionStudioReview(input: {
   targetState: StudioReviewState
   expectedSequence: number
   note?: string
+  compositionId?: string
+  compositionVersionId?: string
 }): Promise<StudioReviewThread> {
   const data = await studioRequest<{ review: StudioReviewThread }>(
     `/api/assistant/creative-studio/assets/${encodeURIComponent(input.assetId)}/state`,
@@ -605,6 +653,8 @@ export async function transitionStudioReview(input: {
         targetState: input.targetState,
         expectedSequence: input.expectedSequence,
         note: input.note,
+        compositionId: input.compositionId,
+        compositionVersionId: input.compositionVersionId,
       }),
     },
     'studio_review_transition_failed',
@@ -654,6 +704,12 @@ export type StudioConfig = {
 
 export type GalleryItem = {
   id: string
+  /** Canonical access-scoped project lineage; absent only on legacy responses. */
+  projectAssetId?: string | null
+  assetVersionId?: string | null
+  reviewSequence?: number | null
+  projectId?: string | null
+  brandProfileId?: string | null
   type: string
   status: string
   assetState: StudioAssetState
@@ -721,6 +777,12 @@ export type BrandStatus = {
 
 export type FinishMode = 'model_overlay' | 'product_card' | 'lifestyle'
 
+export type StudioAssetScope = {
+  brandProfileId: string
+  projectId: string
+  projectAssetId: string
+}
+
 export type FinishOptions = {
   storagePath: string
   /** for 'lifestyle' this is the big headline; other modes treat it as the hook */
@@ -741,6 +803,10 @@ export type FinishOptions = {
   layout?: LifestyleLayoutOverrides | null
   /** when finishing a gallery item, persist the framed copy back onto it */
   pendingActionId?: string
+  /** V3 canonical lineage; the server re-resolves every relationship. */
+  brandProfileId?: string
+  projectId?: string
+  projectAssetId?: string
 }
 
 export async function fetchBrandStatus(): Promise<BrandStatus> {
@@ -807,6 +873,35 @@ export type RunPayload = {
   vibe?: 'premium' | 'festival' | 'offer' | 'lifestyle'
   /** Gallery source id — lets the server enforce the QC action gate. */
   sourcePendingActionId?: string
+  /** Canonical server-enforced Creative Studio scope. */
+  brandProfileId?: string
+  projectId?: string
+  productId?: string
+  sourceAssetIds?: string[]
+  studioSurface?: 'v3' | 'legacy'
+}
+
+export type StudioRunEstimateClient = {
+  receipt: string
+  receiptId: string
+  confirmBy: string
+  estimateBdt: number
+  estimateUsd: number
+  maxCostBdt: number
+  requestFingerprint: string
+  selectionFingerprint: string
+  selection: {
+    mode: string
+    architecture: 'auto' | 'advanced'
+    provider: string
+    model: string
+    providers: string[]
+    models: string[]
+    plan: string[]
+    paidAttemptLimit: number
+  }
+  confirmationRequired: true
+  providerCallMade: false
 }
 
 export async function fetchStudioConfig(): Promise<StudioConfig> {
@@ -884,6 +979,12 @@ export async function uploadStudioFile(file: File, folder: string): Promise<stri
 export async function uploadFillMask(
   maskBlob: Blob,
   basePath: string,
+  scope?: {
+    brandProfileId: string
+    projectId: string
+    projectAssetId: string
+    pendingActionId: string
+  },
 ): Promise<{
   maskPath: string
   width: number
@@ -894,6 +995,12 @@ export async function uploadFillMask(
   const fd = new FormData()
   fd.append('mask', new File([maskBlob], 'mask.png', { type: 'image/png' }))
   fd.append('basePath', basePath)
+  if (scope) {
+    fd.append('brandProfileId', scope.brandProfileId)
+    fd.append('projectId', scope.projectId)
+    fd.append('projectAssetId', scope.projectAssetId)
+    fd.append('pendingActionId', scope.pendingActionId)
+  }
   return studioRequest<{
     maskPath: string
     width: number
@@ -903,7 +1010,41 @@ export async function uploadFillMask(
   }>('/api/assistant/creative-studio/mask-upload', { method: 'POST', body: fd }, 'mask_upload_failed')
 }
 
-export async function runStudioJob(payload: RunPayload) {
+function scopedRunPayload<T extends RunPayload | (RunPayload & { auto: true })>(payload: T): T {
+  const context = activeContentContext
+  return {
+    ...payload,
+    brandProfileId: payload.brandProfileId ?? context?.brandProfileId,
+    projectId: payload.projectId ?? context?.projectId,
+    productId: payload.productId ?? context?.productId ?? undefined,
+    studioSurface: payload.studioSurface ?? 'legacy',
+  }
+}
+
+export async function estimateStudioJob(
+  payload: RunPayload & { auto?: boolean; includeFamily?: boolean; includeReel?: boolean },
+  maxCostBdt = 500,
+): Promise<StudioRunEstimateClient> {
+  return studioRequest<StudioRunEstimateClient>(
+    '/api/assistant/creative-studio/run',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...scopedRunPayload(payload),
+        intent: 'estimate',
+        maxCostBdt,
+      }),
+    },
+    'run_estimate_failed',
+  )
+}
+
+export async function confirmStudioJob(
+  payload: RunPayload & { auto?: boolean; includeFamily?: boolean; includeReel?: boolean },
+  estimate: StudioRunEstimateClient,
+  input: { maxCostBdt: number; idempotencyKey?: string },
+) {
   const result = await studioRequest<{
     jobs: Array<{ pendingActionId: string; label: string }>
     provider: string
@@ -914,7 +1055,14 @@ export async function runStudioJob(payload: RunPayload) {
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...scopedRunPayload(payload),
+        intent: 'confirm',
+        receipt: estimate.receipt,
+        confirmed: true,
+        idempotencyKey: input.idempotencyKey ?? `studio:${estimate.receiptId}`,
+        maxCostBdt: input.maxCostBdt,
+      }),
     },
     'run_failed',
   )
@@ -922,22 +1070,30 @@ export async function runStudioJob(payload: RunPayload) {
   return result
 }
 
-export async function runAutoStudioJob(input: { productImagePath: string; includeFamily?: boolean; includeReel?: boolean }) {
-  const result = await studioRequest<{
-    jobs: Array<{ pendingActionId: string; label: string }>
-    provider: string
-    message: string
-  }>(
-    '/api/assistant/creative-studio/run',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ auto: true, ...input }),
-    },
-    'run_failed',
-  )
-  await linkQueuedStudioJobs(result.jobs)
-  return result
+/**
+ * Legacy compatibility: the caller's existing confirmation button invokes
+ * this method once; the client still performs the mandatory estimate request
+ * and a distinct receipt-bound confirm request. V3 uses the two methods above
+ * directly so the exact server estimate is visible before confirmation.
+ */
+export async function runStudioJob(payload: RunPayload) {
+  const estimate = await estimateStudioJob(payload)
+  return confirmStudioJob(payload, estimate, { maxCostBdt: estimate.maxCostBdt })
+}
+
+export async function runAutoStudioJob(input: {
+  productImagePath: string
+  modelId?: string
+  includeFamily?: boolean
+  includeReel?: boolean
+  brandProfileId?: string
+  projectId?: string
+  productId?: string
+  studioSurface?: 'v3' | 'legacy'
+}) {
+  const payload = { auto: true as const, mode: 'try_on' as const, ...input }
+  const estimate = await estimateStudioJob(payload)
+  return confirmStudioJob(payload, estimate, { maxCostBdt: estimate.maxCostBdt })
 }
 
 export type GalleryQuery = {
@@ -949,6 +1105,12 @@ export type GalleryQuery = {
   query?: string
   includeTest?: boolean
   limit?: number
+  brandProfileId?: string | null
+  projectId?: string | null
+  archived?: boolean
+  projectAssetId?: string | null
+  assetVersionId?: string | null
+  reviewSequence?: number | null
 }
 
 export type GalleryPage = {
@@ -969,6 +1131,14 @@ export async function fetchGallery(input: GalleryQuery | number = {}): Promise<G
   if (query.qc && query.qc !== 'all') params.set('qc', query.qc)
   if (query.query?.trim()) params.set('q', query.query.trim())
   if (query.includeTest) params.set('includeTest', '1')
+  if (query.brandProfileId) params.set('brandProfileId', query.brandProfileId)
+  if (query.projectId) params.set('projectId', query.projectId)
+  if (query.archived) params.set('archived', '1')
+  if (query.projectAssetId) params.set('projectAssetId', query.projectAssetId)
+  if (query.assetVersionId) params.set('assetVersionId', query.assetVersionId)
+  if (Number.isInteger(query.reviewSequence)) {
+    params.set('reviewSequence', String(query.reviewSequence))
+  }
   return studioRequest<GalleryPage>(`/api/assistant/creative-studio/gallery?${params.toString()}`, undefined, 'gallery_failed')
 }
 
@@ -985,8 +1155,12 @@ export type SavedStudioModel = {
   avatar?: { built: boolean; building: boolean; count: number } | null
 }
 
-export async function fetchModels() {
-  return studioRequest<{ models: SavedStudioModel[] }>('/api/assistant/brand-models', undefined, 'models_failed')
+export async function fetchModels(brandProfileId?: string | null, projectId?: string | null) {
+  const query = new URLSearchParams()
+  if (brandProfileId) query.set('brandProfileId', brandProfileId)
+  if (projectId) query.set('projectId', projectId)
+  const suffix = query.size ? `?${query.toString()}` : ''
+  return studioRequest<{ models: SavedStudioModel[] }>(`/api/assistant/brand-models${suffix}`, undefined, 'models_failed')
 }
 
 // ── CS14: Model Avatar (multi-angle identity) ───────────────────────────────
@@ -1048,12 +1222,22 @@ export async function clearAvatarImages(modelId: string) {
 
 /** Make one saved model the default the Auto tab uses (per-image select stays manual). */
 export async function setDefaultModel(id: string) {
+  const context = getActiveStudioContentContext()
   return studioRequest<unknown>(
     '/api/assistant/brand-models',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'set_default', id }),
+      body: JSON.stringify({
+        action: 'set_default',
+        id,
+        ...(context
+          ? {
+              brandProfileId: context.brandProfileId,
+              projectId: context.projectId,
+            }
+          : {}),
+      }),
     },
     'set_default_failed',
   )
@@ -1061,12 +1245,22 @@ export async function setDefaultModel(id: string) {
 
 /** Remove a saved model from the library. */
 export async function deleteModel(id: string) {
+  const context = getActiveStudioContentContext()
   return studioRequest<unknown>(
     '/api/assistant/brand-models',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'remove', id }),
+      body: JSON.stringify({
+        action: 'remove',
+        id,
+        ...(context
+          ? {
+              brandProfileId: context.brandProfileId,
+              projectId: context.projectId,
+            }
+          : {}),
+      }),
     },
     'delete_failed',
   )
@@ -1092,8 +1286,18 @@ export type VideoJobStatus = {
   error: string | null
 }
 
-export async function fetchStudioVideos(): Promise<StudioVideoUpload[]> {
-  const data = await studioRequest<{ uploads?: StudioVideoUpload[] }>('/api/assistant/creative-studio/video', undefined, 'videos_failed')
+export async function fetchStudioVideos(
+  brandProfileId?: string | null,
+  projectId?: string | null,
+): Promise<StudioVideoUpload[]> {
+  const query = new URLSearchParams()
+  if (brandProfileId) query.set('brandProfileId', brandProfileId)
+  if (projectId) query.set('projectId', projectId)
+  const data = await studioRequest<{ uploads?: StudioVideoUpload[] }>(
+    `/api/assistant/creative-studio/video${query.size ? `?${query.toString()}` : ''}`,
+    undefined,
+    'videos_failed',
+  )
   return (data.uploads ?? []) as StudioVideoUpload[]
 }
 
@@ -1103,6 +1307,7 @@ export async function fetchStudioVideos(): Promise<StudioVideoUpload[]> {
  * gets a real progress bar on a multi-minute upload.
  */
 export async function uploadStudioVideo(file: File, onProgress?: (pct: number) => void): Promise<StudioVideoUpload> {
+  const context = getActiveStudioContentContext()
   const urlData = await studioRequest<{
     uploadUrl: string
     uploadId: string
@@ -1140,6 +1345,12 @@ export async function uploadStudioVideo(file: File, onProgress?: (pct: number) =
         path: urlData.path,
         name: file.name,
         sizeBytes: file.size,
+        ...(context
+          ? {
+              brandProfileId: context.brandProfileId,
+              projectId: context.projectId,
+            }
+          : {}),
       }),
     },
     'register_failed',
@@ -1148,7 +1359,13 @@ export async function uploadStudioVideo(file: File, onProgress?: (pct: number) =
 }
 
 export async function deleteStudioVideo(id: string): Promise<void> {
-  await studioRequest<unknown>(`/api/assistant/creative-studio/video?id=${encodeURIComponent(id)}`, { method: 'DELETE' }, 'delete_failed')
+  const context = getActiveStudioContentContext()
+  const query = new URLSearchParams({ id })
+  if (context) {
+    query.set('brandProfileId', context.brandProfileId)
+    query.set('projectId', context.projectId)
+  }
+  await studioRequest<unknown>(`/api/assistant/creative-studio/video?${query.toString()}`, { method: 'DELETE' }, 'delete_failed')
 }
 
 export type StudioMusicTrack = {
@@ -1160,13 +1377,24 @@ export type StudioMusicTrack = {
   uploadedAt: string
 }
 
-export async function fetchMusicTracks(): Promise<StudioMusicTrack[]> {
-  const data = await studioRequest<{ tracks?: StudioMusicTrack[] }>('/api/assistant/creative-studio/music', undefined, 'music_failed')
+export async function fetchMusicTracks(
+  brandProfileId?: string | null,
+  projectId?: string | null,
+): Promise<StudioMusicTrack[]> {
+  const query = new URLSearchParams()
+  if (brandProfileId) query.set('brandProfileId', brandProfileId)
+  if (projectId) query.set('projectId', projectId)
+  const data = await studioRequest<{ tracks?: StudioMusicTrack[] }>(
+    `/api/assistant/creative-studio/music${query.size ? `?${query.toString()}` : ''}`,
+    undefined,
+    'music_failed',
+  )
   return (data.tracks ?? []) as StudioMusicTrack[]
 }
 
 /** Owner-approved music beds only — uploaded from his own files, signed direct upload. */
 export async function uploadMusicTrack(file: File, vibe: string, onProgress?: (pct: number) => void): Promise<StudioMusicTrack> {
+  const context = getActiveStudioContentContext()
   const urlData = await studioRequest<{
     uploadUrl: string
     uploadId: string
@@ -1205,6 +1433,12 @@ export async function uploadMusicTrack(file: File, vibe: string, onProgress?: (p
         name: file.name,
         vibe,
         sizeBytes: file.size,
+        ...(context
+          ? {
+              brandProfileId: context.brandProfileId,
+              projectId: context.projectId,
+            }
+          : {}),
       }),
     },
     'register_failed',
@@ -1213,7 +1447,13 @@ export async function uploadMusicTrack(file: File, vibe: string, onProgress?: (p
 }
 
 export async function deleteMusicTrack(id: string): Promise<void> {
-  await studioRequest<unknown>(`/api/assistant/creative-studio/music?id=${encodeURIComponent(id)}`, { method: 'DELETE' }, 'delete_failed')
+  const context = getActiveStudioContentContext()
+  const query = new URLSearchParams({ id })
+  if (context) {
+    query.set('brandProfileId', context.brandProfileId)
+    query.set('projectId', context.projectId)
+  }
+  await studioRequest<unknown>(`/api/assistant/creative-studio/music?${query.toString()}`, { method: 'DELETE' }, 'delete_failed')
 }
 
 /** Set a reel's cover from the worker's candidate frames. */
@@ -1241,13 +1481,14 @@ export type VideoFinishTemplates = {
 export async function finishVideo(
   pendingActionId: string,
   templates: VideoFinishTemplates,
+  scope?: StudioAssetScope,
 ): Promise<{ pendingActionId: string; message: string }> {
   const result = await studioRequest<{ pendingActionId: string; message: string }>(
     '/api/assistant/creative-studio/video/finish',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pendingActionId, templates }),
+      body: JSON.stringify({ pendingActionId, templates, ...scope }),
     },
     'finish_failed',
   )
@@ -1262,9 +1503,18 @@ export type VideoEditSource = {
   editContract: VideoEditContract | null
 }
 
-export async function fetchVideoEditSource(pendingActionId: string): Promise<VideoEditSource> {
+export async function fetchVideoEditSource(
+  pendingActionId: string,
+  scope?: StudioAssetScope,
+): Promise<VideoEditSource> {
+  const query = new URLSearchParams({ pendingActionId })
+  if (scope) {
+    query.set('brandProfileId', scope.brandProfileId)
+    query.set('projectId', scope.projectId)
+    query.set('projectAssetId', scope.projectAssetId)
+  }
   return studioRequest<VideoEditSource>(
-    `/api/assistant/creative-studio/video/finish?pendingActionId=${encodeURIComponent(pendingActionId)}`,
+    `/api/assistant/creative-studio/video/finish?${query.toString()}`,
     undefined,
     'video_edit_source_failed',
   )
@@ -1273,13 +1523,14 @@ export async function fetchVideoEditSource(pendingActionId: string): Promise<Vid
 export async function partiallyFinishVideo(
   pendingActionId: string,
   editContract: VideoEditContract,
+  scope?: StudioAssetScope,
 ): Promise<{ pendingActionId: string; message: string }> {
   const result = await studioRequest<{ pendingActionId: string; message: string }>(
     '/api/assistant/creative-studio/video/finish',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pendingActionId, mode: 'partial_edit', editContract }),
+      body: JSON.stringify({ pendingActionId, mode: 'partial_edit', editContract, ...scope }),
     },
     'partial_finish_failed',
   )
@@ -1407,9 +1658,15 @@ export type CreativeVoiceClient = {
   audits: CreativeVoiceAuditClient[]
 }
 
-export async function fetchCreativeVoices(): Promise<CreativeVoiceClient[]> {
+export async function fetchCreativeVoices(
+  brandProfileId?: string | null,
+  projectId?: string | null,
+): Promise<CreativeVoiceClient[]> {
+  const query = new URLSearchParams()
+  if (brandProfileId) query.set('brandProfileId', brandProfileId)
+  if (projectId) query.set('projectId', projectId)
   const result = await studioRequest<{ voices: CreativeVoiceClient[] }>(
-    '/api/assistant/creative-studio/voices',
+    `/api/assistant/creative-studio/voices${query.size ? `?${query.toString()}` : ''}`,
     undefined,
     'voices_failed',
   )
@@ -1421,12 +1678,22 @@ export async function estimateVoiceClone(input: {
   samplePaths: string[]
   consent: { accepted: true; statement: string }
 }): Promise<AudioJobEstimate> {
+  const context = getActiveStudioContentContext()
   return studioRequest<AudioJobEstimate>(
     '/api/assistant/creative-studio/voices',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...input, intent: 'estimate' }),
+      body: JSON.stringify({
+        ...input,
+        intent: 'estimate',
+        ...(context
+          ? {
+              brandProfileId: context.brandProfileId,
+              projectId: context.projectId,
+            }
+          : {}),
+      }),
     },
     'voice_clone_estimate_failed',
   )
@@ -1440,6 +1707,7 @@ export async function queueVoiceClone(
   },
   confirmation: { confirmedCostBdt: number; costCapBdt: number },
 ) {
+  const context = getActiveStudioContentContext()
   const result = await studioRequest<{
     pendingActionId: string
     voiceVersionId: string
@@ -1449,7 +1717,17 @@ export async function queueVoiceClone(
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...input, intent: 'queue', ...confirmation }),
+      body: JSON.stringify({
+        ...input,
+        intent: 'queue',
+        ...confirmation,
+        ...(context
+          ? {
+              brandProfileId: context.brandProfileId,
+              projectId: context.projectId,
+            }
+          : {}),
+      }),
     },
     'voice_clone_failed',
   )
@@ -1716,12 +1994,22 @@ export async function fetchVideoJob(id: string): Promise<VideoJobStatus> {
 }
 
 export async function saveModel(body: { id: string; name: string; imagePath: string; role: string; notes?: string }) {
+  const context = getActiveStudioContentContext()
   return studioRequest<unknown>(
     '/api/assistant/brand-models',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'add', ...body }),
+      body: JSON.stringify({
+        action: 'add',
+        ...body,
+        ...(context
+          ? {
+              brandProfileId: context.brandProfileId,
+              projectId: context.projectId,
+            }
+          : {}),
+      }),
     },
     'save_failed',
   )

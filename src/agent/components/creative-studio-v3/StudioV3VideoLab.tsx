@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 import type {
   GalleryItem,
@@ -10,12 +10,13 @@ import type {
   StudioBrandProfile,
   StudioMusicTrack,
   StudioVideoUpload,
+  StudioRunEstimateClient,
+  RunPayload,
 } from '@/agent/components/creative-studio/studio-api'
 import {
   AUDIO_MODES,
   VIDEO_ASPECTS,
   VIDEO_RECIPES,
-  reelCostBdt,
   type VideoAudioMode,
 } from '@/lib/creative-studio/video-recipes'
 import { VIDEO_VIBES } from '@/lib/creative-studio/constants'
@@ -27,6 +28,7 @@ import {
 } from '@/agent/components/creative-studio-v3/ports'
 import type { CreativeStudioV3Navigate } from '@/agent/components/creative-studio-v3/types'
 import styles from '@/agent/components/creative-studio-v3/creative-studio-v3.module.css'
+import type { StudioProjectSummary } from '@/lib/creative-studio/project-contract'
 
 type VideoLabData = {
   sources: GalleryItem[]
@@ -50,12 +52,14 @@ function galleryPath(item: GalleryItem | null): string | null {
 
 export function StudioV3VideoLab({
   activeBrand,
+  activeProject,
   initialAvatarId,
   initialSourceAssetId,
   onNavigate,
   port,
 }: {
   activeBrand: StudioBrandProfile | null
+  activeProject: StudioProjectSummary | null
   initialAvatarId?: string
   initialSourceAssetId?: string
   onNavigate: CreativeStudioV3Navigate
@@ -79,9 +83,10 @@ export function StudioV3VideoLab({
   const [voiceover, setVoiceover] = useState('')
   const [stings, setStings] = useState(false)
   const [reviewOpen, setReviewOpen] = useState(false)
+  const [reviewEstimate, setReviewEstimate] = useState<StudioRunEstimateClient | null>(null)
+  const [reviewRequest, setReviewRequest] = useState<RunPayload | null>(null)
+  const [estimating, setEstimating] = useState(false)
   const [queueing, setQueueing] = useState(false)
-  const [uploadPercent, setUploadPercent] = useState<number | null>(null)
-  const videoInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let live = true
@@ -90,10 +95,11 @@ export function StudioV3VideoLab({
       port.listGallery(
         { media: 'image', state: 'ready', limit: 24 },
         activeBrand?.brandProfileId,
+        activeProject?.id,
       ),
-      port.listModels(activeBrand?.brandProfileId),
-      port.listVideoUploads(activeBrand?.brandProfileId),
-      port.listMusicTracks(activeBrand?.brandProfileId),
+      port.listModels(activeBrand?.brandProfileId, activeProject?.id),
+      port.listVideoUploads(activeBrand?.brandProfileId, activeProject?.id),
+      port.listMusicTracks(activeBrand?.brandProfileId, activeProject?.id),
     ]).then((results) => {
       if (!live) return
       const issues: string[] = []
@@ -118,14 +124,19 @@ export function StudioV3VideoLab({
       if (live) setLoading(false)
     })
     return () => { live = false }
-  }, [activeBrand?.brandProfileId, port])
+  }, [activeBrand?.brandProfileId, activeProject?.id, port])
 
   const selectedSource = data.sources.find((item) => item.id === selectedSourceId) ?? null
   const selectedAvatar = data.models.find((item) => item.id === selectedAvatarId) ?? null
   const selectedUpload = data.uploads.find((item) => item.id === selectedUploadId) ?? null
   const recipe = VIDEO_RECIPES.find((item) => item.id === recipeId) ?? VIDEO_RECIPES[0]
   const stillMode = sourceMode !== 'owned'
-  const ownerActionAvailable = activeBrand?.role === 'owner'
+  const creationAvailable = Boolean(
+    activeBrand
+    && activeBrand.role !== 'reviewer'
+    && activeProject
+    && activeProject.brandProfileId === activeBrand.brandProfileId,
+  )
   const startFramePath = sourceMode === 'gallery'
     ? galleryPath(selectedSource)
     : sourceMode === 'avatar'
@@ -133,7 +144,7 @@ export function StudioV3VideoLab({
       : null
   const ready = stillMode
     ? Boolean(startFramePath && prompt.trim())
-    : Boolean(selectedUpload && recipe.targets.includes(duration))
+    : false
 
   useEffect(() => {
     if (stillMode) {
@@ -144,73 +155,75 @@ export function StudioV3VideoLab({
     if (!recipe.targets.includes(duration)) setDuration(recipe.defaultTarget)
   }, [aspect, duration, recipe, stillMode])
 
-  const estimatedCost = stillMode ? reelCostBdt(duration) : 0
   const selectedSourceLabel = sourceMode === 'gallery'
     ? selectedSource?.summary ?? selectedSource?.mode ?? 'No Gallery source'
     : sourceMode === 'avatar'
       ? selectedAvatar?.name ?? 'No avatar source'
       : selectedUpload?.name ?? 'No owned footage'
 
-  const uploadVideo = async (file: File | undefined) => {
-    if (!file) return
-    if (!ownerActionAvailable) {
-      toast.error('Video upload is disabled until the collaborator-safe production adapter is connected.')
+  const legacyVideoHref = `/agent/creative-studio?${new URLSearchParams({
+    studio: 'legacy',
+    mode: 'video',
+    ...(activeBrand ? { brand: activeBrand.brandProfileId } : {}),
+    ...(activeProject ? { project: activeProject.id } : {}),
+    ...(selectedSource?.id ? { asset: selectedSource.id } : {}),
+  }).toString()}`
+
+  const buildStillRequest = (): RunPayload => {
+    if (!activeBrand || !activeProject || !startFramePath) {
+      throw new Error('Choose an accessible project source.')
+    }
+    return {
+      mode: 'image_to_video',
+      provider: 'gemini',
+      brandProfileId: activeBrand.brandProfileId,
+      projectId: activeProject.id,
+      productId: activeProject.product?.code,
+      sourceAssetIds: selectedSource?.projectAssetId ? [selectedSource.projectAssetId] : [],
+      studioSurface: 'v3',
+      sourceImagePath: startFramePath,
+      sourcePendingActionId: sourceMode === 'gallery' ? selectedSource?.id : undefined,
+      modelId: sourceMode === 'avatar' ? selectedAvatar?.id : undefined,
+      prompt: prompt.trim(),
+      aspectRatio: aspect,
+      durationSec: duration,
+      vibe,
+    }
+  }
+
+  const openReview = async () => {
+    if (!creationAvailable || !stillMode) {
+      toast.error('Owned-footage edits use the scoped Legacy handoff until their V3 adapter is connected.')
       return
     }
-    setUploadPercent(0)
+    setEstimating(true)
     try {
-      const uploaded = await port.uploadVideo(file, setUploadPercent)
-      setData((current) => ({ ...current, uploads: [uploaded, ...current.uploads.filter((item) => item.id !== uploaded.id)] }))
-      setSelectedUploadId(uploaded.id)
-      setSourceMode('owned')
-      toast.success('Owned footage registered. No edit job has been queued.')
+      const request = buildStillRequest()
+      const estimate = await port.estimateRun(request, 500)
+      setReviewRequest(request)
+      setReviewEstimate(estimate)
+      setReviewOpen(true)
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : 'Video upload failed.')
+      toast.error(reason instanceof Error ? reason.message : 'The server could not issue an exact estimate.')
     } finally {
-      setUploadPercent(null)
-      if (videoInput.current) videoInput.current.value = ''
+      setEstimating(false)
     }
   }
 
   const queue = async () => {
-    if (!ownerActionAvailable) {
-      toast.error('Video queueing is disabled until the collaborator-safe production adapter is connected.')
+    if (!creationAvailable || !reviewRequest || !reviewEstimate) {
+      toast.error('Refresh the exact server estimate before confirming.')
       return
     }
     setQueueing(true)
     try {
-      if (stillMode) {
-        if (!startFramePath) throw new Error('Choose a valid gallery image or saved avatar source.')
-        const result = await port.queueAdvancedImage({
-          mode: 'image_to_video',
-          provider: 'gemini',
-          sourceImagePath: startFramePath,
-          sourcePendingActionId: sourceMode === 'gallery' ? selectedSource?.id : undefined,
-          prompt: prompt.trim(),
-          aspectRatio: aspect,
-          durationSec: duration,
-          vibe,
-        })
-        toast.success(result.message)
-      } else {
-        if (!selectedUpload) throw new Error('Choose owned footage.')
-        const result = await port.queueOwnedVideo({
-          videoPath: selectedUpload.path,
-          videoName: selectedUpload.name,
-          recipeId: recipe.id,
-          targets: [duration],
-          aspect,
-          options: {
-            captions,
-            audioMode,
-            musicTrackId,
-            voiceoverText: voiceover.trim() || undefined,
-            stings,
-          },
-        })
-        toast.success(result.message)
-      }
+      const result = await port.confirmRun(reviewRequest, reviewEstimate, {
+        maxCostBdt: reviewEstimate.maxCostBdt,
+      })
+      toast.success(result.message)
       setReviewOpen(false)
+      setReviewEstimate(null)
+      setReviewRequest(null)
       setWorkspaceTab('history')
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : 'The server rejected the video request.')
@@ -226,15 +239,6 @@ export function StudioV3VideoLab({
 
   return (
     <div className={styles.page}>
-      <input
-        accept="video/mp4,video/quicktime,.mp4,.mov,.m4v"
-        className="sr-only"
-        disabled={!ownerActionAvailable}
-        onChange={(event) => void uploadVideo(event.target.files?.[0])}
-        ref={videoInput}
-        type="file"
-      />
-
       <header className={styles.workspaceHeader}>
         <div className={styles.workspaceTitle}>
           <span><StudioV3Icon name="video" /></span>
@@ -255,16 +259,16 @@ export function StudioV3VideoLab({
       )}
       <p className={styles.scopeNotice}>
         <StudioV3Icon name="lock" />
-        Brand switch reloaded this Lab. Sources, identities and owned media use legacy owner-only
-        endpoints whose current records carry no brand key; no brand filter is implied
+        Brand or project changes reload canonical source assets plus scope-registered identity,
+        owned-video and music records. Unscoped legacy records are excluded
         ({STUDIO_V3_SCOPE_BOUNDARY.ownedMedia}).
       </p>
-      {!ownerActionAvailable && (
+      {!creationAvailable && (
         <div className={styles.truthBoundary}>
           <StudioV3Icon name="lock" />
           <div>
-            <strong>{activeBrand?.role ?? 'Collaborator'} video actions are not connected yet</strong>
-            <p>The V3 source-first journey remains inspectable, but upload and queue controls stay disabled while the legacy video routes remain owner-only.</p>
+            <strong>{activeBrand?.role ?? 'Unassigned'} cannot create in this scope</strong>
+            <p>Choose an accessible project. Reviewers remain read-only; owner/creator paid requests require a signed estimate and current spend authority.</p>
           </div>
         </div>
       )}
@@ -348,8 +352,7 @@ export function StudioV3VideoLab({
             {sourceMode === 'owned' && (
               <>
                 <section className={styles.sourceSection}>
-                  <header><div><span className={styles.eyebrow}>Owned footage</span><h2>Choose an uploaded shoot</h2></div><button disabled={!ownerActionAvailable} onClick={() => videoInput.current?.click()} type="button">Upload video</button></header>
-                  {uploadPercent !== null && <div className={styles.uploadProgress}><span style={{ width: `${uploadPercent}%` }} /><strong>{uploadPercent}%</strong></div>}
+                  <header><div><span className={styles.eyebrow}>Owned footage</span><h2>Choose an uploaded shoot</h2></div><a className={styles.secondaryButton} href={legacyVideoHref}>Open scoped Legacy video</a></header>
                   {data.uploads.length === 0 ? <p className={styles.emptyState}>No owned footage is registered. Upload verifies the storage object before it enters the library.</p> : (
                     <div className={styles.ownedList}>
                       {data.uploads.map((item) => (
@@ -459,10 +462,10 @@ export function StudioV3VideoLab({
                 <StudioV3Icon name={ready ? 'check' : 'warning'} />
                 <div>
                   <strong>{ready ? 'Ready for authorized review' : 'Source or required input missing'}</strong>
-                  <span>{stillMode ? `Estimated ceiling shown for review: ৳${estimatedCost.toLocaleString('en-BD')}. Server is authoritative.` : 'Local edit path is ৳0; server validates source, recipe and brand assets.'}</span>
+                  <span>{stillMode ? 'Request the signed server estimate to see the exact resolved model, worst-case retry ceiling and hard BDT cap.' : 'V3 owned-footage upload/edit is disabled; use the context-preserving Legacy handoff.'}</span>
                 </div>
               </div>
-              <button className={styles.primaryButton} disabled={!ownerActionAvailable || !ready} onClick={() => setReviewOpen(true)} type="button">Review queue request <StudioV3Icon name="arrow" /></button>
+              <button className={styles.primaryButton} disabled={!creationAvailable || !ready || estimating} onClick={() => void openReview()} type="button">{estimating ? 'Getting exact estimate…' : 'Review exact estimate'} <StudioV3Icon name="arrow" /></button>
             </div>
           </aside>
         </div>
@@ -470,23 +473,23 @@ export function StudioV3VideoLab({
 
       <StudioConfirmationDialog
         ariaLabel="Review video queue request"
-        confirmDisabled={!ownerActionAvailable || !ready || queueing}
-        confirmLabel={queueing ? 'Server checking…' : 'Confirm and send to server gate'}
-        onCancel={() => setReviewOpen(false)}
+        confirmDisabled={!creationAvailable || !reviewEstimate || !ready || queueing}
+        confirmLabel={queueing ? 'Revalidating…' : `Confirm up to ৳${reviewEstimate?.maxCostBdt.toLocaleString('en-BD') ?? '—'}`}
+        onCancel={() => { setReviewOpen(false); setReviewEstimate(null); setReviewRequest(null) }}
         onConfirm={() => void queue()}
         open={reviewOpen}
         summary={stillMode
-          ? 'This can create paid Veo jobs. The authenticated server re-validates source QC, provider readiness, duration chain and cost policy before queueing.'
+          ? 'This is the signed whole-taka server estimate for the exact project source, duration and pinned Veo model. Confirmation is separate; the server and worker revalidate the same whole-taka hard cap before provider execution.'
           : 'This queues a server-validated local edit job. The immutable owned source remains preserved.'}
         title={stillMode ? 'Queue generated reel?' : 'Queue owned-footage edit?'}
       >
         <dl className={styles.confirmationFacts}>
           <div><dt>Source</dt><dd>{selectedSourceLabel}</dd></div>
-          <div><dt>Model / recipe</dt><dd>{stillMode ? 'Veo 3.1' : recipe.label}</dd></div>
+          <div><dt>Model / recipe</dt><dd>{stillMode ? reviewEstimate?.selection.model ?? 'Waiting for server' : recipe.label}</dd></div>
           <div><dt>Duration</dt><dd>{duration}s{stillMode && duration >= 16 ? ' chained' : ''}</dd></div>
           <div><dt>Resolution</dt><dd>{stillMode ? '720p delivery contract; verified result wins' : 'source-preserving, up to 1080p'}</dd></div>
           <div><dt>Audio</dt><dd>{stillMode ? 'provider default only' : AUDIO_MODES.find((item) => item.id === audioMode)?.labelBn}</dd></div>
-          <div><dt>Cost</dt><dd>{stillMode ? `estimated ৳${estimatedCost.toLocaleString('en-BD')}; server cap applies` : '৳0 local worker'}</dd></div>
+          <div><dt>Exact authorized ceiling</dt><dd>{stillMode && reviewEstimate ? `৳${reviewEstimate.estimateBdt.toLocaleString('en-BD')} of hard cap ৳${reviewEstimate.maxCostBdt.toLocaleString('en-BD')}` : '৳0 local worker'}</dd></div>
         </dl>
       </StudioConfirmationDialog>
     </div>

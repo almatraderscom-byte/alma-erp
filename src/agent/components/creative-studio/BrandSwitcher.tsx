@@ -24,7 +24,7 @@ export function BrandSwitcher({
   }
   if (!brands.length) {
     return (
-      <span className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-2 py-1 text-[9px] text-amber-200">
+      <span className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-200">
         কোনো ব্র্যান্ডে প্রবেশাধিকার নেই
       </span>
     )
@@ -35,7 +35,7 @@ export function BrandSwitcher({
       <select
         value={activeBrandProfileId ?? brands[0].brandProfileId}
         onChange={(event) => onChange(event.target.value)}
-        className="max-w-[9.5rem] rounded-xl border border-border-subtle bg-card px-2.5 py-1.5 pr-7 text-[10px] font-bold text-cream outline-none focus:border-[#E07A5F]/60 sm:max-w-[12rem]"
+        className="max-w-[9.5rem] rounded-xl border border-border-subtle bg-card px-2.5 py-1.5 pr-7 text-[11px] font-bold text-cream outline-none focus:border-[#E07A5F]/60 sm:max-w-[12rem]"
       >
         {brands.map((brand) => (
           <option key={brand.brandProfileId} value={brand.brandProfileId}>

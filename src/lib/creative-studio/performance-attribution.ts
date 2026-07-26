@@ -166,6 +166,27 @@ export function performanceSourceFingerprint(input: {
   })).digest('hex')
 }
 
+export function assertPerformanceDeliveryLineage(delivery: AnyRecord): void {
+  const hasComposition = typeof delivery.compositionId === 'string'
+  const pinnedValues = [
+    delivery.compositionVersionId,
+    delivery.compositionVersion,
+    delivery.compositionDocumentHash,
+  ]
+  if (!hasComposition && pinnedValues.some((value) => value != null)) {
+    throw new PerformanceAttributionError('performance_delivery_pin_incomplete', 409)
+  }
+  if (
+    hasComposition
+    && (
+      typeof delivery.compositionVersionId !== 'string'
+      || !Number.isInteger(delivery.compositionVersion)
+      || Number(delivery.compositionVersion) < 1
+      || !/^[a-f0-9]{64}$/.test(String(delivery.compositionDocumentHash ?? ''))
+    )
+  ) throw new PerformanceAttributionError('performance_delivery_pin_incomplete', 409)
+}
+
 async function applyDeterministicFeedback(input: {
   snapshotId: string
   recipeId: string | null
@@ -304,6 +325,7 @@ export async function syncDueCreativePerformance(input: {
   for (const delivery of deliveries) {
     summary.processed += 1
     try {
+      assertPerformanceDeliveryLineage(delivery)
       const metrics = normalizePerformanceMetrics(await input.fetchMetrics({
         id: String(delivery.id),
         platform: String(delivery.platform).toLowerCase() as 'facebook' | 'instagram',
@@ -330,6 +352,13 @@ export async function syncDueCreativePerformance(input: {
             deliveryId: delivery.id,
             assetVersionId: delivery.assetVersionId,
             campaignPackId: delivery.campaignPackId,
+            compositionId: delivery.compositionId,
+            compositionVersionId: delivery.compositionVersionId,
+            compositionVersion: delivery.compositionVersion,
+            compositionDocumentHash: delivery.compositionDocumentHash,
+            operationBatchId: delivery.operationBatchId,
+            reviewFingerprint: delivery.reviewFingerprint,
+            renderFingerprint: delivery.renderFingerprint,
             externalObjectId: metrics.externalObjectId,
             source: 'meta_graph',
             sourceFingerprint,
@@ -386,6 +415,19 @@ function serializeSnapshot(row: AnyRecord) {
     deliveryId: String(row.deliveryId),
     assetVersionId: String(row.assetVersionId),
     campaignPackId: typeof row.campaignPackId === 'string' ? row.campaignPackId : null,
+    compositionId: typeof row.compositionId === 'string' ? row.compositionId : null,
+    compositionVersionId: typeof row.compositionVersionId === 'string'
+      ? row.compositionVersionId
+      : null,
+    compositionVersion: Number.isInteger(row.compositionVersion)
+      ? Number(row.compositionVersion)
+      : null,
+    compositionDocumentHash: typeof row.compositionDocumentHash === 'string'
+      ? row.compositionDocumentHash
+      : null,
+    operationBatchId: typeof row.operationBatchId === 'string' ? row.operationBatchId : null,
+    reviewFingerprint: typeof row.reviewFingerprint === 'string' ? row.reviewFingerprint : null,
+    renderFingerprint: typeof row.renderFingerprint === 'string' ? row.renderFingerprint : null,
     externalObjectId: String(row.externalObjectId),
     reach: Number(row.reach ?? 0),
     impressions: Number(row.impressions ?? 0),
@@ -534,6 +576,22 @@ export async function getCreativePerformanceDashboard(
       assetId: String(delivery.assetId),
       assetVersionId: String(delivery.assetVersionId),
       campaignPackId: typeof delivery.campaignPackId === 'string' ? delivery.campaignPackId : null,
+      compositionId: typeof delivery.compositionId === 'string' ? delivery.compositionId : null,
+      compositionVersionId: typeof delivery.compositionVersionId === 'string'
+        ? delivery.compositionVersionId
+        : null,
+      compositionVersion: Number.isInteger(delivery.compositionVersion)
+        ? Number(delivery.compositionVersion)
+        : null,
+      operationBatchId: typeof delivery.operationBatchId === 'string'
+        ? delivery.operationBatchId
+        : null,
+      reviewFingerprint: typeof delivery.reviewFingerprint === 'string'
+        ? delivery.reviewFingerprint
+        : null,
+      renderFingerprint: typeof delivery.renderFingerprint === 'string'
+        ? delivery.renderFingerprint
+        : null,
       sceneKey: String(delivery.sceneKey),
       platform: String(delivery.platform).toLowerCase(),
       status: String(delivery.status).toLowerCase(),
@@ -549,6 +607,7 @@ export async function getCreativePerformanceDashboard(
       weight: Number(weight.weight),
       sampleCount: Number(weight.sampleCount),
       updatedAt: iso(weight.updatedAt),
+      advisoryOnly: true,
     })),
     observability: {
       queueAgeSec: oldestQueued

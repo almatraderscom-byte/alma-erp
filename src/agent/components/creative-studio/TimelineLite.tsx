@@ -55,16 +55,16 @@ export function TimelineLite({
       <div className="flex items-center justify-between">
         <div>
           <p className="text-[12px] font-bold text-cream">✂️ Timeline-lite</p>
-          <p className="text-[10px] text-muted">মূল source বদলাবে না · output {outputDuration.toFixed(1)}s</p>
+          <p className="text-[11px] text-muted">মূল source বদলাবে না · output {outputDuration.toFixed(1)}s</p>
         </div>
-        <button type="button" onClick={addSegment} className="st-chip px-2 py-1 text-[10px]">+ ক্লিপ</button>
+        <button type="button" onClick={addSegment} className="st-chip px-2 py-1 text-[11px]">+ ক্লিপ</button>
       </div>
 
       <div className="space-y-1.5">
         {value.segments.map((segment, index) => (
           <div key={segment.id} className="grid grid-cols-[28px_1fr_1fr_56px] items-center gap-1.5 rounded-lg bg-white/[0.04] p-2">
-            <span className="text-center text-[10px] font-bold text-[#E07A5F]">{index + 1}</span>
-            <label className="text-[9px] text-muted">
+            <span className="text-center text-[11px] font-bold text-[#E07A5F]">{index + 1}</span>
+            <label className="text-[11px] text-muted">
               শুরু
               <input
                 aria-label={`ক্লিপ ${index + 1} শুরু`}
@@ -77,7 +77,7 @@ export function TimelineLite({
                 className="mt-0.5 w-full rounded bg-black/30 px-1.5 py-1 text-[11px] text-cream"
               />
             </label>
-            <label className="text-[9px] text-muted">
+            <label className="text-[11px] text-muted">
               শেষ
               <input
                 aria-label={`ক্লিপ ${index + 1} শেষ`}
@@ -91,8 +91,8 @@ export function TimelineLite({
               />
             </label>
             <div className="flex justify-end gap-1">
-              <button type="button" aria-label="আগে নিন" onClick={() => move(index, -1)} className="st-chip h-6 w-6 text-[10px]">↑</button>
-              <button type="button" aria-label="পরে নিন" onClick={() => move(index, 1)} className="st-chip h-6 w-6 text-[10px]">↓</button>
+              <button type="button" aria-label="আগে নিন" onClick={() => move(index, -1)} className="st-chip h-6 w-6 text-[11px]">↑</button>
+              <button type="button" aria-label="পরে নিন" onClick={() => move(index, 1)} className="st-chip h-6 w-6 text-[11px]">↓</button>
             </div>
           </div>
         ))}
@@ -111,18 +111,18 @@ export function TimelineLite({
             className="absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#E07A5F] ring-2 ring-black/50"
             style={{ left: `${value.crop.focusX * 100}%`, top: `${value.crop.focusY * 100}%` }}
           />
-          <span className="absolute bottom-1 left-1 text-[8px] font-semibold text-white/70">SAFE ZONE</span>
+          <span className="absolute bottom-1 left-1 text-[11px] font-semibold text-white/70">SAFE ZONE</span>
         </div>
         <div className="space-y-2">
           <div>
-            <p className="mb-1 text-[10px] font-semibold text-muted">Crop</p>
+            <p className="mb-1 text-[11px] font-semibold text-muted">Crop</p>
             <div className="flex flex-wrap gap-1">
               {VIDEO_CROP_ASPECTS.map((aspect) => (
                 <button
                   key={aspect}
                   type="button"
                   onClick={() => onChange({ ...value, crop: { ...value.crop, aspect } })}
-                  className={cn('rounded px-2 py-1 text-[10px] font-semibold', value.crop.aspect === aspect ? 'st-chip-on' : 'st-chip')}
+                  className={cn('rounded px-2 py-1 text-[11px] font-semibold', value.crop.aspect === aspect ? 'st-chip-on' : 'st-chip')}
                 >
                   {aspect === 'original' ? 'মূল' : aspect}
                 </button>
@@ -130,7 +130,7 @@ export function TimelineLite({
             </div>
           </div>
           {(['focusX', 'focusY'] as const).map((axis) => (
-            <label key={axis} className="block text-[9px] text-muted">
+            <label key={axis} className="block text-[11px] text-muted">
               {axis === 'focusX' ? 'Focus ↔' : 'Focus ↕'}
               <input
                 type="range"
@@ -150,10 +150,10 @@ export function TimelineLite({
       </div>
 
       <div>
-        <p className="mb-1 text-[10px] font-semibold text-muted">Track volume</p>
+        <p className="mb-1 text-[11px] font-semibold text-muted">Track volume</p>
         <div className="grid grid-cols-3 gap-2">
           {(['original', 'music', 'voiceover'] as const).map((track) => (
-            <label key={track} className="text-[9px] text-muted">
+            <label key={track} className="text-[11px] text-muted">
               {track === 'original' ? 'মূল' : track === 'music' ? 'মিউজিক' : 'ভয়েস'}
               <input
                 aria-label={`${track} volume`}
@@ -176,21 +176,21 @@ export function TimelineLite({
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <p className="mb-1 text-[10px] font-semibold text-muted">ক্যাপশন কোথায়</p>
+          <p className="mb-1 text-[11px] font-semibold text-muted">ক্যাপশন কোথায়</p>
           <div className="flex gap-1">
             {CAPTION_PLACEMENTS.map((placement) => (
               <button
                 key={placement}
                 type="button"
                 onClick={() => onChange({ ...value, captionPlacement: placement })}
-                className={cn('rounded px-2 py-1 text-[10px]', value.captionPlacement === placement ? 'st-chip-on' : 'st-chip')}
+                className={cn('rounded px-2 py-1 text-[11px]', value.captionPlacement === placement ? 'st-chip-on' : 'st-chip')}
               >
                 {placement === 'top' ? 'উপরে' : placement === 'center' ? 'মাঝে' : 'নিচে'}
               </button>
             ))}
           </div>
         </div>
-        <label className="text-[10px] font-semibold text-muted">
+        <label className="text-[11px] font-semibold text-muted">
           Cover frame · {value.cover.atSec.toFixed(1)}s
           <input
             aria-label="Cover frame time"
@@ -206,10 +206,10 @@ export function TimelineLite({
       </div>
 
       <div>
-        <p className="mb-1 text-[10px] font-semibold text-muted">এইবার যে track-গুলো render হবে</p>
+        <p className="mb-1 text-[11px] font-semibold text-muted">এইবার যে track-গুলো render হবে</p>
         <div className="flex flex-wrap gap-2">
           {VIDEO_EDIT_TRACKS.map((track) => (
-            <label key={track} className="flex items-center gap-1 text-[10px] text-cream">
+            <label key={track} className="flex items-center gap-1 text-[11px] text-cream">
               <input
                 type="checkbox"
                 checked={value.rerender.includes(track)}

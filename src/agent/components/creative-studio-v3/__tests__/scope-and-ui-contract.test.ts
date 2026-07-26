@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { StudioBrandProfile } from '@/agent/components/creative-studio/studio-api'
+import type { StudioV3LibraryItem } from '@/agent/components/creative-studio-v3/gallery-model'
 import type { StudioProjectSummary } from '@/lib/creative-studio/project-contract'
 import {
   STUDIO_V3_CAPABILITY_DESKS,
   STUDIO_V3_GALLERY_CATEGORIES,
   STUDIO_V3_GALLERY_DENSITIES,
   STUDIO_V3_LIFECYCLES,
+  exactReviewLibraryItem,
+  galleryViewForReviewItem,
   scopeProjectsToBrand,
   selectAccessibleStudioBrand,
 } from '@/agent/components/creative-studio-v3/ui-contract'
@@ -61,10 +64,58 @@ describe('Creative Studio V3 accessible-brand contract', () => {
     expect(scopeProjectsToBrand(rows, null)).toEqual(rows)
   })
 
-  it('documents owner-only legacy resources without implying brand scope', () => {
-    expect(STUDIO_V3_SCOPE_BOUNDARY.gallery).toContain('no brand field')
-    expect(STUDIO_V3_SCOPE_BOUNDARY.models).toContain('no brand field')
-    expect(STUDIO_V3_SCOPE_BOUNDARY.recipes).toContain('owner-only')
+  it('documents server-enforced canonical scope and excludes unscoped legacy rows', () => {
+    expect(STUDIO_V3_SCOPE_BOUNDARY.gallery).toContain('server brand/project access')
+    expect(STUDIO_V3_SCOPE_BOUNDARY.models).toContain('unscoped legacy identities are excluded')
+    expect(STUDIO_V3_SCOPE_BOUNDARY.recipes).toContain('Server-enforced brand recipe filter')
+  })
+
+  it('hands Review Inspect the exact canonical asset/version/sequence tuple', () => {
+    const target = galleryViewForReviewItem({
+      projectAssetId: 'asset-17',
+      projectId: 'project-2',
+      brandProfileId: 'brand-b',
+      currentVersionId: 'version-9',
+      expectedSequence: 4,
+      state: 'revised',
+      title: 'Campaign still',
+      previewUrl: null,
+    })
+    expect(target).toEqual({
+      id: 'gallery',
+      reviewTarget: {
+        brandProfileId: 'brand-b',
+        projectId: 'project-2',
+        projectAssetId: 'asset-17',
+        currentVersionId: 'version-9',
+        expectedSequence: 4,
+      },
+    })
+
+    if (target.id !== 'gallery' || !target.reviewTarget) {
+      throw new Error('expected_review_target')
+    }
+    const generic = {
+      id: 'generic-current',
+      galleryItem: {
+        projectAssetId: 'asset-17',
+        assetVersionId: 'version-10',
+        reviewSequence: 5,
+      },
+    } as StudioV3LibraryItem
+    const exact = {
+      id: 'exact-version',
+      galleryItem: {
+        projectAssetId: 'asset-17',
+        assetVersionId: 'version-9',
+        reviewSequence: 4,
+      },
+    } as StudioV3LibraryItem
+    expect(exactReviewLibraryItem([generic], target.reviewTarget)).toBeNull()
+    expect(exactReviewLibraryItem(
+      [generic, exact],
+      target.reviewTarget,
+    )?.id).toBe('exact-version')
   })
 })
 

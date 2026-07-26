@@ -42,6 +42,13 @@ import {
 } from './image/reference-contract.mjs'
 import { uploadImageArtifact } from './image-artifact.mjs'
 import { resolveGenericImageRequest } from './image-resolution-contract.mjs'
+import {
+  allowPaidGarmentPrepCleanup,
+  assertStudioRunPaidAttempt,
+  authorizeStudioRunExecution,
+  requiresStudioRunPaidAttemptAuthorization,
+  studioRunQueueJobOptions,
+} from './studio-run-authorize.mjs'
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -255,11 +262,19 @@ async function pollPendingJobs() {
       }
       let handled = false
       if (job.type === 'image_gen') {
-        await imageGenQueue.add('generate', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        await imageGenQueue.add(
+          'generate',
+          { pendingActionId: job.id, payload: job.payload },
+          { jobId: job.id, ...studioRunQueueJobOptions(job.payload) },
+        )
         console.log(`[worker] enqueued image-gen job for action ${job.id}`)
         handled = true
       } else if (job.type === 'video_gen') {
-        await videoGenQueue.add('generate', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        await videoGenQueue.add(
+          'generate',
+          { pendingActionId: job.id, payload: job.payload },
+          { jobId: job.id, ...studioRunQueueJobOptions(job.payload) },
+        )
         console.log(`[worker] enqueued video-gen job for action ${job.id}`)
         handled = true
       } else if (job.type === 'video_edit') {
@@ -586,6 +601,17 @@ async function processImageGen(job) {
     return
   }
 
+  const authorization = await authorizeStudioRunExecution(pendingActionId, payload)
+  if (!authorization.authorized) {
+    await callJobResult(
+      pendingActionId,
+      'failed',
+      undefined,
+      `studio_run_revalidation_failed:${authorization.error}`,
+    )
+    return
+  }
+
   // CSE4 — deterministic campaign-pack previews, crops/frames and Bangla
   // captions. These are local/free and storage-addressed; a worker restart can
   // safely repeat the exact path without duplicating any paid provider call.
@@ -608,7 +634,15 @@ async function processImageGen(job) {
     try {
       const { prepSupplierPhoto } = await import('./garment-prep.mjs')
       const { logCost } = await import('./cost-log.mjs')
-      const result = await prepSupplierPhoto({ supabase, imagePath: payload.imagePath, pendingActionId, logCost })
+      const result = await prepSupplierPhoto({
+        supabase,
+        imagePath: payload.imagePath,
+        pendingActionId,
+        logCost,
+        // The signed plan calls garment prep local/free. Optional Gemini/FLUX
+        // cleanup is therefore disabled rather than spending outside its cap.
+        allowPaidCleanup: allowPaidGarmentPrepCleanup(payload),
+      })
       await callJobResult(pendingActionId, 'success', {
         garmentPrep: true,
         multiPerson: result.multiPerson,
@@ -937,6 +971,7 @@ async function processImageGen(job) {
     })
   }
 
+  await assertStudioRunPaidAttempt(pendingActionId, payload, 1)
   const first = await generateImageToStorage({ ...genOpts, prompt: basePrompt })
   const artifactsByPath = new Map([[first.storagePath, first.original]])
   await logImageCost(first.storagePath, first.modelName, first.resolvedAspectRatio, first.resolvedImageSize, 1)
@@ -957,8 +992,10 @@ async function processImageGen(job) {
     personImagePath: referenceContract?.bindings?.find((binding) => binding.role === 'person')?.path
       ?? referenceImageId
       ?? null,
+    maxPaidGenerations: payload.studioPaidAttemptLimit,
     regenerate: async (fixHint, attemptNum) => {
       regenCount += 1
+      await assertStudioRunPaidAttempt(pendingActionId, payload, attemptNum)
       const regenPrompt = `${basePrompt}\n\nQC FIX (regeneration attempt ${attemptNum}): ${fixHint}`
       const regen = await generateImageToStorage({
         ...genOpts,
@@ -1838,6 +1875,23 @@ if (!creativeDistributionInterval) {
   console.log('[creative-distribution] scheduler OFF — rollout gate not enabled')
 }
 
+// V3 lifecycle execution is independently OFF by default and only admits the
+// built-in zero-cost local manifest adapter. Paid/provider renderers are never
+// selected by this loop.
+let lifecycleWorkerInterval = null
+if (process.env.STUDIO_LIFECYCLE_LOCAL_WORKER_ENABLED === 'true') {
+  const { startLifecycleWorkerLoop } = await import('./lifecycle-worker.mjs')
+  lifecycleWorkerInterval = startLifecycleWorkerLoop({
+    appUrl: getAppUrl(),
+    internalToken: getInternalToken(),
+    supabase,
+    intervalMs: Number(process.env.STUDIO_LIFECYCLE_WORKER_INTERVAL_MS) || 60_000,
+  })
+  console.log('[lifecycle-worker] zero-cost local adapter started')
+} else {
+  console.log('[lifecycle-worker] OFF — rollout gate not enabled')
+}
+
 // Phase 53 — effect-outbox dispatcher (OFF by default; readiness gates flip it).
 // Dispatch posts the run back to the app's assistant surface, where the guard +
 // effect engine own execution; the worker only drives retries/dead-letter.
@@ -1907,6 +1961,7 @@ async function shutdown(signal) {
   clearInterval(heartbeatInterval)
   clearInterval(healthPingInterval)
   if (creativeDistributionInterval) clearInterval(creativeDistributionInterval)
+  if (lifecycleWorkerInterval) clearInterval(lifecycleWorkerInterval)
   clearInterval(workbenchJanitorInterval)
   if (schedulerTeardown?.retriggerPoll) clearInterval(schedulerTeardown.retriggerPoll)
   if (schedulerTeardown?.dutyTimePoll) clearInterval(schedulerTeardown.dutyTimePoll)

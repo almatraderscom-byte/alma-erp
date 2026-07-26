@@ -170,7 +170,7 @@
 .projectIdentity > div > span {
   overflow: hidden;
   color: var(--editor-muted);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-overflow: ellipsis;
@@ -212,7 +212,7 @@
   width: auto;
   padding: 0 9px;
   gap: 5px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -222,7 +222,7 @@
   gap: 4px;
   margin-right: 3px;
   color: var(--editor-teal);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 750;
 }
 
@@ -238,7 +238,7 @@
   color: var(--editor-muted-hi);
   background: var(--editor-inset);
   font-family: var(--font-mono-nums, "JetBrains Mono", monospace);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -250,7 +250,7 @@
 .editorBoundaries > button {
   gap: 5px;
   width: auto;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 750;
 }
 
@@ -268,7 +268,7 @@
   border-radius: 999px;
   color: var(--editor-coral);
   background: var(--editor-coral-soft);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .trustBar {
@@ -297,7 +297,7 @@
   min-height: 29px;
   padding: 0 12px;
   border-right: 1px solid var(--editor-border);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 680;
   letter-spacing: 0.015em;
 }
@@ -367,7 +367,7 @@
 .toolRail button span {
   max-width: 42px;
   overflow: hidden;
-  font-size: 7.5px;
+  font-size: 11px;
   font-weight: 720;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -417,7 +417,7 @@
 .stageHeader > div > span,
 .timelineHeader > div > span {
   color: var(--editor-coral);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.12em;
 }
@@ -438,7 +438,7 @@
   color: var(--editor-muted);
   background: var(--editor-inset);
   font-family: var(--font-mono-nums, monospace);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .mediaSearch {
@@ -466,7 +466,7 @@
   outline: 0;
   color: var(--editor-ink);
   background: transparent;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .mediaSearch kbd,
@@ -477,7 +477,7 @@
   color: var(--editor-muted);
   background: var(--editor-surface);
   font-family: var(--font-mono-nums, monospace);
-  font-size: 7px;
+  font-size: 11px;
 }
 
 .mediaPanelBody {
@@ -510,7 +510,7 @@
   border-radius: 9px;
   color: #fff;
   background: var(--editor-coral);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -521,7 +521,7 @@
 
 .projectContextCard div strong {
   overflow: hidden;
-  font-size: 10px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -530,7 +530,7 @@
   overflow: hidden;
   margin-top: 2px;
   color: var(--editor-muted);
-  font-size: 8px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -538,7 +538,7 @@
 .projectContextCard > span:last-child {
   color: var(--editor-coral);
   font-family: var(--font-mono-nums, monospace);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -564,14 +564,14 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
 }
 
 .projectTree section > header em {
   font-family: var(--font-mono-nums, monospace);
-  font-size: 8px;
+  font-size: 11px;
   font-style: normal;
 }
 
@@ -605,7 +605,7 @@
 .projectTree section > button strong,
 .assetCopy strong {
   overflow: hidden;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 720;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -616,7 +616,7 @@
   overflow: hidden;
   margin-top: 2px;
   color: var(--editor-muted);
-  font-size: 7.5px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -718,7 +718,7 @@
   right: 3px;
   bottom: 2px;
   z-index: 1;
-  font-size: 6px;
+  font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -731,7 +731,7 @@
 .assetCopy em {
   margin-top: 3px;
   color: var(--editor-coral);
-  font-size: 7px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 750;
 }
@@ -756,7 +756,7 @@
 .inspectorEmpty p {
   max-width: 220px;
   margin: 5px 0 0;
-  font-size: 8.5px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -766,7 +766,7 @@
   border: 1px solid var(--editor-border);
   border-radius: 8px;
   background: var(--editor-surface);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 750;
 }
 
@@ -779,7 +779,7 @@
   border-top: 1px solid var(--editor-border);
   color: var(--editor-teal);
   background: var(--editor-inset);
-  font-size: 7.5px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -820,13 +820,13 @@
 
 .stageHeader > div:first-child strong {
   font-family: var(--font-mono-nums, monospace);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .stageHeader > div:first-child small {
   color: rgba(255, 255, 255, 0.45);
   font-family: var(--font-mono-nums, monospace);
-  font-size: 7px;
+  font-size: 11px;
 }
 
 .stageTruth {
@@ -843,7 +843,7 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 999px;
   color: rgba(255, 255, 255, 0.58);
-  font-size: 7px;
+  font-size: 11px;
 }
 
 .stageTruth span:first-child {
@@ -961,7 +961,7 @@
   z-index: 2;
   top: 4%;
   font-family: var(--font-mono-nums, monospace);
-  font-size: clamp(5px, 0.58vw, 8px);
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
 }
@@ -985,7 +985,7 @@
 
 .stageEditorial span {
   color: #ffe1d6;
-  font-size: clamp(5px, 0.56vw, 8px);
+  font-size: 11px;
   font-weight: 750;
   letter-spacing: 0.18em;
 }
@@ -1000,7 +1000,7 @@
 .stageEditorial small {
   margin-top: 5px;
   color: rgba(255, 255, 255, 0.7);
-  font-size: clamp(5px, 0.54vw, 8px);
+  font-size: 11px;
 }
 
 .stageOverlay {
@@ -1011,7 +1011,7 @@
   padding: 2px 5px;
   border: 1px solid rgba(255, 255, 255, 0.6);
   font-family: Georgia, serif;
-  font-size: clamp(7px, 0.72vw, 11px);
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.2em;
 }
@@ -1028,7 +1028,7 @@
   background: rgba(16, 14, 13, 0.72);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.16);
   font-family: var(--font-sans, sans-serif);
-  font-size: clamp(8px, 0.92vw, 14px);
+  font-size: clamp(11px, 0.92vw, 14px);
   font-weight: 750;
   text-align: center;
 }
@@ -1072,7 +1072,7 @@
   color: rgba(255, 255, 255, 0.48);
   background: rgba(0, 0, 0, 0.2);
   font-family: var(--font-mono-nums, monospace);
-  font-size: 5px;
+  font-size: 11px;
   letter-spacing: 0.12em;
   transform: rotate(-90deg);
 }
@@ -1131,20 +1131,20 @@
 .splitButton {
   gap: 5px;
   padding: 0 9px;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 750;
 }
 
 .playerTime {
   color: #fff;
   font-family: var(--font-mono-nums, monospace);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
 .playerTime small {
   color: rgba(255, 255, 255, 0.35);
-  font-size: 7px;
+  font-size: 11px;
 }
 
 .playerScrubber {
@@ -1162,7 +1162,7 @@
   max-width: 140px;
   overflow: hidden;
   color: rgba(255, 255, 255, 0.48);
-  font-size: 7.5px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1200,12 +1200,12 @@
 .timelineHeader > div:first-child small {
   grid-column: 1 / -1;
   color: var(--editor-muted);
-  font-size: 7px;
+  font-size: 11px;
 }
 
 .timelineHeader > div:first-child strong {
   overflow: hidden;
-  font-size: 9px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1275,7 +1275,7 @@
   padding: 0 7px;
   border-right: 1px solid var(--editor-border);
   color: var(--editor-muted);
-  font-size: 7px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.12em;
 }
@@ -1291,7 +1291,7 @@
   bottom: 5px;
   color: var(--editor-muted);
   font-family: var(--font-mono-nums, monospace);
-  font-size: 6.5px;
+  font-size: 11px;
   transform: translateX(-50%);
 }
 
@@ -1340,14 +1340,14 @@
 
 .timelineTrackLabel strong {
   overflow: hidden;
-  font-size: 7.5px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .timelineTrackLabel small {
   color: var(--editor-muted);
-  font-size: 6px;
+  font-size: 11px;
 }
 
 .timelineTrackLabel[aria-pressed="true"] {
@@ -1436,7 +1436,7 @@
 
 .timelineClip strong {
   overflow: hidden;
-  font-size: 7px;
+  font-size: 11px;
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1447,7 +1447,7 @@
   margin-top: 2px;
   opacity: 0.72;
   font-family: var(--font-mono-nums, monospace);
-  font-size: 5.5px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1458,7 +1458,7 @@
   top: 2px;
   right: 3px;
   color: var(--editor-amber);
-  font-size: 5px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 800;
 }
@@ -1533,7 +1533,7 @@
   border-right: 1px solid var(--editor-border);
   color: var(--editor-muted);
   background: transparent;
-  font-size: 7.5px;
+  font-size: 11px;
   font-weight: 720;
 }
 
@@ -1569,7 +1569,7 @@
   border-radius: 999px;
   color: #fff;
   background: var(--editor-coral);
-  font-size: 6px;
+  font-size: 11px;
   font-style: normal;
 }
 
@@ -1619,7 +1619,7 @@
 
 .selectionCard > div span {
   color: var(--editor-coral);
-  font-size: 7px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.1em;
 }
@@ -1627,7 +1627,7 @@
 .selectionCard > div strong {
   overflow: hidden;
   margin-top: 2px;
-  font-size: 10px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1637,7 +1637,7 @@
   margin-top: 2px;
   color: var(--editor-muted);
   font-family: var(--font-mono-nums, monospace);
-  font-size: 6.5px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1648,7 +1648,7 @@
   border-radius: 999px;
   color: var(--editor-teal);
   background: var(--editor-teal-soft);
-  font-size: 6px;
+  font-size: 11px;
   font-weight: 800;
   text-align: center;
   text-transform: uppercase;
@@ -1674,13 +1674,13 @@
 }
 
 .inspectorSection > header strong {
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .inspectorSection > header span,
 .inspectorSection > header button {
   color: var(--editor-muted);
-  font-size: 7px;
+  font-size: 11px;
 }
 
 .inspectorSection > header button {
@@ -1695,7 +1695,7 @@
   display: grid;
   gap: 4px;
   color: var(--editor-muted);
-  font-size: 7.5px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -1727,7 +1727,7 @@
   display: grid;
   gap: 3px;
   color: var(--editor-muted);
-  font-size: 7px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -1735,7 +1735,7 @@
   height: 31px;
   padding: 0 7px;
   font-family: var(--font-mono-nums, monospace);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .inspectorRange {
@@ -1748,7 +1748,7 @@
   align-items: center;
   justify-content: space-between;
   color: var(--editor-muted);
-  font-size: 7px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -1782,7 +1782,7 @@
 
 .provenanceGrid dt {
   color: var(--editor-muted);
-  font-size: 6.5px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -1790,7 +1790,7 @@
 .provenanceGrid dd {
   overflow-wrap: anywhere;
   margin: 2px 0 0;
-  font-size: 7.5px;
+  font-size: 11px;
   font-weight: 680;
   line-height: 1.35;
 }
@@ -1814,7 +1814,7 @@
   align-items: center;
   gap: 4px;
   color: var(--editor-muted);
-  font-size: 6.5px;
+  font-size: 11px;
 }
 
 .inspectorSave button,
@@ -1825,7 +1825,7 @@
   border-radius: 8px;
   color: #fff;
   background: var(--editor-coral);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -1860,7 +1860,7 @@
 
 .agentIdentity > div > span {
   color: var(--editor-coral);
-  font-size: 7px;
+  font-size: 11px;
   font-weight: 850;
   letter-spacing: 0.12em;
 }
@@ -1873,7 +1873,7 @@
 .agentIdentity > div > small {
   margin-top: 2px;
   color: var(--editor-muted);
-  font-size: 7px;
+  font-size: 11px;
 }
 
 .agentMode {
@@ -1884,7 +1884,7 @@
   border-radius: 999px;
   color: var(--editor-teal);
   background: var(--editor-teal-soft);
-  font-size: 6.5px;
+  font-size: 11px;
   font-weight: 850;
 }
 
@@ -1904,7 +1904,7 @@
 
 .agentContextStrip small {
   color: var(--editor-muted);
-  font-size: 5.5px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
 }
@@ -1912,7 +1912,7 @@
 .agentContextStrip strong {
   margin-top: 2px;
   font-family: var(--font-mono-nums, monospace);
-  font-size: 7px;
+  font-size: 11px;
 }
 
 .agentContextStrip > i {
@@ -1951,7 +1951,7 @@
   max-width: 278px;
   margin: 8px 0 0;
   color: var(--editor-muted);
-  font-size: 8.5px;
+  font-size: 11px;
   line-height: 1.55;
 }
 
@@ -1968,7 +1968,7 @@
   border: 1px solid var(--editor-border);
   border-radius: 8px;
   background: var(--editor-surface);
-  font-size: 7.5px;
+  font-size: 11px;
   font-weight: 720;
 }
 
@@ -1991,14 +1991,14 @@
 
 .planHeader > div span {
   color: var(--editor-coral);
-  font-size: 6.5px;
+  font-size: 11px;
   font-weight: 850;
   letter-spacing: 0.12em;
 }
 
 .planHeader > div strong {
   margin-top: 2px;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .fingerprint {
@@ -2011,7 +2011,7 @@
   color: var(--editor-muted-hi);
   background: var(--editor-inset);
   font-family: var(--font-mono-nums, monospace);
-  font-size: 6px;
+  font-size: 11px;
   font-weight: 750;
 }
 
@@ -2032,13 +2032,13 @@
 .stalePlan span,
 .reviewWarning span {
   display: grid;
-  font-size: 7.5px;
+  font-size: 11px;
   line-height: 1.4;
 }
 
 .stalePlan span strong,
 .reviewWarning span strong {
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .planWarnings {
@@ -2062,13 +2062,13 @@
 
 .planWarnings li span {
   display: grid;
-  font-size: 6.5px;
+  font-size: 11px;
   line-height: 1.4;
 }
 
 .planWarnings li strong {
   font-family: var(--font-mono-nums, monospace);
-  font-size: 6px;
+  font-size: 11px;
   text-transform: uppercase;
 }
 
@@ -2095,13 +2095,13 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 6.5px;
+  font-size: 11px;
   font-weight: 850;
   letter-spacing: 0.08em;
 }
 
 .operationGroup > header em {
-  font-size: 6px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 700;
 }
@@ -2135,7 +2135,7 @@
   color: var(--editor-muted);
   background: var(--editor-inset);
   font-family: var(--font-mono-nums, monospace);
-  font-size: 6.5px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -2145,7 +2145,7 @@
 }
 
 .operationGroup li > div strong {
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .operationGroup li > div small {
@@ -2153,7 +2153,7 @@
   margin-top: 2px;
   color: var(--editor-muted);
   font-family: var(--font-mono-nums, monospace);
-  font-size: 5.8px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2164,7 +2164,7 @@
   gap: 4px;
   min-width: 0;
   margin: 4px 0 0;
-  font-size: 6.5px;
+  font-size: 11px;
   line-height: 1.35;
 }
 
@@ -2190,7 +2190,7 @@
 
 .operationGroup li > em {
   color: var(--editor-teal);
-  font-size: 6px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 800;
 }
@@ -2207,7 +2207,7 @@
   border-radius: 6px;
   color: var(--editor-amber);
   background: var(--editor-inset);
-  font-size: 6px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -2215,7 +2215,7 @@
   padding: 12px;
   margin: 0;
   color: var(--editor-muted);
-  font-size: 7.5px;
+  font-size: 11px;
   line-height: 1.45;
   text-align: center;
 }
@@ -2249,7 +2249,7 @@
 }
 
 .ownerAcknowledgement label strong {
-  font-size: 7.5px;
+  font-size: 11px;
   line-height: 1.35;
 }
 
@@ -2257,7 +2257,7 @@
 .ownerAcknowledgement > p {
   margin-top: 2px;
   color: var(--editor-muted);
-  font-size: 6.5px;
+  font-size: 11px;
   line-height: 1.4;
 }
 
@@ -2276,7 +2276,7 @@
   border-radius: 8px;
   color: #fff;
   background: var(--editor-coral);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 820;
 }
 
@@ -2308,20 +2308,20 @@
 }
 
 .agentReceipt strong {
-  font-size: 8px;
+  font-size: 11px;
   text-transform: capitalize;
 }
 
 .agentReceipt small {
   margin-top: 2px;
   font-family: var(--font-mono-nums, monospace);
-  font-size: 6px;
+  font-size: 11px;
 }
 
 .agentReceipt p {
   margin: 3px 0 0;
   color: var(--editor-muted-hi);
-  font-size: 6.5px;
+  font-size: 11px;
   line-height: 1.4;
 }
 
@@ -2350,7 +2350,7 @@
   outline: 0;
   color: var(--editor-ink);
   background: var(--editor-inset);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.45;
 }
 
@@ -2372,7 +2372,7 @@
   align-items: center;
   gap: 3px;
   color: var(--editor-muted);
-  font-size: 6px;
+  font-size: 11px;
 }
 
 .planButton {
@@ -2386,7 +2386,7 @@
   border-radius: 8px;
   color: #fff;
   background: #22201e;
-  font-size: 7.5px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -2407,7 +2407,7 @@
 .reviewPanel > header > span,
 .activityPanel > header > span {
   color: var(--editor-coral);
-  font-size: 7px;
+  font-size: 11px;
   font-weight: 850;
   letter-spacing: 0.12em;
 }
@@ -2424,7 +2424,7 @@
 .activityPanel > header p {
   margin: 4px 0 0;
   color: var(--editor-muted);
-  font-size: 7.5px;
+  font-size: 11px;
   line-height: 1.4;
 }
 
@@ -2448,7 +2448,7 @@
   border-radius: 9px;
   color: #fff;
   background: #252320;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 850;
 }
 
@@ -2457,13 +2457,13 @@
 }
 
 .reviewRole strong {
-  font-size: 8.5px;
+  font-size: 11px;
 }
 
 .reviewRole small {
   margin-top: 2px;
   color: var(--editor-muted);
-  font-size: 6.5px;
+  font-size: 11px;
 }
 
 .reviewRole em {
@@ -2471,7 +2471,7 @@
   border-radius: 999px;
   color: var(--editor-teal);
   background: var(--editor-teal-soft);
-  font-size: 6px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 850;
 }
@@ -2491,18 +2491,18 @@
 }
 
 .reviewComment header strong {
-  font-size: 7.5px;
+  font-size: 11px;
 }
 
 .reviewComment header time {
   color: var(--editor-muted);
-  font-size: 6px;
+  font-size: 11px;
 }
 
 .reviewComment p {
   margin: 6px 0;
   color: var(--editor-muted-hi);
-  font-size: 7.5px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -2512,7 +2512,7 @@
   gap: 4px;
   color: var(--editor-coral);
   font-family: var(--font-mono-nums, monospace);
-  font-size: 6px;
+  font-size: 11px;
 }
 
 .reviewBoundary {
@@ -2524,7 +2524,7 @@
 .reviewBoundary p {
   margin: 0;
   color: var(--editor-muted);
-  font-size: 6.5px;
+  font-size: 11px;
   line-height: 1.4;
   text-align: center;
 }
@@ -2569,14 +2569,14 @@
 }
 
 .activityPanel li strong {
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.35;
 }
 
 .activityPanel li small {
   margin-top: 3px;
   color: var(--editor-muted);
-  font-size: 6.2px;
+  font-size: 11px;
   line-height: 1.4;
 }
 
@@ -2588,7 +2588,7 @@
   color: var(--editor-muted-hi);
   background: var(--editor-inset);
   font-family: var(--font-mono-nums, monospace);
-  font-size: 5.7px;
+  font-size: 11px;
 }
 
 .focusNavigation {
@@ -2610,7 +2610,7 @@
   background: var(--editor-surface);
   box-shadow: 0 3px 12px rgba(30, 26, 22, 0.08);
   cursor: pointer;
-  font-size: 6.5px;
+  font-size: 11px;
   font-weight: 750;
   list-style: none;
 }
@@ -2638,7 +2638,7 @@
   gap: 5px;
   padding: 4px;
   border-bottom: 1px solid var(--editor-border);
-  font-size: 6.5px;
+  font-size: 11px;
 }
 
 .keyboardHelp dl div:last-child {
@@ -2687,7 +2687,7 @@
 .editorNotice strong {
   overflow: hidden;
   margin: 0;
-  font-size: 6.5px;
+  font-size: 11px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2749,7 +2749,7 @@
   padding: 10px;
   margin: 0;
   color: #76716a;
-  font-size: 10px;
+  font-size: 11px;
   text-align: center;
 }
 
@@ -2847,7 +2847,7 @@
     border-radius: 9px;
     color: var(--editor-muted);
     background: transparent;
-    font-size: 7px;
+    font-size: 11px;
     font-weight: 750;
   }
 
@@ -2919,11 +2919,11 @@
   }
 
   .projectIdentity > div > span {
-    font-size: 7px;
+    font-size: 11px;
   }
 
   .projectIdentity > div > strong {
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .projectIdentity > button:last-child,
@@ -2934,13 +2934,13 @@
   .versionPill {
     height: 25px;
     margin: 0;
-    font-size: 8px;
+    font-size: 11px;
   }
 
   .trustBar > span {
     min-height: 28px;
     padding: 0 9px;
-    font-size: 7px;
+    font-size: 11px;
   }
 
   .editorMain {
@@ -3050,7 +3050,7 @@
     gap: 1px;
     min-height: 42px;
     padding: 3px 6px;
-    font-size: 7px;
+    font-size: 11px;
   }
 
   .editorNotice {
@@ -3074,7 +3074,7 @@
   .workbenchTabs button {
     flex-direction: column;
     gap: 1px;
-    font-size: 6.5px;
+    font-size: 11px;
   }
 
   .agentComposer {
@@ -3146,7 +3146,7 @@
 .stagePreviewUnavailable small {
   max-width: 220px;
   color: rgba(255, 255, 255, 0.56);
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.45;
 }
 
@@ -3160,7 +3160,7 @@
   border-radius: 9px;
   color: var(--editor-muted-hi);
   background: var(--editor-inset);
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.4;
 }
 

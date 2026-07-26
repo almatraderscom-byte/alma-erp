@@ -3,8 +3,6 @@
 // planner produces a frame-exact plan; the VPS worker renders it with Remotion
 // and composites it over the reel.
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
-import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { buildOverlayPlan, type FinishTemplateInput } from '@/lib/creative-studio/video-finish'
@@ -14,19 +12,46 @@ import {
   parseVideoEditContract,
   selectVideoEditSourcePath,
 } from '@/lib/creative-studio/video-edit-contract'
+import {
+  authenticateStudioRequest,
+  StudioAccessError,
+  type StudioActor,
+} from '@/lib/creative-studio/studio-access'
+import {
+  requireStudioProjectAssetContext,
+  type StudioProjectAssetContext,
+} from '@/lib/creative-studio/studio-resource-scope'
 
 export const runtime = 'nodejs'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-async function ownerAllowed(req: NextRequest): Promise<Response | null> {
-  const disabled = requireAgentEnabled()
-  if (disabled) return disabled
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
-  return null
+async function resolveOwnerAssetScope(
+  actor: StudioActor,
+  input: {
+    brandProfileId?: string | null
+    projectId?: string | null
+    projectAssetId?: string | null
+    pendingActionId?: string | null
+  },
+): Promise<StudioProjectAssetContext | null> {
+  const hasScopedSelector = Boolean(
+    input.brandProfileId
+    || input.projectId
+    || input.projectAssetId,
+  )
+  if (!hasScopedSelector) {
+    if (!isSystemOwner(actor.erpRole)) {
+      throw new StudioAccessError('studio_finish_owner_required', 403)
+    }
+    return null
+  }
+  const scoped = await requireStudioProjectAssetContext(actor, input)
+  if (scoped.access.role !== 'owner') {
+    throw new StudioAccessError('studio_finish_owner_required', 403)
+  }
+  return scoped
 }
 
 function sourceStoragePath(result: Record<string, unknown>): string | undefined {
@@ -40,10 +65,22 @@ function latestRenderedPath(result: Record<string, unknown>): string | undefined
 }
 
 export async function GET(req: NextRequest) {
-  const denied = await ownerAllowed(req)
-  if (denied) return denied
+  const actor = await authenticateStudioRequest(req)
+  if (actor instanceof Response) return actor
   const sourceId = String(req.nextUrl.searchParams.get('pendingActionId') ?? '').trim()
   if (!sourceId) return Response.json({ error: 'invalid_input' }, { status: 422 })
+  try {
+    await resolveOwnerAssetScope(actor, {
+      brandProfileId: req.nextUrl.searchParams.get('brandProfileId'),
+      projectId: req.nextUrl.searchParams.get('projectId'),
+      projectAssetId: req.nextUrl.searchParams.get('projectAssetId'),
+      pendingActionId: sourceId,
+    })
+  } catch (error) {
+    const status = error instanceof StudioAccessError ? error.status : 403
+    const code = error instanceof StudioAccessError ? error.code : 'forbidden'
+    return Response.json({ error: code }, { status })
+  }
   const source = await db.agentPendingAction.findUnique({ where: { id: sourceId } })
   const result = (source?.result ?? {}) as Record<string, unknown>
   const path = sourceStoragePath(result)
@@ -59,11 +96,14 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await ownerAllowed(req)
-  if (denied) return denied
+  const actor = await authenticateStudioRequest(req)
+  if (actor instanceof Response) return actor
 
   let body: {
     pendingActionId?: string
+    brandProfileId?: string
+    projectId?: string
+    projectAssetId?: string
     mode?: 'templates' | 'partial_edit'
     templates?: FinishTemplateInput
     editContract?: unknown
@@ -74,6 +114,19 @@ export async function POST(req: NextRequest) {
 
   const sourceId = String(body.pendingActionId ?? '').trim()
   if (!sourceId) return Response.json({ error: 'invalid_input' }, { status: 422 })
+  let scoped: StudioProjectAssetContext | null
+  try {
+    scoped = await resolveOwnerAssetScope(actor, {
+      brandProfileId: body.brandProfileId,
+      projectId: body.projectId,
+      projectAssetId: body.projectAssetId,
+      pendingActionId: sourceId,
+    })
+  } catch (error) {
+    const status = error instanceof StudioAccessError ? error.status : 403
+    const code = error instanceof StudioAccessError ? error.code : 'forbidden'
+    return Response.json({ error: code }, { status })
+  }
 
   const source = await db.agentPendingAction.findUnique({ where: { id: sourceId } })
   const sourceResult = (source?.result ?? {}) as Record<string, unknown>
@@ -127,6 +180,16 @@ export async function POST(req: NextRequest) {
                 : null,
             voiceover: typeof sourceResult.voiceoverPath === 'string' ? sourceResult.voiceoverPath : null,
           },
+          ...(scoped ? {
+            studioScope: {
+              ownerId: scoped.access.ownerId,
+              brandProfileId: scoped.brandProfileId,
+              projectId: scoped.projectId,
+              projectAssetId: scoped.projectAssetId,
+              actorUserId: actor.userId,
+              role: scoped.access.role,
+            },
+          } : {}),
         },
         summary: `✂️ Timeline-lite — ${editContract.rerender.join(', ')}`,
         costEstimate: 0,
@@ -191,6 +254,16 @@ export async function POST(req: NextRequest) {
         sourcePath,
         plan,
         brandLogoPath,
+        ...(scoped ? {
+          studioScope: {
+            ownerId: scoped.access.ownerId,
+            brandProfileId: scoped.brandProfileId,
+            projectId: scoped.projectId,
+            projectAssetId: scoped.projectAssetId,
+            actorUserId: actor.userId,
+            role: scoped.access.role,
+          },
+        } : {}),
       },
       summary: `🎞️ টেমপ্লেট ফিনিশিং — ${plan.items.map((i) => i.kind).join(', ')}`,
       costEstimate: 0, // Remotion + ffmpeg on the VPS

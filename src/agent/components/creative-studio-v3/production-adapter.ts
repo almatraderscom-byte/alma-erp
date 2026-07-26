@@ -10,16 +10,17 @@ import {
   fetchStudioConfig,
   fetchStudioHealth,
   fetchStudioProjects,
+  fetchStudioReviewQueue,
+  fetchStudioReview,
   fetchStudioRetention,
   fetchStudioSettings,
   fetchStudioVideos,
   fetchVideoEditSource,
   finishImage,
   finishVideo,
+  confirmStudioJob,
+  estimateStudioJob,
   partiallyFinishVideo,
-  runAutoStudioJob,
-  runStudioJob,
-  runVideoRecipe,
   uploadFillMask,
   uploadStudioFile,
   uploadStudioVideo,
@@ -29,6 +30,8 @@ import type {
   StudioV3DataIssue,
   StudioV3HomeSnapshot,
 } from '@/agent/components/creative-studio-v3/ports'
+import { creativeStudioV3CompositionClient } from '@/agent/components/creative-studio-v3/composition-client'
+import { studioV3LifecycleClient } from '@/agent/components/creative-studio-v3/lifecycle-client'
 import { scopeProjectsToBrand } from '@/agent/components/creative-studio-v3/ui-contract'
 
 function issue(resource: string, reason: unknown): StudioV3DataIssue {
@@ -40,13 +43,14 @@ function issue(resource: string, reason: unknown): StudioV3DataIssue {
 
 export async function loadCreativeStudioV3Home(
   brandProfileId?: string | null,
+  projectId?: string | null,
 ): Promise<StudioV3HomeSnapshot> {
   const resources = await Promise.allSettled([
     fetchStudioBrands(),
-    fetchStudioProjects(),
+    fetchStudioProjects(brandProfileId),
     fetchBrandRecipes(brandProfileId),
-    fetchModels(),
-    fetchGallery({ limit: 12 }),
+    fetchModels(brandProfileId, projectId),
+    fetchGallery({ limit: 12, brandProfileId, projectId }),
     fetchStudioConfig(),
     fetchStudioHealth(),
     fetchStudioRetention(),
@@ -77,40 +81,41 @@ export const creativeStudioV3ProductionPort: CreativeStudioV3ProductionPort = {
   loadHome: loadCreativeStudioV3Home,
   listBrands: fetchStudioBrands,
   listProjects: async (brandProfileId) => scopeProjectsToBrand(
-    await fetchStudioProjects(),
+    await fetchStudioProjects(brandProfileId),
     brandProfileId,
   ),
   listRecipes: fetchBrandRecipes,
   listProducts: fetchErpProducts,
-  // These legacy endpoints are authenticated and owner-only, and expose no
-  // brand key. Accepting the selected brand keeps the UI port future-ready and
-  // forces callers to make scope explicit; it must not be mistaken for a
-  // server brand filter or collaborator access.
-  listModels: async (_brandProfileId) => (await fetchModels()).models ?? [],
-  listGallery: async (query, _brandProfileId) => fetchGallery(query),
-  listVoices: async (_brandProfileId) => fetchCreativeVoices(),
-  listVideoUploads: async (_brandProfileId) => fetchStudioVideos(),
-  listMusicTracks: async (_brandProfileId) => fetchMusicTracks(),
+  listCompositions: creativeStudioV3CompositionClient.listCompositions,
+  getReview: fetchStudioReview,
+  transitionReview: studioV3LifecycleClient.transitionReview,
+  // V3 reads require both brand and project. Server routes validate the actor's
+  // assignment and exclude every unscoped legacy resource.
+  listModels: async (brandProfileId, projectId) =>
+    (await fetchModels(brandProfileId, projectId)).models ?? [],
+  listGallery: async (query, brandProfileId, projectId) =>
+    fetchGallery({ ...query, brandProfileId, projectId }),
+  listVoices: fetchCreativeVoices,
+  listVideoUploads: fetchStudioVideos,
+  listMusicTracks: fetchMusicTracks,
+  listReviewQueue: fetchStudioReviewQueue,
+  loadWorkspace: studioV3LifecycleClient.loadWorkspace,
+  resolvePin: studioV3LifecycleClient.resolvePin,
+  previewLocal: studioV3LifecycleClient.previewLocal,
+  queueLocal: studioV3LifecycleClient.queueLocal,
+  controlJob: studioV3LifecycleClient.controlJob,
+  listFlags: studioV3LifecycleClient.listFlags,
+  configureFlag: studioV3LifecycleClient.configureFlag,
   getConfig: fetchStudioConfig,
   getSettings: fetchStudioSettings,
   getHealth: fetchStudioHealth,
   getAudioStatus: fetchAudioLabStatus,
   uploadImage: uploadStudioFile,
   uploadVideo: uploadStudioVideo,
-  queueAdvancedImage: runStudioJob,
-  queueAutoImage: runAutoStudioJob,
-  queueOwnedVideo: runVideoRecipe,
+  estimateRun: estimateStudioJob,
+  confirmRun: confirmStudioJob,
   getVideoEditSource: fetchVideoEditSource,
   finishImage,
-  queueMaskedEdit: (input) => runStudioJob({
-    mode: 'edit',
-    sourceImagePath: input.sourceImagePath,
-    maskPath: input.maskPath,
-    maskPreset: input.maskPreset,
-    prompt: input.prompt,
-    baseWidth: input.baseWidth,
-    baseHeight: input.baseHeight,
-  }),
   uploadMask: uploadFillMask,
   finishVideo,
   partiallyFinishVideo,

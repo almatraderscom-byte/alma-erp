@@ -1,36 +1,102 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "program": "creative-studio-v3-lifecycle",
-  "status": "implementation-ready-foundation-ui-wiring-pending",
-  "productionMutation": false,
+  "status": "phase-3-ui-wired-zero-cost-rollout-held-default-off",
+  "productionMutation": true,
   "externalMeta": "off",
-  "requiredFoundationPort": "StudioFoundationLifecyclePort",
-  "requiredUiContract": "toStudioLifecycleView",
+  "foundationIntegration": {
+    "acceptedSha": "14b5ce17fcf746c479399657d6288cf224d84a17",
+    "mergedWithAncestry": true,
+    "port": "StudioFoundationLifecyclePort"
+  },
+  "uiIntegration": {
+    "status": "wired",
+    "typedContracts": [
+      "LifecycleJobView",
+      "LifecycleFeatureFlagView",
+      "StudioLifecycleOperationsView",
+      "toStudioLifecycleView"
+    ],
+    "clientMethods": [
+      "loadWorkspace",
+      "resolvePin",
+      "previewLocal",
+      "queueLocal",
+      "controlJob",
+      "listFlags",
+      "configureFlag"
+    ],
+    "mutationPolicy": {
+      "owner": "composition-pinned review, zero-cost local queue/control, exact flag config",
+      "creator": "read-only",
+      "reviewer": "read-only"
+    },
+    "unavailableExecution": [
+      "paid_render",
+      "voice_provider",
+      "schedule",
+      "live_publish",
+      "external_meta"
+    ]
+  },
   "checks": [
-    { "id": "role-capability", "required": true, "evidence": "lifecycle-contract.test.ts" },
-    { "id": "composition-review-version-pin", "required": true, "evidence": "lifecycle-contract.test.ts" },
-    { "id": "composition-version-approval-pin", "required": true, "evidence": "lifecycle-contract.test.ts" },
-    { "id": "approval-invalidation", "required": true, "evidence": "lifecycle-contract.test.ts" },
-    { "id": "render-idempotency-progress-truth", "required": true, "evidence": "lifecycle-contract.test.ts" },
-    { "id": "preview-render-export-dry-run-schedule-live-separation", "required": true, "evidence": "lifecycle-contract.test.ts" },
-    { "id": "verified-receipt-only-state-truth", "required": true, "evidence": "lifecycle-contract.test.ts" },
-    { "id": "cancel-retry-ambiguous-quarantine", "required": true, "evidence": "lifecycle-contract.test.ts" },
-    { "id": "append-only-composition-attribution", "required": true, "evidence": "lifecycle-contract.test.ts" },
-    { "id": "archive-fetch-back-checksum", "required": true, "evidence": "lifecycle-contract.test.ts" },
-    { "id": "scoped-flags-canary-dual-read-legacy-fallback-rollback", "required": true, "evidence": "lifecycle-contract.test.ts" },
-    { "id": "migration-dry-run-roadmap-reconciliation-no-production-mutation", "required": true, "evidence": "scripts/creative-studio-lifecycle-migration-dry-run.mjs" }
+    { "id": "role-capability-direct-api", "required": true, "evidence": "lifecycle-service.test.ts,lifecycle-flags-api.test.ts" },
+    { "id": "authoritative-current-review-snapshot", "required": true, "evidence": "lifecycle-service.test.ts,review-workflow.test.ts" },
+    { "id": "composition-version-approval-invalidation", "required": true, "evidence": "lifecycle-service.test.ts,lifecycle-contract.test.ts" },
+    { "id": "claim-time-source-node-review-batch-revalidation", "required": true, "evidence": "lifecycle-service.test.ts" },
+    { "id": "immutable-source-path-checksum-bytes", "required": true, "evidence": "lifecycle-schema.test.ts,lifecycle-service.test.ts" },
+    { "id": "owner-render-fingerprint-idempotency", "required": true, "evidence": "lifecycle-service.test.ts,lifecycle-schema.test.ts" },
+    { "id": "postgres-serializable-idempotency-concurrency", "required": true, "evidence": "lifecycle-postgres-concurrency.integration.test.ts; run npm run test:lifecycle:postgres with TEST_DATABASE_URL" },
+    { "id": "ready-artifact-relational-proof", "required": true, "evidence": "lifecycle-service.test.ts,lifecycle-schema.test.ts" },
+    { "id": "preview-render-export-dry-run-schedule-live-separation", "required": true, "evidence": "lifecycle-contract.test.ts,publish-service.test.ts" },
+    { "id": "verified-receipt-only-state-truth", "required": true, "evidence": "lifecycle-contract.test.ts,publish-service.test.ts" },
+    { "id": "cancel-retry-ambiguous-quarantine", "required": true, "evidence": "lifecycle-service.test.ts,lifecycle-contract.test.ts" },
+    { "id": "append-only-attribution-and-evidence", "required": true, "evidence": "lifecycle-schema.test.ts" },
+    { "id": "archive-fetch-back-checksum-and-bounded-retry", "required": true, "evidence": "studio-archive-retention.test.mjs" },
+    { "id": "scoped-owner-operated-flags", "required": true, "evidence": "lifecycle-service.test.ts,lifecycle-flags-api.test.ts,lifecycle-schema.test.ts" },
+    { "id": "unknown-telemetry-remains-unknown", "required": true, "evidence": "lifecycle-contract.test.ts" },
+    { "id": "migration-dry-run-roadmap-reconciliation", "required": true, "evidence": "creative-studio-lifecycle-migration-dry-run.mjs" },
+    { "id": "explicit-transaction-wrapped-prisma-deploy-compatible", "required": true, "evidence": "lifecycle-schema.test.ts,creative-studio-lifecycle-ddl-preflight.mjs" },
+    { "id": "function-free-null-aware-flag-scope-uniqueness", "required": true, "evidence": "lifecycle-schema.test.ts,creative-studio-lifecycle-ddl-preflight.mjs" },
+    { "id": "failed-migration-recovery-held-and-fail-closed", "required": true, "evidence": "lifecycle-migration-recovery.test.ts,v3-lifecycle-failed-migration-recovery.md" },
+    { "id": "ddl-static-preflight-no-low-lock-claim", "required": true, "evidence": "creative-studio-lifecycle-ddl-preflight.mjs" }
   ],
   "gates": {
+    "agentKillSwitchRequired": true,
+    "localWorker": false,
     "livePublish": false,
     "paidRender": false,
     "voiceProvider": false,
     "dualRead": false,
-    "legacyFallback": true
+    "legacyFallbackAvailable": true,
+    "legacyFallbackExecution": "client_orchestrated"
   },
-  "migrations": [],
+  "migrations": [
+    {
+      "id": "20260921130000_creative_lifecycle_production",
+      "mode": "additive-auto-deploy",
+      "populatedTableConstraints": "not-valid"
+    }
+  ],
+  "heldReleaseScripts": [
+    {
+      "path": "docs/creative-studio-enterprise/sql/creative-lifecycle-validate-existing.sql",
+      "automaticDeploy": false,
+      "representativeRestoreRehearsal": "not-run"
+    },
+    {
+      "path": "scripts/recover-creative-lifecycle-migration.mjs",
+      "automaticDeploy": false,
+      "requiresExactFailedRecord": "42P17:creative_lifecycle_feature_flags_exact_scope_key",
+      "databaseExecution": "not-run"
+    }
+  ],
   "risks": [
-    "Foundation composition snapshots are intentionally not wired until the parent supplies its exact integration SHA.",
-    "UI desks are intentionally not wired until the parent UI integration supplies its exact integration SHA.",
-    "Existing CSE7 publish service remains the external-effect owner; this boundary neither calls Meta nor changes its scheduler."
+    "Worker heartbeat/VPS readiness is not available; the UI reports the app-side flag separately and leaves heartbeat unknown.",
+    "Dry-run and schedule have typed intent boundaries but no production execution adapter; live publish remains hard-disabled.",
+    "The held constraint-validation script has not been timed on a representative restored database; no low-lock or duration claim is made.",
+    "The real PostgreSQL concurrency gate skips when TEST_DATABASE_URL is absent and must run in database-backed CI before rollout certification.",
+    "Legacy fallback is selected by caller orchestration; this server does not claim to execute fallback automatically.",
+    "Live publish, paid render, voice provider actions and external Meta execution remain independently hard-disabled."
   ]
 }

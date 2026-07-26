@@ -32,7 +32,7 @@ export function getStudioStatusMeta(state: string): {
 }
 
 export function StudioStatusBadge({ label, tone = 'neutral', className }: { label: string; tone?: StudioStatusTone; className?: string }) {
-  return <span className={cn('rounded px-1.5 py-0.5 text-[9px] font-bold', STATUS_TONE_CLASS[tone], className)}>{label}</span>
+  return <span className={cn('rounded px-1.5 py-0.5 text-[11px] font-bold', STATUS_TONE_CLASS[tone], className)}>{label}</span>
 }
 
 export function StudioLoadingState({ label = 'লোড হচ্ছে…', cards = 6 }: { label?: string; cards?: number }) {

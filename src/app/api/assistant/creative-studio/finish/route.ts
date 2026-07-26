@@ -10,8 +10,6 @@
  * owner's correction: the same code/hook must not sit on every image.
  */
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
-import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import {
@@ -28,6 +26,13 @@ import {
 } from '@/lib/creative-studio/artifact-metadata'
 import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
 import { studioActionBlockReason } from '@/lib/creative-studio/studio-policy'
+import {
+  authenticateStudioRequest,
+  StudioAccessError,
+} from '@/lib/creative-studio/studio-access'
+import {
+  requireStudioProjectAssetContext,
+} from '@/lib/creative-studio/studio-resource-scope'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -40,12 +45,8 @@ function isTheme(v: unknown): v is BrandTheme {
 }
 
 export async function POST(req: NextRequest) {
-  const disabled = requireAgentEnabled()
-  if (disabled) return disabled
-
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  const actor = await authenticateStudioRequest(req)
+  if (actor instanceof Response) return actor
 
   let body: {
     storagePath?: string
@@ -61,6 +62,9 @@ export async function POST(req: NextRequest) {
     fit?: unknown
     layout?: unknown
     pendingActionId?: string
+    brandProfileId?: string
+    projectId?: string
+    projectAssetId?: string
   }
   try {
     body = await req.json()
@@ -77,7 +81,35 @@ export async function POST(req: NextRequest) {
   const hook = (typeof body.hook === 'string' ? body.hook : '').trim()
   if (!hook) return Response.json({ error: 'hook_required', message: 'একটা hook লেখা লাগবে।' }, { status: 400 })
 
-  const pendingActionId = typeof body.pendingActionId === 'string' ? body.pendingActionId.trim() : ''
+  const hasScopedSelector = Boolean(
+    body.brandProfileId
+    || body.projectId
+    || body.projectAssetId,
+  )
+  let pendingActionId = typeof body.pendingActionId === 'string' ? body.pendingActionId.trim() : ''
+  if (hasScopedSelector) {
+    try {
+      const scoped = await requireStudioProjectAssetContext(actor, {
+        brandProfileId: body.brandProfileId,
+        projectId: body.projectId,
+        projectAssetId: body.projectAssetId,
+        pendingActionId,
+        storagePath,
+      })
+      if (scoped.access.role !== 'owner') {
+        throw new StudioAccessError('studio_finish_owner_required', 403)
+      }
+      pendingActionId = scoped.pendingActionId
+    } catch (error) {
+      const status = error instanceof StudioAccessError ? error.status : 403
+      const code = error instanceof StudioAccessError ? error.code : 'forbidden'
+      return Response.json({ error: code }, { status })
+    }
+  } else if (!isSystemOwner(actor.erpRole)) {
+    // Legacy callers remain owner-only. Supplying a project/brand selector
+    // never upgrades access and partial scoped selectors fail closed above.
+    return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
   const source = pendingActionId
     ? await db.agentPendingAction.findUnique({ where: { id: pendingActionId } })
     : await db.agentPendingAction.findFirst({

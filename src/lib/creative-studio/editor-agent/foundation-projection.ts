@@ -32,6 +32,8 @@ export type FoundationEditorSnapshotContext = {
   activity?: readonly EditorActivityEntry[]
   canUndo?: boolean
   canRedo?: boolean
+  latestAgentBatchId?: string | null
+  canRollbackLatestAgentBatch?: boolean
   hydration?: EditorCompositionSnapshot['hydration']
 }
 
@@ -79,6 +81,7 @@ export function parseFoundationCompositionView(value: unknown): CreativeComposit
   const view = record(value)
   const document = record(view.document)
   const project = record(document.project)
+  const history = record(view.history)
   requiredString(view.id)
   requiredString(view.brandProfileId)
   requiredString(view.projectId)
@@ -102,6 +105,14 @@ export function parseFoundationCompositionView(value: unknown): CreativeComposit
   requiredArray(document.canvases)
   requiredArray(document.nodes)
   requiredArray(document.tracks)
+  requiredBoolean(history.canUndo)
+  requiredBoolean(history.canRedo)
+  requiredInteger(history.undoDepth)
+  requiredInteger(history.redoDepth)
+  if (history.latestAgentBatchId !== null) requiredString(history.latestAgentBatchId)
+  requiredBoolean(history.canRollbackLatestAgentBatch)
+  requiredArray(history.rollbackPoints)
+  requiredArray(history.activity)
 
   if (
     view.id !== document.compositionId
@@ -406,6 +417,9 @@ function projectFoundationCompositionToEditorUnchecked(
     activity: [...(context.activity ?? [])].map((entry) => structuredClone(entry)),
     canUndo: context.canUndo ?? false,
     canRedo: context.canRedo ?? false,
+    latestAgentBatchId: context.latestAgentBatchId ?? null,
+    canRollbackLatestAgentBatch:
+      context.canRollbackLatestAgentBatch ?? false,
     hydration: context.hydration
       ? structuredClone(context.hydration)
       : {

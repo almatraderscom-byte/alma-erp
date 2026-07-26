@@ -76,7 +76,6 @@ export function CreativeProjectEditor({
   const [proposal, setProposal] = useState<EditorOperationProposal | null>(null)
   const [acknowledged, setAcknowledged] = useState(false)
   const [lastReceipt, setLastReceipt] = useState<EditorCommandReceipt | null>(null)
-  const [lastAgentBatchId, setLastAgentBatchId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -308,7 +307,6 @@ export function CreativeProjectEditor({
         acknowledgement,
         actor,
       })
-      setLastAgentBatchId(receipt.batchId)
       updateFromReceipt(
         receipt,
         `${receipt.operationIds.length} local ৳0 operation${receipt.operationIds.length === 1 ? '' : 's'} applied; ${receipt.pendingActionIds.length} pending action${receipt.pendingActionIds.length === 1 ? '' : 's'} not executed`,
@@ -339,7 +337,13 @@ export function CreativeProjectEditor({
       setNotice(readOnlyReason ?? 'History commands are disabled in preview.')
       return
     }
-    if (kind === 'rollback' && !lastAgentBatchId) {
+    if (
+      kind === 'rollback'
+      && (
+        !snapshot.latestAgentBatchId
+        || !snapshot.canRollbackLatestAgentBatch
+      )
+    ) {
       setNotice('No Agent rollback point is available.')
       return
     }
@@ -356,7 +360,10 @@ export function CreativeProjectEditor({
         ? await commandPort.undo(request)
         : kind === 'redo'
           ? await commandPort.redo(request)
-          : await commandPort.rollback({ ...request, batchId: lastAgentBatchId! })
+          : await commandPort.rollback({
+              ...request,
+              batchId: snapshot.latestAgentBatchId!,
+            })
       updateFromReceipt(
         receipt,
         `${kind[0].toUpperCase()}${kind.slice(1)} recorded as a new version`,
@@ -371,7 +378,6 @@ export function CreativeProjectEditor({
     actor,
     busy,
     commandPort,
-    lastAgentBatchId,
     presentationReadOnly,
     readOnlyReason,
     snapshot,
@@ -599,7 +605,12 @@ export function CreativeProjectEditor({
           </button>
           <button
             aria-label="Rollback latest Agent batch"
-            disabled={presentationReadOnly || busy || !lastAgentBatchId}
+            disabled={
+              presentationReadOnly
+              || busy
+              || !snapshot.latestAgentBatchId
+              || !snapshot.canRollbackLatestAgentBatch
+            }
             onClick={() => void runHistory('rollback')}
             type="button"
           >

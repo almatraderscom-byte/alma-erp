@@ -115,7 +115,7 @@ export function CreativeStudioShell() {
             </Link>
             <div className="min-w-0">
               <p className="text-lg font-extrabold tracking-tight text-cream">ক্রিয়েটিভ স্টুডিও</p>
-              <p className="text-[10px] text-muted">{activeBrand?.organization ?? config?.organization ?? 'ALMA Lifestyle'} · আলাদা ব্র্যান্ড, আলাদা সম্পদ</p>
+              <p className="text-[11px] text-muted">{activeBrand?.organization ?? config?.organization ?? 'ALMA Lifestyle'} · আলাদা ব্র্যান্ড, আলাদা সম্পদ</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -128,7 +128,7 @@ export function CreativeStudioShell() {
             <StudioRoleSettings brand={activeBrand} onBrandsChange={setBrands} />
             <Link
               href="/agent/catalog-images"
-              className="hidden rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-muted hover:text-cream lg:block"
+              className="hidden rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-muted hover:text-cream lg:block"
             >
               📸 ক্যাটালগ
             </Link>
@@ -139,7 +139,7 @@ export function CreativeStudioShell() {
                 return (
                   <span
                     className={cn(
-                      'rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                      'rounded-full px-2 py-0.5 text-[11px] font-semibold',
                       available ? 'bg-[#81B29A]/15 text-[#2d6a4f]' : 'bg-amber-100 text-amber-800',
                     )}
                   >
@@ -223,7 +223,7 @@ export function CreativeStudioShell() {
                   setView(id)
                 }}
                 className={cn(
-                  'st-tab flex flex-col items-center gap-0.5 px-3.5 py-1.5 text-[10px] font-semibold',
+                  'st-tab flex flex-col items-center gap-0.5 px-3.5 py-1.5 text-[11px] font-semibold',
                   view === id && 'st-tab-on',
                 )}
               >

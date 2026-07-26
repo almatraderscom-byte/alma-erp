@@ -138,12 +138,12 @@ function AvatarSheet({ model, onClose }: { model: StudioModel; onClose: () => vo
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={avatar.imageUrls[i] as string} alt="" className="h-full w-full object-cover" />
                   ) : (
-                    <span className="grid h-full w-full place-items-center text-[10px] text-muted">ছবি {i + 1}</span>
+                    <span className="grid h-full w-full place-items-center text-[11px] text-muted">ছবি {i + 1}</span>
                   )}
                   <button
                     type="button"
                     onClick={() => void removeAt(i)}
-                    className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-black/60 text-[10px] text-white"
+                    className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-black/60 text-[11px] text-white"
                   >
                     ✕
                   </button>
@@ -160,7 +160,7 @@ function AvatarSheet({ model, onClose }: { model: StudioModel; onClose: () => vo
                 </button>
               )}
             </div>
-            <p className="mt-1.5 text-[10px] text-muted">
+            <p className="mt-1.5 text-[11px] text-muted">
               {paths.length}/10 ছবি
               {avatar?.builtAt ? ` · সর্বশেষ build: ${new Date(avatar.builtAt).toLocaleString()}` : ''}
             </p>
@@ -169,14 +169,14 @@ function AvatarSheet({ model, onClose }: { model: StudioModel; onClose: () => vo
               <div className="mt-3 flex gap-2">
                 {avatar?.canonicalUrl && (
                   <div className="flex-1">
-                    <p className="mb-1 text-[10px] font-semibold text-muted">Canonical পোর্ট্রেট</p>
+                    <p className="mb-1 text-[11px] font-semibold text-muted">Canonical পোর্ট্রেট</p>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={avatar.canonicalUrl} alt="canonical" className="w-full rounded-xl border border-border-subtle" />
                   </div>
                 )}
                 {avatar?.sheetUrl && (
                   <div className="flex-1">
-                    <p className="mb-1 text-[10px] font-semibold text-muted">আইডেন্টিটি শিট</p>
+                    <p className="mb-1 text-[11px] font-semibold text-muted">আইডেন্টিটি শিট</p>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={avatar.sheetUrl} alt="sheet" className="w-full rounded-xl border border-border-subtle" />
                   </div>
@@ -353,7 +353,7 @@ function ModelsView() {
             +
           </span>
           <span className="text-[12px] font-semibold">নতুন মডেল</span>
-          <span className="px-3 text-center text-[9.5px] leading-snug text-[#E07A5F]/60">ফুল-বডি ছবি যোগ করুন</span>
+          <span className="px-3 text-center text-[11px] leading-snug text-[#E07A5F]/60">ফুল-বডি ছবি যোগ করুন</span>
         </button>
 
         {models.map((m) => {
@@ -376,12 +376,12 @@ function ModelsView() {
               {/* bottom gradient + name / role */}
               <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent px-2.5 pb-2 pt-8">
                 <p className="truncate text-[13px] font-bold text-white">{m.name}</p>
-                <p className="truncate text-[10px] text-white/70">{roleLabelBn(m.role)}</p>
+                <p className="truncate text-[11px] text-white/70">{roleLabelBn(m.role)}</p>
               </div>
 
               {/* default badge */}
               {m.isDefault && (
-                <span className="absolute left-2 top-2 rounded-full bg-[#E07A5F] px-2 py-0.5 text-[9px] font-bold text-white shadow-sm">
+                <span className="absolute left-2 top-2 rounded-full bg-[#E07A5F] px-2 py-0.5 text-[11px] font-bold text-white shadow-sm">
                   ⭐ ডিফল্ট
                 </span>
               )}
@@ -390,7 +390,7 @@ function ModelsView() {
               {m.avatar && (m.avatar.built || m.avatar.building) && (
                 <span
                   className={cn(
-                    'absolute left-2 rounded-full px-2 py-0.5 text-[9px] font-bold text-white shadow-sm',
+                    'absolute left-2 rounded-full px-2 py-0.5 text-[11px] font-bold text-white shadow-sm',
                     m.isDefault ? 'top-8' : 'top-2',
                     m.avatar.building ? 'bg-amber-500' : 'bg-[#81B29A]',
                   )}
@@ -528,7 +528,7 @@ function ModelsView() {
                   <button
                     type="button"
                     onClick={() => ref.current?.click()}
-                    className="absolute inset-x-0 bottom-0 bg-black/55 py-1 text-center text-[10px] font-semibold text-white backdrop-blur-sm"
+                    className="absolute inset-x-0 bottom-0 bg-black/55 py-1 text-center text-[11px] font-semibold text-white backdrop-blur-sm"
                   >
                     ছবি বদলান
                   </button>
@@ -601,7 +601,7 @@ function ModelCreatorCard({ models, onQueued }: { models: Array<{ role: string |
   return (
     <div className="mt-4 st-card p-3">
       <p className="text-[12px] font-bold text-cream">🧑‍🎨 AI দিয়ে ব্র্যান্ড মডেল বানাও</p>
-      <p className="mb-2 text-[10px] text-muted">
+      <p className="mb-2 text-[11px] text-muted">
         একবার বানালে একই মুখ প্রতিবার ফিরে আসবে — বাচ্চার আসল ছবি লাগবে না। তৈরি হলে Gallery-তে গিয়ে “মডেল হিসেবে সেভ” চাপুন।
       </p>
       <div className="flex flex-wrap gap-1.5">

@@ -57,7 +57,7 @@ export function CampaignPackProgress({
             style={{ width: `${pack.progressPercent}%` }}
           />
         </div>
-        <p className="mt-2 text-[9px] text-muted">
+        <p className="mt-2 text-[11px] text-muted">
           খরচ: ${pack.actualCostUsd.toFixed(2)} / অনুমোদিত ${pack.estimatedCostUsd.toFixed(2)}
         </p>
       </div>
@@ -86,8 +86,8 @@ export function CampaignPackProgress({
               </div>
               <div className="space-y-2 p-2">
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-[10px] font-bold text-cream">{stage.labelBn}</span>
-                  <span className={cn('rounded-full px-1.5 py-0.5 text-[8px]', statusClass(stage.status))}>
+                  <span className="text-[11px] font-bold text-cream">{stage.labelBn}</span>
+                  <span className={cn('rounded-full px-1.5 py-0.5 text-[11px]', statusClass(stage.status))}>
                     {STATUS_LABELS[stage.status]}
                   </span>
                 </div>
@@ -96,7 +96,7 @@ export function CampaignPackProgress({
                     type="button"
                     disabled={busyStageId === stage.stageId}
                     onClick={() => onSelectDraft(stage.stageId as 'draft-a' | 'draft-b')}
-                    className="w-full rounded-lg bg-[#E07A5F] py-1.5 text-[10px] font-bold text-white disabled:opacity-50"
+                    className="w-full rounded-lg bg-[#E07A5F] py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
                   >
                     {busyStageId === stage.stageId ? 'নির্বাচন হচ্ছে…' : 'এই ড্রাফট নিন'}
                   </button>
@@ -112,12 +112,12 @@ export function CampaignPackProgress({
           <article key={stage.stageId} className="rounded-xl border border-white/10 bg-white/[0.03] p-2.5">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="text-[10px] font-bold text-cream">{stage.labelBn}</p>
-                <p className="truncate text-[8px] text-muted">
+                <p className="text-[11px] font-bold text-cream">{stage.labelBn}</p>
+                <p className="truncate text-[11px] text-muted">
                   {stage.engine} · ${stage.estimatedCostUsd.toFixed(2)} · attempt {Math.max(1, stage.attempt)}
                 </p>
               </div>
-              <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[8px]', statusClass(stage.status))}>
+              <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[11px]', statusClass(stage.status))}>
                 {STATUS_LABELS[stage.status]}
               </span>
             </div>
@@ -129,7 +129,7 @@ export function CampaignPackProgress({
               <video src={stage.previewUrl} controls className="mt-2 max-h-56 w-full rounded-lg" />
             )}
             {stage.captionBn && (
-              <p className="mt-2 whitespace-pre-line rounded-lg bg-black/20 p-2 text-[10px] leading-relaxed text-cream">
+              <p className="mt-2 whitespace-pre-line rounded-lg bg-black/20 p-2 text-[11px] leading-relaxed text-cream">
                 {stage.captionBn}
               </p>
             )}
@@ -138,7 +138,7 @@ export function CampaignPackProgress({
                 type="button"
                 disabled={busyStageId === stage.stageId}
                 onClick={() => onRetry(stage)}
-                className="mt-2 rounded-lg border border-white/10 px-2 py-1 text-[9px] font-semibold text-muted disabled:opacity-40"
+                className="mt-2 rounded-lg border border-white/10 px-2 py-1 text-[11px] font-semibold text-muted disabled:opacity-40"
               >
                 {stage.status === 'ready' ? 'রিজেক্ট + শুধু এই stage আবার' : 'শুধু এই stage আবার'}
               </button>

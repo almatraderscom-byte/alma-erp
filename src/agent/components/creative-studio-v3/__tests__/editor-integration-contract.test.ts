@@ -71,26 +71,22 @@ describe('Creative Studio V3 cross-stream Editor integration', () => {
     expect(journey).toContain('loadCreativeStudioV3EditorSnapshotContext')
     expect(context).toContain('fetchProjectAssets(view.projectId)')
     expect(context).toContain('fetchStudioReview')
-    expect(context).toContain("history: 'not_hydrated'")
+    expect(context).toContain('view.history.activity')
+    expect(context).toContain("history: 'hydrated'")
     expect(context).toContain('referenceContract')
     expect(context).toContain('lineage:')
-    expect(context).not.toMatch(/new Map|localStorage|sessionStorage/)
+    expect(context).not.toMatch(/localStorage|sessionStorage/)
   })
 
-  it('keeps collaborator project discovery off owner-only client routes', () => {
+  it('uses access-scoped project discovery with the route snapshot as truthful recovery', () => {
     const home = source('StudioV3Home.tsx')
     const desks = source('StudioV3CapabilityDesk.tsx')
     const studio = source('CreativeStudioV3.tsx')
 
-    expect(home).toContain("activeBrand.role !== 'owner'")
-    expect(home).toContain('server-derived accessible scope')
-    expect(home).toContain(
-      'Legacy owner-only project, recipe, Gallery, model and identity reads were not used',
-    )
-    expect(desks).toContain("activeBrand.role !== 'owner'")
-    expect(desks.replace(/\s+/g, ' ')).toContain(
-      'owner-only legacy project endpoint was not used',
-    )
+    expect(home).toContain('port.loadHome(activeBrand.brandProfileId')
+    expect(home).toContain('unscoped legacy records are excluded')
+    expect(desks).toContain('port.listProjects(activeBrand.brandProfileId)')
+    expect(desks).toContain('using the authenticated route snapshot')
     expect(studio).toContain('initialContext.accessibleProjects.find')
     expect(home).not.toContain('fetchStudioProjects')
     expect(desks).not.toContain('fetchStudioProjects')
@@ -151,9 +147,9 @@ describe('Creative Studio V3 cross-stream Editor integration', () => {
     expect(v3Styles).toContain('.editorHost')
   })
 
-  it('leaves Lifecycle Review and Operations mutations disabled', () => {
-    expect(workbenchSource).toContain('Lifecycle Review port unavailable')
-    expect(workbenchSource).toContain('corrective backend integration')
+  it('keeps Editor enrichment read-only and hands Lifecycle authority to the Review desk', () => {
+    expect(workbenchSource).toContain('Use the Studio Review desk')
+    expect(workbenchSource).toContain('exact composition-pinned approval')
     expect(workbenchSource).not.toContain('transitionStudioReview')
     expect(workbenchSource).not.toContain('approveStudio')
   })

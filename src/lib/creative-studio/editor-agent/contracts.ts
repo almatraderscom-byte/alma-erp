@@ -134,6 +134,9 @@ export type EditorCompositionSnapshot = {
   activity: EditorActivityEntry[]
   canUndo: boolean
   canRedo: boolean
+  /** Server-derived from durable Foundation operation history. */
+  latestAgentBatchId: string | null
+  canRollbackLatestAgentBatch: boolean
   hydration?: {
     projectAssets: 'hydrated' | 'not_hydrated'
     review: 'hydrated' | 'not_hydrated'

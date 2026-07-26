@@ -14,7 +14,11 @@ import {
 
 /** Foundation supplies this snapshot later; no Foundation model is imported here. */
 export interface StudioFoundationLifecyclePort {
-  getCompositionPin(input: { compositionId: string; actorId: string }): Promise<StudioCompositionPin>
+  getCompositionPin(input: {
+    compositionId: string
+    actorId: string
+    artifactVersionId?: string
+  }): Promise<StudioCompositionPin>
   getReviewSnapshot(input: { artifactId: string; actorId: string }): Promise<StudioReviewSnapshot>
 }
 
@@ -55,6 +59,7 @@ export async function createStudioLifecycleIntent(input: {
   actorId: string
   role: StudioLifecycleRole
   compositionId: string
+  artifactVersionId?: string
   mode: StudioLifecycleMode
   renderProfile?: string
   outputFormat?: string
@@ -66,6 +71,7 @@ export async function createStudioLifecycleIntent(input: {
   const composition = await input.foundation.getCompositionPin({
     compositionId: input.compositionId,
     actorId: input.actorId,
+    artifactVersionId: input.artifactVersionId,
   })
   const executionMode = input.mode === 'schedule' || input.mode === 'live_publish'
   if (executionMode && input.ownerAcknowledged !== true) {
