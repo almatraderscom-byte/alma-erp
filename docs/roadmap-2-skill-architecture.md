@@ -133,20 +133,37 @@ off. Behaviour there is unchanged, and a test asserts that rather than assuming
 it. When the owner turns the engine on in production, deleting
 `CLIENT_SEO_AUDIT_PROCEDURE` and its registry entry is the whole removal.
 
+### SK-7 live proof — done 2026-07-27, in his own Chrome
+
+`"isolated":true` on the `skill_pinned` SSE frame, on the preview host, with the
+chip visible and the job running to an approval card. The claim is checkable
+from outside the server, which is the whole point of putting it on the wire.
+
+The same session proved the rest of the loop end to end: a Banglish fix order
+pins the fixing skill at the RULE layer, a pin follows the job when the job
+changes, an answered card leads to WORK rather than another question, and an
+approval makes the agent carry on by itself.
+
 ## Not done — start here
 
-1. **Live proof of SK-7 on preview** — the one thing still outstanding for it.
-   Needs the owner to log in to the preview host (separate cookie origin).
+1. **Finish SK-6's deletion.** The global copies (`CLIENT_SEO_AUDIT_PROCEDURE`
+   and its registry entry, the SEO lines in `buildOwnerRequirementNote`) still
+   serve the no-skill path, which is production today with the engine off.
+   Deleting them is one commit — gated on the owner turning the engine on in
+   production, not on more work here.
 2. **Eval-gate the isolated path** against the inline baseline with
-   `compareToBaseline()`. The harness is a pure scorer, so it needs real runs —
-   also blocked on the live preview.
+   `compareToBaseline()`. The harness is a pure scorer, so it needs recorded
+   runs; the runs now exist, nobody has scored them.
 3. **Promote the 16 originals**, one at a time, each with evals — 79 lint
    findings are the work list (`docs/skill-lint-report.md`).
 4. **`isolation: subagent` for the other two SEO skills** — each needs its own
    `SYSTEM.md` written, and promotion is one at a time, never a batch.
-4. **Router's last 4 misses** — all skill-description gaps, not router gaps.
-5. **Registry budget and the selection trace** are written but never exercised at
+5. **Router's last misses** — all skill-description gaps, not router gaps.
+6. **Registry budget and the selection trace** are written but never exercised at
    scale; revisit when more than ~10 skills are active.
+7. **Drop Upstash from the turn queue** (optional). It exists only because
+   Vercel and the VPS must share one queue; a Vercel→VPS HTTP handoff would let
+   the VPS use its own local Redis and remove the metered dependency entirely.
 
 ## Flags
 
