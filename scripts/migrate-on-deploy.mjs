@@ -20,15 +20,6 @@
  * from any Vercel build (preview or production) is safe for the live app.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
-const lifecycleRecoveryMarker = join(
-  repoRoot,
-  'docs/creative-studio-enterprise/LIFECYCLE_MIGRATION_RECOVERY_ONCE',
-)
 
 // 1) Only run inside Vercel's build — keep local `npm run build` DB-free.
 if (!process.env.VERCEL) {
@@ -47,45 +38,7 @@ if (!directUrl) {
   process.exit(0)
 }
 
-// 3) One-time, branch-locked recovery for the audited failed lifecycle preview
-// migration. The marker is removed immediately after the recovery deployment.
-// It can never run on production or another branch.
-if (existsSync(lifecycleRecoveryMarker)) {
-  const isExactRecoveryPreview =
-    process.env.VERCEL_ENV === 'preview'
-    && process.env.VERCEL_GIT_COMMIT_REF === 'codex/cs-v3-lifecycle'
-  if (!isExactRecoveryPreview) {
-    console.error(
-      '[migrate-on-deploy] lifecycle recovery marker is present outside its exact preview branch — refusing',
-    )
-    process.exit(1)
-  }
-  console.log(
-    '[migrate-on-deploy] running audited one-time lifecycle failed-migration recovery…',
-  )
-  const recovery = spawnSync(
-    process.execPath,
-    [join(repoRoot, 'scripts/recover-creative-lifecycle-migration.mjs'), '--execute'],
-    {
-      stdio: 'inherit',
-      env: {
-        ...process.env,
-        LIFECYCLE_RECOVERY_DATABASE_URL: directUrl,
-        LIFECYCLE_MIGRATION_RECOVERY_ACK:
-          '20260921130000_creative_lifecycle_production:ROLLBACK_FAILED_RECORD',
-      },
-    },
-  )
-  if (recovery.status !== 0) {
-    console.error(
-      '[migrate-on-deploy] audited lifecycle recovery FAILED — normal migrations remain blocked',
-    )
-    process.exit(recovery.status ?? 1)
-  }
-  console.log('[migrate-on-deploy] audited lifecycle recovery completed ✓')
-}
-
-// 4) Apply pending migrations over the direct connection. Prisma reads
+// 3) Apply pending migrations over the direct connection. Prisma reads
 //    DATABASE_URL, so override just it for this command — schema.prisma is
 //    untouched, avoiding any generate-time env requirement.
 console.log('[migrate-on-deploy] applying pending migrations (prisma migrate deploy)…')
