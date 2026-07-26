@@ -156,17 +156,34 @@ export async function POST(req: NextRequest) {
 
   const body = (await req.json().catch(() => ({}))) as { staffId?: string; action?: string; label?: string }
   const staffId = String(body.staffId ?? '').trim()
-  const action = body.action === 'remove' ? 'remove' : body.action === 'rotate' ? 'rotate' : null
+  const action = ['remove', 'rotate', 'create'].includes(String(body.action)) ? String(body.action) : null
   if (!staffId || !action) return NextResponse.json({ ok: false, error: 'কী করতে হবে বোঝা গেল না।' }, { status: 400 })
 
   try {
-    await callGateway(`/api/v1/webrtc/${action}`, { method: 'POST', body: JSON.stringify({ staffId }) })
+    if (action === 'create') {
+      // A staff member has always been able to create their own by opening the phone page.
+      // The owner needs to do it FOR them — to hand someone a working extension before their
+      // first shift, or for a person who will use a desk phone and never open the ERP.
+      //
+      // The gateway returns the new password here (that route also serves the staff member's
+      // own browser, which genuinely needs it). It is dropped on this line and never leaves
+      // the server: the owner does not need it, and a secret nobody displays cannot leak.
+      const user = (await db.user.findUnique({ where: { id: staffId }, select: { name: true } })) as { name: string } | null
+      await callGateway('/api/v1/webrtc/provision', {
+        method: 'POST',
+        body: JSON.stringify({ staffId, name: user?.name ?? '' }),
+      })
+    } else {
+      await callGateway(`/api/v1/webrtc/${action}`, { method: 'POST', body: JSON.stringify({ staffId }) })
+    }
   } catch (err) {
     return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 400 })
   }
 
   await audit(gate.actor, staffId, body.label ?? staffId,
-    action === 'rotate' ? 'পাসওয়ার্ড বদলানো হয়েছে' : 'এক্সটেনশন মুছে ফেলা হয়েছে')
+    action === 'create' ? 'নতুন এক্সটেনশন তৈরি হয়েছে'
+      : action === 'rotate' ? 'পাসওয়ার্ড বদলানো হয়েছে'
+        : 'এক্সটেনশন মুছে ফেলা হয়েছে')
   return NextResponse.json({ ok: true })
 }
 

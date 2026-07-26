@@ -43,11 +43,21 @@ export type InboundDecision = {
   route: DidRoute | null
   /** True when the caller is the owner — he is never blocked and never gets the receptionist. */
   owner: boolean
+  /** In the agent's contacts (owner, staff, or saved). Known callers skip the staff-first ring. */
+  known: boolean
   blocked: boolean
   time: TimeVerdict
   transferMode: 'direct' | 'ask_first'
   forwardSupport: string
   forwardBoss: string
+  /**
+   * Who picks up. `staff_first` rings the team with hold music for `ringSecs` and hands the
+   * caller to the AI only if nobody answers; `ai_first` is the original behaviour.
+   */
+  answerMode: 'ai_first' | 'staff_first'
+  ringSecs: number
+  /** Empty means "every browser phone that is open right now" — resolved on the gateway. */
+  ringGroup: string
   /** Plain Bangla: what would actually happen. This is the whole point of the preview. */
   outcome: string
 }

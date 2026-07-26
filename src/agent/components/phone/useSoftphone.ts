@@ -81,6 +81,32 @@ export function useSoftphone() {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
   }, [])
 
+  /**
+   * Get the websocket back, then let `onConnect` re-register.
+   *
+   * Backed off and capped: a laptop waking after an hour should still find its phone, and a
+   * gateway that is genuinely down should not be hammered once a second all day. `closingRef`
+   * stops us fighting a deliberate hang-up-and-disconnect.
+   */
+  const reconnectRef = useRef<{ tries: number; timer: ReturnType<typeof setTimeout> | null }>({ tries: 0, timer: null })
+  const closingRef = useRef(false)
+
+  const reconnect = useCallback(() => {
+    const ua = uaRef.current
+    const st = reconnectRef.current
+    if (!ua || closingRef.current || st.timer) return
+    st.tries += 1
+    const delay = Math.min(30_000, 1000 * 2 ** Math.min(st.tries, 5))
+    st.timer = setTimeout(() => {
+      st.timer = null
+      if (!uaRef.current || closingRef.current) return
+      uaRef.current.reconnect().then(
+        () => { reconnectRef.current.tries = 0 },
+        () => { reconnect() },
+      )
+    }, delay)
+  }, [])
+
   const wireSession = useCallback((session: Session, peer: string, incoming: boolean) => {
     sessionRef.current = session
     patch({ peer, incoming, status: 'ringing', seconds: 0, error: null })
@@ -128,6 +154,34 @@ export function useSoftphone() {
         // Audio only: this is a phone, and asking for camera permission would be alarming.
         sessionDescriptionHandlerFactoryOptions: { constraints: { audio: true, video: false } },
         delegate: {
+          /*
+           * RE-REGISTER ON EVERY RECONNECT. This is not housekeeping — without it the phone
+           * goes half-dead and says nothing.
+           *
+           * Asterisk cannot OPEN a websocket; it can only accept one. So the contact it stores
+           * at registration time is bound to that exact socket, and when the socket dies —
+           * a gateway restart, a network blip, a laptop lid — anything Asterisk needs to SEND
+           * lands nowhere: an incoming call never rings, and the BYE at the end of a call
+           * never arrives. Meanwhile everything the browser INITIATES still works over the new
+           * socket, so the phone looks fine. The owner hit precisely this on 2026-07-26: his
+           * outgoing call connected, the far end hung up, Asterisk tore the channel down at
+           * 18 s, and his screen kept counting to 0:29 until he hung up by hand.
+           *
+           * Registering again is what replaces the stale contact (the AOR is max_contacts=1,
+           * remove_existing=yes, so the new one evicts it).
+           */
+          onConnect: () => {
+            // Null on the very first connect — connect() happens inside ua.start(), before the
+            // Registerer exists, and that first registration is done explicitly below.
+            void registererRef.current?.register().catch(() => { /* the retry loop covers it */ })
+            patch({ error: null })
+          },
+          onDisconnect: () => {
+            // Never keep claiming "registered" while the socket is gone: a screen that asserts
+            // a working phone is worse than one that admits it is reconnecting.
+            patch({ status: 'connecting', error: null })
+            reconnect()
+          },
           onInvite: (invitation: Invitation) => {
             // Only one call at a time: a second one is rejected rather than silently ignored,
             // so the caller hears busy instead of ringing into nothing.
@@ -137,22 +191,32 @@ export function useSoftphone() {
         },
       })
       uaRef.current = ua
+      closingRef.current = false
       await ua.start()
-      const registerer = new Registerer(ua)
+      // A short expiry is the belt to the reconnect handler's braces: even if a reconnect is
+      // ever missed, Asterisk's contact goes stale for three minutes rather than for the ten
+      // that sip.js defaults to. The trunk taught this lesson expensively — a binding is only
+      // as honest as its refresh interval.
+      const registerer = new Registerer(ua, { expires: 180 })
       registererRef.current = registerer
       registerer.stateChange.addListener((s) => {
-        if (s === RegistererState.Registered) patch({ status: 'registered', extension: cred.extension })
-        if (s === RegistererState.Unregistered) patch({ status: 'idle' })
+        if (s === RegistererState.Registered) patch({ status: 'registered', extension: cred.extension, error: null })
+        // Only report "off" for a deliberate unregister. Losing the socket is a reconnect, not
+        // an idle phone, and onDisconnect has already put the UI in 'connecting'.
+        if (s === RegistererState.Unregistered && closingRef.current) patch({ status: 'idle' })
       })
       await registerer.register()
     } catch (err) {
       uaRef.current = null
       patch({ status: 'error', error: err instanceof Error ? err.message : String(err) })
     }
-  }, [patch, wireSession])
+  }, [patch, reconnect, wireSession])
 
   const disconnect = useCallback(async () => {
     stopTimer()
+    closingRef.current = true
+    if (reconnectRef.current.timer) { clearTimeout(reconnectRef.current.timer); reconnectRef.current.timer = null }
+    reconnectRef.current.tries = 0
     try { await registererRef.current?.unregister() } catch { /* */ }
     try { await uaRef.current?.stop() } catch { /* */ }
     registererRef.current = null
