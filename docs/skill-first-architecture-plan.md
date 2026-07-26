@@ -132,13 +132,24 @@ version: 2.0.0
 extends: alma-base                 # ALMA invariants once, not copied 40 times
 tools: [get_website_catalog, audit_product_seo, draft_seo_fixes, submit_to_indexnow]
 isolation: subagent                # or `inline` for light skills
+implicit: true                     # U8 — false = never auto-triggers, Boss must ask
+dependencies:                      # U2 — checked BEFORE step 0
+  - env: WEBSITE_SUPABASE_URL
+  - env: WEBSITE_SUPABASE_SERVICE_ROLE_KEY
+output_contract:                   # U2 — the exact shape of the deliverable
+  kind: approval_card
+  must_include: [product_slug, before, after, batch_size]
+stop_conditions:                   # U2 — when to stop and ask, not guess
+  - "একটা ব্যাচে ১০টার বেশি product"
+  - "কোনো fix-এ টাকা বা publish জড়ালে"
+  - "অডিটের সংখ্যা আর লাইভ পেজের সংখ্যা না মিললে"
 done:                              # machine-checkable, not prose
   - tool: audit_product_seo        # every targeted product measured first
   - tool: draft_seo_fixes          # a real approval card exists
   - check: no_finding_left_open
 ```
 
-Four things this adds over what we have today:
+What this adds over what we have today:
 
 - **`SYSTEM.md`** — the skill's own operating rules, which become the runner's
   system prompt. This is his core ask, and it only works because of `isolation`.
@@ -149,6 +160,17 @@ Four things this adds over what we have today:
   Loaded only when that branch is hit, so they cost nothing on the happy path.
 - **`done:`** — becomes the existing completion gate. "হয়ে গেছে" stops being a
   sentence the model can produce at will.
+- **`dependencies:` (U2)** — what the skill needs in order to work at all. This
+  wires straight into the capability preflight already shipped: the skill
+  declares it, the server checks it before step 0, and a dead connection is one
+  honest sentence instead of fifteen wasted steps.
+- **`output_contract:` (U2)** — the deliverable's exact shape. Prose like "give a
+  good report" is unenforceable; a named kind with required fields is checkable.
+- **`stop_conditions:` (U2)** — where the skill must stop and ask rather than
+  guess. On a live business line this is a safety feature, not a courtesy.
+- **`implicit: false` (U8)** — a skill that must never auto-trigger. Money
+  movement and publishing belong here: Boss asks for them by name or they do not
+  run.
 
 What `traps.md` looks like for the SEO skill on day one — all of it earned today:
 
@@ -167,12 +189,48 @@ What `traps.md` looks like for the SEO skill on day one — all of it earned tod
 
 ---
 
+## 3b. Authority ladder (U1) — what a skill may and may not displace
+
+Cross-checked against Codex, and it is right on this: a skill is a *playbook*,
+never a licence. The order is fixed and a skill sits at the bottom of it.
+
+```
+1. Safety, permissions, sandbox                ← a skill can never touch these
+2. Money, approval cards, publish gates        ← enforced in CODE, not in prompt
+3. ALMA invariants (alma-base)                 ← Bangla, "Boss", halal, honesty
+4. Boss's instruction in this turn
+5. The selected skill's workflow               ← this is what a skill controls
+```
+
+This resolves the apparent conflict between his ask — *"অন্য কোনো অপ্রয়োজনীয় নিয়ম
+প্রভাব ফেলবে না"* — and Codex's warning that a skill must not override policy.
+Both hold, because they are about different layers:
+
+> **A skill displaces the general BEHAVIOURAL prompt. It never displaces the
+> gates.** The huge general prompt does not ride along into a focused job; the
+> approval card, the money guard and the publish gate always do — and they are
+> server-side code, so no skill text can talk its way past them.
+
 ## 4. Runtime: select → pin → announce → isolate → gate
 
-1. **Select** — the server picks the skill *before* the model runs. Selection is
-   a short deterministic decision list (verb + target + `when_not_to_use`), not
-   keyword scoring alone, because keywords cannot separate "audit it" from
-   "fix it" — which is precisely the bug that cost a day this week.
+1. **Select — three layers (U4).** Revised after comparing notes with Codex,
+   who argued the model should choose and I had argued the server should. The
+   SK-0 measurement settles it: pure keyword routing scores **61%**, so neither
+   extreme is right.
+
+   ```
+   a. Server FILTERS to eligible skills   — status, dependencies, permissions,
+                                            implicit:false excluded unless named
+   b. Deterministic rules DECIDE the      — verb-based: "ঠিক করো" = fix,
+      unambiguous cases                     "অডিট করো" = audit. Free, and this
+                                            exact confusion cost us a day.
+   c. The model chooses ONLY when (b)     — semantic judgement for phrasing no
+      leaves it ambiguous                   rule anticipated
+   ```
+
+   Cost: the model is asked at most **once per conversation**, not per message,
+   because of the pin in step 2. The fix-vs-audit decision never reaches the
+   model at all — a rule is both cheaper and more reliable there.
 2. **Pin** — the choice sticks to the conversation. One chat, one job. This is
    also the cost fix: a 5k-token skill re-picked every turn destroys the prompt
    cache (his own meter showed what that costs); pinned, it is one cache write.
@@ -187,6 +245,32 @@ What `traps.md` looks like for the SEO skill on day one — all of it earned tod
    is a guarantee.
 5. **Gate** — `done:` is checked against actual tool records. Unmet → the turn
    reports what is left, never "হয়ে গেছে".
+6. **Trace (U5)** — every selection stores *why*: the scores, the winner, the
+   runner-up, and which layer decided (filter / rule / model). A wrong pin then
+   has an answer instead of a guess, and the mis-trigger evals get real data.
+
+### Two budgets that keep this affordable
+
+- **Registry budget (U3).** The always-loaded name+description list is capped at
+  roughly **2% of the context window**. Past that, descriptions get shortened,
+  and skills that have not been selected in a long time drop out of the initial
+  list entirely. Without a cap, the cost of having 100 skills is invisible until
+  the bill arrives.
+- **Body budget.** A pinned SKILL.md stays under ~200 lines; depth lives in the
+  reference files, loaded only on the branch that needs them.
+
+### Role vs skill (U6)
+
+Codex's distinction, and it maps onto code we already have:
+
+| | question it answers | where it lives |
+|---|---|---|
+| **Role** | *who is working* — mandate, tool ceiling | `models/specialist-roles.ts` (exists) |
+| **Skill** | *how this job is done* — steps, traps, verification | `src/agent/skills/*/` |
+
+A role is durable and coarse; a skill is per-task and precise. Keeping them
+separate means the tool ceiling is enforced once per role, and skills stay
+free to be many and small.
 
 His literal ask — *"first reply-তে skill-এর নাম না বললে server আটকে দেবে"* — is
 kept as the announcement check, but softened to one in-place repair rather than
@@ -203,8 +287,8 @@ Eval-first, because finding 5 says skills can regress things.
 |---|---|---|
 | **SK-0** ✅ | **Measure today's reality** — 24 of his real messages through the live router. Result: `docs/skill-selection-baseline.md`. | done, see below |
 | **SK-1** ✅ | **Eval harness** — `evals/scoring.ts` (5 dimensions), `evals/scenarios.ts` (9 scenarios, 3 per SEO skill), `evals/owner-corpus.ts`. Validated by replaying this week's real failures. | done, see below |
-| **SK-2** | **Format v2 + `alma-base`.** Schema, loader support, a linter for the 99%-of-skills flaws (description person/what+when, length, reference depth, tool names exist). | linter green on all skills |
-| **SK-3** | **Select → pin → announce.** Deterministic router, conversation pin, UI chip + override. | right skill on ≥90% of the SK-0 set |
+| **SK-2** | **Format v2 + `alma-base` + linter.** Schema (incl. U2/U8 fields), loader support, and a linter for the 99%-of-skills flaws — description person/what+when, body length, reference depth, tool names that exist, **description overlap between skills (U7)**, and **no multi-purpose skill (U7)**: audit, edit, deploy and review may not share one file. | linter green on all skills |
+| **SK-3** | **Select → pin → announce → trace.** Three-layer router (U4), conversation pin, UI chip + override, selection trace (U5), registry budget (U3). | right skill on ≥90% of the SK-0 set |
 | **SK-4** | **Isolate + allowlist + gate.** Route `isolation: subagent` skills through `runSubAgent`; wire `done:` into the existing pack gate. | audit skill provably cannot write |
 | **SK-5** | **Write the three SEO skills properly**, with `traps.md` seeded from this week. | beats no-skill baseline on evals |
 | **SK-6** | **Move the global hacks into skills** and delete them from global code. | tests stay green |
@@ -316,6 +400,35 @@ one thing every later decision depends on: *do the skills we already have
 actually get picked and actually help?*
 
 Given finding 5, doing anything else first would be guessing.
+
+---
+
+## 9. Cross-check against Codex (2026-07-26)
+
+The owner put the same question to Codex and had me read its full answer. Its
+account of ChatGPT/Codex skill handling agreed with the research above on
+progressive disclosure, one-focused-skill-per-job, tool allowlists, mandatory
+verification and mis-trigger evals. Eight of its points were adopted as U1–U8
+(authority ladder, three new frontmatter sections, registry budget, three-layer
+selection, selection trace, role-vs-skill, two new linter rules, `implicit`).
+
+Three things stay as they were, because they came from measurement Codex did not
+have:
+
+- **Eval-gating against a no-skill baseline** — Codex did not raise it; the
+  research says 13 of 87 tasks got *worse* with a skill. SK-1 already builds it.
+- **Measure on OUR harness and head model** — the same model swings 60.8% → 52.8%
+  between harnesses, so a skill that works elsewhere proves nothing here.
+- **The `draft` finding** — 15 of our 16 skills were never offered to the model
+  at all. No amount of authoring would have changed that, and only SK-0's
+  measurement surfaced it.
+
+One point is adopted with a correction. Codex says a skill is "not really a
+separate system prompt". True of ChatGPT's design, and true here for the *gates*
+— but the owner's actual complaint is the giant general prompt polluting focused
+work, and a subagent with a lean system prompt fixes that without weakening
+anything, precisely because our approval, money and publish gates live in
+server-side code rather than in prompt text. §3b writes that boundary down.
 
 ---
 
