@@ -99,14 +99,29 @@ export default function VpsLiveBrowserPanel() {
     [],
   )
 
+  /**
+   * Input events are sent ONE AT A TIME, in order.
+   *
+   * Each keystroke is its own HTTP request, and fired in parallel they arrive in
+   * whatever order the network settles on — typing "backlink" landed on the page
+   * as "kbclanki". Ordering is the whole point of a keyboard, so every event
+   * queues behind the previous one rather than racing it.
+   */
+  const inputQueue = useRef<Promise<void>>(Promise.resolve())
+
   const sendInput = useCallback(
-    async (event: InputEvent) => {
-      if (!interactive) return
-      try {
-        await post({ action: 'input', event })
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
-      }
+    (event: InputEvent) => {
+      if (!interactive) return inputQueue.current
+      inputQueue.current = inputQueue.current
+        .catch(() => {}) // one failed keystroke must not stop the ones after it
+        .then(async () => {
+          try {
+            await post({ action: 'input', event })
+          } catch (err) {
+            setError(err instanceof Error ? err.message : String(err))
+          }
+        })
+      return inputQueue.current
     },
     [interactive, post],
   )

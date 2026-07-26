@@ -98,24 +98,43 @@ async function readBody(req) {
   return Buffer.concat(chunks).toString('utf8')
 }
 
+/** Consecutive failed reads of the gateway. Reset on any successful answer. */
+let callCheckFailures = 0
+/** Last answer we actually got from the gateway, used to ride out a single blip. */
+let lastKnownCallState = false
+
 /**
- * Is a call up right now? Fails CLOSED — if the gateway cannot be reached we
- * assume a call is in progress, because the cost of guessing wrong in the other
- * direction is degraded audio on a live customer call.
+ * Is a call up right now?
+ *
+ * Failing closed is right when STARTING a session — refusing to open a browser
+ * costs the owner one retry. It is wrong for a session already running: this box
+ * has two cores, and a busy Chromium can make a local HTTP round-trip miss a
+ * tight deadline, which would pause the live view exactly when it is being used.
+ * That is the feature fighting itself.
+ *
+ * So a single unanswered check keeps the last known state, and only a sustained
+ * inability to reach the gateway (STRICT, or several failures in a row) is
+ * treated as "assume a call". `strict` is passed when starting.
  */
-async function callInProgress() {
+async function callInProgress({ strict = false } = {}) {
   if (!SIP_BASE) return false // no gateway configured on this host ⇒ nothing to protect
   try {
     const res = await fetch(`${SIP_BASE}/api/v1/active`, {
       headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(6000),
     })
-    if (!res.ok) return true
+    if (!res.ok) throw new Error(`gateway ${res.status}`)
     const body = await res.json().catch(() => null)
     const calls = body?.calls ?? body?.active ?? []
-    return Array.isArray(calls) ? calls.length > 0 : Boolean(calls)
+    callCheckFailures = 0
+    lastKnownCallState = Array.isArray(calls) ? calls.length > 0 : Boolean(calls)
+    return lastKnownCallState
   } catch {
-    return true // fail closed
+    callCheckFailures += 1
+    if (strict) return true
+    // Three misses in a row (~15s) is not a blip any more — assume a call.
+    if (callCheckFailures >= 3) return true
+    return lastKnownCallState
   }
 }
 
@@ -123,7 +142,9 @@ async function callInProgress() {
 
 async function startSession({ startUrl, goal, profile }) {
   if (session) return { ok: false, error: 'a live session is already running' }
-  if (await callInProgress()) {
+  // Strict here: opening a browser is new load on a two-core box that also runs
+  // the phone system, so an unverifiable gateway means "not now".
+  if (await callInProgress({ strict: true })) {
     return { ok: false, error: 'a call is in progress — live browsing is paused so the call audio stays clean' }
   }
 
