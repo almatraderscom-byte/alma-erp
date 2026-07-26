@@ -206,14 +206,28 @@ CREATE INDEX "creative_lifecycle_feature_flags_brand_profile_id_project_id_role_
   ON "creative_lifecycle_feature_flags"("brand_profile_id", "project_id", "role");
 CREATE INDEX "creative_lifecycle_feature_flags_updated_by_id_idx"
   ON "creative_lifecycle_feature_flags"("updated_by_id");
+-- PostgreSQL requires every function used by an index expression to be
+-- IMMUTABLE. Enum-to-text casts are not immutable, so exact nullable scope
+-- uniqueness is expressed with raw-column partial indexes instead. These six
+-- predicates cover every valid scope shape (project scope requires brand).
 CREATE UNIQUE INDEX "creative_lifecycle_feature_flags_exact_scope_key"
-  ON "creative_lifecycle_feature_flags"(
-    "owner_id",
-    COALESCE("brand_profile_id", ''),
-    COALESCE("project_id", ''),
-    COALESCE("role"::text, ''),
-    "capability"
-  );
+  ON "creative_lifecycle_feature_flags"("owner_id", "capability")
+  WHERE "brand_profile_id" IS NULL AND "project_id" IS NULL AND "role" IS NULL;
+CREATE UNIQUE INDEX "creative_lifecycle_feature_flags_exact_scope_role_key"
+  ON "creative_lifecycle_feature_flags"("owner_id", "role", "capability")
+  WHERE "brand_profile_id" IS NULL AND "project_id" IS NULL AND "role" IS NOT NULL;
+CREATE UNIQUE INDEX "creative_lifecycle_feature_flags_exact_scope_brand_key"
+  ON "creative_lifecycle_feature_flags"("owner_id", "brand_profile_id", "capability")
+  WHERE "brand_profile_id" IS NOT NULL AND "project_id" IS NULL AND "role" IS NULL;
+CREATE UNIQUE INDEX "creative_lifecycle_feature_flags_exact_scope_brand_role_key"
+  ON "creative_lifecycle_feature_flags"("owner_id", "brand_profile_id", "role", "capability")
+  WHERE "brand_profile_id" IS NOT NULL AND "project_id" IS NULL AND "role" IS NOT NULL;
+CREATE UNIQUE INDEX "creative_lifecycle_feature_flags_exact_scope_project_key"
+  ON "creative_lifecycle_feature_flags"("owner_id", "brand_profile_id", "project_id", "capability")
+  WHERE "brand_profile_id" IS NOT NULL AND "project_id" IS NOT NULL AND "role" IS NULL;
+CREATE UNIQUE INDEX "creative_lifecycle_feature_flags_exact_scope_project_role_key"
+  ON "creative_lifecycle_feature_flags"("owner_id", "brand_profile_id", "project_id", "role", "capability")
+  WHERE "brand_profile_id" IS NOT NULL AND "project_id" IS NOT NULL AND "role" IS NOT NULL;
 CREATE UNIQUE INDEX "creative_lifecycle_flag_audit_events_owner_id_idempotency_key_key"
   ON "creative_lifecycle_flag_audit_events"("owner_id", "idempotency_key");
 CREATE INDEX "creative_lifecycle_flag_audit_events_feature_flag_id_created_at_idx"

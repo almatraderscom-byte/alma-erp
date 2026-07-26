@@ -36,6 +36,8 @@
     { "id": "unknown-telemetry-remains-unknown", "required": true, "evidence": "lifecycle-contract.test.ts" },
     { "id": "migration-dry-run-roadmap-reconciliation", "required": true, "evidence": "creative-studio-lifecycle-migration-dry-run.mjs" },
     { "id": "explicit-transaction-wrapped-prisma-deploy-compatible", "required": true, "evidence": "lifecycle-schema.test.ts,creative-studio-lifecycle-ddl-preflight.mjs" },
+    { "id": "function-free-null-aware-flag-scope-uniqueness", "required": true, "evidence": "lifecycle-schema.test.ts,creative-studio-lifecycle-ddl-preflight.mjs" },
+    { "id": "failed-migration-recovery-held-and-fail-closed", "required": true, "evidence": "lifecycle-migration-recovery.test.ts,v3-lifecycle-failed-migration-recovery.md" },
     { "id": "ddl-static-preflight-no-low-lock-claim", "required": true, "evidence": "creative-studio-lifecycle-ddl-preflight.mjs" }
   ],
   "gates": {
@@ -60,6 +62,12 @@
       "path": "docs/creative-studio-enterprise/sql/creative-lifecycle-validate-existing.sql",
       "automaticDeploy": false,
       "representativeRestoreRehearsal": "not-run"
+    },
+    {
+      "path": "scripts/recover-creative-lifecycle-migration.mjs",
+      "automaticDeploy": false,
+      "requiresExactFailedRecord": "42P17:creative_lifecycle_feature_flags_exact_scope_key",
+      "databaseExecution": "not-run"
     }
   ],
   "risks": [

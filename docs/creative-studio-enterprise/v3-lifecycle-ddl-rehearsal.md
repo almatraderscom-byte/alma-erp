@@ -9,7 +9,8 @@ node scripts/creative-studio-lifecycle-ddl-preflight.mjs
 It checks additive DDL, transaction compatibility for the exact
 `prisma migrate deploy` path, `NOT VALID` staging for populated tables, a held
 constraint-validation script outside `prisma/migrations`, held concurrent index declarations, exact
-performance-version lineage, and deferred READY evidence. It does not connect
+performance-version lineage, deferred READY evidence, and raw-column-only
+automatic indexes (no function/cast index expressions). It does not connect
 to PostgreSQL, execute DDL, measure locks, or prove production latency.
 
 Before production scheduling, restore a representative production backup into
@@ -34,3 +35,12 @@ the Foundation/lifecycle tables are new and default-off. Optional child-table
 indexes remain in the held script and must never be sent through Prisma deploy.
 The automatic migration also carries explicit `BEGIN`/`COMMIT` markers, matching
 the repository's transaction-wrapped Prisma deploy convention.
+
+The nullable feature-flag scope is enforced by six function-free partial unique
+indexes, one for each valid global/brand/project and optional-role shape.
+Repository evidence does not establish the target PostgreSQL major version, so
+the migration does not depend on PostgreSQL 15 `NULLS NOT DISTINCT`.
+
+The one-time procedure for the audited failed `42P17` preview record is held in
+`v3-lifecycle-failed-migration-recovery.md`. It is never part of an automatic
+build or deploy.

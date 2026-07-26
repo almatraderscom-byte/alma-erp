@@ -19,6 +19,33 @@ const [addSql, validateSql] = await Promise.all([
   readFile(validatePath, 'utf8'),
 ])
 
+const executableAddSql = addSql
+  .replace(/--[^\n]*/g, '')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+const automaticIndexStatements =
+  executableAddSql.match(/\bCREATE\s+(?:UNIQUE\s+)?INDEX\b[\s\S]*?;/gi) ?? []
+function indexKeys(statement) {
+  const on = /\bON\s+"[^"]+"\s*\(/i.exec(statement)
+  if (!on) return null
+  const start = on.index + on[0].length
+  let depth = 1
+  for (let index = start; index < statement.length; index += 1) {
+    if (statement[index] === '(') depth += 1
+    if (statement[index] === ')') depth -= 1
+    if (depth === 0) return statement.slice(start, index)
+  }
+  return null
+}
+function isRawColumnIndex(statement) {
+  const keys = indexKeys(statement)
+  if (keys === null) return false
+  const syntaxWithoutColumns = keys
+    .replace(/"[^"]+"/g, '')
+    .replace(/\b(?:ASC|DESC|NULLS|FIRST|LAST)\b/gi, '')
+    .replace(/[\s,]/g, '')
+  return syntaxWithoutColumns.length === 0
+}
+
 const validationNames = [...validateSql.matchAll(/VALIDATE CONSTRAINT "([^"]+)"/g)]
   .map((match) => match[1])
 const missingFromAdd = validationNames.filter(
@@ -32,6 +59,17 @@ const checks = {
     && addSql.trimEnd().endsWith('COMMIT;'),
   automaticMigrationTransactionCompatible:
     !/\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b/i.test(addSql),
+  automaticIndexesUseRawColumnsOnly:
+    automaticIndexStatements.length > 0
+    && automaticIndexStatements.every(isRawColumnIndex),
+  exactFlagScopeFunctionFree:
+    (executableAddSql.match(/creative_lifecycle_feature_flags_exact_scope(?:_[a-z]+)*_key/g) ?? []).length === 6
+    && !/creative_lifecycle_feature_flags_exact_scope[\s\S]*?(?:COALESCE\s*\(|::)/i.test(
+      executableAddSql.slice(
+        executableAddSql.indexOf('creative_lifecycle_feature_flags_exact_scope_key'),
+        executableAddSql.indexOf('creative_lifecycle_flag_audit_events_owner_id_idempotency_key_key'),
+      ),
+    ),
   populatedConstraintsStagedNotValid: validationNames.every((name) => {
     const start = addSql.indexOf(`CONSTRAINT "${name}"`)
     if (start < 0) return false

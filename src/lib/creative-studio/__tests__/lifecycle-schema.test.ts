@@ -39,6 +39,30 @@ describe('Creative Studio V3 lifecycle production schema', () => {
     expect(heldValidationScript).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS')
   })
 
+  it('enforces null-aware exact feature-flag scopes without index expressions or enum casts', () => {
+    const scopeIndexBlock = migration.slice(
+      migration.indexOf(
+        'CREATE UNIQUE INDEX "creative_lifecycle_feature_flags_exact_scope_key"',
+      ),
+      migration.indexOf(
+        'creative_lifecycle_flag_audit_events_owner_id_idempotency_key_key',
+      ),
+    )
+    expect(
+      scopeIndexBlock.match(
+        /CREATE UNIQUE INDEX "creative_lifecycle_feature_flags_exact_scope(?:_[a-z]+)*_key"/g,
+      ),
+    ).toHaveLength(6)
+    expect(scopeIndexBlock).not.toMatch(/\bCOALESCE\s*\(/i)
+    expect(scopeIndexBlock).not.toContain('::text')
+    expect(scopeIndexBlock).not.toContain('NULLS NOT DISTINCT')
+    expect(scopeIndexBlock.match(/\bWHERE\b/g)).toHaveLength(6)
+    for (const statement of scopeIndexBlock.match(/CREATE UNIQUE INDEX[\s\S]*?;/g) ?? []) {
+      const keys = statement.match(/\bON\s+"[^"]+"\s*\(([^)]*)\)/)?.[1] ?? ''
+      expect(keys).toMatch(/^"[^"]+"(?:\s*,\s*"[^"]+")*$/)
+    }
+  })
+
   it('defines durable job, receipt, audit and scoped rollout models', () => {
     for (const model of [
       'CreativeLifecycleJob',
