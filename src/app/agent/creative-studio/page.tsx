@@ -7,10 +7,14 @@ import {
   listAccessibleStudioBrands,
   type StudioActor,
 } from '@/lib/creative-studio/studio-access'
+import { getCreativeStudioV3FoundationFlags } from '@/lib/creative-studio/composition-feature-flags'
 import { listProjects } from '@/lib/creative-studio/project-service'
 import CreativeStudio from '@/agent/components/creative-studio/CreativeStudio'
 import { CreativeStudioV3 } from '@/agent/components/creative-studio-v3/CreativeStudioV3'
-import { resolveCreativeStudioV3RouteDecision } from '@/agent/components/creative-studio-v3/route-access-policy'
+import {
+  resolveCreativeStudioV3RouteDecision,
+  selectCreativeStudioV3InitialProjectId,
+} from '@/agent/components/creative-studio-v3/route-access-policy'
 
 export const metadata = {
   title: 'Creative Studio',
@@ -53,13 +57,16 @@ export default async function CreativeStudioPage({
 
   const accessibleBrands = await listAccessibleStudioBrands(actor)
   const ownerIds = [...new Set(accessibleBrands.map((brand) => brand.ownerId))]
-  const accessibleProjects = requestedProjectId
-    ? (await Promise.all(ownerIds.map((ownerId) => listProjects(ownerId))))
-      .flat()
-      .filter((project) =>
-        Boolean(project.brandProfileId)
-        && accessibleBrands.some((brand) => brand.brandProfileId === project.brandProfileId))
-    : []
+  const accessibleBrandIds = new Set(
+    accessibleBrands.map((brand) => brand.brandProfileId),
+  )
+  const accessibleProjects = (await Promise.all(
+    ownerIds.map((ownerId) => listProjects(ownerId)),
+  ))
+    .flat()
+    .filter((project) =>
+      Boolean(project.brandProfileId)
+      && accessibleBrandIds.has(project.brandProfileId as string))
 
   const decision = resolveCreativeStudioV3RouteDecision({
     actorIsSystemOwner,
@@ -77,14 +84,25 @@ export default async function CreativeStudioPage({
   })
 
   if (decision.kind === 'v3') {
-    const roleLabel = `${decision.brand.role.slice(0, 1).toUpperCase()}${decision.brand.role.slice(1)}`
+    const foundation = getCreativeStudioV3FoundationFlags()
+    const initialProjectId = selectCreativeStudioV3InitialProjectId({
+      accessibleProjects,
+      brandProfileId: decision.brand.brandProfileId,
+      requestedProjectId: decision.projectId,
+    })
     return (
       <CreativeStudioV3
         initialContext={{
           brandId: decision.brand.brandProfileId,
-          projectId: decision.projectId,
+          projectId: initialProjectId,
+          actorUserId: actor.userId,
           accountLabel: actor.name,
-          studioRoleLabel: roleLabel,
+          studioRole: decision.brand.role,
+          accessibleProjects,
+          foundation: {
+            readEnabled: foundation.readEnabled,
+            writesEnabled: foundation.writesEnabled,
+          },
           legacyAllowed: actorIsSystemOwner,
         }}
       />

@@ -32,6 +32,7 @@ export type FoundationEditorSnapshotContext = {
   activity?: readonly EditorActivityEntry[]
   canUndo?: boolean
   canRedo?: boolean
+  hydration?: EditorCompositionSnapshot['hydration']
 }
 
 function record(value: unknown): AnyRecord {
@@ -254,6 +255,7 @@ function derivedAssets(
       qcLabel: 'Canonical version pinned; asset metadata not hydrated',
       artifact: null,
       referenceContract: null,
+      lineage: [],
     })
   }
   return [...assets.values()]
@@ -404,6 +406,14 @@ function projectFoundationCompositionToEditorUnchecked(
     activity: [...(context.activity ?? [])].map((entry) => structuredClone(entry)),
     canUndo: context.canUndo ?? false,
     canRedo: context.canRedo ?? false,
+    hydration: context.hydration
+      ? structuredClone(context.hydration)
+      : {
+          projectAssets: 'not_hydrated',
+          review: 'not_hydrated',
+          activity: 'not_hydrated',
+          history: 'not_hydrated',
+        },
   }
 }
 

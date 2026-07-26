@@ -39,6 +39,7 @@ export function EditorTimeline({
   onSelect,
   onSplit,
   onZoomChange,
+  readOnly,
   regionRef,
   selection,
   snapshot,
@@ -49,6 +50,7 @@ export function EditorTimeline({
   onSelect: (selection: EditorSelection) => void
   onSplit: () => void
   onZoomChange: (zoom: number) => void
+  readOnly: boolean
   regionRef: RefObject<HTMLElement>
   selection: EditorSelection | null
   snapshot: EditorCompositionSnapshot
@@ -88,7 +90,7 @@ export function EditorTimeline({
         <div className={styles.timelineActions}>
           <button
             aria-label="Move selected clip earlier"
-            disabled={!canMoveBack}
+            disabled={readOnly || !canMoveBack}
             onClick={() => onMoveClip(-1)}
             type="button"
           >
@@ -96,7 +98,7 @@ export function EditorTimeline({
           </button>
           <button
             aria-label="Move selected clip later"
-            disabled={!canMoveForward}
+            disabled={readOnly || !canMoveForward}
             onClick={() => onMoveClip(1)}
             type="button"
           >
@@ -105,6 +107,7 @@ export function EditorTimeline({
           <button
             aria-keyshortcuts="S"
             aria-label="Split selected clip at playhead"
+            disabled={readOnly}
             onClick={onSplit}
             type="button"
           >

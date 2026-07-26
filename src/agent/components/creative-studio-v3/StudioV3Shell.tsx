@@ -8,6 +8,7 @@ import type {
   CreativeStudioV3Navigate,
   CreativeStudioV3View,
 } from '@/agent/components/creative-studio-v3/types'
+import type { StudioAccessRole } from '@/lib/creative-studio/studio-access'
 import styles from '@/agent/components/creative-studio-v3/creative-studio-v3.module.css'
 
 type NavItem = {
@@ -53,8 +54,9 @@ export function StudioV3Shell({
   activeBrandId,
   onBrandChange,
   accountLabel,
+  immersive,
   legacyAllowed,
-  studioRoleLabel,
+  studioRole,
 }: {
   children: ReactNode
   currentView: CreativeStudioV3View
@@ -63,14 +65,15 @@ export function StudioV3Shell({
   activeBrandId: string | null
   onBrandChange: (brandId: string) => void
   accountLabel: string
+  immersive: boolean
   legacyAllowed: boolean
-  studioRoleLabel: string
+  studioRole: StudioAccessRole
 }) {
   const activeBrand = brands.find((brand) => brand.brandProfileId === activeBrandId) ?? brands[0] ?? null
   const legacyHref = '/agent/creative-studio?studio=legacy'
   const accessLabel = activeBrand
     ? `${activeBrand.role.slice(0, 1).toUpperCase()}${activeBrand.role.slice(1)}`
-    : studioRoleLabel
+    : `${studioRole.slice(0, 1).toUpperCase()}${studioRole.slice(1)}`
 
   const navButton = (item: NavItem) => {
     const active = isCurrent(currentView, item.view)
@@ -131,7 +134,7 @@ export function StudioV3Shell({
         </div>
       </header>
 
-      <div className={styles.shellBody}>
+      <div className={`${styles.shellBody} ${immersive ? styles.shellBodyImmersive : ''}`}>
         <aside aria-label="Creative Studio sections" className={styles.sidebar}>
           <nav className={styles.sidebarNav}>{primaryNav.map(navButton)}</nav>
           <div className={styles.sidebarDivider} />
@@ -146,14 +149,20 @@ export function StudioV3Shell({
           </div>
         </aside>
 
-        <main className={styles.main} id="creative-studio-v3-main" tabIndex={-1}>
+        <main
+          className={`${styles.main} ${immersive ? styles.mainImmersive : ''}`}
+          id="creative-studio-v3-main"
+          tabIndex={-1}
+        >
           {children}
         </main>
       </div>
 
-      <nav aria-label="Creative Studio mobile navigation" className={styles.mobileNav}>
-        {mobileNav.map(navButton)}
-      </nav>
+      {!immersive && (
+        <nav aria-label="Creative Studio mobile navigation" className={styles.mobileNav}>
+          {mobileNav.map(navButton)}
+        </nav>
+      )}
     </section>
   )
 }

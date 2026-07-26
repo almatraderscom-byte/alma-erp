@@ -12,6 +12,7 @@ import type {
   CreativeStudioV3ProductionPort,
   StudioV3HomeSnapshot,
 } from '@/agent/components/creative-studio-v3/ports'
+import type { StudioProjectSummary } from '@/lib/creative-studio/project-contract'
 import { STUDIO_V3_SCOPE_BOUNDARY } from '@/agent/components/creative-studio-v3/ports'
 import styles from '@/agent/components/creative-studio-v3/creative-studio-v3.module.css'
 
@@ -63,11 +64,21 @@ function AssetPreview({
 
 export function StudioV3Home({
   activeBrand,
+  accessibleProjects,
+  foundationReadEnabled,
+  initialProjectId,
+  launchingProjectId,
   onNavigate,
+  onOpenComposition,
   port,
 }: {
   activeBrand: StudioBrandProfile | null
+  accessibleProjects: StudioProjectSummary[]
+  foundationReadEnabled: boolean
+  initialProjectId: string | null
+  launchingProjectId: string | null
   onNavigate: CreativeStudioV3Navigate
+  onOpenComposition: (project: StudioProjectSummary) => Promise<void>
   port: CreativeStudioV3ProductionPort
 }) {
   const [snapshot, setSnapshot] = useState<StudioV3HomeSnapshot>(EMPTY_SNAPSHOT)
@@ -75,13 +86,32 @@ export function StudioV3Home({
   const [search, setSearch] = useState('')
 
   const load = useCallback(async () => {
+    if (!activeBrand) {
+      setSnapshot(EMPTY_SNAPSHOT)
+      setLoading(false)
+      return
+    }
+    if (activeBrand.role !== 'owner') {
+      setSnapshot({
+        ...EMPTY_SNAPSHOT,
+        projects: accessibleProjects.filter((project) =>
+          project.brandProfileId === activeBrand.brandProfileId),
+        issues: [{
+          resource: 'owner-only legacy enrichment',
+          message:
+            'Gallery, models, recipes, health and retention were not requested for this collaborator. Projects below are the server-derived accessible scope; compositions use Foundation APIs.',
+        }],
+      })
+      setLoading(false)
+      return
+    }
     setLoading(true)
     try {
       setSnapshot(await port.loadHome(activeBrand?.brandProfileId))
     } finally {
       setLoading(false)
     }
-  }, [activeBrand?.brandProfileId, port])
+  }, [activeBrand, accessibleProjects, port])
 
   useEffect(() => {
     void load()
@@ -89,7 +119,15 @@ export function StudioV3Home({
 
   const query = search.trim().toLocaleLowerCase('bn-BD')
   const matches = (value: string | null | undefined) => !query || String(value ?? '').toLocaleLowerCase('bn-BD').includes(query)
-  const projects = snapshot.projects.filter((project) =>
+  const accessScopedProjects = accessibleProjects.filter((project) =>
+    project.brandProfileId === activeBrand?.brandProfileId)
+  const compositionProjects = accessScopedProjects.filter((project) =>
+    !project.readonly)
+  const initialProject = initialProjectId
+    ? compositionProjects.find((project) =>
+      project.id === initialProjectId) ?? null
+    : compositionProjects[0] ?? null
+  const projects = accessScopedProjects.filter((project) =>
     matches(`${project.name} ${project.description ?? ''} ${project.product?.code ?? ''}`))
   const assets = snapshot.recentAssets.filter((asset) =>
     matches(`${asset.summary ?? ''} ${asset.provider} ${asset.mode}`))
@@ -129,11 +167,24 @@ export function StudioV3Home({
     },
     {
       title: 'Long-form',
-      description: 'Composition command foundation connects here.',
+      description: 'Open the newest accessible composition or create one idempotently.',
       icon: 'project',
-      action: () => {},
-      disabled: true,
-      badge: 'Foundation hook',
+      action: () => {
+        if (initialProject) void onOpenComposition(initialProject)
+      },
+      disabled:
+        !foundationReadEnabled
+        || !initialProject
+        || launchingProjectId !== null,
+      badge: !foundationReadEnabled
+        ? 'Foundation off'
+        : compositionProjects.length === 0
+          ? 'Editable project required'
+          : !initialProject
+            ? 'Selected project unavailable'
+            : launchingProjectId
+              ? 'Opening…'
+              : 'Versioned editor',
     },
   ]
 
@@ -183,9 +234,9 @@ export function StudioV3Home({
       )}
       <p className={styles.scopeNotice}>
         <StudioV3Icon name="lock" />
-        Active brand is selected only from the server-enforced accessible-brand list. Projects and
-        recipes re-request the active brand through their current owner-only contracts; recent
-        assets and identities do not imply brand filtering ({STUDIO_V3_SCOPE_BOUNDARY.gallery}).
+        {activeBrand?.role === 'owner'
+          ? `Active brand is selected only from the server-enforced accessible-brand list. Owner project and recipe enrichment re-request that brand; recent assets and identities do not imply brand filtering (${STUDIO_V3_SCOPE_BOUNDARY.gallery}).`
+          : 'Active brand and projects came from the authenticated server route. Legacy owner-only project, recipe, Gallery, model and identity reads were not used for this collaborator.'}
       </p>
 
       <section aria-labelledby="studio-create-heading" className={styles.section}>
@@ -303,7 +354,15 @@ export function StudioV3Home({
             {projects.length === 0 ? (
               <p className={styles.emptyState}>No production projects match this view.</p>
             ) : projects.slice(0, 5).map((project) => (
-              <button key={project.id} onClick={() => onNavigate({ id: 'desk', desk: 'projects' })} type="button">
+              <button
+                key={project.id}
+                onClick={() => onNavigate({
+                  id: 'desk',
+                  desk: 'projects',
+                  projectId: project.id,
+                })}
+                type="button"
+              >
                 <span className={styles.projectMark}><StudioV3Icon name="project" /></span>
                 <span className={styles.projectCopy}>
                   <strong>{project.name}</strong>

@@ -1,5 +1,7 @@
 'use client'
 
+/* eslint-disable @next/next/no-img-element */
+
 import type { CSSProperties, RefObject } from 'react'
 import type { EditorCompositionSnapshot } from '@/lib/creative-studio/editor-agent'
 import { EditorIcon } from './EditorIcon'
@@ -18,6 +20,7 @@ export function EditorStage({
   onSplit,
   playing,
   playheadSec,
+  readOnly,
   regionRef,
   selection,
   snapshot,
@@ -28,11 +31,16 @@ export function EditorStage({
   onSplit: () => void
   playing: boolean
   playheadSec: number
+  readOnly: boolean
   regionRef: RefObject<HTMLElement>
   selection: EditorSelection | null
   snapshot: EditorCompositionSnapshot
 }) {
   const activeVisual = activeVisualClip(snapshot, playheadSec)
+  const activeAsset = activeVisual?.assetVersionId
+    ? snapshot.assets.find((asset) =>
+      asset.assetVersionId === activeVisual.assetVersionId) ?? null
+    : null
   const selected = selectedEditorClip(snapshot, selection)
   const captionTrack = snapshot.tracks.find((track) => track.kind === 'caption')
   const activeCaption = captionTrack?.clips.find(
@@ -65,11 +73,13 @@ export function EditorStage({
         <div className={styles.stageTruth}>
           <span>
             <EditorIcon name="check" size={12} />
-            Preview proxy
+            {activeAsset?.previewUrl
+              ? 'Access-scoped preview'
+              : 'Preview not hydrated'}
           </span>
           <span>
             <EditorIcon name="safe-zone" size={12} />
-            Safe zone on
+            Safe zone {snapshot.canvas.safeZone ? 'on' : 'off'}
           </span>
         </div>
       </header>
@@ -88,20 +98,32 @@ export function EditorStage({
           type="button"
         >
           <span className={styles.stageArtwork}>
-            <span className={styles.stageGlow} />
-            <span className={styles.stageFigure}>
-              <i />
-              <b />
-              <em />
-            </span>
+            {activeAsset?.previewUrl ? (
+              <img
+                alt=""
+                className={styles.stagePreviewMedia}
+                src={activeAsset.previewUrl}
+              />
+            ) : (
+              <span className={styles.stagePreviewUnavailable}>
+                <EditorIcon name="assets" size={28} />
+                <strong>Preview not hydrated</strong>
+                <small>
+                  Canonical clip and asset-version pins are still loaded.
+                </small>
+              </span>
+            )}
             <span className={styles.stageProductCode}>
               {snapshot.productCode ?? 'NO PRODUCT'}
             </span>
-            <span className={styles.stageEdition}>EID / 2026</span>
             <span className={styles.stageEditorial}>
-              <span>NEW SEASON</span>
-              <strong>Quiet confidence,<br />made for Eid.</strong>
-              <small>{activeVisual?.label ?? 'No visual at playhead'}</small>
+              <span>{snapshot.projectName}</span>
+              <strong>{activeVisual?.label ?? 'No visual at playhead'}</strong>
+              <small>
+                {activeAsset
+                  ? `${activeAsset.status} · ${activeAsset.assetVersionId}`
+                  : 'No asset metadata was returned'}
+              </small>
             </span>
           </span>
 
@@ -116,7 +138,7 @@ export function EditorStage({
                 transform: `translate(${overlay.transform.x * 40}px, ${overlay.transform.y * 40}px) scale(${overlay.transform.scale}) rotate(${overlay.transform.rotation}deg)`,
               }}
             >
-              ALMA
+              {overlay.text ?? overlay.label}
             </span>
           ))}
 
@@ -189,7 +211,7 @@ export function EditorStage({
         <button
           aria-keyshortcuts="S"
           className={styles.splitButton}
-          disabled={!activeVisual}
+          disabled={readOnly || !activeVisual}
           onClick={onSplit}
           type="button"
         >

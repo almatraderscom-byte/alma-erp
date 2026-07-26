@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { StudioBrandSummary } from '@/lib/creative-studio/studio-access'
 import type { StudioProjectSummary } from '@/lib/creative-studio/project-contract'
-import { resolveCreativeStudioV3RouteDecision } from '@/agent/components/creative-studio-v3/route-access-policy'
+import {
+  resolveCreativeStudioV3RouteDecision,
+  selectCreativeStudioV3InitialProjectId,
+} from '@/agent/components/creative-studio-v3/route-access-policy'
 
 function brand(
   id: string,
@@ -44,6 +47,29 @@ const enabled = {
 }
 
 describe('Creative Studio V3 route admission', () => {
+  it('selects an editable project inside the admitted brand and preserves a sanitized query', () => {
+    const legacy = { ...project('legacy-a', 'brand-a'), readonly: true }
+    const editable = project('project-a', 'brand-a')
+    const otherBrand = project('project-b', 'brand-b')
+    const accessibleProjects = [otherBrand, legacy, editable]
+
+    expect(selectCreativeStudioV3InitialProjectId({
+      accessibleProjects,
+      brandProfileId: 'brand-a',
+      requestedProjectId: null,
+    })).toBe('project-a')
+    expect(selectCreativeStudioV3InitialProjectId({
+      accessibleProjects,
+      brandProfileId: 'brand-a',
+      requestedProjectId: 'legacy-a',
+    })).toBe('legacy-a')
+    expect(selectCreativeStudioV3InitialProjectId({
+      accessibleProjects,
+      brandProfileId: 'brand-a',
+      requestedProjectId: 'project-b',
+    })).toBeNull()
+  })
+
   it('admits an owner through an owner-scoped rollout', () => {
     const decision = resolveCreativeStudioV3RouteDecision({
       actorIsSystemOwner: true,
@@ -99,6 +125,21 @@ describe('Creative Studio V3 route admission', () => {
         CREATIVE_STUDIO_V3_OWNER_IDS: '*',
       },
     })).toEqual({ kind: 'denied', reason: 'no_accessible_brand' })
+  })
+
+  it('keeps the legacy fallback available to a system owner without a V3 brand', () => {
+    expect(resolveCreativeStudioV3RouteDecision({
+      actorIsSystemOwner: true,
+      accessibleBrands: [],
+      accessibleProjects: [],
+      requestedBrandId: null,
+      requestedProjectId: null,
+      forceLegacy: false,
+      environment: {
+        CREATIVE_STUDIO_V3_UI_ENABLED: '1',
+        CREATIVE_STUDIO_V3_OWNER_IDS: '*',
+      },
+    })).toEqual({ kind: 'legacy' })
   })
 
   it('rejects an inaccessible query brand even under a wildcard rollout', () => {
