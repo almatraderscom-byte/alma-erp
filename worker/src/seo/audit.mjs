@@ -176,10 +176,31 @@ export function analyzeHtml(html, pageUrl) {
   if (jsonLdTypes.length === 0) add('medium', 'missing_structured_data', 'কোনো schema.org (JSON-LD) নেই')
   if (jsonLdTypes.includes('INVALID')) add('medium', 'invalid_structured_data', 'JSON-LD ভাঙা')
 
-  const imgs = root.querySelectorAll('img')
-  const missingAlt = imgs.filter((i) => !(i.getAttribute('alt') ?? '').trim()).length
-  if (imgs.length > 0 && missingAlt > 0) {
-    add(missingAlt > imgs.length / 2 ? 'medium' : 'low', 'missing_img_alt', `${imgs.length}টা ছবির মধ্যে ${missingAlt}টায় alt নেই`)
+  // A decorative image is SUPPOSED to have alt="" — that is the accessibility
+  // rule, not a defect. Counting them cost the owner real time on 2026-07-26:
+  // the audit reported "52+ images without alt, hurting Google Images and
+  // accessibility", he ordered the fix, and the images turned out to be a
+  // <div class="foot-strip" aria-hidden="true"> decorative footer strip that was
+  // already correct. Tracking pixels are the same story.
+  const isDecorative = (node) => {
+    if (typeof node?.getAttribute !== 'function') return false
+    if ((node.getAttribute('role') ?? '') === 'presentation') return true
+    if ((node.getAttribute('aria-hidden') ?? '') === 'true') return true
+    return isDecorative(node.parentNode)
+  }
+  const isTrackingPixel = (i) => {
+    const src = i.getAttribute('src') ?? ''
+    if (/facebook\.com\/tr|\/pixel|analytics|googletagmanager/i.test(src)) return true
+    return (i.getAttribute('width') ?? '') === '1' && (i.getAttribute('height') ?? '') === '1'
+  }
+  const contentImgs = root.querySelectorAll('img').filter((i) => !isDecorative(i) && !isTrackingPixel(i))
+  const missingAlt = contentImgs.filter((i) => !(i.getAttribute('alt') ?? '').trim()).length
+  if (contentImgs.length > 0 && missingAlt > 0) {
+    add(
+      missingAlt > contentImgs.length / 2 ? 'medium' : 'low',
+      'missing_img_alt',
+      `${contentImgs.length}টা কনটেন্ট ছবির মধ্যে ${missingAlt}টায় alt নেই`,
+    )
   }
 
   const text = root.querySelector('body')?.structuredText ?? ''

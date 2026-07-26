@@ -68,9 +68,22 @@ export function extractOrderedWebTargets(text: string): string[] {
 /**
  * "Do the work" verbs. When Boss uses one of these about findings that already
  * exist, he wants execution — not another audit, and not another report.
+ *
+ * These are VERB STEMS, not whole phrases. The first version listed exact forms
+ * (লেখো, লিখে দাও) and missed the very next thing he typed — "alt লিখে সেভ করো"
+ * — so the audit contract armed again and the turn died demanding an audit tool.
+ * Bangla inflects; match the stem (লিখ/লেখ/সেভ/বসা) and the forms come free.
  */
 const FIX_INTENT_RE =
-  /(?:ঠিক\s*কর|সমাধান\s*কর|লেখো|লিখে\s*দাও|বসাও|যোগ\s*কর|আপডেট\s*কর|apply|fix(?:ing|es)?\b|implement|write\s+(?:the\s+)?alt|update\s+the)/i
+  /(?:ঠিক\s*কর|সমাধান\s*কর|সংশোধন|লিখ|লেখ|সেভ\s*কর|বসাও|বসিয়ে|যোগ\s*কর|জুড়ে\s*দাও|আপডেট\s*কর|apply|fix(?:ing|es|ed)?\b|implement|write|update|save|add\s+(?:the\s+)?alt)/i
+
+/**
+ * ...but a work verb inside a request FOR an audit or a report is still an audit
+ * order ("SEO অডিট করে রিপোর্ট লিখে দাও"). The object of the verb decides, so an
+ * explicit ask for the audit/report itself wins over the verb.
+ */
+const AUDIT_ASK_RE =
+  /(?:অডিট|audit)\s*(?:কর|চালাও|দাও|run)|রিপোর্ট\s*(?:বানা|তৈরি|দাও|লিখ)|\breport\s+(?:on|for)\b/i
 
 export function deriveOwnerTurnRequirements(text: string): OwnerTurnRequirements {
   const t = text.trim()
@@ -81,7 +94,7 @@ export function deriveOwnerTurnRequirements(text: string): OwnerTurnRequirements
   // because it contains the words "SEO" and "অডিট" — so the agent produced ANOTHER
   // report instead of doing the work, and Boss's reaction was exactly right:
   // "agent ke kaj dile fix korte, kintu abar SEO report baniye dilo".
-  const fixIntent = FIX_INTENT_RE.test(t)
+  const fixIntent = FIX_INTENT_RE.test(t) && !AUDIT_ASK_RE.test(t)
   const clientSeo = targets.length > 0 && /\bseo\b|এসইও|audit|অডিট/i.test(t) && !fixIntent
   // Owner standing rule (2026-07-25): a website audit ALWAYS ends in a
   // client-ready deliverable — the owner should never have to type the word

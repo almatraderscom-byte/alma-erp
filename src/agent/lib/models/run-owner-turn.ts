@@ -1673,7 +1673,7 @@ async function* runAlternateProviderTurn(
       // A staged approval card ends the working part of the turn: everything
       // past it is spend on work the owner may reject (and it buries the card).
       const cardStaged = confirmCardsEmitted > 0 || emittedAskCards.length > 0
-      const iterationTools =
+      const budgetedTools =
         nearDeadline || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
         || (standardOverBudget && delegateOnlyNeutral.length === 0)
           ? []
@@ -1682,16 +1682,36 @@ async function* runAlternateProviderTurn(
             : dynamicNeutralTools.length > 0
               ? [...neutralTools, ...dynamicNeutralTools]
               : neutralTools
-      if (iteration === 0) turnToolNames = iterationTools.map((t) => t.name)
-      // Phase 3 — the EXACT set the provider was given this round; the
-      // membership gate below refuses anything outside it.
-      const roundToolNames = new Set(iterationTools.map((t) => t.name))
+
       const batchRequiredTool = driveClientSeoBatch ? await getClientSeoBatchRequiredTool(conversationId) : null
       const memoryRequiredTool = ownerRequirements.remember
         && !toolRecords.some((r) => r.toolName === 'save_memory' && r.status === 'success')
         ? 'save_memory'
         : null
       const requestedContractTool = memoryRequiredTool ?? batchRequiredTool
+
+      // A contract may never demand a tool this round did not ship (owner watched
+      // it happen 2026-07-26: the head spent its tool budget, the budget strip
+      // above emptied the list, it then called the contract's run_website_seo_audit
+      // and the membership gate refused it — "বাধ্যতামূলক ধাপ সফল হয়নি" over a tool
+      // the server itself had taken away). The demand and the means travel together.
+      const contractToolMissing = Boolean(
+        requestedContractTool && !budgetedTools.some((t) => t.name === requestedContractTool),
+      )
+      const iterationTools = contractToolMissing
+        ? [
+            ...budgetedTools,
+            ...(await resolveToolsByName([requestedContractTool as string])).map((t) => ({
+              name: t.name,
+              description: t.description,
+              schema: t.input_schema as object,
+            })),
+          ]
+        : budgetedTools
+      if (iteration === 0) turnToolNames = iterationTools.map((t) => t.name)
+      // Phase 3 — the EXACT set the provider was given this round; the
+      // membership gate below refuses anything outside it.
+      const roundToolNames = new Set(iterationTools.map((t) => t.name))
       const contractFailure = requestedContractTool
         ? [...toolRecords].reverse().find((r) => r.toolName === requestedContractTool && r.status === 'error')
         : undefined

@@ -36,6 +36,26 @@ describe('a fix order is not an audit order', () => {
     expect(req.reportArtifact).toBe(true)
   })
 
+  // Round 2, same day: the first regex listed exact word forms, so the very next
+  // order Boss typed slipped through and armed the audit contract again — the
+  // turn then died demanding run_website_seo_audit. Bangla inflects; match stems.
+  it.each([
+    'almatraders.com এর যেসব ছবিতে alt নেই, সেগুলোতে বাংলা SEO-friendly alt লিখে সেভ করো',
+    'almatraders.com এর SEO সমস্যাগুলোর alt গুলো বসিয়ে দাও',
+    'almatraders.com এর product পেজের SEO title গুলো সংশোধন করো',
+    'save proper alt text on almatraders.com images from the SEO audit',
+  ])('a work verb in any form is still a work order: %s', (text) => {
+    expect(deriveOwnerTurnRequirements(text).clientSeo).toBe(false)
+  })
+
+  // ...but the object of the verb decides. Asking for the report IS an audit order.
+  it.each([
+    'almatraders.com এর SEO অডিট করে রিপোর্ট লিখে দাও',
+    'almatraders.com এর একটা SEO রিপোর্ট বানাও',
+  ])('a work verb aimed at the report itself stays an audit: %s', (text) => {
+    expect(deriveOwnerTurnRequirements(text).clientSeo).toBe(true)
+  })
+
   it('deep-work scope is unaffected — a fix job is still deep work', () => {
     const req = deriveOwnerTurnRequirements(
       'almatraders.com এর সব SEO সমস্যা ঠিক করো, পুরোটা শেষ করো',
