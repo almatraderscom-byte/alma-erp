@@ -12691,3 +12691,652 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── Owner-locked reference correction: compact viewport composer ─────── */
+
+.v4LabWithFloatingComposer {
+  display: block;
+  padding-bottom: 360px;
+  position: relative;
+}
+
+.v4LabWithFloatingComposer .v3ExploreBoard {
+  min-height: 820px;
+  width: 100%;
+}
+
+.v4LabWithFloatingComposer .v3TemplateGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.v4LabWithFloatingComposer .v3TemplateCard {
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+}
+
+.v4LabWithFloatingComposer .v3TemplateArtwork {
+  min-height: 78px;
+}
+
+.v4LabWithFloatingComposer .v3ExploreGallery > div {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.v3Composer.v4FloatingComposer {
+  background: rgb(var(--c-card) / 0.995);
+  border: 1px solid rgb(var(--c-ink) / 0.13);
+  border-radius: 21px;
+  bottom: 18px;
+  box-shadow:
+    0 28px 80px -34px rgb(15 15 18 / 0.72),
+    0 1px 0 rgb(255 255 255 / 0.78) inset;
+  box-sizing: border-box;
+  left: 50%;
+  margin: 0;
+  max-height: none;
+  overflow: visible;
+  overscroll-behavior: contain;
+  padding: 12px;
+  position: fixed;
+  right: auto;
+  scrollbar-width: thin;
+  top: auto;
+  transform: translateX(-50%);
+  width: min(760px, calc(100vw - 32px));
+  z-index: 180;
+}
+
+:global(:root[data-theme='dark']) .v3Composer.v4FloatingComposer {
+  background: rgb(var(--c-card) / 0.99);
+  border-color: rgb(255 255 255 / 0.13);
+  box-shadow:
+    0 32px 88px -28px rgb(0 0 0 / 0.9),
+    0 1px 0 rgb(255 255 255 / 0.08) inset;
+}
+
+.v4ComposerAuto {
+  display: grid;
+  gap: 8px;
+}
+
+.v4ComposerRecipes {
+  bottom: calc(100% + 8px);
+  display: flex;
+  gap: 6px;
+  left: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 1px 1px 5px;
+  position: absolute;
+  scrollbar-width: none;
+}
+
+.v4ComposerRecipes::-webkit-scrollbar {
+  display: none;
+}
+
+.v4ComposerRecipes button {
+  align-items: center;
+  background: rgb(var(--c-card) / 0.985);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  box-shadow: 0 10px 28px -20px rgb(var(--c-black) / 0.7);
+  color: var(--studio-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 650;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.v4ComposerRecipes button[aria-pressed='true'] {
+  border-color: rgb(var(--c-accent) / 0.42);
+  color: var(--studio-accent-dim);
+}
+
+.v4ComposerAuto:has(.v4SourceTray) .v4ComposerRecipes {
+  display: none;
+}
+
+.v4ComposerHeader {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(170px, 1fr) auto auto;
+  min-height: 34px;
+}
+
+.v4ComposerHeader > div:first-child {
+  min-width: 0;
+}
+
+.v4ComposerHeader h2 {
+  font-size: 14px;
+  font-weight: 730;
+  letter-spacing: -0.02em;
+  margin: 1px 0 0;
+}
+
+.v4ComposerTabs {
+  align-items: center;
+  background: var(--bg-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 11px;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+}
+
+.v4ComposerTabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--studio-muted);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 680;
+  min-height: 27px;
+  padding: 0 12px;
+}
+
+.v4ComposerTabs .v4ComposerTabActive {
+  background: var(--studio-card);
+  box-shadow: 0 6px 16px -14px rgb(var(--c-black) / 0.8);
+  color: var(--studio-ink);
+}
+
+.v4LocalOnlyBadge {
+  align-items: center;
+  background: var(--studio-success-soft);
+  border: 1px solid rgb(34 135 95 / 0.18);
+  border-radius: var(--radius-pill);
+  color: var(--studio-success);
+  display: inline-flex;
+  font-size: 8px;
+  font-weight: 720;
+  gap: 4px;
+  min-height: 27px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.v4AutoSourceGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.v4SourceCard {
+  align-items: stretch;
+  background: var(--bg-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 15px;
+  display: grid;
+  gap: 9px;
+  grid-template-columns: 76px minmax(0, 1fr);
+  min-width: 0;
+  padding: 6px;
+}
+
+.v4SourceArtwork {
+  background:
+    radial-gradient(circle at 50% 28%, rgb(255 255 255 / 0.7), transparent 24%),
+    linear-gradient(145deg, rgb(var(--c-accent) / 0.25), rgb(var(--c-card) / 0.52));
+  border: 1px solid rgb(255 255 255 / 0.38);
+  border-radius: 11px;
+  height: 76px;
+  overflow: hidden;
+  position: relative;
+  width: 76px;
+}
+
+.v4SourceArtwork > span {
+  color: rgb(255 255 255 / 0.86);
+  font-size: 6px;
+  font-weight: 820;
+  left: 7px;
+  letter-spacing: 0.12em;
+  position: absolute;
+  top: 7px;
+  z-index: 2;
+}
+
+.v4SourceArtwork > i {
+  background: rgb(255 255 255 / 0.4);
+  border-radius: 50% 50% 44% 44%;
+  height: 21px;
+  left: calc(50% - 10px);
+  position: absolute;
+  top: 16px;
+  width: 21px;
+}
+
+.v4SourceArtwork > b {
+  background:
+    linear-gradient(90deg, transparent 47%, rgb(255 255 255 / 0.18) 48% 52%, transparent 53%),
+    rgb(255 255 255 / 0.3);
+  border-radius: 38% 38% 9px 9px;
+  bottom: -13px;
+  height: 52px;
+  left: calc(50% - 31px);
+  position: absolute;
+  width: 62px;
+}
+
+.v4ModelArtwork {
+  background:
+    radial-gradient(circle at 50% 28%, rgb(255 255 255 / 0.5), transparent 24%),
+    linear-gradient(150deg, #343740, #777870);
+}
+
+.v4SourceContent {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.v4SourceContent > span {
+  color: var(--studio-muted);
+  font-size: 6px;
+  font-weight: 760;
+  letter-spacing: 0.13em;
+}
+
+.v4SourceContent > strong {
+  font-size: 10px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v4SourceContent > small {
+  color: var(--studio-muted);
+  font-size: 7px;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v4SourceActions {
+  display: grid;
+  gap: 4px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 6px;
+}
+
+.v4SourceActions button,
+.v4SourceActions label {
+  align-items: center;
+  background: var(--studio-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--studio-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 7px;
+  font-weight: 650;
+  gap: 3px;
+  justify-content: center;
+  min-height: 25px;
+  overflow: hidden;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.v4SourceActions button:hover,
+.v4SourceActions label:hover,
+.v4SourceActions button[aria-expanded='true'] {
+  border-color: rgb(var(--c-accent) / 0.4);
+  color: var(--studio-accent-dim);
+}
+
+.v4SourceActions input {
+  clip: rect(0, 0, 0, 0);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.v4ComposerAuto .v3PromptField {
+  margin: 0;
+}
+
+.v4ComposerAuto .v3PromptField textarea {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  font-size: 12px;
+  line-height: 1.45;
+  min-height: 48px;
+  outline: 0;
+  padding: 8px 4px 5px;
+  resize: none;
+}
+
+.v4ComposerAuto .v3PromptField textarea:focus {
+  box-shadow: 0 1px 0 rgb(var(--c-accent) / 0.42);
+}
+
+.v4SourceTray {
+  background: rgb(var(--c-card) / 0.998);
+  border: 1px solid rgb(var(--c-accent) / 0.22);
+  border-radius: 17px;
+  bottom: calc(100% + 8px);
+  box-shadow: 0 24px 70px -30px rgb(var(--c-black) / 0.75);
+  left: 0;
+  margin: 0;
+  max-height: 230px;
+  overflow: hidden;
+  padding: 11px;
+  position: absolute;
+  right: 0;
+  z-index: 4;
+}
+
+.v4SourceTray > header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.v4SourceTray > header > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.v4SourceTray > header strong {
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+.v4SourceTray > header > button {
+  align-items: center;
+  background: var(--bg-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  cursor: pointer;
+  display: inline-flex;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+
+.v4SourceTray > div {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding-bottom: 3px;
+  scrollbar-width: thin;
+}
+
+.v4SourceTray > div > button {
+  align-items: center;
+  background: var(--bg-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  cursor: pointer;
+  display: grid;
+  flex: 0 0 190px;
+  gap: 8px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  min-width: 0;
+  padding: 6px;
+  text-align: left;
+}
+
+.v4SourceTray > div > button[aria-pressed='true'] {
+  border-color: rgb(var(--c-accent) / 0.48);
+  box-shadow: 0 0 0 2px rgb(var(--c-accent) / 0.08);
+}
+
+.v4SourceTray > div > button > span:last-child {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.v4SourceTray > div > button strong {
+  font-size: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v4SourceTray > div > button small {
+  color: var(--studio-muted);
+  font-size: 7px;
+  margin-top: 2px;
+}
+
+.v4ComposerFooter {
+  align-items: center;
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  padding-top: 8px;
+}
+
+.v4ComposerControls {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.v4ComposerControls::-webkit-scrollbar {
+  display: none;
+}
+
+.v4ComposerControls button,
+.v4ComposerControls label {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--studio-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 8px;
+  font-weight: 630;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 7px;
+}
+
+.v4ComposerControls button:hover,
+.v4ComposerControls label:hover,
+.v4ComposerControls label:has(input:checked) {
+  background: var(--bg-2);
+  color: var(--studio-ink);
+}
+
+.v4ComposerControls input {
+  clip: rect(0, 0, 0, 0);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.v4ComposerEstimate {
+  display: flex;
+  flex-direction: column;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.v4ComposerEstimate strong {
+  font-family: var(--font-mono-nums);
+  font-size: 10px;
+}
+
+.v4ComposerEstimate small {
+  color: var(--studio-muted);
+  font-size: 6px;
+}
+
+.v4ComposerSave,
+.v4ComposerSubmit {
+  align-items: center;
+  border-radius: 50%;
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.v4ComposerSave {
+  background: var(--bg-2);
+  border: 1px solid var(--border-subtle);
+  color: var(--studio-muted);
+  cursor: pointer;
+}
+
+.v4ComposerSubmit {
+  background: var(--studio-ink);
+  border: 0;
+  color: var(--studio-card);
+  cursor: not-allowed;
+  opacity: 0.92;
+}
+
+.v4ComposerStatus {
+  clip: rect(0, 0, 0, 0);
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.v3Composer.v4FloatingComposer.v4ComposerAdvanced {
+  bottom: 18px;
+  max-height: min(650px, calc(100dvh - 96px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 14px;
+  width: min(780px, calc(100vw - 32px));
+}
+
+.v4ComposerAdvanced .v3ComposerHeader {
+  margin-bottom: 8px;
+}
+
+.v4ComposerAdvanced .v3ArchitectureSwitch {
+  margin: 0 auto 9px;
+  max-width: 360px;
+}
+
+.v4ComposerAdvanced .v3ComposerFooter {
+  background: rgb(var(--c-card) / 0.985);
+  bottom: -14px;
+  margin: 10px -14px -14px;
+  padding: 10px 14px;
+  position: sticky;
+  z-index: 3;
+}
+
+@media (max-width: 1180px) {
+  .v4LabWithFloatingComposer .v3TemplateGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .v4LabWithFloatingComposer .v3ExploreGallery > div {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .v4LabWithFloatingComposer {
+    padding-bottom: 470px;
+  }
+
+  .v3Composer.v4FloatingComposer {
+    bottom: calc(70px + env(safe-area-inset-bottom));
+    padding: 10px;
+    width: calc(100vw - 16px);
+  }
+
+  .v4ComposerHeader {
+    gap: 6px;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .v4ComposerHeader > div:first-child {
+    display: none;
+  }
+
+  .v4ComposerTabs {
+    justify-self: start;
+  }
+
+  .v4AutoSourceGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .v4SourceCard {
+    grid-template-columns: 62px minmax(0, 1fr);
+  }
+
+  .v4SourceArtwork {
+    height: 62px;
+    width: 62px;
+  }
+
+  .v4SourceArtwork > i {
+    top: 12px;
+  }
+
+  .v4SourceActions {
+    margin-top: 4px;
+  }
+
+  .v4ComposerAuto .v3PromptField textarea {
+    font-size: 16px;
+    min-height: 45px;
+  }
+
+  .v4ComposerEstimate {
+    display: none;
+  }
+
+  .v4ComposerFooter {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .v3Composer.v4FloatingComposer.v4ComposerAdvanced {
+    bottom: calc(70px + env(safe-area-inset-bottom));
+    max-height: calc(100dvh - 150px);
+    width: calc(100vw - 16px);
+  }
+}
+
+@media (max-width: 560px) {
+  .v4LabWithFloatingComposer .v3TemplateGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .v4LabWithFloatingComposer .v3ExploreGallery > div {
+    display: flex;
+  }
+
+  .v4ComposerRecipes {
+    max-width: calc(100vw - 20px);
+  }
+}

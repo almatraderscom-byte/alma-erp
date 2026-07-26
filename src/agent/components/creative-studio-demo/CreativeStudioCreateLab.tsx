@@ -344,140 +344,148 @@ function ImageComposer({
     return (
       <section
         aria-labelledby="image-composer-title"
-        className={`${styles.v3Composer} ${styles.v4FloatingComposer}`}
+        className={`${styles.v3Composer} ${styles.v4FloatingComposer} ${styles.v4ComposerAuto}`}
       >
-        <header className={styles.v3ComposerHeader}>
-          <div>
-            <span className={styles.eyebrow}>IMAGE COMPOSER</span>
-            <h2 id="image-composer-title">Production Auto</h2>
-            <p>Existing one-brief flow with the default model and hard safeguards.</p>
-          </div>
-          <span className={styles.v3NoRunBadge}>No API connected</span>
-        </header>
-
-        <div className={styles.v3ArchitectureSwitch} role="tablist" aria-label="Image workflow">
-          <button
-            aria-selected
-            className={styles.v3ArchitectureActive}
-            onClick={() => setArchitecture('auto')}
-            role="tab"
-            type="button"
-          >
-            Auto
-            <small>Fast product flow</small>
-          </button>
-          <button
-            aria-selected={false}
-            onClick={() => setArchitecture('advanced')}
-            role="tab"
-            type="button"
-          >
-            Advanced
-            <small>7 production modes</small>
-          </button>
+        <div className={styles.v4ComposerRecipes} aria-label="Quick recipes">
+          {IMAGE_RECIPES.slice(0, 3).map((item) => (
+            <button
+              aria-pressed={recipe === item}
+              key={item}
+              onClick={() => setRecipe(item)}
+              type="button"
+            >
+              <StudioV2Icon name="template" size={13} />
+              {item}
+            </button>
+          ))}
         </div>
+
+        <header className={styles.v4ComposerHeader}>
+          <div>
+            <span className={styles.eyebrow}>IMAGE LAB</span>
+            <h2 id="image-composer-title">Create a product image</h2>
+          </div>
+          <div className={styles.v4ComposerTabs} role="tablist" aria-label="Image workflow">
+            <button
+              aria-selected
+              className={styles.v4ComposerTabActive}
+              onClick={() => setArchitecture('auto')}
+              role="tab"
+              type="button"
+            >
+              Auto
+            </button>
+            <button
+              aria-selected={false}
+              onClick={() => setArchitecture('advanced')}
+              role="tab"
+              type="button"
+            >
+              Advanced
+            </button>
+          </div>
+          <span className={styles.v4LocalOnlyBadge}>
+            <StudioV2Icon name="lock" size={12} />
+            $0 demo
+          </span>
+        </header>
 
         <div className={styles.v4AutoSourceGrid}>
           <section className={styles.v4SourceCard}>
-            <header>
-              <div>
-                <span>PRODUCT</span>
-                <strong>{localProductName || selectedProduct?.name || 'Choose product'}</strong>
-              </div>
-              <em>Required</em>
-            </header>
             <div className={`${styles.v4SourceArtwork} ${styles.v3Tone_coral}`}>
-              <span>ALMA</span>
+              <span>PRODUCT</span>
               <i />
               <b />
-              <small>{localProductName ? 'LOCAL DEMO SOURCE' : selectedProduct?.code}</small>
             </div>
-            <div className={styles.v4SourceActions}>
-              <button
-                onClick={() => {
-                  setLocalStatus('Clipboard paste is represented locally in this demo.')
-                  setLocalProductName('Pasted product image')
-                }}
-                type="button"
-              >
-                <StudioV2Icon name="projects" size={14} />
-                Paste
-              </button>
-              <label>
-                <input
-                  accept="image/*"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0]
-                    if (!file) return
-                    setLocalProductName(file.name)
-                    setLocalStatus(`${file.name} staged locally as the product source.`)
+            <div className={styles.v4SourceContent}>
+              <span>PRODUCT</span>
+              <strong>{localProductName || selectedProduct?.name || 'Choose product'}</strong>
+              <small>{localProductName ? 'Local demo source' : selectedProduct?.code}</small>
+              <div className={styles.v4SourceActions}>
+                <button
+                  onClick={() => {
+                    setLocalStatus('Clipboard paste is represented locally in this demo.')
+                    setLocalProductName('Pasted product image')
                   }}
-                  type="file"
-                />
-                <StudioV2Icon name="plus" size={14} />
-                Upload
-              </label>
-              <button
-                aria-expanded={sourceTray === 'product-gallery'}
-                onClick={() =>
-                  setSourceTray((current) => current === 'product-gallery' ? null : 'product-gallery')
-                }
-                type="button"
-              >
-                <StudioV2Icon name="grid" size={14} />
-                Gallery
-              </button>
+                  type="button"
+                >
+                  <StudioV2Icon name="projects" size={13} />
+                  Paste
+                </button>
+                <label>
+                  <input
+                    accept="image/*"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      if (!file) return
+                      setLocalProductName(file.name)
+                      setLocalStatus(`${file.name} staged locally as the product source.`)
+                    }}
+                    type="file"
+                  />
+                  <StudioV2Icon name="plus" size={13} />
+                  Upload
+                </label>
+                <button
+                  aria-expanded={sourceTray === 'product-gallery'}
+                  onClick={() =>
+                    setSourceTray((current) => current === 'product-gallery' ? null : 'product-gallery')
+                  }
+                  type="button"
+                >
+                  <StudioV2Icon name="grid" size={13} />
+                  Gallery
+                </button>
+              </div>
             </div>
           </section>
 
           <section className={styles.v4SourceCard}>
-            <header>
-              <div>
-                <span>MODEL</span>
-                <strong>{localModelName || selectedAvatar?.name || 'Choose model'}</strong>
-              </div>
-              <em>Required</em>
-            </header>
             <div className={`${styles.v4SourceArtwork} ${styles.v4ModelArtwork} ${styles.v3Tone_ink}`}>
+              <span>MODEL</span>
               <i />
               <b />
-              <small>{localModelName ? 'NEW LOCAL MODEL' : selectedAvatar?.version}</small>
             </div>
-            <div className={styles.v4SourceActions}>
-              <button
-                aria-expanded={sourceTray === 'model-library'}
-                onClick={() =>
-                  setSourceTray((current) => current === 'model-library' ? null : 'model-library')
-                }
-                type="button"
-              >
-                <StudioV2Icon name="library" size={14} />
-                Library
-              </button>
-              <label>
-                <input
-                  accept="image/*"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0]
-                    if (!file) return
-                    setLocalModelName(file.name)
-                    setLocalStatus(`${file.name} staged locally as a new model reference.`)
-                  }}
-                  type="file"
-                />
-                <StudioV2Icon name="plus" size={14} />
-                Upload
-              </label>
-              <button
-                aria-expanded={sourceTray === 'avatar-library'}
-                onClick={() =>
-                  setSourceTray((current) => current === 'avatar-library' ? null : 'avatar-library')
-                }
-                type="button"
-              >
-                <StudioV2Icon name="agent" size={14} />
-                Avatar
-              </button>
+            <div className={styles.v4SourceContent}>
+              <span>MODEL</span>
+              <strong>{localModelName || selectedAvatar?.name || 'Choose model'}</strong>
+              <small>{localModelName ? 'New local model' : selectedAvatar?.version}</small>
+              <div className={styles.v4SourceActions}>
+                <button
+                  aria-expanded={sourceTray === 'model-library'}
+                  onClick={() =>
+                    setSourceTray((current) => current === 'model-library' ? null : 'model-library')
+                  }
+                  type="button"
+                >
+                  <StudioV2Icon name="library" size={13} />
+                  Library
+                </button>
+                <label>
+                  <input
+                    accept="image/*"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      if (!file) return
+                      setLocalModelName(file.name)
+                      setLocalStatus(`${file.name} staged locally as a new model reference.`)
+                    }}
+                    type="file"
+                  />
+                  <StudioV2Icon name="plus" size={13} />
+                  Upload
+                </label>
+                <button
+                  aria-expanded={sourceTray === 'avatar-library'}
+                  onClick={() =>
+                    setSourceTray((current) => current === 'avatar-library' ? null : 'avatar-library')
+                  }
+                  type="button"
+                >
+                  <StudioV2Icon name="agent" size={13} />
+                  Avatar
+                </button>
+              </div>
             </div>
           </section>
         </div>
@@ -491,8 +499,8 @@ function ImageComposer({
                 </span>
                 <strong>
                   {sourceTray === 'product-gallery'
-                    ? 'Choose an ERP-pinned product source'
-                    : 'Choose a saved model or approved avatar'}
+                    ? 'Choose an approved product'
+                    : 'Choose a saved model or avatar'}
                 </strong>
               </div>
               <button aria-label="Close source picker" onClick={() => setSourceTray(null)} type="button">
@@ -547,67 +555,62 @@ function ImageComposer({
         )}
 
         <label className={styles.v3PromptField}>
-          <span>Creative direction <em>optional in Auto</em></span>
-          <textarea onChange={(event) => setPrompt(event.target.value)} value={prompt} />
+          <span className={styles.srOnly}>Creative direction</span>
+          <textarea
+            aria-label="Creative direction"
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder="Describe the image you want to create…"
+            value={prompt}
+          />
         </label>
 
-        <div className={styles.v3AutoToggles}>
-          <label>
-            <input
-              checked={autoFamily}
-              onChange={(event) => setAutoFamily(event.target.checked)}
-              type="checkbox"
-            />
-            <span>
-              <strong>Family variant</strong>
-              <small>Deterministic preset chain</small>
-            </span>
-          </label>
-          <label>
-            <input
-              checked={autoReel}
-              onChange={(event) => setAutoReel(event.target.checked)}
-              type="checkbox"
-            />
-            <span>
-              <strong>Add 6 sec reel</strong>
-              <small>Separate Veo cost review</small>
-            </span>
-          </label>
-        </div>
-
-        <div className={styles.v3ComposerTrust}>
-          <div>
-            <span>ENGINE</span>
-            <strong>Fal · FASHN v1.6</strong>
-            <small>Commercial · 1K fixed delivery contract</small>
+        <footer className={styles.v4ComposerFooter}>
+          <div className={styles.v4ComposerControls} aria-label="Auto image settings">
+            <button type="button">
+              <StudioV2Icon name="image" size={13} />
+              FASHN v1.6
+            </button>
+            <button type="button">4:5</button>
+            <button type="button">1K</button>
+            <label>
+              <input
+                checked={autoFamily}
+                onChange={(event) => setAutoFamily(event.target.checked)}
+                type="checkbox"
+              />
+              Family
+            </label>
+            <label>
+              <input
+                checked={autoReel}
+                onChange={(event) => setAutoReel(event.target.checked)}
+                type="checkbox"
+              />
+              + 6s reel
+            </label>
           </div>
-          <div>
-            <span>ESTIMATE</span>
-            <strong>৳9.38 image only</strong>
-            <small>Reel estimate is never bundled silently</small>
-          </div>
-        </div>
-
-        <footer className={styles.v3ComposerFooter}>
-          <div>
-            <StudioV2Icon name="lock" size={15} />
-            <span>
-              <strong>{selectedProduct?.status === 'needs_reference' ? 'Source needs attention' : 'Ready for cost review'}</strong>
-              <small>{localStatus}</small>
-            </span>
-          </div>
+          <span className={styles.v4ComposerEstimate}>
+            <strong>৳9.38</strong>
+            <small>review first</small>
+          </span>
           <button
-            className={styles.secondaryButton}
+            aria-label="Save local image brief"
+            className={styles.v4ComposerSave}
             onClick={() => setLocalStatus('Auto brief saved in local component state only.')}
             type="button"
           >
-            Save local brief
+            <StudioV2Icon name="check" size={15} />
           </button>
-          <button className={styles.v3DisconnectedButton} disabled type="button">
-            Generate disconnected
+          <button
+            aria-label="Generation disconnected in demo"
+            className={styles.v4ComposerSubmit}
+            disabled
+            type="button"
+          >
+            <StudioV2Icon name="publish" size={17} />
           </button>
         </footer>
+        <p className={styles.v4ComposerStatus} role="status">{localStatus}</p>
       </section>
     )
   }
@@ -615,7 +618,7 @@ function ImageComposer({
   return (
     <section
       aria-labelledby="image-composer-title"
-      className={`${styles.v3Composer} ${styles.v4FloatingComposer}`}
+      className={`${styles.v3Composer} ${styles.v4FloatingComposer} ${styles.v4ComposerAdvanced}`}
     >
       <header className={styles.v3ComposerHeader}>
         <div>
@@ -1483,13 +1486,11 @@ export function CreativeStudioCreateLab({
         </div>
       }
     >
-      {kind === 'video' && (
-        <AvatarRail
-          onNavigate={onNavigate}
-          onSelect={(avatar) => setSelectedAvatarId(avatar.id)}
-          selectedId={selectedAvatarId}
-        />
-      )}
+      <AvatarRail
+        onNavigate={onNavigate}
+        onSelect={(avatar) => setSelectedAvatarId(avatar.id)}
+        selectedId={selectedAvatarId}
+      />
 
       {tab === 'history' ? (
         <HistoryLedger kind={kind} />
