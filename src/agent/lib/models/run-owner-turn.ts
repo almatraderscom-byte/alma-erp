@@ -55,6 +55,7 @@ import { captureAgentError } from '@/agent/lib/sentry'
 import { logCost } from '@/agent/lib/cost-events'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { isTurnCancelRequested, getTurnInstructionOrigin } from '@/agent/lib/turn-status'
+import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
@@ -2590,6 +2591,36 @@ async function* runAlternateProviderTurn(
       finalText += footer
       yield { type: 'text_delta', delta: footer }
     }
+    // OWNER RULING 2026-07-26 — the agent sets its OWN wake-up. Hitting the
+    // hosting deadline is the agent's problem to handle, not a reason to sit and
+    // wait for Boss to type "continue": save where you are, schedule the next
+    // hop, carry on. Scheduled SERVER-side (worker queue) so it continues whether
+    // or not his app is open. Bounded by the hop counter + the cost caps; an
+    // unanswered ask card still stops everything (checked inside).
+    if (taskUnfinished) {
+      const doneWork = toolRecords
+        .filter((r) => r.status === 'success')
+        .slice(-8)
+        .map((r) => r.toolName)
+      const { scheduleSelfContinue } = await import('@/agent/lib/self-continue')
+      const wake = await scheduleSelfContinue({
+        conversationId,
+        summary:
+          `মূল কাজ: ${(lastUserText || '').slice(0, 300)}\n`
+          + `এই টার্নে যা হয়েছে: ${doneWork.join(' · ') || 'কিছু না'}\n`
+          + `শেষ অবস্থা: ${finalText.slice(-400)}`,
+      })
+      if (wake.scheduled) {
+        const note = `\n\n_(কাজ শেষ হয়নি — নিজে থেকেই ${Math.round(SELF_CONTINUE_DELAY_MS / 1000)} সেকেন্ড পরে বাকিটা চালিয়ে যাব, hop ${wake.hops}. আপনাকে কিছু বলতে হবে না।)_`
+        finalText += note
+        yield { type: 'text_delta', delta: note }
+      }
+    } else {
+      // Finished cleanly — the chain resets so the next long job starts fresh.
+      const { clearHops } = await import('@/agent/lib/self-continue')
+      await clearHops(conversationId).catch(() => {})
+    }
+
     if (taskUnfinished && !toolRecords.some((r) => r.toolName === 'save_task_checkpoint')) {
       try {
         const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
