@@ -13,6 +13,30 @@ export interface LiveCallResult<T = unknown> {
   error?: string
 }
 
+/**
+ * KV kill-switch, default OFF like every other new capability in this project.
+ *
+ * A live session is a Chromium held open for minutes on the same two-core box
+ * that carries the phone calls, so it is opt-in: the owner turns it on when he
+ * wants it and can turn it off from settings without a deploy if it ever gets in
+ * the way of a call.
+ */
+export const LIVE_VIEW_ENABLED_KEY = 'browser_live_view_enabled'
+
+export async function isLiveViewEnabled(): Promise<boolean> {
+  try {
+    const { prisma } = await import('@/lib/prisma')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = await (prisma as any).agentKvSetting.findUnique({
+      where: { key: LIVE_VIEW_ENABLED_KEY },
+      select: { value: true },
+    })
+    return row?.value === 'true'
+  } catch {
+    return false // unreadable setting ⇒ stay off, never open a browser on a guess
+  }
+}
+
 export function liveBase(): string | null {
   const base = (process.env.BROWSER_LIVE_BASE ?? '').trim().replace(/\/$/, '')
   return base || null

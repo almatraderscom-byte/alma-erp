@@ -8,6 +8,7 @@
 import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { callLive, requireOwner } from './relay'
+import { isLiveViewEnabled, LIVE_VIEW_ENABLED_KEY } from '@/agent/lib/browser/live-client'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -31,12 +32,28 @@ export async function POST(req: NextRequest) {
   const action = String(body.action ?? '')
 
   switch (action) {
-    case 'start':
+    case 'start': {
+      // Opening a browser is the only action that creates new load on the box
+      // carrying the phone calls, so it is the one gated by the kill-switch.
+      // Stopping, clearing and reading stay available even when it is off —
+      // switching a capability off must never strand a running session.
+      if (!(await isLiveViewEnabled())) {
+        return Response.json(
+          {
+            error: 'browser_live_disabled',
+            message:
+              'লাইভ ব্রাউজার এখন বন্ধ আছে, Boss। চালু করতে বলুন — "লাইভ ব্রাউজার চালু করো" ' +
+              `(settings: ${LIVE_VIEW_ENABLED_KEY} = true)।`,
+          },
+          { status: 403 },
+        )
+      }
       return callLive('/live/start', {
         method: 'POST',
-        body: { startUrl: body.startUrl, goal: body.goal },
+        body: { startUrl: body.startUrl, goal: body.goal, profile: body.profile },
         timeoutMs: 45_000,
       })
+    }
     case 'stop':
       return callLive('/live/stop', { method: 'POST', timeoutMs: 15_000 })
     case 'input':
