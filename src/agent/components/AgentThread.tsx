@@ -942,7 +942,26 @@ function ActivityTimeline({
     return out
   }, [entries, live])
 
-  if (phases.length === 0) return null
+  // OWNER BUG, verified live 2026-07-26: for the first 10–20 seconds of a turn
+  // this rendered NOTHING — Boss saw a bare spinner and could not open anything.
+  // Measured on his own chat: at 10s only the spoken line existed; the thought
+  // block appeared at 23s. The cause is stream ORDER, not the client — DeepSeek
+  // emits its reasoning AFTER the spoken preamble, so there was genuinely nothing
+  // to draw. An empty screen is still the wrong answer: the process section now
+  // opens immediately with an honest placeholder and fills in as reasoning lands.
+  if (phases.length === 0 && !live) return null
+
+  // OWNER BUG, verified live on his own chat 2026-07-26: for the first 10–20
+  // seconds of a turn this drew NOTHING — a bare spinner with nothing to open.
+  // Measured: at 10s only the spoken line existed; the thought block appeared at
+  // 23s. The cause is stream ORDER rather than the client — DeepSeek emits its
+  // reasoning AFTER the spoken preamble, so there was genuinely nothing to draw
+  // yet. An empty screen is still the wrong answer. The process section now opens
+  // from the first moment with an honest placeholder, and real reasoning replaces
+  // it the instant it arrives.
+  const shown: Phase[] = phases.length > 0
+    ? phases
+    : [{ headline: 'কাজ শুরু করছি…', detail: '', tools: [], live: true }]
 
   const seconds = thinkingMs != null ? Math.max(1, Math.round(thinkingMs / 1000)) : null
   const baseSrc = (thinking ?? entries.filter((e) => e.t === 'think').map((e) => (e as { text: string }).text).join('\n')).trim()
@@ -968,13 +987,13 @@ function ActivityTimeline({
           </svg>
         )}
         <span>{summary}</span>
-        <span className="rounded-full bg-muted/10 px-1.5 py-px text-[10px] tabular-nums text-muted/80">{phases.length} ধাপ</span>
+        <span className="rounded-full bg-muted/10 px-1.5 py-px text-[10px] tabular-nums text-muted/80">{shown.length} ধাপ</span>
       </div>
 
       {/* Phases: bold headline → collapsed tool pill → tool → input/output. */}
       <div className="flex flex-col">
-        {phases.map((p, i) => {
-          const isLast = i === phases.length - 1
+        {shown.map((p, i) => {
+          const isLast = i === shown.length - 1
           const headline = p.headline || (p.tools[0] ? toolDisplay(p.tools[0].name).label : 'কাজ করছি')
           const hasDetail = p.detail.trim().length > 0 && p.detail.trim() !== p.headline.trim()
           const headOpen = open[`h${i}`] ?? false
@@ -1522,14 +1541,25 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     // separate steps-card + body blocks below.
                     const chrono = (msg.timeline ?? []).some((e) => e.t === 'text')
                     if (chrono) return <ChronoFlow msg={msg} onOpenFile={(id) => onArtifactOpen(id)} />
-                    if (msg.timeline?.length || msg.thinking || (msg.toolActivity && msg.toolActivity.length > 0)) {
+                    // A RUNNING turn always shows the process section, even before
+                    // there is anything in it (owner bug, verified live 2026-07-26:
+                    // the first 10–20 seconds drew nothing at all, so there was
+                    // nothing for Boss to open). `live` stays true for as long as the
+                    // turn runs — it used to flip off the moment the spoken first
+                    // line arrived, which is precisely when the real thinking starts.
+                    if (
+                      msg.streaming
+                      || msg.timeline?.length
+                      || msg.thinking
+                      || (msg.toolActivity && msg.toolActivity.length > 0)
+                    ) {
                       return (
                         <ActivityTimeline
                           timeline={msg.timeline}
                           thinking={msg.thinking}
                           thinkingMs={msg.thinkingMs}
                           toolActivity={msg.toolActivity}
-                          live={Boolean(msg.streaming) && !msg.text}
+                          live={Boolean(msg.streaming)}
                         />
                       )
                     }
