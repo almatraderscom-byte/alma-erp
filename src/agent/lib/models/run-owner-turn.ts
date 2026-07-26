@@ -56,6 +56,7 @@ import { logCost } from '@/agent/lib/cost-events'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { isTurnCancelRequested, getTurnInstructionOrigin } from '@/agent/lib/turn-status'
 import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
+import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUserTextPeek } from '@/agent/lib/history-trim'
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
@@ -410,6 +411,29 @@ async function* runAlternateProviderTurn(
       })
     askAnswers = new Map(askRows.map((r) => [r.id, { status: r.status, selectedOption: r.selectedOption }]))
   } catch { /* fail-open */ }
+
+  // A SELF-CONTINUE hop resumes from its CHECKPOINT, not from the transcript
+  // (owner ruling 2026-07-26): "তুমি নিজেও তো এভাবে কাজ করো না — একটি session শেষ
+  // হওয়ার পর পুরো history নতুন করে পড়ো না, আগের notes/progress/checkpoint থেকে শুরু
+  // করো"। He is right: the resume directive already carries what was achieved and
+  // what is next, so replaying the whole thread only re-bills tokens for context
+  // the hop does not need.
+  const isSelfContinueHop = /^\[SELF-CONTINUE/m.test(lastUserTextPeek(allRows))
+  if (isSelfContinueHop && rows.length > SELF_CONTINUE_KEEP_MESSAGES) {
+    rows = rows.slice(-SELF_CONTINUE_KEEP_MESSAGES)
+  }
+
+  // Size trim on top of turn-count compaction (owner cost analysis 2026-07-26).
+  // Keeping "the last 6 turns" is meaningless when one tool result is a whole
+  // audit JSON — his meter showed ~300k tokens re-sent per turn at $0.17 each.
+  // Oversized OLDER blocks keep their head and tail with an honest marker; the
+  // newest messages stay verbatim.
+  const rowsBefore = estimateChars(rows)
+  rows = trimHistoryBySize(rows)
+  const rowsAfter = estimateChars(rows)
+  if (rowsBefore - rowsAfter > 20_000) {
+    console.log(`[history-trim] ${Math.round((rowsBefore - rowsAfter) / 1000)}k chars trimmed from replayed history`)
+  }
 
   let messages: NeutralMsg[] = dbRowsToNeutral(rows, askAnswers)
 
