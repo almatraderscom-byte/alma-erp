@@ -34,6 +34,8 @@ export type ClaimViolationCategory =
   | 'tool_not_called'
   /** The opening line promised something; the work failed and the reply never said so. */
   | 'stale_promise'
+  /** The reply asserts a card is waiting for Boss when no card exists. */
+  | 'phantom_card_state'
 
 export interface ClaimViolation {
   category: ClaimViolationCategory
@@ -661,6 +663,45 @@ export function detectUncorrectedOpeningPromise(openingLine: string, replyText: 
   }]
 }
 
+// ── "Waiting for approval" with nothing to approve (owner incident 2026-07-26) ─
+//
+// The mirror image of a promised-but-missing card: the head parks the turn on a
+// card that does not exist — "কার্ডটা অনুমোদনের অপেক্ষায় আছে" — so Boss waits for
+// a button that was never drawn, or is told to approve work already applied. It
+// asserted card state from its own memory instead of reading it.
+
+const AWAITING_APPROVAL_CLAIM = new RegExp(
+  [
+    // "…অনুমোদনের অপেক্ষায় (আছি/আছে/রয়েছে)"
+    '(?:অনুমোদন(?:ের)?|approval|approve)[^।.!?\\n]{0,30}?অপেক্ষা(?:য়|\\s*কর)',
+    // "card-টা approve করুন / অনুমোদন দিন" — asking him to act NOW. Past tense
+    // ("গতকাল কার্ডটা approve করেছিলেন") is history, not a phantom wait.
+    '(?:card|কার্ড)[^।.!?\\n]{0,30}?(?:approve\\s*কর(?:ুন|ো|তে\\s*হবে)|অনুমোদন\\s*(?:দিন|করুন|দেবেন|দরকার))',
+    // "waiting for your approval"
+    'wait(?:ing)?\\s+for\\s+(?:your\\s+)?approval',
+  ].join('|'),
+  'i',
+)
+
+/**
+ * The reply says something is waiting for Boss's approval while NO card is
+ * pending. `pendingCardCount` must come from the server (readPendingCards),
+ * never from the model — that is the whole point.
+ */
+export function detectPhantomApprovalWait(replyText: string, pendingCardCount: number): ClaimViolation[] {
+  if (pendingCardCount > 0) return []
+  const text = replyText.trim()
+  if (text.length < 6) return []
+  const m = AWAITING_APPROVAL_CLAIM.exec(text)
+  if (!m) return []
+  return [{
+    category: 'phantom_card_state',
+    ruleId: 'awaiting_approval_without_a_card',
+    matchedSnippet: stripWhitespace(m[0]).slice(0, 120),
+    requiredTools: ['get_pending_approvals'],
+  }]
+}
+
 // ── Prose-choice detection (owner rule 2026-07-07, live-hit 2026-07-16) ─────
 //
 // HARD RULE: giving the Boss a choice means an ask_user card — no exceptions.
@@ -939,6 +980,12 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'ওই লাইনটা Boss-এর স্ক্রিনে থেকে গেছে — মুছে ফেলা যায় না, তাই উত্তরে স্পষ্ট করে সংশোধন করতে হবে। ' +
     'এখন হয় সত্যিই কার্ড তৈরির tool কল করুন, নয়তো সরাসরি লিখুন "কার্ড তৈরি করতে পারিনি" এবং কেন — ' +
     'চুপ করে অন্য কথা বলা চলবে না।',
+  phantom_card_state:
+    'আপনি বলেছেন কিছু একটা Boss-এর অনুমোদনের অপেক্ষায় আছে — কিন্তু সার্ভারে এই চ্যাটে কোনো pending card নেই। ' +
+    'Boss তাহলে এমন একটা বোতামের জন্য বসে থাকবেন যেটা কোথাও নেই, অথবা যে কাজ ইতিমধ্যে হয়ে গেছে সেটা আবার approve করতে যাবেন। ' +
+    'কার্ডের অবস্থা কখনো স্মৃতি থেকে বলবেন না — get_pending_approvals দিয়ে পড়ে নিন। ' +
+    'সত্যিই অনুমোদন দরকার হলে এখনই সঠিক approval tool call করে আসল কার্ড তৈরি করুন; ' +
+    'দরকার না হলে "অপেক্ষায় আছি" বাদ দিয়ে কাজের আসল অবস্থা বলুন।',
   general_write:
     'আপনি কাজ সম্পন্ন হওয়ার দাবি করেছেন কিন্তু এই turn-এ কোনো সফল write/action tool call হয়নি। ' +
     'এখনই প্রয়োজনীয় tool call করুন এবং success result পেলে তবেই confirm দিন। ' +

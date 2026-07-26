@@ -50,6 +50,7 @@ import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/
 import { runPreToolHooks, runPostToolHooks } from '@/agent/lib/turn-hooks'
 import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
 import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
+import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -89,6 +90,7 @@ import {
   detectMissingCardViolation,
   detectProseChoiceViolation,
   detectUncorrectedOpeningPromise,
+  detectPhantomApprovalWait,
   detectFabricatedStatViolations,
   detectRoboticStyleViolations,
   detectAsyncCompletionViolation,
@@ -1693,6 +1695,15 @@ async function* runAlternateProviderTurn(
     }
   }
 
+  // ── What is ACTUALLY in front of Boss (owner incident 2026-07-26) ──────────
+  // The head used to assert card state from memory — "কার্ড অনুমোদনের অপেক্ষায়
+  // আছি" with no card in existence, or for work already applied. It now reads
+  // the answer instead. Appended at the END of messages (the self-correct
+  // pattern) so the cached prompt prefix is untouched — this is a per-turn
+  // volatile fact and must never sit in the cached bytes.
+  const pendingCardsAtStart = await readPendingCards(conversationId)
+  messages = [...messages, { role: 'user', content: buildCardStateNote(pendingCardsAtStart) }]
+
   try {
     for (let iteration = 0; iteration < maxIterations; iteration++) {
       if (signal?.aborted) break
@@ -2066,6 +2077,14 @@ async function* runAlternateProviderTurn(
             // every rewrite (finalText resets to it below), so a promise made
             // there can never be corrected by a rewrite — the reply must own it.
             violations.push(...detectUncorrectedOpeningPromise(preambleText, iterationText.trim()))
+          }
+          // The mirror case: parking Boss on a card that does not exist. Counted
+          // from the server, plus anything staged during this turn.
+          if (violations.length === 0) {
+            violations.push(...detectPhantomApprovalWait(
+              iterationText.trim(),
+              pendingCardsAtStart.length + stagedCards + emittedAskCards.length + confirmCardsEmitted,
+            ))
           }
           // Queued work is not finished work: block "অডিট সম্পন্ন" while the only
           // evidence is a 200 ms queue insert (owner incident 2026-07-25).

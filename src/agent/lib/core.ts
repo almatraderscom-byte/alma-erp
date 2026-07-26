@@ -43,6 +43,7 @@ import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/
 import { runPreToolHooks, runPostToolHooks } from '@/agent/lib/turn-hooks'
 import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
 import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
+import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
 import { trimToolResultForHistory } from '@/agent/lib/context-trim'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
@@ -84,6 +85,7 @@ import {
   detectExplicitInstructionViolations,
   countStagedCards,
   detectMissingCardViolation,
+  detectPhantomApprovalWait,
   detectProseChoiceViolation,
   MAX_VERIFY_RETRIES,
   type ClaimViolation,
@@ -1163,6 +1165,12 @@ export async function* runAgentTurn(
   let maxIterations = MAX_TOOL_ITERATIONS
   const claimedSteeringIds = new Set<string>()
 
+  // What is ACTUALLY in front of Boss — read, not remembered (parity with
+  // run-owner-turn; owner incident 2026-07-26). Appended at the END of messages
+  // so the cached prompt prefix is untouched.
+  const pendingCardsAtStart = await readPendingCards(conversationId)
+  messages = [...messages, { role: 'user', content: [{ type: 'text', text: buildCardStateNote(pendingCardsAtStart) }] }]
+
   try {
     for (let iteration = 0; iteration < maxIterations; iteration++) {
       if (signal?.aborted) break
@@ -1389,6 +1397,13 @@ export async function* runAgentTurn(
             // 2026-07-16). Same zero-card precondition: an emitted ask card
             // legitimately carries the question.
             violations.push(...detectProseChoiceViolation(finalText))
+          }
+          // Parking Boss on a card that does not exist (owner incident 2026-07-26).
+          if (finalText && violations.length === 0) {
+            violations.push(...detectPhantomApprovalWait(
+              finalText,
+              pendingCardsAtStart.length + stagedCards + emittedConfirmCards.length + askCardsEmitted,
+            ))
           }
           if (finalText && violations.length === 0) {
             violations.push(...detectExplicitInstructionViolations(finalText, currentOwnerInstructions))
