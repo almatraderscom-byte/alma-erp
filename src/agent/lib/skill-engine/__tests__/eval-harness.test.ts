@@ -176,9 +176,22 @@ describe('scenario hygiene', () => {
     }
   })
 
-  it('covers all three SEO skills, three scenarios each', () => {
-    for (const skill of ['seo-auditing-own-site', 'seo-fixing-own-site', 'seo-fixing-client-site']) {
-      expect(ALL_SCENARIOS.filter((s) => s.expectSkill === skill)).toHaveLength(3)
+  // Three per skill is the recommended MINIMUM, so this is a floor, not an
+  // equality. A promotion may legitimately add a boundary case that expects an
+  // already-covered skill — `listing/not-an-seo-fix` expects the fixing skill
+  // precisely to prove the listing rule does not steal that message.
+  it('every promoted skill carries at least three scenarios', () => {
+    for (const skill of [
+      'seo-auditing-own-site',
+      'seo-fixing-own-site',
+      'seo-fixing-client-site',
+      'alma-finance-brief',
+      'alma-research',
+      'alma-staff-dispatch',
+      'alma-product-listing',
+      'alma-product-social-post',
+    ]) {
+      expect(ALL_SCENARIOS.filter((s) => s.expectSkill === skill).length).toBeGreaterThanOrEqual(3)
     }
   })
 })

@@ -1,20 +1,32 @@
 {
   "name": "alma-product-social-post",
-  "description": "পণ্যের সোশ্যাল পোস্ট তৈরি: ছবি + বাংলা ক্যাপশন — পোস্ট owner-gated, brand/Islamic guardrail।",
-  "version": "0.1.0",
+  "description": "Builds a social post for one item — image plus Bangla caption — ready for Boss to approve. Use when Boss asks for a Facebook post, a caption, or promotion of something we sell. Publishing is an owner-gated card; this skill prepares the post and never publishes it.",
+  "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
   "businessScopes": ["ALMA_LIFESTYLE"],
   "riskTier": "medium",
+  "extends": "alma-base",
+  "whenNotToUse": "পণ্যটা ওয়েবসাইটে তুলতে বলা হলে → alma-product-listing। পেইড ক্যাম্পেইন/বাজেট → alma-meta-campaign-launch। কাস্টমারের ইনবক্সে উত্তর → alma-customer-support।",
   "requiredCapabilities": [
     "get_product",
     "generate_image",
     "list_creative_studio_assets",
     "post_to_facebook"
   ],
+  "outputContract": {
+    "kind": "approval_card",
+    "mustInclude": ["caption_bangla", "image_ref", "product_ref"]
+  },
+  "stopConditions": [
+    "পণ্যের দাম বা স্টক নিশ্চিত না হলে — ক্যাপশনে সংখ্যা বসাবে না",
+    "ছবি বা ক্যাপশন ইসলামি guardrail-এ আটকালে — বদলে দেবে না, Boss-কে বলবে",
+    "কোন পণ্য সেটা পরিষ্কার না হলে — একটা ধরে নিয়ে বানাবে না"
+  ],
+  "done": [{ "tool": "get_product" }],
   "networkPolicy": "allowlist",
   "writePolicy": "owner_gated",
   "approvalPolicy": "always",
   "maxSteps": 5,
-  "status": "draft"
+  "status": "active"
 }

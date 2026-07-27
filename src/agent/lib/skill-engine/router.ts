@@ -133,6 +133,16 @@ const STAFF_PRESENCE =
  */
 const PARCEL_CONTEXT = /(\border\b|অর্ডার|parcel|পার্সেল|courier|কুরিয়ার|shipment|চালান)/i
 
+/**
+ * "notun panjabi ta website e tolo" — putting a PRODUCT up, not editing the
+ * site. Keyword scoring gets this wrong for a structural reason: the product is
+ * named ("panjabi"), so the only word both skills can see is "website", and
+ * `alma-website` owns that word. The verb is what separates them, exactly as
+ * with fix-vs-audit.
+ */
+const LISTING_ASK =
+  /((?:website|site|সাইট)\s*(?:e|ে|তে)?\s*(?:tolo|tulo|tul\b|upload|add\b|তোল|তুল|যোগ)|নতুন\s*পণ্য\s*(?:তোল|যোগ)|\blist\s*(?:the\s*)?product\b)/i
+
 export interface RouterRule {
   id: string
   skill: string
@@ -162,6 +172,14 @@ export const RULES: RouterRule[] = [
     skill: 'seo-fixing-own-site',
     test: (t) => isSeoTopic(t) && (FIX_VERB.test(t) || FIX_VERB_BANGLISH.test(t)) && !AUDIT_ASK.test(t),
     why: 'কাজের ক্রিয়াপদ + SEO বিষয় = ফিক্স, রিপোর্ট নয়',
+  },
+  {
+    id: 'product-listing',
+    skill: 'alma-product-listing',
+    // Ordered AFTER the SEO rules on purpose: "almatraders.com er meta thik
+    // koro" is a fix on an existing listing, not a new one.
+    test: (t) => LISTING_ASK.test(t) && !isSeoTopic(t),
+    why: 'পণ্য সাইটে তোলার কথা — সাইটের কনটেন্ট এডিট নয়',
   },
   {
     id: 'staff-attendance',

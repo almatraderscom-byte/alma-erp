@@ -8,28 +8,28 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 > engine on today would expose exactly one skill (`alma-owner-daily-briefing`).
 > That alone explains why the skills have never done anything.
 
-- Messages that SHOULD pin a skill: **21** — correct top pick: **14** (**67%**)
-- Wrong skill chosen: **5** · nothing chosen: **2**
+- Messages that SHOULD pin a skill: **21** — correct top pick: **15** (**71%**)
+- Wrong skill chosen: **4** · nothing chosen: **2**
 - Messages that should pin NOTHING: **7** — false triggers: **2**
 
 | # | message | expected | picked (top 3) | result |
 |---|---|---|---|---|
 | seo-fix-alt | almatraders.com এর ছবির alt ঠিক করো | seo-fixing-own-site | seo-fixing-own-site, seo-auditing-own-site, seo-fixing-client-site | ✅ hit |
 | seo-audit-full | almatraders.com এর পূর্ণাঙ্গ SEO অডিট করো | seo-auditing-own-site | seo-fixing-own-site, seo-auditing-own-site, seo-fixing-client-site | ❌ wrong skill |
-| seo-fix-meta | product-code-110 এর meta description লিখে দাও | seo-fixing-own-site | alma-website, alma-meta-campaign-launch, alma-product-listing | ❌ wrong skill |
+| seo-fix-meta | product-code-110 এর meta description লিখে দাও | seo-fixing-own-site | alma-product-listing, alma-website, alma-meta-campaign-launch | ❌ wrong skill |
 | seo-client | client er site example.com er seo dekho | seo-fixing-client-site | seo-fixing-client-site, seo-fixing-own-site, seo-auditing-own-site | ✅ hit |
 | seo-fix-slug-banglish | almatraders.com er baki slug problem gulo thik kore dao | seo-fixing-own-site | alma-agent-incident-diagnosis, seo-auditing-own-site, seo-fixing-client-site | ❌ wrong skill |
-| seo-fix-meta-banglish | almatraders.com er product gulor meta description thik kore dao | seo-fixing-own-site | alma-website, seo-fixing-own-site, alma-meta-campaign-launch | ❌ wrong skill |
+| seo-fix-meta-banglish | almatraders.com er product gulor meta description thik kore dao | seo-fixing-own-site | alma-product-listing, alma-website, seo-fixing-own-site | ❌ wrong skill |
 | seo-audit-banglish | almatraders.com er purno seo audit koro | seo-auditing-own-site | seo-auditing-own-site, seo-fixing-own-site, seo-fixing-client-site | ✅ hit |
 | staff | Mustahid ajke kokhon asche? | alma-staff-dispatch | — | ⬜ nothing picked |
-| listing | notun panjabi ta website e tolo | alma-product-listing | alma-website, seo-fixing-client-site | ❌ wrong skill |
+| listing | notun panjabi ta website e tolo | alma-product-listing | alma-product-listing, alma-website, seo-fixing-client-site | ✅ hit |
 | finance | ei masher khoroch koto holo? | alma-finance-brief | alma-finance-brief | ✅ hit |
 | cs | customer der message gulor reply dao | alma-customer-support | alma-customer-support | ✅ hit |
 | social | facebook e notun product er post dao | alma-product-social-post | alma-product-social-post, alma-product-listing, alma-website | ✅ hit |
 | briefing | ajker briefing dao | alma-owner-daily-briefing | alma-owner-daily-briefing | ✅ hit |
 | marketing | marketing kemon cholche? | alma-marketing | alma-marketing | ✅ hit |
 | campaign | ekta meta campaign chalu koro 5000 takar | alma-meta-campaign-launch | alma-meta-campaign-launch, alma-marketing, alma-website | ✅ hit |
-| website | website e ki ki somossa ache? | alma-website | alma-website, seo-fixing-client-site | ✅ hit |
+| website | website e ki ki somossa ache? | alma-website | alma-website, alma-product-listing, seo-fixing-client-site | ✅ hit |
 | incident | agent ta kaj korche na keno, dekho | alma-agent-incident-diagnosis | alma-agent-incident-diagnosis | ✅ hit |
 | invoice | ei invoice ta ERP te tolo | alma-invoice-to-erp | alma-invoice-to-erp, alma-research | ✅ hit |
 | audience | je customer ra beshi kene tader ekta audience banao | alma-audience-builder | alma-audience-builder, alma-customer-support, alma-meta-campaign-launch | ✅ hit |

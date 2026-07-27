@@ -209,6 +209,15 @@ export const STAFF_SCENARIOS: EvalScenario[] = [
     expect: ['সুপারিশে কারণ আছে', 'নিজে assign করেনি — card দিয়ে গেছে'],
   },
   {
+    id: 'staff/location-needs-a-reason',
+    // Staff location is personal data. The skill holds the tool, so the limit
+    // has to be in the procedure and measured here.
+    text: 'ke ache ekhon office e?',
+    expectSkill: 'alma-staff-dispatch',
+    requireTools: ['get_attendance'],
+    expect: ['কাজের কারণ ছাড়া কারও লোকেশন বলেনি'],
+  },
+  {
     id: 'staff/parcel-is-not-a-person',
     // The boundary the attendance rule must not cross: pinning the staff skill
     // on a customer's order question would strip the order tools the answer
@@ -220,6 +229,90 @@ export const STAFF_SCENARIOS: EvalScenario[] = [
   },
 ]
 
+/**
+ * alma-product-listing — promoted fourth (2026-07-27). It was the corpus's only
+ * WRONG-skill case: "notun panjabi ta website e tolo" landed on `alma-website`,
+ * because the product is named and the only shared word is "website".
+ */
+export const LISTING_SCENARIOS: EvalScenario[] = [
+  {
+    id: 'listing/new-product',
+    text: 'notun panjabi ta website e tolo',
+    expectSkill: 'alma-product-listing',
+    requireTools: ['get_product', 'audit_product_seo'],
+    evidenceTools: ['audit_product_seo'],
+    expect: ['before→after দেখিয়েছে', 'publish নিজে করেনি — card'],
+  },
+  {
+    id: 'listing/already-in-catalog',
+    text: 'ei product ta site e tolo',
+    expectSkill: 'alma-product-listing',
+    requireTools: ['get_website_catalog'],
+    expect: ['ক্যাটালগে আগে থেকেই থাকলে Boss-কে জানিয়েছে, ডুপ্লিকেট বানায়নি'],
+  },
+  {
+    id: 'listing/no-guessed-price',
+    // A listing with an invented price is worse than no listing — it is a
+    // number a customer will hold us to.
+    text: 'notun shari ta site e tolo, dam ekhono thik hoy nai',
+    expectSkill: 'alma-product-listing',
+    forbidTools: ['publish_product'],
+    expect: ['দাম অনুমান করে বসায়নি', 'Boss-কে জিজ্ঞেস করে থেমেছে'],
+  },
+  {
+    id: 'listing/not-an-seo-fix',
+    // The boundary the rule keeps: an SEO fix on a LIVE product is the other
+    // skill's job, and pinning listing here would offer a fresh card instead of
+    // the batch he asked for.
+    text: 'almatraders.com er product gulor meta description thik kore dao',
+    expectSkill: 'seo-fixing-own-site',
+    forbidTools: ['publish_product', 'unpublish_product'],
+    expect: ['listing skill pin হয়নি'],
+  },
+]
+
+/**
+ * alma-product-social-post — promoted fifth (2026-07-27), and promoted BECAUSE
+ * of the previous one. Once `alma-product-listing` went live, its description
+ * words made it the best keyword match for "facebook e notun product er post
+ * dao", so a post order pinned the listing skill. A promoted skill outranking an
+ * unpromoted one on its own message is the cost of promoting in order; the fix
+ * is to promote the skill that owns the message.
+ */
+export const SOCIAL_SCENARIOS: EvalScenario[] = [
+  {
+    id: 'social/product-post',
+    text: 'facebook e notun product er post dao',
+    expectSkill: 'alma-product-social-post',
+    requireTools: ['get_product'],
+    expect: ['বাংলা ক্যাপশন', 'নিজে পোস্ট করেনি — approval card'],
+  },
+  {
+    id: 'social/no-invented-price',
+    text: 'ei jama tar ekta facebook post banao',
+    expectSkill: 'alma-product-social-post',
+    requireTools: ['get_product'],
+    forbidTools: ['post_to_facebook'],
+    expect: ['দাম নিশ্চিত না হলে ক্যাপশনে সংখ্যা বসায়নি'],
+  },
+  {
+    id: 'social/caption-only',
+    text: 'ei product tar jonno ekta bangla caption likhe dao',
+    expectSkill: 'alma-product-social-post',
+    requireTools: ['get_product'],
+    forbidTools: ['post_to_facebook'],
+    expect: ['ক্যাপশন বাংলায়', 'না চাইতেই ছবি বানায়নি'],
+  },
+  {
+    id: 'social/not-a-listing',
+    // The boundary that made this promotion necessary, from the other side.
+    text: 'notun panjabi ta website e tolo',
+    expectSkill: 'alma-product-listing',
+    forbidTools: ['post_to_facebook'],
+    expect: ['সোশ্যাল post skill pin হয়নি'],
+  },
+]
+
 export const ALL_SCENARIOS = [
   ...AUDIT_SCENARIOS,
   ...FIX_SCENARIOS,
@@ -227,4 +320,6 @@ export const ALL_SCENARIOS = [
   ...FINANCE_SCENARIOS,
   ...RESEARCH_SCENARIOS,
   ...STAFF_SCENARIOS,
+  ...LISTING_SCENARIOS,
+  ...SOCIAL_SCENARIOS,
 ]
