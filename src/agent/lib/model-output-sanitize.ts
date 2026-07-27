@@ -195,3 +195,31 @@ export function typedToolCallsInsteadOfCalling(input: {
   if (!input.rawText?.trim()) return false
   return stripToolCallMarkup(input.rawText) !== input.rawText
 }
+
+
+/**
+ * How many tool calls did the model TYPE?
+ *
+ * The round-level detector answers "did it type instead of calling", which is
+ * false the moment the model does both — and doing both is exactly what Qwen did
+ * live on 2026-07-28: one real call, three typed. So the turn needs the COUNT,
+ * not the boolean, to see that most of the work was narrated.
+ */
+export function countTypedToolCalls(text: string): number {
+  if (!text) return 0
+  const patterns = [
+    FENCED_TOOL_CALL,
+    FENCED_TOOL_JSON,
+    JSON_TOOL_USE,
+    FUNCTION_CALLS_BLOCK,
+    INVOKE_BLOCK,
+    TOOL_CALL_BLOCK,
+    NAMED_TOOL_ARGS,
+  ]
+  let n = 0
+  for (const re of patterns) {
+    re.lastIndex = 0
+    n += (text.match(re) ?? []).length
+  }
+  return n
+}

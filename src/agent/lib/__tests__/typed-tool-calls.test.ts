@@ -57,3 +57,23 @@ describe('what must stay quiet', () => {
     expect(typedToolCallsInsteadOfCalling({ rawText: '', realToolCallCount: 0 })).toBe(false)
   })
 })
+
+describe('a round that BOTH calls and types — the shape seen live 2026-07-28', () => {
+  it('counts what was typed, so one real call does not excuse three narrated ones', async () => {
+    const { countTypedToolCalls } = await import('@/agent/lib/model-output-sanitize')
+    const mixed = [
+      'বস, marketing-এর লাইভ অবস্থা দেখতে performance, ads আর calendar টানছি।',
+      '{"type": "tool_call", "id": "marketing_report", "name": "marketing_report", "arguments": {"window_days": 7}}',
+      '{"type": "tool_call", "id": "recommend_ad_actions", "name": "recommend_ad_actions", "arguments": {}}',
+      '{"type": "tool_call", "id": "list_content_calendar", "name": "list_content_calendar", "arguments": {"days": 14}}',
+    ].join(' ')
+    expect(countTypedToolCalls(mixed)).toBe(3)
+    // One tool really ran that round; the other three were prose.
+    expect(countTypedToolCalls(mixed) > 1).toBe(true)
+  })
+
+  it('counts nothing in ordinary prose', async () => {
+    const { countTypedToolCalls } = await import('@/agent/lib/model-output-sanitize')
+    expect(countTypedToolCalls('বস, আজ ৭টা অর্ডার।')).toBe(0)
+  })
+})

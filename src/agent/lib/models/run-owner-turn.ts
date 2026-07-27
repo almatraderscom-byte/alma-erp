@@ -10,7 +10,7 @@ import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-to
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_MODULES, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
-import { dropRepeatedBlocks, stripToolCallMarkup, typedToolCallsInsteadOfCalling } from '@/agent/lib/model-output-sanitize'
+import { countTypedToolCalls, dropRepeatedBlocks, stripToolCallMarkup, typedToolCallsInsteadOfCalling } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
   claimsCompletion,
@@ -2211,10 +2211,13 @@ async function* runAlternateProviderTurn(
       // what he sees and hides what went wrong — a round that narrates its calls
       // does no work, which is exactly the missing think → tool → update rhythm
       // he reported. Remembered here, acted on where the turn would otherwise end.
-      typedToolCallsThisRound = typedToolCallsInsteadOfCalling({
-        rawText: rawIterationText,
-        realToolCallCount: calls.length,
-      })
+      // Live on 2026-07-28, minutes after the first fix shipped: Qwen made ONE
+      // real call and TYPED three more in the same round. The boolean form reads
+      // that as "it called, fine" — so the count is what decides. More typed than
+      // called means most of the work was narrated, and the turn must not settle.
+      typedToolCallsThisRound =
+        typedToolCallsInsteadOfCalling({ rawText: rawIterationText, realToolCallCount: calls.length })
+        || countTypedToolCalls(rawIterationText) > calls.length
       if (typedToolCallsThisRound) {
         console.info('[model-output] model TYPED its tool calls instead of calling them', {
           conversationId,
