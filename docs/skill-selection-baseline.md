@@ -8,8 +8,8 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 > engine on today would expose exactly one skill (`alma-owner-daily-briefing`).
 > That alone explains why the skills have never done anything.
 
-- Messages that SHOULD pin a skill: **21** — correct top pick: **12** (**57%**)
-- Wrong skill chosen: **7** · nothing chosen: **2**
+- Messages that SHOULD pin a skill: **21** — correct top pick: **13** (**62%**)
+- Wrong skill chosen: **6** · nothing chosen: **2**
 - Messages that should pin NOTHING: **6** — false triggers: **1**
 
 | # | message | expected | picked (top 3) | result |
@@ -31,10 +31,10 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 | campaign | ekta meta campaign chalu koro 5000 takar | alma-meta-campaign-launch | alma-meta-campaign-launch, alma-marketing, alma-website | ✅ hit |
 | website | website e ki ki somossa ache? | alma-website | alma-website, alma-client-seo, seo-fixing-client-site | ✅ hit |
 | incident | agent ta kaj korche na keno, dekho | alma-agent-incident-diagnosis | alma-agent-incident-diagnosis | ✅ hit |
-| invoice | ei invoice ta ERP te tolo | alma-invoice-to-erp | alma-invoice-to-erp | ✅ hit |
+| invoice | ei invoice ta ERP te tolo | alma-invoice-to-erp | alma-invoice-to-erp, alma-research | ✅ hit |
 | audience | je customer ra beshi kene tader ekta audience banao | alma-audience-builder | alma-audience-builder, alma-customer-support, alma-meta-campaign-launch | ✅ hit |
 | browser | chrome khule daraz e dekho dam koto | alma-browser-operator | — | ⬜ nothing picked |
-| research | competitor ra ki dame bikri korche khuje dekho | alma-research | alma-marketing | ❌ wrong skill |
+| research | competitor ra ki dame bikri korche khuje dekho | alma-research | alma-research, alma-marketing | ✅ hit |
 | greeting | valo acho? | — | — | ✅ correctly silent |
 | weather | ajke bristi hobe? | — | — | ✅ correctly silent |
 | thanks | thanks bhai | — | — | ✅ correctly silent |

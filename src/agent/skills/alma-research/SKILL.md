@@ -1,8 +1,8 @@
 ---
 name: alma-research
-description: Multi-source, cross-checked, cited research → Bangla brief.
-version: 0.1.0
-keywords: research, রিসার্চ, খোঁজ, competitor research, market research, খুঁজে বের কর, তথ্য বের কর, জেনে আন, find out, খবর নাও
+description: Answers a business question from several independent sources, cross-checks every claim, and delivers a cited Bangla brief. Use when Boss wants to find out something the ERP does not know — competitor prices, suppliers, market rates.
+version: 1.0.0
+keywords: research, রিসার্চ, খোঁজ, competitor, প্রতিযোগী, competitor research, market research, খুঁজে বের কর, তথ্য বের কর, জেনে আন, find out, খবর নাও, khuje dekho, khuje ber koro, khoj nao, kon dame bikri, bazar dor
 ---
 
 # Research — multi-source, cross-checked, cited

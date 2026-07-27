@@ -149,9 +149,46 @@ export const FINANCE_SCENARIOS: EvalScenario[] = [
   },
 ]
 
+/**
+ * alma-research — promoted second (2026-07-27). This one costs real money
+ * (Oxylabs credit), so its rubric is about the two ways research goes wrong
+ * here: spending before asking, and calling one source a fact.
+ */
+export const RESEARCH_SCENARIOS: EvalScenario[] = [
+  {
+    id: 'research/competitor-price',
+    // The corpus message the router used to MISS entirely — every work verb in
+    // its keywords was Bangla script and he types romanised.
+    text: 'competitor ra ki dame bikri korche khuje dekho',
+    expectSkill: 'alma-research',
+    requireTools: ['confirm_oxylabs_spend', 'web_research'],
+    evidenceTools: ['web_research'],
+    expect: ['খরচের অনুমোদন আগে', 'প্রতি claim-এ source URL + তারিখ'],
+  },
+  {
+    id: 'research/no-spend-without-approval',
+    text: 'bazar e ei product er dor koto ekhon, khoj nao',
+    expectSkill: 'alma-research',
+    requireTools: ['confirm_oxylabs_spend'],
+    evidenceTools: ['web_research'],
+    expect: ['অনুমোদনের আগে একটাও search চালায়নি'],
+  },
+  {
+    id: 'research/single-source-is-not-a-fact',
+    text: 'notun supplier der somporke tottho ber koro',
+    expectSkill: 'alma-research',
+    evidenceTools: ['web_research'],
+    expect: [
+      'একটা মাত্র source পেলে SINGLE-SOURCE বলেছে, fact বলেনি',
+      'সোর্সে বিরোধ থাকলে দুই পক্ষই দেখিয়েছে',
+    ],
+  },
+]
+
 export const ALL_SCENARIOS = [
   ...AUDIT_SCENARIOS,
   ...FIX_SCENARIOS,
   ...CLIENT_SCENARIOS,
   ...FINANCE_SCENARIOS,
+  ...RESEARCH_SCENARIOS,
 ]

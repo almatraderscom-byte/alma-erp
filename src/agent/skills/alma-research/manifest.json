@@ -1,16 +1,31 @@
 {
   "name": "alma-research",
-  "description": "একটি ব্যবসায়িক প্রশ্নের উত্তর একাধিক স্বাধীন source থেকে cross-check করে, cited Bangla brief আকারে।",
-  "version": "0.1.0",
+  "description": "Answers a business question from several independent sources, cross-checks every claim, and delivers a cited Bangla brief. Use when Boss wants to find out something the ERP does not know — competitor prices, a supplier, market rates, what is happening outside the business. Paid search credit is owner-approved before any of it runs.",
+  "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
   "businessScopes": ["ALMA_LIFESTYLE", "ALMA_TRADING", "CDIT"],
   "riskTier": "low",
+  "extends": "alma-base",
+  "whenNotToUse": "উত্তরটা আমাদের নিজের ডেটাতেই আছে (বিক্রি, স্টক, অর্ডার) → skill লাগে না, সাধারণ ERP read। মার্কেটিং পারফরম্যান্স বা ক্যাম্পেইনের হিসাব → alma-marketing। কোনো সাইটে ঢুকে ক্লিক করে কাজ করতে হলে → alma-browser-operator।",
   "requiredCapabilities": ["confirm_oxylabs_spend", "web_research", "live_browser_look", "research_competitor"],
+  "outputContract": {
+    "kind": "artifact_report",
+    "mustInclude": ["answer", "claims_with_status", "source_urls", "source_dates"]
+  },
+  "stopConditions": [
+    "Oxylabs খরচের অনুমোদন না পেলে — একটাও search চালাবে না",
+    "কোনো মূল claim-এ দ্বিতীয় স্বাধীন source না পেলে — SINGLE-SOURCE লেবেল দেবে, fact বলবে না",
+    "সোর্সগুলো একে অপরের বিরোধী হলে — নিজে একটা বেছে নেবে না, দুই পক্ষই দেখাবে"
+  ],
+  "done": [
+    { "tool": "confirm_oxylabs_spend" },
+    { "tool": "web_research" }
+  ],
   "networkPolicy": "allowlist",
   "writePolicy": "none",
   "approvalPolicy": "inherit",
   "entryWorkflow": "skill_pack:research",
   "maxSteps": 8,
-  "status": "draft"
+  "status": "active"
 }
