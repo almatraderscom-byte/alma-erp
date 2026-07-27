@@ -145,6 +145,113 @@ pins the fixing skill at the RULE layer, a pin follows the job when the job
 changes, an answered card leads to WORK rather than another question, and an
 approval makes the agent carry on by itself.
 
+## 2026-07-27 (afternoon) — branch `claude/roadmap-2-finish`
+
+### Item 1 — the ledger could not be filled at all
+
+`approveSkill()` shipped in SK-8 **with no caller**. The only one possible was a
+script holding database credentials, and an approval written by a script is the
+one thing a ledger is not for: the question it answers is *who said yes*.
+
+So approving is now an owner act on a screen — `/api/assistant/skills`
+(owner-session auth, same shape as the pin override) and a section in the
+control centre showing every package on disk, drafts included, with its version,
+content hash, approval state, and the number that decides everything:
+**how many live skills the gate would stop if switched on today.**
+
+`approval-view.ts` is pure so the distinction the screen exists to make is held
+down in tests rather than found on his screen: **approved is not the same as
+runs.** A draft can be approved and never be offered; `alma-base` is
+`implicit: false` and can never be selected at all.
+
+**A hole found while preparing to fill the ledger, not by a test.** `alma-base`
+is INHERITED via `extends:`, never selected — so the runtime approval check,
+which only ever saw the *picked* skill, never looked at it. The single file
+carrying the ALMA invariants (money, approvals, Bangla, "Boss", halal) was the
+one file provenance could not see. Turning the gate on would have felt safe and
+left that open. `approvalStateWithBase` now folds the base in, and the held-back
+message names the BASE rather than the skill — sending him to re-approve the
+wrong file is its own failure.
+
+**Still open, and it needs him:** the gate is `AGENT_SKILL_APPROVAL_GATE`, env
+only, deliberately with no KV path. A KV row is exactly how the ENGINE flag
+ended up on in production without anyone recording it (see the correction
+above), so that mistake is not being repeated. Once the ledger is populated he
+sets it on Vercel **Preview only**.
+
+### Item 2 — the scorer had no bridge to a real run
+
+`compareToBaseline()` has existed since SK-1 and has never been pointed at a
+real run, because nothing turned the rows we already store into the shape it
+scores. Everything it needs was persisted all along:
+
+| | |
+|---|---|
+| `pinnedSkill` | `agent_conversations.pinned_skill` |
+| `tools` | `agent_tool_calls` (name + status) |
+| `replyText` | the assistant messages' text blocks |
+
+`evals/from-conversation.ts` is that adapter and `/api/assistant/skills/evals`
+lists the runs that pinned a skill, reconstructs one, and scores two arms
+through the regression gate. An unknown tool status counts as an **error**,
+never as evidence — treating it as success is precisely how a fabricated
+completion claim would score honest.
+
+**Scoring itself is blocked on reading the DB, which needs his login.** One
+honest caveat recorded before the numbers exist: `compareToBaseline()` matches
+by scenario **id**, and the 2026-07-26 inline runs and the 2026-07-27 isolated
+run were the same job but not the same scripted scenario. If they do not line
+up, the three fix scenarios get run both ways rather than a comparison being
+implied from runs that were never paired.
+
+### Item 3 — five promoted, one at a time, each measured
+
+| # | skill | why it was next |
+|---|---|---|
+| 1 | `alma-finance-brief` | lowest blast radius — `writePolicy: none`, so the guarantee is structural |
+| 2 | `alma-research` | closed a router MISS: its work verbs were Bangla script only |
+| 3 | `alma-staff-dispatch` | he names the PERSON, so only a rule can reach it |
+| 4 | `alma-product-listing` | the corpus's only WRONG-skill case |
+| 5 | `alma-product-social-post` | promoted **because** #4 started winning its message |
+
+**Two of the "16" must never be promoted.** `alma-seo-audit` and
+`alma-client-seo` are superseded by the SK-5 skills and both claim the keyword
+"seo"; promoting either would recreate by hand the collision SK-0 measured. Both
+are now `retired` — dropped by discovery at every status, files kept in git. The
+promotion list is **14**.
+
+**The number this programme was missing.** 81% (now 95%) is measured with
+DRAFTS INCLUDED — it is what routing would score if everything were promoted,
+not what he experiences. `docs/skill-router-result.md` now also records the live
+path, and that is the promotion meter:
+
+| | before | after |
+|---|---|---|
+| corpus messages with a skill pinned | 8 of 21 | **13 of 21** |
+| of those pins, wrong | 0 | **0** |
+| false triggers | 0 | **0** |
+| lint findings | 78 | **58** |
+
+**What the meter caught that review would not have.** Promoting #4 made it the
+best keyword match for a *social post* message — twice. The first cause was a
+greedy keyword and was simply removed. The second is structural and worth
+writing down: `selectSkills` scores every token of a skill's name and
+description, so a description about products repeats "product", and **a promoted
+skill will always outrank an unpromoted one on a message that belongs to the
+unpromoted one.** The answer is not to weaken the description; it is to promote
+the skill that owns the message. That is why #5 exists.
+
+**Recorded for the next promotion:** `alma-customer-support` overlaps
+`alma-product-social-post` at 40% description similarity and is what takes the
+parcel message in the drafts-included run. Both must be resolved before it is
+promoted.
+
+### Not yet started
+
+Item 4 (`isolation: subagent` for the other two SEO skills) and item 5 (dropping
+Upstash) are untouched. Item 4 is deliberately after item 3, and each of its two
+skills needs its own `SYSTEM.md` written and proven live one at a time.
+
 ## Not done — start here
 
 ### SK-6 finished — 2026-07-27
