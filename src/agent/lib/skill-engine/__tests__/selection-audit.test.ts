@@ -60,7 +60,12 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     const live = await discoverSkills(SKILLS_ROOT)
     const all = await discoverSkills(SKILLS_ROOT, { includeDraft: true })
 
-    expect(all.skills.length).toBeGreaterThanOrEqual(19)
+    // 19 → 18: `alma-seo-audit` and `alma-client-seo` are RETIRED (2026-07-27).
+    // They are superseded by the SK-5 skills and both claim "seo" — promoting a
+    // duplicate would recreate the exact collision SK-0 measured. Retired skills
+    // are dropped by discovery at every status, so they cannot route again; the
+    // files stay on disk and in git.
+    expect(all.skills.length).toBeGreaterThanOrEqual(18)
     // `alma-base` is active but `implicit: false` — inherited via `extends`,
     // never selected. It must not show up as a choice.
     const selectable = live.skills.filter((s) => s.implicit !== false).map((s) => s.name).sort()
@@ -80,7 +85,7 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     ])
 
     const stillDraft = all.skills.length - live.skills.length
-    expect(stillDraft).toBeGreaterThanOrEqual(12)
+    expect(stillDraft).toBeGreaterThanOrEqual(10)
   })
 
   it('records the baseline table and the headline numbers', async () => {

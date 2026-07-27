@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "publisher": "alma-native",
   "license": "proprietary",
-  "businessScopes": ["ALMA_LIFESTYLE"],
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
   "riskTier": "low",
   "requiredCapabilities": [
     "audit_product_seo",
@@ -23,5 +25,5 @@
   "approvalPolicy": "inherit",
   "entryWorkflow": "skill_pack:seo",
   "maxSteps": 8,
-  "status": "draft"
+  "status": "retired"
 }
