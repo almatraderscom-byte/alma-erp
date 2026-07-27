@@ -154,6 +154,18 @@ export type AgentEvent =
   // than a flag on `skill_pinned`, because nothing IS pinned — the chip must stay
   // empty while the reason is still shown. Measured 2026-07-27: with the reason
   // only in the prompt, the head said nothing at all.
+  // The live checklist. `AgentPlan`/`AgentPlanStep` already track status per
+  // step; nothing carried it to the thread, so a plan was only ever the text the
+  // model typed once and never updated.
+  | {
+      type: 'plan_progress'
+      planId: string
+      goal: string
+      headline: string
+      doneCount: number
+      total: number
+      steps: Array<{ seq: number; action: string; status: string }>
+    }
   // A status line while the agent is heads-down. The server knows the round
   // count and elapsed time; the model does not reliably volunteer them on a long
   // tool-heavy turn, which is exactly when the owner is left watching a spinner.

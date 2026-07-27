@@ -138,6 +138,17 @@ export interface ChatMessage {
    * 2026-07-27: on a long tool-heavy turn he was left watching a spinner.
    */
   progressNote?: string
+  /**
+   * Live checklist for this turn — "৩/৫ ধাপ শেষ · এখন X". The plan rows have
+   * always ticked in the database; until 2026-07-27 nothing carried them here,
+   * so a plan was only the text the model typed once and never updated.
+   */
+  plan?: {
+    headline: string
+    doneCount: number
+    total: number
+    steps: Array<{ seq: number; action: string; status: string }>
+  }
   /** Live extended-thinking stream — how the agent reasoned before answering. */
   thinking?: string
   /** Seconds spent thinking (set once the reply text begins). */
@@ -1557,6 +1568,27 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     // Chronological mode: the timeline carries the reply text too, so
                     // render ONE interleaved flow (text → steps → text) and skip the
                     // separate steps-card + body blocks below.
+                    const planBlock = msg.plan && msg.plan.steps.length > 0 ? (
+                      <div className="mb-2 rounded-xl border border-border-subtle bg-white/[0.02] px-3 py-2">
+                        <p className="mb-1.5 text-[11.5px] font-semibold text-cream">📋 {msg.plan.headline}</p>
+                        <ul className="space-y-0.5">
+                          {msg.plan.steps.map((st) => (
+                            <li key={st.seq} className="flex items-start gap-1.5 text-[11px] leading-snug">
+                              <span aria-hidden className="shrink-0">
+                                {st.status === 'done' ? '✅'
+                                  : st.status === 'running' ? '⏳'
+                                  : st.status === 'failed' ? '❌'
+                                  : st.status === 'blocked' ? '🚧'
+                                  : '⬜'}
+                              </span>
+                              <span className={st.status === 'done' ? 'text-muted line-through' : 'text-cream'}>
+                                {st.action}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null
                     const progressLine = msg.progressNote ? (
                       <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-muted">
                         <span>{msg.progressNote}</span>
@@ -1579,7 +1611,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       </div>
                     ) : null
                     const chrono = (msg.timeline ?? []).some((e) => e.t === 'text')
-                    if (chrono) return <>{skillLine}{progressLine}<ChronoFlow msg={msg} onOpenFile={(id) => onArtifactOpen(id)} /></>
+                    if (chrono) return <>{skillLine}{planBlock}{progressLine}<ChronoFlow msg={msg} onOpenFile={(id) => onArtifactOpen(id)} /></>
                     // A RUNNING turn always shows the process section, even before
                     // there is anything in it (owner bug, verified live 2026-07-26:
                     // the first 10–20 seconds drew nothing at all, so there was
@@ -1595,6 +1627,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       return (
                         <>
                         {skillLine}
+                        {planBlock}
                         {progressLine}
                         <ActivityTimeline
                           timeline={msg.timeline}

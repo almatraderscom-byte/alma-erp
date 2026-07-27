@@ -55,6 +55,8 @@ import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
 import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
 import { buildOwnerCorrectionNudge } from '@/agent/lib/owner-correction'
 import { newTurnProgressState, nextTurnProgress } from '@/agent/lib/turn-progress'
+import { buildPlanProgress, planProgressSignature } from '@/agent/lib/plan-progress'
+import { loadLatestPlanProgress } from '@/agent/lib/planner'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
@@ -532,6 +534,7 @@ async function* runAlternateProviderTurn(
   // speak-first line before the loop also counts as the model having spoken.
   let progressState = newTurnProgressState()
   let spokeSinceProgress = false
+  let lastPlanSignature = ''
   const turnStartedMs = Date.now()
   const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
   if (ownerCorrectionNudge) {
@@ -2995,6 +2998,29 @@ async function* runAlternateProviderTurn(
         .slice(-calls.length)
         .filter((r) => r.status === 'error')
         .map((r) => ({ toolName: r.toolName, error: String(r.error ?? '') }))
+      // The live checklist. Re-read after each tool round and emitted ONLY when a
+      // step actually changed state — an identical checklist re-sent every round
+      // is how a live element turns into wallpaper.
+      try {
+        const planRows = await loadLatestPlanProgress(conversationId)
+        const planProgress = planRows
+          ? buildPlanProgress(planRows.planId, planRows.goal, planRows.rows)
+          : null
+        const sig = planProgressSignature(planProgress)
+        if (planProgress && sig !== lastPlanSignature) {
+          lastPlanSignature = sig
+          yield {
+            type: 'plan_progress',
+            planId: planProgress.planId,
+            goal: planProgress.goal,
+            headline: planProgress.headline,
+            doneCount: planProgress.doneCount,
+            total: planProgress.total,
+            steps: planProgress.steps,
+          }
+        }
+      } catch { /* a checklist must never break a turn */ }
+
       // "কী হচ্ছে এখন" — deterministic, server-side, and silent while the model
       // is talking. Owner ask 2026-07-27: never leave him watching a spinner.
       const progressTick = nextTurnProgress(progressState, {

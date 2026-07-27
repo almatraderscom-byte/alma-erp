@@ -1123,6 +1123,22 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               ? { ...m, skill: { name: pin.skill, source: pin.source, reason: pin.reason } }
               : m,
           ))
+        } else if (evt.type === 'plan_progress') {
+          // The live checklist. Replaces the previous snapshot on the message, so
+          // a reload replays the latest state rather than a stale list.
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? {
+                  ...m,
+                  plan: {
+                    headline: String(evt.headline ?? ''),
+                    doneCount: Number(evt.doneCount ?? 0),
+                    total: Number(evt.total ?? 0),
+                    steps: Array.isArray(evt.steps) ? (evt.steps as Array<{ seq: number; action: string; status: string }>) : [],
+                  },
+                }
+              : m,
+          ))
         } else if (evt.type === 'turn_progress') {
           // Server-side status line during a silent stretch. Stamped on the
           // message being built so it survives a reload like every other step.
