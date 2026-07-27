@@ -29,6 +29,120 @@ function purchaseValueFromActions(actions: Array<{ action_type?: string; value?:
     .reduce((s, a) => s + safeNum(a.value), 0)
 }
 
+/**
+ * ADS-2 phase B — everything else in `actions`.
+ *
+ * Meta returns one `actions` array per row carrying every result the campaign
+ * produced: messaging conversations started, link clicks, landing page views,
+ * leads, post engagement, video views, purchases. Until now this file read ONE
+ * of them (`purchase`) and dropped the rest on the floor — which is why Boss
+ * could not ask the agent the most basic question about his own account
+ * ("কত মেসেজ পাচ্ছি") even though the answer arrived with every single call.
+ *
+ * Meta's action_type names are versioned and verbose
+ * (`onsite_conversion.messaging_conversation_started_7d`), so match on a stable
+ * fragment rather than an exact string that a Graph version bump would break.
+ */
+export type AdResults = {
+  messagingConversations: number
+  linkClicks: number
+  landingPageViews: number
+  leads: number
+  postEngagement: number
+  videoViews: number
+  purchases: number
+  /** Every action_type Meta sent, verbatim — so a result we have no name for is
+   *  still visible instead of silently discarded. */
+  raw: Record<string, number>
+}
+
+const EMPTY_RESULTS: AdResults = {
+  messagingConversations: 0,
+  linkClicks: 0,
+  landingPageViews: 0,
+  leads: 0,
+  postEngagement: 0,
+  videoViews: 0,
+  purchases: 0,
+  raw: {},
+}
+
+export function resultsFromActions(
+  actions: Array<{ action_type?: string; value?: string }> | undefined,
+): AdResults {
+  if (!actions?.length) return { ...EMPTY_RESULTS, raw: {} }
+  const out: AdResults = { ...EMPTY_RESULTS, raw: {} }
+  for (const a of actions) {
+    const type = a.action_type ?? ''
+    if (!type) continue
+    const n = safeNum(a.value)
+    out.raw[type] = (out.raw[type] ?? 0) + n
+
+    if (type.includes('messaging_conversation_started')) out.messagingConversations += n
+    else if (type === 'link_click') out.linkClicks += n
+    else if (type.includes('landing_page_view')) out.landingPageViews += n
+    else if (type.includes('lead')) out.leads += n
+    else if (type === 'post_engagement') out.postEngagement += n
+    else if (type === 'video_view') out.videoViews += n
+    else if (type === 'purchase') out.purchases += n
+  }
+  return out
+}
+
+/**
+ * What this campaign is FOR, and therefore what it should be judged on.
+ *
+ * The agent told Boss his engagement campaign was "money waste, ROAS 0.0" on
+ * 2026-07-27. ROAS on an OUTCOME_ENGAGEMENT campaign is 0.0 by construction —
+ * it was never buying purchases. Judging every campaign by purchases is how a
+ * working messaging campaign gets recommended for the chop.
+ */
+export type PrimaryResult = {
+  key: keyof Omit<AdResults, 'raw'>
+  /** Bangla label for the owner-facing line. */
+  label: string
+  count: number
+  /** Spend ÷ count, in the account currency. 0 when there are no results yet. */
+  costPer: number
+}
+
+export function primaryResultFor(
+  objective: string,
+  results: AdResults,
+  spend: number,
+): PrimaryResult {
+  const pick = (key: PrimaryResult['key'], label: string): PrimaryResult => {
+    const count = results[key]
+    return { key, label, count, costPer: count > 0 ? spend / count : 0 }
+  }
+  const o = (objective || '').toUpperCase()
+  if (o.includes('MESSAGE')) return pick('messagingConversations', 'মেসেজ/কথোপকথন')
+  if (o.includes('ENGAGEMENT')) {
+    // An engagement campaign optimised for messages reports both; conversations
+    // are the ones worth money, so they win when present.
+    return results.messagingConversations > 0
+      ? pick('messagingConversations', 'মেসেজ/কথোপকথন')
+      : pick('postEngagement', 'এনগেজমেন্ট')
+  }
+  if (o.includes('LEAD')) return pick('leads', 'লিড')
+  if (o.includes('TRAFFIC') || o.includes('LINK_CLICKS')) return pick('linkClicks', 'লিংক ক্লিক')
+  if (o.includes('VIDEO')) return pick('videoViews', 'ভিডিও ভিউ')
+  if (o.includes('SALES') || o.includes('CONVERSION')) return pick('purchases', 'পারচেজ')
+  // Unknown objective: fall back to the first result type that carries real
+  // business value, NOT the biggest number. Post engagements always out-count
+  // conversations by an order of magnitude, so "whichever is largest" would
+  // report 210 likes and bury the 14 people who actually messaged him.
+  const ladder: Array<[PrimaryResult['key'], string]> = [
+    ['messagingConversations', 'মেসেজ/কথোপকথন'],
+    ['leads', 'লিড'],
+    ['purchases', 'পারচেজ'],
+    ['linkClicks', 'লিংক ক্লিক'],
+    ['postEngagement', 'এনগেজমেন্ট'],
+  ]
+  const found = ladder.find(([key]) => results[key] > 0)
+  return found ? pick(found[0], found[1]) : pick('purchases', 'পারচেজ')
+}
+
 async function adsApi<T = Record<string, unknown>>(
   path: string,
   params: Record<string, string> = {},
@@ -70,6 +184,117 @@ export type CampaignMetrics = {
   currency: string
   /** Campaign objective (e.g. OUTCOME_ENGAGEMENT / MESSAGES / OUTCOME_SALES) — judge performance by THIS, not always purchases. */
   objective: string
+  /** Ad sets under this campaign whose own effective_status is ACTIVE. */
+  activeAdSets: number
+  /** Ads under this campaign whose own effective_status is ACTIVE. */
+  activeAds: number
+  /**
+   * Is this campaign actually RUNNING, in the sense Boss means when he counts
+   * campaigns in Ads Manager?
+   *
+   * ADS-2, 2026-07-27: he said two campaigns were active; we reported four. Both
+   * were "right" — we were counting campaign-level `effective_status === ACTIVE`,
+   * which stays ACTIVE while every ad set and ad beneath it is paused. One of the
+   * four had spent $0.00 with 0 impressions for seven days and was still being
+   * counted as running. A campaign that cannot deliver is not running, so
+   * `delivering` requires a live ad set AND a live ad underneath.
+   *
+   * `effectiveStatus` is kept as-is next to it: the campaign-level truth is still
+   * the truth, it is just not the answer to "কয়টা চলছে".
+   */
+  delivering: boolean
+  /** Everything Meta's `actions` array carried for the window — messages, link
+   *  clicks, leads, engagement, video views, purchases. Read `raw` for anything
+   *  without a named field. */
+  resultsWeek: AdResults
+  resultsToday: AdResults
+  /** The ONE number this campaign should be judged on, chosen from its objective,
+   *  with its cost. An engagement campaign is not a failed shop. */
+  primaryWeek: PrimaryResult
+  /** Average times ONE person saw this campaign in the window. The fatigue
+   *  signal — never available before ADS-2, so fatigue was being guessed. */
+  frequencyWeek: number
+  /** Unique people reached in the window (impressions ÷ frequency). */
+  reachWeek: number
+}
+
+/**
+ * Live ad sets and ads per campaign, in TWO account-level calls regardless of
+ * how many campaigns exist — the per-campaign loop this file already runs is
+ * expensive enough. Never throws: a failed structure read degrades to "unknown",
+ * and an unknown structure must not turn a running campaign into a stopped one.
+ */
+export type CampaignStructure = {
+  activeAdSets: number
+  activeAds: number
+  /** Summed daily budget (whole currency) of this campaign's ACTIVE ad sets —
+   *  what "Using ad set budget" means in Ads Manager. */
+  adSetDailyBudget: number
+  known: boolean
+}
+
+/**
+ * TWO account-level calls for the whole account, and they REPLACE the
+ * per-campaign `/adsets` budget lookups this file used to make in a loop. That
+ * matters: Graph started returning "An unexpected error has occurred" under the
+ * call volume on 2026-07-27, and an audit that hammers the API is an audit that
+ * fails at the worst moment. Net calls now go DOWN, not up.
+ */
+export async function fetchCampaignStructure(
+  accountId: string,
+): Promise<Map<string, CampaignStructure>> {
+  const byCampaign = new Map<string, CampaignStructure>()
+  const row = (id: string) =>
+    byCampaign.get(id) ?? { activeAdSets: 0, activeAds: 0, adSetDailyBudget: 0, known: true }
+
+  const [adsets, ads] = await Promise.all([
+    adsApi<{ data?: Array<{ campaign_id?: string; effective_status?: string; daily_budget?: string }> }>(
+      `${accountId}/adsets`,
+      { fields: 'campaign_id,effective_status,daily_budget', limit: '200' },
+    ).catch(() => null),
+    adsApi<{ data?: Array<{ campaign_id?: string; effective_status?: string }> }>(
+      `${accountId}/ads`,
+      { fields: 'campaign_id,effective_status', limit: '200' },
+    ).catch(() => null),
+  ])
+
+  if (!adsets || !ads) return byCampaign // empty map = "unknown", see deliveringFrom()
+
+  for (const a of adsets.data ?? []) {
+    if (!a.campaign_id || a.effective_status !== 'ACTIVE') continue
+    const r = row(a.campaign_id)
+    r.activeAdSets += 1
+    r.adSetDailyBudget += safeNum(a.daily_budget) / 100
+    byCampaign.set(a.campaign_id, r)
+  }
+  for (const a of ads.data ?? []) {
+    if (!a.campaign_id || a.effective_status !== 'ACTIVE') continue
+    const r = row(a.campaign_id)
+    r.activeAds += 1
+    byCampaign.set(a.campaign_id, r)
+  }
+  return byCampaign
+}
+
+/**
+ * Fail SAFE, not silent: with no structure data at all we fall back to the old
+ * campaign-level answer rather than reporting every campaign as stopped. A wrong
+ * "everything is off" would be read as an outage.
+ */
+export function deliveringFrom(
+  structure: Map<string, CampaignStructure>,
+  campaignId: string,
+  campaignIsActive: boolean,
+): { activeAdSets: number; activeAds: number; delivering: boolean } {
+  if (structure.size === 0) {
+    return { activeAdSets: 0, activeAds: 0, delivering: campaignIsActive }
+  }
+  const row = structure.get(campaignId) ?? { activeAdSets: 0, activeAds: 0, known: true }
+  return {
+    activeAdSets: row.activeAdSets,
+    activeAds: row.activeAds,
+    delivering: campaignIsActive && row.activeAdSets > 0 && row.activeAds > 0,
+  }
 }
 
 export const INSIGHT_MIN_SPEND_BDT = 500
@@ -135,6 +360,7 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
 
   const today = new Date().toISOString().slice(0, 10)
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
+  const structure = await fetchCampaignStructure(accountId)
   const rows: CampaignMetrics[] = []
 
   for (const campaign of activeCampaigns) {
@@ -143,14 +369,22 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
         `${campaign.id}/insights`,
         {
           time_range: JSON.stringify({ since: today, until: today }),
-          fields: 'spend,impressions,clicks,ctr,cpc,actions',
+          // ADS-2 phase C: frequency + reach. Creative fatigue is measured in
+          // how many times the same person saw the ad; without frequency the
+          // agent was substituting Meta's "Ad Relevance" label and calling it a
+          // fatigue read, which it is not.
+          fields: 'spend,impressions,clicks,ctr,cpc,actions,frequency,reach',
         },
       )
       const weekData = await adsApi<{ data?: Array<Record<string, unknown>> }>(
         `${campaign.id}/insights`,
         {
           time_range: JSON.stringify({ since: sevenDaysAgo, until: today }),
-          fields: 'spend,impressions,clicks,ctr,cpc,actions',
+          // ADS-2 phase C: frequency + reach. Creative fatigue is measured in
+          // how many times the same person saw the ad; without frequency the
+          // agent was substituting Meta's "Ad Relevance" label and calling it a
+          // fatigue read, which it is not.
+          fields: 'spend,impressions,clicks,ctr,cpc,actions,frequency,reach',
         },
       )
 
@@ -167,6 +401,9 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
       const ctrWeekPct = safeNum(weekInsight.ctr)
       const cpcToday = safeNum(todayInsight.cpc)
 
+      const resultsWeek = resultsFromActions(
+        weekInsight.actions as Array<{ action_type?: string; value?: string }>,
+      )
       const roasToday = spendToday > 0
         ? purchaseValueFromActions(todayInsight.actions as Array<{ action_type?: string; value?: string }>) / spendToday
         : 0
@@ -181,17 +418,10 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
         ? Math.round(safeNum(campaign.daily_budget) / 100)
         : 0
       if (dailyBudgetBdt === 0) {
-        try {
-          const adsets = await adsApi<{ data?: Array<{ daily_budget?: string; effective_status?: string }> }>(
-            `${campaign.id}/adsets`,
-            { fields: 'daily_budget,effective_status', limit: '25' },
-          )
-          dailyBudgetBdt = Math.round(
-            (adsets.data ?? [])
-              .filter((a) => a.effective_status === 'ACTIVE')
-              .reduce((sum, a) => sum + safeNum(a.daily_budget), 0) / 100,
-          )
-        } catch { /* keep 0 */ }
+        // "Using ad set budget" in Ads Manager: the campaign field is empty and
+        // the real number lives on the ad sets. Read from the structure map we
+        // already have instead of one more Graph call per campaign.
+        dailyBudgetBdt = Math.round(structure.get(campaign.id)?.adSetDailyBudget ?? 0)
       }
 
       rows.push({
@@ -212,6 +442,14 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
         roasWeek,
         dailyBudgetBdt,
         effectiveStatus: campaign.effective_status ?? 'ACTIVE',
+        resultsWeek,
+        resultsToday: resultsFromActions(
+          todayInsight.actions as Array<{ action_type?: string; value?: string }>,
+        ),
+        primaryWeek: primaryResultFor(campaign.objective ?? 'UNKNOWN', resultsWeek, spendWeek),
+        frequencyWeek: safeNum(weekInsight.frequency),
+        reachWeek: safeNum(weekInsight.reach),
+        ...deliveringFrom(structure, campaign.id, (campaign.effective_status ?? 'ACTIVE') === 'ACTIVE'),
         hasEnoughData: spendWeek >= minSpendForCurrency(accountCurrency) && impressionsWeek >= INSIGHT_MIN_IMPRESSIONS,
       })
     } catch (err) {
@@ -253,7 +491,7 @@ export async function fetchCampaignMetricsWindow(windowDays = 7): Promise<Campai
   const insightParams = (since: string, until: string) => ({
     level: 'campaign',
     time_range: JSON.stringify({ since, until }),
-    fields: 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpc,actions',
+    fields: 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpc,actions,frequency,reach',
     limit: '100',
   })
 
@@ -268,6 +506,7 @@ export async function fetchCampaignMetricsWindow(windowDays = 7): Promise<Campai
   ])
 
   const currency = acctRes.currency ?? 'USD'
+  const structure = await fetchCampaignStructure(accountId)
   const metaById = new Map((campaignsRes.data ?? []).map((c) => [c.id, c]))
   const todayById = new Map((todayRes.data ?? []).filter((r) => r.campaign_id).map((r) => [r.campaign_id as string, r]))
 
@@ -280,18 +519,13 @@ export async function fetchCampaignMetricsWindow(windowDays = 7): Promise<Campai
 
     const spendWeek = safeNum(row.spend)
     const spendToday = safeNum(todayRow.spend)
+    const windowResults = resultsFromActions(
+      row.actions as Array<{ action_type?: string; value?: string }>,
+    )
 
     let dailyBudgetBdt = meta?.daily_budget ? Math.round(safeNum(meta.daily_budget) / 100) : 0
     if (dailyBudgetBdt === 0) {
-      try {
-        const adsets = await adsApi<{ data?: Array<{ daily_budget?: string; effective_status?: string }> }>(
-          `${id}/adsets`,
-          { fields: 'daily_budget,effective_status', limit: '25' },
-        )
-        dailyBudgetBdt = Math.round(
-          (adsets.data ?? []).reduce((sum, a) => sum + safeNum(a.daily_budget), 0) / 100,
-        )
-      } catch { /* keep 0 */ }
+      dailyBudgetBdt = Math.round(structure.get(id)?.adSetDailyBudget ?? 0)
     }
 
     campaigns.push({
@@ -318,11 +552,63 @@ export async function fetchCampaignMetricsWindow(windowDays = 7): Promise<Campai
       // The TRUE current status (may be PAUSED) — historical rows must never be
       // presented as currently running.
       effectiveStatus: meta?.effective_status ?? 'UNKNOWN',
+      resultsWeek: windowResults,
+      resultsToday: resultsFromActions(
+        todayRow.actions as Array<{ action_type?: string; value?: string }>,
+      ),
+      primaryWeek: primaryResultFor(meta?.objective ?? 'UNKNOWN', windowResults, spendWeek),
+      frequencyWeek: safeNum(row.frequency),
+      reachWeek: safeNum(row.reach),
+      ...deliveringFrom(structure, id, (meta?.effective_status ?? 'UNKNOWN') === 'ACTIVE'),
       hasEnoughData: spendWeek >= minSpendForCurrency(currency) && safeNum(row.impressions) >= INSIGHT_MIN_IMPRESSIONS,
     })
   }
 
   return { accountId, currency, windowDays, campaigns }
+}
+
+/**
+ * ADS-2 phase C — the account's own spending limits.
+ *
+ * Boss asked "roj koto kharoch hocche ar amar limit er moddhe achi kina" on
+ * 2026-07-27 and the honest answer was "I don't know your cap" — because
+ * nothing in this repo had ever read `spend_cap`. Meta has always exposed it.
+ *
+ * Money values arrive in the account currency's MINOR unit (cents), the same
+ * convention the write guard already documents, so everything here is ÷100.
+ * `spend_cap` of 0 means NO cap set, which is different from a cap of zero.
+ */
+export type AccountLimits = {
+  currency: string
+  /** Lifetime spend cap on the account, or null when none is set. */
+  spendCap: number | null
+  /** Lifetime spend counted against that cap. */
+  amountSpent: number
+  /** Prepaid balance, for accounts that run on one. */
+  balance: number
+  /** spendCap − amountSpent, or null when uncapped. */
+  remaining: number | null
+}
+
+export async function fetchAccountLimits(): Promise<AccountLimits> {
+  const accountId = adAccountId()
+  const raw = await adsApi<{
+    currency?: string
+    spend_cap?: string
+    amount_spent?: string
+    balance?: string
+  }>(accountId, { fields: 'currency,spend_cap,amount_spent,balance' })
+
+  const minor = (v: unknown) => safeNum(v) / 100
+  const cap = safeNum(raw.spend_cap) > 0 ? minor(raw.spend_cap) : null
+  const spent = minor(raw.amount_spent)
+  return {
+    currency: raw.currency ?? 'USD',
+    spendCap: cap,
+    amountSpent: spent,
+    balance: minor(raw.balance),
+    remaining: cap === null ? null : Math.max(0, cap - spent),
+  }
 }
 
 export async function fetchCampaignDailyBudgetBdt(campaignId: string): Promise<number> {

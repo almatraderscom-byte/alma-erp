@@ -272,7 +272,18 @@ const recommend_ad_actions: AgentTool = {
     '`metaIntelligence` carries Meta\'s own trend / anomaly / opportunity-score / industry + auction benchmarks when available — ' +
     'cite them ("CTR ইন্ডাস্ট্রি গড়ের নিচে…") instead of judging on spend alone. ' +
     'SOURCE: quote `provenance.sourceLabel` verbatim; say "Meta MCP" ONLY if provenance.source === "meta_mcp", otherwise state ' +
-    'provenance.degradedReason honestly. MONEY: use windowPerformance[].spendLabel / windowSpendLabel — never ৳ unless BDT.',
+    'provenance.degradedReason honestly. MONEY: use windowPerformance[].spendLabel / windowSpendLabel — never ৳ unless BDT. ' +
+    'FATIGUE: windowPerformance[].frequency is how many times ONE person saw the campaign (reach = people). Rising frequency with ' +
+    'falling CTR is fatigue; say "frequency জানা নেই" if it is 0, never substitute Meta\'s relevance label for it. ' +
+    'LIMITS: `accountLimits` — Meta\'s own spendCapLabel/remainingLabel (null = কোনো cap সেট নেই) plus dailySoftCapBdt, the ৳ cap ' +
+    'enforced in CODE at launch. Answer "limit-এর মধ্যে আছি?" from these; never offer to remember a cap Boss tells you — a money ' +
+    'limit lives in code, not in memory. ' +
+    'RESULTS: judge each campaign by its OWN objective — windowPerformance[].objective + primaryResult/primaryCount/primaryCostLabel. ' +
+    'An OUTCOME_ENGAGEMENT / MESSAGES campaign is measured in messages (windowPerformance[].messages), NOT purchases: saying ' +
+    '"ROAS 0, টাকা নষ্ট" about a messaging campaign is a category error. Purchases/ROAS only for SALES/CONVERSION objectives. ' +
+    'HOW MANY ARE RUNNING: quote `deliveringCount` / `deliveringNames` — a campaign is RUNNING only when it has a live ad set AND a live ad. ' +
+    '`stalledNames` are campaign-level ACTIVE with nothing live underneath: report them as "চলছে না (ad set/ad বন্ধ)", never inside the running count. ' +
+    'Boss counts what Ads Manager shows delivering, and that is deliveringCount.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -296,8 +307,11 @@ const recommend_ad_actions: AgentTool = {
       // the head can cite trend/benchmark/anomaly evidence without ever guessing
       // (or fabricating) where the numbers came from.
       const { readAdInsights, provenanceOf } = await import('@/agent/lib/meta-mcp/insights-source')
-      const { formatAdSpend } = await import('@/agent/lib/ads/insights')
+      const { formatAdSpend, fetchAccountLimits } = await import('@/agent/lib/ads/insights')
       const insights = await readAdInsights(7).catch(() => null)
+      // ADS-2 phase C: the cap question. Never fatal — an account with no cap
+      // set, or a limits read that fails, must not take down the whole audit.
+      const limits = await fetchAccountLimits().catch(() => null)
 
       const summary = formatRecommendationsSummary(recommendations)
       const actionable = recommendations.filter((r) => r.verdict !== 'hold')
@@ -330,17 +344,47 @@ const recommend_ad_actions: AgentTool = {
         impressions: c.impressionsWeek,
         clicks: c.clicksWeek,
         ctrPct: Number(c.ctrWeekPct.toFixed(2)),
+        // ADS-2 phase B: what the campaign is FOR, and what it actually produced.
+        // Meta sent these with every call; we used to read `purchase` and throw
+        // the rest away, so "কত মেসেজ পাচ্ছি" was unanswerable.
+        objective: c.objective,
+        primaryResult: c.primaryWeek.label,
+        primaryCount: c.primaryWeek.count,
+        primaryCostLabel: c.primaryWeek.costPer > 0
+          ? formatAdSpend(c.primaryWeek.costPer, insights?.currency ?? 'USD')
+          : null,
+        // Fatigue, measured instead of guessed: how many times ONE person saw
+        // this campaign, and how many people that was.
+        frequency: Number(c.frequencyWeek.toFixed(2)),
+        reach: c.reachWeek,
+        messages: c.resultsWeek.messagingConversations,
+        linkClicks: c.resultsWeek.linkClicks,
+        leads: c.resultsWeek.leads,
+        postEngagement: c.resultsWeek.postEngagement,
+        videoViews: c.resultsWeek.videoViews,
+        purchases: c.resultsWeek.purchases,
       }))
+
+      // ADS-2: "কয়টা চলছে" is the DELIVERING count, not the campaign-level
+      // ACTIVE count. Boss counted 2 in Ads Manager while this tool said 4 —
+      // both were reading a real field, and his is the one that spends money.
+      const deliveringCampaigns = metrics.filter((m) => m.delivering)
+      const deliveringCount = deliveringCampaigns.length
+      const stalledNames = metrics.filter((m) => !m.delivering).map((m) => m.name)
 
       if (activeCampaignCount === 0) {
         message =
           windowPerformance.length > 0
             ? `এই মুহূর্তে কোনো ACTIVE ক্যাম্পেইন নেই (সব paused), কিন্তু গত ৭ দিনের পারফরম্যান্স আসল ডেটা windowPerformance-এ আছে — quote it (impressions/clicks/CTR সহ, paused লেবেলসহ), "ডেটা নেই" বলবেন না।`
             : 'এই অ্যাড অ্যাকাউন্টে গত ৭ দিনে কোনো ক্যাম্পেইন ডেলিভারি করেনি।'
-      } else if (actionable.length > 0) {
-        message = `${activeCampaignCount}টি ACTIVE ক্যাম্পেইন চলছে — ${actionable.length}টিতে actionable rec; owner approve ছাড়া budget/spend change হবে না।`
       } else {
-        message = `${activeCampaignCount}টি ACTIVE ক্যাম্পেইন চলছে, সবগুলো এখন hold — thin data বা middle performance; noise-এ action নয়।`
+        const stalledNote = stalledNames.length
+          ? ` আরও ${stalledNames.length}টি campaign-level ACTIVE কিন্তু ডেলিভারি করছে না (ad set/ad বন্ধ): ${stalledNames.join(', ')}।`
+          : ''
+        message =
+          actionable.length > 0
+            ? `${deliveringCount}টি ক্যাম্পেইন আসলে চলছে — ${actionable.length}টিতে actionable rec; owner approve ছাড়া budget/spend change হবে না।${stalledNote}`
+            : `${deliveringCount}টি ক্যাম্পেইন আসলে চলছে, সবগুলো এখন hold — thin data বা middle performance; noise-এ action নয়।${stalledNote}`
       }
 
       return {
@@ -362,7 +406,26 @@ const recommend_ad_actions: AgentTool = {
           // The real last-7-days per-campaign performance (paused-inclusive) —
           // this is what a "impressions/clicks/CTR কত?" question is answered from.
           windowPerformance,
-          campaignCount: activeCampaignCount,
+          // ADS-2 phase C — the answer to "limit er moddhe achi kina", which
+          // used to be "I don't know your cap". `dailySoftCapBdt` is the CODE
+          // gate that actually stops a launch; Meta's spendCap is the account's
+          // own lifetime ceiling (null = none set).
+          accountLimits: limits
+            ? {
+                ...limits,
+                spendCapLabel: limits.spendCap === null ? null : formatAdSpend(limits.spendCap, limits.currency),
+                amountSpentLabel: formatAdSpend(limits.amountSpent, limits.currency),
+                remainingLabel: limits.remaining === null ? null : formatAdSpend(limits.remaining, limits.currency),
+                dailySoftCapBdt: DAILY_BUDGET_SOFT_CAP_BDT,
+              }
+            : null,
+          // THE number to quote when Boss asks how many campaigns are running.
+          deliveringCount,
+          deliveringNames: deliveringCampaigns.map((m) => m.name),
+          // Campaign-level ACTIVE but nothing live underneath — real campaigns,
+          // spending nothing, and the reason his count and ours disagreed.
+          stalledNames,
+          campaignCount: deliveringCount,
           activeCampaignCount,
           activeCampaignNames: activeNames,
           actionableCount: actionable.length,
