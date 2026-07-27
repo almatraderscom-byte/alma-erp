@@ -1123,6 +1123,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               ? { ...m, skill: { name: pin.skill, source: pin.source, reason: pin.reason } }
               : m,
           ))
+        } else if (evt.type === 'skill_held_back') {
+          // SK-8: the skill matched and the gate refused it. Say so where the
+          // running-skill line would have gone — an unexplained absence reads as
+          // a broken engine, which is exactly how this was found.
+          const held = {
+            name: String(evt.skill ?? ''),
+            state: String(evt.state ?? ''),
+            reason: String(evt.reason ?? ''),
+          }
+          setPinnedSkill(null)
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId ? { ...m, skillHeldBack: held } : m,
+          ))
         } else if (evt.type === 'model_info') {
           const variant = (evt.variant as 'claude' | 'qwen' | 'deepseek' | 'default') ?? 'claude'
           setStreamVariant(variant)

@@ -58,6 +58,17 @@ export interface ActiveSkills {
    * uses this instead — never both, or the procedure would ship twice.
    */
   isolated: IsolatedSkillPrompt | null
+  /**
+   * SK-8 — the skill matched, and the provenance gate refused to run it.
+   *
+   * Found live 2026-07-27, and it had been true for a day: `seo-fixing-own-site`
+   * was approved at one content hash, its manifest and SKILL.md were edited the
+   * next day (#627), and the gate correctly read that as `changed`. Correct — but
+   * SILENT. The head got one line in its prompt, no event reached any client, and
+   * from the outside the engine looked switched on and idle. A refusal nobody can
+   * see is indistinguishable from a bug, so it is now on the wire.
+   */
+  heldBack: { skill: string; state: string; reason: string } | null
 }
 
 /** Thin wrapper for callers that only want the prompt text. */
@@ -72,7 +83,7 @@ export async function buildActiveSkills(
   lastUserText: string,
   opts: { conversationId?: string } = {},
 ): Promise<ActiveSkills> {
-  const none: ActiveSkills = { block: '', pinned: null, manifest: null, isolated: null }
+  const none: ActiveSkills = { block: '', pinned: null, manifest: null, isolated: null, heldBack: null }
   if (!(await isSkillEngineEnabled())) return none
   if (!lastUserText || !lastUserText.trim()) return none
   try {
@@ -127,7 +138,14 @@ export async function buildActiveSkills(
         // withheld is the same failure shape as the silent continuation.
         const { heldBackReason } = await import('@/agent/lib/skill-engine/provenance')
         const h = heldBack as { skill: string; state: string }
-        return { ...none, block: `\n## Skill\n${heldBackReason(h.skill, h.state as never)}\n` }
+        const reason = heldBackReason(h.skill, h.state as never)
+        // Structured, not just prose: the client draws the refusal from this,
+        // and the owner learns his skill is waiting on him instead of guessing.
+        return {
+          ...none,
+          block: `\n## Skill\n${reason}\n`,
+          heldBack: { skill: h.skill, state: h.state, reason },
+        }
       }
       picked = allowed
     } catch {
@@ -191,7 +209,7 @@ export async function buildActiveSkills(
           }
         : null
 
-    return { block, pinned, manifest, isolated }
+    return { block, pinned, manifest, isolated, heldBack: null }
   } catch {
     return none
   }
