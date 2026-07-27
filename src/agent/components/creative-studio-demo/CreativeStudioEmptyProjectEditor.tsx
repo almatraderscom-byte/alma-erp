@@ -80,6 +80,7 @@ export function CreativeStudioEmptyProjectEditor({
   const [canvasPreset, setCanvasPreset] = useState<CanvasSelection>(initialCanvasPreset)
   const [canvasSize, setCanvasSize] = useState(CANVAS_SIZES[initialCanvasPreset])
   const [customDraft, setCustomDraft] = useState(CANVAS_SIZES[initialCanvasPreset])
+  const [isCustomCanvasOpen, setIsCustomCanvasOpen] = useState(false)
   const [activePanel, setActivePanel] = useState<EmptyEditorPanel>('media')
   const [mediaItems, setMediaItems] = useState<LocalMediaItem[]>([])
   const [selectedMediaId, setSelectedMediaId] = useState('')
@@ -101,6 +102,7 @@ export function CreativeStudioEmptyProjectEditor({
     setCanvasPreset(preset)
     setCanvasSize(size)
     setCustomDraft(size)
+    setIsCustomCanvasOpen(false)
     setNotice(`${preset} canvas selected inside the project.`)
   }
 
@@ -111,6 +113,7 @@ export function CreativeStudioEmptyProjectEditor({
     setCanvasPreset('custom')
     setCanvasSize(size)
     setCustomDraft(size)
+    setIsCustomCanvasOpen(false)
     setNotice(`Custom ${width} × ${height} canvas applied locally.`)
   }
 
@@ -121,6 +124,7 @@ export function CreativeStudioEmptyProjectEditor({
     setCanvasPreset('custom')
     setCanvasSize(size)
     setCustomDraft(size)
+    setIsCustomCanvasOpen(false)
     setNotice(`${item.name} dimensions are now the current canvas.`)
   }
 
@@ -352,16 +356,20 @@ export function CreativeStudioEmptyProjectEditor({
                   </button>
                 ))}
                 <button
-                  aria-expanded={canvasPreset === 'custom'}
+                  aria-expanded={isCustomCanvasOpen}
                   aria-pressed={canvasPreset === 'custom'}
-                  className={canvasPreset === 'custom' ? styles.v4CanvasPresetActive : undefined}
-                  onClick={() => setCanvasPreset('custom')}
+                  className={
+                    canvasPreset === 'custom' || isCustomCanvasOpen
+                      ? styles.v4CanvasPresetActive
+                      : undefined
+                  }
+                  onClick={() => setIsCustomCanvasOpen((current) => !current)}
                   type="button"
                 >
                   Custom
                 </button>
               </div>
-              {canvasPreset === 'custom' ? (
+              {isCustomCanvasOpen ? (
                 <div className={styles.v6CustomCanvasFields}>
                   <label>
                     <span>Width</span>

@@ -15020,7 +15020,13 @@
   gap: 6px;
   overflow-x: auto;
   padding: 1px 0 3px;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.v4ComposerAdvanced .v3ModeScroller::-webkit-scrollbar,
+.v4ComposerAdvanced .v3ComposerBody::-webkit-scrollbar,
+.v3Composer.v4FloatingComposer.v6ComposerExpanded::-webkit-scrollbar {
+  display: none;
 }
 
 .v4ComposerAdvanced .v3ModeScroller button,
@@ -15259,6 +15265,7 @@
   overflow-y: auto;
   padding: 18px clamp(18px, 3vw, 48px);
   right: 0;
+  scrollbar-width: none;
   top: 0;
   transform: none;
   width: 100vw;
@@ -15390,6 +15397,7 @@
   display: grid;
   gap: 9px;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 0.52fr);
+  scrollbar-width: none;
 }
 
 .v6ComposerExpanded.v4ComposerAdvanced .v3ComposerBody > .v3PromptField {
@@ -15458,7 +15466,8 @@
   }
 
   .v6ComposerExpanded .v4AutoSourceGrid,
-  .v6ComposerExpanded .v6AdvancedSourceGrid {
+  .v6ComposerExpanded .v6AdvancedSourceGrid,
+  .v6AdvancedSourceGrid {
     gap: 9px;
     grid-template-columns: minmax(0, 1fr);
   }
