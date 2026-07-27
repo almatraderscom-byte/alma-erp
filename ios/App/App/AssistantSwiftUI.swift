@@ -165,6 +165,55 @@ struct AlmaAgentGlassBackground<S: Shape>: ViewModifier {
     }
 }
 
+/// The composer's surface.
+///
+/// iOS 26 draws it as Liquid Glass: one system material that carries its own
+/// edge highlight, refraction and shadow, and that reacts to what scrolls under
+/// it. Before 26 there is no such thing, so the original stack is kept verbatim
+/// — an ultraThin material, a hairline stroke and the ALMA ring — rather than
+/// approximating glass badly on a phone that cannot do it.
+///
+/// Focus stays legible in both: the ring brightens, it does not bounce.
+@available(iOS 17.0, *)
+struct AlmaComposerSurface: ViewModifier {
+    let pal: AgentPalette
+    let focused: Bool
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 30, style: .continuous) }
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            content
+                .glassEffect(.regular.interactive(), in: shape)
+                .overlay {
+                    shape.strokeBorder(
+                        AgentPalette.coral.opacity(focused ? 0.34 : 0.10),
+                        lineWidth: focused ? 1.0 : 0.6)
+                        .animation(.easeOut(duration: 0.2), value: focused)
+                }
+        } else {
+            content
+                .background(pal.glassFill)
+                .modifier(AlmaAgentGlassBackground(shape: shape, pal: pal))
+                .clipShape(shape)
+                .overlay {
+                    ZStack {
+                        shape.strokeBorder(focused
+                            ? Color.white.opacity(pal.dark ? 0.28 : 0.62)
+                            : pal.borderSubtle.opacity(0.95),
+                            lineWidth: focused ? 1.1 : 0.8)
+                        AgentNeonBorder(cornerRadius: 30)
+                            .opacity(focused ? 0.72 : 0.22)
+                    }
+                    .animation(.easeOut(duration: 0.2), value: focused)
+                }
+                .shadow(color: Color.black.opacity(pal.dark ? 0.28 : 0.10), radius: 18, y: 8)
+                .shadow(color: AgentPalette.coral.opacity(focused ? 0.12 : 0.04), radius: 18, y: 2)
+        }
+    }
+}
+
 /// Bangla digits — same convention as the web `toBn()`.
 func almaBn(_ n: Int) -> String {
     let bn = ["০","১","২","৩","৪","৫","৬","৭","৮","৯"]
@@ -230,6 +279,24 @@ enum AgentPermissionMode: String, CaseIterable, Identifiable {
         case .standard: return "scalemass"
         case .supervised: return "eye"
         case .elevated: return "timer"
+        }
+    }
+
+    /// A colour per rung, so the mode reads at a glance without being read.
+    ///
+    /// Owner, 2026-07-28: *"jei mode jemon eta jeno bujha jay, color jeno change
+    /// hoy chip er"*. The order is the ladder itself — the further the agent may
+    /// go on its own, the warmer the chip. All four hues are ALMA's own (teal,
+    /// gold, coral, coralDim); nothing invented, and স্বাভাবিক stays deliberately
+    /// colourless because the ordinary setting should not shout.
+    @available(iOS 17.0, *)
+    var tint: Color? {
+        switch self {
+        case .plan: return AgentPalette.teal            // reads only — calm
+        case .careful: return AgentMotionColor.gold     // every change asks first
+        case .standard: return nil                      // the quiet default
+        case .supervised: return AgentPalette.coral     // acts, then reports
+        case .elevated: return AgentPalette.coralDim    // widest, and time-boxed
         }
     }
 
@@ -10422,6 +10489,124 @@ enum AlmaAssistantLibraryRequest {
     static let note = Notification.Name("almaAssistantOpenSessionLibrary")
 }
 
+/// The mode chip's menu, built in UIKit so it is the SYSTEM menu.
+///
+/// SwiftUI's `Menu` is the right tool and the app uses it elsewhere (the ⋯
+/// button, the project picker) — but inside the composer it never opens: the
+/// menu's window lands behind the layer the composer is presented in. Rather
+/// than substitute something that merely resembles a menu (a popover did open,
+/// and looked like a panel from another app), this hands the job to UIKit, which
+/// presents the menu from the button and gets the real iOS 26 treatment: the
+/// glass panel, the spring, the haptic, the checkmark on the current rung, and
+/// the subtitle under each one.
+@available(iOS 17.0, *)
+struct AlmaPermissionModeMenuButton: UIViewControllerRepresentable {
+    let mode: AgentPermissionMode
+    let pal: AgentPalette
+    let onPick: (AgentPermissionMode) -> Void
+
+    /// A view CONTROLLER, not a bare view.
+    ///
+    /// A UIMenu needs a presentation context in the responder chain, and inside
+    /// the composer — which SwiftUI hosts as a `safeAreaInset` — a bare
+    /// representable does not provide one, so the menu never appeared while the
+    /// app's own ⋯ menu (a bar-button item, which has a controller) opened fine.
+    /// Wrapping the button in a controller puts that context back.
+    final class Host: UIViewController {
+        let button = UIButton(type: .system)
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            button.showsMenuAsPrimaryAction = true
+            button.translatesAutoresizingMaskIntoConstraints = false
+            view.backgroundColor = .clear
+            view.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                button.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
+                button.topAnchor.constraint(equalTo: view.topAnchor),
+                button.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+        }
+    }
+
+    func makeUIViewController(context: Context) -> Host {
+        let host = Host()
+        host.loadViewIfNeeded()
+        apply(to: host.button)
+        return host
+    }
+
+    func updateUIViewController(_ host: Host, context: Context) {
+        apply(to: host.button)
+    }
+
+    /// Without this the representable is laid out at ZERO height: the button
+    /// still draws at its natural size, so the chip looked right and the tap fell
+    /// straight through to the text field underneath. Visible-but-untappable, the
+    /// same failure the tab-bar strip produced — hence this note.
+    /// Without this the representable lays out at zero height: the button still
+    /// DRAWS at its natural size, so the chip looked right while the tap fell
+    /// through to whatever was behind it.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiViewController: Host, context: Context) -> CGSize? {
+        let fitted = uiViewController.button.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        return CGSize(width: max(fitted.width, 96), height: max(fitted.height, 32))
+    }
+
+    private func apply(to button: UIButton) {
+        var config = UIButton.Configuration.plain()
+        config.title = mode.label
+        config.image = UIImage(systemName: mode.symbol)
+        config.imagePadding = 5
+        config.imagePlacement = .leading
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 11, bottom: 6, trailing: 9)
+        config.cornerStyle = .capsule
+        // The system's own popup chevron — the mark that says "this opens a menu"
+        // everywhere else in iOS, instead of a hand-drawn one.
+        config.indicator = .popup
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var out = incoming
+            out.font = .systemFont(ofSize: 12, weight: .medium)
+            return out
+        }
+        // The colour IS the mode. Foreground, fill and stroke all move together so
+        // the chip reads at a glance from across the room, and the standard rung
+        // stays neutral so a changed mode is what catches the eye.
+        let accent = mode.tint.map { UIColor($0) }
+        config.baseForegroundColor = accent ?? UIColor(pal.mutedHi)
+        config.background.backgroundColor = accent?.withAlphaComponent(0.16)
+            ?? UIColor.white.withAlphaComponent(pal.dark ? 0.05 : 0.35)
+        config.background.strokeColor = accent?.withAlphaComponent(0.45) ?? UIColor(pal.borderSubtle)
+        config.background.strokeWidth = accent == nil ? 1 : 1.2
+        button.configuration = config
+        button.menu = buildMenu()
+    }
+
+    private func buildMenu() -> UIMenu {
+        let actions: [UIMenuElement] = AgentPermissionMode.allCases.map { candidate in
+            let action = UIAction(
+                title: candidate.label,
+                subtitle: candidate.hint,
+                image: UIImage(systemName: candidate.symbol),
+                state: candidate == mode ? .on : .off,
+            ) { _ in
+                guard candidate != mode else { return }
+                onPick(candidate)
+            }
+            return action
+        }
+        // True in every rung, and the reason a looser one is still safe: the
+        // risk-tier ceiling in the policy kernel, not this menu, keeps money and
+        // permissions in his hands.
+        return UIMenu(
+            title: "আমার অনুমোদন কতটুকু লাগবে",
+            subtitle: "টাকা সরানো ও নিরাপত্তার কাজ সব মোডেই আপনার হাতে",
+            options: .singleSelection,
+            children: actions,
+        )
+    }
+}
+
 @available(iOS 17.0, *)
 struct AgentComposerView: View {
     @Bindable var vm: AssistantVM
@@ -10434,7 +10619,6 @@ struct AgentComposerView: View {
     @State private var showDocumentPicker = false
     @State private var showCamera = false
     @State private var showScanner = false
-    @State private var showModePicker = false
     @FocusState private var focused: Bool
 
     private var hasComposerPresentation: Bool {
@@ -10503,6 +10687,7 @@ struct AgentComposerView: View {
                         permissionModeChip(pal)
                         Spacer(minLength: 0)
                     }
+                    .frame(height: 34)
                     .padding(.horizontal, 4)
                     .padding(.bottom, 2)
                     composerInputRow(pal)
@@ -10510,24 +10695,12 @@ struct AgentComposerView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
-            .background(pal.glassFill)
-            .modifier(AlmaAgentGlassBackground(
-                shape: RoundedRectangle(cornerRadius: 30, style: .continuous), pal: pal))
-            .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-            .overlay {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 30, style: .continuous)
-                        .strokeBorder(focused
-                            ? Color.white.opacity(pal.dark ? 0.28 : 0.62)
-                            : pal.borderSubtle.opacity(0.95),
-                            lineWidth: focused ? 1.1 : 0.8)
-                    AgentNeonBorder(cornerRadius: 30)
-                        .opacity(focused ? 0.72 : 0.22)
-                }
-                .animation(.easeOut(duration: 0.2), value: focused)
-            }
-            .shadow(color: Color.black.opacity(pal.dark ? 0.28 : 0.10), radius: 18, y: 8)
-            .shadow(color: AgentPalette.coral.opacity(focused ? 0.12 : 0.04), radius: 18, y: 2)
+            // NATIVE POLISH (owner, 2026-07-28). On iOS 26 the bar is real Liquid
+            // Glass — the system material, its own specular edge and its own
+            // shadow — instead of four hand-rolled layers (a fill, a material, a
+            // stroke and a neon ring) impersonating one. The pre-26 path keeps
+            // exactly what shipped, so nothing changes on an older phone.
+            .modifier(AlmaComposerSurface(pal: pal, focused: focused))
             .padding(.horizontal, 10)
             .padding(.bottom, 7)
         }
@@ -10738,95 +10911,23 @@ struct AgentComposerView: View {
 
     /// The ONE mode chip (owner, 2026-07-28) — "how much may it do without me".
     ///
-    /// Opens ANCHORED TO THE CHIP, like the ⋯ menu and the model picker, not as a
-    /// sheet from the bottom of the screen (owner correction). A SwiftUI `Menu`
-    /// is what those two use, but a Menu placed inside this composer container
-    /// does not open at all in the simulator while the app's own ⋯ Menu does —
-    /// so this uses the popover the composer's own attachment chooser uses, with
-    /// `.presentationCompactAdaptation(.popover)` to keep it a popover on iPhone
-    /// instead of letting it adapt into a sheet.
+    /// A real UIKit menu button, so it opens the SYSTEM menu: the iOS 26 glass
+    /// panel, its spring, its haptic, its checkmark — the same thing the ⋯ button
+    /// gives, which is what the owner asked for ("iOS feel").
     ///
-    /// It lives ABOVE the input row: below it, the strip is inside the floating
-    /// tab bar's hit area and the chip is visible but untappable.
+    /// Why UIKit and not SwiftUI's `Menu`: a SwiftUI Menu placed inside this
+    /// composer does not open at all in the simulator, while the app's own ⋯ Menu
+    /// on the same screen opens fine — the composer is presented in a layer where
+    /// the menu's own window ends up behind it. A `.popover` did open, but a
+    /// popover is not a menu; it looked like a panel from another app. UIKit
+    /// presents the menu from the button itself and sidesteps the whole problem.
     @ViewBuilder private func permissionModeChip(_ pal: AgentPalette) -> some View {
-        Button {
-            AlmaAgentHaptics.selection()
-            showModePicker = true
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: vm.permissionMode.symbol)
-                    .font(.system(size: 11, weight: .semibold))
-                Text(vm.permissionMode.label)
-                    .font(.system(size: 12, weight: .medium))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .foregroundStyle(vm.permissionMode == .standard ? pal.mutedHi : AgentPalette.coral)
-            .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(
-                vm.permissionMode == .standard
-                    ? AnyShapeStyle(Color.white.opacity(scheme == .dark ? 0.05 : 0.35))
-                    : AnyShapeStyle(AgentPalette.coral.opacity(0.12)),
-                in: Capsule())
-            .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(AlmaAgentPressStyle())
-        .accessibilityLabel("মোড: \(vm.permissionMode.label)")
-        .accessibilityHint(vm.permissionMode.hint)
-        .popover(isPresented: $showModePicker, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-            modeMenu(pal)
-                .presentationCompactAdaptation(.popover)
-                .presentationBackground(.ultraThinMaterial)
-        }
-    }
-
-    @ViewBuilder private func modeMenu(_ pal: AgentPalette) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("আমার অনুমোদন কতটুকু লাগবে")
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(pal.muted)
-                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
-            ForEach(AgentPermissionMode.allCases) { mode in
-                Button {
-                    showModePicker = false
-                    Task { await vm.setPermissionMode(mode) }
-                } label: {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: mode.symbol)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(AgentPalette.coral)
-                            .frame(width: 22)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(mode.label)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(pal.ink)
-                            Text(mode.hint)
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(pal.muted)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer(minLength: 6)
-                        if vm.permissionMode == mode {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(AgentPalette.coral)
-                        }
-                    }
-                    .padding(.horizontal, 14).padding(.vertical, 9)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(AlmaAgentPressStyle())
-            }
-            // True in every mode, and the reason a looser rung is still safe: the
-            // risk-tier ceiling in the policy kernel, not this menu, keeps money
-            // and permissions in his hands.
-            Text("টাকা সরানো ও নিরাপত্তার কাজ সব মোডেই আপনার হাতে থাকবে।")
-                .font(.system(size: 11))
-                .foregroundStyle(pal.muted)
-                .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 12)
-        }
-        .frame(width: 330)
+        AlmaPermissionModeMenuButton(
+            mode: vm.permissionMode,
+            pal: pal,
+            onPick: { next in Task { await vm.setPermissionMode(next) } })
+            .accessibilityLabel("মোড: \(vm.permissionMode.label)")
+            .accessibilityHint(vm.permissionMode.hint)
     }
 
     @ViewBuilder private func composerInputRow(_ pal: AgentPalette) -> some View {
