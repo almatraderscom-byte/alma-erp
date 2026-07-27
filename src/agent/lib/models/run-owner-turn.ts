@@ -55,6 +55,7 @@ import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
 import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
 import { buildOwnerCorrectionNudge } from '@/agent/lib/owner-correction'
 import { newTurnProgressState, nextTurnProgress } from '@/agent/lib/turn-progress'
+import { insertControlNote } from '@/agent/lib/control-note-order'
 import { buildPlanProgress, planProgressSignature } from '@/agent/lib/plan-progress'
 import { loadLatestPlanProgress } from '@/agent/lib/planner'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
@@ -538,7 +539,7 @@ async function* runAlternateProviderTurn(
   const turnStartedMs = Date.now()
   const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
   if (ownerCorrectionNudge) {
-    messages = [...messages, { role: 'user', content: ownerCorrectionNudge }]
+    messages = insertControlNote(messages, { role: 'user', content: ownerCorrectionNudge })
   }
   const ownerRequirements = deriveOwnerTurnRequirements(lastUserText)
   // A derived deliverable requirement (client SEO batch / live-browser walk) is
@@ -1912,14 +1913,14 @@ async function* runAlternateProviderTurn(
   // pattern) so the cached prompt prefix is untouched — this is a per-turn
   // volatile fact and must never sit in the cached bytes.
   const pendingCardsAtStart = await readPendingCards(conversationId)
-  messages = [...messages, { role: 'user', content: buildCardStateNote(pendingCardsAtStart) }]
+  messages = insertControlNote(messages, { role: 'user', content: buildCardStateNote(pendingCardsAtStart) })
 
   // PM-1 — the agent must never be unaware of the mode it is in (owner
   // requirement 2026-07-27: if he takes a plan and then asks for the work
   // without switching, it has to say which mode it is in and which one would do
   // it, instead of answering vaguely). Same slot as the card-state note: after
   // the cached prefix, marked INTERNAL CONTROL.
-  messages = [...messages, { role: 'user', content: permissionModeNote(permissionMode, elevationGrant) }]
+  messages = insertControlNote(messages, { role: 'user', content: permissionModeNote(permissionMode, elevationGrant) })
 
   try {
     for (let iteration = 0; iteration < maxIterations; iteration++) {
