@@ -109,6 +109,28 @@ export const OWNER_CORPUS: OwnerCase[] = [
   { id: 'browser', text: 'chrome khule daraz e dekho dam koto', expected: 'alma-browser-operator' },
   { id: 'research', text: 'competitor ra ki dame bikri korche khuje dekho', expected: 'alma-research' },
 
+  // ── A1: editing a product that is already on the site ───────────────────
+  // He names the product and says what should change. No SEO word, no "website"
+  // — nothing a keyword score can reach, which is why these are rules.
+  {
+    id: 'edit-price',
+    text: 'ei product tar dam 1200 koro',
+    expected: 'storefront-editing',
+    note: 'Price on the live site. Must not be read as a new listing.',
+  },
+  {
+    id: 'edit-hide',
+    text: 'oi panjabi ta site theke soriye dao',
+    expected: 'storefront-editing',
+    note: 'Unpublish. The mirror of the listing job, and it is not one.',
+  },
+  {
+    id: 'edit-featured',
+    text: 'oita homepage e dekhao',
+    expected: 'storefront-editing',
+    note: 'Homepage featured row.',
+  },
+
   // ── Must pick NOTHING. A false trigger costs tools the job needed. ───────
   { id: 'greeting', text: 'valo acho?', expected: null },
   { id: 'weather', text: 'ajke bristi hobe?', expected: null },

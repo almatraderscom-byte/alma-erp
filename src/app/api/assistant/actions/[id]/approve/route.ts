@@ -2058,6 +2058,134 @@ async function runApprove(
     return Response.json({ success: true, ...result })
   }
 
+  if (action.type === 'website_edit_product') {
+    const {
+      productId,
+      fields,
+      imageAlts,
+      publishTo,
+      featuredTo,
+      expected,
+    } = payload as {
+      productId: string
+      fields?: Record<string, unknown>
+      imageAlts?: Array<{ url: string; alt: string }>
+      publishTo?: boolean | null
+      featuredTo?: boolean | null
+      expected?: Record<string, unknown>
+    }
+
+    const {
+      updateWebsiteProductFields,
+      updateWebsiteProductImageAlts,
+      publishWebsiteProduct,
+      unpublishWebsiteProduct,
+      setWebsiteProductFeatured,
+    } = await import('@/lib/website/write.service')
+    const { getWebsiteProduct } = await import('@/lib/website/catalog.service')
+
+    const applied: string[] = []
+    const failures: string[] = []
+
+    // Order is a safety property. Hiding comes FIRST so a half-finished page is
+    // never public, and publishing comes LAST so nothing goes live before its
+    // copy and price landed. A partial failure in between leaves a product that
+    // is either still hidden or still showing its old, complete self.
+    if (publishTo === false) {
+      const res = await unpublishWebsiteProduct(String(productId))
+      if (res.ok) applied.push('unpublished')
+      else failures.push(`unpublish: ${res.error}`)
+    }
+
+    if (fields && Object.keys(fields).length) {
+      const res = await updateWebsiteProductFields(String(productId), fields)
+      if (res.ok) applied.push(...Object.keys(fields))
+      else failures.push(`fields: ${res.error}`)
+    }
+
+    if (Array.isArray(imageAlts) && imageAlts.length) {
+      const res = await updateWebsiteProductImageAlts(String(productId), imageAlts)
+      if (res.ok) applied.push(`imageAlts×${res.updated}`)
+      else failures.push(`imageAlts: ${res.error}`)
+    }
+
+    if (featuredTo != null) {
+      const res = await setWebsiteProductFeatured(String(productId), featuredTo === true)
+      if (res.ok) applied.push(`featured=${featuredTo}`)
+      else failures.push(`featured: ${res.error}`)
+    }
+
+    if (publishTo === true) {
+      const res = await publishWebsiteProduct(String(productId))
+      if (res.ok) applied.push('published')
+      else failures.push(`publish: ${res.error}`)
+    }
+
+    // The write reporting success is not the evidence. Read the row back and
+    // compare it to what the card promised, field by field.
+    const live = await getWebsiteProduct(String(productId))
+    const liveValue = (field: string): unknown => {
+      switch (field) {
+        case 'title': return live?.name ?? null
+        case 'shortDescription': return live?.shortDescription ?? null
+        case 'description': return live?.description ?? null
+        case 'priceBdt': return live?.price ?? null
+        case 'category': return live?.category ?? null
+        case 'published': return live?.published ?? null
+        case 'featured': return live?.featured ?? null
+        default: return null
+      }
+    }
+
+    const verified: Array<{ field: string; expected: unknown; live: unknown; ok: boolean }> = []
+    for (const [field, want] of Object.entries(expected ?? {})) {
+      const got = liveValue(field)
+      verified.push({ field, expected: want, live: got, ok: got === want })
+    }
+    const altsLive = (imageAlts ?? []).filter((a) => {
+      const img = live?.images.find((i) => i.url === a.url)
+      return img?.alt === a.alt
+    }).length
+    if (Array.isArray(imageAlts) && imageAlts.length) {
+      verified.push({
+        field: 'imageAlts',
+        expected: imageAlts.length,
+        live: altsLive,
+        ok: altsLive === imageAlts.length,
+      })
+    }
+
+    const notVerified = verified.filter((v) => !v.ok).map((v) => v.field)
+    const allGood = failures.length === 0 && notVerified.length === 0
+    const result = {
+      ok: allGood,
+      productId: String(productId),
+      slug: live?.slug ?? String(productId),
+      applied,
+      failures,
+      verified,
+    }
+
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: allGood ? 'executed' : 'failed', resolvedAt: new Date(), result },
+    })
+
+    const verifiedLines = verified
+      .map((v) => `${v.ok ? '✅' : '❌'} ${v.field}: ${String(v.live ?? '(খালি)').slice(0, 60)}`)
+      .join('\n')
+    const note = allGood
+      ? `✅ পণ্য এডিট হয়েছে — /products/${result.slug}\nসাইট থেকে পড়ে মিলিয়ে দেখা হলো:\n${verifiedLines}\n⚠️ ISR/cache — live page-এ দেখতে কিছুক্ষণ লাগতে পারে।`
+      : `⚠️ পণ্য এডিট আংশিক — /products/${result.slug}\n${verifiedLines}`
+        + (failures.length ? `\nব্যর্থ: ${failures.join(' · ')}` : '')
+        + `\nযেগুলো বসেছে সেগুলো বসেই আছে; বাকিগুলো আবার চেষ্টা করতে হবে।`
+    await appendConversationNote(db, action, note)
+
+    return Response.json(allGood ? { success: true, ...result } : { error: 'partial', ...result }, {
+      status: allGood ? 200 : 502,
+    })
+  }
+
   if (action.type === 'auto_fix') {
     const claimed = await db.agentPendingAction.updateMany({
       where: { id: actionId, status: 'pending' },

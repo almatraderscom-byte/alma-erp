@@ -143,6 +143,9 @@ export const DOMAIN_PACKS = {
   website: [
     'get_website_catalog', 'get_website_health', 'fetch_website_page', 'publish_product',
     'unpublish_product', 'set_product_featured', 'update_product_web', 'get_design_group', 'get_size_for_age',
+    // edit_storefront_product is the batched form of the three staging tools
+    // above: one card for the whole edit instead of one per field.
+    'edit_storefront_product',
   ],
   // change_product_slug is deliberately NOT here. The seo pack is already at the
   // 24-tool hard limit, and a URL rename is an owner-facing decision the HEAD

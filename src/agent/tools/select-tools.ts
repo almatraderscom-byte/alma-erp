@@ -260,6 +260,12 @@ const HEAD_KEPT_GROWTH_TOOLS = [
   'get_gbp_reviews',
   'draft_gbp_reply',
   'draft_gbp_post',
+  // edit_storefront_product is what "এই পণ্যের দাম আর বর্ণনা ঠিক করো" needs, and
+  // that lands on the head as one owner-facing sentence. It stages a single card
+  // like draft_seo_fixes above, so keeping it off the head would buy a delegation
+  // hop and nothing else — and the owner would still approve exactly once.
+  // Appended last so the existing cached-prefix bytes never shift.
+  'edit_storefront_product',
 ] as const
 
 // Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work

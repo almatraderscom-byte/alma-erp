@@ -80,6 +80,9 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     //   2026-07-27: alma-website, the sixth — scope narrowed away from page copy.
     //   2026-07-27: alma-marketing, the seventh — three keyword collisions freed.
     //   2026-07-27: alma-invoice-to-erp, the eighth.
+    //   2026-07-28: storefront-editing, the ninth — A1. Editing a product that is
+    //   already live had no skill at all, so "dam 1200 koro" fell through to the
+    //   head and, at best, one approval card per field.
     expect(selectable).toEqual([
       'alma-finance-brief',
       'alma-invoice-to-erp',
@@ -93,6 +96,7 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
       'seo-auditing-own-site',
       'seo-fixing-client-site',
       'seo-fixing-own-site',
+      'storefront-editing',
     ])
 
     const stillDraft = all.skills.length - live.skills.length
@@ -162,7 +166,9 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     // 27 → 28: the parcel-vs-person boundary added 2026-07-27 with
     // alma-staff-dispatch. "customer er order ta kokhon asche" carries the same
     // words as the staff question and must still pin nothing.
-    expect(rows).toHaveLength(30)
+    // 30 → 33: A1's three product-edit messages added 2026-07-28 — a price, a
+    // hide and a homepage placement, none of which any skill covered before.
+    expect(rows).toHaveLength(33)
     expect(accuracy).toBeLessThanOrEqual(100)
     expect(hits + count('wrong') + count('missed')).toBe(shouldPick.length)
     expect(falseTriggers + count('correctly-silent')).toBe(shouldNotPick.length)
