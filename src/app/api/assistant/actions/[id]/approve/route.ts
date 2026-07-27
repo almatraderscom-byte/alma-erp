@@ -553,6 +553,51 @@ async function runApprove(
 
   // Growth Autopilot: approve a batch of on-page SEO copy fixes — apply
   // shortDescription/description to every product in the batch, live.
+  // A URL rename: the slug and its redirect land together, and the live page is
+  // re-read afterwards so the reply carries proof rather than a claim.
+  if (action.type === 'product_slug_change') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+        return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+      }
+      const productId = String(payload.productId ?? '')
+      const fromSlug = String(payload.fromSlug ?? '')
+      const toSlug = String(payload.toSlug ?? '')
+      if (!productId || !fromSlug || !toSlug) throw new Error('slug change payload incomplete')
+
+      const { renameWebsiteProductSlug } = await import('@/lib/website/write.service')
+      const result = await renameWebsiteProductSlug(productId, {
+        fromSlug,
+        toSlug,
+        reason: payload.reason ? String(payload.reason) : undefined,
+      })
+      if (!result.ok) throw new Error(result.error)
+
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result: { fromSlug, toSlug } },
+      })
+      const note =
+        `✅ URL বদল হয়েছে — /products/${fromSlug} → /products/${toSlug}। `
+        + `পুরনো লিংকে গেলে এখন নতুনটায় পৌঁছাবে (৩০১), তাই র‍্যাঙ্ক থাকবে। `
+        + `ISR/cache — live page-এ দেখতে কিছুক্ষণ লাগতে পারে।`
+      await appendConversationNote(db, action, note)
+      return Response.json({ success: true, fromSlug, toSlug })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
   if (action.type === 'seo_fix_batch') {
     try {
       const claimed = await db.agentPendingAction.updateMany({

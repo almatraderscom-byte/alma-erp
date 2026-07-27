@@ -241,7 +241,7 @@ const draft_seo_fixes: AgentTool = {
     'keyword-rich, on-brand, halal-compliant), then call this with the drafts. The owner approves the whole batch at once; on approval each ' +
     'product\'s title/shortDescription/description and image alt-text are updated live. NEVER auto-apply — this only creates the pending card. ' +
     'Writable via SEO fixes: title (name), shortDescription (meta), description, and imageAlts (per-image alt-text). ' +
-    'Slug changes are NOT supported here (they need a 301 redirect — coordinate with the owner separately).',
+    'Slug changes are NOT done here — use change_product_slug, which writes the 301 redirect alongside the rename.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -807,10 +807,113 @@ const seo_release_plan: AgentTool = {
   },
 }
 
+
+/**
+ * Renaming a product's URL — the one SEO edit that can destroy value instead of
+ * adding it.
+ *
+ * `draft_seo_fixes` has always refused slugs, and correctly: until 2026-07-27 the
+ * storefront had no redirect of any kind, so a rename meant the old URL 404s and
+ * its ranking is gone. One live product still carries a Bangla sentence as its
+ * slug for exactly that reason, and the agent fails to find it on every attempt.
+ *
+ * With `product_redirects` in place (alma-lifestyle PR #84) a rename is finally
+ * safe — but only as ONE operation that writes both. That is why this is its own
+ * staged tool rather than a field on the batch: it needs the owner to see the old
+ * URL, the new URL, and the promise that the old one keeps working.
+ */
+const change_product_slug: AgentTool = {
+  name: 'change_product_slug',
+  description:
+    'Stage an approval card to CHANGE a product URL (slug) on almatraders.com. The old URL keeps working: '
+    + 'the rename writes a permanent redirect at the same time, so no ranking is lost. Use ONLY when the current '
+    + 'slug is genuinely broken — Bangla text, spaces, uppercase, a product code where words belong. '
+    + 'A good slug is lowercase, hyphenated, ASCII, and describes the product. NEVER rename for cosmetics: '
+    + 'every rename spends a little link equity even done correctly. Owner approval required — nothing changes until he taps.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      slugOrId: { type: 'string', description: 'The product to rename — its CURRENT slug or UUID.' },
+      newSlug: {
+        type: 'string',
+        description: 'The new slug: lowercase ASCII words separated by hyphens, no spaces (e.g. islamic-7-books-combo-package).',
+      },
+      reason: { type: 'string', description: 'Why this rename is worth it, in one line — stored with the redirect.' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
+    },
+    required: ['slugOrId', 'newSlug'],
+  },
+  handler: async (input) => {
+    try {
+      // Shape first, database second: judging the argument needs no connection,
+      // and "that is not a valid slug" is a far more useful answer to the head
+      // than "Supabase not configured" when both are true.
+      const newSlug = String(input.newSlug ?? '').trim().toLowerCase()
+      // The shape rules are the whole point of the tool — a rename to another bad
+      // slug spends link equity and buys nothing.
+      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(newSlug)) {
+        return {
+          success: false,
+          error: `"${newSlug}" ঠিক slug নয় — শুধু ছোট হাতের ইংরেজি অক্ষর/সংখ্যা আর হাইফেন চলবে (যেমন islamic-7-books-combo-package)।`,
+        }
+      }
+      if (newSlug.length < 3 || newSlug.length > 80) {
+        return { success: false, error: `slug ${newSlug.length} অক্ষর — ৩ থেকে ৮০-এর মধ্যে রাখুন।` }
+      }
+
+      if (!websiteSupabaseConfigured()) {
+        return { success: false, error: 'Website Supabase not configured.' }
+      }
+
+      const product = await getWebsiteProduct(String(input.slugOrId ?? '').trim())
+      if (!product) return { success: false, error: `product পাওয়া যায়নি (${input.slugOrId})।` }
+      if (product.slug === newSlug) {
+        return { success: false, error: 'নতুন slug বর্তমানটার মতোই — বদলানোর কিছু নেই।' }
+      }
+
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+      const reason = input.reason ? String(input.reason).trim().slice(0, 200) : null
+
+      const summary =
+        `🔗 URL বদল — ${product.name}\n`
+        + `পুরনো: /products/${product.slug}\n`
+        + `নতুন:  /products/${newSlug}\n`
+        + (reason ? `কারণ: ${reason}\n` : '')
+        + `\n✅ পুরনো লিংক নষ্ট হবে না — ৩০১ redirect একসাথেই বসবে, তাই Google-এর র‍্যাঙ্ক থাকবে।\n`
+        + `⚠️ ISR/cache — live page-এ দেখতে কিছুক্ষণ লাগতে পারে।`
+
+      const action = await db.agentPendingAction.create({
+        data: {
+          conversationId,
+          type: 'product_slug_change',
+          payload: { productId: product.id, fromSlug: product.slug, toSlug: newSlug, reason, conversationId },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+      })
+
+      return {
+        success: true,
+        data: {
+          pendingActionId: action.id,
+          fromSlug: product.slug,
+          toSlug: newSlug,
+          message: `URL বদলের approval card পাঠানো হয়েছে — approve করলে নতুন slug আর redirect একসাথে বসবে।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
 export const SEO_TOOLS: AgentTool[] = [
+
   audit_product_seo,
   research_seo_keywords,
   draft_seo_fixes,
+  change_product_slug,
   track_keyword,
   list_tracked_keywords,
   untrack_keyword,
@@ -827,7 +930,7 @@ export const SEO_ROLE_PROMPT = `
 audit_product_seo দিয়ে on-page SEO check করুন (cost-free) — title/meta description/description/alt-text/slug। scope="all_published" দিলে পুরো সাইট scan হয়।
 **আসল Google ডেটা (ফ্রি):** সাইট search-এ কেমন করছে জানতে **get_search_console_performance** ব্যবহার করুন — Google Search Console থেকে সত্যিকারের clicks/impressions/CTR/গড় position + top query ও top page (ডিফল্ট শেষ ২৮ দিন)। ইনডেক্সিং/কভারেজ দেখতে **get_indexing_status** (আর্গুমেন্ট ছাড়া sitemap সারাংশ, বা নির্দিষ্ট page URL দিলে সেটা ইনডেক্স হয়েছে কিনা)। এগুলো ফ্রি ও নির্ভরযোগ্য — Oxylabs-এর আগে এগুলোই দেখুন। (owner একবার Growth পেজ থেকে Search Console connect করলে চালু হবে।)
 research_seo_keywords দিয়ে keyword ranking দেখুন — **আগে confirm_oxylabs_spend** (≈১ ক্রেডিট), owner Approve ছাড়া চালাবেন না। GSC-তে যা পাওয়া যায় তার জন্য Oxylabs খরচ করবেন না।
-**একসাথে অনেক product ঠিক করতে:** আগে audit চালান → যেসব product-এর title/meta/description/alt-text দুর্বল, তাদের জন্য নিজে উন্নত বাংলা কপি লিখুন (title 10-70 chars, meta 50-160 chars, description 100+ chars, image alt-text সংক্ষিপ্ত বর্ণনামূলক, keyword-rich, on-brand, হালাল) → তারপর **draft_seo_fixes**-এ সব একসাথে দিন। title, shortDescription (meta), description, ও imageAlts (per-image alt-text, single-product audit-এ image url পাবেন) — এই ফিল্ডগুলো লেখা যায়। slug পরিবর্তন এখান থেকে হয় না (301 redirect লাগে — owner-এর সাথে আলাদা করে করবেন)। owner **একটাই approval card**-এ পুরো ব্যাচ অনুমোদন করেন, approve করলেই সব লাইভ আপডেট হয়।
+**একসাথে অনেক product ঠিক করতে:** আগে audit চালান → যেসব product-এর title/meta/description/alt-text দুর্বল, তাদের জন্য নিজে উন্নত বাংলা কপি লিখুন (title 10-70 chars, meta 50-160 chars, description 100+ chars, image alt-text সংক্ষিপ্ত বর্ণনামূলক, keyword-rich, on-brand, হালাল) → তারপর **draft_seo_fixes**-এ সব একসাথে দিন। title, shortDescription (meta), description, ও imageAlts (per-image alt-text, single-product audit-এ image url পাবেন) — এই ফিল্ডগুলো লেখা যায়। slug পরিবর্তন এখান থেকে হয় না — তার জন্য **change_product_slug** আছে, ওটা নতুন slug আর ৩০১ redirect একসাথে বসায় বলে পুরনো লিংকের র‍্যাঙ্ক নষ্ট হয় না। slug শুধু তখনই বদলাবেন যখন সেটা সত্যিই ভাঙা (বাংলা লেখা, স্পেস, বড় হাতের অক্ষর, বা শব্দের বদলে কোড) — সৌন্দর্যের জন্য কখনো নয়। owner **একটাই approval card**-এ পুরো ব্যাচ অনুমোদন করেন, approve করলেই সব লাইভ আপডেট হয়।
 একটা মাত্র product-এর জন্য update_product_web-ও ব্যবহার করা যায় (price সহ)।
 **র‍্যাঙ্ক ট্র্যাকিং:** যে keyword-এ business rank করতে চায় সেটা track_keyword দিয়ে যোগ করুন (যোগ করা ফ্রি) — rank tracking ON থাকলে প্রতি সপ্তাহে নিজে থেকে SERP টেনে owner-কে র‍্যাঙ্ক জানাবে। list_tracked_keywords-এ সর্বশেষ র‍্যাঙ্ক, untrack_keyword-এ বন্ধ। এককালীন check-এ research_seo_keywords (Approve লাগে)।
 কখনোই নিজে থেকে content/meta change করবেন না — শুধু audit + draft + owner Approve।

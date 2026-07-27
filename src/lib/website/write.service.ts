@@ -173,3 +173,85 @@ export async function getWebsiteCategoryIdBySlug(slug: string): Promise<string |
   if (error) throw new Error(error.message)
   return (data?.id as string) ?? null
 }
+
+/**
+ * Rename a product's URL — and leave a way back.
+ *
+ * A slug is the page's address on Google. Changing one without a redirect is not
+ * an edit, it is a deletion: the old URL 404s and whatever ranking it earned is
+ * gone. That is why nothing in this ERP could rename a slug until the storefront
+ * gained a `product_redirects` table (alma-lifestyle PR #84), and why one live
+ * product still carries a Bangla sentence as its slug.
+ *
+ * The order here is the safety property. The redirect is written FIRST: if the
+ * rename then fails, the worst case is a redirect pointing at a slug nobody uses
+ * — invisible and harmless. Writing the slug first and failing on the redirect
+ * would leave the old URL dead, which is the exact damage this exists to prevent.
+ */
+export async function renameWebsiteProductSlug(
+  productId: string,
+  input: { fromSlug: string; toSlug: string; reason?: string },
+): Promise<WebsiteWriteResult> {
+  const sb = getWebsiteSupabaseAdmin()
+  const fromSlug = input.fromSlug.trim()
+  const toSlug = input.toSlug.trim()
+
+  if (!fromSlug || !toSlug) return { ok: false, error: 'fromSlug ও toSlug দুটোই লাগবে।' }
+  if (fromSlug === toSlug) return { ok: false, error: 'নতুন slug পুরনোটার মতোই — বদলানোর কিছু নেই।' }
+
+  // Refuse rather than silently half-work: without the redirect table this write
+  // would destroy the old URL. The storefront migration must be applied first.
+  const probe = await sb.from('product_redirects').select('from_slug').limit(1)
+  if (probe.error) {
+    return {
+      ok: false,
+      error:
+        'storefront-এ product_redirects টেবিল এখনো নেই — redirect ছাড়া slug বদলালে পুরনো লিংক ৪০৪ হবে। '
+        + 'আগে alma-lifestyle-এর migration চালাতে হবে, তারপর এটা করা যাবে।',
+    }
+  }
+
+  // Someone else may already own the target address.
+  const taken = await sb.from('products').select('id').eq('slug', toSlug).is('deleted_at', null).maybeSingle()
+  if (taken.error) return { ok: false, error: taken.error.message }
+  if (taken.data && (taken.data as { id: string }).id !== productId) {
+    return { ok: false, error: `"${toSlug}" slug অন্য একটা product ইতিমধ্যে ব্যবহার করছে।` }
+  }
+
+  const redirectWrite = await sb.from('product_redirects').upsert(
+    {
+      from_slug: fromSlug,
+      to_slug: toSlug,
+      reason: input.reason ?? null,
+      created_by: 'agent',
+    },
+    { onConflict: 'from_slug' },
+  )
+  if (redirectWrite.error) return { ok: false, error: `redirect লেখা যায়নি: ${redirectWrite.error.message}` }
+
+  const { data, error } = await sb
+    .from('products')
+    .update({ slug: toSlug, updated_at: new Date().toISOString() })
+    .eq('id', productId)
+    .is('deleted_at', null)
+    .select('id, slug')
+    .maybeSingle()
+
+  if (error || !data) {
+    // The rename failed after the redirect landed. Take the redirect back so we
+    // do not leave a pointer to an address that was never created.
+    await sb.from('product_redirects').delete().eq('from_slug', fromSlug)
+    return { ok: false, error: error?.message ?? 'Product not found' }
+  }
+
+  // Anything that pointed AT the old slug must now point at the new one, or the
+  // chain grows a hop every rename.
+  await sb.from('product_redirects').update({ to_slug: toSlug }).eq('to_slug', fromSlug)
+
+  await logWebsiteAudit('website_rename_slug', productId, {
+    fromSlug,
+    toSlug,
+    reason: input.reason ?? null,
+  })
+  return { ok: true, productId, slug: data.slug as string }
+}

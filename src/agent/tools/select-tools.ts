@@ -234,6 +234,13 @@ const HEAD_KEPT_GROWTH_TOOLS = [
   // off the head would force a delegation hop just to fire one HTTP ping.
   // Appended last so the existing cached-prefix bytes never shift.
   'submit_to_indexnow',
+  // change_product_slug completes the SEO fix set on the head. A slug rename is
+  // the one on-page fix draft_seo_fixes always refused, because without a
+  // redirect it deletes the old URL's ranking; the storefront gained
+  // product_redirects on 2026-07-27, so it is finally safe — and it stages an
+  // owner card exactly like its siblings. Appended last so the existing
+  // cached-prefix bytes never shift.
+  'change_product_slug',
   // get_ga4_report is a cost-free, read-only Google Analytics read the owner asks
   // for directly ("which marketing drives sales / how's traffic") — an owner-facing
   // ROI question that lands on the head, not a delegable content/growth sub-task.

@@ -4,7 +4,9 @@
   "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
-  "businessScopes": ["ALMA_LIFESTYLE"],
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
   "riskTier": "medium",
   "extends": "alma-base",
   "isolation": "subagent",
@@ -13,13 +15,24 @@
     "get_website_catalog",
     "audit_product_seo",
     "draft_seo_fixes",
+    "change_product_slug",
     "fetch_website_page",
     "submit_to_indexnow"
   ],
-  "dependencies": { "env": ["WEBSITE_SUPABASE_URL", "WEBSITE_SUPABASE_SERVICE_ROLE_KEY"] },
+  "dependencies": {
+    "env": [
+      "WEBSITE_SUPABASE_URL",
+      "WEBSITE_SUPABASE_SERVICE_ROLE_KEY"
+    ]
+  },
   "outputContract": {
     "kind": "approval_card",
-    "mustInclude": ["product_slug", "before", "after", "batch_size"]
+    "mustInclude": [
+      "product_slug",
+      "before",
+      "after",
+      "batch_size"
+    ]
   },
   "stopConditions": [
     "এক ব্যাচে ১০টার বেশি product হলে",
@@ -28,8 +41,12 @@
     "publish বা টাকা জড়ালে"
   ],
   "done": [
-    { "tool": "audit_product_seo" },
-    { "tool": "draft_seo_fixes" }
+    {
+      "tool": "audit_product_seo"
+    },
+    {
+      "tool": "draft_seo_fixes"
+    }
   ],
   "networkPolicy": "allowlist",
   "writePolicy": "owner_gated",
