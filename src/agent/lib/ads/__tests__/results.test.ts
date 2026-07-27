@@ -82,3 +82,4 @@ describe('primaryResultFor — judge a campaign by what it is for', () => {
     expect(primaryResultFor('OUTCOME_SALES', none, 25).costPer).toBe(0)
   })
 })
+

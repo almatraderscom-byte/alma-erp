@@ -273,6 +273,11 @@ const recommend_ad_actions: AgentTool = {
     'cite them ("CTR ইন্ডাস্ট্রি গড়ের নিচে…") instead of judging on spend alone. ' +
     'SOURCE: quote `provenance.sourceLabel` verbatim; say "Meta MCP" ONLY if provenance.source === "meta_mcp", otherwise state ' +
     'provenance.degradedReason honestly. MONEY: use windowPerformance[].spendLabel / windowSpendLabel — never ৳ unless BDT. ' +
+    'FATIGUE: windowPerformance[].frequency is how many times ONE person saw the campaign (reach = people). Rising frequency with ' +
+    'falling CTR is fatigue; say "frequency জানা নেই" if it is 0, never substitute Meta\'s relevance label for it. ' +
+    'LIMITS: `accountLimits` — Meta\'s own spendCapLabel/remainingLabel (null = কোনো cap সেট নেই) plus dailySoftCapBdt, the ৳ cap ' +
+    'enforced in CODE at launch. Answer "limit-এর মধ্যে আছি?" from these; never offer to remember a cap Boss tells you — a money ' +
+    'limit lives in code, not in memory. ' +
     'RESULTS: judge each campaign by its OWN objective — windowPerformance[].objective + primaryResult/primaryCount/primaryCostLabel. ' +
     'An OUTCOME_ENGAGEMENT / MESSAGES campaign is measured in messages (windowPerformance[].messages), NOT purchases: saying ' +
     '"ROAS 0, টাকা নষ্ট" about a messaging campaign is a category error. Purchases/ROAS only for SALES/CONVERSION objectives. ' +
@@ -302,8 +307,11 @@ const recommend_ad_actions: AgentTool = {
       // the head can cite trend/benchmark/anomaly evidence without ever guessing
       // (or fabricating) where the numbers came from.
       const { readAdInsights, provenanceOf } = await import('@/agent/lib/meta-mcp/insights-source')
-      const { formatAdSpend } = await import('@/agent/lib/ads/insights')
+      const { formatAdSpend, fetchAccountLimits } = await import('@/agent/lib/ads/insights')
       const insights = await readAdInsights(7).catch(() => null)
+      // ADS-2 phase C: the cap question. Never fatal — an account with no cap
+      // set, or a limits read that fails, must not take down the whole audit.
+      const limits = await fetchAccountLimits().catch(() => null)
 
       const summary = formatRecommendationsSummary(recommendations)
       const actionable = recommendations.filter((r) => r.verdict !== 'hold')
@@ -345,6 +353,10 @@ const recommend_ad_actions: AgentTool = {
         primaryCostLabel: c.primaryWeek.costPer > 0
           ? formatAdSpend(c.primaryWeek.costPer, insights?.currency ?? 'USD')
           : null,
+        // Fatigue, measured instead of guessed: how many times ONE person saw
+        // this campaign, and how many people that was.
+        frequency: Number(c.frequencyWeek.toFixed(2)),
+        reach: c.reachWeek,
         messages: c.resultsWeek.messagingConversations,
         linkClicks: c.resultsWeek.linkClicks,
         leads: c.resultsWeek.leads,
@@ -394,6 +406,19 @@ const recommend_ad_actions: AgentTool = {
           // The real last-7-days per-campaign performance (paused-inclusive) —
           // this is what a "impressions/clicks/CTR কত?" question is answered from.
           windowPerformance,
+          // ADS-2 phase C — the answer to "limit er moddhe achi kina", which
+          // used to be "I don't know your cap". `dailySoftCapBdt` is the CODE
+          // gate that actually stops a launch; Meta's spendCap is the account's
+          // own lifetime ceiling (null = none set).
+          accountLimits: limits
+            ? {
+                ...limits,
+                spendCapLabel: limits.spendCap === null ? null : formatAdSpend(limits.spendCap, limits.currency),
+                amountSpentLabel: formatAdSpend(limits.amountSpent, limits.currency),
+                remainingLabel: limits.remaining === null ? null : formatAdSpend(limits.remaining, limits.currency),
+                dailySoftCapBdt: DAILY_BUDGET_SOFT_CAP_BDT,
+              }
+            : null,
           // THE number to quote when Boss asks how many campaigns are running.
           deliveringCount,
           deliveringNames: deliveringCampaigns.map((m) => m.name),

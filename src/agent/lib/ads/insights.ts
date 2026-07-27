@@ -211,6 +211,11 @@ export type CampaignMetrics = {
   /** The ONE number this campaign should be judged on, chosen from its objective,
    *  with its cost. An engagement campaign is not a failed shop. */
   primaryWeek: PrimaryResult
+  /** Average times ONE person saw this campaign in the window. The fatigue
+   *  signal — never available before ADS-2, so fatigue was being guessed. */
+  frequencyWeek: number
+  /** Unique people reached in the window (impressions ÷ frequency). */
+  reachWeek: number
 }
 
 /**
@@ -347,14 +352,22 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
         `${campaign.id}/insights`,
         {
           time_range: JSON.stringify({ since: today, until: today }),
-          fields: 'spend,impressions,clicks,ctr,cpc,actions',
+          // ADS-2 phase C: frequency + reach. Creative fatigue is measured in
+          // how many times the same person saw the ad; without frequency the
+          // agent was substituting Meta's "Ad Relevance" label and calling it a
+          // fatigue read, which it is not.
+          fields: 'spend,impressions,clicks,ctr,cpc,actions,frequency,reach',
         },
       )
       const weekData = await adsApi<{ data?: Array<Record<string, unknown>> }>(
         `${campaign.id}/insights`,
         {
           time_range: JSON.stringify({ since: sevenDaysAgo, until: today }),
-          fields: 'spend,impressions,clicks,ctr,cpc,actions',
+          // ADS-2 phase C: frequency + reach. Creative fatigue is measured in
+          // how many times the same person saw the ad; without frequency the
+          // agent was substituting Meta's "Ad Relevance" label and calling it a
+          // fatigue read, which it is not.
+          fields: 'spend,impressions,clicks,ctr,cpc,actions,frequency,reach',
         },
       )
 
@@ -424,6 +437,8 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
           todayInsight.actions as Array<{ action_type?: string; value?: string }>,
         ),
         primaryWeek: primaryResultFor(campaign.objective ?? 'UNKNOWN', resultsWeek, spendWeek),
+        frequencyWeek: safeNum(weekInsight.frequency),
+        reachWeek: safeNum(weekInsight.reach),
         ...deliveringFrom(structure, campaign.id, (campaign.effective_status ?? 'ACTIVE') === 'ACTIVE'),
         hasEnoughData: spendWeek >= minSpendForCurrency(accountCurrency) && impressionsWeek >= INSIGHT_MIN_IMPRESSIONS,
       })
@@ -466,7 +481,7 @@ export async function fetchCampaignMetricsWindow(windowDays = 7): Promise<Campai
   const insightParams = (since: string, until: string) => ({
     level: 'campaign',
     time_range: JSON.stringify({ since, until }),
-    fields: 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpc,actions',
+    fields: 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpc,actions,frequency,reach',
     limit: '100',
   })
 
@@ -540,12 +555,58 @@ export async function fetchCampaignMetricsWindow(windowDays = 7): Promise<Campai
         todayRow.actions as Array<{ action_type?: string; value?: string }>,
       ),
       primaryWeek: primaryResultFor(meta?.objective ?? 'UNKNOWN', windowResults, spendWeek),
+      frequencyWeek: safeNum(row.frequency),
+      reachWeek: safeNum(row.reach),
       ...deliveringFrom(structure, id, (meta?.effective_status ?? 'UNKNOWN') === 'ACTIVE'),
       hasEnoughData: spendWeek >= minSpendForCurrency(currency) && safeNum(row.impressions) >= INSIGHT_MIN_IMPRESSIONS,
     })
   }
 
   return { accountId, currency, windowDays, campaigns }
+}
+
+/**
+ * ADS-2 phase C — the account's own spending limits.
+ *
+ * Boss asked "roj koto kharoch hocche ar amar limit er moddhe achi kina" on
+ * 2026-07-27 and the honest answer was "I don't know your cap" — because
+ * nothing in this repo had ever read `spend_cap`. Meta has always exposed it.
+ *
+ * Money values arrive in the account currency's MINOR unit (cents), the same
+ * convention the write guard already documents, so everything here is ÷100.
+ * `spend_cap` of 0 means NO cap set, which is different from a cap of zero.
+ */
+export type AccountLimits = {
+  currency: string
+  /** Lifetime spend cap on the account, or null when none is set. */
+  spendCap: number | null
+  /** Lifetime spend counted against that cap. */
+  amountSpent: number
+  /** Prepaid balance, for accounts that run on one. */
+  balance: number
+  /** spendCap − amountSpent, or null when uncapped. */
+  remaining: number | null
+}
+
+export async function fetchAccountLimits(): Promise<AccountLimits> {
+  const accountId = adAccountId()
+  const raw = await adsApi<{
+    currency?: string
+    spend_cap?: string
+    amount_spent?: string
+    balance?: string
+  }>(accountId, { fields: 'currency,spend_cap,amount_spent,balance' })
+
+  const minor = (v: unknown) => safeNum(v) / 100
+  const cap = safeNum(raw.spend_cap) > 0 ? minor(raw.spend_cap) : null
+  const spent = minor(raw.amount_spent)
+  return {
+    currency: raw.currency ?? 'USD',
+    spendCap: cap,
+    amountSpent: spent,
+    balance: minor(raw.balance),
+    remaining: cap === null ? null : Math.max(0, cap - spent),
+  }
 }
 
 export async function fetchCampaignDailyBudgetBdt(campaignId: string): Promise<number> {
