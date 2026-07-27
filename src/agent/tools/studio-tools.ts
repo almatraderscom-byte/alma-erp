@@ -188,6 +188,8 @@ const run_creative_studio: AgentTool = {
           summary: `🎬 ${recipe.labelBn} রিল ${targetSec}s (chat)`,
           costEstimate: 0,
           status: 'approved',
+          // Auto-run: no card reaches Boss, so the record must not say he approved it.
+          ownerDecided: false,
         },
       })
       return { success: true, data: { queued: [{ pendingActionId: row.id, label: `${recipe.labelBn} ${targetSec}s` }] } }

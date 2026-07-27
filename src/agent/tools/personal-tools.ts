@@ -263,6 +263,8 @@ export const place_agent_call: AgentTool = {
             summary: `${channel === 'whatsapp' ? '💬📞' : '📞'} ${who} কে লাইভ কল (কলে Boss-এর মুখের অনুমোদন) — "${purpose.slice(0, 60)}"`,
             costEstimate: 0.5,
             status: 'approved',
+            // Auto-run: no card reaches Boss, so the record must not say he approved it.
+            ownerDecided: false,
             resolvedAt: new Date(),
           },
         })

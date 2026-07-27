@@ -171,6 +171,10 @@ const run_website_seo_audit: AgentTool = {
             costEstimate: 0,
             // Read-only crawl, no owner-side effects → runs without an approval card.
             status: 'approved',
+            // …and because no card ever reaches him, the settled record must not
+            // claim he approved it. The one-time backfill fixed history; this
+            // fixes every row from now on (owner caught the lie 2026-07-27).
+            ownerDecided: false,
           },
           select: { id: true },
         })

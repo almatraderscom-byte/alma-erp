@@ -243,7 +243,11 @@ export function analyzeHtml(html, pageUrl) {
   return {
     url: pageUrl, title, titleLength: title.length, metaDesc, metaDescLength: metaDesc.length,
     h1Count: h1s.length, canonical, noindex, jsonLdTypes: jsonLdTypes.filter((t) => t !== 'INVALID'),
-    imgCount: imgs.length, missingAlt, wordCount, internalLinks: [...internal], externalCount, issues,
+    // `contentImgs`, not `imgs` — the decorative-alt correction renamed the
+    // variable and this one reference was left behind, so EVERY audited page
+    // threw "imgs is not defined" and the whole audit failed. The owner watched
+    // it fail all day on 2026-07-27 before the card finally said why.
+    imgCount: contentImgs.length, missingAlt, wordCount, internalLinks: [...internal], externalCount, issues,
   }
 }
 
