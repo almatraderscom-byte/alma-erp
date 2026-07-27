@@ -3524,6 +3524,7 @@ label.secondaryButton[aria-disabled='true'] {
 .v3Composer.v4FloatingComposer {
   position: fixed;
   z-index: 110;
+  top: auto;
   bottom: 22px;
   left: 50%;
   width: min(900px, calc(100vw - 64px));

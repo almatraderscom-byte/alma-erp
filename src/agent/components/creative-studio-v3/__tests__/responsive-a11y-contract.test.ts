@@ -81,8 +81,13 @@ describe('Creative Studio production responsive and a11y contract', () => {
     const imageLab = readFileSync(join(v3Root, 'StudioV3ImageLab.tsx'), 'utf8')
     const pageRule = v3Styles.match(/\.page\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
     const enterFrames = v3Styles.match(/@keyframes studioEnter\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
+    const floatingComposerRule =
+      v3Styles.match(/\.v3Composer\.v4FloatingComposer\s*\{[\s\S]*?\n\}/)?.[0] ??
+      ''
     expect(pageRule).not.toContain('transform:')
     expect(enterFrames).not.toContain('transform:')
+    expect(floatingComposerRule).toContain('top: auto;')
+    expect(floatingComposerRule).toContain('bottom: 22px;')
     expect(v3Styles).toContain('.v3Composer.v4FloatingComposer.v6ComposerExpanded')
     expect(v3Styles).toContain('inset: 68px 0 0;')
     expect(imageLab).toContain("composerRef.current?.scrollTo({ top: 0")
