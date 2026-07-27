@@ -57,12 +57,12 @@ describe('calcModelTurnCostUsd — bills each model at its own rate', () => {
     expect(cost).toBeCloseTo(6.25 + 0.5, 6)
   })
 
-  it('OpenRouter model uses its own rate (DeepSeek $0.09 / $0.18)', () => {
+  it('OpenRouter model uses its live catalog rate (DeepSeek $0.0938 / $0.1876)', () => {
     const cost = calcModelTurnCostUsd(getModel('or-deepseek-v4-flash'), {
       inputTokens: ONE_M,
       outputTokens: ONE_M,
     })
-    expect(cost).toBeCloseTo(0.27, 6) // 0.09 + 0.18
+    expect(cost).toBeCloseTo(0.2814, 6) // 0.0938 + 0.1876
   })
 
   it('DeepSeek cached reads are billed at the 0.1x provider discount, not full input rate', () => {
@@ -75,8 +75,8 @@ describe('calcModelTurnCostUsd — bills each model at its own rate', () => {
       outputTokens: ONE_M,
       cacheRead: 0.6 * ONE_M,
     })
-    // 0.4M × 0.09 + 0.6M × 0.09 × 0.1 + 1M × 0.18 = 0.036 + 0.0054 + 0.18
-    expect(split).toBeCloseTo(0.2214, 6)
+    // 0.4M × 0.0938 + 0.6M × 0.0938 × 0.1 + 1M × 0.1876
+    expect(split).toBeCloseTo(0.230748, 6)
   })
 
   it('Qwen cached reads use the 0.25x Alibaba discount', () => {
@@ -85,7 +85,7 @@ describe('calcModelTurnCostUsd — bills each model at its own rate', () => {
       outputTokens: 0,
       cacheRead: ONE_M,
     })
-    expect(cost).toBeCloseTo(1.25 * 0.25, 6) // 0.3125
+    expect(cost).toBeCloseTo(1.475 * 0.25, 6) // 0.36875
   })
 
   it('Gemini (google) cached reads use the 0.25x implicit-cache discount', () => {
@@ -104,5 +104,19 @@ describe('calcModelTurnCostUsd — bills each model at its own rate', () => {
       cacheRead: ONE_M,
     })
     expect(cost).toBeCloseTo(2.5 * 0.5, 6) // 1.25
+  })
+
+  it('reasoning tokens bill at the output rate on top of completion (Phase 7 xai gap)', () => {
+    const grok = getModel('xai-grok-4.20')
+    const base = calcModelTurnCostUsd(grok, { inputTokens: 0, outputTokens: 1000 })
+    const withReasoning = calcModelTurnCostUsd(grok, { inputTokens: 0, outputTokens: 1000, reasoningTokens: 2000 })
+    // 2000 reasoning tokens add exactly 2000 * outPerM / 1e6 over the visible-only cost.
+    expect(withReasoning - base).toBeCloseTo((2000 / ONE_M) * grok.outPerM, 9)
+  })
+
+  it('reasoning tokens default to zero — existing callers are unchanged', () => {
+    const grok = getModel('xai-grok-4.20')
+    expect(calcModelTurnCostUsd(grok, { inputTokens: 0, outputTokens: 1000 }))
+      .toBeCloseTo(calcModelTurnCostUsd(grok, { inputTokens: 0, outputTokens: 1000, reasoningTokens: 0 }), 9)
   })
 })

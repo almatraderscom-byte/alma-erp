@@ -7,7 +7,8 @@ import type {
 import type { NeutralMsg, NeutralTool, NeutralToolChoice, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
 import { resolveGenerationParams, toOpenAiGenerationParams } from '@/agent/lib/models/generation-params'
 import { repairToolArgs } from '@/agent/lib/models/tool-arg-repair'
-import { AGENT_UNIFORM_SAMPLING } from '@/agent/config'
+import { AGENT_UNIFORM_SAMPLING, openAiSchemaSanitizeEnabled } from '@/agent/config'
+import { sanitizeSchemaPortable } from '@/agent/lib/models/adapters/portable-schema'
 
 /** P9 — honest marker appended when a reply is cut at max_tokens (finish_reason
  * 'length'), so the owner never sees a silent mid-sentence stop. */
@@ -131,7 +132,14 @@ function toOpenAiTools(tools: NeutralTool[]): ChatCompletionTool[] {
     function: {
       name: t.name,
       description: t.description,
-      parameters: t.schema as Record<string, unknown>,
+      // Universal pipeline Phase 5 (Bug C): the Gemini path has always sanitised
+      // its declarations; this one shipped raw registry schemas, so "the same
+      // tool" was a different tool per provider. Light, non-lossy normalisation
+      // (see portable-schema.ts) — constraints preserved, structural/vendor keys
+      // dropped, deterministic key order for prefix-cache byte stability.
+      parameters: openAiSchemaSanitizeEnabled()
+        ? sanitizeSchemaPortable(t.schema)
+        : (t.schema as Record<string, unknown>),
     },
   }))
 }
@@ -143,6 +151,7 @@ export class OpenAiAdapter implements ProviderAdapter {
   private includeCostUsage: boolean
   private exacto: boolean
   private requireParameters: boolean
+  private stickyCacheHeader: boolean
 
   constructor(
     apiKey: string,
@@ -180,6 +189,15 @@ export class OpenAiAdapter implements ProviderAdapter {
        * OPENROUTER_REQUIRE_PARAMETERS=false.
        */
       requireParameters?: boolean
+      /**
+       * xAI sticky cache routing (cost audit Phase 8). xAI stores prompt-cache
+       * entries PER SERVER, and its docs recommend the `x-grok-conv-id` header to
+       * maximise the hit rate — without it, consecutive turns of the same
+       * conversation can land on different servers and re-pay full input price for
+       * an identical prefix. Opt-in per factory so OpenAI/OpenRouter requests stay
+       * byte-identical. Owner kill switch: XAI_STICKY_CACHE=false.
+       */
+      stickyCacheHeader?: boolean
     },
   ) {
     this.client = new OpenAI({
@@ -194,6 +212,7 @@ export class OpenAiAdapter implements ProviderAdapter {
     this.includeCostUsage = (opts?.includeCostUsage ?? false) && process.env.OPENROUTER_INCLUDE_COST !== 'false'
     this.exacto = (opts?.exacto ?? false) && process.env.ENABLE_OPENROUTER_EXACTO !== 'false'
     this.requireParameters = (opts?.requireParameters ?? false) && process.env.OPENROUTER_REQUIRE_PARAMETERS !== 'false'
+    this.stickyCacheHeader = (opts?.stickyCacheHeader ?? false) && process.env.XAI_STICKY_CACHE !== 'false'
   }
 
   async *streamTurn(args: {
@@ -205,6 +224,7 @@ export class OpenAiAdapter implements ProviderAdapter {
     thinking?: 'adaptive' | 'level' | 'none'
     toolChoice?: NeutralToolChoice
     parallelToolCalls?: boolean
+    cacheKey?: string
   }): AsyncGenerator<TurnEvent> {
     // `reasoning` is an OpenRouter extension (not in the OpenAI SDK types) that
     // asks reasoning-capable models (DeepSeek, Qwen-thinking) to stream their
@@ -257,7 +277,17 @@ export class OpenAiAdapter implements ProviderAdapter {
     // between chunks means a STALLED provider (no chunks at all) hangs past the
     // 280s turn abort until Vercel hard-kills the function at 300s: no salvage,
     // a forever-'running' turn row and a blank reply (2026-07-12 carousel run).
-    const reqOptions = args.signal ? { signal: args.signal } : undefined
+    // Sticky prompt-cache routing (Phase 8). xAI keeps cache entries per server, so
+    // the SAME conversation must land on the same one to reuse its prefix; the
+    // header is what pins it. Sent per-request (not on the client) because the key
+    // is per-conversation. Only set when the factory opted in and a key exists, so
+    // every other provider's request bytes are unchanged.
+    const stickyHeaders = this.stickyCacheHeader && args.cacheKey
+      ? { 'x-grok-conv-id': args.cacheKey }
+      : undefined
+    const reqOptions = args.signal || stickyHeaders
+      ? { ...(args.signal ? { signal: args.signal } : {}), ...(stickyHeaders ? { headers: stickyHeaders } : {}) }
+      : undefined
     // Pull OpenRouter's upstream detail out of an APIError — `error.metadata.raw`
     // carries the provider's real reason ("Provider returned error" alone is
     // useless; the 2026-07-13 Grok-4.20 outage was undiagnosable without it).
@@ -401,12 +431,18 @@ export class OpenAiAdapter implements ProviderAdapter {
         const costUsd = typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost > 0
           ? rawCost
           : undefined
+        // Reasoning tokens (cost audit Phase 7) — observability only. Reasoning
+        // models report these under completion_tokens_details.reasoning_tokens.
+        const reasoningTokens =
+          (chunk.usage as { completion_tokens_details?: { reasoning_tokens?: number } })
+            .completion_tokens_details?.reasoning_tokens ?? 0
         yield {
           type: 'usage',
           inputTokens: Math.max(0, promptTokens - cachedTokens),
           outputTokens: chunk.usage.completion_tokens ?? 0,
           cacheRead: cachedTokens,
           costUsd,
+          reasoningTokens: reasoningTokens > 0 ? reasoningTokens : undefined,
         }
       }
     }
@@ -432,5 +468,5 @@ export function createOpenAiAdapter(): OpenAiAdapter {
 export function createXaiAdapter(): OpenAiAdapter {
   const key = process.env.XAI_API_KEY?.trim()
   if (!key) throw new Error('XAI_API_KEY not configured')
-  return new OpenAiAdapter(key, { baseURL: 'https://api.x.ai/v1' })
+  return new OpenAiAdapter(key, { baseURL: 'https://api.x.ai/v1', stickyCacheHeader: true })
 }

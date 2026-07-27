@@ -22,6 +22,16 @@ const LIFECYCLE_BOUND_ACTION_TYPES = new Set<string>([
   'office_absence_snooze',
   'office_absence_nudge',
   'office_absence_nudge_send',
+  // OWNER INCIDENT 2026-07-26. A ten-product SEO copy batch expired on the
+  // 30-minute clock while Boss was reading it. He asked for it again, the agent
+  // re-DRAFTED from scratch, that one expired too — four rounds, four different
+  // texts, four approvals, and his verdict was exact: "erta ki kono kaj?"
+  //
+  // Nothing about drafted copy goes stale in thirty minutes. It is a standing
+  // proposal like the dispatch card above: the payload holds the exact text and
+  // the exact image URLs, approving it writes those, and a newer batch supersedes
+  // it. A clock has no business in it, and expiring it is what created the loop.
+  'seo_fix_batch',
 ])
 
 export function isLifecycleBoundAction(type?: string | null): boolean {

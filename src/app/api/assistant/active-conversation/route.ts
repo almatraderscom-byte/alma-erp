@@ -60,13 +60,19 @@ export async function GET(req: NextRequest) {
   // (project/model) on load without a second round-trip.
   let projectId: string | null = null
   let modelId: string | null = null
+  // The chat-mode chip must come back exactly as the owner left it — restoring a
+  // 'plan' chat as 'auto' would silently re-arm every tool he had withheld.
+  let chatMode: string | null = null
+  let permissionMode: string | null = null
   if (conversationId) {
     const meta = await prisma.agentConversation.findUnique({
       where: { id: conversationId },
-      select: { projectId: true, modelId: true },
+      select: { projectId: true, modelId: true, chatMode: true, permissionMode: true },
     })
     projectId = meta?.projectId ?? null
     modelId = meta?.modelId ?? null
+    chatMode = meta?.chatMode ?? null
+    permissionMode = meta?.permissionMode ?? null
   }
 
   return NextResponse.json({
@@ -74,6 +80,8 @@ export async function GET(req: NextRequest) {
     personalConversationId: pointer.personalConversationId,
     projectId,
     modelId,
+    chatMode,
+    permissionMode,
   })
 }
 

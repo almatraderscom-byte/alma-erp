@@ -8,6 +8,27 @@
 
 export interface TurnLoopToolRecord {
   status: 'success' | 'error'
+  /** Name of the tool, when the caller has it — lets the failure guard tell a
+   *  concrete recovery ("now get_staff_tasks") from hammering the same call. */
+  toolName?: string
+  /** Stable error code from the tool envelope, when the caller has it. Lets the
+   *  failure guard tell a BROKEN call from a badly-ARGUED one. */
+  errorCode?: string
+}
+
+/**
+ * Failures that mean "you called it wrong", not "it does not work".
+ *
+ * Owner watched this live 2026-07-27: audit_product_seo failed on its arguments,
+ * the head said *"ভুল ছিল … এখন সঠিকভাবে চালাচ্ছি"* — and the turn ended, because
+ * the guard below saw the same tool named again and refused to push, treating a
+ * self-correction as hammering. A corrected retry is the opposite of hammering:
+ * it is the recovery the whole self-correction machinery exists to produce.
+ */
+const ARGUMENT_ERROR_CODES = new Set(['invalid_args', 'malformed_args'])
+
+export function isArgumentFailure(record: TurnLoopToolRecord | undefined): boolean {
+  return record?.status === 'error' && !!record.errorCode && ARGUMENT_ERROR_CODES.has(record.errorCode)
 }
 
 // A permission question may be followed by a parenthetical detail, as in the
@@ -28,14 +49,97 @@ const ADAPTER_INTENT_RE =
 const ZERO_TOOL_INTENT_RE =
   /(দিয়ে\s*দেখি|করে\s*দেখি|চেক\s*কর(ি|ছি)|দেখে\s*নিই|দেখে\s*নি|বের\s*কর(ি|ছি)|চালাই|চালাচ্ছি|টান(ি|ছি)|আনছি|আগে.*দেখি|let me (check|look|see|pull|run|fetch)|i('|’)?ll (check|look|see|pull|run|fetch|grab)|i will (check|look|see|pull|run|fetch)|going to (check|look|run|pull|fetch)|let's (check|look|run|see))/i
 
-function isTerminalReply(text: string): boolean {
+/**
+ * A failure report that names a DIFFERENT, CONCRETE tool as the next step is a
+ * recovery in progress, not a stop: "প্রস্তাব টুল ব্যর্থ — আগে get_staff_tasks
+ * দিয়ে দেখে নিচ্ছি।" Ending the turn there means the head promised a recovery
+ * and never ran it (found 2026-07-25 by testing a staff-dispatch request
+ * instead of repeating the same ads question).
+ *
+ * The test is deliberately NARROW — a literal snake_case tool name that isn't
+ * the one that just failed. Vague promises ("আবার চেষ্টা করব", "অন্যভাবে দেখব")
+ * stay terminal: those are how a head hammers a broken call, which is exactly
+ * what the failure guard exists to prevent.
+ */
+const TOOL_NAME_RE = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g
+
+function namesDifferentTool(text: string, failedTool?: string): boolean {
+  const tail = text.trim().slice(-300)
+  for (const m of tail.match(TOOL_NAME_RE) ?? []) {
+    if (m !== failedTool) return true
+  }
+  return false
+}
+
+function isTerminalReply(text: string, failedTool?: string, lastFailed = false): boolean {
   const normalized = text.trim()
   if (!normalized) return true
-  return (
-    OWNER_QUESTION_TAIL_RE.test(normalized)
-    || OWNER_PERMISSION_QUESTION_RE.test(normalized.slice(-800))
-    || BLOCKED_OR_FAILED_RE.test(normalized)
-  )
+  if (OWNER_QUESTION_TAIL_RE.test(normalized)) return true
+  if (OWNER_PERMISSION_QUESTION_RE.test(normalized.slice(-800))) return true
+  if (!BLOCKED_OR_FAILED_RE.test(normalized)) return false
+  // An admission plus work in flight is not a sign-off — it is "I got that wrong,
+  // I am doing it properly now". Since 2026-07-27 the verifier REQUIRES that
+  // admission when an opening-line promise went unmet, so without this line the
+  // honesty fix would itself end the turn: the word পারিনি appears, the reply
+  // reads as blocked, and the push that would have finished the job is suppressed.
+  if (isWorkInFlight(normalized)) return false
+  // Blocked/failed report → terminal unless a concrete different tool follows it.
+  return !(lastFailed && namesDifferentTool(normalized, failedTool))
+}
+
+/**
+ * "I am doing it right now" — present continuous, no deferral. This is the tail
+ * of a turn that was cut off mid-step, not the tail of a finished report.
+ */
+const IN_FLIGHT_RE =
+  /(খুঁজছি|দেখছি|দেখে\s*নিচ্ছি|চালাচ্ছি|করছি|নিচ্ছি|যাচ্ছি|খুলছি|আনছি|টানছি|পড়ছি|বের\s*করছি|checking|fetching|running|looking\s+up|pulling)/i
+
+/** …unless it is explicitly parked for later, which is a legitimate sign-off. */
+const DEFERRED_RE =
+  /(পরের\s*ধাপে|পরে\s*(?:দেখব|করব|জানাব)|পরবর্তীতে|আগামী|next\s+step|later\b|afterwards)/i
+
+function isWorkInFlight(text: string): boolean {
+  const tail = text.trim().slice(-300)
+  if (DEFERRED_RE.test(tail)) return false
+  return IN_FLIGHT_RE.test(tail)
+}
+
+/**
+ * OWNER OBSERVATION 2026-07-27 — one reply opened with the same sentence twice:
+ *
+ *   "বস, আপনি এখন কোনো SEO fix কাজ করার দরকার নেই বলেছেন — চলমান seo task-এর স্ট্যাটাস যাচাই করছি।"
+ *   "বস, আপনি এখন কোনো SEO fix কাজ করার দরকার নেই বলেছেন — seo task-এর চলমান স্ট্যাটাস যাচাই করছি।"
+ *
+ * Speak-first streams the opening line in its own round and seeds it into the
+ * transcript as the assistant's own words, precisely so the model continues
+ * instead of greeting Boss again. It mostly works — and when it does not, the
+ * paraphrase is close but not identical, so no exact-match check catches it.
+ *
+ * Asking the prompt more firmly is a request. Comparing the two lines is a
+ * guarantee, and it is cheap: the tool-round prose arrives as one block, so a
+ * duplicate is dropped before Boss ever sees it.
+ *
+ * Deliberately conservative. The threshold is high and the check only applies to
+ * the FIRST prose after the preamble; a genuine progress line ("catalogue পড়া
+ * শেষ, এখন audit চালাচ্ছি") shares few words with the opener and survives.
+ */
+const OPENER_SIMILARITY = 0.75
+
+function words(s: string): string[] {
+  return (s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => w.length > 1)
+}
+
+export function isRepeatedOpener(preamble: string, next: string): boolean {
+  const a = words(preamble)
+  const b = words(next)
+  if (a.length < 4 || b.length < 4) return false
+  // A restatement is not usually much longer than the line it restates; a real
+  // progress update that happens to echo some words is.
+  if (b.length > a.length * 1.8) return false
+  const setA = new Set(a)
+  const shared = b.filter((w) => setA.has(w)).length
+  const union = new Set([...a, ...b]).size
+  return shared / union >= OPENER_SIMILARITY || shared / b.length >= 0.9
 }
 
 export function shouldNudgeAdapterIntent(input: {
@@ -44,10 +148,35 @@ export function shouldNudgeAdapterIntent(input: {
   hasAskCard?: boolean
   ownerRequestedAction: boolean
 }): boolean {
-  if (!input.ownerRequestedAction) return false
-  if (input.hasAskCard || isTerminalReply(input.text)) return false
+  // A turn that ran NO tool at all and signs off with "… চালাচ্ছি / দেখছি" is
+  // unfinished by definition — whether or not the message asked for a mutation.
+  // The old `ownerRequestedAction` requirement made read-only turns exempt, so a
+  // head that announced a lookup and stopped ended the turn there (owner hit
+  // this live 2026-07-25: "list_family_contacts চালাচ্ছি।" and nothing else).
+  //
+  // Round 2, 2026-07-26. That fix only covered turns where NO tool ran, so this
+  // still died: Boss typed "almatraders.com এর ছবির alt ঠিক করো", the head read
+  // the catalogue, said "এখন alt text update-এর জন্য সঠিক SEO tool খুঁজছি" — and
+  // ended the turn at 25 seconds. One successful read had made noToolRan false,
+  // and the turn was not mutation-authorised, so the guard bailed.
+  //
+  // The line that matters is not "was this turn allowed to write" — it is "is the
+  // head in the MIDDLE of something". "খুঁজছি / দেখছি / চালাচ্ছি" is work in flight
+  // and stopping there strands it; "পরের ধাপে dispatch দেখব" is a finished report
+  // that mentions what comes later, and pushing on that would be nagging.
+  const noToolRan = input.toolRecords.length === 0
+  if (!input.ownerRequestedAction && !noToolRan && !isWorkInFlight(input.text)) return false
   const latestTool = input.toolRecords.at(-1)
-  if (latestTool?.status === 'error') return false
+  const lastFailed = latestTool?.status === 'error'
+  if (input.hasAskCard || isTerminalReply(input.text, latestTool?.toolName, lastFailed)) return false
+  // A failed last tool normally ends the turn — we must not hammer a broken
+  // call. But when the head has just named a DIFFERENT concrete tool as its next
+  // step, stopping is the bug: it promised a recovery and never ran it. The
+  // caller bounds this to one nudge per turn, so it cannot become a retry loop.
+  // …unless the failure was the ARGUMENTS. Then naming the same tool again is
+  // the correction, not the repetition, and stopping there strands the job one
+  // step from done (owner, live 2026-07-27).
+  if (lastFailed && !isArgumentFailure(latestTool) && !namesDifferentTool(input.text, latestTool?.toolName)) return false
   return ADAPTER_INTENT_RE.test(input.text.trim().slice(-600))
 }
 

@@ -5,6 +5,9 @@
     "src/app/api/assistant/chat/route.ts": {
       "maxDuration": 300
     },
+    "src/app/api/assistant/internal/plan-driver-tick/route.ts": {
+      "maxDuration": 300
+    },
     "src/app/api/assistant/**/route.ts": {
       "maxDuration": 120
     }
@@ -13,6 +16,10 @@
     {
       "path": "/api/cron/office-call-reconcile",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/recording-cleanup",
+      "schedule": "17 3 * * *"
     },
     {
       "path": "/api/cron/scheduled-calls",
@@ -33,6 +40,10 @@
     {
       "path": "/api/cron/live-activity-push",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/assistant/internal/cost-guard",
+      "schedule": "*/30 * * * *"
     },
     {
       "path": "/api/cron/growth-publish",

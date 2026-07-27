@@ -10,6 +10,19 @@ export function websiteSupabaseConfigured(): boolean {
   return Boolean(resolveWebsiteSupabaseUrl() && resolveWebsiteServiceRoleKey())
 }
 
+/**
+ * WHICH half is missing. Half-configured is the realistic failure: on 2026-07-26
+ * the key was set on Vercel Preview but the URL was not, so every website write
+ * tool died and the head burned 15 steps discovering it one tool at a time.
+ * Naming the exact variable turns that into a one-line answer for the owner.
+ */
+export function websiteSupabaseMissingVars(): string[] {
+  const missing: string[] = []
+  if (!resolveWebsiteSupabaseUrl()) missing.push('WEBSITE_SUPABASE_URL')
+  if (!resolveWebsiteServiceRoleKey()) missing.push('WEBSITE_SUPABASE_SERVICE_ROLE_KEY')
+  return missing
+}
+
 function normalizeWebsiteSupabaseUrl(raw: string): string {
   const trimmed = raw.trim().replace(/\/$/, '')
   if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) return trimmed

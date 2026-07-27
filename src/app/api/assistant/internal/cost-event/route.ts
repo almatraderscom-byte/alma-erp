@@ -20,7 +20,7 @@ function verifyToken(provided: string): boolean {
   } catch { return false }
 }
 
-const PROVIDERS = new Set<CostProvider>(['anthropic', 'openai', 'gemini', 'veo', 'google_tts', 'twilio', 'elevenlabs'])
+const PROVIDERS = new Set<CostProvider>(['anthropic', 'openai', 'openrouter', 'gemini', 'xai', 'veo', 'google_tts', 'twilio', 'elevenlabs'])
 const KINDS = new Set<CostKind>(['chat', 'embedding', 'transcribe', 'tts', 'image', 'video', 'call'])
 
 export async function POST(req: NextRequest) {

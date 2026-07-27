@@ -1,5 +1,6 @@
 'use client'
 
+import { RESOLVED_RECORD, resolvedRecordFor } from '@/agent/lib/approval-record'
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
@@ -26,17 +27,15 @@ export interface PendingAction {
    * card. Live cards from the SSE stream never set this.
    */
   resolvedStatus?: string
+  /**
+   * Did BOSS decide this? False when the row ran under standing authority and
+   * never reached him — a read-only crawl, a queued generation. He caught the
+   * card telling him "আপনি অনুমোদন করেছিলেন" about work he had never seen
+   * (2026-07-27), which is the one thing a record must never do.
+   */
+  ownerDecided?: boolean
   /** Why a 'failed' action failed — owner rule: failures are never silent. */
   failReason?: string
-}
-
-/** Settled-record presentation for a confirm card rebuilt from history. */
-const RESOLVED_RECORD: Record<string, { icon: string; label: string; tone: string; text: string }> = {
-  approved: { icon: '✅', label: 'অনুমোদিত', tone: 'border tone-green', text: 'আপনি অনুমোদন করেছিলেন' },
-  executed: { icon: '✅', label: 'অনুমোদিত ও সম্পন্ন', tone: 'border tone-green', text: 'আপনি অনুমোদন করেছিলেন — কাজটি সম্পন্ন হয়েছে' },
-  rejected: { icon: '❌', label: 'বাতিল', tone: 'border tone-red', text: 'আপনি বাতিল করেছিলেন' },
-  expired: { icon: '⏱️', label: 'সময় শেষ', tone: 'border tone-slate', text: 'সময় শেষ হয়ে গিয়েছিল — সিদ্ধান্ত নেওয়া হয়নি' },
-  failed: { icon: '⚠️', label: 'ব্যর্থ', tone: 'border tone-amber', text: 'অনুমোদন করেছিলেন, কিন্তু কাজটি ব্যর্থ হয়েছে' },
 }
 
 type CardPhase = 'idle' | 'loading' | 'approved' | 'rejected' | 'editing' | 'settled' | 'opinion'
@@ -69,6 +68,14 @@ const TERMINAL_NOTES: Record<string, string> = {
 interface AgentConfirmCardProps {
   action: PendingAction
   onResolved: (status: 'approved' | 'rejected') => void
+  /**
+   * Fired the INSTANT Approve is pressed, before the server round-trip.
+   * Approving a batch writes every product live, which takes seconds — and for
+   * all of them the thread showed nothing at all, so it looked like the agent
+   * had gone to sleep (owner report 2026-07-26). `false` means the approval
+   * failed and whatever the parent started should be torn down again.
+   */
+  onApprovePending?: (pending: boolean) => void
   onUpdated?: (summary: string, meta: Partial<PendingAction>) => void
   /**
    * Owner's "আমার মত" (my opinion) path: reject this pending action AND feed the
@@ -87,7 +94,7 @@ const EDIT_FIELDS: Record<string, string> = {
   note: '📝 নোট',
 }
 
-export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuickSend }: AgentConfirmCardProps) {
+export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuickSend, onApprovePending }: AgentConfirmCardProps) {
   const [phase, setPhase] = useState<CardPhase>('idle')
   const [loadingDecision, setLoadingDecision] = useState<'approve' | 'reject' | 'revise' | null>(null)
   const [summary, setSummary] = useState(action.summary)
@@ -118,7 +125,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
       ? { icon: '📞', label: 'কল চলছে', tone: 'border tone-amber', text: 'ডায়াল হয়েছে — terminal report-এর অপেক্ষা' }
       : action.actionType === 'agent_voice_call' && action.resolvedStatus === 'executed'
         ? { icon: '✅', label: 'কল শেষ', tone: 'border tone-green', text: 'রিপোর্ট সংরক্ষিত ও delivery শুরু হয়েছে' }
-        : RESOLVED_RECORD[action.resolvedStatus] ?? RESOLVED_RECORD.expired
+        : resolvedRecordFor(action.resolvedStatus, action.ownerDecided) ?? RESOLVED_RECORD.expired
     return (
       <motion.div
         initial={{ opacity: 0, y: 6 }}
@@ -145,6 +152,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
     if (phase !== 'idle' && phase !== 'editing') return
     setPhase('loading')
     setLoadingDecision(decision)
+    if (decision === 'approve') onApprovePending?.(true)
     try {
       const res = await fetch(`/api/assistant/actions/${meta.id}/${decision}`, { method: 'POST' })
       if (!res.ok) {
@@ -175,6 +183,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
       notifyTodosChanged()
     } catch (err) {
       notifyError()
+      if (decision === 'approve') onApprovePending?.(false)
       toast.error(`সমস্যা: ${err instanceof Error ? err.message : String(err)}`)
       setPhase('idle')
       setLoadingDecision(null)

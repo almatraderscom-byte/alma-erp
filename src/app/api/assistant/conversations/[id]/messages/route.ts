@@ -109,7 +109,7 @@ export async function GET(
   // breadcrumbs AND lets us synthesize cards that were never breadcrumbed.
   const allActions = await prisma.agentPendingAction.findMany({
     where: { conversationId: id },
-    select: { id: true, type: true, summary: true, costEstimate: true, status: true, createdAt: true, result: true },
+    select: { id: true, type: true, summary: true, costEstimate: true, status: true, createdAt: true, result: true, ownerDecided: true },
     orderBy: { createdAt: 'asc' },
   })
 
@@ -117,8 +117,17 @@ export async function GET(
   // Failure reason (owner rule: a failed approval must NEVER be silent — always
   // show WHY). Executors store their error in result.error / result.message.
   const failReasonById = new Map<string, string>()
+  // Did BOSS decide this, or did it run under standing authority and never reach
+  // him? Only the approve/reject routes set ownerDecided, and both refuse a row
+  // that is not 'pending' — so a row created already-approved (a read-only
+  // crawl, a queued generation) can never be marked his. NULL is UNKNOWN, not
+  // false: history written before the column keeps the old wording rather than
+  // being relabelled by a guess. (resolvedAt looked like the signal and is not:
+  // the worker's job-result callback stamps it on completion.)
+  const ownerDecidedById = new Map<string, boolean | null>()
   for (const a of allActions) {
     statusById.set(a.id, a.status)
+    ownerDecidedById.set(a.id, a.ownerDecided ?? null)
     if (a.status === 'failed' && a.result && typeof a.result === 'object') {
       const r = a.result as Record<string, unknown>
       const reason = [r.error, r.message, r.detail].find((v) => typeof v === 'string' && v.trim())
@@ -146,6 +155,7 @@ export async function GET(
       summary: decodeUnicodeEscapes(a.summary ?? ''),
       actionType: a.type,
       status: a.status,
+      ownerDecided: a.ownerDecided ?? undefined,
       failReason: a.status === 'failed' ? failReasonById.get(a.id) : undefined,
     }
     if (a.costEstimate != null) block.costEstimate = a.costEstimate
@@ -240,6 +250,7 @@ export async function GET(
             return [{
               ...b,
               status: statusById.get(b.pendingActionId) ?? 'expired',
+              ownerDecided: ownerDecidedById.get(b.pendingActionId) ?? undefined,
               failReason: failReasonById.get(b.pendingActionId),
               // Heal any escaped astral emoji in a persisted breadcrumb summary.
               ...(typeof b.summary === 'string'
@@ -300,6 +311,9 @@ export async function GET(
       // "Thought for Ns" block survives reload, not just the live stream.
       thinking: typeof u.reasoning === 'string' && u.reasoning ? u.reasoning : undefined,
       thinkingMs: typeof u.reasoningMs === 'number' ? u.reasoningMs : undefined,
+      // How long the agent actually WORKED on this reply (owner ask 2026-07-26:
+      // "reply শেষ হলেও time টা যেন show করে token এর সাথে").
+      durationMs: typeof u.duration_ms === 'number' ? u.duration_ms : undefined,
       // Ordered, display-only activity timeline (reasoning ↔ tool, execution order)
       // that drives the unified Claude-style stream after reload.
       timeline,

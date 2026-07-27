@@ -44,6 +44,27 @@ describe('detectRoboticStyleViolations (BP6 — robotic-filler hard gate)', () =
     // "অবশ্যই" mid-sentence (not a canned opener) stays fine
     expect(detect('এটা অবশ্যই ভালো আইডিয়া বস।')).toEqual([])
   })
+
+  // Owner rule 2026-07-25: he compared two live replies — DeepSeek's
+  // "বস, গত ৭ দিনের অ্যাড পারফরম্যান্স …" (good) against Grok's
+  // "ঠিক আছে Boss — …" (contentless) — and banned the second shape.
+  it('flags a contentless "ঠিক আছে Boss" opener', async () => {
+    vi.stubEnv('AGENT_STYLE_GATE', 'on')
+    vi.resetModules()
+    const detect = await loadDetector()
+    expect(detect('ঠিক আছে Boss — গত ৭ দিনের live ad performance: মোট খরচ $15.22।')).toHaveLength(1)
+    expect(detect('ঠিক আছে বস, দেখছি।')).toHaveLength(1)
+    expect(detect('Thik ache boss — ekhon dekhchi.')).toHaveLength(1)
+    expect(detect('Ok boss, ads report ready.')).toHaveLength(1)
+  })
+
+  it('accepts the shape Boss asked for, and leaves mid-reply "ঠিক আছে" alone', async () => {
+    vi.stubEnv('AGENT_STYLE_GATE', 'on')
+    vi.resetModules()
+    const detect = await loadDetector()
+    expect(detect('বস, গত ৭ দিনের অ্যাড পারফরম্যান্স (Meta থেকে): মোট খরচ $15.22, CTR ~৬.৯%।')).toEqual([])
+    expect(detect('স্টক ১২টা — সব ঠিক আছে বস।')).toEqual([])
+  })
 })
 
 describe('STYLE_EXEMPLARS (BP6 — few-shot bank)', () => {

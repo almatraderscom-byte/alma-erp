@@ -1,0 +1,56 @@
+{
+  "name": "seo-fixing-own-site",
+  "description": "Writes and saves SEO content on almatraders.com — image alt text, meta descriptions, titles — in owner-approved batches. Use when Boss asks to fix, write, add or update SEO copy on our own site. Not for producing an audit or a report.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
+  "riskTier": "medium",
+  "extends": "alma-base",
+  "isolation": "subagent",
+  "whenNotToUse": "Boss asked for an audit, a report or 'কেমন অবস্থা' → seo-auditing-own-site. Another company's site → seo-fixing-client-site.",
+  "requiredCapabilities": [
+    "get_website_catalog",
+    "audit_product_seo",
+    "draft_seo_fixes",
+    "change_product_slug",
+    "fetch_website_page",
+    "submit_to_indexnow"
+  ],
+  "dependencies": {
+    "env": [
+      "WEBSITE_SUPABASE_URL",
+      "WEBSITE_SUPABASE_SERVICE_ROLE_KEY"
+    ]
+  },
+  "outputContract": {
+    "kind": "approval_card",
+    "mustInclude": [
+      "product_slug",
+      "before",
+      "after",
+      "batch_size"
+    ]
+  },
+  "stopConditions": [
+    "এক ব্যাচে ১০টার বেশি product হলে",
+    "অডিটের সংখ্যা লাইভ পেজের সাথে না মিললে",
+    "কোনো ছবির exact URL না পেলে",
+    "publish বা টাকা জড়ালে"
+  ],
+  "done": [
+    {
+      "tool": "audit_product_seo"
+    },
+    {
+      "tool": "draft_seo_fixes"
+    }
+  ],
+  "networkPolicy": "allowlist",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 20,
+  "status": "active"
+}

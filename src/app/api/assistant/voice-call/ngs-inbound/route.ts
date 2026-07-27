@@ -86,18 +86,28 @@ async function handle(req: NextRequest) {
   const internalToken = process.env.AGENT_INTERNAL_TOKEN ?? ''
   if (!wsUrl || !internalToken) return xml(EMPTY)
 
-  // NGS field names vary; accept the common variants.
-  // NGS action-callback naming uses event_* prefixes (docs: event_from/event_to/
-  // event_call_id) — live 2026-07-24 the inbound webhook sent NONE of our old
-  // variants and every caller landed as 'unknown' (boss got the receptionist).
-  const caller = String(
+  // Caller id — robust extraction (live 2026-07-24: every NAMED variant missed,
+  // caller stayed 'unknown', boss got the receptionist). Take a named field if
+  // present, else SCAN every param value for a BD-phone-shaped string. Never
+  // depends on knowing NGS's exact key.
+  const named = String(
     p.from ?? p.caller ?? p.src ?? p.caller_id ?? p.callerId
-    ?? p.event_from ?? p.eventFrom ?? p.caller_id_number ?? p.ani ?? '',
-  ).trim() || 'unknown'
-  if (caller === 'unknown') {
-    // One safe breadcrumb so the NEXT inbound call reveals the real field name.
-    console.warn('[ngs-inbound] caller id missing — payload keys:', Object.keys(p).join(','))
+    ?? p.event_from ?? p.eventFrom ?? p.caller_id_number ?? p.ani
+    ?? p.CallerId ?? p.Caller ?? p.From ?? p.msisdn ?? p.cli ?? '',
+  ).trim()
+  const scanForBdPhone = (obj: Record<string, string>): string => {
+    for (const v of Object.values(obj)) {
+      const digits = String(v ?? '').replace(/\D/g, '')
+      const m = digits.match(/(8801\d{9}|01\d{9})/)
+      if (m) return m[1].startsWith('01') ? `+88${m[1]}` : `+${m[1]}`
+    }
+    return ''
   }
+  const caller = (named || scanForBdPhone(p)) || 'unknown'
+  // Diagnostic: when still unknown, persist the raw payload into recipientName so
+  // ONE inbound call reveals NGS's real field(s) in the DB (log tailing is flaky).
+  const debugPayload = caller === 'unknown' ? JSON.stringify(p).slice(0, 150) : ''
+  if (debugPayload) console.warn('[ngs-inbound] caller unknown — payload:', debugPayload)
   const voice = process.env.NGS_INBOUND_VOICE || 'Charon'
   // Human-PA point 1 (owner audit 2026-07-24): the BOSS calling his own agent
   // must get the full assistant, not the receptionist. Owner number ⇒ owner
@@ -119,7 +129,7 @@ async function handle(req: NextRequest) {
     const rec = await db.agentVoiceCall.create({
       data: {
         toNumber: caller,
-        recipientName: ownerCalling ? 'Boss' : `ইনকামিং কল: ${caller}`,
+        recipientName: ownerCalling ? 'Boss' : (debugPayload ? `ইনকামিং [debug ${debugPayload}]` : `ইনকামিং কল: ${caller}`),
         purpose: ownerCalling ? 'inbound_owner_call' : 'inbound_call',
         firstMessage: '',
         status: 'ringing',

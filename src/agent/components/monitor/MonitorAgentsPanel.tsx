@@ -75,7 +75,7 @@ interface RoutingResponse {
   modelsToday: ModelToday[]
   specialistsToday: SpecialistToday[]
   specialistDelegationsToday: SpecialistDelegation[]
-  headTokensToday: { inputTokens: number; outputTokens: number }
+  headTokensToday: { inputTokens: number; outputTokens: number; cacheReadTokens?: number }
   todayDhakaDate: string
 }
 
@@ -391,7 +391,8 @@ export function MonitorAgentsPanel({
           ) : (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {data.agentsToday.map((a) => {
-                const isHead = a.provider === 'anthropic'
+                // Head has run on Claude and now Grok (xAI direct) — both get the head badge.
+                const isHead = a.provider === 'anthropic' || a.provider === 'xai'
                 return (
                   <motion.div
                     key={a.provider}
@@ -442,7 +443,18 @@ export function MonitorAgentsPanel({
                           <p className="text-[10px] text-muted">
                             টোকেন: {(data.headTokensToday.inputTokens / 1000).toFixed(1)}k in ·{' '}
                             {(data.headTokensToday.outputTokens / 1000).toFixed(1)}k out
-                            <span className="text-muted"> — বড় system prompt + ERP tools = input বেশি</span>
+                            {(data.headTokensToday.cacheReadTokens ?? 0) > 0 ? (
+                              <span className="text-[#81B29A]">
+                                {' '}· cache {((data.headTokensToday.cacheReadTokens ?? 0) / 1000).toFixed(1)}k (
+                                {Math.round(
+                                  (100 * (data.headTokensToday.cacheReadTokens ?? 0))
+                                  / ((data.headTokensToday.cacheReadTokens ?? 0) + data.headTokensToday.inputTokens),
+                                )}
+                                % hit)
+                              </span>
+                            ) : (
+                              <span className="text-[#D4A84B]"> · cache hit ০% — full দাম</span>
+                            )}
                           </p>
                         )}
                         <div className="flex items-center gap-1.5 text-[10px] text-muted">

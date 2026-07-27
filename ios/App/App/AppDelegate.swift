@@ -267,6 +267,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
                 }
                 return true
             }
+            // Headless proof of the cost drill-down "open this chat natively" flow —
+            // mirrors exactly what the CreditUsage conversation row does, so a
+            // screenshot proves the row without a finger. almaerp://open-agent-chat?id=<convId>
+            if url.host == "open-agent-chat" {
+                let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                if let id = comps?.queryItems?.first(where: { $0.name == "id" })?.value, !id.isEmpty {
+                    AlmaAgentNav.pendingConversationId = id
+                    NotificationCenter.default.post(name: .almaOpenPath, object: nil, userInfo: ["path": "/agent"])
+                    NotificationCenter.default.post(name: .almaOpenAgentConversation, object: nil,
+                                                    userInfo: ["conversationId": id])
+                }
+                return true
+            }
             #endif
             var path = "/" + (url.host ?? "") + url.path
             if path.count > 1, path.hasSuffix("/") { path = String(path.dropLast()) }

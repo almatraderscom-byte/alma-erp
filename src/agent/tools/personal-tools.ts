@@ -239,9 +239,10 @@ export const place_agent_call: AgentTool = {
 
       const firstMessage = String(input.firstMessage ?? '').trim() || 'আসসালামু আলাইকুম, কেমন আছেন?'
       // Voice = Boss's words (male → ashutosh/v3, female → anushka/v2). Resolved from his
-      // recent messages via the server-injected ownerVoicePref; silence → female default.
+      // recent messages via the server-injected ownerVoicePref; silence → MALE, the house
+      // voice (owner, 2026-07-25: a call went out in a woman's voice he never asked for).
       const pref = input.ownerVoicePref as { gender?: 'male' | 'female' } | undefined
-      const voiceGender: 'male' | 'female' = pref?.gender === 'male' ? 'male' : 'female'
+      const voiceGender: 'male' | 'female' = pref?.gender === 'female' ? 'female' : 'male'
       const who = recipientName ?? phone
       const channel = input.channel === 'whatsapp' ? 'whatsapp' : 'phone'
       // Role-aware persona (owner ask 2026-07-24: the agent must KNOW who it is
@@ -262,6 +263,8 @@ export const place_agent_call: AgentTool = {
             summary: `${channel === 'whatsapp' ? '💬📞' : '📞'} ${who} কে লাইভ কল (কলে Boss-এর মুখের অনুমোদন) — "${purpose.slice(0, 60)}"`,
             costEstimate: 0.5,
             status: 'approved',
+            // Auto-run: no card reaches Boss, so the record must not say he approved it.
+            ownerDecided: false,
             resolvedAt: new Date(),
           },
         })
@@ -466,7 +469,7 @@ export const schedule_call: AgentTool = {
 
       const firstMessage = String(input.firstMessage ?? '').trim() || 'আসসালামু আলাইকুম।'
       const pref = input.ownerVoicePref as { gender?: 'male' | 'female' } | undefined
-      const voiceGender: 'male' | 'female' = pref?.gender === 'male' ? 'male' : callType === 'staff' ? 'male' : 'female'
+      const voiceGender: 'male' | 'female' = pref?.gender === 'female' ? 'female' : 'male'
       const who = recipientName ?? phone
       const whenLabel = dueAt.toLocaleString('en-US', { timeZone: 'Asia/Dhaka', dateStyle: 'medium', timeStyle: 'short' })
       const action = await db.agentPendingAction.create({

@@ -80,6 +80,25 @@ const worker = new Worker(
       return
     }
     console.log(`[browser-worker] running task ${pendingActionId}: ${String(payload?.goal ?? '').slice(0, 80)}`)
+
+    // Defence in depth for the driver rule (src/agent/lib/browser/drivers.ts).
+    // A task routed to the owner's own Chrome must NEVER execute here: this is a
+    // datacenter IP with no owner login, and running a Meta/bank/infra task from
+    // it is exactly the account-lock risk the router exists to prevent. The app
+    // side already refuses to enqueue these; this is the second lock, in case a
+    // job was queued by an older build or replayed by hand.
+    const driver = payload?.driver
+    if (driver && driver !== 'vps' && driver !== 'vps_live') {
+      await callJobResult(
+        pendingActionId,
+        'failed',
+        undefined,
+        `driver_mismatch — this task is routed to "${driver}" (the owner's own Chrome) and must not run on the VPS browser`,
+      )
+      console.warn(`[browser-worker] task ${pendingActionId} refused — driver "${driver}" is not a VPS driver`)
+      return
+    }
+
     if (await isSecurityQuarantined()) {
       await callJobResult(pendingActionId, 'failed', undefined, 'security_quarantine — autonomous browser paused until the owner clears the incident')
       console.warn(`[browser-worker] task ${pendingActionId} refused — security quarantine active (or unverifiable, fail closed)`)

@@ -133,6 +133,29 @@ type BalanceProviderRow = {
   suggestedTopUpUsd?: number | null
   criticality?: 'critical' | 'important' | 'variable' | 'free'
   fundingMode?: 'provider_auto_recharge' | 'usage_based_billing' | 'postpaid' | 'hosted_top_up' | 'app_top_up' | 'free' | 'unsupported'
+  costBreakdown?: {
+    aiTokensUsd: number
+    hostingUsd: number
+    topLines: Array<{ name: string; usd: number }>
+  } | null
+}
+
+type ReconcileRow = {
+  id: string
+  label: string
+  providerActualUsd: number | null
+  localEstimateUsd: number | null
+  driftUsd: number | null
+  driftPct: number | null
+  status: 'RECONCILED' | 'LOCAL_HIGH' | 'LOCAL_LOW' | 'UNVERIFIED' | 'INFRA' | 'NO_DATA'
+  note: string
+}
+
+type ReconciliationData = {
+  month: string
+  totals: { providerActualUsd: number; localEstimateUsd: number; driftUsd: number }
+  providers: ReconcileRow[]
+  flagged: ReconcileRow[]
 }
 
 type BalanceData = {
@@ -227,6 +250,7 @@ type LogRange = 'today' | '7d' | '30d' | 'custom'
 const PROVIDER_COLORS: Record<string, string> = {
   anthropic: '#E07A5F',
   openai: '#81B29A',
+  xai: '#22C55E',
   openrouter: '#A78BFA',
   gemini: '#3B82F6',
   google_tts: '#8B5CF6',
@@ -240,6 +264,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   openai: 'OpenAI',
   openrouter: 'OpenRouter',
   gemini: 'Gemini',
+  xai: 'xAI (Grok)',
   google_tts: 'Google TTS',
   twilio: 'Twilio',
   elevenlabs: 'ElevenLabs',
@@ -784,6 +809,7 @@ function SpendByCategorySection({ today, month, chatToday, chatMonth }: {
 export default function AgentCostsDashboard() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [balances, setBalances] = useState<BalanceData | null>(null)
+  const [reconcile, setReconcile] = useState<ReconciliationData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshingBalances, setRefreshingBalances] = useState(false)
@@ -824,6 +850,12 @@ export default function AgentCostsDashboard() {
       if (balanceRes.ok) {
         setBalances(await balanceRes.json() as BalanceData)
       }
+
+      // Reconciliation is a secondary read — never let it block the main dashboard.
+      fetch('/api/assistant/costs/reconciliation')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => { if (j) setReconcile(j as ReconciliationData) })
+        .catch(() => {})
     } catch (err) {
       setError(err instanceof Error ? err.message : 'লোড ব্যর্থ')
     } finally {
@@ -943,6 +975,7 @@ export default function AgentCostsDashboard() {
     date: String(d.date).slice(5),
     anthropic: Number(d.anthropic ?? 0),
     openai: Number(d.openai ?? 0),
+    xai: Number(d.xai ?? 0),
     openrouter: Number(d.openrouter ?? 0),
     gemini: Number(d.gemini ?? 0),
     google_tts: Number(d.google_tts ?? 0),
@@ -1201,7 +1234,7 @@ export default function AgentCostsDashboard() {
                     <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-3">
                       <div>
                         <p className="text-[9px] text-muted">
-                          {row.id === 'vercel' ? 'Team billed MTD' : 'Provider published MTD'}
+                          {row.id === 'vercel' ? 'Current cycle billed' : 'Provider published MTD'}
                         </p>
                         <p className="mt-0.5 text-xs font-semibold text-cream">
                           {fmtSpendCell(row.providerMonthUsd)}
@@ -1224,7 +1257,35 @@ export default function AgentCostsDashboard() {
                         </p>
                       </div>
                     </div>
-                  ) : (
+                  ) : null}
+
+                  {/* Vercel: split the AI-agent (v0) spend from real app hosting.
+                      Cost audit 2026-07-25 — $75 of a $128 bill was the Agent
+                      product, not the ERP app, and nobody could see it. */}
+                  {row.id === 'vercel' && row.costBreakdown && row.costBreakdown.aiTokensUsd > 0 && (
+                    <div className="mt-3 rounded-xl border border-[#D4A84B]/25 bg-[#D4A84B]/[0.06] px-3 py-2.5">
+                      <p className="text-[9px] font-semibold uppercase tracking-wider text-[#D4A84B]">
+                        এই বিলে কী আছে
+                      </p>
+                      <div className="mt-1.5 grid grid-cols-2 gap-2">
+                        <div>
+                          <p className="text-[9px] text-muted">🤖 Vercel Agent (v0 — অ্যাপ নয়)</p>
+                          <p className="text-sm font-bold tabular-nums text-cream">{fmtUsd(row.costBreakdown.aiTokensUsd)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-muted">🖥️ ERP hosting</p>
+                          <p className="text-sm font-bold tabular-nums text-cream">{fmtUsd(row.costBreakdown.hostingUsd)}</p>
+                        </div>
+                      </div>
+                      {row.costBreakdown.topLines.length > 0 && (
+                        <p className="mt-1.5 text-[9px] leading-relaxed text-muted">
+                          {row.costBreakdown.topLines.slice(0, 5).map((l) => `${l.name} ${fmtUsd(l.usd)}`).join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {!(row.costAuthoritative && row.providerMonthUsd != null) && (
                     <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-3">
                       <div>
                         <p className="text-[9px] text-muted">Local today</p>
@@ -1315,6 +1376,74 @@ export default function AgentCostsDashboard() {
           </div>
         )}
       </section>
+
+      {/* Reconciliation — local estimate vs provider's real published bill. The
+          check that would have caught the 2026-07-24 mislabel ($4 shown, $2.71
+          real) the moment it happened. */}
+      {reconcile && reconcile.providers.some((p) => p.status !== 'NO_DATA') && (
+        <section className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold text-[#E07A5F]">🧮 হিসাব মেলানো (estimate vs আসল বিল)</p>
+              <p className="mt-1 text-[10px] leading-relaxed text-muted">
+                আমাদের local হিসাব provider-এর প্রকাশিত আসল বিলের সাথে মেলে কিনা। বড় গরমিল = cost model ভুল।
+              </p>
+            </div>
+            {reconcile.flagged.length === 0 ? (
+              <span className="rounded-full px-2 py-0.5 text-[9px] font-semibold tone-green border">সব মিলছে ✓</span>
+            ) : (
+              <span className="rounded-full px-2 py-0.5 text-[9px] font-semibold tone-amber border">
+                {reconcile.flagged.length}টি গরমিল
+              </span>
+            )}
+          </div>
+
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-left text-[11px]">
+              <thead>
+                <tr className="text-[9px] uppercase tracking-wider text-muted">
+                  <th className="pb-1.5 pr-2 font-medium">Provider</th>
+                  <th className="pb-1.5 px-2 text-right font-medium">Local হিসাব</th>
+                  <th className="pb-1.5 px-2 text-right font-medium">আসল বিল</th>
+                  <th className="pb-1.5 pl-2 text-right font-medium">গরমিল</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reconcile.providers
+                  .filter((p) => p.status !== 'NO_DATA')
+                  .map((p) => {
+                    const flagged = p.status === 'LOCAL_HIGH' || p.status === 'LOCAL_LOW'
+                    return (
+                      <tr key={p.id} className="border-t border-border-subtle">
+                        <td className="py-1.5 pr-2 font-semibold text-cream">{p.label}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums text-cream/80">
+                          {p.localEstimateUsd != null ? fmtUsd(p.localEstimateUsd) : '—'}
+                        </td>
+                        <td className="py-1.5 px-2 text-right tabular-nums text-cream/80">
+                          {p.providerActualUsd != null ? fmtUsd(p.providerActualUsd)
+                            : p.status === 'UNVERIFIED' ? 'API নেই' : '—'}
+                        </td>
+                        <td className={cn('py-1.5 pl-2 text-right tabular-nums font-semibold',
+                          flagged ? 'text-amber-500' : 'text-muted')}>
+                          {p.driftUsd != null && flagged
+                            ? `${p.driftUsd > 0 ? '+' : ''}${fmtUsd(p.driftUsd)}${p.driftPct != null ? ` (${p.driftPct > 0 ? '+' : ''}${p.driftPct}%)` : ''}`
+                            : p.status === 'RECONCILED' ? '✓'
+                              : p.status === 'INFRA' ? 'infra'
+                                : p.status === 'UNVERIFIED' ? 'estimate' : '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+              </tbody>
+            </table>
+          </div>
+          {reconcile.flagged.length > 0 && (
+            <p className="mt-2 text-[10px] leading-relaxed text-amber-600">
+              ⚠️ {reconcile.flagged[0].label}: {reconcile.flagged[0].note}
+            </p>
+          )}
+        </section>
+      )}
 
       {(data.googleTts || data.elevenLabs) && (
         <div className="space-y-3">
@@ -1496,8 +1625,10 @@ export default function AgentCostsDashboard() {
                 />
                 <Bar dataKey="anthropic" stackId="a" fill={PROVIDER_COLORS.anthropic} radius={[0, 0, 0, 0]} />
                 <Bar dataKey="openai" stackId="a" fill={PROVIDER_COLORS.openai} />
+                <Bar dataKey="xai" stackId="a" fill={PROVIDER_COLORS.xai} />
                 <Bar dataKey="openrouter" stackId="a" fill={PROVIDER_COLORS.openrouter} />
                 <Bar dataKey="gemini" stackId="a" fill={PROVIDER_COLORS.gemini} />
+                <Bar dataKey="xai" stackId="a" fill={PROVIDER_COLORS.xai} />
                 <Bar dataKey="google_tts" stackId="a" fill={PROVIDER_COLORS.google_tts} />
                 <Bar dataKey="elevenlabs" stackId="a" fill={PROVIDER_COLORS.elevenlabs} />
                 <Bar dataKey="veo" stackId="a" fill={PROVIDER_COLORS.veo} />

@@ -18,10 +18,19 @@ vi.mock('@/agent/lib/planner', () => mockPlanner)
 const mockBriefing = vi.hoisted(() => ({ buildOwnerBriefingData: vi.fn() }))
 vi.mock('@/agent/lib/owner-briefing-data', () => mockBriefing)
 
+// Every self-created plan now gets its own drive conversation (without one the
+// executor cannot run a head turn at all) — stub the creation here.
+const mockDriveConv = vi.hoisted(() => ({
+  ensureDriveConversation: vi.fn().mockResolvedValue('conv-drive-1'),
+  getDriveConversationId: vi.fn().mockResolvedValue(null),
+}))
+vi.mock('@/agent/lib/plan-driver/drive-conversation', () => mockDriveConv)
+
 // notify-owner is fire-and-forget — stub it so no real push happens.
 vi.mock('@/agent/lib/notify-owner', () => ({ notifyOwnerIfAway: vi.fn().mockResolvedValue({ skipped: true }) }))
 
 import {
+  buildSignalSteps,
   selectDrivableSignals,
   scanSignalsToPlanDrive,
   MAX_SIGNALS_PER_SCAN,
@@ -96,21 +105,86 @@ describe('selectDrivableSignals — turns business signals into drivable plans',
     expect(sigs[0].area).toBe('customers')
   })
 
-  it('keys staff signals by name and orders high-urgency first, capped to the batch ceiling', () => {
+  it('orders high-urgency first and caps the batch', () => {
     const sigs = selectDrivableSignals(
       briefing({
         reorderSuggestions: Array.from({ length: 6 }, (_, i) => ({
           id: `SKU-${i}`, name: `P${i}`, suggestedQty: 10, urgency: 'high', reason: 'low', currentStock: 1, dailyRate: 1, daysOfStock: 1,
         })),
-        staffYesterday: { summary: '', done: 0, total: 4, lowPerformers: [{ name: 'Eyafi', pct: 15, daysLow: 2 }] },
+        returns: { flags: ['রিটার্ন হার বেশি'], totalReturns: 9, returnRatePct: 12 },
       }),
     )
-    // capped
     expect(sigs.length).toBeLessThanOrEqual(MAX_SIGNALS_PER_SCAN)
-    // all the top ones are the high-urgency stock signals (sorted first)
+    // the normal-urgency return flag is pushed out by the high-urgency stock ones
     expect(sigs.every((s) => s.urgency === 'high')).toBe(true)
-    // staff (normal urgency) gets pushed out by the cap of high-urgency stock
-    expect(sigs.some((s) => s.signalKey === 'staff:Eyafi')).toBe(false)
+  })
+
+  // Owner ruling 2026-07-25: staff performance belongs to the Office Manager
+  // agent. Every staff plan this scanner ever created died unrun, and he kept
+  // switching Plan-Drive off because of them.
+  it('NEVER creates a staff follow-up signal, however bad the numbers look', () => {
+    const sigs = selectDrivableSignals(
+      briefing({
+        staffYesterday: {
+          summary: '', done: 0, total: 8,
+          lowPerformers: [{ name: 'Eyafi', pct: 0, daysLow: 5 }, { name: 'Mustahid', pct: 10, daysLow: 4 }],
+        },
+        staffPatterns: [{ name: 'Eyafi', type: 'late', detail: 'রোজ দেরি' }],
+      }),
+    )
+    expect(sigs).toHaveLength(0)
+  })
+
+  it('watches the ad account: a campaign whose performance dropped becomes a plan', () => {
+    const sigs = selectDrivableSignals(
+      briefing({
+        adsDigest: { campaigns: [], anomalies: [{ campaign: 'Eid Panjabi', dropPct: 45 }] },
+      }),
+    )
+    expect(sigs).toHaveLength(1)
+    expect(sigs[0].area).toBe('ads')
+    expect(sigs[0].signalKey).toBe('ads:Eid Panjabi')
+  })
+
+  it('flags a real sales drop against the 7-day average, and ignores normal wobble', () => {
+    const dropped = selectDrivableSignals(
+      briefing({ sales: { yesterdayTotal: 20_000, yesterdayOrders: 4, sevenDayAvg: 50_000, sevenDayOrderAvg: 10 } }),
+    )
+    expect(dropped.map((s) => s.signalKey)).toEqual(['business:sales_drop'])
+
+    const normal = selectDrivableSignals(
+      briefing({ sales: { yesterdayTotal: 46_000, yesterdayOrders: 9, sevenDayAvg: 50_000, sevenDayOrderAvg: 10 } }),
+    )
+    expect(normal).toHaveLength(0)
+  })
+})
+
+// G3 (owner ruling 2026-07-26): he watched a one-step plan sit for an hour and
+// then fail the gate, because "find the cause" and "decide what to do" were the
+// same step. The step list is now the visible todo list.
+describe('buildSignalSteps — a real todo list, in order', () => {
+  const sig = {
+    area: 'business' as const,
+    urgency: 'high' as const,
+    signalKey: 'business:sales_drop',
+    goal: 'গতকালের সেল ৭ দিনের গড়ের চেয়ে ৬০% কম — কারণ খুঁজে বের করো',
+    doneCriteria: 'কারণ চিহ্নিত এবং করণীয় প্রস্তাব করা হয়েছে।',
+  }
+
+  it('produces diagnose → decide → report, chained in order', () => {
+    const steps = buildSignalSteps(sig)
+    expect(steps).toHaveLength(3)
+    expect(steps[0].dependsOn).toBeUndefined()
+    expect(steps[1].dependsOn).toEqual(['step-1'])
+    expect(steps[2].dependsOn).toEqual(['step-2'])
+  })
+
+  it('carries the goal into the first step and the done-criteria into the second', () => {
+    const steps = buildSignalSteps(sig)
+    expect(steps[0].action).toContain('কারণ বের করো')
+    expect(steps[0].action).toContain(sig.goal)
+    expect(steps[1].action).toContain(sig.doneCriteria)
+    expect(steps[2].action).toContain('approval card')
   })
 })
 

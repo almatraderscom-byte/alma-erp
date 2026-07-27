@@ -55,6 +55,43 @@ export interface SkillManifest {
   evalSuite?: string
   minimumPassRate?: number
   status: SkillStatus
+
+  // ── Format v2 (2026-07-26). All optional, so every v1 skill stays valid. ──
+
+  /** Inherit the shared ALMA invariants instead of copying them into 40 files. */
+  extends?: string
+  /**
+   * `subagent` runs the job with its own lean system prompt (alma-base +
+   * SYSTEM.md + SKILL.md) and this skill's tool allowlist — the isolation the
+   * owner asked for. `inline` keeps it in the current conversation.
+   */
+  isolation?: 'inline' | 'subagent'
+  /**
+   * U8. `false` = never auto-selected; Boss must name it. Money movement and
+   * publishing belong here. Defaults to true when absent.
+   */
+  implicit?: boolean
+  /** The negative half of routing — "use X instead when…". Feeds the tie-break. */
+  whenNotToUse?: string
+  /**
+   * U2. What must exist for the skill to work at all, checked BEFORE step 0 by
+   * the capability preflight. The alt-text job burned 15 steps discovering a
+   * missing WEBSITE_SUPABASE_URL one tool at a time; a declared dependency turns
+   * that into one honest sentence.
+   */
+  dependencies?: {
+    env?: string[]
+    capability?: string[]
+  }
+  /** U2. The deliverable's shape — checkable, unlike "give a good report". */
+  outputContract?: {
+    kind: string
+    mustInclude?: string[]
+  }
+  /** U2. Where the skill must stop and ask Boss rather than guess. */
+  stopConditions?: string[]
+  /** Machine-checkable completion, fed to the existing skill-pack gate. */
+  done?: Array<{ tool?: string; check?: string }>
 }
 
 /**
@@ -70,8 +107,16 @@ export interface SkillMetadata {
   requiredCapabilities: string[]
   /** Extra keyword hints for routing (from frontmatter `keywords:`), optional. */
   keywords: string[]
+  /** U8 — false means it can never be auto-selected. Defaults true. */
+  implicit: boolean
   /** Absolute path to the skill package directory. */
   dir: string
+  /**
+   * SK-8 — sha256 over the files that define this skill (manifest + SKILL.md +
+   * SYSTEM.md). `version` is a promise a human typed; this is what actually ran,
+   * and it is what an approval is granted against. See `provenance.ts`.
+   */
+  hash: string
 }
 
 /**
@@ -83,6 +128,20 @@ export interface ActivatedSkill {
   manifest: SkillManifest
   /** The SKILL.md body (the actual procedure the head follows). */
   instructions: string
+  /**
+   * SK-7. The skill's OWN system prompt (`SYSTEM.md`) — role, tone, hard limits.
+   * This is the half of the owner's ask that a skill file alone cannot give: it
+   * only means anything when `isolation: 'subagent'` makes it REPLACE the general
+   * behavioural prompt instead of being appended to it. Empty when the package
+   * carries no SYSTEM.md (every v1 skill).
+   */
+  systemPrompt: string
+  /**
+   * SK-7. The resolved `extends:` base body (`alma-base/SKILL.md`) — the ALMA
+   * invariants written once. An isolated turn drops the big prompt, so these
+   * must ride along or the invariants would leave with it.
+   */
+  baseInstructions: string
 }
 
 /** Result of a discovery scan — the metadata index the selector routes over. */

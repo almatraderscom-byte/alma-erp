@@ -11,12 +11,20 @@ export interface PlanStep {
   id: string
   action: string
   toolName?: string
+  /** DB step ids (resolved from logical "step-1" keys at create time). */
   dependsOn: string[]
   status: 'pending' | 'running' | 'done' | 'failed' | 'skipped'
   result?: unknown
   error?: string
   startedAt?: Date
   doneAt?: Date
+  /** S0 retry state — per STEP, so one failure no longer kills the plan. */
+  attemptCount: number
+  maxAttempts: number
+  nextAttemptAt?: Date
+  /** S0 queue mode — the worker turn this step is waiting on. */
+  turnId?: string
+  dispatchedAt?: Date
 }
 
 /**
@@ -71,8 +79,13 @@ export interface Plan {
   maxAttempts: number
   nextTickAt?: Date
   lastDrivenAt?: Date
-  /** Whole-taka autodrive spend on this plan (daily cost-cap input). */
+  /** Whole-taka autodrive spend on this plan (owner-facing display). */
   costTaka: number
+  /** Precise lifetime spend in milli-taka (1৳ = 1000) — the cap arithmetic input. */
+  costMilliTaka: number
+  /** Spend inside the Asia/Dhaka day named by costDay. */
+  costMilliTakaDay: number
+  costDay?: string | null
   /** Durable timing used by the native Background Tasks live/history UI. */
   createdAt?: Date
   updatedAt?: Date
@@ -80,11 +93,25 @@ export interface Plan {
 }
 
 /**
+ * Logical step keys an author may use in `dependsOn` — "step-1" is the FIRST
+ * step, "step-2" the second, and so on (the make_plan tool documents exactly
+ * this). Anything else is treated as a DB id and passed through.
+ */
+const LOGICAL_STEP_KEY = /^step-(\d+)$/i
+
+/**
  * Create a plan with ordered steps. Returns the persisted plan.
+ *
+ * S0 FIX — dependency resolution. Authors write logical keys ("step-1"), but
+ * `getReadySteps` compares `dependsOn` against DB uuids. Every ordered plan ever
+ * created was therefore structurally dead: no dependency could ever be satisfied,
+ * so a diagnose → fix → verify chain (which is entirely dependency-shaped) could
+ * never advance past its first step. We now translate the logical keys into the
+ * real ids in the same transaction that creates them.
  */
 export async function createPlan(opts: {
   goal: string
-  steps: { action: string; toolName?: string; dependsOn?: string[] }[]
+  steps: { action: string; toolName?: string; dependsOn?: string[]; maxAttempts?: number }[]
   conversationId?: string
   businessId?: string
 }): Promise<Plan> {
@@ -99,15 +126,49 @@ export async function createPlan(opts: {
           seq: i + 1,
           action: s.action,
           toolName: s.toolName ?? null,
-          dependsOn: s.dependsOn ?? [],
+          // Written empty first; resolved to DB ids immediately below, once the
+          // ids exist. Storing the logical keys would leave them unresolvable.
+          dependsOn: [],
           status: 'pending',
+          ...(s.maxAttempts ? { maxAttempts: s.maxAttempts } : {}),
         })),
       },
     },
     include: { steps: { orderBy: { seq: 'asc' } } },
   })
 
+  const bySeq: string[] = plan.steps.map((s: { id: string }) => s.id)
+  const resolved = opts.steps.map((s) => resolveDependsOn(s.dependsOn ?? [], bySeq))
+  await Promise.all(
+    resolved.map((deps, i) =>
+      deps.length === 0
+        ? null
+        : db.agentPlanStep.update({ where: { id: bySeq[i] }, data: { dependsOn: deps } }),
+    ).filter(Boolean),
+  )
+  for (let i = 0; i < plan.steps.length; i++) plan.steps[i].dependsOn = resolved[i]
+
   return dbPlanToDto(plan)
+}
+
+/**
+ * Translate one step's dependsOn list into DB ids. Pure — unit-tested directly.
+ * Unknown keys are dropped rather than kept: a dependency that can never resolve
+ * would silently freeze the plan forever, which is the exact bug this fixes.
+ */
+export function resolveDependsOn(deps: string[], stepIdsBySeq: string[]): string[] {
+  const out: string[] = []
+  for (const dep of deps) {
+    const m = LOGICAL_STEP_KEY.exec(dep.trim())
+    if (m) {
+      const idx = Number(m[1]) - 1
+      const id = stepIdsBySeq[idx]
+      if (id) out.push(id)
+      continue
+    }
+    if (stepIdsBySeq.includes(dep)) out.push(dep) // already a real id
+  }
+  return [...new Set(out)]
 }
 
 /**
@@ -150,7 +211,8 @@ export async function markStepRunning(stepId: string): Promise<void> {
 }
 
 /**
- * Mark a step as done with its result.
+ * Mark a step as done with its result. Clears the dispatch fields — a done step
+ * is never waiting on a turn.
  */
 export async function markStepDone(stepId: string, result?: unknown): Promise<void> {
   await db.agentPlanStep.update({
@@ -159,18 +221,76 @@ export async function markStepDone(stepId: string, result?: unknown): Promise<vo
       status: 'done',
       result: result !== undefined ? JSON.parse(JSON.stringify(result)) : null,
       doneAt: new Date(),
+      turnId: null,
+      dispatchedAt: null,
+    },
+  })
+}
+
+/** Backoff before a failed step may be retried: 2, 8, 18 … minutes. */
+export function stepRetryDelayMs(attemptCount: number): number {
+  const n = Math.max(1, attemptCount)
+  return Math.min(2 * n * n, 60) * 60_000
+}
+
+/**
+ * Mark a step as failed and count the attempt.
+ *
+ * S0 FIX — a failed step used to be terminal: `getReadySteps` only ever returned
+ * 'pending', so the plan had nothing ready on the next tick and died at
+ * 'escalated-stuck' after ONE failure (the plan-level maxAttempts was
+ * unreachable). The attempt is now recorded on the step and a retry window is
+ * scheduled; only when the step's own ceiling is reached does it stay failed.
+ */
+export async function markStepFailed(stepId: string, error: string, now = new Date()): Promise<void> {
+  const step = await db.agentPlanStep.findUnique({
+    where: { id: stepId },
+    select: { attemptCount: true, maxAttempts: true },
+  })
+  const attemptCount = (step?.attemptCount ?? 0) + 1
+  const maxAttempts = step?.maxAttempts ?? 3
+  await db.agentPlanStep.update({
+    where: { id: stepId },
+    data: {
+      status: 'failed',
+      error,
+      doneAt: now,
+      attemptCount,
+      nextAttemptAt: attemptCount < maxAttempts ? new Date(now.getTime() + stepRetryDelayMs(attemptCount)) : null,
+      turnId: null,
+      dispatchedAt: null,
     },
   })
 }
 
 /**
- * Mark a step as failed.
+ * A step whose action needs the owner (approval card, credential) goes BACK to
+ * 'pending' rather than sitting in 'running'.
+ *
+ * S0 FIX — the driver used to leave a blocked step 'running' while it parked the
+ * plan. `getReadySteps` can never pick a 'running' step, so approving the card
+ * resumed a plan that then had nothing to do and escalated as "stuck": approval
+ * deadlocked the plan it was meant to unblock. The attempt counter is NOT
+ * touched — waiting for Boss is not a failure.
  */
-export async function markStepFailed(stepId: string, error: string): Promise<void> {
+export async function markStepBlocked(stepId: string): Promise<void> {
   await db.agentPlanStep.update({
     where: { id: stepId },
-    data: { status: 'failed', error, doneAt: new Date() },
+    data: { status: 'pending', turnId: null, dispatchedAt: null, nextAttemptAt: null },
   })
+}
+
+/** Queue mode — the step is now waiting on a worker turn (reaped next tick). */
+export async function markStepDispatched(stepId: string, turnId: string, now = new Date()): Promise<void> {
+  await db.agentPlanStep.update({
+    where: { id: stepId },
+    data: { status: 'running', turnId, dispatchedAt: now, startedAt: now },
+  })
+}
+
+/** Steps currently waiting on a dispatched worker turn (reap input). */
+export function getDispatchedSteps(plan: Pick<Plan, 'steps'>): PlanStep[] {
+  return plan.steps.filter((s) => s.status === 'running' && Boolean(s.turnId))
 }
 
 /**
@@ -234,6 +354,13 @@ export async function enrollPlanForAutodrive(
  * override (if the owner granted more budget) is set separately in autodrive-config.
  */
 export async function resumeAutodrive(planId: string): Promise<void> {
+  // "আবার চালাও" restarts the time budget too — otherwise an old plan escalates
+  // again on its first tick and the button does nothing (owner-visible bug the
+  // day G6 shipped).
+  try {
+    const { markBudgetRestart } = await import('@/agent/lib/plan-driver/plan-delivery')
+    await markBudgetRestart(planId)
+  } catch { /* budget bookkeeping must never block a resume */ }
   await db.agentPlan.update({
     where: { id: planId },
     data: {
@@ -292,7 +419,8 @@ export async function setAutodriveState(
 export async function recordDriveTick(
   planId: string,
   opts: {
-    addCostTaka?: number
+    /** Spend to add, in MILLI-taka (1৳ = 1000). Whole-taka rounding charged 1৳ to every sub-taka turn. */
+    addCostMilliTaka?: number
     nextTickAt?: Date | null
     attempt?: 'increment' | 'reset' | 'keep'
     now?: Date
@@ -300,26 +428,61 @@ export async function recordDriveTick(
 ): Promise<void> {
   const now = opts.now ?? new Date()
   const data: Record<string, unknown> = { lastDrivenAt: now }
-  if (opts.addCostTaka && opts.addCostTaka > 0) {
-    data.costTaka = { increment: Math.round(opts.addCostTaka) }
+
+  const add = Math.max(0, Math.round(opts.addCostMilliTaka ?? 0))
+  if (add > 0) {
+    // Day bucket: read-then-write (plans tick a few times a minute at most, and
+    // Prisma cannot express "increment IF the day matches" in one statement).
+    const today = dhakaDayKey(now)
+    const row = await db.agentPlan.findUnique({
+      where: { id: planId },
+      select: { costDay: true, costMilliTakaDay: true, costMilliTaka: true },
+    })
+    const sameDay = row?.costDay === today
+    data.costMilliTaka = { increment: add }
+    data.costMilliTakaDay = sameDay ? (row?.costMilliTakaDay ?? 0) + add : add
+    data.costDay = today
+    // Whole-taka mirror kept in step for the existing owner-facing panels.
+    data.costTaka = Math.floor(((row?.costMilliTaka ?? 0) + add) / 1000)
   }
+
   if (opts.nextTickAt !== undefined) data.nextTickAt = opts.nextTickAt
   if (opts.attempt === 'increment') data.attemptCount = { increment: 1 }
   else if (opts.attempt === 'reset') data.attemptCount = 0
   await db.agentPlan.update({ where: { id: planId }, data })
 }
 
+/** Asia/Dhaka (UTC+6) calendar day key — no Intl, matching quiet-hours' fix. */
+export function dhakaDayKey(now = new Date()): string {
+  const d = new Date(now.getTime() + 6 * 60 * 60 * 1000)
+  return d.toISOString().slice(0, 10)
+}
+
 /**
- * Get steps that are ready to execute (all dependencies done).
+ * Get steps that are ready to execute: all dependencies done AND either
+ *  - pending, or
+ *  - failed but still under its own attempt ceiling and past its retry window.
+ *
+ * The retry branch is the S0 fix — see markStepFailed.
  */
-export function getReadySteps(plan: Pick<Plan, 'steps'>): PlanStep[] {
+export function getReadySteps(plan: Pick<Plan, 'steps'>, now = new Date()): PlanStep[] {
   const doneIds = new Set(
     plan.steps.filter(s => s.status === 'done').map(s => s.id),
   )
+  const retryable = (s: PlanStep) =>
+    s.status === 'failed'
+    && s.attemptCount < s.maxAttempts
+    && (!s.nextAttemptAt || s.nextAttemptAt.getTime() <= now.getTime())
+
   return plan.steps.filter(s => {
-    if (s.status !== 'pending') return false
+    if (s.status !== 'pending' && !retryable(s)) return false
     return s.dependsOn.every(depId => doneIds.has(depId))
   })
+}
+
+/** A step that has exhausted its own retries — the plan cannot advance past it. */
+export function hasExhaustedStep(plan: Pick<Plan, 'steps'>): boolean {
+  return plan.steps.some((s) => s.status === 'failed' && s.attemptCount >= s.maxAttempts)
 }
 
 /**
@@ -365,10 +528,21 @@ export async function loadDrivablePlans(opts?: { limit?: number; now?: Date }): 
   const limit = opts?.limit ?? 20
   const rows = await db.agentPlan.findMany({
     where: {
-      // 'escalated' is intentionally excluded — it waits on an explicit owner
-      // decision and must NOT auto-resume (that was the re-escalation loop).
-      autodriveState: { in: ['driving', 'blocked'] },
-      OR: [{ nextTickAt: null }, { nextTickAt: { lte: now } }],
+      OR: [
+        {
+          autodriveState: { in: ['driving', 'blocked'] },
+          OR: [{ nextTickAt: null }, { nextTickAt: { lte: now } }],
+        },
+        {
+          // An escalation that waits on an OWNER DECISION clears next_tick_at, so
+          // it stays parked (that was the re-escalation loop). An escalation the
+          // engine can recover from on its own — one that deliberately scheduled a
+          // next tick — is re-admitted here. Without this, a recoverable stall was
+          // indistinguishable from one needing Boss, and both waited for him.
+          autodriveState: 'escalated',
+          nextTickAt: { not: null, lte: now },
+        },
+      ],
     },
     include: { steps: { orderBy: { seq: 'asc' } } },
     orderBy: [{ lastDrivenAt: 'asc' }, { createdAt: 'asc' }],
@@ -455,6 +629,9 @@ interface DbPlan {
   nextTickAt?: Date | null
   lastDrivenAt?: Date | null
   costTaka?: number | null
+  costMilliTaka?: number | null
+  costMilliTakaDay?: number | null
+  costDay?: string | null
   createdAt?: Date | null
   updatedAt?: Date | null
   completedAt?: Date | null
@@ -468,6 +645,11 @@ interface DbPlan {
     error?: string | null
     startedAt?: Date | null
     doneAt?: Date | null
+    attemptCount?: number | null
+    maxAttempts?: number | null
+    nextAttemptAt?: Date | null
+    turnId?: string | null
+    dispatchedAt?: Date | null
   }>
 }
 
@@ -486,6 +668,9 @@ function dbPlanToDto(plan: DbPlan): Plan {
     nextTickAt: plan.nextTickAt ?? undefined,
     lastDrivenAt: plan.lastDrivenAt ?? undefined,
     costTaka: plan.costTaka ?? 0,
+    costMilliTaka: plan.costMilliTaka ?? 0,
+    costMilliTakaDay: plan.costMilliTakaDay ?? 0,
+    costDay: plan.costDay ?? null,
     createdAt: plan.createdAt ?? undefined,
     updatedAt: plan.updatedAt ?? undefined,
     completedAt: plan.completedAt ?? undefined,
@@ -499,6 +684,11 @@ function dbPlanToDto(plan: DbPlan): Plan {
       error: s.error ?? undefined,
       startedAt: s.startedAt ?? undefined,
       doneAt: s.doneAt ?? undefined,
+      attemptCount: s.attemptCount ?? 0,
+      maxAttempts: s.maxAttempts ?? 3,
+      nextAttemptAt: s.nextAttemptAt ?? undefined,
+      turnId: s.turnId ?? undefined,
+      dispatchedAt: s.dispatchedAt ?? undefined,
     })),
   }
 }

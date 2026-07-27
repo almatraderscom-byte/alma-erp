@@ -17,6 +17,7 @@
 import { createHmac } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { normalizeOutboundPhone } from '@/lib/twilio/phone'
+import { buildOwnerCallFacts } from '@/agent/lib/call-facts'
 import { sarvamVoiceFor } from '@/agent/lib/voice-provider-intent'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -95,7 +96,7 @@ const RELAY_STT_HINTS =
 /** Which engine runs two-way calls: ElevenLabs ConvAI (legacy), Twilio
  * ConversationRelay + Gemini + Google Charon (relay), or Twilio Media Streams →
  * our Sarvam pipeline (saaras:v3 STT + Gemini + Bulbul TTS, owner's chosen voice). */
-export type VoiceCallProvider = 'elevenlabs' | 'relay' | 'sarvam' | 'ngs'
+export type VoiceCallProvider = 'elevenlabs' | 'relay' | 'sarvam' | 'ngs' | 'sip'
 
 export interface VoiceCallConfig {
   enabled: boolean
@@ -117,15 +118,21 @@ export interface VoiceCallConfig {
   ngsApiSecret: string
   ngsFrom: string
   ngsLiveWsUrl: string
+  /** sip provider only — our self-hosted Asterisk gateway (sip-gateway-service.mjs) */
+  sipGatewayBase: string
+  sipGatewayKey: string
+  sipGatewaySecret: string
+  sipFrom: string
 }
 
 /** Read + validate config from env. `enabled` is false unless everything required is present. */
 export function getVoiceCallConfig(): VoiceCallConfig {
   const provider: VoiceCallProvider =
-    process.env.VOICE_CALL_PROVIDER === 'ngs' ? 'ngs'
-      : process.env.VOICE_CALL_PROVIDER === 'sarvam' ? 'sarvam'
-        : process.env.VOICE_CALL_PROVIDER === 'relay' ? 'relay'
-          : 'elevenlabs'
+    process.env.VOICE_CALL_PROVIDER === 'sip' ? 'sip'
+      : process.env.VOICE_CALL_PROVIDER === 'ngs' ? 'ngs'
+        : process.env.VOICE_CALL_PROVIDER === 'sarvam' ? 'sarvam'
+          : process.env.VOICE_CALL_PROVIDER === 'relay' ? 'relay'
+            : 'elevenlabs'
   const apiKey = process.env.ELEVENLABS_API_KEY ?? ''
   const agentId = process.env.ELEVENLABS_AGENT_ID ?? ''
   const agentPhoneNumberId = process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID ?? ''
@@ -143,13 +150,22 @@ export function getVoiceCallConfig(): VoiceCallConfig {
   const ngsApiSecret = process.env.NGS_API_SECRET ?? ''
   const ngsFrom = process.env.NGS_FROM ?? '2323'
   const ngsLiveWsUrl = process.env.NGS_LIVE_WS_URL ?? '' // e.g. ws://31.97.237.40:8766/ws
+  // sip = our self-hosted Asterisk gateway (sip-gateway-service.mjs on the VPS). Drop-in
+  // NGS replacement: same control-API shape, caller-ID owned, multi-DID capable.
+  const sipGatewayBase = (process.env.SIP_GATEWAY_BASE ?? '').replace(/\/$/, '') // e.g. http://31.97.237.40:8770
+  const sipGatewayKey = process.env.SIP_GATEWAY_KEY ?? ''
+  const sipGatewaySecret = process.env.SIP_GATEWAY_SECRET ?? ''
+  const sipFrom = process.env.SIP_FROM ?? process.env.SIP_CALLER_ID ?? ''
   const enabled =
     killSwitch &&
-    (provider === 'ngs'
-      ? Boolean(ngsApiKey && ngsApiSecret && ngsLiveWsUrl && internalToken)
-      : provider === 'relay' || provider === 'sarvam'
-        ? Boolean(relayWssUrl && twilioAccountSid && twilioAuthToken && twilioFromNumber && internalToken)
-        : Boolean(apiKey && agentId && agentPhoneNumberId))
+    (provider === 'sip'
+      // Key/secret are optional: the shared internal token authenticates us on its own.
+      ? Boolean(sipGatewayBase && internalToken)
+      : provider === 'ngs'
+        ? Boolean(ngsApiKey && ngsApiSecret && ngsLiveWsUrl && internalToken)
+        : provider === 'relay' || provider === 'sarvam'
+          ? Boolean(relayWssUrl && twilioAccountSid && twilioAuthToken && twilioFromNumber && internalToken)
+          : Boolean(apiKey && agentId && agentPhoneNumberId))
   return {
     enabled,
     provider,
@@ -168,6 +184,10 @@ export function getVoiceCallConfig(): VoiceCallConfig {
     ngsApiSecret,
     ngsFrom,
     ngsLiveWsUrl,
+    sipGatewayBase,
+    sipGatewayKey,
+    sipGatewaySecret,
+    sipFrom,
   }
 }
 
@@ -175,6 +195,11 @@ export function getVoiceCallConfig(): VoiceCallConfig {
 export function voiceCallUnavailableReason(config = getVoiceCallConfig()): string | null {
   if (process.env.VOICE_CALL_ENABLED !== 'true') {
     return 'ভয়েস কল বন্ধ আছে (VOICE_CALL_ENABLED off)। চালু করতে owner সেটিং লাগবে।'
+  }
+  if (config.provider === 'sip') {
+    if (!config.sipGatewayBase) return 'SIP_GATEWAY_BASE সেট করা নেই — self-hosted Asterisk gateway-এর ঠিকানা বসান (যেমন http://31.97.237.40:8770)।'
+    if (!config.internalToken) return 'AGENT_INTERNAL_TOKEN সেট করা নেই — call stream signing ও terminal report-এর জন্য এটি আবশ্যক।'
+    return null
   }
   if (config.provider === 'ngs') {
     if (!config.ngsApiKey || !config.ngsApiSecret) return 'NGS_API_KEY / NGS_API_SECRET সেট করা নেই (infosoftbd Programmable Voice API)।'
@@ -205,11 +230,65 @@ function dhakaDayStart(now = new Date()): Date {
   return new Date(dhaka.getTime() - 6 * 60 * 60 * 1000)
 }
 
-/** How many agent calls have been placed today (Dhaka), for cap enforcement. */
+/** Purposes written by the INBOUND webhooks — calls that came TO us, not spend of ours. */
+const INBOUND_PURPOSES = ['inbound_call', 'inbound_owner_call', 'inbound_voicemail']
+
+/** Only rows we created by dialling out. Purpose is nullable, and a null purpose is ours. */
+const OUTBOUND_ONLY = {
+  OR: [{ purpose: null }, { purpose: { notIn: INBOUND_PURPOSES } }],
+}
+
+/**
+ * Outbound calls that actually reached the network today (Dhaka) — what the daily cap counts.
+ *
+ * This used to count every row in the table, and a row is written before the provider is even
+ * asked, so two unrelated things quietly ate the owner's daily call budget:
+ *   - INBOUND calls, which write rows of their own. On 2026-07-25, 49 of 62 rows were inbound
+ *     (23 of them from the self-test harness's fake caller). A busy morning of customer calls
+ *     used up the cap, and from then on the agent could not phone anyone — with nothing on
+ *     screen to explain why.
+ *   - Attempts the provider dropped. On a day when their switch misroutes, every failure burned
+ *     a slot, so a provider outage became a self-inflicted outage on top of it.
+ *
+ * `dialedAt` is set only once a provider has accepted the call and it is ringing, which makes
+ * it the honest measure of what we spent.
+ */
 export async function callsPlacedToday(): Promise<number> {
   return db.agentVoiceCall.count({
-    where: { createdAt: { gte: dhakaDayStart() } },
+    where: { createdAt: { gte: dhakaDayStart() }, dialedAt: { not: null }, ...OUTBOUND_ONLY },
   })
+}
+
+/**
+ * Every outbound attempt today, reached or not. The cap deliberately ignores failures, so this
+ * is the backstop: without it a retry loop against a broken trunk could dial forever, since
+ * nothing it did would ever count.
+ */
+export async function callAttemptsToday(): Promise<number> {
+  return db.agentVoiceCall.count({
+    where: { createdAt: { gte: dhakaDayStart() }, ...OUTBOUND_ONLY },
+  })
+}
+
+/** Attempts are allowed to run this many times over the cap before we stop dialling at all. */
+const ATTEMPT_CEILING_MULTIPLIER = 3
+
+/**
+ * The daily cap as the owner has set it in the phone console, falling back to the env-derived
+ * value the config already carries.
+ *
+ * Read here rather than in `getVoiceCallConfig()` because that function is synchronous and
+ * used on paths that must not touch the database. A cap lookup must never be the reason a
+ * call cannot be placed, so any failure keeps the existing value.
+ */
+async function dailyCapFromSettings(fallback: number): Promise<number> {
+  try {
+    const { readSetting } = await import('@/agent/lib/phone-settings')
+    const n = Number(await readSetting('phone_daily_call_cap'))
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : fallback
+  } catch {
+    return fallback
+  }
 }
 
 export interface PlaceCallInput {
@@ -261,9 +340,25 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
   const toNumber = normalizeOutboundPhone(input.toNumber)
   if (!toNumber) return { ok: false, error: 'নম্বরটি ঠিক নয় — 01XXXXXXXXX বা +880… ফরম্যাটে দিন।' }
 
+  // The cap is owner-editable from the phone console; the env value it used to read is the
+  // fallback, so an untouched settings table gives exactly the number it gave before.
+  const dailyCap = await dailyCapFromSettings(config.dailyCap)
+
   const placedToday = await callsPlacedToday()
-  if (placedToday >= config.dailyCap) {
-    return { ok: false, error: `আজকের কল লিমিট শেষ (${config.dailyCap}টি)। কাল আবার চেষ্টা করুন।` }
+  if (placedToday >= dailyCap) {
+    return { ok: false, error: `আজকের কল লিমিট শেষ (${dailyCap}টি)। কাল আবার চেষ্টা করুন।` }
+  }
+
+  // Failures no longer consume the cap, so the cap alone can no longer stop a retry loop
+  // dialling a broken trunk all day. This does — and it says WHY, because "limit finished"
+  // on a day when almost nothing connected is a misleading thing to read.
+  const attemptsToday = await callAttemptsToday()
+  const attemptCeiling = dailyCap * ATTEMPT_CEILING_MULTIPLIER
+  if (attemptsToday >= attemptCeiling) {
+    return {
+      ok: false,
+      error: `আজ ${attemptsToday}বার কল করার চেষ্টা হয়েছে কিন্তু মাত্র ${placedToday}টি লাইনে পৌঁছেছে — লাইনে সমস্যা আছে, তাই আপাতত থামানো হলো।`,
+    }
   }
 
   const firstMessage = input.firstMessage.trim() || 'আসসালামু আলাইকুম।'
@@ -336,6 +431,10 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
     // owner's own number runs the OWNER persona (mid-call ERP read tools);
     // everyone else stays on the tool-less contact/staff persona.
     return placeGliveMediaCall(config, record.id, toNumber, purpose, input.recipientName, effectiveCallType, 'whatsapp')
+  }
+
+  if (config.provider === 'sip') {
+    return placeSipLiveCall(config, record.id, toNumber, purpose, input.recipientName, input.voiceGender, effectiveCallType)
   }
 
   if (config.provider === 'ngs') {
@@ -807,6 +906,82 @@ async function placeNgsLiveCall(
     await db.agentVoiceCall.update({
       where: { id: callRecordId },
       data: { status: 'ringing', providerStatus: String(data.status ?? 'ringing'), dialedAt: new Date(), callSid: data.call_id, summary: `ngs live: ${voice}` },
+    })
+    return { ok: true, callRecordId, callSid: data.call_id }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'failed', providerStatus: 'failed', summary: `কল দেওয়া যায়নি: ${msg}`, endedAt: new Date() },
+    }).catch(() => {})
+    return { ok: false, error: `কল দেওয়া যায়নি: ${msg}`, callRecordId }
+  }
+}
+
+/**
+ * Two-way call via our SELF-HOSTED Asterisk gateway (worker/src/voice-relay/
+ * sip-gateway-service.mjs) → the SAME Gemini Live bot. A drop-in NGS replacement
+ * that drops the monthly NGS/EasyPBX fee and — the whole point — OWNS the caller-ID
+ * (SIP From), which NGS strips. The gateway's control API mirrors NGS
+ * (POST /api/v1/call, X-Authorization headers) but takes a JSON body; it originates
+ * the call through our trunk via ARI, bridges the answered leg to the bot over
+ * AudioSocket, and injects a `ctrl` param so the bot hangs up / transfers against
+ * the gateway (not NGS). Behind VOICE_CALL_PROVIDER='sip'; NGS/relay stay the
+ * fallback one env var away until this is proven 100% (owner rule).
+ */
+async function placeSipLiveCall(
+  config: VoiceCallConfig,
+  callRecordId: string,
+  toNumber: string,
+  purpose: string,
+  recipientName: string | undefined,
+  voiceGender: 'male' | 'female' | undefined,
+  callType: 'owner' | 'staff' | 'contact' | undefined,
+): Promise<PlaceCallResult> {
+  try {
+    const exp = Date.now() + 15 * 60_000
+    const t = createHmac('sha256', config.internalToken).update(`relay:${callRecordId}:${exp}`).digest('hex')
+    const voice = voiceGender === 'female' ? 'Aoede' : 'Charon'
+    // Staff names travel WITH an owner call. A mid-call tool round-trip is not reliable for a
+    // name — Gemini Live drops a functionResponse that arrives while it is speaking, and on
+    // 2026-07-25 it answered "who is in today" with two invented names before the real answer
+    // landed. Best-effort: a call must never fail because this could not be read.
+    const facts = (callType ?? 'owner') === 'owner'
+      ? await buildOwnerCallFacts().catch(() => '')
+      : ''
+    // The gateway normalises to the local 01XXXXXXXXX form itself; pass +E.164 as-is.
+    const body = JSON.stringify({
+      to: toNumber,
+      from: config.sipFrom || undefined,
+      params: {
+        id: callRecordId, exp, t,
+        purpose, recipientName: recipientName ?? '', voice,
+        callType: callType ?? 'owner',
+        ...(facts ? { facts } : {}),
+      },
+    })
+    const res = await fetch(`${config.sipGatewayBase}/api/v1/call`, {
+      method: 'POST',
+      headers: {
+        // The gateway accepts either credential; the shared internal token is always
+        // present, so a cutover needs no new secret provisioned here.
+        Authorization: `Bearer ${config.internalToken}`,
+        ...(config.sipGatewayKey ? { 'X-Authorization': config.sipGatewayKey } : {}),
+        ...(config.sipGatewaySecret ? { 'X-Authorization-Secret': config.sipGatewaySecret } : {}),
+        'Content-Type': 'application/json',
+      },
+      body,
+      signal: AbortSignal.timeout(30_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as { call_id?: string; status?: string; error?: string }
+    if (!res.ok || !data.call_id) {
+      const err = `SIP gateway ${res.status}: ${data.error ?? JSON.stringify(data).slice(0, 160)}`
+      await db.agentVoiceCall.update({ where: { id: callRecordId }, data: { status: 'failed', providerStatus: 'failed', summary: err, endedAt: new Date() } })
+      return { ok: false, error: err, callRecordId }
+    }
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'ringing', providerStatus: String(data.status ?? 'ringing'), dialedAt: new Date(), callSid: data.call_id, summary: `sip live: ${voice}` },
     })
     return { ok: true, callRecordId, callSid: data.call_id }
   } catch (err) {

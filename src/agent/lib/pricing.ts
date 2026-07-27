@@ -7,8 +7,10 @@
 export type CostProvider =
   | 'anthropic'
   | 'openai'
+  | 'xai'
   | 'openrouter'
   | 'gemini'
+  | 'xai'
   | 'veo'
   | 'google_tts'
   | 'twilio'
@@ -141,6 +143,54 @@ export function calcWhisperCostUsd(durationSeconds: number): number {
 /** Estimate audio duration from byte size (OGG/MP3 ~16kbps telephony average). */
 export function estimateAudioDurationSeconds(byteLength: number): number {
   return Math.max(1, Math.ceil(byteLength / 2000))
+}
+
+/**
+ * EXACT duration from a WAV/RIFF header — dataSize / byteRate. Returns null when
+ * the bytes are not a parseable PCM WAV (compressed formats have no such header),
+ * so callers fall back to the byte estimate.
+ *
+ * Why this exists (cost audit Phase 6, 2026-07-25): the office-camera listener
+ * uploads WAV 16 kHz mono 16-bit chunks = 32000 bytes/sec, but the byte estimate
+ * assumes ~2000 B/s — a 16× duration over-count that alone billed the dashboard
+ * ~$17/month of "OpenAI" against a real bill of ~$1. Reading the header removes
+ * the guess.
+ */
+export function wavDurationSeconds(bytes: Uint8Array): number | null {
+  // Need at least the 12-byte RIFF/WAVE header before the first chunk.
+  if (bytes.length < 44) return null
+  const ascii = (o: number, n: number) => String.fromCharCode(...bytes.subarray(o, o + n))
+  if (ascii(0, 4) !== 'RIFF' || ascii(8, 4) !== 'WAVE') return null
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+
+  let byteRate = 0
+  let dataSize = 0
+  // Walk the chunk list: [4-byte id][4-byte LE size][payload, padded to even].
+  let off = 12
+  while (off + 8 <= bytes.length) {
+    const id = ascii(off, 4)
+    const size = dv.getUint32(off + 4, true)
+    if (id === 'fmt ' && off + 16 <= bytes.length) {
+      byteRate = dv.getUint32(off + 16, true) // bytes/sec, 8 bytes into the fmt payload
+    } else if (id === 'data') {
+      // The data chunk size can be understated in streamed WAVs; clamp to what is
+      // actually present so a truncated header can't inflate the duration.
+      dataSize = Math.min(size, bytes.length - (off + 8))
+      break
+    }
+    off += 8 + size + (size % 2) // chunks are word-aligned
+  }
+  if (byteRate <= 0 || dataSize <= 0) return null
+  return Math.max(dataSize / byteRate, 0.01)
+}
+
+/**
+ * Best-available audio duration: exact when the bytes are WAV, otherwise the
+ * byte-size estimate. One entry point so every transcribe path gets the accurate
+ * number when it can and degrades gracefully when it can't.
+ */
+export function audioDurationSeconds(bytes: Uint8Array, byteLength = bytes.length): number {
+  return wavDurationSeconds(bytes) ?? estimateAudioDurationSeconds(byteLength)
 }
 
 export function calcTtsCostUsd(charCount: number): number {

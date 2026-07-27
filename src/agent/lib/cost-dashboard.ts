@@ -11,6 +11,7 @@ import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds } from '@/lib/agent-api
 import { PRICING_META } from '@/agent/lib/pricing'
 import { EFFECTIVE_PROVIDER_SQL } from '@/agent/lib/api-balances'
 import { MODEL_REGISTRY } from '@/agent/lib/models/registry'
+import { cacheReadRatePerM } from '@/agent/lib/models/cost'
 import { buildSpendBreakdown, OWNER_CHAT_SOURCES, type SpendGroupRow, type SpendBreakdown } from '@/agent/lib/billing/spend-categories'
 
 const DHAKA_TZ = 'Asia/Dhaka'
@@ -34,15 +35,29 @@ export type PromptCacheMonitorSnapshot = {
   cachingBroken: boolean
 }
 
+/**
+ * Cache savings = cached tokens × (full input rate − cached rate), priced at EACH
+ * model's own registry rate.
+ *
+ * Was hard-coded to Sonnet's rates while the query was anthropic-only (Phase 8
+ * audit): with Grok as the head that both mis-priced the saving and, once the
+ * query widened to all providers, would have applied Claude's $3/Mtok to Grok's
+ * $1.25/Mtok traffic. Models missing from the registry contribute 0 rather than a
+ * guess.
+ */
 export function computePromptCacheSavings(usage: PromptCacheUsageRow): {
   tokensSaved: number
   usdSaved: number
 } {
-  const p = PRICING_META.anthropic
   const tokensSaved = usage.cacheReadTokens
-  const rateDelta = (p.inputPerMillion - p.cacheReadPerMillion) / 1_000_000
-  const usdSaved = Math.round(tokensSaved * rateDelta * 1_000_000) / 1_000_000
-  return { tokensSaved, usdSaved }
+  let usd = 0
+  for (const row of usage.byModel ?? []) {
+    const model = MODEL_REGISTRY.find((m) => m.id === row.modelId)
+    if (!model) continue
+    const rateDelta = (model.inPerM - cacheReadRatePerM(model)) / 1_000_000
+    usd += row.cacheReadTokens * rateDelta
+  }
+  return { tokensSaved, usdSaved: Math.round(usd * 1_000_000) / 1_000_000 }
 }
 
 export function buildPromptCacheMonitorSnapshot(

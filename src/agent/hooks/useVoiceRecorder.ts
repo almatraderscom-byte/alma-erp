@@ -61,6 +61,12 @@ export function useVoiceRecorder(opts: {
 
   const mrRef = useRef<MediaRecorder | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Real elapsed recording seconds — sent to the transcribe API so cost logging
+  // uses the TRUE duration instead of a bytes/2000 guess (which assumed 16 kbps
+  // telephony audio; browser/iOS recordings are ~128-160 kbps, so the estimate
+  // over-billed the dashboard ~8-10x). Ref, not state: onstop must read it after
+  // cleanup() has already reset the displayed counter.
+  const durationSecsRef = useRef(0)
   // Voice-activity-detection (auto-stop) — Web Audio analyser on the same mic stream.
   const audioCtxRef = useRef<AudioContext | null>(null)
   const rafRef = useRef<number | null>(null)
@@ -151,6 +157,8 @@ export function useVoiceRecorder(opts: {
 
         const fd = new FormData()
         fd.append('audio', blob, `recording.${ext}`)
+        // True recorded seconds for accurate cost logging (see durationSecsRef).
+        if (durationSecsRef.current > 0) fd.append('duration_secs', String(durationSecsRef.current))
         try {
           const res = await fetch('/api/assistant/transcribe', { method: 'POST', body: fd })
           const data = await res.json() as { text?: string; error?: string }
@@ -168,8 +176,12 @@ export function useVoiceRecorder(opts: {
       mr.start(500)
       setRecording(true)
       setRecordSecs(0)
+      durationSecsRef.current = 0
       callbacksRef.current.onRecordingStart?.()
-      timerRef.current = setInterval(() => setRecordSecs(s => s + 1), 1000)
+      timerRef.current = setInterval(() => {
+        durationSecsRef.current += 1
+        setRecordSecs(s => s + 1)
+      }, 1000)
 
       // Screen lock / app background: rAF (and the VAD below) freezes but the
       // mic keeps capturing. Stop cleanly — what was said still transcribes.

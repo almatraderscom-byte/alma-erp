@@ -18,34 +18,74 @@ import {
 } from '@/agent/lib/api-balances'
 
 describe('provider billing parsers', () => {
-  it('parses Vercel JSONL and uses billed cost in USD', () => {
+  it('uses only the current Vercel billing period and billed cost in USD', () => {
     const raw = [
       JSON.stringify({
         BilledCost: '1.25',
         EffectiveCost: '1.10',
         BillingCurrency: 'USD',
+        BillingPeriodStart: '2026-07-18T00:00:00Z',
+        BillingPeriodEnd: '2026-08-18T00:00:00Z',
         ChargePeriodStart: '2026-07-23T00:00:00Z',
       }),
       JSON.stringify({
         BilledCost: '2.50',
         BillingCurrency: 'USD',
+        BillingPeriodStart: '2026-07-18T00:00:00Z',
+        BillingPeriodEnd: '2026-08-18T00:00:00Z',
         ChargePeriodStart: '2026-07-22T00:00:00Z',
+      }),
+      JSON.stringify({
+        BilledCost: '99.00',
+        BillingCurrency: 'USD',
+        BillingPeriodStart: '2026-06-18T00:00:00Z',
+        BillingPeriodEnd: '2026-07-18T00:00:00Z',
+        ChargePeriodStart: '2026-07-17T00:00:00Z',
       }),
     ].join('\n')
 
-    expect(parseVercelFocusCharges(raw, '2026-07-23')).toEqual({
+    expect(parseVercelFocusCharges(raw, '2026-07-23', new Date('2026-07-24T00:00:00Z'))).toEqual({
       todayUsd: 1.25,
       monthUsd: 3.75,
       syncedThrough: '2026-07-23',
+      // No ServiceCategory/ServiceName on these rows → all hosting, no AI tokens.
+      breakdown: { aiTokensUsd: 0, hostingUsd: 3.75, topLines: [] },
+      billingPeriodStart: '2026-07-18T00:00:00Z',
+      billingPeriodEnd: '2026-08-18T00:00:00Z',
     })
+  })
+
+  it('splits Vercel Agent AI-token charges from app hosting', () => {
+    const raw = [
+      JSON.stringify({ BilledCost: '75.29', BillingCurrency: 'USD', BillingPeriodStart: '2026-07-18T00:00:00Z', BillingPeriodEnd: '2026-08-18T00:00:00Z', ChargePeriodStart: '2026-07-22T00:00:00Z', ServiceCategory: 'AI Tokens', ServiceName: 'Vercel Agent' }),
+      JSON.stringify({ BilledCost: '17.81', BillingCurrency: 'USD', BillingPeriodStart: '2026-07-18T00:00:00Z', BillingPeriodEnd: '2026-08-18T00:00:00Z', ChargePeriodStart: '2026-07-22T00:00:00Z', ServiceCategory: 'Vercel Functions', ServiceName: 'Function Invocations' }),
+    ].join('\n')
+    const snap = parseVercelFocusCharges(raw, '2026-07-23', new Date('2026-07-24T00:00:00Z'))
+    expect(snap.monthUsd).toBeCloseTo(93.1, 2)
+    expect(snap.breakdown?.aiTokensUsd).toBeCloseTo(75.29, 2)
+    expect(snap.breakdown?.hostingUsd).toBeCloseTo(17.81, 2)
+    expect(snap.breakdown?.topLines[0]).toEqual({ name: 'Vercel Agent', usd: 75.29 })
   })
 
   it('refuses to relabel a non-USD provider charge as USD', () => {
     expect(() => parseVercelFocusCharges(JSON.stringify({
       BilledCost: '100',
       BillingCurrency: 'EUR',
+      BillingPeriodStart: '2026-07-18T00:00:00Z',
+      BillingPeriodEnd: '2026-08-18T00:00:00Z',
       ChargePeriodStart: '2026-07-23T00:00:00Z',
-    }), '2026-07-23')).toThrow('billing currency EUR')
+    }), '2026-07-23', new Date('2026-07-24T00:00:00Z'))).toThrow('billing currency EUR')
+  })
+
+  it('refuses to mix Vercel rows when the current billing period is absent', () => {
+    expect(() => parseVercelFocusCharges(JSON.stringify({
+      BilledCost: '100',
+      BillingCurrency: 'USD',
+      BillingPeriodStart: '2026-06-18T00:00:00Z',
+      BillingPeriodEnd: '2026-07-18T00:00:00Z',
+      ChargePeriodStart: '2026-07-17T00:00:00Z',
+    }), '2026-07-24', new Date('2026-07-24T00:00:00Z')))
+      .toThrow('current billing period')
   })
 
   it('classifies Google billing export rows without mixing TTS and Veo into Gemini', () => {
@@ -137,9 +177,9 @@ describe('provider billing parsers', () => {
     })
   })
 
-  it('parses xAI ledger balance, usage and current invoice preview', () => {
+  it('subtracts xAI prepaid usage from funded credit and does not call covered usage due', () => {
     expect(parseXaiBilling(
-      { total: { val: '-1234' } },
+      { total: { val: '-2000' } },
       {
         timeSeries: [{
           dataPoints: [
@@ -148,20 +188,43 @@ describe('provider billing parsers', () => {
           ],
         }],
       },
-      { coreInvoice: { totalWithCorr: { val: '225' } } },
+      {
+        coreInvoice: {
+          totalWithCorr: { val: '1445' },
+          prepaidCredits: { val: '-2000' },
+          prepaidCreditsUsed: { val: '1445' },
+        },
+      },
       '2026-07-24',
     )).toEqual({
-      balanceUsd: 12.34,
+      balanceUsd: 5.55,
       cost: {
         todayUsd: 0.5,
         monthUsd: 0.75,
         syncedThrough: '2026-07-24',
       },
+      invoice: null,
+    })
+  })
+
+  it('shows only the uncovered xAI postpaid remainder as invoice preview', () => {
+    expect(parseXaiBilling(
+      { total: { val: '-2000' } },
+      { timeSeries: [] },
+      {
+        coreInvoice: {
+          totalWithCorr: { val: '2250' },
+          prepaidCredits: { val: '-2000' },
+          prepaidCreditsUsed: { val: '2000' },
+        },
+      },
+      '2026-07-24',
+    )).toMatchObject({
+      balanceUsd: 0,
       invoice: {
         kind: 'preview',
-        amount: 2.25,
+        amount: 2.5,
         currency: 'USD',
-        dueAt: null,
         status: 'current preview',
       },
     })

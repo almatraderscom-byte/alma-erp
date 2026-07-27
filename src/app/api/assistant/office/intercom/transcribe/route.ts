@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
     void logCost({
       provider: 'openai',
       kind: 'transcribe',
-      units: { duration_seconds: durationSec, bytes: buffer.length, model: result.model },
+      units: { duration_seconds: durationSec, bytes: buffer.length, model: result.model, purpose: 'intercom' },
       costUsd: calcWhisperCostUsd(durationSec),
       dedupKey: `whisper:intercom:${id}`,
     })

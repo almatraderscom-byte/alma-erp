@@ -1,0 +1,33 @@
+{
+  "name": "seo-fixing-client-site",
+  "description": "Audits and plans SEO fixes for a CLIENT's website (any domain that is not almatraders.com) and delivers a report the client can act on. Use when Boss names someone else's site. Never touches our database and never logs in anywhere.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE", "CDIT"],
+  "riskTier": "low",
+  "extends": "alma-base",
+  "whenNotToUse": "The site is almatraders.com → seo-auditing-own-site (read) or seo-fixing-own-site (write).",
+  "requiredCapabilities": [
+    "run_website_seo_audit",
+    "check_website_seo_audit",
+    "fetch_website_page",
+    "web_research",
+    "save_artifact"
+  ],
+  "outputContract": { "kind": "artifact_report", "mustInclude": ["findings", "fix_instructions", "priority"] },
+  "stopConditions": [
+    "ক্লায়েন্টের সাইটে লগইন বা ক্রেডেনশিয়াল দরকার হলে",
+    "সাইটে সরাসরি পরিবর্তন চাওয়া হলে — আমাদের হাতে সে ক্ষমতা নেই",
+    "ডোমেইনটা আসলে almatraders.com হলে"
+  ],
+  "done": [
+    { "tool": "check_website_seo_audit" },
+    { "tool": "save_artifact" }
+  ],
+  "networkPolicy": "allowlist",
+  "writePolicy": "none",
+  "approvalPolicy": "inherit",
+  "maxSteps": 12,
+  "status": "active"
+}

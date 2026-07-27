@@ -101,3 +101,80 @@ describe('turn-loop policy — no hidden duplicate work', () => {
     })).toBe(false)
   })
 })
+
+describe('a read-only turn that ran NO tool must not end on an announcement', () => {
+  // Owner hit this live on the preview 2026-07-25: the reply was exactly
+  // "বস, … সঠিক ফোন নম্বর বের করতে list_family_contacts চালাচ্ছি।" and the turn
+  // ended there. `ownerRequestedAction` was false (a read question), so the
+  // guard exempted it.
+  it('nudges when zero tools ran, even without a mutation intent', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, সঠিক ফোন নম্বর বের করতে list_family_contacts চালাচ্ছি।',
+      toolRecords: [],
+      ownerRequestedAction: false,
+    })).toBe(true)
+  })
+
+  // Owner test, 2026-07-26. He typed one plain sentence — "almatraders.com এর
+  // ছবির alt ঠিক করো" — the head read the catalogue, said it was going to find
+  // the right tool, and ended the turn at 25 seconds. One successful read had
+  // made noToolRan false and the turn was not mutation-authorised, so the guard
+  // let it stop mid-step.
+  it('nudges a turn abandoned mid-step, even after a successful read', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, catalog-এ ৫০টা live product দেখা গেছে — এখন alt text update-এর জন্য সঠিক SEO tool খুঁজছি।',
+      toolRecords: [{ status: 'success' }],
+      ownerRequestedAction: false,
+    })).toBe(true)
+  })
+
+  it('still exempts a finished read turn that already used a tool', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, আজ ৫টা অর্ডার পেন্ডিং। পরের ধাপে dispatch দেখব।',
+      toolRecords: [{ status: 'success' }],
+      ownerRequestedAction: false,
+    })).toBe(false)
+  })
+
+  it('still respects the terminal-reply guards (question / failure)', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, এখনই চালাব কি?',
+      toolRecords: [],
+      ownerRequestedAction: false,
+    })).toBe(false)
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, চালাতে পারিনি — সংযোগ নেই।',
+      toolRecords: [],
+      ownerRequestedAction: false,
+    })).toBe(false)
+  })
+})
+
+describe('a failure REPORT that also names the next attempt is not terminal', () => {
+  // Found 2026-07-25 by testing a staff-dispatch request instead of repeating
+  // the same ads question: prepare_staff_task_proposal failed, the head said
+  // "…ব্যর্থ — আগে get_staff_tasks দিয়ে দেখে নিচ্ছি।" and the turn ended on it.
+  it('nudges when the head reports a failure AND announces a different next step', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, প্রস্তাব টুল ব্যর্থ হয়েছে invalid task type — আগে get_staff_tasks দিয়ে কালকের carried tasks দেখে নিচ্ছি।',
+      toolRecords: [{ status: 'error' }],
+      ownerRequestedAction: true,
+    })).toBe(true)
+  })
+
+  it('still stops on a bare failure report with no next step', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, পারিনি — সংযোগ নেই, অনুমতি লাগবে।',
+      toolRecords: [{ status: 'error' }],
+      ownerRequestedAction: true,
+    })).toBe(false)
+  })
+
+  it('still stops when the failure report ends by asking Boss', () => {
+    expect(shouldNudgeAdapterIntent({
+      text: 'বস, টুল ব্যর্থ — আবার চেষ্টা করব কি?',
+      toolRecords: [{ status: 'error' }],
+      ownerRequestedAction: true,
+    })).toBe(false)
+  })
+})

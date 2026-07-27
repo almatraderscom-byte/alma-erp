@@ -49,6 +49,15 @@ async function handle(req: NextRequest) {
     } catch (wdErr) {
       await captureAgentError(wdErr, 'stuck_task_watchdog_tick', { route: 'open-task-nudge' })
     }
+    // Delivery sweep: a job that FINISHED but whose result was never presented to
+    // the owner (the watchdog above only sees jobs still waiting on the worker).
+    let delivery = { scanned: 0, alreadyDelivered: 0, retried: 0, forced: 0 }
+    try {
+      const { runJobDeliverySweep } = await import('@/agent/lib/job-delivery')
+      delivery = await runJobDeliverySweep()
+    } catch (dlErr) {
+      await captureAgentError(dlErr, 'job_delivery_sweep', { route: 'open-task-nudge' })
+    }
     // P1 §5.6 retention: live-browser command rows (params/results may embed page
     // data and screenshot dataURLs) are auto-deleted after 7 days.
     try {
@@ -64,7 +73,7 @@ async function handle(req: NextRequest) {
       const { cleanupGraphCheckpoints } = await import('@/agent/lib/graph/graph-checkpointer')
       await cleanupGraphCheckpoints()
     } catch { /* best-effort */ }
-    return NextResponse.json({ ok: true, ...result, watchdog })
+    return NextResponse.json({ ok: true, ...result, watchdog, delivery })
   } catch (err) {
     await captureAgentError(err, 'open_task_nudge_tick', { route: 'open-task-nudge' })
     return NextResponse.json({ ok: false, error: 'tick_failed' }, { status: 500 })

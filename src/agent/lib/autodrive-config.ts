@@ -13,8 +13,9 @@
  *
  * Live behaviour: with the kill-switch ON the driver actually advances plans —
  * real step execution (Qwen head turn) + the completion gate + bounded auto-repair.
- * Auto-repair (Phase C) is itself owner-tunable and defaults OFF, so by default a
- * not-done verdict still escalates to the owner rather than re-planning unattended.
+ * Auto-repair (Phase C) is owner-tunable and now defaults ON (owner ruling
+ * 2026-07-26) — a not-done verdict appends bounded corrective work instead of
+ * parking a small task the moment its first answer is imperfect.
  *
  * Owner decision (recorded): the completion gate starts on DeepSeek under a tight
  * cap so we can watch its judgement cheaply, then move it to Claude if its done/
@@ -33,12 +34,25 @@ export const AUTODRIVE_DRIVER_MODEL_KEY = 'autodrive_driver_model'
 /** Backoff (minutes) between drive ticks of the SAME plan. */
 export const AUTODRIVE_BACKOFF_MIN_KEY = 'autodrive_backoff_min'
 /**
- * Phase C auto-repair toggle. When ON, a not-done completion verdict appends ONE
- * corrective step and keeps driving (bounded by MAX_AUTOREPAIR_STEPS + the cost/stall
- * caps) instead of escalating on the first miss. Default OFF — the owner opts into the
- * more-autonomous behaviour; until then the driver escalates a not-done plan as before.
+ * Phase C auto-repair toggle: a not-done completion verdict appends ONE corrective
+ * step and keeps driving, instead of parking the plan on its first imperfect answer.
+ *
+ * DEFAULT ON since 2026-07-26 (owner ruling). It shipped OFF as "the owner opts
+ * into more autonomy", and what he watched was two trivial tasks each running ONE
+ * step, failing the gate, and parking with nothing scheduled — dead for an hour
+ * while his screen said "Running 2". Parking is for work that genuinely needs
+ * him. Still bounded by maxRepairSteps, the cost caps and the stall counter, and
+ * still tunable to 'false' with no redeploy.
  */
 export const AUTODRIVE_AUTO_REPAIR_KEY = 'autodrive_auto_repair'
+/**
+ * Auto-repair ceiling: how many corrective steps the driver may append to ONE
+ * plan before it stops and escalates. Bounds the repair loop independently of
+ * maxAttempts (a successful corrective step resets the stall counter, so without
+ * this cap a plan that keeps half-fixing itself could loop under the cost cap).
+ * Owner-tunable — a long grind campaign may want more than the default two.
+ */
+export const AUTODRIVE_MAX_REPAIR_STEPS_KEY = 'autodrive_max_repair_steps'
 
 // ── Defaults (conservative — tighten, never loosen, by default) ─────────────
 /** Whole-taka cap on TOTAL autodrive spend per day. 0 disables (= hard stop). */
@@ -55,13 +69,18 @@ export const DEFAULT_AUTODRIVE_BATCH_SIZE = 10
  */
 export const DEFAULT_AUTODRIVE_GATE_MODEL = 'or-deepseek-v4-flash'
 /**
- * Driver head model. Owner decision (recorded): Qwen orchestrates each step as the
- * head — NOT Sonnet (`sonnet apatoto ekhane dorkar nei`). DeepSeek does sub-agent
- * work via delegate_to_specialist when the head chooses to hand off.
+ * Driver head model — DeepSeek V4 Flash ONLY (owner order 2026-07-26).
+ *
+ * It was Qwen. A live plan step cost ৳43 in ONE round and a two-step plan spent
+ * ৳84 against a ৳50 cap, which makes an 79-step campaign arithmetically
+ * impossible. Boss's instruction was exact: "must deepseek v4 flash only plan
+ * driver model hobe". Still KV-overridable, but nothing else is the default.
  */
-export const DEFAULT_AUTODRIVE_DRIVER_MODEL = 'or-qwen3-max'
+export const DEFAULT_AUTODRIVE_DRIVER_MODEL = 'or-deepseek-v4-flash'
 /** Default minutes to wait before re-driving the same plan. */
 export const DEFAULT_AUTODRIVE_BACKOFF_MIN = 3
+/** Two self-corrections, then a human looks. */
+export const DEFAULT_AUTODRIVE_MAX_REPAIR_STEPS = 2
 /**
  * Whole-taka conversion for model spend (USD → BDT). Matches the rate used for
  * media-cost estimates elsewhere (content-engine/video-brief). Owner-visible only;
@@ -73,6 +92,25 @@ export const AUTODRIVE_USD_TO_BDT = 125
 export function usdToTaka(costUsd: number): number {
   if (!Number.isFinite(costUsd) || costUsd <= 0) return 0
   return Math.ceil(costUsd * AUTODRIVE_USD_TO_BDT)
+}
+
+/**
+ * Convert USD model spend to MILLI-taka (1৳ = 1000).
+ *
+ * S0 FIX — `usdToTaka` rounds UP to a whole taka, so a step turn costing $0.0008
+ * (~0.1৳) was billed 1৳ against the plan and the day. A grind campaign of ~79
+ * steps was therefore charged up to 79৳ of imaginary spend and hit the 50৳ plan
+ * cap long before it had actually spent it. Milli-taka keeps the same
+ * conservative rounding but at a resolution that doesn't invent cost.
+ */
+export function usdToMilliTaka(costUsd: number): number {
+  if (!Number.isFinite(costUsd) || costUsd <= 0) return 0
+  return Math.ceil(costUsd * AUTODRIVE_USD_TO_BDT * 1000)
+}
+
+/** Milli-taka → whole taka, for owner-facing text. */
+export function milliTakaToTaka(milli: number): number {
+  return Math.round((milli ?? 0) / 1000)
 }
 
 /**
@@ -115,6 +153,8 @@ export interface AutodriveConfig {
   backoffMin: number
   /** Phase C: when true, a not-done verdict appends a corrective step and keeps driving (bounded). Default false. */
   autoRepair: boolean
+  /** Ceiling on appended corrective steps per plan. */
+  maxRepairSteps: number
 }
 
 /**
@@ -149,6 +189,7 @@ export async function getAutodriveConfig(): Promise<AutodriveConfig> {
           AUTODRIVE_DRIVER_MODEL_KEY,
           AUTODRIVE_BACKOFF_MIN_KEY,
           AUTODRIVE_AUTO_REPAIR_KEY,
+          AUTODRIVE_MAX_REPAIR_STEPS_KEY,
         ],
       },
     },
@@ -167,25 +208,38 @@ export async function getAutodriveConfig(): Promise<AutodriveConfig> {
     gateModel: gateModel && gateModel.length > 0 ? gateModel : DEFAULT_AUTODRIVE_GATE_MODEL,
     driverModel: driverModel && driverModel.length > 0 ? driverModel : DEFAULT_AUTODRIVE_DRIVER_MODEL,
     backoffMin: parseIntSetting(byKey.get(AUTODRIVE_BACKOFF_MIN_KEY), DEFAULT_AUTODRIVE_BACKOFF_MIN, 1, 1440),
-    autoRepair: byKey.get(AUTODRIVE_AUTO_REPAIR_KEY)?.trim() === 'true',
+      // Default ON — only an explicit 'false' turns it off (see the key comment).
+    autoRepair: byKey.get(AUTODRIVE_AUTO_REPAIR_KEY)?.trim() !== 'false',
+    maxRepairSteps: parseIntSetting(
+      byKey.get(AUTODRIVE_MAX_REPAIR_STEPS_KEY),
+      DEFAULT_AUTODRIVE_MAX_REPAIR_STEPS,
+      0,
+      20,
+    ),
   }
 }
 
 /**
- * Sum of whole-taka autodrive spend across all plans driven today (Asia/Dhaka).
- * The driver uses this against dailyCapTaka before doing any paid work.
+ * Autodrive spend inside TODAY's Asia/Dhaka day, in milli-taka.
+ *
+ * S0 FIX — this used to sum each plan's LIFETIME `cost_taka` for every plan
+ * touched today, so yesterday's spend was charged again today, and again the day
+ * after. A plan driven for a week counted its whole history against every single
+ * day's cap: the engine strangled itself after ~4 days of use. Each plan now
+ * carries a per-day bucket, and only buckets stamped with today are summed.
  */
-export async function getTodayAutodriveSpendTaka(now = new Date()): Promise<number> {
-  // Day boundary in Asia/Dhaka (UTC+6), expressed back in UTC for the query.
-  const dhakaMs = now.getTime() + 6 * 60 * 60 * 1000
-  const dhakaDayStart = new Date(Math.floor(dhakaMs / 86_400_000) * 86_400_000)
-  const utcDayStart = new Date(dhakaDayStart.getTime() - 6 * 60 * 60 * 1000)
-
+export async function getTodayAutodriveSpendMilliTaka(now = new Date()): Promise<number> {
+  const { dhakaDayKey } = await import('@/agent/lib/planner')
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
   const agg = await db.agentPlan.aggregate({
-    _sum: { costTaka: true },
-    where: { lastDrivenAt: { gte: utcDayStart } },
+    _sum: { costMilliTakaDay: true },
+    where: { costDay: dhakaDayKey(now) },
   })
-  return agg?._sum?.costTaka ?? 0
+  return agg?._sum?.costMilliTakaDay ?? 0
+}
+
+/** Same figure in whole taka — what the cap and the owner-facing report speak. */
+export async function getTodayAutodriveSpendTaka(now = new Date()): Promise<number> {
+  return milliTakaToTaka(await getTodayAutodriveSpendMilliTaka(now))
 }

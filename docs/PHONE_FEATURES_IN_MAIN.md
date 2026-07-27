@@ -1,0 +1,155 @@
+# Phone system — what is in `main` today (updated 2026-07-26)
+
+A feature checklist for the call system as it actually ships, and **how each thing is
+controlled today**. The last column is the point of this document: almost everything works,
+and almost nothing has a screen. That gap is what `ALMA_PBX_CONSOLE_ROADMAP.md` plans to close.
+
+Control legend: **UI** = a screen in ALMA ERP · **KV** = `agent_kv_settings` row (no screen,
+changed by asking the agent or by hand) · **env** = a variable on the VPS or Vercel, needs SSH
+or the Vercel dashboard · **conf** = a file on the VPS, needs SSH · **none** = code only.
+
+**Changed 2026-07-26 (PR #585):** the PBX console shipped, so the "no screen at all" half of
+this document is no longer true for *seeing* things — see §F.
+
+**Changed again 2026-07-26 (console step 2):** and no longer true for *changing* them either.
+Rows marked **UI²** below are now edited from `/agent/phone-console/settings`. The env vars
+they used to read are still the fallback, so nothing changes until the owner changes it. A
+row marked **UI² (gw)** is read on the VPS and arrives within a minute of being saved, via the
+gateway's config pull; the rest apply to the very next call.
+
+---
+
+## A. Calls in and out
+
+| Feature | Works | Lives in | Controlled by |
+|---|---|---|---|
+| Inbound call answered by the AI, in Bangla | ✅ | `sip-inbound/route.ts` + gemini-live-bot | env `SIP_INBOUND_VOICE` |
+| Real caller-ID, so the owner is recognised ("জি বস") | ✅ | `isOwnerNumber()` | env `OWNER_PHONE_NUMBERS` |
+| Outbound AI call (two-way, Gemini Live) | ✅ | `placeSipLiveCall()` → gateway → Asterisk | env `VOICE_CALL_PROVIDER=sip` |
+| One-way message call (speak and hang up) | ✅ | `outbound_phone_call` tool | — |
+| Owner's own todo/ERP reads mid-call | ✅ | `ERP_FN_DECLS` + `erp-tool` allowlist | none (code) |
+| Staff names + today's attendance sent WITH the call | ✅ | `buildOwnerCallFacts()` | none (code) |
+| Voice: male Charon default, female only on request | ✅ | `voice-provider-intent.ts` | **LOCKED** — code default, shown read-only in the UI |
+| Daily call cap (outbound that actually connected) | ✅ | `callsPlacedToday()` | **UI²** — সীমা ও ক্যাপ |
+| Runaway-loop backstop (3× the cap in attempts) | ✅ | `callAttemptsToday()` | none |
+| BD-only destinations, no international | ✅ | generated dialplan + gateway rules | **UI²** — আউটবাউন্ড নিয়ম (env backstop stays) |
+| Concurrency cap (matches the trunk's limit of 2) | ✅ | gateway | **UI² (gw)** — সীমা ও ক্যাপ |
+
+## B. What happens during a call
+
+| Feature | Works | Lives in | Controlled by |
+|---|---|---|---|
+| Transfer to a human when asked, or when it matters | ✅ | `forward_call` tool in the bot | **UI²** — ফরওয়ার্ড ও ট্রান্সফার |
+| Press 0 for a human | ✅ built, 👤 unproven live | gateway DTMF handler | **UI²** (same two numbers) |
+| Ring group, 2 rounds, then back to the AI | ✅ | `dialNextInGroup()` | **UI² (gw)** — ফরওয়ার্ড ও ট্রান্সফার |
+| **Hold audio — the owner's own recording** | ✅ | `alma-hold` MOH class | **UI² (gw)** — হোল্ড অডিও (আপলোড + যাচাই) |
+| Voicemail when the AI cannot speak | ✅ | `sip-voicemail/route.ts` | **UI² (gw)** — সীমা ও ক্যাপ |
+| Office-hours routing + holidays, weekly off-days, Ramadan-style special hours | ✅ | `decideInbound()` | **UI²** — অফিস সময় |
+| Ask-first vs direct transfer | ✅ | bot `requestForward()` | **UI²** — ফরওয়ার্ড ও ট্রান্সফার |
+| Spam/blocked callers refused before answering | ✅ | `isBlockedCaller()` | **UI²** — ব্লকলিস্ট (দুই দিকেই এক তালিকা) |
+| Barge-in (interrupt the AI mid-sentence) | ✅ | gateway fade + bot | env `SIP_BARGE_FADE_FRAMES` |
+| Turn detection (how fast it replies) | ✅ | bot `vadCfg()` | **LOCKED** — code default, shown read-only in the UI |
+| Jitter cushion + overrun recovery | ✅ new | gateway playout | env `SIP_JITTER_*`, `SIP_QUEUE_*` |
+
+## C. After the call
+
+| Feature | Works | Lives in | Controlled by |
+|---|---|---|---|
+| Recording of the whole bridge (survives transfer) | ✅ | gateway → Supabase | env `SIP_DEBUG_RECORD` |
+| Recording delivered to Telegram as playable audio | ✅ | `voice-call-delivery.ts` | none |
+| 30-day recording retention | ✅ | cleanup job | none |
+| Bangla summary + transcript stored | ✅ | `agent_voice_calls` | none |
+| Per-call CDR posted back to the ERP | ✅ | `sip-cdr/route.ts` | none |
+| Outcome sweep (busy / no answer / failed, real cause) | ✅ | `ngs-call-outcome.ts` | none |
+| Unknown caller → "shall I save this number?" | ✅ | `voice-call-delivery.ts` | none |
+| Unanswered-call retry ladder | ⚠️ unit-tested | `call-retry-policy.ts` | env `MAX_CALL_RETRIES` |
+| Per-call audio quality numbers (underruns, cushion, turn-ends) | ✅ | `agent_voice_calls` | **UI** — অডিও কোয়ালিটি |
+| Per-call packet loss / jitter / RTT (what the NETWORK did) | ✅ new | `pjsip show channelstats` → CDR | **UI** — অডিও কোয়ালিটি |
+| Hangup cause in plain Bangla, direction, DID, transfer outcome | ✅ new | `agent_voice_calls` | **UI** — কল লগ |
+
+## D. Staff browser phone
+
+| Feature | Works | Lives in | Controlled by |
+|---|---|---|---|
+| Softphone at `/agent/phone` (the only phone SCREEN we have) | ✅ | `SoftphonePanel.tsx` | **UI** |
+| Registers over TLS (wss), keypad, mute, speaker | ✅ | `useSoftphone.ts` | UI |
+| Screen-pop: caller's orders, dues, recent calls | ✅ built, 👤 unproven live | `phone/caller/route.ts` | UI |
+| Colleague directory + free staff-to-staff calls | ✅ | `phone/dial/route.ts` | UI |
+| Click-to-call from the ERP | ✅ | gateway `click2call` | UI |
+| Staff extension provisioning (create/rotate/disable) | ✅ | `phone/credentials/route.ts` + gateway | **UI²** — এক্সটেনশন |
+| Per-extension dial-out limit, DND, forward-to-mobile | ✅ new | generated dialplan contexts | **UI²** — এক্সটেনশন |
+| Who is registered right now / on a call | ✅ new | `pjsip show contacts` + ARI channels | **UI²** — এক্সটেনশন |
+| Per-extension call history | ✅ new | Asterisk's own CDR CSV on the VPS | **UI²** — এক্সটেনশন |
+| Softphone stack watchdog + self-heal | ✅ | gateway `checkSoftphoneStack()` | env `SIP_WS_CHECK_SECS` |
+
+## E. The line itself
+
+| Feature | Works | Lives in | Controlled by |
+|---|---|---|---|
+| SIP trunk to the provider | ✅ | `pjsip.conf` on the VPS | **conf** |
+| Registration every 60 s (the outbound root cause) | ✅ | `alma-reg` | **conf** |
+| Registration watchdog + owner alert | ✅ | gateway `checkRegistration()` | env `SIP_REG_*` |
+| Line status, binding seconds, concurrency, softphone health | ✅ new | gateway `/api/v1/active` | **UI** — লাইন ও ট্রাঙ্ক |
+| SIP port firewall, survives reboot | ✅ | nftables + systemd | **conf** |
+| Toll-fraud guards (signed calls, BD-only, key checks) | ✅ | gateway | env |
+| Provider cost / balance / rate plan | ❌ **not in ALMA at all** | provider's own panel | their website (Phase 6) |
+| Provider's own registration table (who holds the binding) | ✅ new | amarip.net, credential encrypted at rest | **UI²** — প্রোভাইডার |
+
+---
+
+## F. The console (added 2026-07-26)
+
+| Screen | What it answers | Where |
+|---|---|---|
+| ড্যাশবোর্ড | how many calls, answered, unreached, average length, daily trend | `/agent/phone-console` |
+| লাইভ চ্যানেল | who is on the line right now, in what state, for how long | `…/live` |
+| কল লগ | every call: direction, status, **why it hung up**, audio, recording, CSV | `…/calls` |
+| রেকর্ডিং | listen, with the Bangla summary and transcript | `…/recordings` |
+| অডিও কোয়ালিটি | our own counters AND the network's loss/jitter, per day and worst calls | `…/quality` |
+| লাইন ও ট্রাঙ্ক | registration, seconds left on the binding, concurrency, softphone stack | `…/line` |
+
+### Settings (added 2026-07-26, step 2 — these WRITE)
+
+| Screen | What it changes | Where |
+|---|---|---|
+| ফরওয়ার্ড ও ট্রান্সফার | forward numbers / ring group, direct vs ask-first, rounds, per-member ring | `…/settings` |
+| অফিস সময় | the daily window, and holidays that close the whole day | `…/settings/hours` |
+| ব্লকলিস্ট | numbers refused before the call is answered, so they cost nothing | `…/settings/blocklist` |
+| সীমা ও ক্যাপ | concurrency, daily outbound cap, ring timeout, voicemail length + the LOCKED audio values, read-only | `…/settings/limits` |
+| হোল্ড অডিও | upload a recording and make it live, verified in Asterisk | `…/settings/hold` |
+| প্রোভাইডার | amarip.net's own registration table — who holds the binding | `…/settings/provider` |
+| পরিবর্তনের ইতিহাস | who changed what, from what, and one-click revert | `…/settings/history` |
+
+### Extensions and routing (added 2026-07-26, steps 3 + 4)
+
+| Screen | What it changes | Where |
+|---|---|---|
+| এক্সটেনশন | who has a phone, is it connected/on a call, dial-out limit, DND, forward-to-mobile, disable, rotate | `…/extensions` |
+| ইনবাউন্ড লাইন | which DID answers as which persona, per-line forward overrides, never-transfer lines | `…/routing` |
+| আউটবাউন্ড নিয়ম | what may be dialled, strip/prefix rewriting | `…/routing/outbound` |
+| রাউটিং পরীক্ষা | "a call from X at 21:30 would reach …" — run by the code that actually decides | `…/routing/preview` |
+
+Owner-only, enforced in the section layout AND re-checked in every route. The staff softphone
+at `/agent/phone` is unchanged.
+
+---
+
+## The honest summary
+
+**Everything above works, the owner can SEE it, and he can now CHANGE most of it** without
+SSH. From the original list:
+
+- ~~see whether the line is registered, or who is on a call right now~~ — ✅ done
+- ~~read call logs, listen to recordings, or see why a call failed~~ — ✅ done
+- ~~change the forward numbers, office hours, blocklist, hold audio, caps~~ — ✅ done
+- ~~see who actually holds the registration binding, on the provider's own side~~ — ✅ done
+- ~~add, disable or limit a staff extension; see who is connected right now~~ — ✅ done
+- ~~decide which incoming number answers as what, and test it before a customer does~~ — ✅ done
+- the AI's voice and how fast it replies — **deliberately not editable**; the tuning the
+  owner approved on 2026-07-26 is locked in code (CLAUDE.md hard rule #1) and shown read-only
+- see what a call cost, or what is left with the provider — Phase 6
+- add, edit or check a trunk — Phase 5
+
+One more thing that was never on the list and now is: **an audio regression shows up as a
+number rather than as a complaint** — see the quality screen, and hard rule #1 in CLAUDE.md,
+which locks the tuning the owner approved on 2026-07-26.

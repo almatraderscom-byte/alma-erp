@@ -20,6 +20,7 @@ import OpenAI from 'openai'
 import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, getModel, isKnownModelId } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
+import type { CostProvider } from '@/agent/lib/pricing'
 import { prisma } from '@/lib/prisma'
 import { isOutboundCallIntent } from '@/agent/lib/outbound-call-intent'
 import { stripVoiceInstructionPrefix } from '@/agent/lib/voice-instruction'
@@ -237,13 +238,23 @@ async function classifierCompletion(opts: {
   }
   const usage = resp.usage
   if (usage) {
+    // Cost audit 2026-07-24: bill the classifier under the model's REAL provider
+    // (triage runs DeepSeek via OpenRouter) — the old hardcoded 'openai' piled
+    // these calls onto the dashboard's Whisper/voice card.
+    const costProvider: CostProvider =
+      model.provider === 'openrouter' ? 'openrouter'
+        : model.provider === 'google' ? 'gemini'
+          : model.provider === 'xai' ? 'xai'
+            : model.provider === 'anthropic' ? 'anthropic'
+              : 'openai'
     void logCost({
-      provider: 'openai',
+      provider: costProvider,
       kind: 'chat',
       units: {
         input_tokens: usage.prompt_tokens ?? 0,
         output_tokens: usage.completion_tokens ?? 0,
         model: model.id,
+        provider: model.provider,
         via: opts.via,
       },
       costUsd: calcModelTurnCostUsd(model, {

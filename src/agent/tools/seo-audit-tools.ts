@@ -14,7 +14,13 @@
  */
 import { prisma } from '@/lib/prisma'
 import { agentStorageDownload, agentStorageUpload } from '@/agent/lib/storage'
-import { buildClientReportMarkdown, buildCompareMarkdown, buildIssuesCsv, type AuditJson } from '@/agent/lib/seo-report'
+import {
+  buildClientReportHtml,
+  buildClientReportMarkdown,
+  buildCompareMarkdown,
+  buildIssuesCsv,
+  type AuditJson,
+} from '@/agent/lib/seo-report'
 import {
   normalizeAuditUrl,
   ownerExplicitlyRequestedFreshAudit,
@@ -157,10 +163,18 @@ const run_website_seo_audit: AgentTool = {
             dedupeKey,
             type: 'seo_audit',
             payload: { url: normalizedUrl, maxPages, keywordsNote: input.keywordsNote ?? null, conversationId },
-            summary: `🔎 SEO audit: ${normalizedUrl} (${maxPages} pages)`,
+            // "up to" is deliberate: this number is the CAP, not a result. The
+            // head read the old wording ("40 pages") as a finding and told the
+            // owner 40 pages had been audited seconds after queueing the job
+            // (incident 2026-07-25). Real coverage comes from the worker result.
+            summary: `🔎 SEO audit: ${normalizedUrl} (up to ${maxPages} pages)`,
             costEstimate: 0,
             // Read-only crawl, no owner-side effects → runs without an approval card.
             status: 'approved',
+            // …and because no card ever reaches him, the settled record must not
+            // claim he approved it. The one-time backfill fixed history; this
+            // fixes every row from now on (owner caught the lie 2026-07-27).
+            ownerDecided: false,
           },
           select: { id: true },
         })
@@ -194,10 +208,25 @@ const run_website_seo_audit: AgentTool = {
   },
 }
 
+/**
+ * This tool's row is created ALREADY approved (a read-only crawl needs no card),
+ * so here 'approved' means "crawling", not "Boss said yes". Never let that word
+ * reach him — see the owner incident note below.
+ */
+function auditStateBn(status: string): string {
+  if (status === 'approved') return 'এখনো ক্রল চলছে (শেষ হয়নি)'
+  if (status === 'executed') return 'শেষ হয়েছে'
+  if (status === 'failed') return 'ব্যর্থ হয়েছে'
+  if (status === 'expired') return 'সময় শেষ হয়ে গেছে'
+  return `অবস্থা: ${status}`
+}
+
 const check_website_seo_audit: AgentTool = {
   name: 'check_website_seo_audit',
   description:
-    'Check a website SEO audit started with run_website_seo_audit: status (approved=crawling, ' +
+    'Check a website SEO audit started with run_website_seo_audit: status (approved=STILL CRAWLING — '
+    + 'this row is auto-approved, it does NOT mean Boss must approve anything; use the stateBn field '
+    + 'when telling him, never the raw word, ' +
     'executed=done, failed), the 0-100 score, issue counts by severity, pages crawled, and the storage ' +
     'paths of the report (report.md) + full findings (audit.json).\n' +
     'To READ the FULL report, call this tool again with read:"report" — it returns the whole ' +
@@ -210,10 +239,13 @@ const check_website_seo_audit: AgentTool = {
     'audit of the SAME site (score change, resolved issues with evidence, new issues, remaining) and ' +
     'returns the markdown + a stable download link. Use it after client fixes are done and a fresh ' +
     're-audit has executed — this is the proof file the owner sends the client.\n' +
-    'After status=executed you MUST put the report content (score, every critical/high issue, ' +
-    'prioritized fixes) AND the download links INTO THE SAME REPLY — saying "রিপোর্ট উপরে দিয়েছি" or ' +
-    '"done" WITHOUT the content in that reply is forbidden. Never claim the audit is done before ' +
-    'status=executed.',
+    'When the audit finishes the server has ALREADY built the client report, the issues CSV and a ' +
+    'LIVE HTML DASHBOARD, and filed the dashboard as a chat file card — read:"links" returns all of ' +
+    'them (dashboardUrl first).\n' +
+    'After status=executed you MUST put the report content (score, real pages-crawled coverage, every ' +
+    'critical/high issue with its fix, what to do first) AND the download links INTO THE SAME REPLY — ' +
+    'saying "রিপোর্ট উপরে দিয়েছি" or "done" WITHOUT the content in that reply is forbidden, and so is ' +
+    'asking Boss whether he wants the report. Never claim the audit is done before status=executed.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -289,7 +321,7 @@ const check_website_seo_audit: AgentTool = {
       }
 
       if (read && action.status !== 'executed') {
-        return { success: false, error: `Audit এখনো ${action.status} — status "executed" হওয়ার পর read:"${read}" দিয়ে ডাকো।` }
+        return { success: false, error: `Audit ${auditStateBn(action.status)} — শেষ হলে (status "executed") read:"${read}" দিয়ে ডাকো।` }
       }
 
       if (read === 'links') {
@@ -300,15 +332,23 @@ const check_website_seo_audit: AgentTool = {
           const csvPath = reportPath.replace(/report\.md$/, 'issues.csv')
           // Regenerate the client-grade report + evidence CSV from the raw findings
           // (upsert: replaces the worker's bare version and any stale copy).
+          const htmlPath = reportPath.replace(/report\.md$/, 'report.html')
           const reportMd = buildClientReportMarkdown(loaded.audit, { keywordsNote })
           await agentStorageUpload(reportPath, Buffer.from(reportMd, 'utf8'), 'text/markdown', { upsert: true })
           await agentStorageUpload(csvPath, Buffer.from(buildIssuesCsv(loaded.audit), 'utf8'), 'text/csv', { upsert: true })
+          await agentStorageUpload(
+            htmlPath,
+            Buffer.from(buildClientReportHtml(loaded.audit, { keywordsNote }), 'utf8'),
+            'text/html',
+            { upsert: true },
+          )
           await fileReport(`SEO অডিট রিপোর্ট — ${new URL(loaded.audit.url).hostname.replace(/^www\./, '')}`, reportMd)
           links = {
+            dashboardUrl: ownerFileUrl(htmlPath),
             reportUrl: ownerFileUrl(reportPath),
             auditJsonUrl: ownerFileUrl(loaded.path),
             issuesCsvUrl: ownerFileUrl(csvPath),
-            note: 'লিংকগুলো স্থায়ী — বস তার লগইন-করা ব্রাউজারে ক্লিক করলেই ফাইল নামবে। URL গুলো অক্ষরে-অক্ষরে হুবহু কপি করে reply-তে markdown link হিসেবে দাও: [পুরো রিপোর্ট (md)](…), [সব issue Excel/CSV](…), [raw findings (json)](…)',
+            note: 'লিংকগুলো স্থায়ী — বস তার লগইন-করা ব্রাউজারে ক্লিক করলেই ফাইল খুলবে/নামবে। URL গুলো অক্ষরে-অক্ষরে হুবহু কপি করে reply-তে markdown link হিসেবে দাও: [লাইভ ড্যাশবোর্ড](…), [পুরো রিপোর্ট (md)](…), [সব issue Excel/CSV](…), [raw findings (json)](…)',
           }
         } catch (err) {
           return { success: false, error: `লিংক বানানো গেল না: ${String(err)}` }
@@ -386,6 +426,12 @@ const check_website_seo_audit: AgentTool = {
         data: {
           id: action.id,
           status: action.status, // approved = still crawling, executed = done, failed = error
+          // Owner incident 2026-07-27: the head repeated the raw word to him —
+          // "অডিট এখনো approved অবস্থায় আছে" — and he read it as "waiting for your
+          // approval", because in every other card that is exactly what it means.
+          // This tool's 'approved' means the crawl is RUNNING. Give the head a
+          // phrase it can safely say out loud.
+          stateBn: auditStateBn(action.status),
           summary: action.summary,
           result: action.result ?? null,
           ...(artifactText != null ? { [read === 'report' ? 'reportMarkdown' : 'auditJson']: artifactText } : {}),

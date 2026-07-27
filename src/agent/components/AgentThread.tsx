@@ -120,6 +120,13 @@ export interface ChatMessage {
     summary?: string
     toolsUsed?: string[]
   }>
+  /**
+   * The skill pinned for this turn. Rendered as a system line above the work —
+   * NOT left to the model to remember to say. Boss asked for the ChatGPT shape
+   * ("`openai-docs` skill ব্যবহার করছি" before the work starts), and a prompt rule
+   * competing with the speak-first rule lost that fight every time.
+   */
+  skill?: { name: string; source: 'owner' | 'router'; reason?: string }
   /** Live extended-thinking stream — how the agent reasoned before answering. */
   thinking?: string
   /** Seconds spent thinking (set once the reply text begins). */
@@ -145,6 +152,8 @@ export interface ChatMessage {
     fallbackModelId: string
   }
   tokensIn?: number
+  /** How long the agent worked on this reply (ms) — shown next to the tokens. */
+  durationMs?: number
   tokensOut?: number
   cacheCreation?: number
   cacheRead?: number
@@ -167,7 +176,10 @@ interface AgentThreadProps {
   /** Open the artifacts panel; pass an artifact id to focus that file. */
   onArtifactOpen: (id?: string) => void
   onActionApproved?: () => void
-  onQuickSend?: (text: string) => void
+  /** Fired on the Approve CLICK, before the server round-trip. */
+  onApprovePending?: (pending: boolean) => void
+  /** `askCardId` marks the message as the ANSWER to that card (web parity with native). */
+  onQuickSend?: (text: string, askCardId?: string) => void
   /** Owner answered a model-upgrade approval card → rerun the paused turn. */
   onModelSwitchResolve?: (opts: { approve: boolean; rememberChoice?: boolean; fallbackModelId?: string }) => void
   onStartVoiceSession?: () => void
@@ -178,7 +190,7 @@ interface AgentThreadProps {
   homePanel?: ReactNode
   /** Plan-Drive data — drives render INLINE inside the relevant conversation turn. */
   planDrive?: PlanDrivePanelData | null
-  onPlanDriveAction?: (planId: string, action: PlanDriveAction) => void | Promise<void>
+  onPlanDriveAction?: (planId: string, action: PlanDriveAction, family?: string) => void | Promise<void>
   onPlanDriveOpen?: (conversationId: string) => void
 }
 
@@ -771,19 +783,52 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
     | { kind: 'file'; entry: Extract<TimelineEntry, { t: 'file' }> }
   const segments = useMemo(() => {
     const segs: Seg[] = []
-    for (const e of msg.timeline ?? []) {
-      // Timeline prose is retained for audit/debug only. Rendering every model
-      // round here made one turn look like several assistant replies.
-      if (e.t === 'text') continue
+    let leadText = ''
+    let leadEmitted = false
+    const emitLead = () => {
+      if (leadEmitted || !leadText.trim()) return
+      leadEmitted = true
+      segs.push({ kind: 'text', text: leadText })
+    }
+    const entries = msg.timeline ?? []
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i]
+      // The LEADING text entry is the spoken first line (owner rule 2026-07-25):
+      // "বস, … বুঝেছি — … দেখছি", written before any tool ran. It must stay
+      // pinned at the top for the whole turn — the stream clears msg.text when a
+      // tool starts, so without this the line Boss just read vanished the moment
+      // work began (he caught it live). Every LATER text entry stays audit-only:
+      // rendering each model round made one turn look like several replies.
+      if (e.t === 'text') {
+        // Owner rule 2026-07-26: the spoken line renders AFTER the first
+        // thinking row, not above it — the agent did not answer without
+        // thinking first, so reply-then-reasoning reads backwards. Hold it and
+        // emit it once the first activity segment exists (or at the end, when
+        // the turn had no activity at all).
+        if (i === 0 && e.state !== 'superseded' && e.text.trim()) leadText = e.text
+        continue
+      }
       if (e.t === 'file') {
+        emitLead()
         segs.push({ kind: 'file', entry: e })
       } else {
         const last = segs[segs.length - 1]
         if (last && last.kind === 'steps') last.entries.push(e)
         else segs.push({ kind: 'steps', entries: [e] })
+        // After the first activity row — that row is the head's thinking.
+        emitLead()
       }
     }
-    if (msg.text.trim()) segs.push({ kind: 'text', text: msg.text })
+    emitLead()
+    if (msg.text.trim()) {
+      const lead = leadText.trim()
+      // The server keeps the first line as a floor inside the final text, so
+      // strip it here rather than printing the same sentence twice.
+      const body = lead && msg.text.trim().startsWith(lead)
+        ? msg.text.trim().slice(lead.length).trim()
+        : msg.text
+      if (body.trim()) segs.push({ kind: 'text', text: body })
+    }
     return segs
   }, [msg.text, msg.timeline])
 
@@ -904,7 +949,26 @@ function ActivityTimeline({
     return out
   }, [entries, live])
 
-  if (phases.length === 0) return null
+  // OWNER BUG, verified live 2026-07-26: for the first 10–20 seconds of a turn
+  // this rendered NOTHING — Boss saw a bare spinner and could not open anything.
+  // Measured on his own chat: at 10s only the spoken line existed; the thought
+  // block appeared at 23s. The cause is stream ORDER, not the client — DeepSeek
+  // emits its reasoning AFTER the spoken preamble, so there was genuinely nothing
+  // to draw. An empty screen is still the wrong answer: the process section now
+  // opens immediately with an honest placeholder and fills in as reasoning lands.
+  if (phases.length === 0 && !live) return null
+
+  // OWNER BUG, verified live on his own chat 2026-07-26: for the first 10–20
+  // seconds of a turn this drew NOTHING — a bare spinner with nothing to open.
+  // Measured: at 10s only the spoken line existed; the thought block appeared at
+  // 23s. The cause is stream ORDER rather than the client — DeepSeek emits its
+  // reasoning AFTER the spoken preamble, so there was genuinely nothing to draw
+  // yet. An empty screen is still the wrong answer. The process section now opens
+  // from the first moment with an honest placeholder, and real reasoning replaces
+  // it the instant it arrives.
+  const shown: Phase[] = phases.length > 0
+    ? phases
+    : [{ headline: 'কাজ শুরু করছি…', detail: '', tools: [], live: true }]
 
   const seconds = thinkingMs != null ? Math.max(1, Math.round(thinkingMs / 1000)) : null
   const baseSrc = (thinking ?? entries.filter((e) => e.t === 'think').map((e) => (e as { text: string }).text).join('\n')).trim()
@@ -930,13 +994,13 @@ function ActivityTimeline({
           </svg>
         )}
         <span>{summary}</span>
-        <span className="rounded-full bg-muted/10 px-1.5 py-px text-[10px] tabular-nums text-muted/80">{phases.length} ধাপ</span>
+        <span className="rounded-full bg-muted/10 px-1.5 py-px text-[10px] tabular-nums text-muted/80">{shown.length} ধাপ</span>
       </div>
 
       {/* Phases: bold headline → collapsed tool pill → tool → input/output. */}
       <div className="flex flex-col">
-        {phases.map((p, i) => {
-          const isLast = i === phases.length - 1
+        {shown.map((p, i) => {
+          const isLast = i === shown.length - 1
           const headline = p.headline || (p.tools[0] ? toolDisplay(p.tools[0].name).label : 'কাজ করছি')
           const hasDetail = p.detail.trim().length > 0 && p.detail.trim() !== p.headline.trim()
           const headOpen = open[`h${i}`] ?? false
@@ -1209,7 +1273,38 @@ function isJamaatQuestion(text?: string): boolean {
   return /জামাত/.test(text) && /একা/.test(text) && text.includes('?')
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen }: AgentThreadProps) {
+/**
+ * "24m 20s" — the working time, the way Boss reads it on my own badge.
+ * Owner ask 2026-07-26: he wants the clock running from the moment work starts,
+ * and the total kept next to the tokens once the reply lands.
+ */
+function fmtDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  const rest = s % 60
+  if (m < 60) return rest ? `${m}m ${rest}s` : `${m}m`
+  const h = Math.floor(m / 60)
+  return `${h}h ${m % 60}m`
+}
+
+/** Ticking elapsed time for the turn that is running right now. */
+function LiveWorkTimer({ startedAt }: { startedAt: string }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const started = new Date(startedAt).getTime()
+  if (!Number.isFinite(started)) return null
+  return (
+    <span className="ml-2 text-[10px] tabular-nums text-muted" title="এই কাজটা কতক্ষণ ধরে চলছে">
+      {fmtDuration(now - started)}
+    </span>
+  )
+}
+
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onApprovePending, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
@@ -1229,8 +1324,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
   // no owner conversation — e.g. promoted stuck todos), so they never hide.
   const inlineDrives = useMemo(() => {
     const all = planDrive?.drives ?? []
+    // A plan the agent started itself has its own thread (S0), so matching on
+    // conversationId alone made it invisible on web while iOS still showed it.
+    // Autonomous work belongs to no chat in particular — surface it in whichever
+    // chat Boss has open, which is the one place he is actually looking.
     return all.filter((d) =>
-      d.conversationId === conversationId || (isOfficeShift && d.conversationId == null),
+      d.conversationId === conversationId
+      || d.isAutonomous
+      || (isOfficeShift && d.conversationId == null),
     )
   }, [planDrive, conversationId, isOfficeShift])
   const streamingMessage = messages.find((m) => m.streaming)
@@ -1365,6 +1466,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                 role: m.role,
                 text: m.text,
                 costUsd: m.costUsd,
+                durationMs: m.durationMs,
               }))}
               renderUserMessage={(msg) => (
                 <div className="mb-4 flex justify-end">
@@ -1444,17 +1546,41 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     // Chronological mode: the timeline carries the reply text too, so
                     // render ONE interleaved flow (text → steps → text) and skip the
                     // separate steps-card + body blocks below.
+                    const skillLine = msg.skill ? (
+                      <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-muted">
+                        <span aria-hidden>🧠</span>
+                        <span>
+                          <code className="rounded bg-muted/10 px-1 py-px text-[11px] text-cream">{msg.skill.name}</code>
+                          {' '}skill ব্যবহার করছি
+                          {msg.skill.source === 'owner' ? ' (আপনার বেছে দেওয়া)' : ''}
+                        </span>
+                      </div>
+                    ) : null
                     const chrono = (msg.timeline ?? []).some((e) => e.t === 'text')
-                    if (chrono) return <ChronoFlow msg={msg} onOpenFile={(id) => onArtifactOpen(id)} />
-                    if (msg.timeline?.length || msg.thinking || (msg.toolActivity && msg.toolActivity.length > 0)) {
+                    if (chrono) return <>{skillLine}<ChronoFlow msg={msg} onOpenFile={(id) => onArtifactOpen(id)} /></>
+                    // A RUNNING turn always shows the process section, even before
+                    // there is anything in it (owner bug, verified live 2026-07-26:
+                    // the first 10–20 seconds drew nothing at all, so there was
+                    // nothing for Boss to open). `live` stays true for as long as the
+                    // turn runs — it used to flip off the moment the spoken first
+                    // line arrived, which is precisely when the real thinking starts.
+                    if (
+                      msg.streaming
+                      || msg.timeline?.length
+                      || msg.thinking
+                      || (msg.toolActivity && msg.toolActivity.length > 0)
+                    ) {
                       return (
+                        <>
+                        {skillLine}
                         <ActivityTimeline
                           timeline={msg.timeline}
                           thinking={msg.thinking}
                           thinkingMs={msg.thinkingMs}
                           toolActivity={msg.toolActivity}
-                          live={Boolean(msg.streaming) && !msg.text}
+                          live={Boolean(msg.streaming)}
                         />
+                        </>
                       )
                     }
                     return null
@@ -1510,17 +1636,22 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       (NOT on streamStatus) so a momentary empty label can't make
                       it flicker out; it disappears only when the turn is `done`. */}
                   {msg.streaming && msg.id === messages[messages.length - 1]?.id && (
-                    <AgentThinkingIndicator
-                      mode={streamMode ?? 'thinking'}
-                      variant={streamVariant ?? 'claude'}
-                      className="mt-3"
-                    />
+                    <div className="mt-3 flex items-center">
+                      <AgentThinkingIndicator
+                        mode={streamMode ?? 'thinking'}
+                        variant={streamVariant ?? 'claude'}
+                      />
+                      {/* The clock starts when the work starts (owner ask
+                          2026-07-26) — not only after it finishes. */}
+                      {msg.createdAt && <LiveWorkTimer startedAt={msg.createdAt} />}
+                    </div>
                   )}
 
                   {msg.pendingActions && msg.pendingActions.length > 0 && (
                     <AgentConfirmCardGroup
                       actions={msg.pendingActions}
                       onQuickSend={onQuickSend}
+                      onApprovePending={onApprovePending}
                       onResolved={(status) => {
                         // Approve always posts a result note. For a delegation,
                         // Reject ALSO posts one (Sonnet's own answer), so poll then too.
@@ -1535,21 +1666,28 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     <AgentAskCard
                       card={msg.askCard}
                       onSelect={(opt) => {
-                        void fetch(`/api/assistant/ask-cards/${msg.askCard!.id}/answer`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ option: opt }),
-                        }).then((res) => {
-                          // Non-silent failure: the answer still reaches the agent via
-                          // onQuickSend below, but a failed record means the durable
-                          // card row stays 'pending' — log it so it's diagnosable.
-                          if (!res.ok) {
-                            console.warn(`[ask-card] answer POST failed (HTTP ${res.status}) for card ${msg.askCard!.id}`)
+                        const cardId = msg.askCard!.id
+                        // ORDER MATTERS (owner report 2026-07-26): record the answer
+                        // FIRST, then send it. The old code fired both at once, so the
+                        // turn could start while the row still read 'pending' and the
+                        // head re-asked the identical question the moment he tapped —
+                        // "instantly same abr card ta ashe". The message also carries
+                        // the card id now, so the server resolves it either way.
+                        void (async () => {
+                          try {
+                            const res = await fetch(`/api/assistant/ask-cards/${cardId}/answer`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ option: opt }),
+                            })
+                            if (!res.ok) {
+                              console.warn(`[ask-card] answer POST failed (HTTP ${res.status}) for card ${cardId}`)
+                            }
+                          } catch (err) {
+                            console.warn('[ask-card] answer POST failed:', err)
                           }
-                        }).catch((err) => {
-                          console.warn('[ask-card] answer POST failed:', err)
-                        })
-                        onQuickSend(opt)
+                          onQuickSend(opt, cardId)
+                        })()
                       }}
                     />
                   )}
@@ -1632,7 +1770,12 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                             {`Σ${fmtTok(total)} · ↑${fmtTok(tin)}`}
                             {cw > 0 && ` ⚡${fmtTok(cw)}`}
                             {cr > 0 && ` ♻${fmtTok(cr)}`}
-                            {` ↓${fmtTok(tout)}`}{' '}
+                            {` ↓${fmtTok(tout)}`}
+                            {msg.durationMs != null && msg.durationMs > 0 && (
+                              <span className="text-muted" title="এই উত্তরটা তৈরি করতে যত সময় লেগেছে">
+                                {` · ⏱ ${fmtDuration(msg.durationMs)}`}
+                              </span>
+                            )}{' '}
                             {msg.costUsd != null && (
                               <span
                                 className="text-[#E07A5F]/60"

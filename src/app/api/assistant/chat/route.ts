@@ -47,6 +47,14 @@ import {
   type AgentBusinessId,
 } from '@/lib/agent-api/business-context'
 import { shouldPersistIncomingMessage } from '@/agent/lib/continuation-policy'
+import { type ChatMode, DEFAULT_CHAT_MODE, normalizeChatMode } from '@/agent/lib/chat-mode'
+import {
+  type PermissionMode,
+  type ElevationGrant,
+  DEFAULT_PERMISSION_MODE,
+  normalizePermissionMode,
+  parseElevationGrant,
+} from '@/agent/lib/permission-mode'
 
 export const runtime = 'nodejs'
 // 800s (Pro plan + Fluid compute; Vercel allows up to 1800s). Raised from 300s
@@ -63,6 +71,14 @@ interface ChatBody {
   files?: FileRef[]
   projectId?: string
   personalMode?: boolean
+  /** Chat mode picker value, sent with the FIRST message of a new conversation. */
+  chatMode?: string
+  /**
+   * PM-1 permission mode, sent with the FIRST message of a new conversation only.
+   * For an EXISTING conversation the server reads the row and ignores this — a
+   * client must never be able to widen what the agent may do.
+   */
+  permissionMode?: string
   source?: string
   /** Set by the voice session — the reply is read aloud (TTS), so the head should
    *  answer TTS-friendly and hand money/irreversible confirmations off to a tap. */
@@ -266,6 +282,17 @@ export async function POST(req: NextRequest) {
   let convSource: string | null = null
   let convProjectId: string | null = null
   let projectSystemInstructions: string | null = null
+  // Owner's chat mode picker (auto | direct | plan | plan_drive). Absent/unknown
+  // ⇒ 'auto', which is exactly today's behaviour.
+  let chatMode: ChatMode = normalizeChatMode(body.chatMode)
+  // PM-1 — the permission axis. Deliberately NOT taken from the request body:
+  // the client may say what it likes, the server reads the conversation row.
+  // That is the whole "must sync" guarantee — a tampered or stale client cannot
+  // widen what the agent may do.
+  // A BRAND-NEW chat has no row yet, so the chip he is looking at is the only
+  // source — validated strictly, never coerced. Once the row exists the row wins.
+  let permissionMode: PermissionMode = normalizePermissionMode(body.permissionMode)
+  let elevationGrant: ElevationGrant | null = null
   let personalMode = body.personalMode === true
   let requestedProjectId = typeof body.projectId === 'string' ? body.projectId : null
   // Business scope for the turn — resolved from project or conversation row.
@@ -304,6 +331,9 @@ export async function POST(req: NextRequest) {
           projectId: true,
           businessId: true,
           modelId: true,
+          chatMode: true,
+          permissionMode: true,
+          elevationGrant: true,
           project: { select: { name: true, systemInstructions: true, businessId: true } },
         },
       })
@@ -324,6 +354,9 @@ export async function POST(req: NextRequest) {
         }
       }
       conversationModelId = conv.modelId ?? defaultHeadModelId
+      chatMode = normalizeChatMode(conv.chatMode)
+      permissionMode = normalizePermissionMode(conv.permissionMode)
+      elevationGrant = parseElevationGrant(conv.elevationGrant)
       personalMode = isPersonalProject(conv.project) || personalMode
       projectSystemInstructions = personalMode
         ? null
@@ -374,6 +407,10 @@ export async function POST(req: NextRequest) {
           data: {
             title,
             modelId: conversationModelId,
+            // The mode chip applies from the FIRST message of a new chat, not
+            // only after the conversation row exists.
+            chatMode,
+            permissionMode,
             source,
             projectId: personalMode ? requestedProjectId : (requestedProjectId ?? null),
             businessId: personalMode ? null : businessId,
@@ -541,8 +578,12 @@ export async function POST(req: NextRequest) {
   // match — long browser/content turns stop dying at the old 280s ceiling. The
   // Math.min guard keeps a mismatched env from ever exceeding the function's
   // real budget (cap always ≥20s under maxDuration for the final persist).
+  // 2026-07-26: the default was 280s while maxDuration is 800s — so a turn died
+  // at 4.7 minutes even though the function had 13. That gap is most of the
+  // reason long work had to be pushed into Plan-Drive at all. Use the budget the
+  // function actually has; the Math.min still guarantees a clean final persist.
   const TURN_HARD_CAP_MS = Math.min(
-    Number(process.env.AGENT_TURN_HARD_CAP_MS) || 280_000,
+    Number(process.env.AGENT_TURN_HARD_CAP_MS) || 760_000,
     (maxDuration - 20) * 1000,
   )
   const turnAbort = new AbortController()
@@ -657,6 +698,9 @@ export async function POST(req: NextRequest) {
     // progress wrap-up (+ "continue" hint) instead of dying silently at the cap.
     deadlineAt: Date.now() + TURN_HARD_CAP_MS,
     approveModelSwitch: resume?.approve === true,
+    chatMode,
+    permissionMode,
+    elevationGrant,
   }
 
   async function* runTurn() {
@@ -690,12 +734,17 @@ export async function POST(req: NextRequest) {
     let newConversationId: string | null = null
     let compactedFromCost: number | null = null
     let continuationNeeded = false
+    /** The spoken first line, so a verify retry cannot erase it (see below). */
+    let preambleText = ''
     try {
       for await (const event of runTurn()) {
         if (event.type === 'text_delta') finalText += event.delta
+        else if (event.type === 'preamble') preambleText = event.text
         else if (event.type === 'verification_retry') {
-          // Drop the unverified draft so the final telegram reply is the truthful retry only.
-          finalText = ''
+          // Drop the unverified draft so the final telegram reply is the truthful
+          // retry only — but KEEP the spoken first line: Boss already read it and
+          // the rewrite is not replacing it (owner rule 2026-07-25).
+          finalText = preambleText ? `${preambleText}\n\n` : ''
           console.warn(
             `[assistant/chat] verification retry ${event.attempt}/${event.maxAttempts}`,
             { conversationId, categories: event.categories },
@@ -898,6 +947,9 @@ export async function POST(req: NextRequest) {
                   conversationId,
                   message: lastMomentSteering.map((item) => item.prompt).join('\n\n'),
                   force: true,
+                  // This IS Boss speaking (his last-moment steer), so the
+                  // awaiting-answer gate must not swallow it.
+                  ignoreAwaitingOwner: true,
                 })
               }
             }

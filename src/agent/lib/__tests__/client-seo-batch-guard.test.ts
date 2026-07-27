@@ -1,0 +1,111 @@
+/**
+ * The batch guard must STEER the head, not kill its turn.
+ *
+ * Live run 2026-07-25: the head polled the audit while the crawl was running,
+ * the crawl finished between two rounds, and its next status-only check was
+ * rejected as a contract failure. The turn ended on "⚠️ বাধ্যতামূলক ধাপ … সফল
+ * হয়নি" and the finished report was never read. The server already knows which
+ * read is due, so the guard now fills it in instead of blocking.
+ */
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import {
+  createClientSeoBatchFacts,
+  reduceClientSeoBatch,
+  type ClientSeoBatchFacts,
+} from '@/agent/lib/client-seo-batch-state'
+
+let facts: ClientSeoBatchFacts
+
+vi.mock('@/lib/prisma', () => ({ prisma: {} }))
+vi.mock('@/agent/lib/workflow-run', () => ({
+  listActiveWorkflowRuns: async () => [{ kind: 'client_seo_batch', facts, id: 'run-1' }],
+  ensureActiveWorkflowRun: async () => ({}),
+  transitionWorkflowRun: async () => ({}),
+  WorkflowVersionConflictError: class extends Error {},
+}))
+vi.mock('@/agent/lib/graph/seo-batch-graph', () => ({ mirrorSeoBatchTransition: async () => {} }))
+
+const { guardClientSeoBatchTool, contractStatusOrDraft } = await import('@/agent/lib/client-seo-batch')
+
+beforeEach(() => {
+  facts = createClientSeoBatchFacts(['https://almatraders.com'], {
+    requireLiveBrowser: false,
+    requireArtifact: true,
+  })
+})
+
+function finishAudit() {
+  facts = reduceClientSeoBatch(facts, { type: 'audit_queued', actionId: 'a1' })
+  facts = reduceClientSeoBatch(facts, { type: 'audit_finished', actionId: 'a1', ok: true })
+}
+
+describe('check_website_seo_audit steering', () => {
+  it('a status-only poll is corrected to read:"report" instead of blocked', async () => {
+    finishAudit()
+    const input: Record<string, unknown> = { pendingActionId: 'a1' }
+    const block = await guardClientSeoBatchTool('conv-1', 'check_website_seo_audit', input)
+    expect(block).toBeNull()
+    expect(input.read).toBe('report')
+  })
+
+  it('once the report is read the next call is steered to the links', async () => {
+    finishAudit()
+    facts = reduceClientSeoBatch(facts, { type: 'report_read', actionId: 'a1' })
+    const input: Record<string, unknown> = { pendingActionId: 'a1', read: 'json' }
+    const block = await guardClientSeoBatchTool('conv-1', 'check_website_seo_audit', input)
+    expect(block).toBeNull()
+    expect(input.read).toBe('links')
+  })
+
+  it('leaves a plain status poll alone while the crawl is still running', async () => {
+    facts = reduceClientSeoBatch(facts, { type: 'audit_queued', actionId: 'a1' })
+    const input: Record<string, unknown> = { pendingActionId: 'a1' }
+    const block = await guardClientSeoBatchTool('conv-1', 'check_website_seo_audit', input)
+    expect(block).toBeNull()
+    expect(input.read).toBeUndefined()
+  })
+
+  it('still blocks a crawl started out of target order', async () => {
+    const two = createClientSeoBatchFacts(['https://one.com', 'https://two.com'], {
+      requireLiveBrowser: false,
+      requireArtifact: true,
+    })
+    facts = two
+    const block = await guardClientSeoBatchTool('conv-1', 'run_website_seo_audit', { url: 'https://two.com' })
+    expect(block?.guard).toBe('client_seo_wrong_target_order')
+  })
+})
+
+// Live run 2026-07-25 — the audit finished, the report was read, the file card
+// landed, and the contract then replaced the head's written answer with
+// "⏳ Ordered SEO কাজ চলমান". A delivery must never be overwritten by a
+// progress line.
+describe('the contract never overwrites a delivered report', () => {
+  const REPORT = 'Boss, almatraders.com-এর অডিট শেষ — স্কোর ২৪/১০০, ২টা critical সমস্যা: robots.txt সব ব্লক করছে…'
+
+  it('keeps the draft once report AND links are delivered', () => {
+    let f = createClientSeoBatchFacts(['https://almatraders.com'], { requireLiveBrowser: false, requireArtifact: true })
+    f = reduceClientSeoBatch(f, { type: 'audit_queued', actionId: 'a1' })
+    f = reduceClientSeoBatch(f, { type: 'audit_finished', actionId: 'a1', ok: true })
+    f = reduceClientSeoBatch(f, { type: 'report_read', actionId: 'a1' })
+    f = reduceClientSeoBatch(f, { type: 'links_read', actionId: 'a1' })
+    expect(contractStatusOrDraft(f, REPORT)).toBe(REPORT)
+  })
+
+  it('still shows progress while the crawl is running', () => {
+    let f = createClientSeoBatchFacts(['https://almatraders.com'], { requireLiveBrowser: false, requireArtifact: true })
+    f = reduceClientSeoBatch(f, { type: 'audit_queued', actionId: 'a1' })
+    const out = contractStatusOrDraft(f, 'অডিট সম্পন্ন হয়ে গেছে!')
+    expect(out).not.toContain('সম্পন্ন হয়ে গেছে')
+    expect(out).toContain('worker-এ চলছে')
+  })
+
+  it('falls back to progress text when the model wrote nothing', () => {
+    let f = createClientSeoBatchFacts(['https://almatraders.com'], { requireLiveBrowser: false, requireArtifact: true })
+    f = reduceClientSeoBatch(f, { type: 'audit_queued', actionId: 'a1' })
+    f = reduceClientSeoBatch(f, { type: 'audit_finished', actionId: 'a1', ok: true })
+    f = reduceClientSeoBatch(f, { type: 'report_read', actionId: 'a1' })
+    f = reduceClientSeoBatch(f, { type: 'links_read', actionId: 'a1' })
+    expect(contractStatusOrDraft(f, '   ')).toContain('হয়ে গেছে')
+  })
+})

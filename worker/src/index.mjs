@@ -322,8 +322,28 @@ async function pollPendingJobs() {
         }
         handled = true
       } else if (job.type === 'browser_action') {
-        await browserTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
-        console.log(`[worker] enqueued browser task for action ${job.id}`)
+        // The driver router (src/agent/lib/browser/drivers.ts) decides which
+        // browser runs a task. Only the VPS drivers belong on this queue —
+        // a task pinned to the owner's own Chrome must never be executed from a
+        // datacenter IP, so it is refused loudly rather than silently misrouted.
+        const driver = job.payload?.driver
+        if (driver === 'companion') {
+          // The companion command bus lives in Postgres and only the app talks to
+          // it, so the app runs these. Fired without await: a multi-step run in a
+          // real browser takes minutes and must not block the poll loop.
+          void runCompanionBrowserTask(job)
+        } else if (driver && driver !== 'vps' && driver !== 'vps_live') {
+          await callJobResult(
+            job.id,
+            'failed',
+            undefined,
+            `driver_mismatch — task routed to "${driver}", which has no execution path`,
+          )
+          console.warn(`[worker] browser task ${job.id} refused — unknown driver "${driver}"`)
+        } else {
+          await browserTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+          console.log(`[worker] enqueued browser task for action ${job.id}`)
+        }
         handled = true
       } else if (job.type === 'agent_graph_run') {
         // Phase 35: durable multi-specialist fan-out (>30s work). jobId =
@@ -359,6 +379,37 @@ async function pollPendingJobs() {
 // enqueue failed: the SAME pre-created turn is executed through the internal
 // chat API (like a Telegram turn), so the head runs with every gate and the
 // work streams into the app conversation. No metered Redis on this path.
+/**
+ * A browser task pinned to the owner's own Chrome. This worker cannot drive it —
+ * the companion command bus lives in Postgres and only the app talks to it — so
+ * the app runs the steps and we just carry the result back through the normal
+ * job-result path, exactly like a VPS browser task.
+ */
+async function runCompanionBrowserTask(job) {
+  try {
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/browser-companion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
+      body: JSON.stringify({ pendingActionId: job.id, payload: job.payload }),
+      // Long: every step is a real click in a real browser, and the owner may be
+      // mid-login on one of them.
+      signal: AbortSignal.timeout(5 * 60_000),
+    })
+    const result = await res.json().catch(() => null)
+    if (!res.ok || !result) {
+      await callJobResult(job.id, 'failed', undefined, `companion run failed (HTTP ${res.status})`)
+      console.error(`[worker] companion browser task ${job.id} failed: HTTP ${res.status}`)
+      return
+    }
+    await callJobResult(job.id, result.ok ? 'success' : 'failed', result, result.ok ? undefined : result.error)
+    console.log(`[worker] companion browser task ${job.id} ${result.ok ? 'done' : 'failed'}`)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await callJobResult(job.id, 'failed', undefined, msg)
+    console.error(`[worker] companion browser task ${job.id} threw: ${msg}`)
+  }
+}
+
 async function runVoiceInstructionTurn(job) {
   const { message, conversationId, turnId } = job.payload ?? {}
   if (!message || !conversationId) {

@@ -9,6 +9,14 @@ import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildOutboundDialMessage } from '@/agent/lib/outbound-call-tracking'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { shouldEmitGenericJobSuccess, shouldResumeAgentAfterJob } from '@/agent/lib/job-result-message-policy'
+import {
+  buildFallbackDeliveryMessage,
+  hasUnansweredAskCard,
+  isDeliverableJobType,
+  markDelivered,
+  markDeliveryPending,
+  postAssistantMessage,
+} from '@/agent/lib/job-delivery'
 import { prisma } from '@/lib/prisma'
 
 const IMAGE_SIGNED_URL_TTL_SEC = 3600
@@ -140,6 +148,28 @@ export async function POST(req: NextRequest) {
     await wf.syncWorkflowWithPendingAction(pendingActionId, 'worker')
   } catch (err) {
     console.warn('[job-result] workflow sync failed open:', err instanceof Error ? err.message : err)
+  }
+
+  // Delivery contract: from this moment the owner is OWED the result in his
+  // conversation. The sweep in job-delivery.ts retries the continuation and, if
+  // the head still says nothing, posts the result itself.
+  if (status === 'success' && isDeliverableJobType(action.type)) {
+    await markDeliveryPending(pendingActionId, action.type)
+  }
+
+  // SEO: build the client report, the issues CSV and the live HTML dashboard
+  // NOW and file the dashboard as a chat artifact. Report quality no longer
+  // depends on the head remembering to ask for it (incident 2026-07-25).
+  if (status === 'success' && action.type === 'seo_audit') {
+    try {
+      const { buildSeoDeliverables } = await import('@/agent/lib/seo-deliverables')
+      const built = await buildSeoDeliverables(pendingActionId)
+      if (built) console.log(`[job-result] seo deliverables ready for ${built.host} (${built.pagesCrawled} pages)`)
+    } catch (err) {
+      // The raw result stays durable; the head's read:"report" path can still
+      // build everything on demand.
+      console.warn('[job-result] seo deliverables build failed:', err instanceof Error ? err.message : err)
+    }
   }
 
   const payload = action.payload as Record<string, unknown>
@@ -360,7 +390,10 @@ export async function POST(req: NextRequest) {
     if (!tg.ok) console.warn('[job-result] owner telegram notify failed:', tg.error)
   }
 
-  if (progressTurnId && (status === 'failed' || !resumeAgentAfterImage)) {
+  // The progress turn must stay OPEN while a continuation is about to present the
+  // result — finalizing it here is what literally put "done" on the owner's screen
+  // while the SEO report was still unwritten (2026-07-25).
+  if (progressTurnId && (status === 'failed' || (!resumeAgentAfterImage && !resumeAgentAfterSeo))) {
     await finalizeTurnIfRunning(progressTurnId, status === 'failed' ? 'error' : 'done').catch(() => {})
   }
 
@@ -394,12 +427,62 @@ export async function POST(req: NextRequest) {
   // in the worker while the owner conversation stayed permanently stranded.
   if (resumeAgentAfterSeo && convId) {
     try {
+      // Boss has an open question: resuming the head would answer over it. He
+      // still gets the finished report — the server posts it and the card keeps
+      // waiting (owner ruling 2026-07-25).
+      if (await hasUnansweredAskCard(convId)) {
+        const fresh = await db.agentPendingAction.findUnique({
+          where: { id: pendingActionId },
+          select: { type: true, summary: true, result: true },
+        })
+        if (fresh) {
+          await postAssistantMessage(convId, buildFallbackDeliveryMessage(fresh))
+          await markDelivered(pendingActionId, 'server_fallback')
+        }
+        return Response.json({ success: true, deliveredWhileAwaitingOwner: true })
+      }
+      // DELIVERY SPINE (owner incident 2026-07-25, second half): the head used to
+      // be the ONLY writer of the report message, so a long reply that ran into
+      // the serverless deadline reached Boss cut mid-sentence ("**বাকি মূল সম").
+      // The server-built summary is complete, bounded and already computed at
+      // deliverable-build time — post THAT first, mark the job delivered, and let
+      // the head add only the extra it verified. A deadline can now truncate the
+      // commentary, never the report.
+      const freshForSpine = await db.agentPendingAction.findUnique({
+        where: { id: pendingActionId },
+        select: { type: true, summary: true, result: true },
+      })
+      let spinePosted = false
+      if (freshForSpine) {
+        try {
+          await postAssistantMessage(convId, buildFallbackDeliveryMessage(freshForSpine))
+          await markDelivered(pendingActionId, 'server_spine')
+          spinePosted = true
+        } catch (err) {
+          console.warn('[job-result] delivery spine post failed:', err instanceof Error ? err.message : err)
+        }
+      }
+
       await enqueueAgentContinuation({
         conversationId: convId,
+        // Presenting a finished deliverable is correctness, not an
+        // approval convenience — it must not depend on the auto-continue
+        // preference, and it reuses the progress turn so the owner sees one
+        // unbroken span from his request to the report.
+        force: true,
+        turnId: progressTurnId,
         message:
           `[INTERNAL SEO JOB RESULT] Audit action ${pendingActionId} is now executed. ` +
-          'Resume the canonical client_seo_batch at its exact next tool. Read the full report and links; ' +
-          'then continue the next ordered target. Never rerun a completed audit and never ask Boss to type continue.',
+          (spinePosted
+            ? 'The score, coverage, severity counts and every download link have ALREADY been posted to Boss ' +
+              'by the server — do NOT repeat them. Add only what you can verify yourself on top of that: the ' +
+              'critical/high issues with their concrete fix, and what to do first. Keep it under ~15 lines so ' +
+              'the turn finishes inside its deadline. Then resume the canonical client_seo_batch at its exact next tool. '
+            : 'Resume the canonical client_seo_batch at its exact next tool. Read the full report (read:"report") ' +
+              'and the links (read:"links"), then PRESENT them in this reply: score, every critical/high issue with ' +
+              'its fix, what to do first, and the download links. ') +
+          'Never rerun a completed audit, never ask Boss ' +
+          'whether he wants the report, and never end this turn with only a progress line.',
       })
     } catch (err) {
       console.warn('[job-result] SEO continuation enqueue failed (result remains durable):', err instanceof Error ? err.message : err)

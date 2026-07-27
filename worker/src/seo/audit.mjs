@@ -176,10 +176,43 @@ export function analyzeHtml(html, pageUrl) {
   if (jsonLdTypes.length === 0) add('medium', 'missing_structured_data', 'কোনো schema.org (JSON-LD) নেই')
   if (jsonLdTypes.includes('INVALID')) add('medium', 'invalid_structured_data', 'JSON-LD ভাঙা')
 
-  const imgs = root.querySelectorAll('img')
-  const missingAlt = imgs.filter((i) => !(i.getAttribute('alt') ?? '').trim()).length
-  if (imgs.length > 0 && missingAlt > 0) {
-    add(missingAlt > imgs.length / 2 ? 'medium' : 'low', 'missing_img_alt', `${imgs.length}টা ছবির মধ্যে ${missingAlt}টায় alt নেই`)
+  // A decorative image is SUPPOSED to have alt="" — that is the accessibility
+  // rule, not a defect. Counting them cost the owner real time on 2026-07-26:
+  // the audit reported "52+ images without alt, hurting Google Images and
+  // accessibility", he ordered the fix, and the images turned out to be a
+  // <div class="foot-strip" aria-hidden="true"> decorative footer strip that was
+  // already correct. Tracking pixels are the same story.
+  const isDecorative = (node) => {
+    if (typeof node?.getAttribute !== 'function') return false
+    if ((node.getAttribute('role') ?? '') === 'presentation') return true
+    if ((node.getAttribute('aria-hidden') ?? '') === 'true') return true
+    return isDecorative(node.parentNode)
+  }
+  // An image inside a control that ALREADY carries the name is correctly alt=""
+  // — almatraders.com's thumbnails are
+  // <button aria-label="সি-গ্রীন কালার পাঞ্জাবী …"><img alt=""/></button>, and an
+  // alt there makes a screen reader say it twice. Such images still COUNT (Google
+  // Images cares about them); they are simply not missing anything.
+  const hasNamedAncestor = (node) => {
+    if (typeof node?.getAttribute !== 'function') return false
+    if (node.tagName && node.tagName !== 'IMG' && (node.getAttribute('aria-label') ?? '').trim()) return true
+    return hasNamedAncestor(node.parentNode)
+  }
+  const isTrackingPixel = (i) => {
+    const src = i.getAttribute('src') ?? ''
+    if (/facebook\.com\/tr|\/pixel|analytics|googletagmanager/i.test(src)) return true
+    return (i.getAttribute('width') ?? '') === '1' && (i.getAttribute('height') ?? '') === '1'
+  }
+  const contentImgs = root.querySelectorAll('img').filter((i) => !isDecorative(i) && !isTrackingPixel(i))
+  const missingAlt = contentImgs.filter(
+    (i) => !(i.getAttribute('alt') ?? '').trim() && !hasNamedAncestor(i),
+  ).length
+  if (contentImgs.length > 0 && missingAlt > 0) {
+    add(
+      missingAlt > contentImgs.length / 2 ? 'medium' : 'low',
+      'missing_img_alt',
+      `${contentImgs.length}টা কনটেন্ট ছবির মধ্যে ${missingAlt}টায় alt নেই`,
+    )
   }
 
   const text = root.querySelector('body')?.structuredText ?? ''
@@ -210,7 +243,11 @@ export function analyzeHtml(html, pageUrl) {
   return {
     url: pageUrl, title, titleLength: title.length, metaDesc, metaDescLength: metaDesc.length,
     h1Count: h1s.length, canonical, noindex, jsonLdTypes: jsonLdTypes.filter((t) => t !== 'INVALID'),
-    imgCount: imgs.length, missingAlt, wordCount, internalLinks: [...internal], externalCount, issues,
+    // `contentImgs`, not `imgs` — the decorative-alt correction renamed the
+    // variable and this one reference was left behind, so EVERY audited page
+    // threw "imgs is not defined" and the whole audit failed. The owner watched
+    // it fail all day on 2026-07-27 before the card finally said why.
+    imgCount: contentImgs.length, missingAlt, wordCount, internalLinks: [...internal], externalCount, issues,
   }
 }
 
@@ -219,6 +256,44 @@ export function analyzeHtml(html, pageUrl) {
 // ---------------------------------------------------------------------------
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Pull <loc> entries out of a sitemap (or sitemap index) body. These are the
+ * site's OWN declaration of what it wants indexed, so they make the best crawl
+ * frontier — link-following alone missed most of a JS-rendered shop.
+ */
+export function extractSitemapLocs(xml) {
+  const body = String(xml ?? '')
+  return {
+    locs: [...body.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => m[1]),
+    isIndex: /<sitemapindex/i.test(body),
+  }
+}
+
+/**
+ * Build the crawl frontier: homepage first, then same-origin sitemap URLs
+ * (deduped, capped). Exported so the seeding contract is unit-testable without
+ * a live crawl (the SSRF guard blocks fixture servers by design).
+ */
+export function buildCrawlFrontier(seedUrl, sitemapLocs, maxPages) {
+  const queue = [seedUrl]
+  const seen = new Set([seedUrl])
+  let originStr
+  try { originStr = new URL(seedUrl).origin } catch { return { queue, seen } }
+  for (const loc of sitemapLocs) {
+    if (queue.length >= maxPages * 2) break
+    let normalized
+    try {
+      const u = new URL(loc)
+      if (u.origin !== originStr) continue
+      normalized = u.toString()
+    } catch { continue }
+    if (seen.has(normalized)) continue
+    seen.add(normalized)
+    queue.push(normalized)
+  }
+  return { queue, seen }
+}
 
 export async function crawlSite({ url, maxPages = 40 }) {
   const startedAt = Date.now()
@@ -256,21 +331,44 @@ export async function crawlSite({ url, maxPages = 40 }) {
     sitemapUrls = [...robots.bodyText.matchAll(/^sitemap:\s*(\S+)/gim)].map((m) => m[1])
   }
 
-  // sitemap
+  // sitemap — parsed for coverage AND used as crawl seeds. Index sitemaps
+  // (<sitemapindex>) are followed one level so a shop whose products live in
+  // sitemap_products_1.xml is actually audited.
   if (sitemapUrls.length === 0) sitemapUrls = [`${origin.origin}/sitemap.xml`]
   let sitemapCount = 0
   let sitemapOk = false
-  const sm = await guardedFetch(sitemapUrls[0])
-  if (sm.ok && sm.status === 200 && sm.bodyText.includes('<')) {
-    sitemapOk = true
-    sitemapCount = (sm.bodyText.match(/<loc>/g) ?? []).length
-  } else {
-    addSite('medium', 'missing_sitemap', 'sitemap.xml নেই/পড়া যায়নি')
+  const sitemapLocs = []
+  const readSitemap = async (target, depth = 0) => {
+    const res = await guardedFetch(target)
+    if (!res.ok || res.status !== 200 || !res.bodyText.includes('<')) return false
+    const { locs, isIndex } = extractSitemapLocs(res.bodyText)
+    if (isIndex && depth === 0) {
+      let any = false
+      for (const child of locs.slice(0, 10)) {
+        if (await readSitemap(child, depth + 1)) any = true
+      }
+      return any
+    }
+    sitemapCount += locs.length
+    for (const loc of locs) {
+      try {
+        const u = new URL(loc)
+        if (u.origin === origin.origin) sitemapLocs.push(u.toString())
+      } catch { /* skip malformed <loc> */ }
+    }
+    return true
   }
+  for (const candidate of sitemapUrls.slice(0, 3)) {
+    if (await readSitemap(candidate)) sitemapOk = true
+  }
+  if (!sitemapOk) addSite('medium', 'missing_sitemap', 'sitemap.xml নেই/পড়া যায়নি')
 
-  // BFS crawl (same-origin)
-  const queue = [seed.url]
-  const seen = new Set([seed.url])
+  // BFS crawl (same-origin). The frontier is seeded with the homepage AND the
+  // sitemap's own URLs: a JS-rendered menu or a link-poor homepage used to
+  // collapse the whole "40-page audit" to a couple of pages while the summary
+  // still advertised the cap (owner incident 2026-07-25 — 12 pages crawled
+  // against an 86-URL sitemap, reported as 40).
+  const { queue, seen } = buildCrawlFrontier(seed.url, sitemapLocs, maxPages)
   const pages = []
   const fetchErrors = []
   while (queue.length > 0 && pages.length < maxPages && Date.now() - startedAt < TOTAL_TIME_CAP_MS) {
@@ -337,17 +435,61 @@ export async function crawlSite({ url, maxPages = 40 }) {
 
 const WEIGHT = { critical: 15, high: 6, medium: 2, low: 0.5 }
 
+/**
+ * Page-level issues are scored by RATE, not by raw count (owner incident
+ * 2026-07-25: an 80-page crawl of a 91-URL sitemap scored 0/100 because the old
+ * penalty was an unbounded sum — every extra page crawled made the site look
+ * worse, so a deep audit was punished for being deep and 0 told Boss nothing).
+ *
+ * The rule now:
+ *   - a SITE-level issue (no https, sitemap missing, broken pages) keeps its flat
+ *     weight — there is one site, so one penalty;
+ *   - a PAGE-level issue costs `weight × (how many pages carry it / pages
+ *     crawled)`, scaled by PAGE_RATE_MULT. "every page misses an H1" now costs the
+ *     same whether we crawled 10 pages or 80, which is what makes a before/after
+ *     comparison honest;
+ *   - each severity's page contribution is capped so one noisy family can never
+ *     floor the score on its own and hide everything else.
+ *
+ * Raw counts are unchanged and still reported next to the score.
+ */
+/**
+ * Calibration (owner review 2026-07-26): the first version of this normalisation
+ * over-corrected. A real audit — 10 medium and 79 low findings spread over 80
+ * pages — scored 95/100, which flatters the site as badly as the old unbounded
+ * sum floored it at 0. The cause: a `low` issue on EVERY page cost 1.5 points.
+ *
+ * A problem present on every page is systematic, not cosmetic, so the cost is now
+ * expressed directly: FULL_RATE_COST is what a severity costs when it affects
+ * every crawled page, scaled linearly by how much of the site it actually
+ * touches. Rate still means the score is comparable across crawl sizes.
+ */
+const FULL_RATE_COST = { critical: 45, high: 30, medium: 18, low: 10 }
+
 export function scoreAudit(crawl) {
-  const all = [
-    ...crawl.siteChecks.issues.map((i) => ({ ...i, scope: 'site' })),
-    ...crawl.pages.flatMap((p) => p.issues.map((i) => ({ ...i, scope: p.url }))),
-  ]
+  const siteIssues = crawl.siteChecks.issues.map((i) => ({ ...i, scope: 'site' }))
+  const pageIssues = crawl.pages.flatMap((p) => p.issues.map((i) => ({ ...i, scope: p.url })))
+  const all = [...siteIssues, ...pageIssues]
+
   const counts = { critical: 0, high: 0, medium: 0, low: 0 }
+  for (const i of all) counts[i.severity] = (counts[i.severity] ?? 0) + 1
+
   let penalty = 0
-  for (const i of all) {
-    counts[i.severity] = (counts[i.severity] ?? 0) + 1
-    penalty += WEIGHT[i.severity] ?? 1
+  for (const i of siteIssues) penalty += WEIGHT[i.severity] ?? 1
+
+  const pagesCrawled = crawl.pagesCrawled ?? crawl.pages.length ?? 0
+  if (pagesCrawled > 0) {
+    const perSeverity = {}
+    for (const i of pageIssues) perSeverity[i.severity] = (perSeverity[i.severity] ?? 0) + 1
+    for (const [severity, n] of Object.entries(perSeverity)) {
+      const rate = Math.min(n / pagesCrawled, 1)
+      penalty += (FULL_RATE_COST[severity] ?? 10) * rate
+    }
+  } else {
+    // No page was crawled — nothing to normalise against; fall back to flat sums.
+    for (const i of pageIssues) penalty += WEIGHT[i.severity] ?? 1
   }
+
   const score = Math.max(0, Math.round(100 - penalty))
   return { score, counts, issues: all }
 }
@@ -356,7 +498,9 @@ export function buildReportMarkdown({ url, crawl, scored, keywordsNote }) {
   const lines = [
     `# SEO অডিট রিপোর্ট — ${url}`,
     '',
-    `**স্কোর: ${scored.score}/100** · পেজ দেখা হয়েছে: ${crawl.pagesCrawled} · গড় TTFB: ${crawl.avgTtfbMs}ms`,
+    `**স্কোর: ${scored.score}/100** · পেজ দেখা হয়েছে: ${crawl.pagesCrawled}`
+      + (crawl.sitemap.count ? ` / sitemap-এ ${crawl.sitemap.count}` : '')
+      + ` · গড় TTFB: ${crawl.avgTtfbMs}ms · ক্রল সময়: ${Math.round((crawl.elapsedMs ?? 0) / 1000)}s`,
     `সমস্যা: 🔴 critical ${scored.counts.critical} · 🟠 high ${scored.counts.high} · 🟡 medium ${scored.counts.medium} · ⚪ low ${scored.counts.low}`,
     '',
     '## সাইট-লেভেল সমস্যা',
@@ -410,7 +554,24 @@ export async function runSeoAudit(payload) {
     counts: scored.counts,
     pagesCrawled: crawl.pagesCrawled,
     avgTtfbMs: crawl.avgTtfbMs,
+    // Honesty of coverage: how long the crawl really took and how much of the
+    // site it really saw. Both were dropped before, which is what made a
+    // 1-page/5-second run indistinguishable from a 40-page audit.
+    elapsedMs: crawl.elapsedMs,
+    sitemapCount: crawl.sitemap.count,
+    maxPages: Math.min(Math.max(Number(payload.maxPages) || 40, 5), MAX_PAGES_HARD),
     reportMarkdown: report,
-    auditJson: { url, crawledAt: new Date().toISOString(), score: scored.score, counts: scored.counts, siteChecks: crawl.siteChecks, sitemap: crawl.sitemap, pages: crawl.pages.map(({ internalLinks, ...p }) => p) },
+    auditJson: {
+      url,
+      crawledAt: new Date().toISOString(),
+      score: scored.score,
+      counts: scored.counts,
+      pagesCrawled: crawl.pagesCrawled,
+      elapsedMs: crawl.elapsedMs,
+      avgTtfbMs: crawl.avgTtfbMs,
+      siteChecks: crawl.siteChecks,
+      sitemap: crawl.sitemap,
+      pages: crawl.pages.map(({ internalLinks, ...p }) => p),
+    },
   }
 }

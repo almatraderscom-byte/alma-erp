@@ -17,6 +17,14 @@ export interface Conversation {
   title: string | null
   projectId: string | null
   modelId?: string | null
+  /** Execution mode picker: auto | direct | plan | plan_drive (null = auto). */
+  chatMode?: string | null
+  /**
+   * PM-1 permission axis: plan | careful | standard | supervised | elevated
+   * (null = standard). `undefined` means "this row did not carry it" — a partial
+   * row must trigger a read, never a silent default.
+   */
+  permissionMode?: string | null
   source?: string | null
   archived: boolean
   updatedAt: string
@@ -160,6 +168,13 @@ export default function AgentSidebar({
           <span className="text-sm font-bold text-[#E07A5F]">
             ALMA Agent
           </span>
+          <a
+            href="/agent/phone"
+            className="rounded-full border border-border-subtle bg-white/[0.04] px-2 py-0.5 text-[9px] text-muted transition-all hover:border-[#E07A5F]/25 hover:bg-[#E07A5F]/5 hover:text-[#E07A5F]"
+            title="ব্রাউজার ফোন — সিম ছাড়াই কল"
+          >
+            ☎
+          </a>
           <a
             href="/agent/costs"
             className="rounded-full border border-border-subtle bg-white/[0.04] px-2 py-0.5 text-[9px] text-muted transition-all hover:border-[#E07A5F]/25 hover:bg-[#E07A5F]/5 hover:text-[#E07A5F]"

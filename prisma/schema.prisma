@@ -2038,6 +2038,21 @@ model AgentConversation {
   project            AgentProject?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
   title              String?
   modelId            String          @default("claude-sonnet-4-6") @map("model")
+  /// How the agent may work in this chat: auto | direct | plan | plan_drive.
+  /// NULL = auto. Enforced by withholding tools, not by prompt text.
+  chatMode           String?         @map("chat_mode")
+  /// PM-1: how MUCH the agent may do without Boss in this chat:
+  /// plan | careful | standard | supervised | elevated. NULL = standard.
+  /// The tier ceiling still applies above it — R4 is owner-only in every mode.
+  permissionMode     String?         @map("permission_mode")
+  /// The time-boxed elevation grant 'elevated' runs under:
+  /// { families: string[], expiresAt: ISO }. No expiry ⇒ treated as absent.
+  elevationGrant     Json?           @map("elevation_grant")
+  /// The size of the job running in this chat: chat | deep | long_run. Kept for
+  /// the job's lifetime so a two-word answer does not shrink it back to a chat
+  /// reply mid-work. Expires — a class must never leak into next week.
+  workClass          String?         @map("work_class")
+  workClassUntil     DateTime?       @map("work_class_until")
   source             String          @default("web")
   archived           Boolean         @default(false)
   pinned             Boolean         @default(false)
@@ -2056,6 +2071,12 @@ model AgentConversation {
   /// Business scope inherited from project. null = personal / cross-business.
   /// One of: 'ALMA_LIFESTYLE' | 'ALMA_TRADING' | null
   businessId         String?         @map("business_id")
+  /// SK-3: the skill pinned for this chat. One chat, one job — re-picking a 5k
+  /// token skill every turn would destroy the prompt cache. NULL = none pinned.
+  pinnedSkill        String?         @map("pinned_skill")
+  /// SK-3/U5: WHY that skill was pinned — layer, reason, candidates. Stored so a
+  /// wrong pin has an answer instead of a guess.
+  skillRouteTrace    Json?           @map("skill_route_trace")
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   messages           AgentMessage[]
@@ -2306,6 +2327,10 @@ model AgentTurn {
   /// client's replay cursor and the "stream quiet but alive" liveness signal.
   lastSeq               Int       @default(-1) @map("last_seq")
   executionMode         String?   @map("execution_mode") // inline | worker
+  /// Whose instruction this turn executes — owner_direct (he typed it) vs
+  /// owner_policy (a standing policy / an unattended Plan-Driver step). The tool
+  /// guard reads it so unattended work meets the autonomy ladder + money cap.
+  instructionOrigin     String?   @map("instruction_origin")
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at")
 
   @@unique([conversationId, clientMessageId])
@@ -2492,7 +2517,14 @@ model AgentPendingAction {
   /// Business scope for routing/filtering ('ALMA_LIFESTYLE' | 'ALMA_TRADING').
   businessId     String    @default("ALMA_LIFESTYLE") @map("business_id")
   createdAt      DateTime  @default(now())
+  /// When the row SETTLED — set by the approve/reject routes AND by the worker's
+  /// job-result callback. It does NOT mean Boss decided anything.
   resolvedAt     DateTime?
+  /// Did BOSS decide this? Only the approve/reject routes set it, and both
+  /// refuse a row that is not 'pending' — so a row created already-approved (a
+  /// read-only crawl, a queued generation) can never be marked his.
+  /// NULL = unknown provenance (history written before this column).
+  ownerDecided   Boolean?  @map("owner_decided")
   result         Json?
   /// Phase 4: canonical WorkflowRun this card belongs to (camelCase column —
   /// this legacy table is camelCase in the DB).
@@ -3761,6 +3793,28 @@ model AgentKvSetting {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("agent_kv_settings")
+}
+
+/// The SIP provider's own panel credential, for the ONE thing only their side can answer:
+/// which PBX currently holds the registration binding. Our own Asterisk has reported
+/// "Registered (exp. 3227s)" while their table did not list us at all, and believing our
+/// side cost roughly half of all outbound calls for days.
+///
+/// Deliberately NOT in `agent_kv_settings`: the agent's own `get_settings` tool dumps that
+/// whole table, and a third party's password has no business passing through a model's
+/// context. The secret is stored AES-256-GCM encrypted and is never returned by any route.
+model PhoneProviderCredential {
+  id          String    @id @default("amarip")
+  username    String
+  secretEnc   String    @map("secret_enc") @db.Text
+  loginUrl    String?   @map("login_url")
+  statusUrl   String?   @map("status_url")
+  lastCheckAt DateTime? @map("last_check_at")
+  lastCheckOk Boolean?  @map("last_check_ok")
+  lastError   String?   @map("last_error") @db.Text
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@map("phone_provider_credentials")
 }
 
 // Skill Engine V2 (B4): one row per imported GitHub skill VERSION (pinned commit).
@@ -5131,48 +5185,64 @@ model AgentOwnerFeedback {
 }
 
 model AgentPlan {
-  id             String          @id @default(uuid())
-  conversationId String?         @map("conversation_id")
-  businessId     String          @default("ALMA_LIFESTYLE") @map("business_id")
-  goal           String
-  status         String          @default("draft")
+  id               String          @id @default(uuid())
+  conversationId   String?         @map("conversation_id")
+  businessId       String          @default("ALMA_LIFESTYLE") @map("business_id")
+  goal             String
+  status           String          @default("draft")
   /// Phase 4: the WorkflowRun this plan belongs to.
-  workflowRunId  String?         @map("workflow_run_id")
-  createdAt      DateTime        @default(now()) @map("created_at")
-  updatedAt      DateTime        @updatedAt @map("updated_at")
-  completedAt    DateTime?       @map("completed_at")
-  selfCheckNote  String?         @map("self_check_note")
+  workflowRunId    String?         @map("workflow_run_id")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  completedAt      DateTime?       @map("completed_at")
+  selfCheckNote    String?         @map("self_check_note")
   // Plan-Driver (autonomous pursue-until-completion). Phase A reads these only.
-  doneCriteria   String?         @map("done_criteria")
-  autodriveState String          @default("idle") @map("autodrive_state")
-  attemptCount   Int             @default(0) @map("attempt_count")
-  maxAttempts    Int             @default(5) @map("max_attempts")
-  nextTickAt     DateTime?       @map("next_tick_at")
-  lastDrivenAt   DateTime?       @map("last_driven_at")
-  costTaka       Int             @default(0) @map("cost_taka")
-  steps          AgentPlanStep[]
+  doneCriteria     String?         @map("done_criteria")
+  autodriveState   String          @default("idle") @map("autodrive_state")
+  attemptCount     Int             @default(0) @map("attempt_count")
+  maxAttempts      Int             @default(5) @map("max_attempts")
+  nextTickAt       DateTime?       @map("next_tick_at")
+  lastDrivenAt     DateTime?       @map("last_driven_at")
+  costTaka         Int             @default(0) @map("cost_taka")
+  /// S0 spend accounting: milli-taka so a sub-taka turn isn't rounded up to 1৳,
+  /// plus a per-DAY bucket so the daily cap stops summing lifetime plan cost.
+  costMilliTaka    Int             @default(0) @map("cost_milli_taka")
+  costMilliTakaDay Int             @default(0) @map("cost_milli_taka_day")
+  /// Asia/Dhaka calendar day (YYYY-MM-DD) the day-bucket above belongs to.
+  costDay          String?         @map("cost_day")
+  steps            AgentPlanStep[]
 
   @@index([conversationId])
   @@index([businessId, status])
   @@index([autodriveState, nextTickAt], map: "agent_plans_autodrive_idx")
+  @@index([costDay], map: "agent_plans_cost_day_idx")
   @@map("agent_plans")
 }
 
 model AgentPlanStep {
-  id        String    @id @default(uuid())
-  planId    String    @map("plan_id")
-  plan      AgentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  seq       Int
-  action    String
-  toolName  String?   @map("tool_name")
-  dependsOn String[]  @map("depends_on")
-  status    String    @default("pending")
-  result    Json?
-  error     String?
-  startedAt DateTime? @map("started_at")
-  doneAt    DateTime? @map("done_at")
+  id            String    @id @default(uuid())
+  planId        String    @map("plan_id")
+  plan          AgentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  seq           Int
+  action        String
+  toolName      String?   @map("tool_name")
+  dependsOn     String[]  @map("depends_on")
+  status        String    @default("pending")
+  result        Json?
+  error         String?
+  startedAt     DateTime? @map("started_at")
+  doneAt        DateTime? @map("done_at")
+  /// S0 retry state — a failed step is re-queued (with backoff) until its own
+  /// ceiling, instead of ending the whole plan on the first failure.
+  attemptCount  Int       @default(0) @map("attempt_count")
+  maxAttempts   Int       @default(3) @map("max_attempts")
+  nextAttemptAt DateTime? @map("next_attempt_at")
+  /// S0 queue mode — the worker turn this step is waiting on (reaped next tick).
+  turnId        String?   @map("turn_id")
+  dispatchedAt  DateTime? @map("dispatched_at")
 
   @@index([planId, seq])
+  @@index([planId, status], map: "agent_plan_steps_plan_status_idx")
   @@map("agent_plan_steps")
 }
 
@@ -5355,6 +5425,50 @@ model AgentVoiceCall {
   dialedAt         DateTime?                @map("dialed_at")
   answeredAt       DateTime?                @map("answered_at")
   reportReceivedAt DateTime?                @map("report_received_at")
+  /// Listenable copy of the call (Supabase). Covers the post-transfer human conversation too.
+  recordingUrl     String?                  @map("recording_url")
+  recordingSecs    Int?                     @map("recording_secs")
+  /// 'inbound' | 'outbound'. The SIP gateway has always sent this on the CDR; until the
+  /// phone console there was nowhere to put it, so direction had to be guessed from
+  /// `purpose`. Guessing is wrong for one-way message calls, hence a real column.
+  direction        String?
+  /// Caller's number on an inbound call, and the DID they dialled. `toNumber` holds the
+  /// far end either way, so these two are what make an inbound row readable.
+  fromNumber       String?                  @map("from_number")
+  did              String?
+  /// ISDN hangup cause as the switch reported it (16 = normal, 17 = busy, 19 = no answer,
+  /// 34 = no circuit …). "Why did this call fail" is unanswerable without it.
+  hangupCause      Int?                     @map("hangup_cause")
+  hangupCauseTxt   String?                  @map("hangup_cause_txt")
+  /// Where a transferred call went and how long the two humans then spoke — the AI steps
+  /// off the audio path at transfer, so this is the only record of that half.
+  transferredTo    String?                  @map("transferred_to")
+  transferTalkSecs Int?                     @map("transfer_talk_secs")
+  /// Objective audio-quality counters from the gateway's playout, per call. An underrun is
+  /// the queue running dry mid-sentence (~200 ms of dead air inside a word); `dropped` is
+  /// the opposite — frames skipped to catch up. Previously these existed only in one log
+  /// line on the VPS, so an audio regression could only be caught by the owner's ear.
+  audioUnderruns   Int?                     @map("audio_underruns")
+  audioDropped     Int?                     @map("audio_dropped")
+  audioCushionFrames Int?                   @map("audio_cushion_frames")
+  audioFramesOut   Int?                     @map("audio_frames_out")
+  audioSilenceFrames Int?                   @map("audio_silence_frames")
+  audioBargeIns    Int?                     @map("audio_barge_ins")
+  /// Turn boundaries — the model finishing a sentence. Counted separately from underruns
+  /// because treating one as the other is what made the jitter cushion ratchet up all call.
+  audioTurnEnds    Int?                     @map("audio_turn_ends")
+  /// What the NETWORK did, sampled from Asterisk's own RTP counters while the call was up.
+  /// A call's recording is tapped inside Asterisk, so it can never contain packet loss that
+  /// happened afterwards on the wire — which is why a recording can sound clean while the
+  /// call did not. These are the numbers that close that blind spot.
+  rtpCodec         String?                  @map("rtp_codec")
+  rtpRxLost        Int?                     @map("rtp_rx_lost")
+  rtpRxLostPct     Float?                   @map("rtp_rx_lost_pct")
+  rtpRxJitterMs    Float?                   @map("rtp_rx_jitter_ms")
+  rtpTxLost        Int?                     @map("rtp_tx_lost")
+  rtpTxLostPct     Float?                   @map("rtp_tx_lost_pct")
+  rtpTxJitterMs    Float?                   @map("rtp_tx_jitter_ms")
+  rtpRttMs         Float?                   @map("rtp_rtt_ms")
   createdAt        DateTime                 @default(now()) @map("created_at")
   endedAt          DateTime?                @map("ended_at")
   deliveries       AgentVoiceCallDelivery[]
@@ -5362,6 +5476,7 @@ model AgentVoiceCall {
   @@index([status, createdAt])
   @@index([conversationId])
   @@index([pendingActionId])
+  @@index([createdAt])
   @@map("agent_voice_calls")
 }
 
@@ -5888,4 +6003,80 @@ model AgentFocusEvent {
   @@index([focusId, createdAt])
   @@index([conversationId, createdAt])
   @@map("agent_focus_events")
+}
+
+// ─── GRIND ENGINE: durable findings store (S1) ───────────────────────────────
+// One campaign ("fix all 246 issues the audit found") is one AgentFindingSet;
+// every individual problem is one AgentFinding. The fingerprint is byte-identical
+// to the key the before/after client report already uses (`${scope}|${code}`), so
+// the store and that report agree by construction.
+
+/// A fix campaign over one measured surface (a site audit, a health scan, the
+/// product-SEO sweep). Completion is decided by ARITHMETIC over its findings —
+/// see grind/completion.ts — never by a model saying it is done.
+model AgentFindingSet {
+  id              String         @id @default(uuid())
+  businessId      String         @default("ALMA_LIFESTYLE") @map("business_id")
+  /// Which adapter produced (and can re-measure) these findings.
+  /// 'seo_audit' | 'health_scan' | 'product_seo'
+  source          String
+  /// What was measured — a site origin, a scan scope, a catalogue id.
+  target          String
+  label           String?
+  /// open | complete | halted
+  status          String         @default("open")
+  planId          String?        @map("plan_id")
+  conversationId  String?        @map("conversation_id")
+  /// Storage path of the baseline snapshot the campaign is measured against.
+  baselineRef     String?        @map("baseline_ref")
+  haltReason      String?        @map("halt_reason")
+  /// How many times a fix batch introduced NEW problems. Three halts the campaign.
+  regressionCount Int            @default(0) @map("regression_count")
+  lastMeasuredAt  DateTime?      @map("last_measured_at")
+  lastFixAt       DateTime?      @map("last_fix_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  findings        AgentFinding[]
+
+  @@index([status], map: "agent_finding_sets_status_idx")
+  @@index([planId], map: "agent_finding_sets_plan_idx")
+  @@map("agent_finding_sets")
+}
+
+/// One problem inside a campaign.
+///
+/// `status` is the safety model: only the deterministic step-verifier may write
+/// 'fixed'. A model's verdict can reach at most 'fix_claimed', which the
+/// end-of-campaign re-measurement has to confirm.
+model AgentFinding {
+  id           String          @id @default(uuid())
+  setId        String          @map("set_id")
+  set          AgentFindingSet @relation(fields: [setId], references: [id], onDelete: Cascade)
+  /// `${scope}|${code}` — identical to seo-report.ts's compare key.
+  fingerprint  String
+  scope        String
+  code         String
+  /// Fix family — findings that share a root cause and one fix approach.
+  family       String
+  severity     String
+  detail       String?
+  /// open | in_progress | fix_claimed | fixed | regressed | needs_rediagnosis | wont_fix
+  status       String          @default("open")
+  rootCause    String?         @map("root_cause")
+  /// Concrete evidence for the root cause: file:line or a URL.
+  rootCauseRef String?         @map("root_cause_ref")
+  batchKey     String?         @map("batch_key")
+  stepId       String?         @map("step_id")
+  note         String?
+  /// True when this finding did NOT exist in the baseline — a regression we caused.
+  introduced   Boolean         @default(false)
+  firstSeenAt  DateTime        @default(now()) @map("first_seen_at")
+  lastSeenAt   DateTime?       @map("last_seen_at")
+  reMeasuredAt DateTime?       @map("re_measured_at")
+  fixedAt      DateTime?       @map("fixed_at")
+
+  @@unique([setId, fingerprint], map: "agent_findings_set_fingerprint_key")
+  @@index([setId, status], map: "agent_findings_set_status_idx")
+  @@index([setId, family], map: "agent_findings_set_family_idx")
+  @@map("agent_findings")
 }

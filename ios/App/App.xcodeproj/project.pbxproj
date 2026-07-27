@@ -80,6 +80,7 @@
 		F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A013 /* OrdersSwiftUI.swift */; };
 		F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */; };
 		F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A015 /* CompanionSwiftUI.swift */; };
+		F2AA7700000000000000B9F1 /* BrowserLiveSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A9F1 /* BrowserLiveSwiftUI.swift */; };
 		F2AA7700000000000000B016 /* OrderCreateSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */; };
 		F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A021 /* AssistantSwiftUI.swift */; };
 		FA22BB00000000000000B901 /* AssistantTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA22BB00000000000000A901 /* AssistantTransport.swift */; };
@@ -264,6 +265,7 @@
 		F2AA7700000000000000A013 /* OrdersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrdersSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A015 /* CompanionSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A9F1 /* BrowserLiveSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserLiveSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderCreateSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A021 /* AssistantSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSwiftUI.swift; sourceTree = "<group>"; };
 		FA22BB00000000000000A901 /* AssistantTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantTransport.swift; sourceTree = "<group>"; };
@@ -504,6 +506,7 @@
 				F2AA7700000000000000A040 /* AlmaNativeRouter.swift */,
 				F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */,
 				F2AA7700000000000000A015 /* CompanionSwiftUI.swift */,
+				F2AA7700000000000000A9F1 /* BrowserLiveSwiftUI.swift */,
 				F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
@@ -903,6 +906,7 @@
 				F2AA7700000000000000B040 /* AlmaNativeRouter.swift in Sources */,
 				F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */,
+				F2AA7700000000000000B9F1 /* BrowserLiveSwiftUI.swift in Sources */,
 				F2AA7700000000000000B016 /* OrderCreateSwiftUI.swift in Sources */,
 				75EE0277D14177856309933A /* CreativeStudioSwiftUI.swift in Sources */,
 				56EBF52AB2CCBE8B449217D1 /* TradingHomeSwiftUI.swift in Sources */,
@@ -1105,7 +1109,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 84;
+				CURRENT_PROJECT_VERSION = 86;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -1128,7 +1132,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 84;
+				CURRENT_PROJECT_VERSION = 86;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -1147,7 +1151,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 84;
+				CURRENT_PROJECT_VERSION = 86;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;
@@ -1169,7 +1173,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 84;
+				CURRENT_PROJECT_VERSION = 86;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;

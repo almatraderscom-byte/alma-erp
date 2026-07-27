@@ -58,6 +58,8 @@ export type AgentPresentationV1 = {
 type TimelineEntryIn = {
   t?: unknown
   text?: unknown
+  /** Speak-first: this text entry is the spoken FIRST line, not progress prose. */
+  lead?: unknown
   state?: unknown
   attempt?: unknown
   max?: unknown
@@ -159,6 +161,26 @@ export function buildAgentPresentationV1(input: BuildPresentationInput): AgentPr
   const timeline: TimelineEntryIn[] = Array.isArray(input.timeline)
     ? (input.timeline as TimelineEntryIn[]).filter((e) => e && typeof e === 'object')
     : []
+  // Speak-first (owner rule 2026-07-25): when the head spoke BEFORE doing
+  // anything — "বস, … বুঝেছি — … দেখছি" — that line is the FIRST timeline entry
+  // and it leads the reply. Every other prose entry stays audit/progress data
+  // (the settled answer is chosen below). Without this the canonical projection
+  // dropped the line, so a finished or reloaded turn lost the sentence Boss had
+  // already read live — caught in the simulator after two verify retries.
+  const leadEntry = timeline.find((e) => e.t === 'text' && e.lead === true)
+  const leadText =
+    leadEntry && typeof leadEntry.text === 'string' ? leadEntry.text.trim() : ''
+  // Placement (owner rule 2026-07-26): the line goes AFTER the head's first
+  // thinking row, not above it. The agent did not answer without thinking —
+  // showing the reply first and the reasoning under it reads backwards. So:
+  // thought → the spoken line → the rest of the flow. Inserted below, once the
+  // first thinking block exists (or at the front when the turn had none).
+  let leadInserted = false
+  const insertLead = () => {
+    if (leadInserted || !leadText) return
+    leadInserted = true
+    blocks.push({ id: nextId(), type: 'prose', text: leadText, state: 'final' })
+  }
   if (timeline.length > 0) {
     for (const e of timeline) {
       // Timeline prose is audit/progress data. The single settled prose block is
@@ -172,7 +194,13 @@ export function buildAgentPresentationV1(input: BuildPresentationInput): AgentPr
           detail: e.text,
           status: 'done',
         })
-      } else if (e.t === 'verify') {
+        insertLead()
+      } else if (e.t === 'tool' || e.t === 'file' || e.t === 'verify') {
+        // A turn that jumped straight to work without a thinking row still shows
+        // the line before that work.
+        insertLead()
+      }
+      if (e.t === 'verify') {
         const attempt = num(e.attempt) ?? 1
         const max = num(e.max) ?? attempt
         blocks.push({
@@ -205,6 +233,8 @@ export function buildAgentPresentationV1(input: BuildPresentationInput): AgentPr
       }
       // Unknown entry types are skipped (non-fatal, forward-compatible).
     }
+    // A turn with no thinking/tool/file rows at all still shows the line.
+    insertLead()
   } else {
     for (const t of input.toolCalls ?? []) {
       blocks.push({
@@ -219,8 +249,14 @@ export function buildAgentPresentationV1(input: BuildPresentationInput): AgentPr
     }
   }
 
-  const finalText = selectSettledProse(input.content, timeline)
-  if (finalText) {
+  insertLead()
+  const settled = selectSettledProse(input.content, timeline)
+  // The server keeps the opening line as a floor inside the stored text, so
+  // strip it here rather than printing the same sentence twice.
+  const finalText = leadText && settled.startsWith(leadText)
+    ? settled.slice(leadText.length).trim()
+    : settled
+  if (finalText && finalText !== leadText) {
     blocks.push({ id: nextId(), type: 'prose', text: finalText, state: 'final' })
   }
 

@@ -46,11 +46,23 @@ export async function POST(req: NextRequest) {
     const client = getClient()
     const transcription = await transcribeVoiceBangla(client, audioFile)
 
-    const durationSec = estimateAudioDurationSeconds(audioFile.size)
+    // Prefer the recorder's REAL elapsed seconds (sent by useVoiceRecorder) over
+    // the bytes/2000 estimate — browser/iOS audio is ~128-160 kbps, not the
+    // 16 kbps that estimate assumes, so the guess over-billed ~8-10x. Clamp to
+    // the recorder's own hard caps so a bogus client value can't distort logs.
+    const clientDurRaw = parseInt(String(formData.get('duration_secs') ?? ''), 10)
+    const clientDur = Number.isFinite(clientDurRaw) ? Math.min(Math.max(clientDurRaw, 1), 600) : null
+    const durationSec = clientDur ?? estimateAudioDurationSeconds(audioFile.size)
     void logCost({
       provider: 'openai',
       kind: 'transcribe',
-      units: { duration_seconds: durationSec, bytes: audioFile.size, model: transcription.model },
+      units: {
+        duration_seconds: durationSec,
+        duration_source: clientDur != null ? 'client_timer' : 'byte_estimate',
+        bytes: audioFile.size,
+        model: transcription.model,
+        purpose: 'web_voice',
+      },
       costUsd: calcWhisperCostUsd(durationSec),
       dedupKey: `whisper:web:${audioFile.size}:${transcription.text.slice(0, 16)}`,
     })

@@ -15,6 +15,14 @@ export interface ModelEntry {
   contextWindow: number
   inPerM: number
   outPerM: number
+  /**
+   * Provider's PUBLISHED price for a cached input token, per Mtok (cost audit
+   * Phase 8). When absent, cost.ts falls back to its per-vendor multiplier
+   * estimate. Set it whenever the provider publishes a real number: xAI lists
+   * $0.20 for grok-4.20 while our generic 0.25× multiplier guessed $0.3125, so
+   * the dashboard was over-stating cache cost by ~56%.
+   */
+  cachedInPerM?: number
   thinking?: 'adaptive' | 'level' | 'none'
   default?: boolean
   /**
@@ -26,6 +34,20 @@ export interface ModelEntry {
    * prompt. Omitted = true (pickable).
    */
   headPickable?: boolean
+  /**
+   * Universal pipeline Phase 6 — how expensive a tool ROUND is on this model,
+   * which decides the head's per-turn tool-round budget. Before this, the budget
+   * was a `provider === 'anthropic'` check, so a Claude head was throttled after
+   * HEAD_TOOL_BUDGET rounds while an equally-billed Grok/DeepSeek head ran
+   * unbounded — a model-dependent behaviour difference with no principle behind
+   * it. Omitted = 'standard' semantics for the head budget only when the
+   * universal pipeline flag is on; otherwise the legacy provider check applies,
+   * so an unset field changes nothing.
+   *   'premium'   — expensive head: hand off to a worker early (HEAD_TOOL_BUDGET)
+   *   'marketing' — Qwen's own specialty: larger budget, no hand-off
+   *   'standard'  — cheap worker-grade head: STANDARD_HEAD_TOOL_BUDGET rounds
+   */
+  costTier?: 'premium' | 'marketing' | 'standard'
 }
 
 export const DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
@@ -56,7 +78,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'claude-sonnet-4-6',
     supportsTools: true,
     supportsCaching: true,
-    contextWindow: 200_000,
+    // Anthropic model overview: Claude Sonnet 4.6 supports a 1M-token window.
+    contextWindow: 1_000_000,
     inPerM: 3,
     outPerM: 15,
     thinking: 'adaptive',
@@ -69,7 +92,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'claude-opus-4-8',
     supportsTools: true,
     supportsCaching: true,
-    contextWindow: 200_000,
+    // Anthropic model overview: Claude Opus 4.8 supports a 1M-token window.
+    contextWindow: 1_000_000,
     // Corrected 2026-07: list price is $5/$25 (was written 3x high, which
     // inflated Opus escalation cost estimates and the opus-gate budget math).
     inPerM: 5,
@@ -107,7 +131,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'gemini-3.5-flash',
     supportsTools: true,
     supportsCaching: false,
-    contextWindow: 1_000_000,
+    contextWindow: 1_048_576,
     inPerM: 1.5,
     outPerM: 9,
     thinking: 'level',
@@ -131,7 +155,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'gpt-5.5',
     supportsTools: true,
     supportsCaching: false,
-    contextWindow: 400_000,
+    contextWindow: 1_050_000,
     inPerM: 5,
     outPerM: 30,
     thinking: 'none',
@@ -143,7 +167,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'gpt-5.4',
     supportsTools: true,
     supportsCaching: false,
-    contextWindow: 400_000,
+    contextWindow: 1_050_000,
     inPerM: 2.5,
     outPerM: 15,
     thinking: 'none',
@@ -180,7 +204,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'google/gemini-2.5-flash-lite',
     supportsTools: true,
     supportsCaching: false,
-    contextWindow: 1_000_000,
+    contextWindow: 1_048_576,
     inPerM: 0.1,
     outPerM: 0.4,
     thinking: 'none',
@@ -202,8 +226,9 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     supportsTools: true,
     supportsCaching: true,
     contextWindow: 1_000_000,
-    inPerM: 1.25,
-    outPerM: 3.75,
+    // OpenRouter live model catalog, verified 2026-07-25.
+    inPerM: 1.475,
+    outPerM: 4.425,
     // 'level' asks OpenRouter for reasoning tokens so the owner sees the same
     // live step-by-step thinking stream as the Gemini head. Models/providers
     // that can't reason simply return none — the adapter degrades gracefully.
@@ -216,9 +241,9 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'deepseek/deepseek-v4-flash',
     supportsTools: true,
     supportsCaching: true,
-    contextWindow: 1_000_000,
-    inPerM: 0.09,
-    outPerM: 0.18,
+    contextWindow: 1_048_576,
+    inPerM: 0.0938,
+    outPerM: 0.1876,
     // Same live-thinking request as the Qwen head (see note above).
     thinking: 'level',
   },
@@ -233,7 +258,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'gemini-2.5-flash',
     supportsTools: true,
     supportsCaching: false,
-    contextWindow: 1_000_000,
+    contextWindow: 1_048_576,
     inPerM: 0.3,
     outPerM: 2.5,
     thinking: 'level',
@@ -261,7 +286,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     // Same family as V4 Flash — the adapter's cache_control breakpoint on the
     // system prefix works here too (verified pricing lists cached-input rates).
     supportsCaching: true,
-    contextWindow: 1_000_000,
+    contextWindow: 1_048_576,
     inPerM: 0.435,
     outPerM: 0.87,
     thinking: 'level',
@@ -281,9 +306,14 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     apiModel: 'grok-4.20',
     supportsTools: true,
     supportsCaching: false,
-    contextWindow: 2_000_000,
+    // xAI direct serves a 1M window; the OpenRouter route above is 2M.
+    contextWindow: 1_000_000,
     inPerM: 1.25,
     outPerM: 2.5,
+    // xAI publishes $0.20/Mtok for cached input on grok-4.20
+    // (docs.x.ai/developers/models, verified 2026-07-25). Our generic
+    // non-Anthropic 0.25× multiplier guessed $0.3125 — 56% too high.
+    cachedInPerM: 0.2,
     thinking: 'level',
   },
   {
@@ -296,9 +326,9 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     // picking it gives a chat/vision-only head instead of a crash+fallback.
     supportsTools: false,
     supportsCaching: false,
-    contextWindow: 131_072,
-    inPerM: 0.25,
-    outPerM: 0.75,
+    contextWindow: 128_000,
+    inPerM: 0.8,
+    outPerM: 1,
     thinking: 'none',
   },
 ]
@@ -311,6 +341,18 @@ export function getModel(id?: string | null): ModelEntry {
 
 export function isKnownModelId(id: string): boolean {
   return MODEL_REGISTRY.some((m) => m.id === id)
+}
+
+/**
+ * Universal pipeline Phase 6 — the head's tool-round budget class.
+ * Explicit `costTier` wins; otherwise it is DERIVED so the field stays purely
+ * additive (no model row has to be touched for the default to be sane):
+ * Anthropic heads are 'premium' (the historical behaviour — the only heads that
+ * ever had a budget), everything else is 'standard'.
+ */
+export function resolveHeadCostTier(model: Pick<ModelEntry, 'provider' | 'costTier'>): 'premium' | 'marketing' | 'standard' {
+  if (model.costTier) return model.costTier
+  return model.provider === 'anthropic' ? 'premium' : 'standard'
 }
 
 export function modelsByProvider(): Record<Provider, ModelEntry[]> {

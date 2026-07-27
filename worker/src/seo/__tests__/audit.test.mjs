@@ -6,7 +6,14 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { analyzeHtml, scoreAudit, buildReportMarkdown, unsafeAuditUrlReason } from '../audit.mjs'
+import {
+  analyzeHtml,
+  scoreAudit,
+  buildReportMarkdown,
+  unsafeAuditUrlReason,
+  extractSitemapLocs,
+  buildCrawlFrontier,
+} from '../audit.mjs'
 
 const GOOD = `<!doctype html><html lang="en"><head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -60,6 +67,48 @@ test('scoring penalizes by severity and never goes below 0', () => {
   assert.equal(scoreAudit(wrecked).score, 0)
 })
 
+test('page-level scoring is a RATE, so a deep crawl is not punished for being deep', () => {
+  const badPage = () => analyzeHtml(BAD, 'https://shop.example.com/bad')
+  const site = { issues: [] }
+  const small = scoreAudit({ siteChecks: site, pages: Array.from({ length: 5 }, badPage), pagesCrawled: 5 })
+  const big = scoreAudit({ siteChecks: site, pages: Array.from({ length: 80 }, badPage), pagesCrawled: 80 })
+
+  // Same problem on every page ⇒ same score, whether we saw 5 pages or 80.
+  // (This fixture is broken in every way, so that score is 0 — correctly.)
+  assert.equal(small.score, big.score)
+  // …and the raw counts still grow, so nothing is hidden from the report.
+  assert.ok(big.counts.medium > small.counts.medium)
+})
+
+test('a real-world mix scores in a usable range, not 0 and not a flattering 95', () => {
+  // The shape of the live almatraders audit on 2026-07-26: 10 medium + 79 low
+  // findings over 80 crawled pages. The first normalisation scored this 95/100,
+  // which reads as "nothing to do" for 89 real issues; the unbounded sum before
+  // it scored 0. Both are useless to the owner.
+  const page = (severity) => ({ url: 'https://x.com/p', issues: [{ severity, code: 'c', detail: 'd' }] })
+  const scored = scoreAudit({
+    siteChecks: { issues: [] },
+    pages: [...Array.from({ length: 10 }, () => page('medium')), ...Array.from({ length: 70 }, () => page('low'))],
+    pagesCrawled: 80,
+  })
+  assert.ok(scored.score > 70 && scored.score < 92, `expected a usable middle score, got ${scored.score}`)
+})
+
+test('a mostly-clean deep crawl scores well above a broken one', () => {
+  const site = { issues: [] }
+  const clean = scoreAudit({
+    siteChecks: site,
+    pages: Array.from({ length: 40 }, () => analyzeHtml(GOOD, 'https://shop.example.com/panjabi')),
+    pagesCrawled: 40,
+  })
+  const broken = scoreAudit({
+    siteChecks: site,
+    pages: Array.from({ length: 40 }, () => analyzeHtml(BAD, 'https://shop.example.com/bad')),
+    pagesCrawled: 40,
+  })
+  assert.ok(clean.score > broken.score + 20, `${clean.score} vs ${broken.score}`)
+})
+
 test('report markdown includes score, severities and a prioritized plan', () => {
   const crawl = {
     origin: 'https://shop.example.com', pagesCrawled: 2, avgTtfbMs: 420,
@@ -81,4 +130,47 @@ test('SSRF guard blocks private/loopback/metadata and bad schemes', () => {
   for (const u of ['https://almatraders.com/', 'http://example.com/page', 'https://sub.shop.com:443/x']) {
     assert.equal(unsafeAuditUrlReason(u), null, `should allow ${u}`)
   }
+})
+
+// Owner incident 2026-07-25 — almatraders.com has an 86-URL sitemap but a
+// link-poor homepage, so link-following alone crawled 12 pages while the job
+// summary still advertised "40 pages". The sitemap the crawler already parsed
+// is now the crawl frontier.
+test('sitemap <loc> entries are parsed, index sitemaps are recognised', () => {
+  const plain = `<?xml version="1.0"?><urlset>
+    <url><loc>https://shop.example.com/</loc></url>
+    <url><loc> https://shop.example.com/panjabi </loc></url>
+  </urlset>`
+  const parsed = extractSitemapLocs(plain)
+  assert.equal(parsed.isIndex, false)
+  assert.deepEqual(parsed.locs, ['https://shop.example.com/', 'https://shop.example.com/panjabi'])
+
+  const index = `<sitemapindex><sitemap><loc>https://shop.example.com/sitemap_products_1.xml</loc></sitemap></sitemapindex>`
+  assert.equal(extractSitemapLocs(index).isIndex, true)
+})
+
+test('crawl frontier seeds from the sitemap, same-origin only, homepage first', () => {
+  const { queue } = buildCrawlFrontier(
+    'https://shop.example.com/',
+    [
+      'https://shop.example.com/panjabi',
+      'https://shop.example.com/',            // duplicate of the seed
+      'https://other-site.com/spam',          // cross-origin
+      'not a url',                            // malformed
+      'https://shop.example.com/about',
+    ],
+    40,
+  )
+  assert.deepEqual(queue, [
+    'https://shop.example.com/',
+    'https://shop.example.com/panjabi',
+    'https://shop.example.com/about',
+  ])
+})
+
+test('crawl frontier stays bounded for a huge sitemap', () => {
+  const locs = Array.from({ length: 500 }, (_, i) => `https://shop.example.com/p/${i}`)
+  const { queue } = buildCrawlFrontier('https://shop.example.com/', locs, 40)
+  assert.ok(queue.length <= 81, `frontier should stay bounded, got ${queue.length}`)
+  assert.ok(queue.length > 40, 'frontier should still hold more than one page of work')
 })

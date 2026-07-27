@@ -37,6 +37,49 @@ export const BROWSER_TURN_MAX_ITERATIONS = Math.max(
 )
 
 /**
+ * DEEP-work turns (Boss asked for a deep/full/end-to-end job, or the server is
+ * driving a delivery contract) also need more rounds than a chat reply: queue
+ * the crawl → poll → read the report → read the links → present. At the plain
+ * 8-round cap the turn could die mid-contract, and the owner got a progress
+ * placeholder instead of the report (incident 2026-07-25). Env-tunable.
+ */
+export const DEEP_TURN_MAX_ITERATIONS = Math.max(
+  Number(process.env.DEEP_TURN_MAX_ITERATIONS) || 60,
+  Number(process.env.MAX_TOOL_ITERATIONS) || 8,
+)
+
+/**
+ * LONG-RUN turns — the answer to the owner's question of 2026-07-26: *"ami jodi
+ * tmk claude app e ei same task ta ditam, tmi non-stop 1 hour+ kaj korte paro —
+ * amr model keno parche na?"*
+ *
+ * It was never the model. A turn was capped at MAX_TOOL_ITERATIONS = 8 tool
+ * rounds and (by default) 280 seconds, so anything bigger HAD to be broken into
+ * Plan-Drive steps. That is why finishing an SEO job needed a whole second
+ * engine. A turn Boss has explicitly put in a working mode (plan-drive / a deep
+ * "do the whole thing" request) now gets a real working budget instead, and the
+ * existing auto-continue chains past even this when a job is genuinely huge.
+ *
+ * Still bounded: iterations are finite, every tool call still goes through the
+ * guard, and the cost ledger records every round.
+ */
+export const LONG_RUN_TURN_MAX_ITERATIONS = Math.max(
+  Number(process.env.LONG_RUN_TURN_MAX_ITERATIONS) || 120,
+  Number(process.env.DEEP_TURN_MAX_ITERATIONS) || 60,
+)
+
+/**
+ * Owner ask 2026-07-26: "ekta part er jnne koyek ta dhap sesh kore amk age update
+ * daw, erpor abr onno kaje jaw." A turn may run many tool rounds; without this it
+ * speaks once, at the end, and Boss watches a spinner learning nothing.
+ *
+ * Three rounds is about where a spinner starts to feel dead; four nudges cover a
+ * long job without turning the reply into running commentary.
+ */
+export const PROGRESS_UPDATE_EVERY = Number(process.env.AGENT_PROGRESS_UPDATE_EVERY) || 3
+export const MAX_PROGRESS_NUDGES = Number(process.env.AGENT_MAX_PROGRESS_NUDGES) || 4
+
+/**
  * HARD tool-round budget for EXPENSIVE heads (Sonnet, and the Qwen marketing
  * head). After this many tool ROUNDS (model re-invocations that requested tools)
  * the head is forced to stop spree-calling tools and may ONLY hand the rest of
@@ -131,6 +174,169 @@ export const AGENT_STYLE = parityFlagOn(process.env.AGENT_STYLE)
 // emoji spam) that rides the existing verification retry, so tone discipline is
 // enforced, not hoped for. OFF in prod unless AGENT_STYLE_GATE=on; auto-ON preview.
 export const AGENT_STYLE_GATE = parityFlagOn(process.env.AGENT_STYLE_GATE)
+
+/**
+ * ─── UNIVERSAL SERVER-SIDE TOOL SELECTION ───────────────────────────────────
+ * One pipeline decides the tool set for EVERY head model (Grok / Gemini / Qwen /
+ * DeepSeek / Claude): the model choice changes WHO thinks, never WHICH tools
+ * exist. Industry shape (Anthropic Tool Search / Tool RAG): a small relevant
+ * pack + a runtime search hop for the long tail.
+ * Each flag is an independent kill switch; every one fails back to the exact
+ * behaviour that shipped before it.
+ */
+
+// Phase 2 — the system prompt is built from the FINAL shipped tool list instead
+// of the pre-filter/pre-cap list. Before this, the prompt taught tools the model
+// never received (`unknown_tool` calls). ON by default; AGENT_PROMPT_TOOL_TRUTH=off
+// restores the old ordering (prompt from the pre-filter list).
+export function promptToolTruthEnabled(flag = process.env.AGENT_PROMPT_TOOL_TRUTH): boolean {
+  return flag !== 'off'
+}
+
+// Phase 3 — refuse to EXECUTE a tool that was not shipped to the model this
+// round; answer with a find_tool redirect instead. 'on' enforces, 'shadow' only
+// logs the would-be block, 'off' disables. Default: enforce on preview, shadow
+// in production until the owner canaries it.
+export type ToolMembershipGateMode = 'on' | 'shadow' | 'off'
+export function toolMembershipGateMode(
+  flag = process.env.AGENT_TOOL_MEMBERSHIP_GATE,
+  vercelEnv = process.env.VERCEL_ENV,
+): ToolMembershipGateMode {
+  if (flag === 'on') return 'on'
+  if (flag === 'off') return 'off'
+  if (flag === 'shadow') return 'shadow'
+  return vercelEnv === 'production' ? 'shadow' : 'on'
+}
+
+// Phase 4 — when a provider cap (xAI's 200) forces a trim, keep the RELEVANT
+// tools (core + find_tool + the turn's intent packs) instead of blindly slicing
+// the array tail, and reserve headroom for find_tool's dynamic loads. ON by
+// default (correctness fix); AGENT_RELEVANCE_CAP=off restores the blind slice.
+export function relevanceCapEnabled(flag = process.env.AGENT_RELEVANCE_CAP): boolean {
+  return flag !== 'off'
+}
+
+// Phase 5 — portable JSON-Schema sanitisation on the OpenAI/xAI/OpenRouter path
+// (the Gemini path has always sanitised; this one passed raw schemas through).
+// OFF in prod unless AGENT_OPENAI_SCHEMA_SANITIZE=on; auto-ON on preview.
+export function openAiSchemaSanitizeEnabled(
+  flag = process.env.AGENT_OPENAI_SCHEMA_SANITIZE,
+  vercelEnv = process.env.VERCEL_ENV,
+): boolean {
+  return flag === 'on' || (vercelEnv === 'preview' && flag !== 'off')
+}
+
+// Phase 6 — route EVERY head tier (including the Qwen marketing head) through
+// the one state router, and make the per-round tool budget a registry property
+// instead of a provider check. OFF in prod unless AGENT_UNIVERSAL_TOOL_PIPELINE=on;
+// auto-ON on preview.
+export function universalToolPipelineEnabled(
+  flag = process.env.AGENT_UNIVERSAL_TOOL_PIPELINE,
+  vercelEnv = process.env.VERCEL_ENV,
+): boolean {
+  return flag === 'on' || (vercelEnv === 'preview' && flag !== 'off')
+}
+
+// Phase 7 — specialist sub-agents get a trimmed, role-scoped pack + find_tool
+// instead of whole tool groups (base alone is ~103 schemas). OFF in prod unless
+// AGENT_SUBAGENT_TOOL_TRIM=on; auto-ON on preview.
+export function subagentToolTrimEnabled(
+  flag = process.env.AGENT_SUBAGENT_TOOL_TRIM,
+  vercelEnv = process.env.VERCEL_ENV,
+): boolean {
+  return flag === 'on' || (vercelEnv === 'preview' && flag !== 'off')
+}
+
+/**
+ * Owner rule 2026-07-25 — SPEAK FIRST, then work (the Claude-app shape).
+ * The head must write one spoken line (what it understood + where it will look)
+ * BEFORE its first tool call. The blocker was mechanical, not stylistic: the
+ * grounding gate set `tool_choice: 'required'` on round 0, which forces the
+ * provider to emit a tool call and therefore NO text. With this on, round 0 is
+ * left on 'auto' and grounding is enforced AFTER the round instead (one nudge),
+ * so the guarantee survives and Boss still gets an instant reply.
+ * ON by default; AGENT_SPEAK_FIRST=off restores the forced-tool round 0.
+ */
+export function speakFirstEnabled(flag = process.env.AGENT_SPEAK_FIRST): boolean {
+  return flag !== 'off'
+}
+
+/**
+ * SK-7 — a pinned skill declaring `isolation: subagent` REPLACES the general
+ * behavioural prompt with its own (kernel + alma-base + SYSTEM.md + SKILL.md)
+ * instead of being appended to it. This is the owner's original ask; the tool
+ * allowlist (SK-4) is the other half and is already live.
+ *
+ * OFF in production until he has seen it work; auto-ON on preview, which is
+ * where SKILL_ENGINE_ENABLED already is.
+ */
+export function skillIsolationEnabled(
+  flag = process.env.AGENT_SKILL_ISOLATION,
+  vercelEnv = process.env.VERCEL_ENV,
+): boolean {
+  return flag === 'on' || (vercelEnv === 'preview' && flag !== 'off')
+}
+
+/**
+ * SK-8 — refuse to run a skill nobody approved, or one edited since approval.
+ *
+ * OFF everywhere unless explicitly `on`, and NOT auto-on for preview like the
+ * other flags. Turning this on with an empty ledger disables every skill at
+ * once, so the intended order is: run with it off, watch the approval states in
+ * the logs, populate the ledger, then switch it on deliberately.
+ */
+export function skillApprovalGateEnabled(flag = process.env.AGENT_SKILL_APPROVAL_GATE): boolean {
+  return flag === 'on'
+}
+
+/** Hard ceiling on a trimmed specialist sub-agent's tool count. */
+export const SUBAGENT_TOOL_CAP = Number(process.env.SUBAGENT_TOOL_CAP) || 40
+
+/**
+ * Phase 6 — tool-round budget for a 'standard' (cheap, worker-grade) head. Only
+ * applied when AGENT_UNIVERSAL_TOOL_PIPELINE is on; before it, only the Claude
+ * head had a budget and Grok/DeepSeek heads could spree unbounded.
+ */
+export const STANDARD_HEAD_TOOL_BUDGET = Number(process.env.STANDARD_HEAD_TOOL_BUDGET) || 8
+
+/**
+ * The head budgets above are sized for a CHAT reply. A turn the server itself
+ * classified as work is a different animal, and mixing the two is what made the
+ * owner say "non-stop kaj ekhono hoy na" (2026-07-26).
+ *
+ * The arithmetic he was up against: a deep-work turn is allowed
+ * DEEP_TURN_MAX_ITERATIONS (60) rounds and plan-drive LONG_RUN (120), while the
+ * standard head's budget stripped its tools after 8 — and on Vercel PREVIEW,
+ * where he tests, AGENT_UNIVERSAL_TOOL_PIPELINE defaults ON, so that 8 was live.
+ * The turn did not "decide" to stop; the server took its tools away at round 9.
+ *
+ * So the budget now follows the turn class. It is still a real ceiling — a chat
+ * reply cannot spree — but a job he explicitly started as work gets a budget
+ * that matches the work.
+ */
+export const DEEP_HEAD_TOOL_BUDGET = Number(process.env.DEEP_HEAD_TOOL_BUDGET) || 40
+export const LONG_RUN_HEAD_TOOL_BUDGET = Number(process.env.LONG_RUN_HEAD_TOOL_BUDGET) || 100
+
+export type TurnWorkClass = 'chat' | 'deep' | 'long_run'
+
+/** Never smaller than the chat budget — this only ever widens a work turn. */
+export function headToolBudgetFor(chatBudget: number, workClass: TurnWorkClass): number {
+  if (workClass === 'long_run') return Math.max(chatBudget, LONG_RUN_HEAD_TOOL_BUDGET)
+  if (workClass === 'deep') return Math.max(chatBudget, DEEP_HEAD_TOOL_BUDGET)
+  return chatBudget
+}
+
+/**
+ * How many times one turn may push a head that ANNOUNCED the next step and then
+ * stopped. One push is right for a chat reply; on a work session it was the
+ * difference between finishing and waiting for Boss to type "continue" — which
+ * is the whole complaint.
+ */
+export function maxIntentNudgesFor(workClass: TurnWorkClass): number {
+  if (workClass === 'long_run') return Number(process.env.LONG_RUN_INTENT_NUDGES) || 6
+  if (workClass === 'deep') return Number(process.env.DEEP_INTENT_NUDGES) || 3
+  return 1
+}
 
 // Phase prompt specifies budget_tokens values for reference.
 // budget_tokens is deprecated on claude-sonnet-4-6; we use thinking: {type:'adaptive'}

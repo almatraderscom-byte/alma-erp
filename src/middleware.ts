@@ -38,6 +38,29 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/assistant/voice-call/ngs-inbound') return true
   // NGS outbound call-status callback (no session) — self-protects via ?k=NGS_INBOUND_SECRET.
   if (pathname === '/api/assistant/voice-call/ngs-status') return true
+  // Self-hosted SIP gateway on the VPS (no session, no cookie). Each self-protects in its
+  // own handler: sip-inbound via ?k=SIP_INBOUND_SECRET, the other two via an
+  // AGENT_INTERNAL_TOKEN Bearer — all three additionally behind requireAgentEnabled.
+  if (pathname === '/api/assistant/voice-call/sip-inbound') return true
+  if (pathname === '/api/assistant/voice-call/sip-confirm') return true
+  if (pathname === '/api/assistant/voice-call/sip-cdr') return true
+  if (pathname === '/api/assistant/voice-call/sip-voicemail') return true
+  // ALMA Companion extension (the owner's own Chrome). These three carry a DEVICE
+  // token, not a session cookie: `pair` redeems a single-use, 10-minute, owner-issued
+  // code, and `poll`/`result` present a bearer token stored only as a hash. Each
+  // re-checks in its own handler, all behind requireAgentEnabled + the
+  // `live_browser_enabled` kill-switch.
+  //
+  // They are listed here because the session cookie was silently doing the gatekeeping
+  // and then stopped: NextAuth's cookie is SameSite=Lax, Chrome used to treat an
+  // extension's fetches as first-party and send it anyway, and when that changed the
+  // extension's perfectly valid token-authenticated requests started being refused
+  // before the token was ever looked at — poll 401'd, the extension erased its own
+  // token, and every fresh pairing code then failed the same way. Auth belongs to the
+  // handlers that actually understand these tokens; the cookie was never the check.
+  if (pathname === '/api/assistant/live-browser/pair') return true
+  if (pathname === '/api/assistant/live-browser/poll') return true
+  if (pathname === '/api/assistant/live-browser/result') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   if (pathname === '/api/build-info') return true

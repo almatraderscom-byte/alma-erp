@@ -773,6 +773,20 @@ struct AgentChatMessage: Identifiable, Equatable {
     /// Legacy projection metadata. New projections never expose superseded prose
     /// as a visible block; selfCorrected carries the owner-facing signal instead.
     var supersededBlockIds: Set<String> = []
+    /// Text of the pinned opening line, or "" when this turn had none.
+    var leadProseText: String {
+        guard let lead = leadProseId else { return "" }
+        for block in blocks {
+            if case .prose(let pid, let t) = block, pid == lead { return t }
+        }
+        return ""
+    }
+    /// Speak-first (owner rule 2026-07-25): the prose block holding the opening
+    /// line the head wrote BEFORE any work — "বস, … বুঝেছি — … দেখছি"। Boss has
+    /// already read it, so unlike ordinary mid-turn narration it must survive a
+    /// tool start, a verify rewrite and a cold reload. Set from the server's
+    /// explicit `preamble` marker — never guessed from position.
+    var leadProseId: String? = nil
 
     /// The heartbeat's self-wake seed renders as a divider, never as an owner bubble
     /// (web: isHeartbeatWakeText / HEARTBEAT_WAKE_SENTINEL).
@@ -949,13 +963,23 @@ struct AgentChatMessage: Identifiable, Equatable {
     static func applyPersistedBlocks(to m: inout AgentChatMessage) {
         var blocks: [TurnBlock] = []
         var lastSettledTimelineText = ""
+        // Speak-first (owner rule 2026-07-25): the FIRST timeline entry is the
+        // opening line when the head spoke before doing anything. On reload the
+        // old rule ("only the LAST text is the answer, the rest is audit") threw
+        // it away, so a chat reopened without the line Boss had read live.
+        var leadTimelineText = ""
+        var sawAnyEntry = false
         for e in m.timeline {
             switch e {
             case .text(let t, let isSuperseded):
                 // Timeline prose remains audit data. Only the final verified
                 // segment becomes owner-visible after all activity rows.
-                if !isSuperseded && !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    lastSettledTimelineText = t.trimmingCharacters(in: .whitespacesAndNewlines)
+                let trimmed = t.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !sawAnyEntry && !isSuperseded && !trimmed.isEmpty {
+                    leadTimelineText = trimmed
+                }
+                if !isSuperseded && !trimmed.isEmpty {
+                    lastSettledTimelineText = trimmed
                 }
             case .think(let t):
                 blocks = appendThinkBlock(blocks, chunk: t, messageId: m.id)
@@ -965,6 +989,20 @@ struct AgentChatMessage: Identifiable, Equatable {
             case .file(let aid, let name):
                 blocks.append(.file(id: "fb-\(m.id)-\(aid)", artifactId: aid, name: name))
             }
+            sawAnyEntry = true
+        }
+        // The lead line goes FIRST, above the activity rows — the same shape the
+        // live stream shows and the same shape the web renders.
+        // Owner rule 2026-07-26: the line sits AFTER the head's first thinking
+        // row, not above it — the agent did not answer without thinking first,
+        // so reply-then-reasoning reads backwards. Insert right after the first
+        // activity block (or at the front when the turn had none).
+        if !leadTimelineText.isEmpty, leadTimelineText != lastSettledTimelineText {
+            let leadId = "bp-\(m.id)-lead"
+            let afterFirstActivity = blocks.firstIndex { if case .activity = $0 { return true }; return false }
+                .map { $0 + 1 } ?? 0
+            blocks.insert(.prose(id: leadId, text: leadTimelineText), at: afterFirstActivity)
+            m.leadProseId = leadId
         }
         let stored = m.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let settledText: String
@@ -977,8 +1015,15 @@ struct AgentChatMessage: Identifiable, Equatable {
             // content and therefore cannot be recovered from the raw timeline.
             settledText = stored
         }
-        if !settledText.isEmpty {
-            blocks.append(.prose(id: "bp-\(m.id)-final", text: settledText))
+        var body = settledText
+        if !leadTimelineText.isEmpty, body.hasPrefix(leadTimelineText) {
+            // The server keeps the opening line as a floor inside the stored text;
+            // strip it here so the same sentence is not printed twice.
+            body = String(body.dropFirst(leadTimelineText.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if !body.isEmpty {
+            blocks.append(.prose(id: "bp-\(m.id)-final", text: body))
         }
         for card in m.confirmCards {
             blocks.append(.confirmCard(id: "bc-\(m.id)-\(card.id)", pendingActionId: card.id))
@@ -2172,6 +2217,13 @@ final class AssistantVM {
         }
         restoreCurrentComposerDraft()
         await recoverFromPersistedDescriptor()
+        // Cost drill-down asked to open a specific chat before this tab was mounted.
+        // Drain it AFTER recovery so it wins over both the last-active pointer and a
+        // restored persisted turn (explicit → bypasses the mid-turn guard).
+        if let pendingConv = AlmaAgentNav.pendingConversationId {
+            AlmaAgentNav.pendingConversationId = nil
+            await openConversation(pendingConv, explicit: true)
+        }
         async let drive: Void = loadPlanDrive()
         async let todos: Void = loadDailyAgentTodos()
         async let turns: Void = loadActiveBackgroundTurns()
@@ -2378,6 +2430,16 @@ final class AssistantVM {
                 await self.sendPresenceState("active")
                 self.resumePendingAttachmentUploads()
                 await self.recoverTurnState(trigger: "active")               // idempotent re-check
+            }
+        })
+        // "Open this chat" from the Credit Usage cost drill-down. The tab is already
+        // switched (via .almaOpenPath /agent); open the conversation in place.
+        lifecycleTokens.tokens.append(nc.addObserver(forName: .almaOpenAgentConversation,
+                                              object: nil, queue: .main) { [weak self] note in
+            guard let id = note.userInfo?["conversationId"] as? String, !id.isEmpty else { return }
+            Task { @MainActor in
+                AlmaAgentNav.pendingConversationId = nil
+                await self?.openConversation(id, explicit: true)
             }
         })
     }
@@ -3475,12 +3537,16 @@ final class AssistantVM {
         }
     }
 
-    func openConversation(_ id: String, recoveringPersistedTurn: Bool = false) async {
+    func openConversation(_ id: String, recoveringPersistedTurn: Bool = false, explicit: Bool = false) async {
         guard id != conversationId else { return }
-        if !recoveringPersistedTurn, isStreaming || recoverableTurn != nil {
+        if !recoveringPersistedTurn, !explicit, isStreaming || recoverableTurn != nil {
             errorToast = "চলতি উত্তর শেষ হলে অন্য কথোপকথন খুলুন — বর্তমান কাজটি সুরক্ষিত আছে"
             return
         }
+        // Explicit navigation (opening a chat from the cost drill-down) wins over a
+        // background turn: the server work is durable and keeps running; only the
+        // on-screen resume of the PRIOR chat is dropped so the tap always lands.
+        if explicit { recoverableTurn = nil }
         persistCurrentComposerDraft()
         restoreTick += 1     // screen replays the session-opening awakening
         stopStreaming(cancelServer: false)
@@ -4744,9 +4810,13 @@ final class AssistantVM {
                     // Pre-tool prose is progress narration. Keep the activity/tool
                     // evidence, but let the post-tool settled answer replace the
                     // visible prose instead of stacking as a second reply.
-                    messages[i].text = ""
+                    // EXCEPT the spoken first line (owner rule 2026-07-25): Boss
+                    // read "বস, … বুঝেছি — … দেখছি" three seconds ago; clearing it
+                    // the moment work starts is what made the app feel silent.
+                    let lead = messages[i].leadProseId
+                    messages[i].text = lead == nil ? "" : messages[i].leadProseText
                     messages[i].blocks.removeAll { block in
-                        if case .prose = block { return true }
+                        if case .prose(let pid, _) = block { return pid != lead }
                         return false
                     }
                     messages[i].supersededBlockIds = []
@@ -4813,6 +4883,17 @@ final class AssistantVM {
                                                       selectedOption: nil))
                     messages[i].blocks.append(.askCard(id: "bq-\(messages[i].id)-\(aid)", askCardId: aid))
                 }
+            case .preamble:
+                // The line already streamed in as text_delta; pin whichever prose
+                // block it landed in so the wipes below can spare it.
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    if let lastProse = messages[i].blocks.last(where: {
+                        if case .prose = $0 { return true }; return false
+                    }), case .prose(let pid, _) = lastProse {
+                        messages[i].leadProseId = pid
+                        touchedStream = true
+                    }
+                }
             case .verificationRetry(let attempt, let maxAttempts):
                 // Preserve the rejected draft in audit data, but remove it from the
                 // owner-facing blocks. The verified replacement will be the only
@@ -4820,15 +4901,18 @@ final class AssistantVM {
                 requestLiveMode("thinking")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    // The rewrite replaces the DRAFT ANSWER, never the opening
+                    // line — that line was not what failed the check.
+                    let lead = messages[i].leadProseId
                     if let lastProse = messages[i].blocks.last(where: {
-                        if case .prose = $0 { return true }; return false
+                        if case .prose(let pid, _) = $0 { return pid != lead }; return false
                     }), case .prose(let pid, let draft) = lastProse {
                         messages[i].supersededBlockIds.insert(pid)
                         messages[i].timeline.append(.text(draft, superseded: true))
                     }
-                    messages[i].text = ""
+                    messages[i].text = lead == nil ? "" : messages[i].leadProseText
                     messages[i].blocks.removeAll { block in
-                        if case .prose = block { return true }
+                        if case .prose(let pid, _) = block { return pid != lead }
                         return false
                     }
                     messages[i].supersededBlockIds = []

@@ -25,19 +25,27 @@ describe('owner-chat tool prefix is stable across messages', () => {
   })
 
   it('stable set exposes core business tools across domains', async () => {
+    const { HEAD_TOOL_DIET_ENABLED } = await import('@/agent/tools/select-tools')
     const { tools } = await selectToolsAndGroupsForTurnAsync('ajker sales koto', OWNER)
     const names = tools.map((t) => t.name)
     // content (run_content_post) + growth (plan_marketing) are deliberately NOT on
     // the owner head — the slim router delegates them to specialist workers, the
-    // core cost lever. The remaining business domains stay directly available.
+    // core cost lever. The daily business domains stay directly available.
     for (const tool of [
       'get_sales_summary', // erp
       'get_staff_tasks', // staff
       'get_expense_summary', // finance
-      'get_website_catalog', // website
-      'get_api_balances', // cost
     ]) {
       expect(names).toContain(tool)
+    }
+    if (HEAD_TOOL_DIET_ENABLED) {
+      // Head tool diet (Phase 2): website/cost are long-tail — reachable via
+      // find_tool, which must always be on the pack.
+      expect(names).toContain('find_tool')
+    } else {
+      for (const tool of ['get_website_catalog', 'get_api_balances']) {
+        expect(names).toContain(tool)
+      }
     }
   })
 

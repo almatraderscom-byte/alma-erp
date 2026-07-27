@@ -99,6 +99,14 @@ async function runApprove(
     return Response.json({ error: 'expired' }, { status: 410 })
   }
 
+  // Boss is deciding this, right now. Recorded once, here, because every branch
+  // below settles the row differently and the settled CARD must be able to say
+  // truthfully whether he approved it — resolvedAt cannot, since the worker's
+  // job-result callback stamps that too (owner caught the card lying 2026-07-27).
+  // Reaching this line requires status === 'pending', so a row created
+  // already-approved can never be marked as his.
+  await db.agentPendingAction.update({ where: { id: actionId }, data: { ownerDecided: true } })
+
   // Phase 1 approval span: ties the owner's decision to the conversation trace,
   // so approvals/revisions join the turn → route → tool timeline (fail-open).
   void import('@/agent/lib/tool-telemetry').then((m) =>
@@ -545,6 +553,51 @@ async function runApprove(
 
   // Growth Autopilot: approve a batch of on-page SEO copy fixes — apply
   // shortDescription/description to every product in the batch, live.
+  // A URL rename: the slug and its redirect land together, and the live page is
+  // re-read afterwards so the reply carries proof rather than a claim.
+  if (action.type === 'product_slug_change') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+        return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+      }
+      const productId = String(payload.productId ?? '')
+      const fromSlug = String(payload.fromSlug ?? '')
+      const toSlug = String(payload.toSlug ?? '')
+      if (!productId || !fromSlug || !toSlug) throw new Error('slug change payload incomplete')
+
+      const { renameWebsiteProductSlug } = await import('@/lib/website/write.service')
+      const result = await renameWebsiteProductSlug(productId, {
+        fromSlug,
+        toSlug,
+        reason: payload.reason ? String(payload.reason) : undefined,
+      })
+      if (!result.ok) throw new Error(result.error)
+
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result: { fromSlug, toSlug } },
+      })
+      const note =
+        `✅ URL বদল হয়েছে — /products/${fromSlug} → /products/${toSlug}। `
+        + `পুরনো লিংকে গেলে এখন নতুনটায় পৌঁছাবে (৩০১), তাই র‍্যাঙ্ক থাকবে। `
+        + `ISR/cache — live page-এ দেখতে কিছুক্ষণ লাগতে পারে।`
+      await appendConversationNote(db, action, note)
+      return Response.json({ success: true, fromSlug, toSlug })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
   if (action.type === 'seo_fix_batch') {
     try {
       const claimed = await db.agentPendingAction.updateMany({
@@ -2502,7 +2555,7 @@ async function enqueueApprovalContinuation(actionId: string, reuseTurnId: string
   const db = prisma as any
   const action = await db.agentPendingAction.findUnique({
     where: { id: actionId },
-    select: { conversationId: true, status: true, summary: true, type: true },
+    select: { conversationId: true, status: true, summary: true, type: true, result: true },
   })
   const conversationId: string | null = action?.conversationId ?? null
   if (!conversationId) { await settleProgress(action?.type); return }
@@ -2515,11 +2568,34 @@ async function enqueueApprovalContinuation(actionId: string, reuseTurnId: string
   if (action.type === 'image_gen' || action.type === 'video_gen' || action.type === 'agent_voice_call') return
 
   const summary = (action.summary ?? '').toString().slice(0, 200)
+
+  // OWNER INCIDENT 2026-07-26: after an approval the head kept answering "card
+  // অনুমোদনের অপেক্ষায় আছি" for work that had ALREADY been applied — it trusted its
+  // own earlier sentence instead of the world. Telling it the card was approved
+  // was not enough; it needs the live FACTS: what this approval changed, and
+  // whether anything is genuinely still pending in this conversation.
+  const applied = (() => {
+    const r = action.result as { applied?: unknown[]; failed?: unknown[] } | null
+    if (!r || !Array.isArray(r.applied)) return ''
+    const failed = Array.isArray(r.failed) ? r.failed.length : 0
+    return ` (${r.applied.length}টি প্রয়োগ হয়েছে${failed ? `, ${failed}টি ব্যর্থ` : ''})`
+  })()
+
+  const stillPending: number = await db.agentPendingAction.count({
+    where: { conversationId, status: 'pending' },
+  }).catch(() => 0)
+
   const message =
     '[সিস্টেম নোট — Boss approve করেছেন] একটা pending কাজ Boss approve করেছেন এবং সেটা সম্পন্ন হয়েছে' +
-    (summary ? `: "${summary}"` : '') +
+    (summary ? `: "${summary}"` : '') + applied +
     '। এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও, অথবা সব শেষ হলে সংক্ষেপে Boss-কে জানাও। ' +
-    'যে কাজটা এইমাত্র approve হয়ে সম্পন্ন হয়েছে সেটা আর নতুন করে কোরো না।'
+    'যে কাজটা এইমাত্র approve হয়ে সম্পন্ন হয়েছে সেটা আর নতুন করে কোরো না। ' +
+    (stillPending > 0
+      ? `এই চ্যাটে আরও ${stillPending}টি card এখনো Boss-এর সিদ্ধান্তের অপেক্ষায় আছে।`
+      : 'এই চ্যাটে আর কোনো card অপেক্ষায় নেই — তাই "অনুমোদনের অপেক্ষায় আছি" বোলো না; ' +
+        'বাকি কাজ থাকলে নিজেই এগোও, না থাকলে গুনে ফল জানাও।')
 
-  await enqueueAgentContinuation({ conversationId, message, turnId: reuseTurnId })
+  // Boss tapping Approve is Boss acting — it resumes even if some other card is
+  // still open; the awaiting-answer gate exists for BACKGROUND resumes only.
+  await enqueueAgentContinuation({ conversationId, message, turnId: reuseTurnId, ignoreAwaitingOwner: true })
 }

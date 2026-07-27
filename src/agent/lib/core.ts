@@ -1,3 +1,20 @@
+/**
+ * NATIVE Claude turn loop (legacy path).
+ *
+ * @deprecated Universal pipeline Phase 8 — this loop is a SECOND implementation
+ * of the owner turn. It predates run-owner-turn.ts and does NOT participate in
+ * the universal tool pipeline: no state router, no relevance-aware provider cap,
+ * no prompt/tool-truth guarantee, no membership gate, no find_tool dynamic load.
+ * It is reached only when the head model is native Anthropic (today: an explicit
+ * Claude pick with ANTHROPIC_HEAD_DOWN off and the Monitor toggle on), which is
+ * rare — the house head is Gemini/Grok via run-owner-turn.ts.
+ *
+ * DO NOT add behaviour here. New harness work lands in run-owner-turn.ts, which
+ * every non-Anthropic head already uses. Retiring this loop (routing the native
+ * Claude head through the adapter path too) is its own effort: the route span
+ * emitted by run-owner-turn.ts is the usage signal — if native turns stop
+ * appearing, this file can go.
+ */
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, HEAD_TOOL_BUDGET } from '@/agent/config'
@@ -26,8 +43,10 @@ import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/
 import { runPreToolHooks, runPostToolHooks } from '@/agent/lib/turn-hooks'
 import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
 import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
+import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
 import { trimToolResultForHistory } from '@/agent/lib/context-trim'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
+import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
 import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
 import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
@@ -64,7 +83,9 @@ import {
 import {
   buildVerificationReminder,
   detectExplicitInstructionViolations,
+  countStagedCards,
   detectMissingCardViolation,
+  detectPhantomApprovalWait,
   detectProseChoiceViolation,
   MAX_VERIFY_RETRIES,
   type ClaimViolation,
@@ -101,6 +122,33 @@ export type AgentEvent =
   // card into the reply flow and opens the artifacts panel on it.
   | { type: 'artifact_saved'; id: string; title: string; artifactType: string }
   | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
+  // Speak-first (owner rule 2026-07-25): the line the head wrote BEFORE it ran
+  // anything — "বস, … বুঝেছি — … দেখছি"। It is emitted as ordinary text_delta
+  // first (so every client streams it live), then this marker closes it. The
+  // marker exists because clients must be able to tell that opening line apart
+  // from mid-turn narration WITHOUT guessing: narration is deliberately cleared
+  // when a tool starts or a draft is rewritten, but this line is something Boss
+  // has already read and must survive both.
+  | { type: 'preamble'; text: string }
+  // SK-3: the skill pinned for this conversation, and why. The owner asked to be
+  // able to SEE which skill is running and to change it — this is what feeds the
+  // chip beside the model picker. `source: 'owner'` means he chose it himself,
+  // and the router will not revisit it.
+  | {
+      type: 'skill_pinned'
+      skill: string
+      source: 'owner' | 'router'
+      layer: string
+      reason: string
+      /**
+       * SK-7 — true when this turn ran on the skill's OWN system prompt instead
+       * of inside the general one. On the wire so the isolation claim can be
+       * checked from outside the server: a `[skill-isolation]` line in a Vercel
+       * log is not something the owner can see, and "trust the code" is exactly
+       * the kind of proof this programme rejects.
+       */
+      isolated?: boolean
+    }
   | {
       type: 'verification_retry'
       attempt: number
@@ -111,7 +159,13 @@ export type AgentEvent =
   // needContinue: the turn hit the serverless deadline mid-task (browser work
   // unfinished) — the web client auto-sends a bounded "continue" so a long task
   // finishes end-to-end without the owner typing it every ~4.5 minutes.
-  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number; needContinue?: boolean; apiRounds?: number; roundCostsUsd?: number[] }
+  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number; needContinue?: boolean; apiRounds?: number; roundCostsUsd?: number[]; durationMs?: number;
+      /**
+       * PM-1 — the permission mode this turn ACTUALLY ran under, read from the
+       * server. If the chip says one thing and this says another, that is
+       * visible instead of silent — which is the owner's "must sync" condition.
+       */
+      permissionMode?: string }
   | { type: 'error'; message: string }
 
 // ── Mutating tools (conservative: unknown = treat as mutating) ──────────────
@@ -580,6 +634,20 @@ export interface RunAgentTurnOptions {
    * Absent/null = no deadline (VPS worker turns are uncapped).
    */
   deadlineAt?: number | null
+  /**
+   * Per-conversation execution mode (owner's chat mode picker). Enforced by
+   * withholding tools — see chat-mode.ts. Absent = 'auto' (today's behaviour).
+   */
+  chatMode?: import('@/agent/lib/chat-mode').ChatMode | null
+  /**
+   * PM-1 — per-conversation PERMISSION mode: how much the agent may do without
+   * Boss. Absent = 'standard' (today's behaviour). Shadow in PM-1: the turn
+   * reads it, tells the head, echoes it and records it, but nothing is enforced
+   * until PM-2 — so the sync can be watched before it can bite.
+   */
+  permissionMode?: import('@/agent/lib/permission-mode').PermissionMode | null
+  /** The live elevation grant when permissionMode is 'elevated'. */
+  elevationGrant?: import('@/agent/lib/permission-mode').ElevationGrant | null
 }
 
 /** One-time nudge injected when the serverless deadline is close. */
@@ -608,6 +676,9 @@ export async function* runAgentTurn(
   let totalOutputTokens = 0
   let totalCacheCreationTokens = 0
   let totalCacheReadTokens = 0
+  // Provider-reported prompt size for the latest API round. This is current
+  // context occupancy; totalInputTokens is cumulative billing across rounds.
+  let lastContextTokens: number | null = null
 
   let messages: ApiMessage[] = await loadHistory(conversationId)
 
@@ -963,10 +1034,13 @@ export async function* runAgentTurn(
 
   // Skill Engine V2 (gated OFF by default) — same on-demand skill selection as the
   // normalized path in run-owner-turn; '' when disabled/personal/no match (fail-open).
-  const activeSkillsBlock = personalMode ? '' : await buildActiveSkillsBlock(lastUserText)
+  const activeSkillsBlock = personalMode ? '' : await buildActiveSkillsBlock(lastUserText, { conversationId })
 
+  // Parity with run-owner-turn: name the dead capabilities before the first step.
+  const deadCapabilityBlock = capabilityPreflightBlock()
   const promptArgs = {
-    projectInstructions: projectSystemInstructions,
+    projectInstructions:
+      [deadCapabilityBlock, projectSystemInstructions].filter(Boolean).join('\n\n') || null,
     pinnedMemories,
     relevantMemories,
     recalledTurns,
@@ -1114,6 +1188,12 @@ export async function* runAgentTurn(
   let maxIterations = MAX_TOOL_ITERATIONS
   const claimedSteeringIds = new Set<string>()
 
+  // What is ACTUALLY in front of Boss — read, not remembered (parity with
+  // run-owner-turn; owner incident 2026-07-26). Appended at the END of messages
+  // so the cached prompt prefix is untouched.
+  const pendingCardsAtStart = await readPendingCards(conversationId)
+  messages = [...messages, { role: 'user', content: [{ type: 'text', text: buildCardStateNote(pendingCardsAtStart) }] }]
+
   try {
     for (let iteration = 0; iteration < maxIterations; iteration++) {
       if (signal?.aborted) break
@@ -1201,8 +1281,11 @@ export async function* runAgentTurn(
           const u = event.message.usage
           totalInputTokens += u.input_tokens
           totalOutputTokens += u.output_tokens
-          totalCacheCreationTokens += (u as { cache_creation_input_tokens?: number }).cache_creation_input_tokens ?? 0
-          totalCacheReadTokens += (u as { cache_read_input_tokens?: number }).cache_read_input_tokens ?? 0
+          const cacheWrite = (u as { cache_creation_input_tokens?: number }).cache_creation_input_tokens ?? 0
+          const cacheRead = (u as { cache_read_input_tokens?: number }).cache_read_input_tokens ?? 0
+          totalCacheCreationTokens += cacheWrite
+          totalCacheReadTokens += cacheRead
+          lastContextTokens = u.input_tokens + cacheWrite + cacheRead
         } else if (event.type === 'message_delta') {
           if (event.usage) totalOutputTokens += event.usage.output_tokens
         } else if (event.type === 'content_block_start') {
@@ -1326,13 +1409,24 @@ export async function* runAgentTurn(
           // but NO interactive card surfaced this turn (head forgot to call the
           // approval tool, or a sub-agent made a DB-only pending action). Force the
           // head to actually surface it or admit it couldn't.
-          if (finalText && violations.length === 0 && emittedConfirmCards.length === 0 && askCardsEmitted === 0) {
+          // A staging tool's pending action is a real card too (parity with
+          // run-owner-turn) — otherwise a truthful "approval card বানালাম" after
+          // a SUCCESSFUL draft_seo_fixes is punished as an unbacked promise.
+          const stagedCards = countStagedCards(toolRecords)
+          if (finalText && violations.length === 0 && emittedConfirmCards.length === 0 && askCardsEmitted === 0 && stagedCards === 0) {
             violations.push(...detectMissingCardViolation(finalText))
             // Owner rule: a choice for the Boss MUST be an ask_user card — a
             // prose "Option A/B … কোনটা করবেন?" has nothing to tap (live-hit
             // 2026-07-16). Same zero-card precondition: an emitted ask card
             // legitimately carries the question.
             violations.push(...detectProseChoiceViolation(finalText))
+          }
+          // Parking Boss on a card that does not exist (owner incident 2026-07-26).
+          if (finalText && violations.length === 0) {
+            violations.push(...detectPhantomApprovalWait(
+              finalText,
+              pendingCardsAtStart.length + stagedCards + emittedConfirmCards.length + askCardsEmitted,
+            ))
           }
           if (finalText && violations.length === 0) {
             violations.push(...detectExplicitInstructionViolations(finalText, currentOwnerInstructions))
@@ -1871,7 +1965,7 @@ export async function* runAgentTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload; the GET route surfaces it as
         // `thinking`/`thinkingMs` and history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: chatModel.id, apiModel, provider: chatModel.provider, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
       },
     })
 
@@ -1896,6 +1990,10 @@ export async function* runAgentTurn(
         output_tokens: totalOutputTokens,
         cache_creation_input_tokens: totalCacheCreationTokens,
         cache_read_input_tokens: totalCacheReadTokens,
+        ...(lastContextTokens != null ? {
+          context_tokens: lastContextTokens,
+          context_source: 'provider_last_round',
+        } : {}),
         model: chatModel.id,
         apiModel,
         provider: chatModel.provider,

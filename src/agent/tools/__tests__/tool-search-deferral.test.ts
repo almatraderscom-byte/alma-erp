@@ -1,5 +1,4 @@
-import { describe, it, expect } from 'vitest'
-import { selectToolsAndGroupsForTurnAsync, applyToolSearchDeferral } from '@/agent/tools/select-tools'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const OWNER = { personalMode: false, businessId: 'ALMA_LIFESTYLE' as const }
 
@@ -8,12 +7,22 @@ const OWNER = { personalMode: false, businessId: 'ALMA_LIFESTYLE' as const }
  * Everyday tools stay fully loaded; the specialised long tail is marked
  * `defer_loading` and pulled on demand via the regex tool-search tool. These
  * tests lock the split + the single cache breakpoint in place.
+ *
+ * Runs with the head tool diet (Phase 2) OFF: deferral is the Anthropic-path
+ * mechanism over the FULL slim-router set — under the diet the pack is already
+ * core-only, so there'd be no long tail left to defer.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const named = (t: any) => t as { name?: string; type?: string; defer_loading?: boolean; cache_control?: unknown }
 
 describe('applyToolSearchDeferral', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.stubEnv('AGENT_HEAD_TOOL_DIET', 'false')
+  })
+
   it('keeps everyday tools loaded and defers the specialised long tail', async () => {
+    const { selectToolsAndGroupsForTurnAsync, applyToolSearchDeferral } = await import('@/agent/tools/select-tools')
     const { tools } = await selectToolsAndGroupsForTurnAsync('ajker sales koto', OWNER)
     const out = applyToolSearchDeferral(tools)
     const byName = new Map(out.map((t) => [named(t).name, named(t)]))
@@ -33,6 +42,7 @@ describe('applyToolSearchDeferral', () => {
   })
 
   it('appends the regex tool-search tool exactly once', async () => {
+    const { selectToolsAndGroupsForTurnAsync, applyToolSearchDeferral } = await import('@/agent/tools/select-tools')
     const { tools } = await selectToolsAndGroupsForTurnAsync('hi', OWNER)
     const out = applyToolSearchDeferral(tools)
     const searchTools = out.filter((t) => named(t).type === 'tool_search_tool_regex_20251119')
@@ -40,6 +50,7 @@ describe('applyToolSearchDeferral', () => {
   })
 
   it('has exactly one cache breakpoint, on the last element', async () => {
+    const { selectToolsAndGroupsForTurnAsync, applyToolSearchDeferral } = await import('@/agent/tools/select-tools')
     const { tools } = await selectToolsAndGroupsForTurnAsync('hi', OWNER)
     const out = applyToolSearchDeferral(tools)
     const withCacheControl = out.filter((t) => named(t).cache_control)
