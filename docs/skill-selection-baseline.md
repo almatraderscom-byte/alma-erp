@@ -30,13 +30,13 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 | social | facebook e notun product er post dao | alma-product-social-post | alma-product-social-post, alma-product-listing | ✅ hit |
 | briefing | ajker briefing dao | alma-owner-daily-briefing | alma-owner-daily-briefing | ✅ hit |
 | marketing | marketing kemon cholche? | alma-marketing | alma-marketing | ✅ hit |
-| campaign | ekta meta campaign chalu koro 5000 takar | alma-meta-campaign-launch | alma-meta-campaign-launch, alma-marketing, alma-product-listing | ✅ hit |
+| campaign | ekta meta campaign chalu koro 5000 takar | alma-meta-campaign-launch | alma-meta-campaign-launch, alma-product-listing, seo-fixing-own-site | ✅ hit |
 | website | website e ki ki somossa ache? | alma-website | alma-website, alma-product-listing, seo-fixing-client-site | ✅ hit |
 | incident | agent ta kaj korche na keno, dekho | alma-agent-incident-diagnosis | alma-agent-incident-diagnosis | ✅ hit |
 | invoice | ei invoice ta ERP te tolo | alma-invoice-to-erp | alma-invoice-to-erp, alma-research | ✅ hit |
 | audience | je customer ra beshi kene tader ekta audience banao | alma-audience-builder | alma-audience-builder, alma-customer-support, alma-meta-campaign-launch | ✅ hit |
 | browser | chrome khule daraz e dekho dam koto | alma-browser-operator | — | ⬜ nothing picked |
-| research | competitor ra ki dame bikri korche khuje dekho | alma-research | alma-research, alma-marketing | ✅ hit |
+| research | competitor ra ki dame bikri korche khuje dekho | alma-research | alma-research | ✅ hit |
 | greeting | valo acho? | — | — | ✅ correctly silent |
 | weather | ajke bristi hobe? | — | — | ✅ correctly silent |
 | thanks | thanks bhai | — | — | ✅ correctly silent |

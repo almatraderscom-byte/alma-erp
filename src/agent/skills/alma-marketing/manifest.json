@@ -1,11 +1,13 @@
 {
   "name": "alma-marketing",
-  "description": "Data-grounded marketing readout + plan: performance, competitor creatives, calendar — সব spend owner-gated।",
-  "version": "0.1.0",
+  "description": "Reads how marketing is actually going — spend and return, what competitors are running, what is already on the calendar — and turns it into next week's plan. Use when Boss asks how marketing is doing, what to do next, or what the competition is up to. It recommends only: every taka of spend goes through an owner card.",
+  "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
   "businessScopes": ["ALMA_LIFESTYLE"],
   "riskTier": "medium",
+  "extends": "alma-base",
+  "whenNotToUse": "একটা নির্দিষ্ট ক্যাম্পেইন চালু/বন্ধ/বাজেট বদল → alma-meta-campaign-launch। কোন গ্রাহকদের নিয়ে audience → alma-audience-builder। একটা পণ্যের পোস্ট বা ক্যাপশন → alma-product-social-post। খরচের হিসাব-নিকাশ → alma-finance-brief।",
   "requiredCapabilities": [
     "marketing_report",
     "recommend_ad_actions",
@@ -15,10 +17,22 @@
     "list_important_dates",
     "plan_marketing"
   ],
+  "outputContract": {
+    "kind": "artifact_report",
+    "mustInclude": ["spend_and_return", "competitor_angles", "calendar_gaps", "next_week_plan"]
+  },
+  "stopConditions": [
+    "কোনো ক্যাম্পেইন চালু/বন্ধ/বাজেট বদলাতে বলা হলে — এই skill সেটা করে না, সুপারিশ দিয়ে থামবে",
+    "marketing report না এলে — অনুমান করে ROAS বা খরচ বলবে না",
+    "competitor scan-এ খরচ লাগলে — আগে Boss-এর অনুমোদন"
+  ],
+  "done": [
+    { "tool": "marketing_report" }
+  ],
   "networkPolicy": "allowlist",
   "writePolicy": "owner_gated",
   "approvalPolicy": "always",
   "entryWorkflow": "skill_pack:marketing",
   "maxSteps": 6,
-  "status": "draft"
+  "status": "active"
 }

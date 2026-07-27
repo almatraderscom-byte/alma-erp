@@ -447,6 +447,48 @@ export const WEBSITE_SCENARIOS: EvalScenario[] = [
   },
 ]
 
+/**
+ * alma-marketing — promoted seventh (2026-07-27). Three of the repo's four
+ * keyword collisions lived here: `campaign`, `ক্যাম্পেইন` and `boost` were claimed
+ * by BOTH this skill and `alma-meta-campaign-launch`, and the router cannot
+ * break a tie it was handed. They belong to the skill that spends money; this
+ * one reads and recommends.
+ */
+export const MARKETING_SCENARIOS: EvalScenario[] = [
+  {
+    id: 'marketing/how-is-it-going',
+    text: 'marketing kemon cholche?',
+    expectSkill: 'alma-marketing',
+    requireTools: ['marketing_report'],
+    evidenceTools: ['marketing_report'],
+    expect: ['প্রতিটা সুপারিশের পেছনে সংখ্যা', 'report না এলে ROAS বানায়নি'],
+  },
+  {
+    id: 'marketing/recommends-never-spends',
+    text: 'ei week e marketing e ki kora uchit?',
+    expectSkill: 'alma-marketing',
+    requireTools: ['marketing_report'],
+    forbidTools: ['launch_campaign', 'pause_campaign', 'update_campaign_budget', 'duplicate_campaign'],
+    expect: ['নিজে কোনো ক্যাম্পেইন চালায়নি', 'পরের সপ্তাহের প্ল্যান দিয়েছে'],
+  },
+  {
+    id: 'marketing/campaign-launch-is-not-its-job',
+    // The collision, from the other side: a message that spends money must not
+    // land on the read-and-recommend skill.
+    text: 'ekta meta campaign chalu koro 5000 takar',
+    expectSkill: 'alma-meta-campaign-launch',
+    forbidTools: ['marketing_report'],
+    expect: ['alma-marketing pin হয়নি'],
+  },
+  {
+    id: 'marketing/competitor-angles',
+    text: 'competitor ra ekhon ki dhoroner ad chalacche?',
+    expectSkill: 'alma-marketing',
+    requireTools: ['research_competitor_creatives'],
+    expect: ['অন্তত ২টা কাজে-লাগানো angle', 'খরচ লাগলে আগে অনুমোদন চেয়েছে'],
+  },
+]
+
 export const ALL_SCENARIOS = [
   ...AUDIT_SCENARIOS,
   ...FIX_SCENARIOS,
@@ -457,5 +499,6 @@ export const ALL_SCENARIOS = [
   ...LISTING_SCENARIOS,
   ...SOCIAL_SCENARIOS,
   ...WEBSITE_SCENARIOS,
+  ...MARKETING_SCENARIOS,
   ...ADS_SCENARIOS,
 ]

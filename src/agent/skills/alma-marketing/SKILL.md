@@ -1,8 +1,8 @@
 ---
 name: alma-marketing
-description: Marketing readout + plan (performance, competitor, calendar) — spend owner-gated.
-version: 0.1.0
-keywords: marketing, মার্কেটিং, ad, বিজ্ঞাপন, campaign, ক্যাম্পেইন, boost, competitor ad, marketing plan, weekly brief, প্রচার
+description: Reads how marketing is actually going — spend and return, competitor creatives, what is on the calendar — and turns it into next week's plan. Use when Boss asks how marketing is doing or what to do next. Spend stays owner-gated.
+version: 1.0.0
+keywords: marketing, মার্কেটিং, প্রচার, marketing plan, weekly brief, competitor ad, competitor creative, roas, marketing kemon, prochar
 ---
 
 # Digital marketing — plan, competitor scan, weekly brief
