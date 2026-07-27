@@ -63,14 +63,16 @@ export async function GET(req: NextRequest) {
   // The chat-mode chip must come back exactly as the owner left it — restoring a
   // 'plan' chat as 'auto' would silently re-arm every tool he had withheld.
   let chatMode: string | null = null
+  let permissionMode: string | null = null
   if (conversationId) {
     const meta = await prisma.agentConversation.findUnique({
       where: { id: conversationId },
-      select: { projectId: true, modelId: true, chatMode: true },
+      select: { projectId: true, modelId: true, chatMode: true, permissionMode: true },
     })
     projectId = meta?.projectId ?? null
     modelId = meta?.modelId ?? null
     chatMode = meta?.chatMode ?? null
+    permissionMode = meta?.permissionMode ?? null
   }
 
   return NextResponse.json({
@@ -79,6 +81,7 @@ export async function GET(req: NextRequest) {
     projectId,
     modelId,
     chatMode,
+    permissionMode,
   })
 }
 

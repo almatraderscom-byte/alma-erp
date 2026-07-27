@@ -19,6 +19,12 @@ export interface Conversation {
   modelId?: string | null
   /** Execution mode picker: auto | direct | plan | plan_drive (null = auto). */
   chatMode?: string | null
+  /**
+   * PM-1 permission axis: plan | careful | standard | supervised | elevated
+   * (null = standard). `undefined` means "this row did not carry it" — a partial
+   * row must trigger a read, never a silent default.
+   */
+  permissionMode?: string | null
   source?: string | null
   archived: boolean
   updatedAt: string

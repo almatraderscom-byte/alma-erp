@@ -74,6 +74,12 @@ export interface GuardOutcome {
   ladderVerdict?: 'allow' | 'stage' | 'block'
   /** True when the ladder (not the base policy) is what blocked/staged. */
   ladderEnforced?: boolean
+  /**
+   * The idempotency key this call CLAIMED (duplicate suppression). Set only
+   * when a claim was actually taken; the executor must release it if the effect
+   * does not happen — see releaseEffectClaim.
+   */
+  claimedKey?: string
 }
 
 // ── Same-turn duplicate suppression (process-local until Phase 53's durable claim) ──
@@ -91,6 +97,10 @@ function hasRecentClaim(key: string, now: number): boolean {
  * Register a claim ONLY when execution actually proceeds — a blocked call must
  * not poison the key, or a legitimate retry after re-approval would be treated
  * as a duplicate.
+ *
+ * The claim is taken at guard time (so two identical calls in flight cannot
+ * both execute) and RELEASED by the executor when the effect did not happen —
+ * see releaseEffectClaim.
  */
 function registerClaim(key: string, now: number): void {
   if (recentEffectClaims.size > MAX_CLAIMS) {
@@ -99,6 +109,26 @@ function registerClaim(key: string, now: number): void {
     }
   }
   recentEffectClaims.set(key, now)
+}
+
+/**
+ * Release a claim because the effect never happened (owner incident 2026-07-26).
+ *
+ * The guard claims the idempotency key the moment it ALLOWS a call — but
+ * "allowed" is not "done". `draft_seo_fixes` passed the guard, then its handler
+ * rejected the batch, so no approval card was ever created; the head re-sent the
+ * SAME batch and got "একই কাজ এই টার্নে আগেই হয়েছে" — a duplicate verdict for an
+ * effect that never occurred, locked in for ten minutes.
+ *
+ * So the claim is now a two-phase thing: taken on allow, kept only if the
+ * handler reports success. runRegisteredTool calls this on every failure path
+ * (handler error, thrown exception, effect-engine failure). Releasing is always
+ * safe: it can only re-enable a retry the owner legitimately wants, never
+ * duplicate an effect that actually landed.
+ */
+export function releaseEffectClaim(key: string | undefined): void {
+  if (!key) return
+  recentEffectClaims.delete(key)
 }
 
 /** Test hook. */
@@ -280,6 +310,7 @@ export async function guardToolCall(
     const finalize = (o: GuardOutcome): GuardOutcome => {
       if (o.action === 'proceed' && classification.mode !== 'read' && ctx.turnId) {
         registerClaim(envelope.idempotencyKey, now)
+        return { ...o, claimedKey: envelope.idempotencyKey }
       }
       return o
     }

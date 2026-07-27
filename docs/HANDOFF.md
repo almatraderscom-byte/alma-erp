@@ -180,7 +180,28 @@ until something measurable contradicts it.**
 
 ---
 
-## 7. Flags currently set
+## 7. iOS — three items are NOT on the phone yet
+
+The native chat is separate code (`ios/App/App/AssistantSwiftUI.swift` +
+`AssistantTransport.swift`). Everything server-side from today reaches the phone
+with no build. These three do not:
+
+1. **`skill_pinned` is not handled at all** in the native transport — the 🧠
+   "which skill is running" line will not appear on iOS.
+2. **Process section open from the first moment** — fixed in the web React
+   thread; native renders its own.
+3. **Approval loader on the click + live thinking during a worker continuation**
+   — same reason.
+
+Nothing breaks on the phone: an unknown SSE event is ignored. Those three are
+simply invisible there.
+
+**Do not ship a build for these alone.** Owner rule: batch every native fix into
+ONE TestFlight build, and ask him first. Sequence he set: finish the web/server
+work → ask him → on his go, do all native work at once → verify in the simulator
+and show him screenshots → only after he confirms, TestFlight.
+
+## 8. Flags currently set
 
 `SKILL_ENGINE_ENABLED=true` on **Vercel Preview only** — production untouched.
 `WEBSITE_SUPABASE_URL` was added to Preview (it existed only on Production, so

@@ -7,6 +7,7 @@ import AgentSidebar, { type Conversation } from './AgentSidebar'
 import AgentThread, { type ChatMessage, type TimelineEntry } from './AgentThread'
 import AgentComposer, { type PendingFile } from './AgentComposer'
 import { DEFAULT_CHAT_MODE, normalizeChatMode, type ChatMode } from '@/agent/lib/chat-mode'
+import { DEFAULT_PERMISSION_MODE, normalizePermissionMode, type PermissionMode } from '@/agent/lib/permission-mode'
 import AgentArtifactsPanel, { type Artifact } from './AgentArtifactsPanel'
 import { notifyTodosChanged } from './AgentTodoContext'
 const VoiceConsole = dynamic(() => import('./voice/VoiceConsole'), { ssr: false })
@@ -63,6 +64,8 @@ type MessageRow = {
     actionType?: string
     costEstimate?: number
     status?: string
+    /** False when the row ran under standing authority and never reached him. */
+    ownerDecided?: boolean
     failReason?: string
     durationMs?: number
     askCardId?: string
@@ -181,6 +184,10 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
             // Persisted/reloaded cards carry their resolved status so the card
             // renders as a settled breadcrumb (✅/❌) instead of a fresh prompt.
             resolvedStatus: cb.status,
+            // false → it ran under standing authority and never reached him;
+            // undefined → unknown provenance (history), which keeps the old
+            // wording rather than relabelling it on a guess.
+            ownerDecided: cb.ownerDecided,
             failReason: cb.failReason,
           }))
         : undefined,
@@ -325,6 +332,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   // Chat mode picker (auto | direct | plan | plan_drive) — per conversation, so a
   // "plan only" chat stays plan-only after reload.
   const [chatMode, setChatMode] = useState<ChatMode>(DEFAULT_CHAT_MODE)
+  // PM-1 — the permission axis. The server is the authority; this is only the
+  // chip's view of it, refreshed from the conversation row on load.
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>(DEFAULT_PERMISSION_MODE)
   /** SK-3: which skill is pinned to this chat, and why — shown as a chip. */
   const [pinnedSkill, setPinnedSkill] = useState<{
     skill: string
@@ -559,6 +569,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           projectId: string | null
           modelId: string | null
           chatMode: string | null
+          permissionMode?: string | null
         }
         if (!data.conversationId) return
         if (streamingRef.current || activeConvIdRef.current) return
@@ -568,6 +579,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           projectId: data.projectId,
           modelId: data.modelId ?? undefined,
           chatMode: data.chatMode,
+          permissionMode: data.permissionMode,
           archived: false,
           updatedAt: '',
         })
@@ -723,10 +735,15 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     // absent chatMode means "unknown", not "auto" — read the real one rather
     // than silently dropping the owner back into full-tool mode.
     setChatMode(normalizeChatMode(conv.chatMode))
-    if (conv.chatMode === undefined) {
+    setPermissionMode(normalizePermissionMode(conv.permissionMode))
+    if (conv.chatMode === undefined || conv.permissionMode === undefined) {
       void fetch(`/api/assistant/conversations/${conv.id}`)
-        .then(async (r) => (r.ok ? (await r.json()) as { chatMode?: string | null } : null))
-        .then((row) => { if (row) setChatMode(normalizeChatMode(row.chatMode)) })
+        .then(async (r) => (r.ok ? (await r.json()) as { chatMode?: string | null; permissionMode?: string | null } : null))
+        .then((row) => {
+          if (!row) return
+          setChatMode(normalizeChatMode(row.chatMode))
+          setPermissionMode(normalizePermissionMode(row.permissionMode))
+        })
         .catch(() => { /* offline — the chip stays on auto, which withholds nothing */ })
     }
     setActivePersonalMode(
@@ -1024,6 +1041,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           // and the mode chip he is looking at right now.
           body.modelId = activeModelId
           body.chatMode = chatMode
+          body.permissionMode = permissionMode
         }
         if (fileRefs.length > 0) body.files = fileRefs
       }
@@ -2077,6 +2095,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           onModelChange={setActiveModelId}
           chatMode={chatMode}
           onChatModeChange={setChatMode}
+          permissionMode={permissionMode}
+          onPermissionModeChange={setPermissionMode}
           pinnedSkill={pinnedSkill}
           onClearSkillPin={() => {
             const convId = activeConvId
