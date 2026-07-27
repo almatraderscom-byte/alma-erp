@@ -422,6 +422,40 @@ down here rather than done: it is the only skill that reads pages nobody here
 wrote, which is exactly the argument item 4 used for the two SEO skills. It needs
 his paired Chrome to prove live, so it waits for him.
 
+### What the LIVE skill test found — 2026-07-28
+
+Promoting the five skills was verified by tests and by the router meter. Then the
+same five were driven with his own sentences in his own browser, and the test that
+mattered was the one nobody wrote: **look at the screen.** Four defects, all of
+them shipping already, none visible from the test suite.
+
+| # | what he would have seen | root cause |
+|---|---|---|
+| 1 | `{"name": "marketing_report", "arguments": …}` and `<parameter name="limit">20</parameter>` in the reply | the JSON `name/arguments` shape matched no pattern; `<parameter>` had a pattern but the cheap guard never listed it, so the function returned before any pattern ran |
+| 2 | cards reading `undefined` | `String(children)` on an EMPTY markdown fence is the literal word |
+| 3 | "The first line has been outputted as required." as the whole visible thought | the rule's NAME was matched; the model reporting that it obeyed the rule was not |
+| 4 | a four-step skill stopping after step one | two sign-off shapes no guard covered: "এবার X দেখতে হবে" (obligation) and "ফল এলে আপডেট দেব" with nothing queued |
+
+**And then the leak came back on the very next turn**, which is the part worth
+keeping. The first fix was proven by tests and by one clean live run — and it was
+only half the story: the round's prose is emitted as ONE block after cleaning, but
+**thinking is streamed token by token and nothing cleaned that path**. The repair
+had fixed the stored transcript and left his live screen exactly as broken. It now
+runs through a stream filter that holds an opener until it closes, because
+`<parameter name="fullScan">` arrives as `<param` + `eter name="fullScan"` +
+`>true</parameter>` and any per-delta strip releases it one delta early.
+
+Two lessons recorded against myself: **one clean live run is not proof** (the same
+mistake this document already records about single-run comparisons), and **a test
+as narrow as the bug passes while the bug survives** — the first `<parameter>` test
+asserted the tag name was gone and never checked the value, so stripping tags
+without their contents produced `truetruetrue…` and went green.
+
+All four re-verified live after the fixes: no markup, no `undefined`, no harness
+chatter, and both skills that used to stop now finish — the audience skill refused
+to invent a segment because purchase history is missing (its own stop condition,
+firing live) and customer-support delivered drafts with evidence per line.
+
 ### Harness parity — where it actually stands
 
 Full matrix: `docs/harness-parity-matrix.md`. Implemented today: the
