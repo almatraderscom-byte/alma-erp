@@ -162,6 +162,59 @@ function forwardedArgs(input: Record<string, unknown>): Record<string, unknown> 
   return rest
 }
 
+/**
+ * ADS-2 phase A — the ad account id the head never had.
+ *
+ * Measured on production 2026-07-27: every direct call to a bridged Meta tool
+ * came back `-32602: Missing required argument: ad_account_id`. Four in one
+ * turn — ad entities, performance trend, errors, opportunity score. The server
+ * has known the account id all along (`META_AD_ACCOUNT_ID`); nothing ever put
+ * it on the wire, and the model cannot invent a numeric id it has never been
+ * told. So 23 read tools were registered, advertised, and unusable.
+ *
+ * Meta wants the BARE numeric id ("123456789"), while our env may carry the
+ * `act_` prefix that the Graph REST paths use. Strip it.
+ */
+export function bareAdAccountId(): string | null {
+  const raw = (process.env.META_AD_ACCOUNT_ID ?? '').trim()
+  if (!raw) return null
+  return raw.replace(/^act_/i, '') || null
+}
+
+/**
+ * Fill in account-shaped arguments the caller left out.
+ *
+ * Schema-driven whenever the live catalog is available, because Meta owns these
+ * names and may add more: we only inject a key the remote tool actually
+ * declares. With no catalog (first call, or a fetch failure) we fall back to
+ * the two names Meta's errors named explicitly, and only for tools that are not
+ * account-listing tools — `ads_get_ad_accounts` is how you DISCOVER the account,
+ * so pinning it to one account would be a bug.
+ *
+ * Never overwrites a value the head supplied: if it names an account or an
+ * entity, that wins. This is a default, not a lock.
+ */
+const NO_ACCOUNT_ARG = new Set(['ads_get_ad_accounts', 'ads_get_help_article'])
+
+export function withAccountDefaults(
+  originalName: string,
+  args: Record<string, unknown>,
+  inputSchema?: Record<string, unknown>,
+): Record<string, unknown> {
+  const accountId = bareAdAccountId()
+  if (!accountId || NO_ACCOUNT_ARG.has(originalName)) return args
+
+  const props = (inputSchema?.properties ?? null) as Record<string, unknown> | null
+  const declares = (key: string) => (props ? Object.hasOwn(props, key) : true)
+
+  const out = { ...args }
+  if (out.ad_account_id == null && declares('ad_account_id')) out.ad_account_id = accountId
+  // `ads_get_errors` asks for entity ids and accepts the account itself as one —
+  // "If account ID is provided…" in its own argument description.
+  if (out.entity_ids == null && declares('entity_ids')) out.entity_ids = [accountId]
+  return out
+}
+
 // ── tools/list catalog cache (kv, TTL — plan §8 endpoint-drift mitigation) ──
 
 export const KV_TOOLS_CACHE = 'meta_mcp_tools_cache'
@@ -294,7 +347,9 @@ function makeBridgedReadTool(originalName: string): AgentTool {
       `[Meta Ads — official MCP, read-only] ${hint} ` +
       'Pass Meta\'s arguments inside the single "args" object (they are forwarded verbatim) — ' +
       'call meta_ads_list_tools first if unsure of the schema; ' +
-      'invalid arguments come back as a Meta error you can correct and retry.',
+      'invalid arguments come back as a Meta error you can correct and retry. ' +
+      'ACCOUNT: you do NOT need `ad_account_id` — the server fills in Boss\'s own ad account when you omit it. ' +
+      'Pass one only to query a DIFFERENT account.',
     input_schema: { ...PASSTHROUGH_SCHEMA },
     handler: async (input) => {
       const gated = await bridgeGate(originalName)
@@ -313,7 +368,11 @@ function makeBridgedReadTool(originalName: string): AgentTool {
             retryable: false,
           }
         }
-        const result = await metaMcpCallTool(originalName, forwardedArgs(input))
+        const schema = catalog?.tools.find((t) => t.name === originalName)?.inputSchema
+        const result = await metaMcpCallTool(
+          originalName,
+          withAccountDefaults(originalName, forwardedArgs(input), schema),
+        )
         return toToolResult(result)
       } catch (e) {
         // MA4: a terminal auth failure on a CONNECTED account means the token

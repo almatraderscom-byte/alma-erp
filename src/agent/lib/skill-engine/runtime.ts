@@ -59,12 +59,21 @@ export interface ActiveSkills {
    */
   isolated: IsolatedSkillPrompt | null
   /**
-   * SK-8. A skill matched but the approval gate refused it.
+   * SK-8 — the skill matched, and the provenance gate refused to run it.
    *
-   * This started life as a sentence in the prompt asking the head to explain
-   * itself, and the FIRST live revoke test showed exactly what that is worth:
-   * the skill correctly did not run, and the head said nothing about it — it
-   * just answered as though nothing had matched. A prompt rule is a request.
+   * Two sessions found this on the same day, from opposite ends, and both
+   * findings are worth keeping.
+   *
+   * From the live REVOKE test: the reason started as a sentence in the prompt
+   * asking the head to explain itself. The skill correctly did not run and the
+   * head said nothing at all — it answered as though nothing had matched. A
+   * prompt rule is a request.
+   *
+   * From production: `seo-fixing-own-site` was approved at one content hash, its
+   * files were edited the next day (#627), and the gate correctly read that as
+   * `changed` — correct, and SILENT. From the outside the engine looked switched
+   * on and idle. A refusal nobody can see is indistinguishable from a bug.
+   *
    * So the reason goes on the wire as its own event and the UI draws it, the
    * same way the pin announcement had to stop being a prompt instruction.
    */
@@ -149,7 +158,13 @@ export async function buildActiveSkills(
         const { heldBackReason } = await import('@/agent/lib/skill-engine/provenance')
         const h = heldBack as { skill: string; state: string }
         const reason = heldBackReason(h.skill, h.state as never)
-        return { ...none, block: `\n## Skill\n${reason}\n`, heldBack: { skill: h.skill, state: h.state, reason } }
+        // Structured, not just prose: the client draws the refusal from this,
+        // and the owner learns his skill is waiting on him instead of guessing.
+        return {
+          ...none,
+          block: `\n## Skill\n${reason}\n`,
+          heldBack: { skill: h.skill, state: h.state, reason },
+        }
       }
       picked = allowed
     } catch {

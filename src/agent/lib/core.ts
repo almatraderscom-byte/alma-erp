@@ -150,10 +150,6 @@ export type AgentEvent =
        */
       isolated?: boolean
     }
-  // SK-8: a skill matched and the approval gate refused it. Its own event rather
-  // than a flag on `skill_pinned`, because nothing IS pinned — the chip must stay
-  // empty while the reason is still shown. Measured 2026-07-27: with the reason
-  // only in the prompt, the head said nothing at all.
   // The live checklist. `AgentPlan`/`AgentPlanStep` already track status per
   // step; nothing carried it to the thread, so a plan was only ever the text the
   // model typed once and never updated.
@@ -176,11 +172,18 @@ export type AgentEvent =
       lastToolLabel: string | null
       text: string
     }
+  // SK-8: the skill matched and the provenance gate refused it. Its own event,
+  // emitted instead of `skill_pinned` and never alongside — the two are opposite
+  // facts, and the chip must stay empty while the reason is still shown. Two
+  // sessions found the same hole: with the reason only in the prompt the head
+  // said nothing at all, and in production `seo-fixing-own-site` sat in `changed`
+  // state for a day while every turn ran without it, silently.
   | {
       type: 'skill_held_back'
       skill: string
-      /** approved | changed | revoked | unapproved — decides the wording. */
+      /** `changed` | `unapproved` | `revoked` — decides the wording. */
       state: string
+      /** The owner-facing sentence, already in Bangla. */
       reason: string
     }
   | {

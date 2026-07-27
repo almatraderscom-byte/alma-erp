@@ -909,6 +909,16 @@ async function* runAlternateProviderTurn(
       // SK-7 — say on the wire whether the skill actually got its own prompt.
       isolated: Boolean(activeSkills.isolated),
     }
+  } else if (activeSkills.heldBack) {
+    // SK-8 — the gate refused it. Boss must be told, because from his side a
+    // withheld skill and a broken one look identical, and one of them is
+    // waiting on a decision only he can make.
+    yield {
+      type: 'skill_held_back',
+      skill: activeSkills.heldBack.skill,
+      state: activeSkills.heldBack.state,
+      reason: activeSkills.heldBack.reason,
+    }
   }
   // SK-8 — a skill matched and the approval gate refused it. Proven necessary on
   // the first live revoke test (2026-07-27): the skill correctly did not run and

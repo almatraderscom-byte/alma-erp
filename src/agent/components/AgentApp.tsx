@@ -1148,21 +1148,18 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               : m,
           ))
         } else if (evt.type === 'skill_held_back') {
-          // SK-8: the gate refused a skill. Deliberately does NOT set the chip —
-          // nothing is pinned — but the reason is drawn as a system line, because
-          // the first live revoke proved the head will not say it on its own.
+          // SK-8: the skill matched and the gate refused it. Say so where the
+          // running-skill line would have gone — an unexplained absence reads as
+          // a broken engine, which is exactly how this was found. Its own field,
+          // not an overloaded `skill`, and the chip is cleared: nothing is pinned.
+          const held = {
+            name: String(evt.skill ?? ''),
+            state: String(evt.state ?? ''),
+            reason: String(evt.reason ?? ''),
+          }
+          setPinnedSkill(null)
           setMessages((prev) => prev.map((m) =>
-            m.id === assistantMsgId
-              ? {
-                  ...m,
-                  skill: {
-                    name: String(evt.skill ?? ''),
-                    source: 'router' as const,
-                    reason: String(evt.reason ?? ''),
-                    heldBack: String(evt.state ?? 'unapproved'),
-                  },
-                }
-              : m,
+            m.id === assistantMsgId ? { ...m, skillHeldBack: held } : m,
           ))
         } else if (evt.type === 'model_info') {
           const variant = (evt.variant as 'claude' | 'qwen' | 'deepseek' | 'default') ?? 'claude'

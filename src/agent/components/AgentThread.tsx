@@ -126,13 +126,15 @@ export interface ChatMessage {
    * ("`openai-docs` skill ব্যবহার করছি" before the work starts), and a prompt rule
    * competing with the speak-first rule lost that fight every time.
    */
-  skill?: { name: string; source: 'owner' | 'router'; reason?: string
-    /**
-     * SK-8 — set when the approval gate REFUSED this skill. Then the line says
-     * why it did not run instead of claiming it is running. The server sends it;
-     * asking the head to explain itself was measured and it stayed silent.
-     */
-    heldBack?: string }
+  skill?: { name: string; source: 'owner' | 'router'; reason?: string }
+  /**
+   * SK-8 — the skill that MATCHED and was refused by the provenance gate. Drawn
+   * in the same place as the skill line, because the owner's question is the
+   * same one ("which skill is running?") and the honest answer is "none, and
+   * here is what it is waiting for". Silence here cost a day: `seo-fixing-own-site`
+   * sat in `changed` state after its files were edited and nothing said so.
+   */
+  skillHeldBack?: { name: string; state: string; reason: string }
   /**
    * Server-side "কী হচ্ছে এখন" line, replaced each time it ticks. Owner ask
    * 2026-07-27: on a long tool-heavy turn he was left watching a spinner.
@@ -1596,18 +1598,17 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     ) : null
                     const skillLine = msg.skill ? (
                       <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-muted">
-                        <span aria-hidden>{msg.skill.heldBack ? '🚫' : '🧠'}</span>
+                        <span aria-hidden>🧠</span>
                         <span>
                           <code className="rounded bg-muted/10 px-1 py-px text-[11px] text-cream">{msg.skill.name}</code>
-                          {msg.skill.heldBack
-                            ? (msg.skill.heldBack === 'revoked'
-                                ? ' skill-এর অনুমোদন তুলে নেওয়া — তাই চলেনি'
-                                : msg.skill.heldBack === 'changed'
-                                  ? ' skill অনুমোদনের পর বদলেছে — তাই চলেনি'
-                                  : ' skill অনুমোদিত নয় — তাই চলেনি')
-                            : ' skill ব্যবহার করছি'}
-                          {!msg.skill.heldBack && msg.skill.source === 'owner' ? ' (আপনার বেছে দেওয়া)' : ''}
+                          {' '}skill ব্যবহার করছি
+                          {msg.skill.source === 'owner' ? ' (আপনার বেছে দেওয়া)' : ''}
                         </span>
+                      </div>
+                    ) : msg.skillHeldBack ? (
+                      <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-coral">
+                        <span aria-hidden>⏸️</span>
+                        <span>{msg.skillHeldBack.reason}</span>
                       </div>
                     ) : null
                     const chrono = (msg.timeline ?? []).some((e) => e.t === 'text')
