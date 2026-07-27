@@ -302,11 +302,54 @@ the skill that owns the message. That is why #5 exists.
 parcel message in the drafts-included run. Both must be resolved before it is
 promoted.
 
-### Not yet started
+### Item 4 — both remaining SEO skills isolated, one at a time
 
-Item 4 (`isolation: subagent` for the other two SEO skills) and item 5 (dropping
-Upstash) are untouched. Item 4 is deliberately after item 3, and each of its two
-skills needs its own `SYSTEM.md` written and proven live one at a time.
+| skill | version | proven |
+|---|---|---|
+| `seo-auditing-own-site` | 1.1.0 | pinned + `isolated` on the record; it is also the instrument item 2's pair was measured with |
+| `seo-fixing-client-site` | 1.1.0 | pinned + `isolated` on the record, from one plain Banglish sentence naming a client domain |
+
+Each `SYSTEM.md` says the thing the general prompt cannot. For the audit skill:
+holding no write tool is the ROLE, not a restriction — Boss can trust the number
+because whoever measured it cannot change it. For the client skill: this report
+leaves the building and money changes hands over it, so no login **even if Boss
+offers credentials** — the case where a helpful model talks itself into being
+useful.
+
+Both bumped to 1.1.0, which dropped them to `changed` in the ledger until
+re-approved. That is now a demonstrated mechanism rather than a hope.
+
+### Item 5 — Upstash: built, flag OFF, not deployed to the VPS
+
+**The notes were wrong about what that Redis is, and the correction changes the
+job.** It is described as "only the queue". It is also the ONLY live path from
+the VPS worker back to a Vercel stream: the worker publishes every SSE event to
+it and `/api/assistant/turn/:id/stream` subscribes. With the quota exhausted —
+which it is — `subscribeTurnEvents` returns null, the stream closes, and a
+worker-run turn cannot be watched at all however healthy the worker is.
+
+So removal is two paths, not one:
+
+- **Read path — live now, no flag.** The durable log is written BEFORE each
+  publish, so `agent_turn_events` is complete on its own. With no Redis to tail
+  and the turn still running, the stream polls that log instead of giving up:
+  one indexed query a second per open stream, ~1s latency instead of instant.
+  This is an improvement *today*, before anything is switched off.
+- **Write path — `AGENT_TURN_HANDOFF_HTTP`, default OFF.** The VPS has had a
+  token-authenticated HTTP surface all along, already wired to Vercel as
+  `AGENT_WORKER_DIAGNOSTIC_URL`. A new `/enqueue-job` on it puts the job on the
+  worker's LOCAL Redis with the same jobId and the same `attempts: 1` — a turn
+  is not idempotent, and a retry re-runs the whole thing from the original
+  message. HTTP failure falls back to Redis: a lost turn is worse than a metered
+  one. A half-configured handoff reports itself UNAVAILABLE rather than
+  pretending, because the failure that would actually hurt is a long turn
+  running inline against the 300s cap.
+
+**Not deployed.** The worker file needs a manual `pm2 restart` on his box (the
+deploy workflow is broken and deploys are by hand). The voice gateway is a
+separate pm2 process, so the locked audio is not in the blast radius — but
+restarting a live worker is his call, not something to do inside a session about
+skills.
 
 ## Not done — start here
 
