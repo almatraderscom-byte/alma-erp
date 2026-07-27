@@ -38,6 +38,56 @@ async function requireOwner(req: NextRequest) {
   return null
 }
 
+/**
+ * Which ARM a recorded run belongs to — isolated or inline.
+ *
+ * Read from the record, never inferred from the date. `skill_pinned` carries
+ * `isolated` on the wire (SK-7 put it there so the claim was checkable from
+ * outside the server) and every turn event is persisted, so the run itself says
+ * which prompt it got. Comparing two arms picked by "this one was after the
+ * flag went on" would be exactly the kind of claim this programme exists to
+ * stop making.
+ *
+ * `mixed` is reported rather than resolved: a conversation whose turns
+ * straddled the flag is not a clean data point for either arm.
+ */
+type Arm = 'isolated' | 'inline' | 'mixed' | 'unknown'
+
+async function armOf(conversationIds: string[]): Promise<Map<string, Arm>> {
+  const out = new Map<string, Arm>()
+  if (conversationIds.length === 0) return out
+
+  const turns = await db.agentTurn.findMany({
+    where: { conversationId: { in: conversationIds } },
+    select: { id: true, conversationId: true },
+  })
+  if (turns.length === 0) return out
+
+  const events = await db.agentTurnEvent.findMany({
+    where: { turnId: { in: turns.map((t: { id: string }) => t.id) }, type: 'skill_pinned' },
+    select: { turnId: true, payload: true },
+  })
+  const turnToConv = new Map<string, string>(
+    turns.map((t: { id: string; conversationId: string }) => [t.id, t.conversationId]),
+  )
+
+  const flags = new Map<string, boolean[]>()
+  for (const e of events as Array<{ turnId: string; payload: unknown }>) {
+    const conv = turnToConv.get(e.turnId)
+    if (!conv) continue
+    const isolated = Boolean((e.payload as { isolated?: unknown } | null)?.isolated)
+    flags.set(conv, [...(flags.get(conv) ?? []), isolated])
+  }
+
+  for (const [conv, list] of flags) {
+    out.set(
+      conv,
+      list.every(Boolean) ? 'isolated' : list.some(Boolean) ? 'mixed' : 'inline',
+    )
+  }
+  return out
+}
+
 async function loadRun(conversationId: string) {
   const conv = await db.agentConversation.findUnique({
     where: { id: conversationId },
@@ -58,6 +108,7 @@ async function loadRun(conversationId: string) {
 
   return {
     conversation: conv,
+    arm: (await armOf([conversationId])).get(conversationId) ?? 'unknown',
     messageCount: messages.length,
     run: reconstructRun({ pinnedSkill: conv.pinnedSkill, messages, toolCalls }),
   }
@@ -85,7 +136,11 @@ export async function GET(req: NextRequest) {
       take: limit,
       select: { id: true, title: true, pinnedSkill: true, skillRouteTrace: true, updatedAt: true },
     })
-    return Response.json({ scenarios: ALL_SCENARIOS.map((s) => ({ id: s.id, text: s.text, expectSkill: s.expectSkill })), conversations: rows })
+    const arms = await armOf(rows.map((r: { id: string }) => r.id))
+    return Response.json({
+      scenarios: ALL_SCENARIOS.map((s) => ({ id: s.id, text: s.text, expectSkill: s.expectSkill })),
+      conversations: rows.map((r: { id: string }) => ({ ...r, arm: arms.get(r.id) ?? 'unknown' })),
+    })
   } catch (err) {
     return Response.json({ error: err instanceof Error ? err.message : 'failed' }, { status: 500 })
   }
@@ -115,6 +170,7 @@ async function scoreArm(entries: ArmEntry[]): Promise<{ results: EvalResult[]; d
     detail.push({
       scenarioId: scenario.id,
       conversationId: e.conversationId,
+      arm: loaded.arm,
       pinnedSkill: loaded.run.pinnedSkill,
       toolNames: loaded.run.tools.map((t) => `${t.toolName}:${t.status}`),
       replyChars: loaded.run.replyText.length,
