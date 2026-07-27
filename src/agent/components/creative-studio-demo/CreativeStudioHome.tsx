@@ -109,7 +109,7 @@ export function CreativeStudioHome({
   const [agentWorkspaceOpen, setAgentWorkspaceOpen] = useState(false)
   const [agentPlanReady, setAgentPlanReady] = useState(false)
   const [notice, setNotice] = useState(
-    'V3 prototype · safe fixtures only · providers and publishing disconnected',
+    'V4 review preview · live provider checks · paid generation and publishing locked',
   )
 
   const normalizedSearch = search.trim().toLowerCase()
