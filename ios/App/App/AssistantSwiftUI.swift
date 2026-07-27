@@ -753,6 +753,16 @@ struct AgentChatMessage: Identifiable, Equatable {
         var status: String = "pending"   // pending | approved | declined
     }
     var modelSwitch: ModelSwitch?
+    /// SK-3 — the skill running this turn, announced before any work starts. Web
+    /// parity: the phone showed nothing at all because the transport never
+    /// decoded `skill_pinned` (owner, 2026-07-27).
+    struct PinnedSkill: Equatable {
+        var name: String
+        var source: String   // "owner" | "router"
+        var reason: String
+        var isolated: Bool
+    }
+    var skill: PinnedSkill?
     var tools: [Tool] = []            // flat list (live streaming + fallback)
     var timeline: [TimelineEntry] = []
     var blocks: [TurnBlock] = []      // interleaved prose ↔ activity (streaming UI)
@@ -1934,6 +1944,62 @@ final class AssistantVM {
         }
         return items.filter {
             !decided.contains($0.id) && actionRegistry[$0.id]?.state.isTerminal != true
+        }
+    }
+
+    /// Decide an approval straight from the Background-tasks sheet.
+    ///
+    /// OWNER, 2026-07-27: *"amr iOS theke ami approve ba reject korte pari na,
+    /// mane only just pending approve dekha jay."* He was right — the sheet's
+    /// attention rows were a display, and the hint on them pointed at the
+    /// Approvals TAB, which is the ERP approvals system (`/api/approvals`) and
+    /// has never carried agent cards at all. So an approval staged by a
+    /// background turn, or in any chat other than the open one, was visible and
+    /// unreachable on the phone.
+    ///
+    /// Two paths on purpose. When the card belongs to the chat that is open,
+    /// this is exactly the inline card's decision — `approveAction` owns the
+    /// loader, the continuation tail and the reject follow-up message, and none
+    /// of that may be duplicated. When it belongs to ANOTHER conversation, none
+    /// of that applies: the decision is posted, the row settles, and the current
+    /// chat is left alone. Sending the reject follow-up into the wrong chat is
+    /// the specific bug this split exists to avoid.
+    @discardableResult
+    fileprivate func decideAttention(_ item: AgentBackgroundAttention, approve: Bool) async -> Bool {
+        if let cid = item.conversationId, cid == conversationId {
+            return await approveAction(item.id, approve: approve)
+        }
+        guard beginSubmitting("action:\(item.id)") else { return false }
+        defer { finishSubmitting("action:\(item.id)") }
+        AlmaAgentHaptics.commit()
+        do {
+            let _: OkResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/actions/\(item.id)/\(approve ? "approve" : "reject")")
+            // Terminal state drops the row out of `mergedAttention` immediately —
+            // the 12s poll would otherwise leave a decided approval sitting there
+            // looking undecided.
+            setActionState(item.id, kind: "approval", state: approve ? .approved : .rejected)
+            backgroundAttention.removeAll { $0.id == item.id }
+            AlmaAgentHaptics.success()
+            await loadActiveBackgroundTurns()
+            return true
+        } catch {
+            // Someone may have decided it on another device between the poll and
+            // the tap; reconcile rather than showing a failure for work that is
+            // in fact done.
+            let reconciled = await reconcileActionFailure(cardId: item.id, error: error)
+            if reconciled {
+                backgroundAttention.removeAll { $0.id == item.id }
+            } else {
+                // Found in the simulator, 2026-07-27: the approve route answers
+                // 400 `unknown_action_type` for a `coworker_request` card, and the
+                // row simply sat there — a tap that does nothing and says nothing
+                // is the same silence this whole surface existed to end.
+                errorToast = approve ? "অনুমোদন করা গেল না — আবার চেষ্টা করুন" : "বাতিল করা গেল না — আবার চেষ্টা করুন"
+                AlmaAgentHaptics.error()
+            }
+            await loadActiveBackgroundTurns()
+            return reconciled
         }
     }
     private var usesBackgroundTaskDebugFixture = false
@@ -4883,6 +4949,16 @@ final class AssistantVM {
                                                       selectedOption: nil))
                     messages[i].blocks.append(.askCard(id: "bq-\(messages[i].id)-\(aid)", askCardId: aid))
                 }
+            case .skillPinned(let skill, let source, let reason, let isolated):
+                // Stamp it on the turn being built so the thread can draw the
+                // system line BEFORE the agent's first sentence — the shape Boss
+                // pointed at in ChatGPT. Arrives before any work starts.
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }), !skill.isEmpty {
+                    messages[i].skill = .init(name: skill, source: source,
+                                              reason: reason, isolated: isolated)
+                    touchedStream = true
+                }
             case .preamble:
                 // The line already streamed in as text_delta; pin whichever prose
                 // block it landed in so the wipes below can spare it.
@@ -5976,6 +6052,18 @@ final class AssistantVM {
             .flatMap(\.confirmCards)
             .first(where: { $0.id == cardId })?
             .summary.split(separator: "\n").first.map(String.init) ?? ""
+        // OWNER, 2026-07-27: on the phone an approval looked like nothing had
+        // happened — the loader only appeared after the POST came back, and the
+        // continuation runs on the WORKER, so no thinking ever reached the phone
+        // at all. Web fixed both on 2026-07-26; this is the native half.
+        // The indicator starts on the TAP, before the request.
+        if approve {
+            isStreaming = true
+            thinkingLive = true
+            lastLiveEventAt = Date()
+            beginUnderstanding()
+            ensureStreamingTail()
+        }
         do {
             let _: OkResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/actions/\(cardId)/\(approve ? "approve" : "reject")")
@@ -6007,10 +6095,54 @@ final class AssistantVM {
                 return true
             }
         } catch {
+            // The work never started — take the indicator back down, or the phone
+            // would spin forever on a request that failed.
+            if approve { thinkingLive = false; isStreaming = false }
             return await reconcileActionFailure(cardId: cardId, error: error)
+        }
+        if approve {
+            // The continuation turn runs server-side. Attach to its durable
+            // stream so its REAL thinking and tool rows land on the phone, the
+            // same events the web subscribes to. Fire-and-forget: a failed
+            // attach must never block the approval that already succeeded.
+            Task { [weak self] in await self?.followApprovalContinuation() }
         }
         await loadMessages()
         return true
+    }
+
+    /// After an approval, find the continuation turn and tail it.
+    ///
+    /// The turn is created server-side a moment after the approve route returns,
+    /// so this polls briefly for it rather than assuming it is already there. If
+    /// nothing shows up, the indicator is released — an honest "nothing is
+    /// running" beats a spinner that never ends (the exact complaint on web,
+    /// 2026-07-26).
+    private func followApprovalContinuation() async {
+        guard let convId = conversationId else { thinkingLive = false; isStreaming = false; return }
+        struct TurnStatus: Decodable { let status: String?; let turnId: String? }
+        for attempt in 0..<10 {
+            if Task.isCancelled { return }
+            try? await Task.sleep(nanoseconds: attempt == 0 ? 400_000_000 : 1_200_000_000)
+            let st: TurnStatus? = try? await AlmaAPI.shared.send(
+                "GET", "/api/assistant/conversations/\(convId)/turn-status")
+            guard let st else { continue }
+            if st.status == "running", let tid = st.turnId {
+                currentTurnId = tid
+                let buffer = AgentEventBuffer { [weak self] events in
+                    self?.apply(events)
+                }
+                try? await tailDurableTurn(tid, afterSeq: -1, buffer: buffer)
+                await buffer.finish()
+                thinkingLive = false
+                isStreaming = false
+                await loadMessages()
+                return
+            }
+            if st.status != nil && st.status != "running" { break }
+        }
+        thinkingLive = false
+        isStreaming = false
     }
 
     private func currentConfirmStatus(_ cardId: String) -> String? {
@@ -9770,6 +9902,27 @@ struct AgentTurnBlocksView: View {
         let hiddenCount = max(0, message.blocks.count - blocks.count)
         let lastBlockId = message.blocks.last?.id
         VStack(alignment: .leading, spacing: 6) {
+            // SK-3 — which skill is running, as a system line ABOVE the agent's
+            // first sentence. Web has had it since 2026-07-26; the phone showed
+            // nothing because the transport dropped `skill_pinned` entirely.
+            if let skill = message.skill, !skill.name.isEmpty {
+                HStack(spacing: 6) {
+                    Text("🧠").font(.system(size: 11))
+                    Text("\(skill.name) skill ব্যবহার করছি")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(pal.muted)
+                        .lineLimit(1)
+                    if skill.source == "owner" {
+                        Text("আপনার বাছাই")
+                            .font(.system(size: 10))
+                            .foregroundStyle(pal.muted.opacity(0.8))
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(pal.muted.opacity(0.10)))
+                .accessibilityLabel("\(skill.name) skill ব্যবহার করছি")
+            }
             if hiddenCount > 0 {
                 AgentCompactActivityRow(icon: "clock.arrow.circlepath",
                                         label: "আগের \(almaBn(hiddenCount)) ধাপ",
@@ -12130,6 +12283,7 @@ private struct AgentBackgroundTasksSheet: View {
             VStack(spacing: 0) {
                 ForEach(Array(attention.enumerated()), id: \.element.id) { index, item in
                     attentionRow(item, pal: pal)
+                    attentionActions(item, pal: pal)
                     if index < attention.count - 1 {
                         Divider().overlay(pal.borderSubtle).padding(.leading, 47)
                     }
@@ -12232,14 +12386,73 @@ private struct AgentBackgroundTasksSheet: View {
                 }
             }
             Spacer(minLength: 4)
-            Image(systemName: "checkmark.seal")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(AgentPalette.coral.opacity(0.8))
-                .accessibilityHidden(true)
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
+        .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 2)
         .accessibilityElement(children: .combine)
-        .accessibilityHint("Approvals tab থেকে অনুমোদন বা বাতিল করুন")
+    }
+
+    /// The decision, here, on the phone.
+    ///
+    /// This row used to end in a decorative seal and an accessibility hint that
+    /// said "Approvals tab থেকে অনুমোদন বা বাতিল করুন" — a dead end twice over:
+    /// the Approvals TAB is the ERP approvals screen and never lists agent
+    /// cards, and the one native surface that could decide one
+    /// (`AgentOpenTasksChipView`) is written but never placed on screen. So the
+    /// owner could see every pending approval on his phone and act on none of
+    /// them unless the card happened to be inline in the chat he had open.
+    @ViewBuilder
+    private func attentionActions(_ item: AgentBackgroundAttention, pal: AgentPalette) -> some View {
+        let busy = vm.isSubmittingAction("action:\(item.id)")
+        let foreign = item.conversationId != nil && item.conversationId != vm.conversationId
+        HStack(spacing: 8) {
+            if busy {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Button {
+                    Task { await vm.decideAttention(item, approve: true) }
+                } label: {
+                    Text("অনুমোদন")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity).padding(.vertical, 8)
+                        .background(AgentPalette.coral, in: Capsule())
+                }
+                .buttonStyle(AlmaAgentPressStyle())
+                Button {
+                    Task { await vm.decideAttention(item, approve: false) }
+                } label: {
+                    Text("বাতিল")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(pal.mutedHi)
+                        .frame(maxWidth: .infinity).padding(.vertical, 8)
+                        .background(Color.white.opacity(0.07), in: Capsule())
+                        .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+                }
+                .buttonStyle(AlmaAgentPressStyle())
+                // Deciding a card that belongs to another chat must not drag that
+                // chat's reply into this one — so when it is foreign, offer the
+                // chat itself instead of pretending the answer lands here.
+                if foreign, let cid = item.conversationId {
+                    Button {
+                        dismiss()
+                        Task { await vm.openConversation(cid, explicit: true) }
+                    } label: {
+                        Image(systemName: "bubble.left.and.text.bubble.right")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(pal.mutedHi)
+                            .frame(width: 40).padding(.vertical, 8)
+                            .background(Color.white.opacity(0.07), in: Capsule())
+                            .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+                            .accessibilityLabel("এই কার্ডের চ্যাট খুলুন")
+                    }
+                    .buttonStyle(AlmaAgentPressStyle())
+                }
+            }
+        }
+        .padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 10)
+        .disabled(busy)
     }
 
     private func attentionAge(_ raw: String, now: Date) -> String {
