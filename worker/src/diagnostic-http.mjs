@@ -213,6 +213,72 @@ export function startDiagnosticHttpServer() {
         return
       }
 
+      /**
+       * Vercel hands a long turn over HTTP instead of through the shared cloud
+       * Redis. That queue exists ONLY because a Vercel function and this box
+       * cannot see each other's Redis — every other queue here is already on the
+       * local one. Over this connection the job goes straight onto the LOCAL
+       * queue and the metered dependency disappears from the write path.
+       *
+       * Deliberately the same jobId/attempts semantics as the Vercel-side
+       * enqueue: `turn-<id>` with attempts 1, because a turn is NOT idempotent —
+       * a retry re-runs the whole agent turn from the original message, which the
+       * owner watched happen on 2026-07-12.
+       */
+      if (req.method === 'POST' && pathname === '/enqueue-job') {
+        if (!verifyToken(token)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'unauthorized' }))
+          return
+        }
+        const chunks = []
+        for await (const chunk of req) chunks.push(chunk)
+        let body
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'bad json' }))
+          return
+        }
+        const kind = body?.kind
+        const data = body?.data
+        if ((kind !== 'turn' && kind !== 'durable-task') || !data || typeof data !== 'object') {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'kind (turn|durable-task) + data required' }))
+          return
+        }
+        if (kind === 'turn' && (!data.turnId || !data.conversationId)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'turnId + conversationId required' }))
+          return
+        }
+        if (kind === 'durable-task' && !data.workflowRunId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'workflowRunId required' }))
+          return
+        }
+        try {
+          const { Queue } = await import('bullmq')
+          // The LOCAL Redis, on purpose — this endpoint is the whole point.
+          const queue = new Queue('long-agent-task', { connection: { url: process.env.REDIS_URL } })
+          const job = kind === 'turn'
+            ? await queue.add('turn', data, { jobId: `turn-${data.turnId}`, attempts: 1 })
+            : await queue.add('durable-task', data, {
+                jobId: `dtask-${data.workflowRunId}`,
+                attempts: 5,
+                backoff: { type: 'exponential', delay: 15_000 },
+              })
+          await queue.close()
+          console.log(`[diagnostic-http] enqueue-job ${kind} -> ${job.id}`)
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: true, jobId: job.id ?? null }))
+        } catch (err) {
+          console.warn('[diagnostic-http] enqueue-job failed:', err.message)
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: err.message }))
+        }
+        return
+      }
+
       if (req.method === 'POST' && pathname === '/retrigger') {
         if (!verifyToken(token)) {
           res.writeHead(401, { 'Content-Type': 'application/json' })
