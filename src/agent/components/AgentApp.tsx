@@ -308,6 +308,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [streamMode, setStreamMode] = useState<'understanding' | 'thinking' | 'searching' | 'writing' | 'settled'>('thinking')
   // Which model is answering the live turn → drives the loading animation identity.
   const [streamVariant, setStreamVariant] = useState<'claude' | 'qwen' | 'deepseek' | 'default'>('claude')
+  // The answering model's readable name — every model, not the three families
+  // `variant` knew (owner, 2026-07-28: "shob model er name nai").
+  const [streamModelName, setStreamModelName] = useState<string>('')
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   // File-card focus: which artifact the panel should show (set when a tool files
   // a document mid-turn, or when the owner taps a file card in the thread).
@@ -1163,6 +1166,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         } else if (evt.type === 'model_info') {
           const variant = (evt.variant as 'claude' | 'qwen' | 'deepseek' | 'default') ?? 'claude'
           setStreamVariant(variant)
+          setStreamModelName(typeof evt.displayName === 'string' ? evt.displayName : '')
           const label = typeof evt.label === 'string' ? evt.label : ''
           // Every head now streams a live thinking trace (Gemini thoughts /
           // OpenRouter reasoning) — seed the same "ভাবছে…" state for all of them;
@@ -2101,6 +2105,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             onStartVoiceSession={() => setVoiceOpen(true)}
             streamMode={streamMode}
             streamVariant={streamVariant}
+            streamModelName={streamModelName}
             compacting={compacting}
             planDrive={planDrive}
             onPlanDriveAction={handlePlanDriveAction}

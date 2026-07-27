@@ -65,6 +65,30 @@ const FUNCTION_CALLS_BLOCK =
   /<function_(?:calls|results)>[\s\S]*?(?:<\/function_(?:calls|results)>|$)/gi
 const INVOKE_BLOCK = /<invoke\b[\s\S]*?(?:<\/invoke>|$)/gi
 
+/**
+ * The FIFTH shape, and the one the owner asked about by name — Qwen, answering a
+ * marketing turn on 2026-07-27, wrote its calls as MARKDOWN CODE BLOCKS:
+ *
+ *   ```tool call
+ *   {"name": "marketing_report", "arguments": {"period": "last_7_days"}}
+ *   ```
+ *
+ * Every earlier pattern is anchored on angle brackets or on `"type":"tool_use"`,
+ * so all four missed it and the cheap guard rejected the text before they ran.
+ *
+ * Rather than add a sixth, seventh and eighth pattern as each model invents its
+ * own spelling, this one is GENERIC: a fenced block is tool markup when its info
+ * string mentions a tool/function call, OR when its body is nothing but a JSON
+ * object with `name` + (`arguments` | `input` | `parameters`). Ordinary fenced
+ * JSON the owner asked for does not carry that pair, and a fence tagged `json`
+ * with other keys is left alone.
+ */
+const FENCED_TOOL_CALL =
+  /```[ \t]*(?:[a-z0-9_-]*[ \t]*)?(?:tool|function)[ _-]?calls?[a-z0-9_ \t-]*\r?\n[\s\S]*?(?:```|$)/gi
+
+const FENCED_TOOL_JSON =
+  /```[a-z0-9_ \t-]*\r?\n\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"(?:arguments|input|parameters)"\s*:[\s\S]*?\}\s*\r?\n?(?:```|$)/gi
+
 /** Leftovers when a stream is cut mid-call, plus the DeepSeek/Qwen sentinels. */
 const STRAY_MARKERS =
   /<\/?tool_call>|<\/?arg_key>|<\/?arg_value>|<\/?function_(?:calls|results)>|<\/?invoke\b[^>]*>|<\/?parameter\b[^>]*>|<\|?tool[_▁]?calls?[_▁]?(?:begin|end|sep)\|?>|<｜tool▁calls?▁(?:begin|end|sep)｜>/gi
@@ -72,8 +96,10 @@ const STRAY_MARKERS =
 export function stripToolCallMarkup(text: string): string {
   if (!text) return text
   // Cheap guard: the overwhelming majority of rounds carry none of this.
-  if (!/<tool_call|<arg_key|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|"type"\s*:\s*"tool_(?:use|call)"/i.test(text)) return text
+  if (!/<tool_call|<arg_key|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|"type"\s*:\s*"tool_(?:use|call)"|```[^\n]*(?:tool|function)[ _-]?calls?|```[^\n]*\n\s*\{\s*"name"\s*:/i.test(text)) return text
   const cleaned = text
+    .replace(FENCED_TOOL_CALL, '')
+    .replace(FENCED_TOOL_JSON, '')
     .replace(JSON_TOOL_USE, '')
     .replace(FUNCTION_CALLS_BLOCK, '')
     .replace(INVOKE_BLOCK, '')
@@ -146,4 +172,26 @@ export function dropRepeatedBlocks(text: string): string {
     keptWords.push(words)
   }
   return kept.join('\n\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+
+/**
+ * Did the model TYPE its tool calls instead of making them?
+ *
+ * Stripping the markup fixes what Boss sees, and hides what actually went wrong:
+ * a round that narrates three calls and makes none did no work, so the
+ * think → tool → update → tool rhythm he watches for collapses into a wall of
+ * text. He noticed the missing rhythm before anyone noticed the cause; this is
+ * the detector that lets the turn notice it too.
+ *
+ * True only when the text carries tool syntax AND the round made no real call —
+ * a model that narrates while also calling properly is merely chatty.
+ */
+export function typedToolCallsInsteadOfCalling(input: {
+  rawText: string
+  realToolCallCount: number
+}): boolean {
+  if (input.realToolCallCount > 0) return false
+  if (!input.rawText?.trim()) return false
+  return stripToolCallMarkup(input.rawText) !== input.rawText
 }
