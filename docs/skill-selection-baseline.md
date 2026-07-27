@@ -8,8 +8,8 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 > engine on today would expose exactly one skill (`alma-owner-daily-briefing`).
 > That alone explains why the skills have never done anything.
 
-- Messages that SHOULD pin a skill: **22** — correct top pick: **15** (**68%**)
-- Wrong skill chosen: **5** · nothing chosen: **2**
+- Messages that SHOULD pin a skill: **22** — correct top pick: **16** (**73%**)
+- Wrong skill chosen: **5** · nothing chosen: **1**
 - Messages that should pin NOTHING: **8** — false triggers: **2**
 
 | # | message | expected | picked (top 3) | result |
@@ -35,7 +35,7 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 | incident | agent ta kaj korche na keno, dekho | alma-agent-incident-diagnosis | alma-agent-incident-diagnosis | ✅ hit |
 | invoice | ei invoice ta ERP te tolo | alma-invoice-to-erp | alma-invoice-to-erp, alma-agent-incident-diagnosis, alma-research | ✅ hit |
 | audience | je customer ra beshi kene tader ekta audience banao | alma-audience-builder | alma-audience-builder, alma-customer-support | ✅ hit |
-| browser | chrome khule daraz e dekho dam koto | alma-browser-operator | — | ⬜ nothing picked |
+| browser | chrome khule daraz e dekho dam koto | alma-browser-operator | alma-browser-operator | ✅ hit |
 | research | competitor ra ki dame bikri korche khuje dekho | alma-research | alma-research | ✅ hit |
 | greeting | valo acho? | — | — | ✅ correctly silent |
 | weather | ajke bristi hobe? | — | — | ✅ correctly silent |
