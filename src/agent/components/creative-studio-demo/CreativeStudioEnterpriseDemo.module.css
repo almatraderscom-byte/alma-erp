@@ -1374,6 +1374,115 @@
   padding: 15px 17px;
 }
 
+.v9LiveApiPill {
+  color: var(--studio-ink);
+  cursor: pointer;
+  font: inherit;
+}
+
+.v9LiveApiPill:disabled {
+  cursor: progress;
+  opacity: 0.78;
+}
+
+.v9LiveApiPill strong {
+  font-size: 9px;
+  font-weight: 760;
+}
+
+.v9LiveApiPill small {
+  border-left: 1px solid var(--border-subtle);
+  color: var(--studio-muted);
+  font-size: 8px;
+  padding-left: 7px;
+}
+
+.v9LiveApiPillWarning > span {
+  background: var(--studio-warning);
+  box-shadow: 0 0 0 4px var(--studio-warning-soft);
+}
+
+.v9LiveStateWarning {
+  color: var(--studio-warning);
+}
+
+.v9LiveStateWarning i {
+  background: var(--studio-warning);
+  box-shadow: 0 0 0 4px var(--studio-warning-soft);
+}
+
+.v9ProviderRefresh {
+  background: transparent;
+  border: 0;
+  color: var(--studio-accent);
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 760;
+  padding: 2px 0;
+}
+
+.v9ProviderRefresh:disabled {
+  cursor: progress;
+  opacity: 0.65;
+}
+
+.v9ComposerApiBadge {
+  align-items: center;
+  background: var(--studio-success-soft);
+  border: 1px solid rgb(29 125 90 / 0.14);
+  border-radius: var(--radius-pill);
+  color: var(--studio-success);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 7px;
+  min-height: 30px;
+  padding: 5px 9px;
+  text-align: left;
+}
+
+.v9ComposerApiBadge:disabled {
+  cursor: progress;
+  opacity: 0.76;
+}
+
+.v9ComposerApiBadge > i {
+  background: currentColor;
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px var(--studio-success-soft);
+  height: 6px;
+  width: 6px;
+}
+
+.v9ComposerApiBadge > span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.v9ComposerApiBadge strong {
+  font-size: 8px;
+  font-weight: 780;
+  line-height: 1.15;
+}
+
+.v9ComposerApiBadge small {
+  color: var(--studio-muted);
+  font-family: var(--font-mono-nums);
+  font-size: 7px;
+  line-height: 1.15;
+}
+
+.v9ComposerApiBadgeWarning {
+  background: var(--studio-warning-soft);
+  border-color: rgb(182 106 29 / 0.18);
+  color: var(--studio-warning);
+}
+
+.v9ComposerApiBadgeWarning > i {
+  box-shadow: 0 0 0 4px var(--studio-warning-soft);
+}
+
 .providerIntegrity header {
   align-items: center;
   display: flex;

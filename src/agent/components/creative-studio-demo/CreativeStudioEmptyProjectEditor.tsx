@@ -31,7 +31,7 @@ const PANEL_TOOLS: ReadonlyArray<{
   { id: 'text', label: 'Text', icon: 'caption' },
   { id: 'voice', label: 'Voice', icon: 'voice' },
   { id: 'music', label: 'Music', icon: 'audio' },
-  { id: 'agent', label: 'Agent', icon: 'agent' },
+  { id: 'agent', label: 'Creative Agent', icon: 'agent' },
 ]
 
 const CANVAS_PRESETS: readonly CanvasPreset[] = ['9:16', '1:1', '4:5', '16:9']
