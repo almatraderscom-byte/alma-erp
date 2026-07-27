@@ -859,7 +859,7 @@ async function* runAlternateProviderTurn(
   // Skill Engine V2 (gated OFF by default) — pick ≤3 on-demand skill procedures for
   // this turn from the message text; '' when disabled or nothing matches (fail-open).
   const activeSkills = suppressWork
-    ? { block: '', pinned: null, manifest: null, isolated: null }
+    ? { block: '', pinned: null, manifest: null, isolated: null, heldBack: null }
     : await buildActiveSkills(lastUserText, { conversationId })
   // SK-7: when the pinned skill runs isolated, its procedure becomes the STABLE
   // system prompt instead of a volatile add-on. Sending both would ship it twice.
@@ -888,6 +888,16 @@ async function* runAlternateProviderTurn(
       reason: activeSkills.pinned.reason,
       // SK-7 — say on the wire whether the skill actually got its own prompt.
       isolated: Boolean(activeSkills.isolated),
+    }
+  } else if (activeSkills.heldBack) {
+    // SK-8 — the gate refused it. Boss must be told, because from his side a
+    // withheld skill and a broken one look identical, and one of them is
+    // waiting on a decision only he can make.
+    yield {
+      type: 'skill_held_back',
+      skill: activeSkills.heldBack.skill,
+      state: activeSkills.heldBack.state,
+      reason: activeSkills.heldBack.reason,
     }
   }
   let ownerIntentTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)

@@ -127,6 +127,14 @@ export interface ChatMessage {
    * competing with the speak-first rule lost that fight every time.
    */
   skill?: { name: string; source: 'owner' | 'router'; reason?: string }
+  /**
+   * SK-8 — the skill that MATCHED and was refused by the provenance gate. Drawn
+   * in the same place as the skill line, because the owner's question is the
+   * same one ("which skill is running?") and the honest answer is "none, and
+   * here is what it is waiting for". Silence here cost a day: `seo-fixing-own-site`
+   * sat in `changed` state after its files were edited and nothing said so.
+   */
+  skillHeldBack?: { name: string; state: string; reason: string }
   /** Live extended-thinking stream — how the agent reasoned before answering. */
   thinking?: string
   /** Seconds spent thinking (set once the reply text begins). */
@@ -1554,6 +1562,11 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                           {' '}skill ব্যবহার করছি
                           {msg.skill.source === 'owner' ? ' (আপনার বেছে দেওয়া)' : ''}
                         </span>
+                      </div>
+                    ) : msg.skillHeldBack ? (
+                      <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-coral">
+                        <span aria-hidden>⏸️</span>
+                        <span>{msg.skillHeldBack.reason}</span>
                       </div>
                     ) : null
                     const chrono = (msg.timeline ?? []).some((e) => e.t === 'text')

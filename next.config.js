@@ -30,6 +30,9 @@ const nextConfig = {
       // trace the same files the chat route does, or its answer is about a
       // different lambda than the one that runs the agent.
       '/api/assistant/internal/skill-probe': ['./src/agent/skills/**'],
+      // SK-8 approvals: the hash being approved is computed from these files, so
+      // the route must see the same bytes the chat lambda runs.
+      '/api/assistant/internal/skill-approvals': ['./src/agent/skills/**'],
     },
   },
   images: {

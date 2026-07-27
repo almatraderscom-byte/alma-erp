@@ -149,6 +149,19 @@ export type AgentEvent =
        */
       isolated?: boolean
     }
+  // SK-8: the skill matched and the provenance gate refused it. Emitted instead
+  // of `skill_pinned`, never alongside — the two are opposite facts. This exists
+  // because the refusal was invisible: `seo-fixing-own-site` sat in `changed`
+  // state for a day (its files were edited after approval) and every turn ran
+  // without it, in silence, looking exactly like a broken engine.
+  | {
+      type: 'skill_held_back'
+      skill: string
+      /** `changed` | `unapproved` | `revoked` */
+      state: string
+      /** The owner-facing sentence, already in Bangla. */
+      reason: string
+    }
   | {
       type: 'verification_retry'
       attempt: number
