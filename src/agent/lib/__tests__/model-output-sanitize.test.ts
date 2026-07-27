@@ -9,7 +9,7 @@
  * back untouched, or the repair would be worse than the defect.
  */
 import { describe, expect, it } from 'vitest'
-import { stripToolCallMarkup } from '@/agent/lib/model-output-sanitize'
+import { dropRepeatedBlocks, stripToolCallMarkup } from '@/agent/lib/model-output-sanitize'
 
 describe('tool-call markup never reaches the owner', () => {
   it('removes the exact leak from his screen', () => {
@@ -118,5 +118,48 @@ describe('the FOURTH shape — his own chat, 2026-07-27', () => {
   it('still leaves ordinary angle-bracket text alone', () => {
     const html = 'সাইজ চার্ট: <table><tr><td>M</td></tr></table> — এটা রেখে দাও'
     expect(stripToolCallMarkup(html)).toBe(html)
+  })
+})
+
+describe('the same answer twice — third sighting', () => {
+  it('drops a near-verbatim repeat of the same paragraph', () => {
+    // The handoff shape: the reply says the same thing again a few lines later.
+    const once = 'বস, নির্দিষ্ট সিস্টেম ছাড়া response time বা CPU % বলা সম্ভব না — hardware, stack, database, caching সবকিছুর উপর নির্ভর করে, fixed কোনো সংখ্যা নেই।'
+    const twice = 'বস, নির্দিষ্ট সিস্টেম ছাড়া response time বা CPU % বলা সম্ভব না — hardware, stack, database, caching সবকিছুর উপর নির্ভর করে, fixed সংখ্যা নেই।'
+    const out = dropRepeatedBlocks(`${once}\n\n${twice}`)
+    expect(out).toBe(once)
+  })
+
+  // HONEST LIMIT, recorded rather than tuned away: on the benchmark reply the
+  // second pass carried NEW information (what find_tool returned) wrapped around
+  // a repeated verdict. Block-level similarity does not fire there, and lowering
+  // the threshold until it did would start eating paragraphs that differ for
+  // good reasons. That case needs the model to stop re-answering, not a wider
+  // net here.
+  it('does NOT drop a repeat that carries new information', () => {
+    const first = 'বস, নির্দিষ্ট সিস্টেম ছাড়া exact response time বা CPU % বলা সম্ভব না — hardware, stack, optimization সবকিছুর উপর নির্ভর করে।'
+    const second = 'বস, টুল খুঁজে দেখলাম — find_tool-এর ফলাফলে শুধু ads/salah টুল এসেছে, কোনো মিল নেই। তাই আগের কথাটাই থাকছে: নির্দিষ্ট সিস্টেম ছাড়া সংখ্যা বলা যাবে না।'
+    expect(dropRepeatedBlocks(`${first}\n\n${second}`)).toContain('find_tool')
+  })
+
+  it('keeps the FIRST occurrence, never the later one', () => {
+    const first = 'বস, আজকের সেল ৳১৫,১৫৮ — সাতটা অর্ডার, গত সপ্তাহের চেয়ে ভালো, আর কোনো pending নেই এখন।'
+    const again = 'বস, আজ সেল হয়েছে ৳১৫,১৫৮ সাতটা অর্ডারে — গত সপ্তাহের চেয়ে ভালো, pending কিছু নেই।'
+    const out = dropRepeatedBlocks(`${first}\n\n${again}`)
+    expect(out).toBe(first)
+  })
+
+  it('leaves a genuine list alone — a list repeats its shape on purpose', () => {
+    const list = [
+      '- পাঞ্জাবি: ৳১২০০, স্টক ৮টা, এই সপ্তাহে ৩টা বিক্রি হয়েছে মোট',
+      '- থ্রি-পিস: ৳১৮০০, স্টক ৬টা, এই সপ্তাহে ৪টা বিক্রি হয়েছে মোট',
+    ].join('\n\n')
+    expect(dropRepeatedBlocks(list)).toBe(list)
+  })
+
+  it('leaves two genuinely different paragraphs alone', () => {
+    const a = 'বস, আজকের সেল ৳১৫,১৫৮ — সাতটা অর্ডার, তার মধ্যে তিনটা delivered হয়ে গেছে।'
+    const b = 'স্টকে পাঞ্জাবি মাত্র ছয়টা বাকি — boost চললে দুই দিনেই শেষ হয়ে যাবে বস।'
+    expect(dropRepeatedBlocks(`${a}\n\n${b}`)).toBe(`${a}\n\n${b}`)
   })
 })

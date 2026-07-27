@@ -89,3 +89,61 @@ export function stripToolCallMarkup(text: string): string {
   // that is what an empty string gives it.
   return cleaned
 }
+
+/**
+ * The same answer, twice, in one reply.
+ *
+ * Third sighting 2026-07-27/28 — the handoff already records "the same opening
+ * line twice", and on the benchmark question the whole verdict block came out
+ * twice: answer, evidence, ask for spec … answer, evidence, ask for spec. The
+ * style rule "do not write the same thing twice" shipped and the very next run
+ * did it again.
+ *
+ * So it is repaired rather than requested. Blocks are compared on their WORDS,
+ * not their characters, because the second pass is usually a paraphrase — the
+ * reason a plain equality check never caught it.
+ *
+ * Deliberately conservative:
+ *  - only blocks of real length are considered (a repeated "ঠিক আছে" is fine);
+ *  - the FIRST occurrence is always kept;
+ *  - list items and short lines are never touched, because a list legitimately
+ *    repeats its shape.
+ */
+const DUP_MIN_CHARS = 80
+const DUP_SIMILARITY = 0.82
+
+function wordSet(block: string): Set<string> {
+  return new Set(
+    (block.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => w.length > 2),
+  )
+}
+
+function similarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0
+  let shared = 0
+  for (const w of a) if (b.has(w)) shared++
+  return shared / Math.min(a.size, b.size)
+}
+
+/** Drop a later block that repeats an earlier one. Keeps the first. */
+export function dropRepeatedBlocks(text: string): string {
+  if (!text || text.length < DUP_MIN_CHARS * 2) return text
+  const blocks = text.split(/\n\s*\n/)
+  if (blocks.length < 2) return text
+
+  const kept: string[] = []
+  const keptWords: Array<Set<string>> = []
+  for (const block of blocks) {
+    const trimmed = block.trim()
+    // Short blocks, headings and list items pass through untouched.
+    if (trimmed.length < DUP_MIN_CHARS || /^\s*[-*•\d]/.test(trimmed)) {
+      kept.push(block)
+      continue
+    }
+    const words = wordSet(trimmed)
+    if (keptWords.some((prev) => similarity(words, prev) >= DUP_SIMILARITY)) continue
+    kept.push(block)
+    keptWords.push(words)
+  }
+  return kept.join('\n\n').replace(/\n{3,}/g, '\n\n').trim()
+}

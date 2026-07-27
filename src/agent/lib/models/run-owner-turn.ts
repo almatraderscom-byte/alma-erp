@@ -10,7 +10,7 @@ import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-to
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_MODULES, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
-import { stripToolCallMarkup } from '@/agent/lib/model-output-sanitize'
+import { stripToolCallMarkup, dropRepeatedBlocks } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
   claimsCompletion,
@@ -56,6 +56,7 @@ import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
 import { buildOwnerCorrectionNudge } from '@/agent/lib/owner-correction'
 import { newTurnProgressState, nextTurnProgress } from '@/agent/lib/turn-progress'
 import { insertControlNote } from '@/agent/lib/control-note-order'
+import { cleanVisibleThinking } from '@/agent/lib/visible-thinking'
 import { buildPlanProgress, planProgressSignature } from '@/agent/lib/plan-progress'
 import { loadLatestPlanProgress } from '@/agent/lib/planner'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
@@ -2173,7 +2174,10 @@ async function* runAlternateProviderTurn(
       // timeline or either emission path — a fragment spans several deltas, so
       // this is the only place it can be done completely.
       const rawIterationText = iterationText
-      iterationText = stripToolCallMarkup(iterationText)
+      // Same repair pass, second failure mode: the model answering twice in one
+      // round. Third sighting, and the style rule against it shipped before the
+      // last one — so it is repaired, not requested.
+      iterationText = dropRepeatedBlocks(stripToolCallMarkup(iterationText))
       if (iterationText !== rawIterationText) {
         console.info('[model-output] stripped tool-call markup from visible text', {
           conversationId,
@@ -2181,7 +2185,11 @@ async function* runAlternateProviderTurn(
         })
       }
       // Record this round's reasoning as a timeline segment BEFORE its tool calls.
-      if (iterThinking.trim()) timeline.push({ t: 'think', text: iterThinking.trim().slice(0, 4000) })
+      // Plumbing out of the thought before it is shown or stored: he asked to
+      // watch the reasoning, not to read our control banners and verifier
+      // notes back to himself (visible-thinking.ts).
+      const shownThinking = cleanVisibleThinking(iterThinking)
+      if (shownThinking) timeline.push({ t: 'think', text: shownThinking.slice(0, 4000) })
       // Round's visible text joins the timeline too, so the persisted stream keeps
       // the true text↔step order after reload (ChronoFlow) — same as core.ts.
       if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
