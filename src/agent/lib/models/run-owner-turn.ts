@@ -53,6 +53,7 @@ import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/
 import { runPreToolHooks, runPostToolHooks } from '@/agent/lib/turn-hooks'
 import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
 import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
+import { buildOwnerCorrectionNudge } from '@/agent/lib/owner-correction'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
@@ -522,6 +523,14 @@ async function* runAlternateProviderTurn(
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
   let currentOwnerInstructions = lastUserText
+  // Boss just pointed out a fault. One block, this turn only, telling the head
+  // how to answer a correction — concede first, rank the complaints himself,
+  // name the failure, then go VERIFY instead of arguing. Appended after the
+  // cached prefix, so the prompt cache is untouched (self-correct.ts pattern).
+  const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
+  if (ownerCorrectionNudge) {
+    messages = [...messages, { role: 'user', content: ownerCorrectionNudge }]
+  }
   const ownerRequirements = deriveOwnerTurnRequirements(lastUserText)
   // A derived deliverable requirement (client SEO batch / live-browser walk) is
   // itself an action order — the gate must not mark such a message

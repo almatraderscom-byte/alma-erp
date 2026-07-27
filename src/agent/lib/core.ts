@@ -43,6 +43,7 @@ import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/
 import { runPreToolHooks, runPostToolHooks } from '@/agent/lib/turn-hooks'
 import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
 import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
+import { buildOwnerCorrectionNudge } from '@/agent/lib/owner-correction'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
 import { trimToolResultForHistory } from '@/agent/lib/context-trim'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
@@ -741,6 +742,14 @@ export async function* runAgentTurn(
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
   let currentOwnerInstructions = lastUserText
+  // Boss just pointed out a fault. One block, this turn only, telling the head
+  // how to answer a correction — concede first, rank the complaints himself,
+  // name the failure, then go VERIFY instead of arguing. Appended after the
+  // cached prefix, so the prompt cache is untouched (self-correct.ts pattern).
+  const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
+  if (ownerCorrectionNudge) {
+    messages = [...messages, { role: 'user', content: ownerCorrectionNudge }]
+  }
   const turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
   // Harness round 2 — refresh the owner's kv-configured hook rules (block/notify)
   // for this turn. Fail-open inside; a broken rules JSON registers nothing.
