@@ -23,8 +23,10 @@ interface Row {
   isolation: 'inline' | 'subagent'
   hashShort: string
   state: 'approved' | 'changed' | 'revoked' | 'unapproved'
+  effectiveState: 'approved' | 'changed' | 'revoked' | 'unapproved'
   wouldRun: boolean
-  blockedBy: 'draft' | 'never-auto' | 'approval' | null
+  blockedBy: 'draft' | 'never-auto' | 'approval' | 'base' | null
+  blockedByName?: string
   approval: {
     version: string
     approvedBy: string
@@ -49,10 +51,19 @@ const STATE_TAG: Record<Row['state'], { label: string; cls: string }> = {
   unapproved: { label: 'অনুমোদন নেই', cls: 'border-border-subtle bg-white/[0.02] text-muted' },
 }
 
-const BLOCKED_WHY: Record<NonNullable<Row['blockedBy']>, string> = {
-  draft: 'draft — router-এ আসেই না',
-  'never-auto': 'নিজে থেকে কখনো চলে না (inherit-only)',
-  approval: 'gate আটকে রেখেছে',
+function blockedWhy(r: Row): string {
+  switch (r.blockedBy) {
+    case 'draft':
+      return 'draft — router-এ আসেই না'
+    case 'never-auto':
+      return 'নিজে থেকে কখনো চলে না (inherit-only)'
+    case 'approval':
+      return 'gate আটকে রেখেছে'
+    case 'base':
+      return `base \`${r.blockedByName ?? '?'}\` অনুমোদিত নয়`
+    default:
+      return ''
+  }
 }
 
 export default function SkillApprovalPanel() {
@@ -160,7 +171,7 @@ export default function SkillApprovalPanel() {
                   {r.approval && !r.approval.revokedAt && (
                     <> · {r.approval.approvedBy} · {new Date(r.approval.approvedAt).toLocaleDateString('en-GB')}</>
                   )}
-                  {r.blockedBy && <> · {BLOCKED_WHY[r.blockedBy]}</>}
+                  {r.blockedBy && <> · {blockedWhy(r)}</>}
                   {!r.blockedBy && r.wouldRun && <> · চালু</>}
                 </p>
               </div>

@@ -56,6 +56,7 @@ async function readSkills(): Promise<SkillApprovalInput[]> {
         implicit: s.implicit,
         isolation,
         hash: s.hash,
+        ...(s.extends ? { extends: s.extends } : {}),
       }
     }),
   )

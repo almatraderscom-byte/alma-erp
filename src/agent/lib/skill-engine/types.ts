@@ -112,6 +112,12 @@ export interface SkillMetadata {
   /** Absolute path to the skill package directory. */
   dir: string
   /**
+   * SK-8 — the `extends:` base, carried at discovery so the approval check can
+   * see it. A base is INHERITED, never selected, so without this the gate never
+   * looks at `alma-base` — the one file that holds the ALMA invariants.
+   */
+  extends?: string
+  /**
    * SK-8 — sha256 over the files that define this skill (manifest + SKILL.md +
    * SYSTEM.md). `version` is a promise a human typed; this is what actually ran,
    * and it is what an approval is granted against. See `provenance.ts`.

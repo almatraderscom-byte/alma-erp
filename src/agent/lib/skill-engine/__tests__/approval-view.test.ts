@@ -83,6 +83,42 @@ describe('what would actually run', () => {
   })
 })
 
+describe('a skill is only as approved as the base it inherits', () => {
+  // The blind spot found 2026-07-27 while filling the ledger: `alma-base` is
+  // never SELECTED, so the approval check never looked at it — and it is the
+  // file that carries the ALMA invariants.
+  const child: SkillApprovalInput = { ...live, extends: 'alma-base' }
+
+  it('an approved skill with an UNapproved base does not run', () => {
+    const v = buildApprovalView([child, base], approvedLedger(child), { gateOn: true, engineEnabled: true })
+    const row = v.rows.find((r) => r.name === child.name)!
+    expect(row.state).toBe('approved')
+    expect(row.effectiveState).toBe('unapproved')
+    expect(row.blockedBy).toBe('base')
+    expect(row.blockedByName).toBe('alma-base')
+    expect(row.wouldRun).toBe(false)
+  })
+
+  it('editing the base after approval stops every skill that inherits it', () => {
+    const ledger = { ...approvedLedger(child), ...approvedLedger(base) }
+    const v = buildApprovalView([child, { ...base, hash: 'base-edited' }], ledger, { gateOn: true, engineEnabled: true })
+    const row = v.rows.find((r) => r.name === child.name)!
+    expect(row.effectiveState).toBe('changed')
+    expect(row.blockedBy).toBe('base')
+  })
+
+  it('both approved → it runs', () => {
+    const ledger = { ...approvedLedger(child), ...approvedLedger(base) }
+    const v = buildApprovalView([child, base], ledger, { gateOn: true, engineEnabled: true })
+    expect(v.rows.find((r) => r.name === child.name)!.wouldRun).toBe(true)
+  })
+
+  it('an unapproved base counts in needsApproval, so the number is not a surprise', () => {
+    const v = buildApprovalView([child, base], approvedLedger(child), { gateOn: false, engineEnabled: true })
+    expect(v.summary.needsApproval).toBe(1)
+  })
+})
+
 describe('the summary is the number he decides on', () => {
   it('needsApproval counts only skills the gate would actually stop', () => {
     // draft and implicit:false are unapproved too, but turning the gate on does

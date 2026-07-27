@@ -91,6 +91,33 @@ export function approvalState(
 }
 
 /**
+ * The blind spot found while populating the ledger, 2026-07-27.
+ *
+ * A base layer (`extends: alma-base`) is INHERITED, never selected — so the
+ * runtime's approval check, which only ever sees the picked skill, never looked
+ * at it. `alma-base` is the file that carries the ALMA invariants (money,
+ * approvals, Bangla, "Boss", halal): the one piece of skill text where an
+ * unnoticed edit matters most was the one piece provenance could not see.
+ *
+ * A skill is therefore only as approved as its base. If the base is unapproved
+ * or was edited after approval, the skill that inherits it is held back and
+ * says WHICH package is the problem — naming the skill when the base is at
+ * fault would send the owner to re-approve the wrong file.
+ */
+export function approvalStateWithBase(
+  skill: { name: string; version: string; hash: string },
+  base: { name: string; version: string; hash: string } | null,
+  ledger: SkillApprovalLedger,
+): { state: SkillApprovalState; blockedBy: string } {
+  const own = approvalState(skill, ledger)
+  if (own !== 'approved') return { state: own, blockedBy: skill.name }
+  if (!base || base.name === skill.name) return { state: own, blockedBy: skill.name }
+  const baseState = approvalState(base, ledger)
+  if (baseState !== 'approved') return { state: baseState, blockedBy: base.name }
+  return { state: 'approved', blockedBy: skill.name }
+}
+
+/**
  * May this skill run? Only `approved` passes when the gate is on.
  *
  * With the gate OFF the answer is always yes and the state is still computed,

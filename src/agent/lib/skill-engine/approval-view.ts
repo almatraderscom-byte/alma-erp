@@ -18,7 +18,7 @@
  * selected. Showing a green tick next to a skill that can never run would be a
  * lie of exactly the kind SK-8 was built to stop.
  */
-import { approvalState, mayRun, type SkillApproval, type SkillApprovalLedger, type SkillApprovalState } from '@/agent/lib/skill-engine/provenance'
+import { approvalState, approvalStateWithBase, mayRun, type SkillApproval, type SkillApprovalLedger, type SkillApprovalState } from '@/agent/lib/skill-engine/provenance'
 
 /** The minimum a caller must know about a skill on disk. */
 export interface SkillApprovalInput {
@@ -29,18 +29,25 @@ export interface SkillApprovalInput {
   implicit: boolean
   isolation: 'inline' | 'subagent'
   hash: string
+  /** The `extends:` base. A skill is only as approved as the base it inherits. */
+  extends?: string
 }
 
 /** Why a skill will not run this turn, independent of approval. */
-export type SkillBlockedBy = 'draft' | 'never-auto' | 'approval' | null
+export type SkillBlockedBy = 'draft' | 'never-auto' | 'approval' | 'base' | null
 
 export interface SkillApprovalRow extends SkillApprovalInput {
   /** First 12 hex chars — enough to compare two builds by eye, short enough to read. */
   hashShort: string
+  /** This package's OWN approval state — what the Approve button acts on. */
   state: SkillApprovalState
+  /** State once the inherited base is folded in — what the gate would enforce. */
+  effectiveState: SkillApprovalState
   /** Would this skill be offered to the router right now, with the gate as it is? */
   wouldRun: boolean
   blockedBy: SkillBlockedBy
+  /** Set when `blockedBy === 'base'` — which inherited package is the problem. */
+  blockedByName?: string
   approval: SkillApproval | null
 }
 
@@ -62,8 +69,20 @@ export function buildApprovalView(
   ledger: SkillApprovalLedger,
   opts: { gateOn: boolean; engineEnabled: boolean },
 ): SkillApprovalView {
+  const byName = new Map(skills.map((s) => [s.name, s]))
+
   const rows: SkillApprovalRow[] = skills.map((s) => {
+    // The row's own state is what the Approve button acts on. The EFFECTIVE
+    // state also folds in the inherited base — a skill is only as approved as
+    // the `alma-base` it extends, and a base is never selected, so nothing else
+    // would ever look at it.
     const state = approvalState({ name: s.name, version: s.version, hash: s.hash }, ledger)
+    const baseRow = s.extends ? byName.get(s.extends) ?? null : null
+    const effective = approvalStateWithBase(
+      { name: s.name, version: s.version, hash: s.hash },
+      baseRow ? { name: baseRow.name, version: baseRow.version, hash: baseRow.hash } : null,
+      ledger,
+    )
     // Order matters: report the FIRST reason it cannot run, not the most
     // alarming one. A draft skill held back by the gate is still just a draft,
     // and saying "approval" there would send him to approve something that
@@ -72,15 +91,17 @@ export function buildApprovalView(
       ? 'draft'
       : !s.implicit
         ? 'never-auto'
-        : !mayRun(state, opts.gateOn)
-          ? 'approval'
+        : !mayRun(effective.state, opts.gateOn)
+          ? (effective.blockedBy === s.name ? 'approval' : 'base')
           : null
     return {
       ...s,
       hashShort: s.hash.slice(0, 12),
       state,
+      effectiveState: effective.state,
       wouldRun: opts.engineEnabled && blockedBy === null,
       blockedBy,
+      ...(blockedBy === 'base' ? { blockedByName: effective.blockedBy } : {}),
       approval: ledger[s.name] ?? null,
     }
   })
@@ -103,7 +124,7 @@ export function buildApprovalView(
       // skills that are not approved. This number is the whole point of the
       // screen — the gate was left off because nobody could see it.
       needsApproval: rows.filter(
-        (r) => selectableStatus(r.status) && r.implicit && r.state !== 'approved',
+        (r) => selectableStatus(r.status) && r.implicit && r.effectiveState !== 'approved',
       ).length,
       revoked: rows.filter((r) => r.state === 'revoked').length,
     },

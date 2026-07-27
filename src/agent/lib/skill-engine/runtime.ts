@@ -105,7 +105,7 @@ export async function buildActiveSkills(
     // an unapproved, edited or revoked skill does not run at all.
     let heldBack: { skill: string; state: string } | null = null
     try {
-      const [{ loadApprovalLedger }, { approvalState, mayRun }, { skillApprovalGateEnabled }] =
+      const [{ loadApprovalLedger }, { approvalStateWithBase, mayRun }, { skillApprovalGateEnabled }] =
         await Promise.all([
           import('@/agent/lib/skill-engine/approval-store'),
           import('@/agent/lib/skill-engine/provenance'),
@@ -114,12 +114,22 @@ export async function buildActiveSkills(
       const ledger = await loadApprovalLedger()
       const gateOn = skillApprovalGateEnabled()
       const allowed = picked.filter((meta) => {
-        const state = approvalState({ name: meta.name, version: meta.version, hash: meta.hash }, ledger)
+        // A skill is only as approved as the base it inherits. `alma-base` is
+        // never SELECTED, so checking the picked skill alone left the ALMA
+        // invariants outside provenance entirely.
+        const baseMeta = meta.extends
+          ? index.skills.find((s) => s.name === meta.extends) ?? null
+          : null
+        const { state, blockedBy } = approvalStateWithBase(
+          { name: meta.name, version: meta.version, hash: meta.hash },
+          baseMeta ? { name: baseMeta.name, version: baseMeta.version, hash: baseMeta.hash } : null,
+          ledger,
+        )
         if (state !== 'approved') {
-          console.info('[skill-provenance]', { skill: meta.name, version: meta.version, state, gateOn })
+          console.info('[skill-provenance]', { skill: meta.name, version: meta.version, state, blockedBy, gateOn })
         }
         if (mayRun(state, gateOn)) return true
-        heldBack = { skill: meta.name, state }
+        heldBack = { skill: blockedBy, state }
         return false
       })
       if (allowed.length === 0 && heldBack) {
