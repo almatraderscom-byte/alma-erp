@@ -1,20 +1,48 @@
 {
   "name": "alma-meta-campaign-launch",
-  "description": "Meta campaign plan: objective, audience, budget, creative — launch/spend owner-gated card দিয়ে।",
-  "version": "0.1.0",
+  "description": "Plans a new Meta ad campaign end to end — objective, who it reaches, daily budget, creative angle — validates the plan against the approved budget cap, and only then raises the owner card. Use when Boss asks for a campaign or a boost to be started. Money never moves on this skill's say-so: the card is his click, and Meta creates everything PAUSED.",
+  "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
-  "businessScopes": ["ALMA_LIFESTYLE"],
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
   "riskTier": "high",
   "requiredCapabilities": [
     "marketing_report",
     "recommend_ad_actions",
     "list_audiences",
-    "get_customer_segments"
+    "get_customer_segments",
+    "ads_campaign_plan",
+    "launch_campaign"
   ],
   "networkPolicy": "allowlist",
   "writePolicy": "owner_gated",
   "approvalPolicy": "always",
-  "maxSteps": 5,
-  "status": "draft"
+  "maxSteps": 6,
+  "status": "active",
+  "extends": "alma-base",
+  "whenNotToUse": "কারা টার্গেট হবে সেটাই মূল প্রশ্ন → alma-audience-builder। বিজ্ঞাপন কেমন চলছে/রিপোর্ট → alma-marketing। চালু ক্যাম্পেইন থামানো বা বাড়ানো → এই skill নয়, সরাসরি ads টুল।",
+  "outputContract": {
+    "kind": "approval_card",
+    "mustInclude": [
+      "objective",
+      "audience",
+      "daily_budget_bdt",
+      "projected_monthly_spend",
+      "creative_angle",
+      "plan_validation_result"
+    ]
+  },
+  "stopConditions": [
+    "`ads_campaign_plan` না চালিয়ে কখনো launch card তুলবে না — বাজেট cap আর objective ওখানেই যাচাই হয়",
+    "validation-এ error থাকলে থামবে — error নিয়েই card তোলা মানে Boss-কে ভাঙা plan অনুমোদন করতে বলা",
+    "Boss বাজেট না বললে নিজে একটা ধরে নেবে না — জিজ্ঞেস করবে",
+    "অনুমোদনের পরও যা তৈরি হয় তা PAUSED — নিজে থেকে চালু করবে না"
+  ],
+  "done": [
+    {
+      "tool": "ads_campaign_plan"
+    }
+  ]
 }

@@ -19,7 +19,7 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 | seo-fix-meta | product-code-110 এর meta description লিখে দাও | seo-fixing-own-site | alma-product-listing, alma-meta-campaign-launch, alma-browser-operator | ❌ wrong skill |
 | seo-client | client er site example.com er seo dekho | seo-fixing-client-site | seo-fixing-client-site, seo-fixing-own-site, seo-auditing-own-site | ✅ hit |
 | seo-fix-slug-banglish | almatraders.com er baki slug problem gulo thik kore dao | seo-fixing-own-site | alma-website, seo-auditing-own-site, seo-fixing-client-site | ❌ wrong skill |
-| seo-fix-meta-banglish | almatraders.com er product gulor meta description thik kore dao | seo-fixing-own-site | alma-product-listing, seo-fixing-own-site, alma-meta-campaign-launch | ❌ wrong skill |
+| seo-fix-meta-banglish | almatraders.com er product gulor meta description thik kore dao | seo-fixing-own-site | alma-product-listing, alma-meta-campaign-launch, seo-fixing-own-site | ❌ wrong skill |
 | seo-audit-banglish | almatraders.com er purno seo audit koro | seo-auditing-own-site | seo-auditing-own-site, seo-fixing-own-site, seo-fixing-client-site | ✅ hit |
 | seo-fix-title-thin | almatraders.com এর পুরো দুর্বল title আর thin description gulo thik koro | seo-fixing-own-site | alma-product-listing, alma-website, seo-auditing-own-site | ❌ wrong skill |
 | ads-audit-not-seo | amar ads account ta ekbar valo kore audit koro | — | seo-auditing-own-site, seo-fixing-own-site | ⚠️ false trigger |
@@ -34,7 +34,7 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 | website | website e ki ki somossa ache? | alma-website | alma-website, alma-product-listing, seo-fixing-client-site | ✅ hit |
 | incident | agent ta kaj korche na keno, dekho | alma-agent-incident-diagnosis | alma-agent-incident-diagnosis | ✅ hit |
 | invoice | ei invoice ta ERP te tolo | alma-invoice-to-erp | alma-invoice-to-erp, alma-agent-incident-diagnosis, alma-research | ✅ hit |
-| audience | je customer ra beshi kene tader ekta audience banao | alma-audience-builder | alma-audience-builder, alma-customer-support, alma-meta-campaign-launch | ✅ hit |
+| audience | je customer ra beshi kene tader ekta audience banao | alma-audience-builder | alma-audience-builder, alma-customer-support | ✅ hit |
 | browser | chrome khule daraz e dekho dam koto | alma-browser-operator | — | ⬜ nothing picked |
 | research | competitor ra ki dame bikri korche khuje dekho | alma-research | alma-research | ✅ hit |
 | greeting | valo acho? | — | — | ✅ correctly silent |

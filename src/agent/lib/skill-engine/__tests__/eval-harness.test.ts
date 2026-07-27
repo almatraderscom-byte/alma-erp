@@ -196,6 +196,7 @@ describe('scenario hygiene', () => {
       'alma-agent-incident-diagnosis',
       'alma-audience-builder',
       'alma-customer-support',
+      'alma-meta-campaign-launch',
     ]) {
       expect(ALL_SCENARIOS.filter((s) => s.expectSkill === skill).length).toBeGreaterThanOrEqual(3)
     }
