@@ -3,7 +3,6 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { isSelectableModelId } from '@/agent/lib/models/registry'
-import { isChatMode } from '@/agent/lib/chat-mode'
 import { isPermissionMode } from '@/agent/lib/permission-mode'
 import { prisma } from '@/lib/prisma'
 
@@ -64,14 +63,15 @@ export async function PATCH(
     data.modelId = id
   }
 
-  // Owner's chat mode picker: auto | direct | plan | plan_drive. Rejected rather
-  // than defaulted on a bad value — a silently ignored mode change would be worse
-  // than an error, because the owner would believe the agent is restrained.
+  // The chat-mode picker was RETIRED on 2026-07-28 (owner: one chip, Claude Code
+  // style). Execution style is now derived from the permission mode at turn time,
+  // so accepting a write here would store a value that nothing reads — a control
+  // that looks live and is not. Refused loudly instead.
   if (body.chatMode !== undefined) {
-    if (!isChatMode(body.chatMode)) {
-      return Response.json({ error: 'invalid_chat_mode' }, { status: 400 })
-    }
-    data.chatMode = body.chatMode
+    return Response.json(
+      { error: 'chat_mode_retired', hint: 'permissionMode is the only mode now' },
+      { status: 400 },
+    )
   }
 
   // PM-1 — the permission axis: plan | careful | standard | supervised |

@@ -1753,7 +1753,14 @@ async function* runAlternateProviderTurn(
   // A turn Boss put in a working mode (প্ল্যান-ড্রাইভ) is a WORK SESSION, not a
   // chat reply: it gets the long-run budget so it can grind a real job to the
   // end in one visible session instead of being chopped into engine steps.
-  const longRunTurn = chatMode === 'plan_drive'
+  const rememberedWorkClass = await loadRememberedWorkClass(conversationId)
+  const rememberedLongRun = rememberedWorkClass?.workClass === 'long_run'
+  // The প্ল্যান-ড্রাইভ chip used to be the only way to reach the long-run budget,
+  // and that chip is gone (one mode chip, owner 2026-07-28). A durable plan is
+  // not something he should have to declare in advance anyway — the chat BECOMES
+  // a work session the moment a plan is actually enrolled, which is what the
+  // remembered work class carries forward from the turn that ran execute_plan.
+  const longRunTurn = rememberedLongRun
   const deepTurn = ownerRequirements.deepWork || driveClientSeoBatch || isJobDeliveryDirective(projectSystemInstructions)
   // The turn's work class drives BOTH how many rounds it may take and how big
   // the head's tool budget is. They used to disagree — 60 rounds allowed, tools
@@ -1764,7 +1771,7 @@ async function* runAlternateProviderTurn(
   // agent's own card used to shrink a 60-round job back to an 8-round chat reply
   // at exactly the moment the work began. Inheritance can only WIDEN, and the
   // memory expires.
-  const rememberedWorkClass = await loadRememberedWorkClass(conversationId)
+
   const workClass: TurnWorkClass = effectiveWorkClass(derivedWorkClass, rememberedWorkClass)
   if (derivedWorkClass !== 'chat') void rememberWorkClass(conversationId, derivedWorkClass)
   let maxIterations =
@@ -2712,6 +2719,13 @@ async function* runAlternateProviderTurn(
           errorCode: 'errorCode' in result ? result.errorCode : undefined,
         }
         toolRecords.push(toolRecord)
+        // A durable plan just started running: from here this chat IS a work
+        // session, and it gets the long-run budget the retired প্ল্যান-ড্রাইভ chip
+        // used to grant — earned by the plan actually being enrolled rather than
+        // declared in advance (one mode chip, owner 2026-07-28).
+        if (call.name === 'execute_plan' && result.success) {
+          void rememberWorkClass(conversationId, 'long_run')
+        }
         if (call.name === contractToolName && !result.success) roundContractFailure = toolRecord
 
         timeline.push({

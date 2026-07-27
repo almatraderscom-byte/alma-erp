@@ -181,7 +181,62 @@ struct AgentConversation: Decodable, Identifiable, Equatable {
     var source: String?
     var archived: Bool?
     var pinned: Bool?
+    /// PM-1 — how much the agent may do without Boss in THIS chat. The server has
+    /// returned it since the permission axis shipped; the phone had no picker at
+    /// all until 2026-07-28, so on the phone every chat silently ran on the
+    /// default no matter what he had chosen on the web.
+    var permissionMode: String?
     var updatedAt: String?
+}
+
+/// The five modes, mirroring `src/agent/lib/permission-mode.ts`.
+///
+/// OWNER, 2026-07-28: the web carried TWO mode chips and both had a mode called
+/// প্ল্যান — one meaning "only plan, run nothing", the other "withhold every
+/// effect tool". He asked for the execution-style chip to go and this one to be
+/// the mode control, on the phone too. So this is the single axis: how much may
+/// it do without me.
+///
+/// The labels are copied, not re-invented: a mode that reads differently on the
+/// phone than on the web is a second thing to learn for no gain.
+enum AgentPermissionMode: String, CaseIterable, Identifiable {
+    case plan, careful, standard, supervised, elevated
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .plan: return "প্ল্যান"
+        case .careful: return "সতর্ক"
+        case .standard: return "স্বাভাবিক"
+        case .supervised: return "তত্ত্বাবধান"
+        case .elevated: return "জরুরি অনুমতি"
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .plan: return "শুধু দেখব আর প্ল্যান দেব — কিছুই বদলাবে না, কার্ডও যাবে না"
+        case .careful: return "যা কিছু বদলায় সবই আপনার অনুমোদনে — ছোট কাজও"
+        case .standard: return "রোজকার কাজ নিজে করব, ঝুঁকির কাজ আপনার অনুমোদনে"
+        case .supervised: return "কাজ করে পরে জানাব, এক ট্যাপে ফেরানো যাবে"
+        case .elevated: return "বেঁধে দেওয়া কাজে, বেঁধে দেওয়া সময়ের জন্য — নিজেই মেয়াদ শেষ"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .plan: return "list.clipboard"
+        case .careful: return "shield"
+        case .standard: return "scalemass"
+        case .supervised: return "eye"
+        case .elevated: return "timer"
+        }
+    }
+
+    static func from(_ raw: String?) -> AgentPermissionMode {
+        guard let raw, let mode = AgentPermissionMode(rawValue: raw) else { return .standard }
+        return mode
+    }
 }
 
 struct ActiveConversationPointer: Decodable {
@@ -1374,6 +1429,10 @@ final class AssistantVM {
     // Thread state
     var conversationId: String?
     var conversationTitle: String = "ALMA AI"
+    /// PM-1 on the phone — the ONE mode chip (owner, 2026-07-28). The web carried
+    /// two mode pickers and both had a rung called প্ল্যান; the execution-style
+    /// picker is retired and this ladder is the only mode control, here as well.
+    var permissionMode: AgentPermissionMode = .standard
     var currentProjectId: String?
     var messages: [AgentChatMessage] = []
     var loadingHistory = false
@@ -2510,6 +2569,21 @@ final class AssistantVM {
         })
     }
 
+    /// Read this chat's mode from the SERVER row.
+    ///
+    /// Found in the simulator, 2026-07-28: setting প্ল্যান stuck until the app was
+    /// restarted, then the chip read স্বাভাবিক again — the cold-start restore
+    /// never carried the mode, and the conversation list it would have read from
+    /// may not even be loaded yet. A chip that forgets what he chose is the same
+    /// failure as a chip that lies about it.
+    fileprivate func refreshPermissionModeFromServer() async {
+        guard let cid = conversationId else { return }
+        struct Row: Decodable { let permissionMode: String? }
+        guard let row: Row = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)") else { return }
+        let mode = AgentPermissionMode.from(row.permissionMode)
+        if mode != permissionMode { permissionMode = mode }
+    }
+
     private func loadActiveConversation() async {
         do {
             let ptr: ActiveConversationPointer = try await AlmaAPI.shared.get("/api/assistant/active-conversation")
@@ -2518,6 +2592,7 @@ final class AssistantVM {
                 selectedSessionIdentity = "server:\(cid)"
                 currentProjectId = ptr.projectId
                 modelId = ptr.modelId
+                await refreshPermissionModeFromServer()
                 await loadMessages(showSpinner: messages.isEmpty)
                 await loadArtifacts()
                 await recoverTurnState(trigger: "bootstrap")
@@ -3621,6 +3696,10 @@ final class AssistantVM {
         selectedSessionIdentity = "server:\(id)"
         let selected = conversations.first { $0.id == id }
         modelId = selected?.modelId   // pinned model follows the chat
+        // The mode belongs to the CHAT, not to the phone: opening a chat he had
+        // set to সতর্ক must not show স্বাভাবিক while the server runs সতর্ক.
+        permissionMode = AgentPermissionMode.from(selected?.permissionMode)
+        Task { await refreshPermissionModeFromServer() }
         currentProjectId = selected?.projectId
         conversationTitle = selected?.title?.isEmpty == false ? selected!.title! : "ALMA AI"
         localIdByServerId = [:]   // 1.5: optimistic-ID maps never leak across conversations
@@ -3644,6 +3723,29 @@ final class AssistantVM {
         scheduleQueuedOwnerMessage()
     }
 
+    /// Change the mode for THIS chat.
+    ///
+    /// Optimistic, then persisted — and reverted if the server refuses. Believing
+    /// the agent is restrained when it is not is the one failure this control must
+    /// never produce, which is also why a brand-new chat sends the mode with its
+    /// first message instead of assuming the default.
+    func setPermissionMode(_ next: AgentPermissionMode) async {
+        guard next != permissionMode else { return }
+        let previous = permissionMode
+        permissionMode = next
+        AlmaAgentHaptics.selection()
+        guard let cid = conversationId else { return }  // new chat — rides with the first send
+        do {
+            let _: OkResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/assistant/conversations/\(cid)",
+                body: ["permissionMode": next.rawValue])
+        } catch {
+            permissionMode = previous
+            errorToast = "মোড বদলানো গেল না — আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
+        }
+    }
+
     func newChat() async {
         if isStreaming || recoverableTurn != nil {
             errorToast = "চলতি উত্তর শেষ হলে নতুন কথোপকথন খুলুন — বর্তমান কাজটি সুরক্ষিত আছে"
@@ -3656,6 +3758,7 @@ final class AssistantVM {
         selectedSessionIdentity = UUID().uuidString
         currentProjectId = nil
         conversationTitle = "ALMA AI"
+        permissionMode = .standard
         localIdByServerId = [:]  // 1.5: optimistic-ID maps never leak across conversations
         lastSyncStamp = nil      // 4.1: window/delta cursors are per-conversation
         resetHistoryWindowState()
@@ -4135,6 +4238,10 @@ final class AssistantVM {
         /// route creates no owner message and atomically consumes the predecessor
         /// continuation flag (web parity).
         var autoContinueFromTurnId: String? = nil
+        /// A brand-new chat has no row yet, so the chip he is looking at is the
+        /// only source. Once the row exists the SERVER reads the mode off it and
+        /// ignores whatever a client claims — that guarantee is not weakened here.
+        var permissionMode: String? = nil
     }
 
     private struct SteeringBody: Encodable {
@@ -4340,7 +4447,10 @@ final class AssistantVM {
                             files: files, modelId: modelId ?? "auto",
                             projectId: currentProjectId,
                             clientMessageId: clientMessageId, askCardId: askCardId,
-                            autoContinueFromTurnId: autoContinueFromTurnId)
+                            autoContinueFromTurnId: autoContinueFromTurnId,
+                            // Only for a chat that has no row yet — once it exists
+                            // the server reads the mode off the row and ignores this.
+                            permissionMode: conversationId == nil ? permissionMode.rawValue : nil)
         if let clientMessageId {
             // Persist BEFORE starting network work. Process death between POST and
             // conversation_id/turn_id can now replay the exact idempotent request.
@@ -10324,6 +10434,7 @@ struct AgentComposerView: View {
     @State private var showDocumentPicker = false
     @State private var showCamera = false
     @State private var showScanner = false
+    @State private var showModePicker = false
     @FocusState private var focused: Bool
 
     private var hasComposerPresentation: Bool {
@@ -10384,6 +10495,16 @@ struct AgentComposerView: View {
                 if vm.isRecording {
                     recordingBar(pal)
                 } else {
+                    // ABOVE the input, not below it: the strip under the composer
+                    // is inside the floating tab bar's hit area, so a chip drawn
+                    // there is visible and untappable — three sim rounds proved it
+                    // (Menu, popover and sheet all failed from that row alone).
+                    HStack(spacing: 8) {
+                        permissionModeChip(pal)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 4)
+                    .padding(.bottom, 2)
                     composerInputRow(pal)
                 }
             }
@@ -10613,6 +10734,98 @@ struct AgentComposerView: View {
         case .uploading: return AgentPalette.coral
         case .waitingForNetwork: return pal.muted
         }
+    }
+
+    /// The ONE mode chip (owner, 2026-07-28) — "how much may it do without me".
+    ///
+    /// The web used to carry a second chip for execution style and both had a rung
+    /// called প্ল্যান; that one is retired and its behaviour is derived from this.
+    /// The phone had no picker at all, so every chat here silently ran on the
+    /// default however he had set it on the web.
+    @ViewBuilder private func permissionModeChip(_ pal: AgentPalette) -> some View {
+        Button {
+            AlmaAgentHaptics.selection()
+            showModePicker = true
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: vm.permissionMode.symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(vm.permissionMode.label)
+                    .font(.system(size: 12, weight: .medium))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(pal.muted)
+            }
+            .foregroundStyle(vm.permissionMode == .standard ? pal.mutedHi : AgentPalette.coral)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(
+                vm.permissionMode == .standard
+                    ? AnyShapeStyle(Color.white.opacity(0.06))
+                    : AnyShapeStyle(AgentPalette.coral.opacity(0.12)),
+                in: Capsule())
+            .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(AlmaAgentPressStyle())
+        .accessibilityLabel("মোড: \(vm.permissionMode.label)")
+        .accessibilityHint(vm.permissionMode.hint)
+        // A SwiftUI `Menu` and then a popover both failed to open from this strip
+        // in the simulator; a sheet is unambiguous and, on a phone, is the shape
+        // this list wants anyway — five rungs with a sentence each do not fit in
+        // a popover thumb-reach.
+        .sheet(isPresented: $showModePicker) {
+            modeMenu(pal)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
+    }
+
+    @ViewBuilder private func modeMenu(_ pal: AgentPalette) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("আমার অনুমোদন কতটুকু লাগবে")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(pal.muted)
+                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
+            ForEach(AgentPermissionMode.allCases) { mode in
+                Button {
+                    showModePicker = false
+                    Task { await vm.setPermissionMode(mode) }
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: mode.symbol)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(AgentPalette.coral)
+                            .frame(width: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(mode.label)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(pal.ink)
+                            Text(mode.hint)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(pal.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 6)
+                        if vm.permissionMode == mode {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(AgentPalette.coral)
+                        }
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(AlmaAgentPressStyle())
+            }
+            // True in every mode, and the reason this chip can be relaxed safely:
+            // the risk-tier ceiling in the policy kernel, not this menu, is what
+            // keeps money and permissions in his hands.
+            Text("টাকা সরানো ও নিরাপত্তার কাজ সব মোডেই আপনার হাতে থাকবে।")
+                .font(.system(size: 11))
+                .foregroundStyle(pal.muted)
+                .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 12)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder private func composerInputRow(_ pal: AgentPalette) -> some View {
