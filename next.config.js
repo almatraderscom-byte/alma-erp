@@ -26,6 +26,10 @@ const nextConfig = {
       // skill-engine/runtime.ts. Without tracing them into the chat lambda, Vercel
       // drops the source `.md`/`.json` and discovery silently finds nothing.
       '/api/assistant/chat': ['./src/agent/skills/**'],
+      // SK-8: the approval screen hashes the same packages, so it needs them on
+      // disk too. Without this the list comes back EMPTY on Vercel and nothing
+      // can be approved — the same silent-nothing the chat lambda hit.
+      '/api/assistant/skills': ['./src/agent/skills/**'],
     },
   },
   images: {
