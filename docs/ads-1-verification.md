@@ -181,7 +181,34 @@ the next agent a minute instead of a morning.
 
 ---
 
-## 7. Verification status of the ADS-0 audit, line by line
+## 7. The router fix, proven live on preview
+
+Run A's exact sentence — `amar ads account ta ekbar valo kore audit kore dekho`
+— on the branch preview, in the owner's own browser:
+
+| | production (old code) | preview (this branch) |
+|---|---|---|
+| skill pinned | `seo-auditing-own-site` | none |
+| `recommend_ad_actions` | **blocked** — not in the pinned skill's allowlist | **ran, succeeded** |
+| tool calls | 8, six of them failures | 1 |
+| result | no audit; "start a new conversation" | full audit: 4 campaigns with spend / impressions / clicks / CTR, the $0 campaign flagged `অচল — ডেলিভারি হচ্ছে না`, ROAS 0 explained as Pixel/CAPI not connected |
+| time / cost | 57s · $0.1709 · 6 steps | 1m 23s · $0.1130 · 3 steps |
+
+**The functional proof is stronger than the UI chip here.** If the SEO skill had
+still been pinned, its allowlist would have withheld `recommend_ad_actions`
+exactly as it did on production. The tool ran. That cannot happen with the audit
+skill pinned.
+
+The SEO path was re-run on the same preview to check for a regression:
+`almatraders.com er seo audit koro` still goes straight to
+`run_website_seo_audit` and its `check_website_seo_audit` polls — the audit
+skill's own tools and its own behaviour — and the unit tests assert the rule-layer
+pin on the index production actually serves. **Honest caveat:** the skill chip
+was not observed in the UI on either preview run, and the announcement line is
+model-authored, so the chip is not a reliable signal either way; the pin was
+confirmed from the tools, not the chrome.
+
+## 8. Verification status of the ADS-0 audit, line by line
 
 | ADS-0 said | ADS-1 verdict |
 |---|---|
