@@ -224,23 +224,33 @@ export type CampaignMetrics = {
  * expensive enough. Never throws: a failed structure read degrades to "unknown",
  * and an unknown structure must not turn a running campaign into a stopped one.
  */
-export type CampaignStructure = { activeAdSets: number; activeAds: number; known: boolean }
+export type CampaignStructure = {
+  activeAdSets: number
+  activeAds: number
+  /** Summed daily budget (whole currency) of this campaign's ACTIVE ad sets —
+   *  what "Using ad set budget" means in Ads Manager. */
+  adSetDailyBudget: number
+  known: boolean
+}
 
+/**
+ * TWO account-level calls for the whole account, and they REPLACE the
+ * per-campaign `/adsets` budget lookups this file used to make in a loop. That
+ * matters: Graph started returning "An unexpected error has occurred" under the
+ * call volume on 2026-07-27, and an audit that hammers the API is an audit that
+ * fails at the worst moment. Net calls now go DOWN, not up.
+ */
 export async function fetchCampaignStructure(
   accountId: string,
 ): Promise<Map<string, CampaignStructure>> {
   const byCampaign = new Map<string, CampaignStructure>()
-  const bump = (id: string | undefined, key: 'activeAdSets' | 'activeAds') => {
-    if (!id) return
-    const row = byCampaign.get(id) ?? { activeAdSets: 0, activeAds: 0, known: true }
-    row[key] += 1
-    byCampaign.set(id, row)
-  }
+  const row = (id: string) =>
+    byCampaign.get(id) ?? { activeAdSets: 0, activeAds: 0, adSetDailyBudget: 0, known: true }
 
   const [adsets, ads] = await Promise.all([
-    adsApi<{ data?: Array<{ campaign_id?: string; effective_status?: string }> }>(
+    adsApi<{ data?: Array<{ campaign_id?: string; effective_status?: string; daily_budget?: string }> }>(
       `${accountId}/adsets`,
-      { fields: 'campaign_id,effective_status', limit: '200' },
+      { fields: 'campaign_id,effective_status,daily_budget', limit: '200' },
     ).catch(() => null),
     adsApi<{ data?: Array<{ campaign_id?: string; effective_status?: string }> }>(
       `${accountId}/ads`,
@@ -251,10 +261,17 @@ export async function fetchCampaignStructure(
   if (!adsets || !ads) return byCampaign // empty map = "unknown", see deliveringFrom()
 
   for (const a of adsets.data ?? []) {
-    if (a.effective_status === 'ACTIVE') bump(a.campaign_id, 'activeAdSets')
+    if (!a.campaign_id || a.effective_status !== 'ACTIVE') continue
+    const r = row(a.campaign_id)
+    r.activeAdSets += 1
+    r.adSetDailyBudget += safeNum(a.daily_budget) / 100
+    byCampaign.set(a.campaign_id, r)
   }
   for (const a of ads.data ?? []) {
-    if (a.effective_status === 'ACTIVE') bump(a.campaign_id, 'activeAds')
+    if (!a.campaign_id || a.effective_status !== 'ACTIVE') continue
+    const r = row(a.campaign_id)
+    r.activeAds += 1
+    byCampaign.set(a.campaign_id, r)
   }
   return byCampaign
 }
@@ -401,17 +418,10 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
         ? Math.round(safeNum(campaign.daily_budget) / 100)
         : 0
       if (dailyBudgetBdt === 0) {
-        try {
-          const adsets = await adsApi<{ data?: Array<{ daily_budget?: string; effective_status?: string }> }>(
-            `${campaign.id}/adsets`,
-            { fields: 'daily_budget,effective_status', limit: '25' },
-          )
-          dailyBudgetBdt = Math.round(
-            (adsets.data ?? [])
-              .filter((a) => a.effective_status === 'ACTIVE')
-              .reduce((sum, a) => sum + safeNum(a.daily_budget), 0) / 100,
-          )
-        } catch { /* keep 0 */ }
+        // "Using ad set budget" in Ads Manager: the campaign field is empty and
+        // the real number lives on the ad sets. Read from the structure map we
+        // already have instead of one more Graph call per campaign.
+        dailyBudgetBdt = Math.round(structure.get(campaign.id)?.adSetDailyBudget ?? 0)
       }
 
       rows.push({
@@ -515,15 +525,7 @@ export async function fetchCampaignMetricsWindow(windowDays = 7): Promise<Campai
 
     let dailyBudgetBdt = meta?.daily_budget ? Math.round(safeNum(meta.daily_budget) / 100) : 0
     if (dailyBudgetBdt === 0) {
-      try {
-        const adsets = await adsApi<{ data?: Array<{ daily_budget?: string; effective_status?: string }> }>(
-          `${id}/adsets`,
-          { fields: 'daily_budget,effective_status', limit: '25' },
-        )
-        dailyBudgetBdt = Math.round(
-          (adsets.data ?? []).reduce((sum, a) => sum + safeNum(a.daily_budget), 0) / 100,
-        )
-      } catch { /* keep 0 */ }
+      dailyBudgetBdt = Math.round(structure.get(id)?.adSetDailyBudget ?? 0)
     }
 
     campaigns.push({

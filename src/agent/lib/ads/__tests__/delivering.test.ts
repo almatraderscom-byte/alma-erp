@@ -16,7 +16,7 @@ const structure = (rows: Record<string, [number, number]>) =>
   new Map<string, CampaignStructure>(
     Object.entries(rows).map(([id, [adSets, ads]]) => [
       id,
-      { activeAdSets: adSets, activeAds: ads, known: true },
+      { activeAdSets: adSets, activeAds: ads, adSetDailyBudget: 0, known: true },
     ]),
   )
 
