@@ -245,6 +245,10 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   unpublish_product: stage('website'),
   set_product_featured: stage('website', 'low'),
   update_product_web: stage('website'),
+  // One card for a whole product edit — copy, price, category, alt-text, live,
+  // featured. Same risk as its single-field siblings; the difference is that the
+  // owner approves once instead of five times.
+  edit_storefront_product: stage('website'),
 
   // ── web research (Oxylabs credits) ─────────────────────────────────────────
   confirm_oxylabs_spend: stage('research', 'low'),

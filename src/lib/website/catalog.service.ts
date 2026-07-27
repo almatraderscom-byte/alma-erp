@@ -106,7 +106,7 @@ function notConfiguredError() {
 
 /** Live website catalog — what customers actually see on almatraders.com. */
 export async function listWebsiteProducts(
-  opts: { category?: string; publishedOnly?: boolean; limit?: number } = {},
+  opts: { category?: string; publishedOnly?: boolean; limit?: number; search?: string } = {},
 ): Promise<WebsiteProductSummary[]> {
   if (!websiteSupabaseConfigured()) throw notConfiguredError()
 
@@ -130,6 +130,20 @@ export async function listWebsiteProducts(
   if (opts.category) {
     const catSlug = opts.category.toLowerCase()
     rows = rows.filter((r) => categoryFromRow(r)?.slug === catSlug)
+  }
+
+  // Naming one product is how the owner actually asks ("teat-girl-6-9 er dam
+  // 1450 koro"), and without this the caller had to page through the whole
+  // catalog and give up — watched live on 2026-07-28, where the product sat
+  // past the row limit and the agent concluded it was not on the site at all.
+  if (opts.search) {
+    const needle = opts.search.trim().toLowerCase()
+    if (needle) {
+      rows = rows.filter((r) => {
+        const haystack = [r.slug, r.title, r.sku].filter(Boolean).join(' ').toLowerCase()
+        return haystack.includes(needle)
+      })
+    }
   }
 
   return rows.map((r) => mapSummary(r, featuredIds))

@@ -8,26 +8,26 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 > engine on today would expose exactly one skill (`alma-owner-daily-briefing`).
 > That alone explains why the skills have never done anything.
 
-- Messages that SHOULD pin a skill: **22** — correct top pick: **16** (**73%**)
-- Wrong skill chosen: **5** · nothing chosen: **1**
+- Messages that SHOULD pin a skill: **25** — correct top pick: **17** (**68%**)
+- Wrong skill chosen: **7** · nothing chosen: **1**
 - Messages that should pin NOTHING: **8** — false triggers: **2**
 
 | # | message | expected | picked (top 3) | result |
 |---|---|---|---|---|
-| seo-fix-alt | almatraders.com এর ছবির alt ঠিক করো | seo-fixing-own-site | seo-fixing-own-site, alma-website, seo-auditing-own-site | ✅ hit |
+| seo-fix-alt | almatraders.com এর ছবির alt ঠিক করো | seo-fixing-own-site | seo-fixing-own-site, storefront-editing, alma-website | ✅ hit |
 | seo-audit-full | almatraders.com এর পূর্ণাঙ্গ SEO অডিট করো | seo-auditing-own-site | seo-fixing-own-site, seo-auditing-own-site, seo-fixing-client-site | ❌ wrong skill |
-| seo-fix-meta | product-code-110 এর meta description লিখে দাও | seo-fixing-own-site | alma-product-listing, alma-meta-campaign-launch, alma-browser-operator | ❌ wrong skill |
+| seo-fix-meta | product-code-110 এর meta description লিখে দাও | seo-fixing-own-site | alma-product-listing, alma-meta-campaign-launch, storefront-editing | ❌ wrong skill |
 | seo-client | client er site example.com er seo dekho | seo-fixing-client-site | seo-fixing-client-site, seo-fixing-own-site, seo-auditing-own-site | ✅ hit |
 | seo-fix-slug-banglish | almatraders.com er baki slug problem gulo thik kore dao | seo-fixing-own-site | alma-website, seo-auditing-own-site, seo-fixing-client-site | ❌ wrong skill |
-| seo-fix-meta-banglish | almatraders.com er product gulor meta description thik kore dao | seo-fixing-own-site | alma-product-listing, alma-meta-campaign-launch, seo-fixing-own-site | ❌ wrong skill |
+| seo-fix-meta-banglish | almatraders.com er product gulor meta description thik kore dao | seo-fixing-own-site | alma-product-listing, storefront-editing, alma-meta-campaign-launch | ❌ wrong skill |
 | seo-audit-banglish | almatraders.com er purno seo audit koro | seo-auditing-own-site | seo-auditing-own-site, seo-fixing-own-site, seo-fixing-client-site | ✅ hit |
-| seo-fix-title-thin | almatraders.com এর পুরো দুর্বল title আর thin description gulo thik koro | seo-fixing-own-site | alma-product-listing, alma-website, seo-auditing-own-site | ❌ wrong skill |
+| seo-fix-title-thin | almatraders.com এর পুরো দুর্বল title আর thin description gulo thik koro | seo-fixing-own-site | storefront-editing, alma-product-listing, alma-website | ❌ wrong skill |
 | ads-audit-not-seo | amar ads account ta ekbar valo kore audit koro | — | seo-auditing-own-site, seo-fixing-own-site | ⚠️ false trigger |
 | staff | Mustahid ajke kokhon asche? | alma-staff-dispatch | — | ⬜ nothing picked |
 | listing | notun panjabi ta website e tolo | alma-product-listing | alma-product-listing, alma-website, seo-fixing-client-site | ✅ hit |
 | finance | ei masher khoroch koto holo? | alma-finance-brief | alma-finance-brief | ✅ hit |
 | cs | customer der message gulor reply dao | alma-customer-support | alma-customer-support | ✅ hit |
-| social | facebook e notun product er post dao | alma-product-social-post | alma-product-social-post, alma-product-listing, alma-customer-support | ✅ hit |
+| social | facebook e notun product er post dao | alma-product-social-post | alma-product-social-post, alma-product-listing, storefront-editing | ✅ hit |
 | briefing | ajker briefing dao | alma-owner-daily-briefing | alma-owner-daily-briefing | ✅ hit |
 | marketing | marketing kemon cholche? | alma-marketing | alma-marketing | ✅ hit |
 | campaign | ekta meta campaign chalu koro 5000 takar | alma-meta-campaign-launch | alma-meta-campaign-launch, alma-product-listing, seo-fixing-own-site | ✅ hit |
@@ -37,6 +37,9 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 | audience | je customer ra beshi kene tader ekta audience banao | alma-audience-builder | alma-audience-builder, alma-customer-support | ✅ hit |
 | browser | chrome khule daraz e dekho dam koto | alma-browser-operator | alma-browser-operator | ✅ hit |
 | research | competitor ra ki dame bikri korche khuje dekho | alma-research | alma-research | ✅ hit |
+| edit-price | ei product tar dam 1200 koro | storefront-editing | alma-product-listing, storefront-editing, alma-product-social-post | ❌ wrong skill |
+| edit-hide | oi panjabi ta site theke soriye dao | storefront-editing | alma-website, seo-fixing-client-site, seo-fixing-own-site | ❌ wrong skill |
+| edit-featured | oita homepage e dekhao | storefront-editing | storefront-editing | ✅ hit |
 | greeting | valo acho? | — | — | ✅ correctly silent |
 | weather | ajke bristi hobe? | — | — | ✅ correctly silent |
 | thanks | thanks bhai | — | — | ✅ correctly silent |
