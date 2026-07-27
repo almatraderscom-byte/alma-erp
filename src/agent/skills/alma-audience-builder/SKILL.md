@@ -1,33 +1,34 @@
 ---
 name: alma-audience-builder
-description: Define a target audience from customer segments/intelligence; creation stays gated.
-version: 0.1.0
-keywords: audience, অডিয়েন্স, target, টার্গেট, customer segment, segment, কাস্টমার গ্রুপ, retargeting, lookalike, ke target
+description: Defines WHO an ad should reach, from our own segment data — which group, how many, why them. Use when Boss asks who to target. It defines only; it holds no tool that creates or exports an audience.
+version: 1.0.0
+keywords: audience, অডিয়েন্স, ke target korbo, কাকে টার্গেট, target group, customer segment, segment, কাস্টমার গ্রুপ, retargeting, lookalike
 ---
 
-# Audience builder — define the right target
+# Audience builder — who, and why them
 
-**Goal:** কাস্টমার segment + intelligence থেকে একটা পরিষ্কার টার্গেট audience সংজ্ঞা (কারা, কেন)।
-audience আসলে তৈরি/সেভ করা owner-gated।
+**Goal:** নিজেদের কাস্টমার ডেটা থেকে একটা পরিষ্কার টার্গেট গ্রুপের সংজ্ঞা — **কারা, কেন তারা, কতজন**।
+এই skill শুধু সংজ্ঞা দেয়; তৈরি/এক্সপোর্ট করার কোনো টুল এর হাতে নেই।
 
 ## ধাপ
 
-1. **Existing (required):** `list_audiences` — এখন কী কী audience আছে (ডুপ্লিকেট এড়াও)।
-2. **Segments (required):** `get_customer_segments` + `get_customer_intelligence` — কোন গ্রুপ মূল্যবান/সক্রিয়।
-3. **Define (required):** টার্গেট audience-এর সংজ্ঞা — বৈশিষ্ট্য, আকার-ধারণা, কেন এই গ্রুপ, কোন campaign-এ কাজে লাগবে।
-4. **Handoff (required):** সংজ্ঞা Boss-কে দাও; তৈরি/সেভ existing owner-gated tool দিয়ে।
+1. **Existing (required):** `list_audiences` — এখন কী কী আছে। কাছাকাছি কিছু থাকলে নতুন বানানোর আগে সেটা দেখাও।
+2. **Segments (required):** `get_customer_segments` + `get_customer_intelligence` — কোন গ্রুপ আসলে দামি/সক্রিয়।
+3. **Define (required):** কারা (বৈশিষ্ট্য) · কেন এই গ্রুপ (ডেটা থেকে) · আনুমানিক আকার · কোন ক্যাম্পেইনের জন্য।
+4. **Handoff (required):** সংজ্ঞা Boss-কে দাও। তৈরি করা আলাদা কাজ — সেটা ক্যাম্পেইনের owner-gated ধাপে।
 
 ## Checklist
 
-- বিদ্যমান audience চেক করা (ডুপ্লিকেট নয়)
-- সংজ্ঞা ডেটা-ভিত্তিক (segment/intelligence থেকে)
-- তৈরি সরাসরি হয়নি — owner-gated
+- বিদ্যমান audience দেখা হয়েছে (ডুপ্লিকেট নয়)
+- প্রতিটা বৈশিষ্ট্য segment/intelligence টুলের ফলাফল থেকে — বানানো নয়
+- আকারের অনুমান বলা হয়েছে "অনুমান" হিসেবেই
+- কোনো ব্যক্তিগত তালিকা বের করা হয়নি
 
 ## Guardrails
 
-- ব্যক্তিগত তথ্য একত্র/রপ্তানি নয়; শুধু বিদ্যমান segment টুল ব্যবহার।
-- audience তৈরি existing approval দিয়ে।
+- গ্রুপের সংজ্ঞা, ব্যক্তির তালিকা নয় — নাম/ফোন/ঠিকানা একত্র বা রপ্তানি করবে না।
+- ডেটা যা দেখায়নি এমন কারণ লিখবে না ("এরা প্রিমিয়াম পছন্দ করে" — কোথা থেকে?)।
 
 ## Done
 
-ডেটা-ভিত্তিক audience সংজ্ঞা দেওয়া হয়েছে — তবেই "শেষ"।
+ডেটা-ভিত্তিক সংজ্ঞা + বিদ্যমান audience-এর সাথে মিল/অমিল Boss-কে দেওয়া হয়েছে — তবেই "শেষ"।

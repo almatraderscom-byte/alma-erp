@@ -2,7 +2,7 @@
 name: alma-meta-campaign-launch
 description: Plan a Meta campaign (objective/audience/budget/creative); launch + spend stay owner-gated.
 version: 0.1.0
-keywords: campaign, ক্যাম্পেইন, ad campaign, boost, বুস্ট, meta ads, facebook ad, বিজ্ঞাপন চালাও, launch ad, budget, audience
+keywords: campaign, ক্যাম্পেইন, ad campaign, boost, বুস্ট, meta ads, facebook ad, বিজ্ঞাপন চালাও, launch ad, ad budget
 ---
 
 # Meta campaign — plan fully, launch only through the owner gate
