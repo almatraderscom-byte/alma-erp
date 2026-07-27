@@ -36,6 +36,20 @@ type LabTab = 'explore' | 'history'
 type ImageArchitecture = 'auto' | 'advanced'
 type ImageSourceTray = 'product-gallery' | 'model-library' | 'avatar-library' | null
 
+const ADVANCED_MODE_ORDER = [
+  'product_to_model',
+  'try_on',
+  'generate',
+  'swap',
+  'face',
+  'edit',
+  'reel',
+] as const satisfies readonly ImageModeId[]
+
+const ADVANCED_IMAGE_MODES = ADVANCED_MODE_ORDER.map((id) =>
+  IMAGE_MODES.find((item) => item.id === id),
+).filter((item): item is (typeof IMAGE_MODES)[number] => Boolean(item))
+
 function AssetArtwork({
   asset,
   compact = false,
@@ -61,6 +75,37 @@ function AssetArtwork({
         </span>
       )}
     </span>
+  )
+}
+
+function SourceArtwork({
+  kind,
+  name,
+  preview,
+}: {
+  kind: 'product' | 'model'
+  name: string
+  preview: string
+}) {
+  const hasPreview = Boolean(preview)
+
+  return (
+    <div
+      aria-label={hasPreview ? `Uploaded ${kind} preview: ${name}` : undefined}
+      className={`${styles.v4SourceArtwork} ${
+        kind === 'model' ? `${styles.v4ModelArtwork} ${styles.v3Tone_ink}` : styles.v3Tone_coral
+      } ${hasPreview ? styles.v7HasSourcePreview : ''}`}
+      role={hasPreview ? 'img' : undefined}
+      style={hasPreview ? { backgroundImage: `url(${JSON.stringify(preview)})` } : undefined}
+    >
+      {!hasPreview && (
+        <>
+          <span>{kind === 'model' ? 'MODEL' : 'PRODUCT'}</span>
+          <i />
+          <b />
+        </>
+      )}
+    </div>
   )
 }
 
@@ -291,6 +336,8 @@ function ImageComposer({
   const [sourceTray, setSourceTray] = useState<ImageSourceTray>(null)
   const [localProductName, setLocalProductName] = useState('')
   const [localModelName, setLocalModelName] = useState('')
+  const [localProductPreview, setLocalProductPreview] = useState('')
+  const [localModelPreview, setLocalModelPreview] = useState('')
   const [isExpanded, setIsExpanded] = useState(false)
   const [localStatus, setLocalStatus] = useState(
     'Configuration is local to this prototype. Nothing has been queued.',
@@ -359,6 +406,25 @@ function ImageComposer({
     ) {
       setResolution(nextProvider.resolutions[0])
     }
+  }
+
+  function stageLocalImage(file: File, kind: 'product' | 'model') {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const preview = typeof reader.result === 'string' ? reader.result : ''
+      if (kind === 'product') {
+        setLocalProductName(file.name)
+        setLocalProductPreview(preview)
+      } else {
+        setLocalModelName(file.name)
+        setLocalModelPreview(preview)
+      }
+      setLocalStatus(`${file.name} staged locally as the ${kind} source.`)
+    }
+    reader.onerror = () => {
+      setLocalStatus(`${file.name} could not be previewed. Nothing was uploaded.`)
+    }
+    reader.readAsDataURL(file)
   }
 
   if (architecture === 'auto') {
@@ -430,11 +496,11 @@ function ImageComposer({
 
         <div className={styles.v4AutoSourceGrid}>
           <section className={styles.v4SourceCard}>
-            <div className={`${styles.v4SourceArtwork} ${styles.v3Tone_coral}`}>
-              <span>PRODUCT</span>
-              <i />
-              <b />
-            </div>
+            <SourceArtwork
+              kind="product"
+              name={localProductName || selectedProduct?.name || 'product'}
+              preview={localProductPreview}
+            />
             <div className={styles.v4SourceContent}>
               <span>PRODUCT</span>
               <strong>{localProductName || selectedProduct?.name || 'Choose product'}</strong>
@@ -444,6 +510,7 @@ function ImageComposer({
                   onClick={() => {
                     setLocalStatus('Clipboard paste is represented locally in this demo.')
                     setLocalProductName('Pasted product image')
+                    setLocalProductPreview('')
                   }}
                   type="button"
                 >
@@ -456,8 +523,7 @@ function ImageComposer({
                     onChange={(event) => {
                       const file = event.target.files?.[0]
                       if (!file) return
-                      setLocalProductName(file.name)
-                      setLocalStatus(`${file.name} staged locally as the product source.`)
+                      stageLocalImage(file, 'product')
                     }}
                     type="file"
                   />
@@ -479,11 +545,11 @@ function ImageComposer({
           </section>
 
           <section className={styles.v4SourceCard}>
-            <div className={`${styles.v4SourceArtwork} ${styles.v4ModelArtwork} ${styles.v3Tone_ink}`}>
-              <span>MODEL</span>
-              <i />
-              <b />
-            </div>
+            <SourceArtwork
+              kind="model"
+              name={localModelName || selectedAvatar?.name || 'model'}
+              preview={localModelPreview}
+            />
             <div className={styles.v4SourceContent}>
               <span>MODEL</span>
               <strong>{localModelName || selectedAvatar?.name || 'Choose model'}</strong>
@@ -505,8 +571,7 @@ function ImageComposer({
                     onChange={(event) => {
                       const file = event.target.files?.[0]
                       if (!file) return
-                      setLocalModelName(file.name)
-                      setLocalStatus(`${file.name} staged locally as a new model reference.`)
+                      stageLocalImage(file, 'model')
                     }}
                     type="file"
                   />
@@ -554,6 +619,7 @@ function ImageComposer({
                       onClick={() => {
                         setProductId(product.id)
                         setLocalProductName('')
+                        setLocalProductPreview('')
                         setSourceTray(null)
                       }}
                       type="button"
@@ -572,6 +638,7 @@ function ImageComposer({
                       onClick={() => {
                         onSelectAvatar(avatar.id)
                         setLocalModelName('')
+                        setLocalModelPreview('')
                         setSourceTray(null)
                       }}
                       type="button"
@@ -707,7 +774,7 @@ function ImageComposer({
       </div>
 
       <div className={styles.v3ModeScroller} role="tablist" aria-label="Advanced image modes">
-        {IMAGE_MODES.map((item) => (
+        {ADVANCED_IMAGE_MODES.map((item) => (
           <button
             aria-selected={mode === item.id}
             className={mode === item.id ? styles.v3ModeActive : undefined}
@@ -736,11 +803,11 @@ function ImageComposer({
           className={styles.v4SourceCard}
           data-required={activeMode.product === 'required'}
         >
-          <div className={`${styles.v4SourceArtwork} ${styles.v3Tone_coral}`}>
-            <span>PRODUCT</span>
-            <i />
-            <b />
-          </div>
+          <SourceArtwork
+            kind="product"
+            name={localProductName || selectedProduct?.name || 'product'}
+            preview={localProductPreview}
+          />
           <div className={styles.v4SourceContent}>
             <span>
               PRODUCT
@@ -753,6 +820,7 @@ function ImageComposer({
                 onClick={() => {
                   setLocalStatus('Clipboard paste is represented locally in this demo.')
                   setLocalProductName('Pasted product image')
+                  setLocalProductPreview('')
                 }}
                 type="button"
               >
@@ -765,8 +833,7 @@ function ImageComposer({
                   onChange={(event) => {
                     const file = event.target.files?.[0]
                     if (!file) return
-                    setLocalProductName(file.name)
-                    setLocalStatus(`${file.name} staged locally as the product source.`)
+                    stageLocalImage(file, 'product')
                   }}
                   type="file"
                 />
@@ -793,11 +860,11 @@ function ImageComposer({
           className={styles.v4SourceCard}
           data-required={activeMode.avatar === 'required'}
         >
-          <div className={`${styles.v4SourceArtwork} ${styles.v4ModelArtwork} ${styles.v3Tone_ink}`}>
-            <span>MODEL</span>
-            <i />
-            <b />
-          </div>
+          <SourceArtwork
+            kind="model"
+            name={localModelName || selectedAvatar?.name || 'model'}
+            preview={localModelPreview}
+          />
           <div className={styles.v4SourceContent}>
             <span>
               MODEL
@@ -822,8 +889,7 @@ function ImageComposer({
                   onChange={(event) => {
                     const file = event.target.files?.[0]
                     if (!file) return
-                    setLocalModelName(file.name)
-                    setLocalStatus(`${file.name} staged locally as a new model reference.`)
+                    stageLocalImage(file, 'model')
                   }}
                   type="file"
                 />
@@ -871,6 +937,7 @@ function ImageComposer({
                     onClick={() => {
                       setProductId(product.id)
                       setLocalProductName('')
+                      setLocalProductPreview('')
                       setSourceTray(null)
                     }}
                     type="button"
@@ -889,6 +956,7 @@ function ImageComposer({
                     onClick={() => {
                       onSelectAvatar(avatar.id)
                       setLocalModelName('')
+                      setLocalModelPreview('')
                       setSourceTray(null)
                     }}
                     type="button"
