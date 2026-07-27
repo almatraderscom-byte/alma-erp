@@ -9,7 +9,11 @@ import {
   type StudioProject,
 } from './studio-v2-fixtures'
 import { AVATARS, GALLERY_ASSETS } from './studio-v3-fixtures'
-import type { StudioV3Navigate } from './studio-v3-navigation'
+import {
+  studioDemoLiveEngineCount,
+  type StudioDemoApiState,
+  type StudioV3Navigate,
+} from './studio-v3-navigation'
 import {
   StudioV2Icon,
   type StudioIconName,
@@ -26,7 +30,9 @@ type HomeSection =
   | 'operations'
 
 type CreativeStudioHomeProps = {
+  apiState: StudioDemoApiState
   onNavigate: StudioV3Navigate
+  onRefreshApi: () => Promise<void>
 }
 
 const createIcons: Record<CreateKind, StudioIconName> = {
@@ -90,7 +96,11 @@ function ProjectArtwork({ project }: { project: StudioProject }) {
   )
 }
 
-export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
+export function CreativeStudioHome({
+  apiState,
+  onNavigate,
+  onRefreshApi,
+}: CreativeStudioHomeProps) {
   const [activeSection, setActiveSection] = useState<HomeSection>('home')
   const [search, setSearch] = useState('')
   const [agentBrief, setAgentBrief] = useState(
@@ -121,6 +131,35 @@ export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
         .includes(normalizedSearch),
     )
   }, [normalizedSearch])
+  const liveEngineCount = studioDemoLiveEngineCount(apiState)
+  const liveEngines =
+    apiState.config?.engines.filter(
+      (engine) =>
+        engine.configured &&
+        engine.enabled &&
+        engine.runnable &&
+        !engine.killed,
+    ) ?? []
+  const workerState = apiState.health?.worker.state ?? 'unknown'
+  const workerLabel =
+    apiState.phase === 'checking'
+      ? 'Checking'
+      : workerState === 'healthy'
+        ? 'Healthy'
+        : workerState === 'delayed'
+          ? 'Delayed'
+          : workerState === 'offline'
+            ? 'Offline'
+            : 'Telemetry limited'
+  const sevenDaySpendUsd =
+    apiState.health?.engines.reduce((total, engine) => total + engine.spendUsd, 0) ??
+    null
+  const lastCheckedLabel = apiState.lastCheckedAt
+    ? new Date(apiState.lastCheckedAt).toLocaleTimeString('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : null
 
   function selectSection(section: HomeSection) {
     setActiveSection(section)
@@ -171,10 +210,25 @@ export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
         </label>
 
         <div className={styles.homeTopActions}>
-          <span className={styles.prototypePill}>
+          <button
+            aria-label="Refresh Creative Studio live API status"
+            className={`${styles.prototypePill} ${styles.v9LiveApiPill} ${
+              apiState.phase === 'degraded' ? styles.v9LiveApiPillWarning : ''
+            }`}
+            disabled={apiState.phase === 'checking'}
+            onClick={() => void onRefreshApi()}
+            type="button"
+          >
             <span />
-            Prototype · ৳0
-          </span>
+            <strong>
+              {apiState.phase === 'checking'
+                ? 'Checking live API'
+                : apiState.phase === 'connected'
+                  ? `Live API · ${liveEngineCount} ready`
+                  : 'API unavailable'}
+            </strong>
+            <small>৳0 check</small>
+          </button>
           <button
             className={styles.secondaryButton}
             onClick={() => {
@@ -249,12 +303,19 @@ export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
             </div>
             <div className={styles.homeHeroMeta}>
               <span>
-                <StudioV2Icon name="check" size={15} />
-                6 providers healthy
+                <StudioV2Icon
+                  name={apiState.phase === 'connected' ? 'check' : 'activity'}
+                  size={15}
+                />
+                {apiState.phase === 'checking'
+                  ? 'Checking provider API'
+                  : apiState.phase === 'connected'
+                    ? `${liveEngineCount} live engines ready`
+                    : 'Provider API unavailable'}
               </span>
               <span>
                 <StudioV2Icon name="review" size={15} />
-                3 awaiting review
+                3 demo reviews
               </span>
             </div>
           </section>
@@ -570,9 +631,15 @@ export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
                     <span>STUDIO PULSE</span>
                     <h2>Today</h2>
                   </div>
-                  <span className={styles.liveState}>
+                  <span
+                    className={`${styles.liveState} ${
+                      apiState.phase !== 'connected' || workerState !== 'healthy'
+                        ? styles.v9LiveStateWarning
+                        : ''
+                    }`}
+                  >
                     <i />
-                    Healthy
+                    {workerLabel}
                   </span>
                 </div>
 
@@ -623,47 +690,67 @@ export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
                   <div>
                     <span>
                       <StudioV2Icon name="worker" size={15} />
-                      Workers
+                      Queue worker
                     </span>
-                    <strong>6 / 6 healthy</strong>
+                    <strong>{workerLabel}</strong>
                   </div>
                   <div>
                     <span>
                       <StudioV2Icon name="wallet" size={15} />
-                      Today
+                      7-day API spend
                     </span>
-                    <strong>৳420 / ৳2,500</strong>
+                    <strong>
+                      {sevenDaySpendUsd === null
+                        ? 'Unavailable'
+                        : `$${sevenDaySpendUsd.toFixed(2)}`}
+                    </strong>
                   </div>
                   <div>
                     <span>
                       <StudioV2Icon name="lock" size={15} />
-                      Security
+                      Preview gate
                     </span>
-                    <strong>0 policy alerts</strong>
+                    <strong>Paid runs locked</strong>
                   </div>
                 </div>
               </section>
 
               <section className={styles.providerIntegrity}>
                 <header>
-                  <span>PROVIDER INTEGRITY</span>
-                  <strong>Workstreams A + B</strong>
+                  <span>LIVE PROVIDER API</span>
+                  <button
+                    className={styles.v9ProviderRefresh}
+                    disabled={apiState.phase === 'checking'}
+                    onClick={() => void onRefreshApi()}
+                    type="button"
+                  >
+                    {apiState.phase === 'checking' ? 'Checking…' : 'Refresh'}
+                  </button>
                 </header>
                 <div>
-                  <span>
-                    <StudioV2Icon name="check" size={14} />
-                    1080 × 1920 verified
-                  </span>
-                  <span>
-                    <StudioV2Icon name="lock" size={14} />
-                    Upscale prohibited
-                  </span>
-                  <span>
-                    <StudioV2Icon name="check" size={14} />
-                    FASHN commercial approved
-                  </span>
+                  {apiState.phase === 'checking' ? (
+                    <span>
+                      <StudioV2Icon name="activity" size={14} />
+                      Authenticated config check
+                    </span>
+                  ) : liveEngines.length ? (
+                    liveEngines.slice(0, 4).map((engine) => (
+                      <span key={engine.id}>
+                        <StudioV2Icon name="check" size={14} />
+                        {engine.label}
+                      </span>
+                    ))
+                  ) : (
+                    <span>
+                      <StudioV2Icon name="lock" size={14} />
+                      No runnable engine reported
+                    </span>
+                  )}
                 </div>
-                <p>IDM-VTON remains research-only. Model choice is explicit before paid runs.</p>
+                <p>
+                  {apiState.error ??
+                    `Authenticated read-only check${lastCheckedLabel ? ` · ${lastCheckedLabel}` : ''}. Paid generation remains locked in this preview.`}
+                </p>
               </section>
             </aside>
           </div>

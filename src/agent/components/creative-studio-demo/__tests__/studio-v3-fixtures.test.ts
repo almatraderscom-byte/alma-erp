@@ -13,6 +13,12 @@ import {
   imageProviderSupports,
   videoModelSupports,
 } from '../studio-v3-fixtures'
+import {
+  INITIAL_STUDIO_DEMO_API_STATE,
+  studioDemoLiveEngineCount,
+  studioDemoProviderAvailability,
+  type StudioDemoApiState,
+} from '../studio-v3-navigation'
 
 describe('Studio V3 capability truth', () => {
   it('keeps every production image mode and rejects misleading resolution options', () => {
@@ -99,5 +105,61 @@ describe('Studio V3 parity fixtures', () => {
       'End card · CTA / code / price',
       'Countdown · days',
     ])
+  })
+})
+
+describe('Studio V4 live API truth', () => {
+  const connectedState = {
+    phase: 'connected',
+    config: {
+      engines: [
+        {
+          id: 'xai_imagine',
+          configured: true,
+          enabled: true,
+          runnable: true,
+          killed: false,
+        },
+        {
+          id: 'fashn',
+          configured: true,
+          enabled: false,
+          runnable: true,
+          killed: false,
+        },
+        {
+          id: 'gemini',
+          configured: true,
+          enabled: true,
+          runnable: true,
+          killed: true,
+        },
+      ],
+    },
+    health: null,
+    error: null,
+    lastCheckedAt: '2026-07-27T12:00:00.000Z',
+  } as unknown as StudioDemoApiState
+
+  it('distinguishes checking, local, live and unavailable providers', () => {
+    expect(
+      studioDemoProviderAvailability(
+        INITIAL_STUDIO_DEMO_API_STATE,
+        'fashn-direct',
+      ),
+    ).toBe('checking')
+    expect(studioDemoProviderAvailability(connectedState, 'owned-local')).toBe(
+      'local',
+    )
+    expect(studioDemoProviderAvailability(connectedState, 'grok')).toBe(
+      'available',
+    )
+    expect(
+      studioDemoProviderAvailability(connectedState, 'fashn-direct'),
+    ).toBe('unavailable')
+  })
+
+  it('counts only configured, enabled, runnable and non-killed engines', () => {
+    expect(studioDemoLiveEngineCount(connectedState)).toBe(1)
   })
 })

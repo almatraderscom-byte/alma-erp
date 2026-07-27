@@ -398,3 +398,36 @@ Routine repository-local reads, demo edits, tests, builds, branch/tag/push, Verc
 The next session's immediate objective is only:
 
 > Independently audit the rejected V4 demo against the owner's ElevenLabs references and ALMA Aura requirements, correct the demo, live-verify it at `$0`, show it to the owner, and stop for explicit approval before production implementation.
+
+## 12. 2026-07-27 live-API audit ledger
+
+Owner direction in the active review session expanded the demo correction to
+include a real, read-only Creative Studio API connection on the preview branch.
+The locked review baseline for that work is
+`e348faea1c0d35102ce9d134fd7975df31d3059f`, tagged
+`creative-studio-demo-v4-locked-e348faea1`.
+
+The browser audit compared the authenticated ALMA preview with ElevenLabs
+Studio and Image & Video. It also exercised Image Auto, all Advanced mode
+entries, Video, Gallery density controls, Finishing, project setup, the empty
+editor, and back navigation.
+
+| Severity | Route / state | Evidence and root cause | Demo-only correction | Acceptance proof |
+| --- | --- | --- | --- | --- |
+| P0 | Home + Image/Video composers | Home claimed “6 providers healthy” and “6 / 6 healthy” while both composers said “No API connected”. All three claims were hard-coded fixture copy. | Read the existing owner-authenticated `/config` and `/health` routes and render one shared connection snapshot. | Browser shows a live API state and truthful engine/worker telemetry with no provider run. |
+| P1 | Image Advanced | Every fixture engine remained selectable regardless of its server env, owner flag, or kill switch. | Map fixture provider IDs to the production engine registry and disable unavailable choices. | Browser provider menu agrees with the live config response. |
+| P1 | Global connection recovery | There was no loading, degraded, retry, or last-checked state. | Add parent-owned async state plus an explicit `$0` refresh action. | Loading → connected/degraded transition is visible and keyboard accessible. |
+| P1 | Paid action boundary | “Generation disconnected” conflated API connectivity with the preview’s spend lock. | Show connectivity independently; keep paid generation disabled and label it “locked in preview”. | Config/health requests return successfully while no POST `/run` request or spend occurs. |
+| P2 | Composer hierarchy | Repeated disconnected labels added visual noise compared with the compact status treatment in the ElevenLabs reference. | Use one compact ALMA live-status capsule in Auto, Advanced, and Video. | Desktop screenshots show a stable compact badge without changing composer geometry. |
+| P2 | Empty editor | The editor represented the capability only as “Agent”, weakening Creative Agent discoverability. | Rename the tool label to “Creative Agent”; keep it local and plan-only. | Empty editor exposes a “Creative Agent” control without creating a job. |
+
+This work does not authorize a paid generation, render, export, publish,
+production deployment, or `main` merge. Verification spend remains exactly
+`$0`.
+
+The audit additionally changes the existing demo-only verification file
+`src/agent/components/creative-studio-demo/__tests__/studio-v3-fixtures.test.ts`.
+This is the diagnosed exception to the eight application-file correction
+allowlist: it proves that checking, local, available, unavailable, disabled,
+and killed engine states cannot regress into hard-coded “healthy” UI claims.
+It does not change production runtime behavior.

@@ -1,10 +1,15 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import styles from './CreativeStudioEnterpriseDemo.module.css'
 import { CreativeStudioWorkspaceShell } from './CreativeStudioWorkspaceShell'
 import { StudioV2Icon } from './StudioV2Icon'
-import type { StudioV3Navigate } from './studio-v3-navigation'
+import {
+  studioDemoLiveEngineCount,
+  studioDemoProviderAvailability,
+  type StudioDemoApiState,
+  type StudioV3Navigate,
+} from './studio-v3-navigation'
 import {
   AVATARS,
   BACKGROUNDS,
@@ -26,10 +31,12 @@ import {
 } from './studio-v3-fixtures'
 
 type CreativeStudioCreateLabProps = {
+  apiState: StudioDemoApiState
   kind: 'image' | 'video'
   initialSourceAssetId?: string
   initialAvatarId?: string
   onNavigate: StudioV3Navigate
+  onRefreshApi: () => Promise<void>
 }
 
 type LabTab = 'explore' | 'history'
@@ -49,6 +56,40 @@ const ADVANCED_MODE_ORDER = [
 const ADVANCED_IMAGE_MODES = ADVANCED_MODE_ORDER.map((id) =>
   IMAGE_MODES.find((item) => item.id === id),
 ).filter((item): item is (typeof IMAGE_MODES)[number] => Boolean(item))
+
+function LiveApiBadge({
+  apiState,
+  onRefreshApi,
+}: {
+  apiState: StudioDemoApiState
+  onRefreshApi: () => Promise<void>
+}) {
+  const liveEngineCount = studioDemoLiveEngineCount(apiState)
+
+  return (
+    <button
+      aria-label="Refresh Creative Studio live API status"
+      className={`${styles.v9ComposerApiBadge} ${
+        apiState.phase === 'degraded' ? styles.v9ComposerApiBadgeWarning : ''
+      }`}
+      disabled={apiState.phase === 'checking'}
+      onClick={() => void onRefreshApi()}
+      type="button"
+    >
+      <i />
+      <span>
+        <strong>
+          {apiState.phase === 'checking'
+            ? 'Checking API'
+            : apiState.phase === 'connected'
+              ? `Live API · ${liveEngineCount} ready`
+              : 'API unavailable'}
+        </strong>
+        <small>৳0 read-only check</small>
+      </span>
+    </button>
+  )
+}
 
 function AssetArtwork({
   asset,
@@ -294,17 +335,21 @@ function ReferencePicker({
 }
 
 function ImageComposer({
+  apiState,
   initialTemplateId,
   initialSourceAssetId,
   selectedAvatarId,
   onSelectAvatar,
   onNavigate,
+  onRefreshApi,
 }: {
+  apiState: StudioDemoApiState
   initialTemplateId: string
   initialSourceAssetId?: string
   selectedAvatarId: string
   onSelectAvatar: (id: string) => void
   onNavigate: StudioV3Navigate
+  onRefreshApi: () => Promise<void>
 }) {
   const [architecture, setArchitecture] = useState<ImageArchitecture>('auto')
   const [mode, setMode] = useState<ImageModeId>('product_to_model')
@@ -344,10 +389,14 @@ function ImageComposer({
   )
 
   const activeMode = IMAGE_MODES.find((item) => item.id === mode) ?? IMAGE_MODES[0]
-  const providers = compatibleImageProviders(mode)
+  const providers = useMemo(() => compatibleImageProviders(mode), [mode])
   const provider =
     IMAGE_PROVIDERS.find((item) => item.id === providerId) ?? providers[0] ?? IMAGE_PROVIDERS[0]
-  const imageAssets = GALLERY_ASSETS.filter((asset) => asset.type === 'image')
+  const providerAvailability = studioDemoProviderAvailability(apiState, provider.id)
+  const imageAssets = useMemo(
+    () => GALLERY_ASSETS.filter((asset) => asset.type === 'image'),
+    [],
+  )
   const selectedAvatar = AVATARS.find((avatar) => avatar.id === selectedAvatarId)
   const selectedProduct = PRODUCTS.find((product) => product.id === productId)
 
@@ -364,6 +413,9 @@ function ImageComposer({
     if (mode !== 'reel' && !imageProviderSupports(provider.id, mode, resolution)) {
       missing.push(`${provider.label} does not support ${mode} at ${resolution}`)
     }
+    if (mode !== 'reel' && providerAvailability === 'unavailable') {
+      missing.push(`${provider.label} is unavailable in the live provider configuration`)
+    }
     if (mode !== 'reel' && provider.researchOnly) missing.push('commercial policy approval')
     return missing
   }, [
@@ -374,6 +426,7 @@ function ImageComposer({
     productId,
     prompt,
     provider,
+    providerAvailability,
     resolution,
     selectedAvatarId,
     sourceId,
@@ -386,8 +439,37 @@ function ImageComposer({
         ? null
         : (provider.estimate[resolution] ?? 0) * count
 
+  useEffect(() => {
+    if (apiState.phase !== 'connected' || providerAvailability !== 'unavailable') {
+      return
+    }
+
+    const fallback = providers.find(
+      (item) =>
+        studioDemoProviderAvailability(apiState, item.id) !== 'unavailable',
+    )
+    if (!fallback || fallback.id === provider.id) return
+
+    setProviderId(fallback.id)
+    setResolution(fallback.resolutions[0])
+    setLocalStatus(
+      `${provider.label} is unavailable in the live configuration. Switched to ${fallback.label}.`,
+    )
+  }, [
+    apiState,
+    provider.id,
+    provider.label,
+    providerAvailability,
+    providers,
+  ])
+
   function chooseMode(nextMode: ImageModeId) {
-    const nextProvider = compatibleImageProviders(nextMode)[0]
+    const nextProviders = compatibleImageProviders(nextMode)
+    const nextProvider =
+      nextProviders.find(
+        (item) =>
+          studioDemoProviderAvailability(apiState, item.id) !== 'unavailable',
+      ) ?? nextProviders[0]
     setMode(nextMode)
     if (nextProvider) {
       setProviderId(nextProvider.id)
@@ -487,10 +569,7 @@ function ImageComposer({
                 <i />
               </span>
             </button>
-            <span className={styles.v4LocalOnlyBadge}>
-              <StudioV2Icon name="lock" size={12} />
-              $0 demo
-            </span>
+            <LiveApiBadge apiState={apiState} onRefreshApi={onRefreshApi} />
           </div>
         </header>
 
@@ -673,7 +752,12 @@ function ImageComposer({
           <div className={styles.v4ComposerControls} aria-label="Auto image settings">
             <button type="button">
               <StudioV2Icon name="image" size={13} />
-              FASHN v1.6
+              {provider.label}
+              {providerAvailability === 'available'
+                ? ' · Live'
+                : providerAvailability === 'unavailable'
+                  ? ' · Unavailable'
+                  : ''}
             </button>
             <button type="button">4:5</button>
             <button type="button">1K</button>
@@ -695,7 +779,9 @@ function ImageComposer({
             </label>
           </div>
           <span className={styles.v4ComposerEstimate}>
-            <strong>৳9.38</strong>
+            <strong>
+              {estimatedBdt === null ? 'Unavailable' : `৳${estimatedBdt.toFixed(2)}`}
+            </strong>
             <small>review first</small>
           </span>
           <button
@@ -707,7 +793,7 @@ function ImageComposer({
             <StudioV2Icon name="check" size={15} />
           </button>
           <button
-            aria-label="Generation disconnected in demo"
+            aria-label="Paid generation locked in preview"
             className={styles.v4ComposerSubmit}
             disabled
             type="button"
@@ -747,7 +833,7 @@ function ImageComposer({
               <i />
             </span>
           </button>
-          <span className={styles.v3NoRunBadge}>No API connected</span>
+          <LiveApiBadge apiState={apiState} onRefreshApi={onRefreshApi} />
         </div>
       </header>
 
@@ -1196,11 +1282,26 @@ function ImageComposer({
                     onChange={(event) => chooseProvider(event.target.value)}
                     value={provider.id}
                   >
-                    {providers.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.label} · {item.badge}
-                      </option>
-                    ))}
+                    {providers.map((item) => {
+                      const availability = studioDemoProviderAvailability(
+                        apiState,
+                        item.id,
+                      )
+                      return (
+                        <option
+                          disabled={availability === 'unavailable'}
+                          key={item.id}
+                          value={item.id}
+                        >
+                          {item.label} · {item.badge}
+                          {availability === 'available'
+                            ? ' · Live'
+                            : availability === 'unavailable'
+                              ? ' · Unavailable'
+                              : ''}
+                        </option>
+                      )
+                    })}
                   </select>
                 </label>
                 <label>
@@ -1375,7 +1476,7 @@ function ImageComposer({
               Save local configuration
             </button>
             <button className={styles.v3DisconnectedButton} disabled type="button">
-              Generation disconnected
+              Paid run locked · ৳0
             </button>
           </>
         )}
@@ -1385,18 +1486,28 @@ function ImageComposer({
 }
 
 function VideoComposer({
+  apiState,
   initialTemplateId,
   initialSourceAssetId,
   selectedAvatarId,
   onNavigate,
+  onRefreshApi,
 }: {
+  apiState: StudioDemoApiState
   initialTemplateId: string
   initialSourceAssetId?: string
   selectedAvatarId: string
   onNavigate: StudioV3Navigate
+  onRefreshApi: () => Promise<void>
 }) {
-  const imageSources = GALLERY_ASSETS.filter((asset) => asset.type === 'image')
-  const videoSources = GALLERY_ASSETS.filter((asset) => asset.type === 'video')
+  const imageSources = useMemo(
+    () => GALLERY_ASSETS.filter((asset) => asset.type === 'image'),
+    [],
+  )
+  const videoSources = useMemo(
+    () => GALLERY_ASSETS.filter((asset) => asset.type === 'video'),
+    [],
+  )
   const initialOwnedRecipe = initialTemplateId !== 'premium-turn'
   const initialModel = initialOwnedRecipe ? VIDEO_MODELS[1] : VIDEO_MODELS[0]
   const [modelId, setModelId] = useState(initialModel.id)
@@ -1428,15 +1539,50 @@ function VideoComposer({
   )
 
   const model = VIDEO_MODELS.find((item) => item.id === modelId) ?? VIDEO_MODELS[0]
+  const modelAvailability = studioDemoProviderAvailability(apiState, model.id)
   const selectedSource = GALLERY_ASSETS.find((asset) => asset.id === sourceId)
   const sourceOptions = model.id === 'owned-local' ? videoSources : imageSources
   const estimatedBdt = duration * model.estimatePerSecondBdt * count
   const valid =
-    videoModelSupports(model.id, duration, resolution, aspect) ||
-    (model.id === 'veo-preview' &&
-      (duration === 16 || duration === 24) &&
-      resolution === '720p' &&
-      (aspect === '9:16' || aspect === '16:9'))
+    modelAvailability !== 'unavailable' &&
+    (videoModelSupports(model.id, duration, resolution, aspect) ||
+      (model.id === 'veo-preview' &&
+        (duration === 16 || duration === 24) &&
+        resolution === '720p' &&
+        (aspect === '9:16' || aspect === '16:9')))
+
+  useEffect(() => {
+    if (apiState.phase !== 'connected' || modelAvailability !== 'unavailable') {
+      return
+    }
+    if (model.id === 'owned-local') return
+
+    const fallback = VIDEO_MODELS.find(
+      (item) =>
+        studioDemoProviderAvailability(apiState, item.id) !== 'unavailable',
+    )
+    if (!fallback || fallback.id === model.id) return
+
+    setModelId(fallback.id)
+    setDuration(fallback.durations[0])
+    setResolution(fallback.resolutions[0])
+    setAspect(fallback.aspects[0])
+    const fallbackSource =
+      fallback.id === 'owned-local' ? videoSources[0] : imageSources[0]
+    setSourceId(fallbackSource.id)
+    setStartFrameId(fallback.id === 'owned-local' ? '' : fallbackSource.id)
+    setEndFrameId('')
+    setLocalStatus(
+      `${model.label} is unavailable in the live configuration. Switched to ${fallback.label}.`,
+    )
+  }, [
+    apiState,
+    imageSources,
+    model.id,
+    model.label,
+    modelAvailability,
+    videoSources,
+  ])
 
   function chooseModel(nextModelId: string) {
     const next = VIDEO_MODELS.find((item) => item.id === nextModelId)
@@ -1466,7 +1612,7 @@ function VideoComposer({
             owned/gallery media before delivery capability.
           </p>
         </div>
-        <span className={styles.v3NoRunBadge}>No API connected</span>
+        <LiveApiBadge apiState={apiState} onRefreshApi={onRefreshApi} />
       </header>
 
       <div className={styles.v6VideoStage}>
@@ -1572,24 +1718,35 @@ function VideoComposer({
             <em>explicit</em>
           </div>
           <div className={styles.v3ModelCards}>
-            {VIDEO_MODELS.map((item) => (
-              <button
-                aria-pressed={model.id === item.id}
-                className={model.id === item.id ? styles.v3ModelSelected : undefined}
-                key={item.id}
-                onClick={() => chooseModel(item.id)}
-                type="button"
-              >
-                <span className={styles.v3ModelIcon}>
-                  <StudioV2Icon name={item.id === 'owned-local' ? 'scissors' : 'agent'} size={18} />
-                </span>
-                <span>
-                  <strong>{item.label}</strong>
-                  <small>{item.provider}</small>
-                </span>
-                <em>{item.id === 'owned-local' ? '৳0 edit' : 'Paid gate'}</em>
-              </button>
-            ))}
+            {VIDEO_MODELS.map((item) => {
+              const availability = studioDemoProviderAvailability(apiState, item.id)
+              return (
+                <button
+                  aria-pressed={model.id === item.id}
+                  className={model.id === item.id ? styles.v3ModelSelected : undefined}
+                  disabled={availability === 'unavailable'}
+                  key={item.id}
+                  onClick={() => chooseModel(item.id)}
+                  type="button"
+                >
+                  <span className={styles.v3ModelIcon}>
+                    <StudioV2Icon name={item.id === 'owned-local' ? 'scissors' : 'agent'} size={18} />
+                  </span>
+                  <span>
+                    <strong>{item.label}</strong>
+                    <small>
+                      {item.provider}
+                      {availability === 'available'
+                        ? ' · Live'
+                        : availability === 'unavailable'
+                          ? ' · Unavailable'
+                          : ''}
+                    </small>
+                  </span>
+                  <em>{item.id === 'owned-local' ? '৳0 edit' : 'Paid gate'}</em>
+                </button>
+              )
+            })}
           </div>
           <p className={styles.v3CapabilityNote}>
             <StudioV2Icon name="check" size={13} />
@@ -1832,7 +1989,7 @@ function VideoComposer({
           <StudioV2Icon name="chevron-right" size={17} />
         </button>
         <button className={styles.v3DisconnectedButton} disabled type="button">
-          Generation disconnected
+          Paid run locked · ৳0
         </button>
       </footer>
     </section>
@@ -1840,10 +1997,12 @@ function VideoComposer({
 }
 
 export function CreativeStudioCreateLab({
+  apiState,
   kind,
   initialSourceAssetId,
   initialAvatarId,
   onNavigate,
+  onRefreshApi,
 }: CreativeStudioCreateLabProps) {
   const [tab, setTab] = useState<LabTab>('explore')
   const [selectedAvatarId, setSelectedAvatarId] = useState(
@@ -2007,19 +2166,23 @@ export function CreativeStudioCreateLab({
 
           {kind === 'image' ? (
             <ImageComposer
+              apiState={apiState}
               initialTemplateId={selectedTemplate}
               initialSourceAssetId={initialSourceAssetId}
               key={selectedTemplate}
               onNavigate={onNavigate}
+              onRefreshApi={onRefreshApi}
               onSelectAvatar={setSelectedAvatarId}
               selectedAvatarId={selectedAvatarId}
             />
           ) : (
             <VideoComposer
+              apiState={apiState}
               initialTemplateId={selectedTemplate}
               initialSourceAssetId={initialSourceAssetId}
               key={selectedTemplate}
               onNavigate={onNavigate}
+              onRefreshApi={onRefreshApi}
               selectedAvatarId={selectedAvatarId}
             />
           )}
