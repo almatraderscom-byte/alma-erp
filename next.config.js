@@ -26,6 +26,10 @@ const nextConfig = {
       // skill-engine/runtime.ts. Without tracing them into the chat lambda, Vercel
       // drops the source `.md`/`.json` and discovery silently finds nothing.
       '/api/assistant/chat': ['./src/agent/skills/**'],
+      // The probe that checks whether the line above actually worked. It must
+      // trace the same files the chat route does, or its answer is about a
+      // different lambda than the one that runs the agent.
+      '/api/assistant/internal/skill-probe': ['./src/agent/skills/**'],
     },
   },
   images: {
