@@ -42,10 +42,55 @@ describe('layer 2 — the rules that keywords can never get right', () => {
     expect(applyRules('example.com er meta likhe dao')?.skill).toBe('seo-fixing-client-site')
   })
 
+  it('an audit of something that is NOT the website is not an SEO job (ADS-0)', () => {
+    // The exact sentence that pinned the SEO audit skill on 2026-07-27 and cost
+    // the run every ads tool it needed.
+    expect(applyRules('amar ads account ta ekbar valo kore audit kore dekho')).toBeNull()
+    expect(applyRules('ads account er ekta full audit koro')).toBeNull()
+    // Ads vocabulary vetoes the SEO reading even when our own domain is named.
+    expect(applyRules('almatraders.com er ads gulo audit kore dekho')).toBeNull()
+    // Other things that get audited and are not SEO either.
+    expect(applyRules('gato masher kharocher audit koro')).toBeNull()
+    expect(applyRules('stock er audit kore dao')).toBeNull()
+  })
+
+  it('…and the website audit still routes exactly as before', () => {
+    expect(applyRules('almatraders.com এর পূর্ণাঙ্গ SEO অডিট করো')?.skill).toBe('seo-auditing-own-site')
+    expect(applyRules('seo audit chalao')?.skill).toBe('seo-auditing-own-site')
+    // No SEO word at all — a bare "audit" still counts once a site is named,
+    // which is the case the old broad rule existed to catch.
+    expect(applyRules('almatraders.com er audit koro')?.skill).toBe('seo-auditing-own-site')
+    expect(applyRules('example.com er audit koro')?.skill).toBe('seo-fixing-client-site')
+  })
+
   it('leaves non-SEO messages alone', () => {
     expect(applyRules('kalker order gulo dekhao')).toBeNull()
     expect(applyRules('ajker sale koto?')).toBeNull()
     expect(applyRules('valo acho?')).toBeNull()
+  })
+})
+
+describe('ADS-0 regression — the whole router, not just the rule layer', () => {
+  it('an ads question pins NO skill on the index production actually serves', async () => {
+    // Rules were only half the story: with the rule removed, the keyword layer
+    // still had to decline. It does — the weak-match guard fires rather than
+    // hand an ads job to an SEO skill.
+    const index = await discoverSkills(SKILLS_ROOT)
+    for (const t of [
+      'amar ads account ta ekbar valo kore audit kore dekho',
+      'amar ads account tar ekhon ki obostha, ekbar bhalo kore dekhe bolo',
+      'ads e roj koto kharoch hocche ar amar limit er moddhe achi kina bolo',
+    ]) {
+      const d = routeSkill(index, t)
+      expect(d.skill == null || !d.skill.startsWith('seo-')).toBe(true)
+    }
+  })
+
+  it('the website audit still pins the audit skill', async () => {
+    const index = await discoverSkills(SKILLS_ROOT)
+    const d = routeSkill(index, 'almatraders.com এর পূর্ণাঙ্গ SEO অডিট করো')
+    expect(d.skill).toBe('seo-auditing-own-site')
+    expect(d.layer).toBe('rule')
   })
 })
 

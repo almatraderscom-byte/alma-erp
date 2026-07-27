@@ -98,7 +98,26 @@ const AUDIT_ASK =
  * above happen (the sentence carried no `seo`/`alt`/`meta` word at all).
  */
 const SEO_TOPIC_CLEAR =
-  /\bseo\b|এসইও|\balt\b|meta\s*(?:description|title|tag)|অডিট|audit|sitemap|canonical|\bslug\b|স্লাগ/i
+  /\bseo\b|এসইও|\balt\b|meta\s*(?:description|title|tag)|sitemap|canonical|\bslug\b|স্লাগ/i
+/**
+ * `audit` USED to sit in the list above, and that one word cost a whole run.
+ * ADS-0, 2026-07-27: *"amar ads account ta ekbar valo kore audit kore dekho"*
+ * pinned `seo-auditing-own-site` at the RULE layer — a rule wins outright — and
+ * the skill's allowlist then correctly withheld every ads tool. Eight tool
+ * calls, no audit, and the agent advised the owner to start a new conversation.
+ *
+ * SEO is not the only thing that gets audited: ads, money and stock all do. So
+ * a bare `audit` is treated like a bare `meta` — a marker that only means SEO
+ * once a website is in the sentence. `seo audit koro` still routes on `seo`.
+ */
+const AUDIT_BARE = /\baudit\b|অডিট/i
+/**
+ * …and a site name is not enough on its own either: "almatraders.com er ads
+ * audit koro" is an ADS job about our own domain. Any ads vocabulary vetoes the
+ * SEO reading unless a clear SEO word is also present.
+ */
+const ADS_TOPIC =
+  /\bads?\b|\bad\s*account\b|বিজ্ঞাপন|ক্যাম্পেইন|\bcampaign\b|\bboost\b|বুস্ট|\broas\b|\bctr\b|\bcpc\b|\bcpm\b|\bbudget\b|বাজেট|\baudience\b|\bpixel\b/i
 /**
  * Bare "meta" is the ambiguity SK-0 caught: "meta description লিখে দাও" routed to
  * the Meta ADS campaign skill. One word, two businesses. It only counts as SEO
@@ -114,7 +133,8 @@ const ANY_DOMAIN = /\b[a-z0-9-]+\.(?:com|net|org|io|xyz|shop|co)\b/i
 
 export function isSeoTopic(text: string): boolean {
   if (SEO_TOPIC_CLEAR.test(text)) return true
-  return META_BARE.test(text) && ANY_DOMAIN.test(text)
+  if (ADS_TOPIC.test(text)) return false
+  return (META_BARE.test(text) || AUDIT_BARE.test(text)) && ANY_DOMAIN.test(text)
 }
 
 export interface RouterRule {
