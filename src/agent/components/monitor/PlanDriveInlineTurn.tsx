@@ -58,7 +58,7 @@ function StepRow({ step, index }: { step: PlanDriveStepView; index: number }) {
       </span>
       <span className={cn(
         'text-[12.5px] leading-snug break-words [overflow-wrap:anywhere]',
-        done ? 'text-muted line-through' : failed ? 'text-red-500/80' : running ? 'alma-thinking-shimmer font-medium' : 'text-cream',
+        done ? 'text-muted line-through' : failed ? 'txt-neg' : running ? 'alma-thinking-shimmer font-medium' : 'text-cream',
       )}>
         {index + 1}. {step.action}
       </span>
@@ -106,7 +106,7 @@ function InlineDrive({ drive, onAction, onOpenConversation }: {
         </span>
         {badge && (
           <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[8.5px] font-extrabold uppercase tracking-wide',
-            isDecision ? 'bg-red-500/15 text-red-600' : 'bg-amber-500/15 text-amber-700')}>{badge}</span>
+            isDecision ? 'bg-red-500/15 txt-neg' : 'bg-amber-500/15 txt-warn')}>{badge}</span>
         )}
         <span className="shrink-0 text-[10px] font-semibold tabular-nums text-muted">{drive.doneCount}/{drive.totalCount}</span>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -127,7 +127,7 @@ function InlineDrive({ drive, onAction, onOpenConversation }: {
       {open && (
         <div className="border-t border-white/[0.05] px-1.5 pb-2 pt-1.5">
           {drive.waitingReason && (
-            <p className={cn('mb-1.5 px-1.5 text-[11px] leading-snug', isDecision ? 'text-red-600/85' : 'text-amber-700/85')}>
+            <p className={cn('mb-1.5 px-1.5 text-[11px] leading-snug', isDecision ? 'txt-neg' : 'txt-warn')}>
               {drive.waitingReason}
             </p>
           )}
@@ -152,7 +152,7 @@ function InlineDrive({ drive, onAction, onOpenConversation }: {
               {isDecision && onAction && (
                 <>
                   <button type="button" disabled={busy !== null} onClick={() => run('resume')}
-                    className={cn(actBtn, 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20')}>
+                    className={cn(actBtn, 'border border-emerald-500/40 bg-emerald-500/10 txt-pos hover:bg-emerald-500/20')}>
                     {busy === 'resume' ? '⏳' : '▶'} আবার চালাও
                   </button>
                   <button type="button" disabled={busy !== null} onClick={() => run('add-budget')}

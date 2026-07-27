@@ -1,7 +1,7 @@
 ---
 name: alma-product-social-post
-description: Prepare a product social post (image + Bangla caption); publishing stays owner-gated.
-version: 0.1.0
+description: Builds a social post for one item — image plus Bangla caption — ready for Boss to approve. Use when Boss asks for a Facebook post, a caption, or promotion of something we sell. Publishing stays an owner-gated card.
+version: 1.0.0
 keywords: post, পোস্ট, facebook post, ফেসবুক পোস্ট, caption, ক্যাপশন, product post, পণ্যের পোস্ট, social, promote, বিজ্ঞাপন বানাও
 ---
 

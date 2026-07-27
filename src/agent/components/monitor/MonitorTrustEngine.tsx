@@ -69,10 +69,10 @@ export function MonitorTrustEngine({ rules, onUpdateTier }: {
                       <p className="text-[11px] font-semibold text-cream/80">{rule.domain} / {rule.actionPattern}</p>
                       <div className="mt-1 flex items-center gap-3 text-[9px] text-muted">
                         <span className="flex items-center gap-1">
-                          <span className="text-emerald-500">✅</span> {rule.approvalCount}
+                          <span className="txt-pos">✅</span> {rule.approvalCount}
                         </span>
                         <span className="flex items-center gap-1">
-                          <span className="text-red-500">❌</span> {rule.rejectionCount}
+                          <span className="txt-neg">❌</span> {rule.rejectionCount}
                         </span>
                         <StreakFire count={rule.consecutiveApprovals} />
                       </div>

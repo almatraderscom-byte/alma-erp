@@ -184,7 +184,7 @@ export default function CatalogImagesScreen({ canDelete = false }: { canDelete?:
         {/* Body */}
         {loading && <div className="py-12 text-center text-sm text-muted">লোড হচ্ছে…</div>}
         {error && !loading && (
-          <div className="rounded-xl border border-red-400/30 bg-red-500/5 p-4 text-center text-sm text-red-300">
+          <div className="rounded-xl border border-red-400/30 bg-red-500/5 p-4 text-center text-sm txt-neg">
             {error}
             <button onClick={load} className="ml-2 underline">
               আবার চেষ্টা করুন

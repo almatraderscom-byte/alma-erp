@@ -122,6 +122,7 @@ export async function discoverSkills(
       keywords,
       implicit: manifest.implicit !== false,
       dir,
+      ...(manifest.extends ? { extends: manifest.extends } : {}),
       // SK-8: computed at discovery, which runs once per process, so the
       // approval check later costs nothing per turn.
       hash: await computeSkillHash(dir),

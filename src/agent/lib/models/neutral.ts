@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import type { AgentTool } from '@/agent/tools/registry'
 import type { NeutralMsg, NeutralTool } from '@/agent/lib/models/types'
+import { annotateUntrustedToolResult } from '@/agent/lib/security/untrusted-tool-results'
 
 type StoredBlock = { type: string; text?: string; tool_use_id?: string; content?: string; path?: string; summary?: string; status?: string; question?: string; askCardId?: string; options?: string[] }
 
@@ -135,7 +136,12 @@ export function appendToolExchange(
       role: 'tool' as const,
       toolCallId: r.id,
       name: r.name,
-      result: capToolResult(r.result),
+      // Audit 2026-07-27: every tool result reaches the model through here, and
+      // the ones written by OUTSIDERS — a customer's Messenger message, a
+      // competitor's page, an uploaded document — were arriving as plain text
+      // that read exactly like Boss speaking. The classifier for that existed
+      // and was wired to a single caller. This is the door it was written for.
+      result: capToolResult(annotateUntrustedToolResult(r.name, r.result).result),
     })),
   ]
 }

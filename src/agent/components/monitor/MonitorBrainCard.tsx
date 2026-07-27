@@ -67,8 +67,8 @@ function PromptCacheLine({ cache }: { cache: PromptCacheMonitorSnapshot | null }
   if (cache.cachingBroken) {
     return (
       <div className="rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2 space-y-1">
-        <p className="text-[11px] font-semibold text-amber-800">⚠️ caching হিট করছে না</p>
-        <p className="text-[10px] text-amber-700/90 tabular-nums">
+        <p className="text-[11px] font-semibold txt-warn">⚠️ caching হিট করছে না</p>
+        <p className="text-[10px] txt-warn tabular-nums">
           আজ {cache.chatTurns} টার্ন · cache read {fmtTokens(cache.cacheReadTokens)} · hit {(cache.cacheHitRatio * 100).toFixed(0)}%
         </p>
       </div>

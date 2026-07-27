@@ -10,7 +10,7 @@ import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-to
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_MODULES, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
-import { stripToolCallMarkup } from '@/agent/lib/model-output-sanitize'
+import { stripToolCallMarkup, dropRepeatedBlocks } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
   claimsCompletion,
@@ -53,6 +53,12 @@ import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/
 import { runPreToolHooks, runPostToolHooks } from '@/agent/lib/turn-hooks'
 import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
 import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
+import { buildOwnerCorrectionNudge } from '@/agent/lib/owner-correction'
+import { newTurnProgressState, nextTurnProgress } from '@/agent/lib/turn-progress'
+import { insertControlNote } from '@/agent/lib/control-note-order'
+import { cleanVisibleThinking } from '@/agent/lib/visible-thinking'
+import { buildPlanProgress, planProgressSignature } from '@/agent/lib/plan-progress'
+import { loadLatestPlanProgress } from '@/agent/lib/planner'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
@@ -522,6 +528,20 @@ async function* runAlternateProviderTurn(
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
   let currentOwnerInstructions = lastUserText
+  // Boss just pointed out a fault. One block, this turn only, telling the head
+  // how to answer a correction — concede first, rank the complaints himself,
+  // name the failure, then go VERIFY instead of arguing. Appended after the
+  // cached prefix, so the prompt cache is untouched (self-correct.ts pattern).
+  // Status-line state for this turn (see turn-progress.ts). Declared here so the
+  // speak-first line before the loop also counts as the model having spoken.
+  let progressState = newTurnProgressState()
+  let spokeSinceProgress = false
+  let lastPlanSignature = ''
+  const turnStartedMs = Date.now()
+  const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
+  if (ownerCorrectionNudge) {
+    messages = insertControlNote(messages, { role: 'user', content: ownerCorrectionNudge })
+  }
   const ownerRequirements = deriveOwnerTurnRequirements(lastUserText)
   // A derived deliverable requirement (client SEO batch / live-browser walk) is
   // itself an action order — the gate must not mark such a message
@@ -893,6 +913,18 @@ async function* runAlternateProviderTurn(
     // SK-8 — the gate refused it. Boss must be told, because from his side a
     // withheld skill and a broken one look identical, and one of them is
     // waiting on a decision only he can make.
+    yield {
+      type: 'skill_held_back',
+      skill: activeSkills.heldBack.skill,
+      state: activeSkills.heldBack.state,
+      reason: activeSkills.heldBack.reason,
+    }
+  }
+  // SK-8 — a skill matched and the approval gate refused it. Proven necessary on
+  // the first live revoke test (2026-07-27): the skill correctly did not run and
+  // the head said nothing, because "explain yourself" lived only in the prompt.
+  // On the wire it is drawn whether or not the model cooperates.
+  if (activeSkills.heldBack) {
     yield {
       type: 'skill_held_back',
       skill: activeSkills.heldBack.skill,
@@ -1851,6 +1883,8 @@ async function* runAlternateProviderTurn(
       })) {
         if (ev.type === 'text_delta') {
           line += ev.text
+          // The model is narrating — the status line stays quiet while it does.
+          if (ev.text.trim()) spokeSinceProgress = true
           yield { type: 'text_delta', delta: ev.text }
         } else if (ev.type === 'usage') {
           totalInputTokens += ev.inputTokens
@@ -1890,14 +1924,14 @@ async function* runAlternateProviderTurn(
   // pattern) so the cached prompt prefix is untouched — this is a per-turn
   // volatile fact and must never sit in the cached bytes.
   const pendingCardsAtStart = await readPendingCards(conversationId)
-  messages = [...messages, { role: 'user', content: buildCardStateNote(pendingCardsAtStart) }]
+  messages = insertControlNote(messages, { role: 'user', content: buildCardStateNote(pendingCardsAtStart) })
 
   // PM-1 — the agent must never be unaware of the mode it is in (owner
   // requirement 2026-07-27: if he takes a plan and then asks for the work
   // without switching, it has to say which mode it is in and which one would do
   // it, instead of answering vaguely). Same slot as the card-state note: after
   // the cached prefix, marked INTERNAL CONTROL.
-  messages = [...messages, { role: 'user', content: permissionModeNote(permissionMode, elevationGrant) }]
+  messages = insertControlNote(messages, { role: 'user', content: permissionModeNote(permissionMode, elevationGrant) })
 
   try {
     for (let iteration = 0; iteration < maxIterations; iteration++) {
@@ -2150,7 +2184,10 @@ async function* runAlternateProviderTurn(
       // timeline or either emission path — a fragment spans several deltas, so
       // this is the only place it can be done completely.
       const rawIterationText = iterationText
-      iterationText = stripToolCallMarkup(iterationText)
+      // Same repair pass, second failure mode: the model answering twice in one
+      // round. Third sighting, and the style rule against it shipped before the
+      // last one — so it is repaired, not requested.
+      iterationText = dropRepeatedBlocks(stripToolCallMarkup(iterationText))
       if (iterationText !== rawIterationText) {
         console.info('[model-output] stripped tool-call markup from visible text', {
           conversationId,
@@ -2158,7 +2195,11 @@ async function* runAlternateProviderTurn(
         })
       }
       // Record this round's reasoning as a timeline segment BEFORE its tool calls.
-      if (iterThinking.trim()) timeline.push({ t: 'think', text: iterThinking.trim().slice(0, 4000) })
+      // Plumbing out of the thought before it is shown or stored: he asked to
+      // watch the reasoning, not to read our control banners and verifier
+      // notes back to himself (visible-thinking.ts).
+      const shownThinking = cleanVisibleThinking(iterThinking)
+      if (shownThinking) timeline.push({ t: 'think', text: shownThinking.slice(0, 4000) })
       // Round's visible text joins the timeline too, so the persisted stream keeps
       // the true text↔step order after reload (ChronoFlow) — same as core.ts.
       if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
@@ -2976,6 +3017,44 @@ async function* runAlternateProviderTurn(
         .slice(-calls.length)
         .filter((r) => r.status === 'error')
         .map((r) => ({ toolName: r.toolName, error: String(r.error ?? '') }))
+      // The live checklist. Re-read after each tool round and emitted ONLY when a
+      // step actually changed state — an identical checklist re-sent every round
+      // is how a live element turns into wallpaper.
+      try {
+        const planRows = await loadLatestPlanProgress(conversationId)
+        const planProgress = planRows
+          ? buildPlanProgress(planRows.planId, planRows.goal, planRows.rows)
+          : null
+        const sig = planProgressSignature(planProgress)
+        if (planProgress && sig !== lastPlanSignature) {
+          lastPlanSignature = sig
+          yield {
+            type: 'plan_progress',
+            planId: planProgress.planId,
+            goal: planProgress.goal,
+            headline: planProgress.headline,
+            doneCount: planProgress.doneCount,
+            total: planProgress.total,
+            steps: planProgress.steps,
+          }
+        }
+      } catch { /* a checklist must never break a turn */ }
+
+      // "কী হচ্ছে এখন" — deterministic, server-side, and silent while the model
+      // is talking. Owner ask 2026-07-27: never leave him watching a spinner.
+      const progressTick = nextTurnProgress(progressState, {
+        round: iteration + 1,
+        spokeSinceLast: spokeSinceProgress,
+        elapsedMs: Date.now() - turnStartedMs,
+        lastToolLabel: calls[calls.length - 1]?.name ?? null,
+        nowMs: Date.now(),
+      })
+      if (progressTick) {
+        progressState = progressTick.state
+        spokeSinceProgress = false
+        yield { type: 'turn_progress', ...progressTick.progress }
+      }
+
       const selfCorrectionNudge = buildSelfCorrectionNudge(failedThisRound)
       if (selfCorrectionNudge) {
         messages = [...messages, { role: 'user', content: selfCorrectionNudge }]

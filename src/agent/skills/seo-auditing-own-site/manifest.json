@@ -1,10 +1,12 @@
 {
   "name": "seo-auditing-own-site",
   "description": "Audits almatraders.com SEO and reports findings — score, severity-grouped issues, search and traffic readout. Use when Boss asks for an audit, a report, or 'কেমন অবস্থা'. Not for fixing anything: it holds no write tool.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "alma-native",
   "license": "proprietary",
-  "businessScopes": ["ALMA_LIFESTYLE"],
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
   "riskTier": "low",
   "extends": "alma-base",
   "whenNotToUse": "Boss asked to FIX or WRITE something → seo-fixing-own-site. Another company's site → seo-fixing-client-site.",
@@ -19,20 +21,37 @@
     "get_ga4_report",
     "save_artifact"
   ],
-  "dependencies": { "env": ["WEBSITE_SUPABASE_URL", "WEBSITE_SUPABASE_SERVICE_ROLE_KEY"] },
-  "outputContract": { "kind": "artifact_report", "mustInclude": ["score", "severity_groups", "per_issue_page"] },
+  "dependencies": {
+    "env": [
+      "WEBSITE_SUPABASE_URL",
+      "WEBSITE_SUPABASE_SERVICE_ROLE_KEY"
+    ]
+  },
+  "outputContract": {
+    "kind": "artifact_report",
+    "mustInclude": [
+      "score",
+      "severity_groups",
+      "per_issue_page"
+    ]
+  },
   "stopConditions": [
     "ক্রল ৫ মিনিটের বেশি চললে — অবস্থা জানিয়ে থামবে",
     "Oxylabs বা টাকা লাগে এমন কিছু দরকার হলে",
     "অডিটের সংখ্যা লাইভ পেজের সাথে না মিললে"
   ],
   "done": [
-    { "tool": "check_website_seo_audit" },
-    { "tool": "save_artifact" }
+    {
+      "tool": "check_website_seo_audit"
+    },
+    {
+      "tool": "save_artifact"
+    }
   ],
   "networkPolicy": "allowlist",
   "writePolicy": "none",
   "approvalPolicy": "inherit",
   "maxSteps": 10,
-  "status": "active"
+  "status": "active",
+  "isolation": "subagent"
 }

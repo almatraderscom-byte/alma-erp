@@ -1,11 +1,13 @@
 {
   "name": "alma-product-listing",
-  "description": "পণ্য ওয়েবসাইটে লিস্ট করা: title/meta/desc/alt তৈরি — publish/update owner-gated।",
-  "version": "0.1.0",
+  "description": "Puts one product onto the website with clean copy — title, meta, description, alt, slug — checked against the SEO rules before it is offered. Use when Boss says to put a product up, add a new item, or refresh an existing listing. The publish itself is an owner-gated card; this skill prepares it and never ships it.",
+  "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
   "businessScopes": ["ALMA_LIFESTYLE"],
   "riskTier": "medium",
+  "extends": "alma-base",
+  "whenNotToUse": "ইতিমধ্যে লাইভ পণ্যের meta/alt ঠিক করা → seo-fixing-own-site। সাইটের সাধারণ সমস্যা বা কনটেন্ট → alma-website। একসাথে অনেক পণ্যের SEO ব্যাচ → seo-fixing-own-site।",
   "requiredCapabilities": [
     "get_product",
     "get_website_catalog",
@@ -14,9 +16,22 @@
     "publish_product",
     "unpublish_product"
   ],
+  "outputContract": {
+    "kind": "approval_card",
+    "mustInclude": ["product_slug", "before", "after", "seo_check_result"]
+  },
+  "stopConditions": [
+    "পণ্যটা ক্যাটালগে আগে থেকেই আছে — নতুন বানানোর আগে Boss-কে জানাবে",
+    "দাম বা স্টক জানা না থাকলে — অনুমান করে বসাবে না, জিজ্ঞেস করবে",
+    "audit পাস না করলে — কার্ড বানানোর আগে ঘাটতি ঠিক করবে"
+  ],
+  "done": [
+    { "tool": "get_product" },
+    { "tool": "audit_product_seo" }
+  ],
   "networkPolicy": "allowlist",
   "writePolicy": "owner_gated",
   "approvalPolicy": "always",
   "maxSteps": 5,
-  "status": "draft"
+  "status": "active"
 }

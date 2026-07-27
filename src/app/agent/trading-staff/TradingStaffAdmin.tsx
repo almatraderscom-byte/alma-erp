@@ -148,8 +148,8 @@ export default function TradingStaffAdmin() {
                       className={cn(
                         'text-xs px-3 py-1.5 rounded-lg border backdrop-blur-sm transition-all',
                         s.active
-                          ? 'border-red-500/25 bg-red-500/[0.06] text-red-300 hover:bg-red-500/10 hover:shadow-[0_0_10px_rgba(239,68,68,0.1)]'
-                          : 'border-emerald-500/25 bg-emerald-500/[0.06] text-emerald-300 hover:bg-emerald-500/10 hover:shadow-[0_0_10px_rgba(16,185,129,0.1)]',
+                          ? 'border-red-500/25 bg-red-500/[0.06] txt-neg hover:bg-red-500/10 hover:shadow-[0_0_10px_rgba(239,68,68,0.1)]'
+                          : 'border-emerald-500/25 bg-emerald-500/[0.06] txt-pos hover:bg-emerald-500/10 hover:shadow-[0_0_10px_rgba(16,185,129,0.1)]',
                       )}
                     >
                       {s.active ? 'Deactivate' : 'Activate'}

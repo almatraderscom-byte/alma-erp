@@ -15,9 +15,9 @@ interface ModelRow {
 }
 
 const PROVIDER_TAG: Record<string, string> = {
-  google: 'border-sky-300/40 bg-sky-400/10 text-sky-300',
-  openrouter: 'border-violet-300/40 bg-violet-400/10 text-violet-300',
-  anthropic: 'border-amber-300/40 bg-amber-400/10 text-amber-300',
+  google: 'border-sky-300/40 bg-sky-400/10 txt-info',
+  openrouter: 'border-violet-300/40 bg-violet-400/10 txt-accent',
+  anthropic: 'border-amber-300/40 bg-amber-400/10 txt-warn',
 }
 
 export default function ModelTogglePanel() {

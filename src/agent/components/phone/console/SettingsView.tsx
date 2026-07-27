@@ -201,7 +201,7 @@ function Field({
             বাতিল
           </button>
         )}
-        {done && <span className="text-[12px] text-emerald-500">{done}</span>}
+        {done && <span className="text-[12px] txt-pos">{done}</span>}
       </div>
 
       {problem && <p className="mt-2 tone-red rounded-xl border px-3 py-2 text-[12px]">{problem}</p>}

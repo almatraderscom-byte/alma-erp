@@ -145,6 +145,212 @@ pins the fixing skill at the RULE layer, a pin follows the job when the job
 changes, an answered card leads to WORK rather than another question, and an
 approval makes the agent carry on by itself.
 
+## 2026-07-27 (afternoon) — branch `claude/roadmap-2-finish`
+
+### Item 1 — the ledger could not be filled at all
+
+`approveSkill()` shipped in SK-8 **with no caller**. The only one possible was a
+script holding database credentials, and an approval written by a script is the
+one thing a ledger is not for: the question it answers is *who said yes*.
+
+So approving is now an owner act on a screen — `/api/assistant/skills`
+(owner-session auth, same shape as the pin override) and a section in the
+control centre showing every package on disk, drafts included, with its version,
+content hash, approval state, and the number that decides everything:
+**how many live skills the gate would stop if switched on today.**
+
+`approval-view.ts` is pure so the distinction the screen exists to make is held
+down in tests rather than found on his screen: **approved is not the same as
+runs.** A draft can be approved and never be offered; `alma-base` is
+`implicit: false` and can never be selected at all.
+
+**A hole found while preparing to fill the ledger, not by a test.** `alma-base`
+is INHERITED via `extends:`, never selected — so the runtime approval check,
+which only ever saw the *picked* skill, never looked at it. The single file
+carrying the ALMA invariants (money, approvals, Bangla, "Boss", halal) was the
+one file provenance could not see. Turning the gate on would have felt safe and
+left that open. `approvalStateWithBase` now folds the base in, and the held-back
+message names the BASE rather than the skill — sending him to re-approve the
+wrong file is its own failure.
+
+**Still open, and it needs him:** the gate is `AGENT_SKILL_APPROVAL_GATE`, env
+only, deliberately with no KV path. A KV row is exactly how the ENGINE flag
+ended up on in production without anyone recording it (see the correction
+above), so that mistake is not being repeated. Once the ledger is populated he
+sets it on Vercel **Preview only**.
+
+### Item 2 — the scorer had no bridge to a real run
+
+`compareToBaseline()` has existed since SK-1 and has never been pointed at a
+real run, because nothing turned the rows we already store into the shape it
+scores. Everything it needs was persisted all along:
+
+| | |
+|---|---|
+| `pinnedSkill` | `agent_conversations.pinned_skill` |
+| `tools` | `agent_tool_calls` (name + status) |
+| `replyText` | the assistant messages' text blocks |
+
+`evals/from-conversation.ts` is that adapter and `/api/assistant/skills/evals`
+lists the runs that pinned a skill, reconstructs one, and scores two arms
+through the regression gate. An unknown tool status counts as an **error**,
+never as evidence — treating it as success is precisely how a fabricated
+completion claim would score honest.
+
+**Scoring itself is blocked on reading the DB, which needs his login.** One
+honest caveat recorded before the numbers exist: `compareToBaseline()` matches
+by scenario **id**, and the 2026-07-26 inline runs and the 2026-07-27 isolated
+run were the same job but not the same scripted scenario. If they do not line
+up, the three fix scenarios get run both ways rather than a comparison being
+implied from runs that were never paired.
+
+### Item 1 — proven live, 2026-07-27
+
+All four provenance properties measured on the preview, in his own Chrome, with
+`AGENT_SKILL_APPROVAL_GATE=on`:
+
+| | how it was proven |
+|---|---|
+| ledger fills | 10 skills approved, each with its content hash and "Maruf Chowdhury · 27/07/2026" |
+| an approved skill runs | one plain Banglish sentence → chip `alma-finance-brief`, reply in the skill's own order, "All 4 required tools are now complete" |
+| **revoke stops it** | revoked → new chat, same sentence → no pin at all, live count 9 → 8, no deploy |
+| **an edited skill loses its approval** | bumping `seo-auditing-own-site` to 1.1.0 flipped it to `changed` by itself; it stopped running until re-approved |
+
+**And the revoke test found a hole in SK-8's own promise.** The rule "say WHY
+rather than behaving as if no skill matched" was a sentence in the PROMPT.
+Measured: the skill correctly did not run and the head said nothing at all — it
+answered as though nothing had matched, which is exactly the silent-withhold
+failure the sentence existed to prevent. `skill_held_back` is now its own SSE
+event and the thread draws the line whether or not the model cooperates. Its own
+event, not a flag on `skill_pinned`, because nothing IS pinned — the chip has to
+stay empty while the reason still shows.
+
+### Item 2 — the isolated path is eval-gated. **No regression.**
+
+The recorded runs did not pair, and the reason is worth keeping: read from the
+`skill_pinned` events rather than the dates, history holds exactly ONE isolated
+run and no inline run of the same scenario. Splitting them by date would have
+been wrong in BOTH directions — a 07-26 conversation is isolated and a 07-27 one
+is inline. So the route now reads the arm from the record, and the pair was made
+deliberately.
+
+Made on the READ-ONLY audit skill on purpose: no writes, no approval cards, no
+staged work he then has to dismiss. Baseline ran before the isolation commit,
+isolated arm after it, same sentence, one variable.
+
+| `audit/decorative-alt` | inline (`5f819baa`) | isolated (`32a2e202`) |
+|---|---|---|
+| `compareToBaseline` | — | **regressed: none** |
+| routing / safety | pass / pass | pass / pass |
+| tokens Σ | 269.8k | **180.5k** (−33%) |
+| input ↑ | 92.7k | **57.4k** (−38%) |
+| tool calls | 4 | 8 (7 of them polling the crawl) |
+| reply length | 4180 chars | 1636 |
+| stopped to ask before starting | **yes** — "এটা ঠিক আছে?" | no, went straight to work |
+| cost | $0.1585 | $0.0095 |
+
+**Read it honestly.** The gate passes: nothing regressed. But the scenario's
+rubric was thin — with only `forbidTools` it could score routing and safety and
+nothing else, so both arms passed a test that could barely fail. That is
+recorded, and `evidenceTools` was added to the scenario AFTERWARDS so later runs
+are judged harder; the verdict above stands as it was measured. The cost gap is
+confounded by model routing under Auto, exactly as in the SK-5 comparison — the
+defensible claims are the prompt size and the behaviour, not the 16× price.
+
+The one behavioural difference worth watching: isolated did not stall for
+permission, but it burned seven polling calls on a queued crawl.
+
+### Item 3 — five promoted, one at a time, each measured
+
+| # | skill | why it was next |
+|---|---|---|
+| 1 | `alma-finance-brief` | lowest blast radius — `writePolicy: none`, so the guarantee is structural |
+| 2 | `alma-research` | closed a router MISS: its work verbs were Bangla script only |
+| 3 | `alma-staff-dispatch` | he names the PERSON, so only a rule can reach it |
+| 4 | `alma-product-listing` | the corpus's only WRONG-skill case |
+| 5 | `alma-product-social-post` | promoted **because** #4 started winning its message |
+
+**Two of the "16" must never be promoted.** `alma-seo-audit` and
+`alma-client-seo` are superseded by the SK-5 skills and both claim the keyword
+"seo"; promoting either would recreate by hand the collision SK-0 measured. Both
+are now `retired` — dropped by discovery at every status, files kept in git. The
+promotion list is **14**.
+
+**The number this programme was missing.** 81% (now 95%) is measured with
+DRAFTS INCLUDED — it is what routing would score if everything were promoted,
+not what he experiences. `docs/skill-router-result.md` now also records the live
+path, and that is the promotion meter:
+
+| | before | after |
+|---|---|---|
+| corpus messages with a skill pinned | 8 of 21 | **13 of 21** |
+| of those pins, wrong | 0 | **0** |
+| false triggers | 0 | **0** |
+| lint findings | 78 | **58** |
+
+**What the meter caught that review would not have.** Promoting #4 made it the
+best keyword match for a *social post* message — twice. The first cause was a
+greedy keyword and was simply removed. The second is structural and worth
+writing down: `selectSkills` scores every token of a skill's name and
+description, so a description about products repeats "product", and **a promoted
+skill will always outrank an unpromoted one on a message that belongs to the
+unpromoted one.** The answer is not to weaken the description; it is to promote
+the skill that owns the message. That is why #5 exists.
+
+**Recorded for the next promotion:** `alma-customer-support` overlaps
+`alma-product-social-post` at 40% description similarity and is what takes the
+parcel message in the drafts-included run. Both must be resolved before it is
+promoted.
+
+### Item 4 — both remaining SEO skills isolated, one at a time
+
+| skill | version | proven |
+|---|---|---|
+| `seo-auditing-own-site` | 1.1.0 | pinned + `isolated` on the record; it is also the instrument item 2's pair was measured with |
+| `seo-fixing-client-site` | 1.1.0 | pinned + `isolated` on the record, from one plain Banglish sentence naming a client domain |
+
+Each `SYSTEM.md` says the thing the general prompt cannot. For the audit skill:
+holding no write tool is the ROLE, not a restriction — Boss can trust the number
+because whoever measured it cannot change it. For the client skill: this report
+leaves the building and money changes hands over it, so no login **even if Boss
+offers credentials** — the case where a helpful model talks itself into being
+useful.
+
+Both bumped to 1.1.0, which dropped them to `changed` in the ledger until
+re-approved. That is now a demonstrated mechanism rather than a hope.
+
+### Item 5 — Upstash: built, flag OFF, not deployed to the VPS
+
+**The notes were wrong about what that Redis is, and the correction changes the
+job.** It is described as "only the queue". It is also the ONLY live path from
+the VPS worker back to a Vercel stream: the worker publishes every SSE event to
+it and `/api/assistant/turn/:id/stream` subscribes. With the quota exhausted —
+which it is — `subscribeTurnEvents` returns null, the stream closes, and a
+worker-run turn cannot be watched at all however healthy the worker is.
+
+So removal is two paths, not one:
+
+- **Read path — live now, no flag.** The durable log is written BEFORE each
+  publish, so `agent_turn_events` is complete on its own. With no Redis to tail
+  and the turn still running, the stream polls that log instead of giving up:
+  one indexed query a second per open stream, ~1s latency instead of instant.
+  This is an improvement *today*, before anything is switched off.
+- **Write path — `AGENT_TURN_HANDOFF_HTTP`, default OFF.** The VPS has had a
+  token-authenticated HTTP surface all along, already wired to Vercel as
+  `AGENT_WORKER_DIAGNOSTIC_URL`. A new `/enqueue-job` on it puts the job on the
+  worker's LOCAL Redis with the same jobId and the same `attempts: 1` — a turn
+  is not idempotent, and a retry re-runs the whole thing from the original
+  message. HTTP failure falls back to Redis: a lost turn is worse than a metered
+  one. A half-configured handoff reports itself UNAVAILABLE rather than
+  pretending, because the failure that would actually hurt is a long turn
+  running inline against the 300s cap.
+
+**Not deployed.** The worker file needs a manual `pm2 restart` on his box (the
+deploy workflow is broken and deploys are by hand). The voice gateway is a
+separate pm2 process, so the locked audio is not in the blast radius — but
+restarting a live worker is his call, not something to do inside a session about
+skills.
+
 ## Not done — start here
 
 ### SK-6 finished — 2026-07-27

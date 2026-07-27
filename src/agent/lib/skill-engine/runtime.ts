@@ -61,12 +61,21 @@ export interface ActiveSkills {
   /**
    * SK-8 — the skill matched, and the provenance gate refused to run it.
    *
-   * Found live 2026-07-27, and it had been true for a day: `seo-fixing-own-site`
-   * was approved at one content hash, its manifest and SKILL.md were edited the
-   * next day (#627), and the gate correctly read that as `changed`. Correct — but
-   * SILENT. The head got one line in its prompt, no event reached any client, and
-   * from the outside the engine looked switched on and idle. A refusal nobody can
-   * see is indistinguishable from a bug, so it is now on the wire.
+   * Two sessions found this on the same day, from opposite ends, and both
+   * findings are worth keeping.
+   *
+   * From the live REVOKE test: the reason started as a sentence in the prompt
+   * asking the head to explain itself. The skill correctly did not run and the
+   * head said nothing at all — it answered as though nothing had matched. A
+   * prompt rule is a request.
+   *
+   * From production: `seo-fixing-own-site` was approved at one content hash, its
+   * files were edited the next day (#627), and the gate correctly read that as
+   * `changed` — correct, and SILENT. From the outside the engine looked switched
+   * on and idle. A refusal nobody can see is indistinguishable from a bug.
+   *
+   * So the reason goes on the wire as its own event and the UI draws it, the
+   * same way the pin announcement had to stop being a prompt instruction.
    */
   heldBack: { skill: string; state: string; reason: string } | null
 }
@@ -116,7 +125,7 @@ export async function buildActiveSkills(
     // an unapproved, edited or revoked skill does not run at all.
     let heldBack: { skill: string; state: string } | null = null
     try {
-      const [{ loadApprovalLedger }, { approvalState, mayRun }, { skillApprovalGateEnabled }] =
+      const [{ loadApprovalLedger }, { approvalStateWithBase, mayRun }, { skillApprovalGateEnabled }] =
         await Promise.all([
           import('@/agent/lib/skill-engine/approval-store'),
           import('@/agent/lib/skill-engine/provenance'),
@@ -125,12 +134,22 @@ export async function buildActiveSkills(
       const ledger = await loadApprovalLedger()
       const gateOn = skillApprovalGateEnabled()
       const allowed = picked.filter((meta) => {
-        const state = approvalState({ name: meta.name, version: meta.version, hash: meta.hash }, ledger)
+        // A skill is only as approved as the base it inherits. `alma-base` is
+        // never SELECTED, so checking the picked skill alone left the ALMA
+        // invariants outside provenance entirely.
+        const baseMeta = meta.extends
+          ? index.skills.find((s) => s.name === meta.extends) ?? null
+          : null
+        const { state, blockedBy } = approvalStateWithBase(
+          { name: meta.name, version: meta.version, hash: meta.hash },
+          baseMeta ? { name: baseMeta.name, version: baseMeta.version, hash: baseMeta.hash } : null,
+          ledger,
+        )
         if (state !== 'approved') {
-          console.info('[skill-provenance]', { skill: meta.name, version: meta.version, state, gateOn })
+          console.info('[skill-provenance]', { skill: meta.name, version: meta.version, state, blockedBy, gateOn })
         }
         if (mayRun(state, gateOn)) return true
-        heldBack = { skill: meta.name, state }
+        heldBack = { skill: blockedBy, state }
         return false
       })
       if (allowed.length === 0 && heldBack) {

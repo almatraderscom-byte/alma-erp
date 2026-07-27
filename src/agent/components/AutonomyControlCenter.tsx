@@ -99,7 +99,7 @@ export default function AutonomyControlCenter() {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-200">
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs txt-warn">
         নিয়ম: প্রতিটা শ্রেণি আলাদাভাবে, এক ধাপ করে বাড়ে — প্রমাণ (shadow/canary ফলাফল) ছাড়া প্রমোশন হয় না।
         “সব একসাথে চালু” বলে কিছু নেই। বড় প্রভাবের (R3/R4) কাজ কখনোই স্বয়ংক্রিয় হয় না।
       </div>
@@ -123,8 +123,8 @@ export default function AutonomyControlCenter() {
               </div>
 
               <div className="mt-2 space-y-1 text-[12px]">
-                <div className="text-emerald-300/90">✓ যা হবে: {ex.will}</div>
-                <div className="text-rose-300/90">✗ যা হবে না: {ex.wont}</div>
+                <div className="txt-pos">✓ যা হবে: {ex.will}</div>
+                <div className="txt-neg">✗ যা হবে না: {ex.wont}</div>
               </div>
 
               {(r.stage === 'auto_r1' || r.stage === 'bounded_r2') && (
@@ -135,14 +135,14 @@ export default function AutonomyControlCenter() {
 
               <div className="mt-3 flex gap-2">
                 <button
-                  className="rounded-lg bg-emerald-600/20 px-3 py-1 text-xs text-emerald-300 disabled:opacity-40"
+                  className="rounded-lg bg-emerald-600/20 px-3 py-1 text-xs txt-pos disabled:opacity-40"
                   disabled={busy === r.taskClass || atCeiling}
                   onClick={() => void act({ action: 'promote', taskClass: r.taskClass, note: 'owner promoted from control centre' }, 'এক ধাপ বাড়ানো হলো')}
                 >
                   {atCeiling ? 'সর্বোচ্চ ধাপে' : 'এক ধাপ বাড়াও'}
                 </button>
                 <button
-                  className="rounded-lg bg-rose-600/20 px-3 py-1 text-xs text-rose-300 disabled:opacity-40"
+                  className="rounded-lg bg-rose-600/20 px-3 py-1 text-xs txt-neg disabled:opacity-40"
                   disabled={busy === r.taskClass || r.stage === 'off'}
                   onClick={() => void act({ action: 'pause', taskClass: r.taskClass, note: 'owner paused' }, 'বন্ধ করা হলো — পরের কাজ থেকেই কার্যকর')}
                 >
@@ -162,7 +162,7 @@ export default function AutonomyControlCenter() {
               <div key={s.service} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-neutral-800/50 px-3 py-2">
                 <div className="text-xs text-neutral-200">
                   {s.service} <span className="text-neutral-400">({s.scope})</span>
-                  <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] ${s.live ? 'bg-emerald-600/30 text-emerald-200' : 'bg-neutral-700 text-neutral-300'}`}>
+                  <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] ${s.live ? 'bg-emerald-600/30 txt-pos' : 'bg-neutral-700 text-neutral-300'}`}>
                     {s.live ? 'চালু' : `${s.status} / ${s.readiness}`}
                   </span>
                   <div className="mt-0.5 text-[10px] text-neutral-500">অনুমতি: {s.grantedOps.join(', ') || '(কিছু না)'}</div>
@@ -176,9 +176,9 @@ export default function AutonomyControlCenter() {
                     <button className="rounded bg-neutral-700 px-2 py-1 text-[11px]" disabled={busy === s.service}
                       onClick={() => void act({ action: 'service_resume', service: s.service }, 'সার্ভিস চালু হলো')}>চালু করো</button>
                   )}
-                  <button className="rounded bg-rose-700/40 px-2 py-1 text-[11px] text-rose-200" disabled={busy === s.service}
+                  <button className="rounded bg-rose-700/40 px-2 py-1 text-[11px] txt-neg" disabled={busy === s.service}
                     onClick={() => void act({ action: 'service_revoke', service: s.service }, 'অ্যাক্সেস বাতিল')}>বাতিল</button>
-                  <button className="rounded bg-rose-900/40 px-2 py-1 text-[11px] text-rose-300" disabled={busy === s.service}
+                  <button className="rounded bg-rose-900/40 px-2 py-1 text-[11px] txt-neg" disabled={busy === s.service}
                     onClick={() => void act({ action: 'service_delete_data', service: s.service }, 'জমা রাখা ডেটা মুছে দেওয়া হলো')}>ডেটা মুছো</button>
                 </div>
               </div>

@@ -158,7 +158,7 @@ function SlotCard({ slot, busy, onDone }: { slot: Slot; busy: boolean; onDone: (
         <ul className="mt-3 space-y-1.5">
           {steps.map((s, i) => (
             <li key={`${s.step}-${i}`} className="flex items-start gap-2 text-[12px]">
-              <span className={s.ok ? 'text-emerald-500' : 'text-red-500'}>{s.ok ? '✓' : '✕'}</span>
+              <span className={s.ok ? 'txt-pos' : 'txt-neg'}>{s.ok ? '✓' : '✕'}</span>
               <span className="min-w-0">
                 <span className="text-cream">{STEP_BN[s.step] ?? s.step}</span>
                 <span className="text-muted"> — {s.detail}</span>
@@ -168,7 +168,7 @@ function SlotCard({ slot, busy, onDone }: { slot: Slot; busy: boolean; onDone: (
         </ul>
       )}
 
-      {done && <p className="mt-3 text-[12px] text-emerald-500">হয়ে গেছে — পরের কল থেকেই নতুন সুরটা বাজবে।</p>}
+      {done && <p className="mt-3 text-[12px] txt-pos">হয়ে গেছে — পরের কল থেকেই নতুন সুরটা বাজবে।</p>}
       {problem && <p className="mt-3 tone-red rounded-xl border px-3 py-2 text-[12px]">{problem}</p>}
     </Panel>
   )

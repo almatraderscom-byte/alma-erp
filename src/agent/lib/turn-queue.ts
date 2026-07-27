@@ -89,9 +89,61 @@ function longTaskRedisUrl(): string | undefined {
   return process.env.LONG_TASK_REDIS_URL || process.env.REDIS_URL || undefined
 }
 
-/** True only when a VPS worker queue is reachable (cloud Redis configured). */
+/**
+ * The HTTP handoff — the reason the shared cloud Redis can go away.
+ *
+ * That queue exists ONLY because a Vercel function (producer) and the VPS
+ * (consumer) cannot see each other's Redis; every other queue in this system is
+ * already on the VPS's own local Redis. But the VPS has had a
+ * token-authenticated HTTP surface all along (worker/src/diagnostic-http.mjs,
+ * already wired to Vercel as AGENT_WORKER_DIAGNOSTIC_URL). Handing the job over
+ * that connection lets the worker enqueue onto its LOCAL Redis, and the metered
+ * dependency disappears from the write path.
+ *
+ * Default OFF. The Redis path stays exactly as it is until the owner flips this,
+ * and the HTTP path falls back to Redis on any failure rather than dropping a
+ * turn — a lost turn is worse than a metered one.
+ */
+function httpHandoff(): { url: string; token: string } | null {
+  if (process.env.AGENT_TURN_HANDOFF_HTTP !== 'on') return null
+  const base = process.env.AGENT_WORKER_DIAGNOSTIC_URL?.replace(/\/$/, '')
+  const token = process.env.AGENT_INTERNAL_TOKEN
+  if (!base || !token) return null
+  return { url: base, token }
+}
+
+/**
+ * True when a VPS worker queue is reachable — over HTTP, or the shared Redis.
+ * Callers use this to decide whether a long turn can be handed off at all.
+ */
 export function isTurnHandoffConfigured(): boolean {
-  return Boolean(longTaskRedisUrl())
+  return Boolean(httpHandoff()) || Boolean(longTaskRedisUrl())
+}
+
+/** POST a job to the worker's own enqueue endpoint. Returns the job id, or null. */
+async function enqueueOverHttp(
+  kind: 'turn' | 'durable-task',
+  data: TurnJobData | DurableTaskJobData,
+): Promise<string | null> {
+  const cfg = httpHandoff()
+  if (!cfg) return null
+  try {
+    const res = await fetch(`${cfg.url}/enqueue-job`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-token': cfg.token },
+      body: JSON.stringify({ kind, data }),
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) {
+      console.warn(`[turn-queue] http handoff ${kind} failed: HTTP ${res.status}`)
+      return null
+    }
+    const json = (await res.json().catch(() => ({}))) as { jobId?: string }
+    return json.jobId ?? null
+  } catch (err) {
+    console.warn('[turn-queue] http handoff error:', err instanceof Error ? err.message : err)
+    return null
+  }
 }
 
 /**
@@ -104,6 +156,10 @@ export function isTurnHandoffConfigured(): boolean {
  * Returns the job id, or null if no queue is configured / the add failed.
  */
 export async function enqueueTurnJob(data: TurnJobData): Promise<string | null> {
+  // HTTP first when enabled; a failure falls through to Redis rather than
+  // dropping the turn.
+  const viaHttp = await enqueueOverHttp('turn', data)
+  if (viaHttp) return viaHttp
   const url = longTaskRedisUrl()
   if (!url) return null
   try {
@@ -152,6 +208,8 @@ export function buildDurableTaskJobData(
  * duplicating. Deterministic jobId prevents double-enqueue.
  */
 export async function enqueueDurableTask(data: DurableTaskJobData): Promise<string | null> {
+  const viaHttp = await enqueueOverHttp('durable-task', data)
+  if (viaHttp) return viaHttp
   const url = longTaskRedisUrl()
   if (!url) return null
   try {

@@ -100,31 +100,30 @@ const AUDIT_ASK =
 const SEO_TOPIC_CLEAR =
   /\bseo\b|এসইও|\balt\b|meta\s*(?:description|title|tag)|sitemap|canonical|\bslug\b|স্লাগ/i
 /**
- * `audit` USED to sit in the list above, and that one word cost a whole run.
- * ADS-0, 2026-07-27: *"amar ads account ta ekbar valo kore audit kore dekho"*
- * pinned `seo-auditing-own-site` at the RULE layer — a rule wins outright — and
- * the skill's allowlist then correctly withheld every ads tool. Eight tool
- * calls, no audit, and the agent advised the owner to start a new conversation.
+ * Words that mean SEO **only when a website is in the sentence**. Two sessions
+ * found this list independently on the same day, from two different live runs,
+ * and both findings are kept because each catches what the other misses.
  *
- * SEO is not the only thing that gets audited: ads, money and stock all do. So
- * a bare `audit` is treated like a bare `meta` — a marker that only means SEO
- * once a website is in the sentence. `seo audit koro` still routes on `seo`.
+ *  • `meta` — SK-0: "meta description লিখে দাও" routed to the Meta ADS campaign
+ *    skill. One word, two businesses.
+ *  • `audit` — ADS-0: "amar ads account ta ekbar valo kore audit kore dekho"
+ *    pinned `seo-auditing-own-site` at the RULE layer, and that skill's
+ *    allowlist then correctly withheld every ads tool. Eight tool calls, no
+ *    audit. SEO is not the only thing that gets audited — ads, money and stock
+ *    all do.
+ *  • `title` / `description` — the same traffic: "almatraders.com এর পুরো দুর্বল
+ *    title আর thin description gulo thik koro" is an unmistakable on-page fix,
+ *    but carried no seo/alt/meta word, so no rule fired and the READ-ONLY audit
+ *    skill won the tie. Bare, they belong to captions and products too.
  */
-const AUDIT_BARE = /\baudit\b|অডিট/i
+const DOMAIN_GATED_SEO = /\bmeta\b|\baudit\b|অডিট|\btitle\b|\bdescription\b|শিরোনাম|বিবরণ/i
 /**
- * …and a site name is not enough on its own either: "almatraders.com er ads
- * audit koro" is an ADS job about our own domain. Any ads vocabulary vetoes the
- * SEO reading unless a clear SEO word is also present.
+ * …and a site name is not enough on its own: "almatraders.com er ads audit
+ * koro" is an ADS job about our own domain. Any ads vocabulary vetoes the SEO
+ * reading unless a clear SEO word is also present.
  */
 const ADS_TOPIC =
   /\bads?\b|\bad\s*account\b|বিজ্ঞাপন|ক্যাম্পেইন|\bcampaign\b|\bboost\b|বুস্ট|\broas\b|\bctr\b|\bcpc\b|\bcpm\b|\bbudget\b|বাজেট|\baudience\b|\bpixel\b/i
-/**
- * Bare "meta" is the ambiguity SK-0 caught: "meta description লিখে দাও" routed to
- * the Meta ADS campaign skill. One word, two businesses. It only counts as SEO
- * when a website is in the sentence — an ads message names a campaign or a
- * budget, not a domain.
- */
-const META_BARE = /\bmeta\b/i
 
 const OWN_SITE = /almatraders\.com|আমাদের\s*(?:সাইট|ওয়েবসাইট)|our\s+site/i
 /** Any other domain mentioned — a client's site. */
@@ -134,8 +133,34 @@ const ANY_DOMAIN = /\b[a-z0-9-]+\.(?:com|net|org|io|xyz|shop|co)\b/i
 export function isSeoTopic(text: string): boolean {
   if (SEO_TOPIC_CLEAR.test(text)) return true
   if (ADS_TOPIC.test(text)) return false
-  return (META_BARE.test(text) || AUDIT_BARE.test(text)) && ANY_DOMAIN.test(text)
+  return DOMAIN_GATED_SEO.test(text) && (ANY_DOMAIN.test(text) || OWN_SITE.test(text))
 }
+
+/**
+ * "কে কখন আসছে" — a person's attendance. Keyword scoring cannot reach this at
+ * all: he names the STAFF MEMBER ("Mustahid ajke kokhon asche?"), and a name is
+ * not a keyword any skill can claim. It is the same shape as fix-vs-audit — a
+ * deterministic distinction a model should never be asked to make.
+ */
+const STAFF_PRESENCE =
+  /(kokhon\s*(?:asche|ashbe|eshe|ase)|কখন\s*(?:আসছে|আসবে|এসেছে|আসে)|\bke\s*ache\b|কে\s*আছে|hajir|হাজির|hajira|হাজিরা|attendance|উপস্থিত)/i
+/**
+ * …unless it is a PARCEL arriving, not a person. "order kokhon asche" is a
+ * customer question and pinning the staff skill there would remove the order
+ * tools the answer actually needs. `delivery` is deliberately NOT here: "delivery
+ * ke korbe" is a dispatch question, which is exactly this skill's job.
+ */
+const PARCEL_CONTEXT = /(\border\b|অর্ডার|parcel|পার্সেল|courier|কুরিয়ার|shipment|চালান)/i
+
+/**
+ * "notun panjabi ta website e tolo" — putting a PRODUCT up, not editing the
+ * site. Keyword scoring gets this wrong for a structural reason: the product is
+ * named ("panjabi"), so the only word both skills can see is "website", and
+ * `alma-website` owns that word. The verb is what separates them, exactly as
+ * with fix-vs-audit.
+ */
+const LISTING_ASK =
+  /((?:website|site|সাইট)\s*(?:e|ে|তে)?\s*(?:tolo|tulo|tul\b|upload|add\b|তোল|তুল|যোগ)|নতুন\s*পণ্য\s*(?:তোল|যোগ)|\blist\s*(?:the\s*)?product\b)/i
 
 export interface RouterRule {
   id: string
@@ -166,6 +191,20 @@ export const RULES: RouterRule[] = [
     skill: 'seo-fixing-own-site',
     test: (t) => isSeoTopic(t) && (FIX_VERB.test(t) || FIX_VERB_BANGLISH.test(t)) && !AUDIT_ASK.test(t),
     why: 'কাজের ক্রিয়াপদ + SEO বিষয় = ফিক্স, রিপোর্ট নয়',
+  },
+  {
+    id: 'product-listing',
+    skill: 'alma-product-listing',
+    // Ordered AFTER the SEO rules on purpose: "almatraders.com er meta thik
+    // koro" is a fix on an existing listing, not a new one.
+    test: (t) => LISTING_ASK.test(t) && !isSeoTopic(t),
+    why: 'পণ্য সাইটে তোলার কথা — সাইটের কনটেন্ট এডিট নয়',
+  },
+  {
+    id: 'staff-attendance',
+    skill: 'alma-staff-dispatch',
+    test: (t) => STAFF_PRESENCE.test(t) && !PARCEL_CONTEXT.test(t),
+    why: 'কে কখন আসছে/আছে — মানুষের হাজিরার প্রশ্ন, পার্সেলের নয়',
   },
 ]
 

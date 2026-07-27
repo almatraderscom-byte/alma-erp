@@ -39,9 +39,9 @@ function StaffInitial({ name }: { name: string }) {
 }
 
 const GEO_LABEL: Record<GeoStaffStatus['status'], { icon: string; text: string; cls: string }> = {
-  in_zone: { icon: '✅', text: 'অফিসে', cls: 'text-emerald-600' },
-  outside: { icon: '🚨', text: 'বাইরে', cls: 'text-red-600' },
-  stale: { icon: '⏸️', text: 'পুরোনো লোকেশন', cls: 'text-amber-600' },
+  in_zone: { icon: '✅', text: 'অফিসে', cls: 'txt-pos' },
+  outside: { icon: '🚨', text: 'বাইরে', cls: 'txt-neg' },
+  stale: { icon: '⏸️', text: 'পুরোনো লোকেশন', cls: 'txt-warn' },
   no_data: { icon: '❓', text: 'লোকেশন নেই', cls: 'text-muted' },
 }
 
@@ -145,8 +145,8 @@ export function MonitorStaffHub({
                     <h4 className="truncate text-[13px] font-semibold text-cream">{s.staffName}</h4>
                     <span className={cn(
                       'shrink-0 rounded-md border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider',
-                      s.completionPct >= 100 ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600' :
-                      s.completionPct >= 50 ? 'border-amber-500/25 bg-amber-500/10 text-amber-600' :
+                      s.completionPct >= 100 ? 'border-emerald-500/25 bg-emerald-500/10 txt-pos' :
+                      s.completionPct >= 50 ? 'border-amber-500/25 bg-amber-500/10 txt-warn' :
                       'border-border-subtle bg-transparent text-muted',
                     )}>
                       {info.label}
@@ -168,7 +168,7 @@ export function MonitorStaffHub({
                   <div className="mt-2 flex items-center gap-3 text-[10px] text-muted">
                     <span>📤 {s.dispatched}</span>
                     <span>✓ {s.delivered}</span>
-                    {s.failed > 0 && <span className="text-red-500">✗ {s.failed}</span>}
+                    {s.failed > 0 && <span className="txt-neg">✗ {s.failed}</span>}
                     <span className="font-medium">🎯 {s.tasksDone}/{s.tasksTotal}</span>
                     {geo && <span className={cn('ml-auto', GEO_LABEL[geo.status].cls)}>{GEO_LABEL[geo.status].icon}</span>}
                     <span className={cn('text-muted transition-transform', geo ? '' : 'ml-auto', isOpen && 'rotate-180')}>⌄</span>
@@ -192,8 +192,8 @@ export function MonitorStaffHub({
                         {cap && (
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                             <span className="font-semibold text-cream/80">দক্ষতা {cap.overallCompletionRate}%</span>
-                            {cap.strongTypes.length > 0 && <span className="text-emerald-600/80">💪 {cap.strongTypes.join(', ')}</span>}
-                            {cap.weakTypes.length > 0 && <span className="text-red-500/70">📈 {cap.weakTypes.join(', ')}</span>}
+                            {cap.strongTypes.length > 0 && <span className="txt-pos">💪 {cap.strongTypes.join(', ')}</span>}
+                            {cap.weakTypes.length > 0 && <span className="txt-neg">📈 {cap.weakTypes.join(', ')}</span>}
                           </div>
                         )}
                         {geo && (
@@ -208,7 +208,7 @@ export function MonitorStaffHub({
                           </div>
                         )}
                         {alerts.map((a, i) => (
-                          <div key={i} className="text-amber-600/90">⚡ {a.message}</div>
+                          <div key={i} className="txt-warn">⚡ {a.message}</div>
                         ))}
                         {!cap && !geo && alerts.length === 0 && (
                           <p className="text-muted">এই স্টাফের অতিরিক্ত ডেটা এখনও নেই।</p>

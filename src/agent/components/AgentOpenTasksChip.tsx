@@ -174,7 +174,7 @@ export default function AgentOpenTasksChip({
                           <span className="truncate text-[13px] font-semibold text-cream">{t.title}</span>
                           <span
                             className={`shrink-0 rounded-md px-1.5 py-0.5 text-[9.5px] font-medium ${
-                              isPending ? 'bg-amber-500/15 text-amber-500' : 'bg-[#E07A5F]/15 text-[#E07A5F]'
+                              isPending ? 'bg-amber-500/15 txt-warn' : 'bg-[#E07A5F]/15 text-[#E07A5F]'
                             }`}
                           >
                             {isPending ? 'অনুমোদন বাকি' : 'অসম্পূর্ণ'}
