@@ -43,6 +43,7 @@ import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/
 import { runPreToolHooks, runPostToolHooks } from '@/agent/lib/turn-hooks'
 import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
 import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
+import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
 import { trimToolResultForHistory } from '@/agent/lib/context-trim'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
@@ -82,7 +83,9 @@ import {
 import {
   buildVerificationReminder,
   detectExplicitInstructionViolations,
+  countStagedCards,
   detectMissingCardViolation,
+  detectPhantomApprovalWait,
   detectProseChoiceViolation,
   MAX_VERIFY_RETRIES,
   type ClaimViolation,
@@ -156,7 +159,13 @@ export type AgentEvent =
   // needContinue: the turn hit the serverless deadline mid-task (browser work
   // unfinished) — the web client auto-sends a bounded "continue" so a long task
   // finishes end-to-end without the owner typing it every ~4.5 minutes.
-  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number; needContinue?: boolean; apiRounds?: number; roundCostsUsd?: number[]; durationMs?: number }
+  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number; needContinue?: boolean; apiRounds?: number; roundCostsUsd?: number[]; durationMs?: number;
+      /**
+       * PM-1 — the permission mode this turn ACTUALLY ran under, read from the
+       * server. If the chip says one thing and this says another, that is
+       * visible instead of silent — which is the owner's "must sync" condition.
+       */
+      permissionMode?: string }
   | { type: 'error'; message: string }
 
 // ── Mutating tools (conservative: unknown = treat as mutating) ──────────────
@@ -630,6 +639,15 @@ export interface RunAgentTurnOptions {
    * withholding tools — see chat-mode.ts. Absent = 'auto' (today's behaviour).
    */
   chatMode?: import('@/agent/lib/chat-mode').ChatMode | null
+  /**
+   * PM-1 — per-conversation PERMISSION mode: how much the agent may do without
+   * Boss. Absent = 'standard' (today's behaviour). Shadow in PM-1: the turn
+   * reads it, tells the head, echoes it and records it, but nothing is enforced
+   * until PM-2 — so the sync can be watched before it can bite.
+   */
+  permissionMode?: import('@/agent/lib/permission-mode').PermissionMode | null
+  /** The live elevation grant when permissionMode is 'elevated'. */
+  elevationGrant?: import('@/agent/lib/permission-mode').ElevationGrant | null
 }
 
 /** One-time nudge injected when the serverless deadline is close. */
@@ -1170,6 +1188,12 @@ export async function* runAgentTurn(
   let maxIterations = MAX_TOOL_ITERATIONS
   const claimedSteeringIds = new Set<string>()
 
+  // What is ACTUALLY in front of Boss — read, not remembered (parity with
+  // run-owner-turn; owner incident 2026-07-26). Appended at the END of messages
+  // so the cached prompt prefix is untouched.
+  const pendingCardsAtStart = await readPendingCards(conversationId)
+  messages = [...messages, { role: 'user', content: [{ type: 'text', text: buildCardStateNote(pendingCardsAtStart) }] }]
+
   try {
     for (let iteration = 0; iteration < maxIterations; iteration++) {
       if (signal?.aborted) break
@@ -1385,13 +1409,24 @@ export async function* runAgentTurn(
           // but NO interactive card surfaced this turn (head forgot to call the
           // approval tool, or a sub-agent made a DB-only pending action). Force the
           // head to actually surface it or admit it couldn't.
-          if (finalText && violations.length === 0 && emittedConfirmCards.length === 0 && askCardsEmitted === 0) {
+          // A staging tool's pending action is a real card too (parity with
+          // run-owner-turn) — otherwise a truthful "approval card বানালাম" after
+          // a SUCCESSFUL draft_seo_fixes is punished as an unbacked promise.
+          const stagedCards = countStagedCards(toolRecords)
+          if (finalText && violations.length === 0 && emittedConfirmCards.length === 0 && askCardsEmitted === 0 && stagedCards === 0) {
             violations.push(...detectMissingCardViolation(finalText))
             // Owner rule: a choice for the Boss MUST be an ask_user card — a
             // prose "Option A/B … কোনটা করবেন?" has nothing to tap (live-hit
             // 2026-07-16). Same zero-card precondition: an emitted ask card
             // legitimately carries the question.
             violations.push(...detectProseChoiceViolation(finalText))
+          }
+          // Parking Boss on a card that does not exist (owner incident 2026-07-26).
+          if (finalText && violations.length === 0) {
+            violations.push(...detectPhantomApprovalWait(
+              finalText,
+              pendingCardsAtStart.length + stagedCards + emittedConfirmCards.length + askCardsEmitted,
+            ))
           }
           if (finalText && violations.length === 0) {
             violations.push(...detectExplicitInstructionViolations(finalText, currentOwnerInstructions))

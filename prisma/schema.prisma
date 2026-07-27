@@ -2025,6 +2025,18 @@ model AgentConversation {
   /// How the agent may work in this chat: auto | direct | plan | plan_drive.
   /// NULL = auto. Enforced by withholding tools, not by prompt text.
   chatMode           String?         @map("chat_mode")
+  /// PM-1: how MUCH the agent may do without Boss in this chat:
+  /// plan | careful | standard | supervised | elevated. NULL = standard.
+  /// The tier ceiling still applies above it — R4 is owner-only in every mode.
+  permissionMode     String?         @map("permission_mode")
+  /// The time-boxed elevation grant 'elevated' runs under:
+  /// { families: string[], expiresAt: ISO }. No expiry ⇒ treated as absent.
+  elevationGrant     Json?           @map("elevation_grant")
+  /// The size of the job running in this chat: chat | deep | long_run. Kept for
+  /// the job's lifetime so a two-word answer does not shrink it back to a chat
+  /// reply mid-work. Expires — a class must never leak into next week.
+  workClass          String?         @map("work_class")
+  workClassUntil     DateTime?       @map("work_class_until")
   source             String          @default("web")
   archived           Boolean         @default(false)
   pinned             Boolean         @default(false)
@@ -2489,7 +2501,14 @@ model AgentPendingAction {
   /// Business scope for routing/filtering ('ALMA_LIFESTYLE' | 'ALMA_TRADING').
   businessId     String    @default("ALMA_LIFESTYLE") @map("business_id")
   createdAt      DateTime  @default(now())
+  /// When the row SETTLED — set by the approve/reject routes AND by the worker's
+  /// job-result callback. It does NOT mean Boss decided anything.
   resolvedAt     DateTime?
+  /// Did BOSS decide this? Only the approve/reject routes set it, and both
+  /// refuse a row that is not 'pending' — so a row created already-approved (a
+  /// read-only crawl, a queued generation) can never be marked his.
+  /// NULL = unknown provenance (history written before this column).
+  ownerDecided   Boolean?  @map("owner_decided")
   result         Json?
   /// Phase 4: canonical WorkflowRun this card belongs to (camelCase column —
   /// this legacy table is camelCase in the DB).

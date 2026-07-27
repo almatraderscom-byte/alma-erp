@@ -32,6 +32,12 @@ export type ClaimViolationCategory =
   | 'async_unverified'
   /** The reply named a tool and said it ran, but that tool never ran this turn. */
   | 'tool_not_called'
+  /** The opening line promised something; the work failed and the reply never said so. */
+  | 'stale_promise'
+  /** The reply asserts a card is waiting for Boss when no card exists. */
+  | 'phantom_card_state'
+  /** Boss just answered a question and the reply asks him another one. */
+  | 'redundant_question'
 
 export interface ClaimViolation {
   category: ClaimViolationCategory
@@ -563,7 +569,13 @@ export function detectAsyncCompletionViolation(
 // A card noun, optionally qualified (approval/confirm/question/অনুমোদন/প্রশ্ন…).
 const CARD_NOUN = '(?:approval|approve|confirm(?:ation)?|question|yes[\\s/-]*no|অনুমোদন(?:ের)?|নিশ্চিতকরণ|প্রশ্ন|হ্যাঁ[\\s/-]*না)?\\s*(?:card|কার্ড)'
 // Present/near-future "it is in front of the owner now" delivery verbs.
-const CARD_DELIVERY = '(?:পাঠা(?:চ্ছি|লাম|চ্ছে|নো\\s*হ[য়ছ][েি]|নো\\s*হচ্ছে)|পাঠিয়ে(?:ছি|\\s*দিয়েছি|\\s*দিলাম)?|দিচ্ছি|দিলাম|দিয়ে\\s*দিলাম|দিয়েছি|আসবে|আসছে|এসেছে|দেখতে\\s*পাবেন|পাবেন|নিচে\\s*(?:দেখুন|আছে|দিলাম|পাবেন)|তৈরি\\s*কর[ছিলােয]+|surfac|show|sent|sending|pathacchi|pathalam|pathiyechi|dilam|diyechi)'
+//
+// Owner hit 2026-07-26: the head wrote "card বানাচ্ছি", draft_seo_fixes was
+// blocked, no card existed — and this detector said nothing, because the whole
+// বানা- family (বানাচ্ছি / বানালাম / বানিয়েছি / বানাব) was missing while its
+// synonym তৈরি করছি was covered. Making a card IS delivering it here: the owner
+// is told something is now in front of him either way.
+const CARD_DELIVERY = '(?:পাঠা(?:চ্ছি|লাম|চ্ছে|নো\\s*হ[য়ছ][েি]|নো\\s*হচ্ছে)|পাঠিয়ে(?:ছি|\\s*দিয়েছি|\\s*দিলাম)?|দিচ্ছি|দিলাম|দিয়ে\\s*দিলাম|দিয়েছি|আসবে|আসছে|এসেছে|দেখতে\\s*পাবেন|পাবেন|নিচে\\s*(?:দেখুন|আছে|দিলাম|পাবেন)|তৈরি\\s*(?:কর[ছিলােয]+|হ(?:চ্ছে|য়েছে|ল))|বানা(?:চ্ছি|চ্ছে|লাম|বো?|নো\\s*হ(?:চ্ছে|য়েছে|ল))|বানিয়ে(?:ছি|\\s*দিয়েছি|\\s*দিলাম|\\s*ফেললাম)?|surfac|show|sent|sending|creat(?:e|ed|ing)|pathacchi|pathalam|pathiyechi|dilam|diyechi|banacchi|banalam|baniyechi)'
 
 const CARD_PROMISE = new RegExp(
   `${CARD_NOUN}[^।.!?\\n]{0,45}?${CARD_DELIVERY}`,
@@ -574,12 +586,39 @@ const CARD_PROMISE_REV = new RegExp(
   'i',
 )
 // Honest "I couldn't surface it / it isn't showing" — never a violation.
-const CARD_INABILITY = /(?:card|কার্ড)[^।.!?\n]{0,30}?(?:আসেনি|আসছে\s*না|দেখা\s*যাচ্ছে\s*না|পারিনি|পারলাম\s*না|পারছি\s*না|failed|আসেনা)|(?:card|কার্ড)\s*(?:তৈরি|surface|show)[^।.!?\n]{0,20}?(?:পারিনি|পারলাম\s*না)/i
+const CARD_INABILITY = /(?:card|কার্ড)[^।.!?\n]{0,30}?(?:আসেনি|আসছে\s*না|দেখা\s*যাচ্ছে\s*না|হয়নি|পারিনি|পারলাম\s*না|পারছি\s*না|failed|আসেনা)|(?:card|কার্ড)\s*(?:তৈরি|বানা(?:তে|নো)|surface|show)[^।.!?\n]{0,20}?(?:পারিনি|পারলাম\s*না|হয়নি)/i
+
+/**
+ * Did any tool this turn actually put a card in front of the owner?
+ *
+ * The emitted-card counters only see confirm_card / ask_card. A staging tool —
+ * draft_seo_fixes, draft_marketing_campaign, schedule_content_batch — creates a
+ * pending action instead, and that IS the owner's card. Counting only the
+ * emitted kinds means a truthful "approval card বানালাম" after a SUCCESSFUL
+ * staging call reads as an unbacked promise.
+ *
+ * Only successful calls count. A staging tool that failed created nothing, which
+ * is the exact case the detector exists to catch.
+ */
+export function countStagedCards(
+  records: ReadonlyArray<{ status: 'success' | 'error'; output: Record<string, unknown> | null }>,
+): number {
+  let n = 0
+  for (const r of records) {
+    if (r.status !== 'success' || !r.output) continue
+    const data = (r.output.data ?? r.output) as Record<string, unknown> | null
+    if (!data || typeof data !== 'object') continue
+    const id = data.pendingActionId ?? data.askCardId
+    if (typeof id === 'string' && id.length > 0) n++
+  }
+  return n
+}
 
 /**
  * Detects an unbacked owner-facing card promise: the reply says an approval/
- * question card is now shown, but no confirm_card or ask_card was emitted this
- * turn. Only call this when both counts are zero.
+ * question card is now shown, but no card of any kind surfaced this turn — no
+ * confirm_card, no ask_card, and no staged pending action (countStagedCards).
+ * Only call this when all three counts are zero.
  */
 export function detectMissingCardViolation(replyText: string): ClaimViolation[] {
   const text = replyText.trim()
@@ -594,6 +633,74 @@ export function detectMissingCardViolation(replyText: string): ClaimViolation[] 
     ruleId: 'card_promised_not_emitted',
     matchedSnippet: stripWhitespace(m[0]).slice(0, 120),
     requiredTools: [],
+  }]
+}
+
+// ── The opening line is a claim too (owner incident 2026-07-26) ──────────────
+//
+// Speak-first gives Boss an instant line BEFORE any tool runs. That line is
+// streamed straight to his screen, seeded into the transcript, and — by design —
+// survives every verification rewrite. So when the head opened with "SEO ফিক্সের
+// card বানাচ্ছি" and draft_seo_fixes was then blocked, the promise stood on his
+// screen with nothing behind it and no rewrite could reach it.
+//
+// It cannot be unsaid, so it must be CORRECTED. If the opening line promised a
+// card and the turn produced none, the final reply has to say so plainly.
+
+/**
+ * The opening line promised a card, no card exists, and the final reply does not
+ * admit it. Call only when the turn produced zero cards of any kind.
+ */
+export function detectUncorrectedOpeningPromise(openingLine: string, replyText: string): ClaimViolation[] {
+  const opening = openingLine.trim()
+  if (!opening) return []
+  if (detectMissingCardViolation(opening).length === 0) return []
+  // The reply already owns it — "কার্ড তৈরি করতে পারিনি", "card আসেনি"।
+  if (CARD_INABILITY.test(replyText)) return []
+  return [{
+    category: 'stale_promise',
+    ruleId: 'opening_line_card_promise_uncorrected',
+    matchedSnippet: stripWhitespace(opening).slice(0, 120),
+    requiredTools: [],
+  }]
+}
+
+// ── "Waiting for approval" with nothing to approve (owner incident 2026-07-26) ─
+//
+// The mirror image of a promised-but-missing card: the head parks the turn on a
+// card that does not exist — "কার্ডটা অনুমোদনের অপেক্ষায় আছে" — so Boss waits for
+// a button that was never drawn, or is told to approve work already applied. It
+// asserted card state from its own memory instead of reading it.
+
+const AWAITING_APPROVAL_CLAIM = new RegExp(
+  [
+    // "…অনুমোদনের অপেক্ষায় (আছি/আছে/রয়েছে)"
+    '(?:অনুমোদন(?:ের)?|approval|approve)[^।.!?\\n]{0,30}?অপেক্ষা(?:য়|\\s*কর)',
+    // "card-টা approve করুন / অনুমোদন দিন" — asking him to act NOW. Past tense
+    // ("গতকাল কার্ডটা approve করেছিলেন") is history, not a phantom wait.
+    '(?:card|কার্ড)[^।.!?\\n]{0,30}?(?:approve\\s*কর(?:ুন|ো|তে\\s*হবে)|অনুমোদন\\s*(?:দিন|করুন|দেবেন|দরকার))',
+    // "waiting for your approval"
+    'wait(?:ing)?\\s+for\\s+(?:your\\s+)?approval',
+  ].join('|'),
+  'i',
+)
+
+/**
+ * The reply says something is waiting for Boss's approval while NO card is
+ * pending. `pendingCardCount` must come from the server (readPendingCards),
+ * never from the model — that is the whole point.
+ */
+export function detectPhantomApprovalWait(replyText: string, pendingCardCount: number): ClaimViolation[] {
+  if (pendingCardCount > 0) return []
+  const text = replyText.trim()
+  if (text.length < 6) return []
+  const m = AWAITING_APPROVAL_CLAIM.exec(text)
+  if (!m) return []
+  return [{
+    category: 'phantom_card_state',
+    ruleId: 'awaiting_approval_without_a_card',
+    matchedSnippet: stripWhitespace(m[0]).slice(0, 120),
+    requiredTools: ['get_pending_approvals'],
   }]
 }
 
@@ -639,6 +746,34 @@ export function detectProseChoiceViolation(replyText: string): ClaimViolation[] 
     ruleId: 'choice_asked_without_ask_card',
     matchedSnippet: stripWhitespace(hit[0]).slice(0, 120),
     requiredTools: ['ask_user'],
+  }]
+}
+
+/**
+ * He answered — now do the work (owner, live 2026-07-27).
+ *
+ * He planned the job, tapped an option, and the very next turn asked him a
+ * near-identical question again. Worse, the prose-choice rule above made that
+ * second question into a real card: the rule's remedy is "turn your prose
+ * question into a tappable card", which is the right answer when a question is
+ * genuinely needed and precisely the wrong one when it is not. That is the drip
+ * of cards he has been objecting to all week, manufactured by a safety rule.
+ *
+ * So on a turn that ANSWERS an ask card, this replaces the prose-choice rule.
+ * Same detection, opposite remedy: stop asking, start working.
+ */
+export function detectRedundantQuestionAfterAnswer(replyText: string): ClaimViolation[] {
+  const text = replyText.trim()
+  if (text.length < 12) return []
+  const ask = DECISION_ASK.exec(text)
+  const options = PROSE_OPTIONS.exec(text)
+  const hit = ask ?? (options && /\?/.test(text) ? options : null)
+  if (!hit) return []
+  return [{
+    category: 'redundant_question',
+    ruleId: 'asked_again_right_after_an_answer',
+    matchedSnippet: stripWhitespace(hit[0]).slice(0, 120),
+    requiredTools: [],
   }]
 }
 // ── Ask-guard (owner escalation 2026-07-16: "agent card diye ask kore na") ──
@@ -870,6 +1005,23 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'সাথে যে id / সংখ্যা / ধাপের তালিকা দিয়েছেন সেগুলোও তাহলে বানানো — এটা Boss-এর সবচেয়ে বড় আপত্তি। ' +
     'এখনই আসল tool-টা কল করুন এবং তার আসল ফলাফল থেকে উত্তর দিন; tool না থাকলে find_tool দিয়ে লোড করুন। ' +
     'কল করতে না পারলে সোজা বলুন "পারিনি" — বানানো id বা ধাপ কখনো নয়।',
+  stale_promise:
+    'আপনার প্রথম লাইনে Boss-কে বলেছিলেন কার্ড বানাচ্ছেন/পাঠাচ্ছেন, কিন্তু এই turn-এ কোনো কার্ডই তৈরি হয়নি। ' +
+    'ওই লাইনটা Boss-এর স্ক্রিনে থেকে গেছে — মুছে ফেলা যায় না, তাই উত্তরে স্পষ্ট করে সংশোধন করতে হবে। ' +
+    'এখন হয় সত্যিই কার্ড তৈরির tool কল করুন, নয়তো সরাসরি লিখুন "কার্ড তৈরি করতে পারিনি" এবং কেন — ' +
+    'চুপ করে অন্য কথা বলা চলবে না।',
+  redundant_question:
+    'Boss এইমাত্র আপনার প্রশ্নের উত্তর দিয়েছেন — আর আপনি আবার তাঁকেই জিজ্ঞেস করছেন। ' +
+    'এটাই তাঁর সবচেয়ে পুরোনো অভিযোগ: এক প্রশ্নের উত্তর দিলে পরের কার্ড, তার উত্তর দিলে আরেকটা। ' +
+    'তিনি যা বেছে দিয়েছেন সেটা ধরেই এখনই কাজ শুরু করুন — প্রশ্নটা বাদ দিন। ' +
+    'সত্যিই এমন কিছু জানতে হলে যেটা তিনি এখনো বলেননি, তবেই একটাই ask_user কার্ডে ' +
+    'সব প্রশ্ন একসাথে দিন; নাহলে কাজ করে ফলটা জানান।',
+  phantom_card_state:
+    'আপনি বলেছেন কিছু একটা Boss-এর অনুমোদনের অপেক্ষায় আছে — কিন্তু সার্ভারে এই চ্যাটে কোনো pending card নেই। ' +
+    'Boss তাহলে এমন একটা বোতামের জন্য বসে থাকবেন যেটা কোথাও নেই, অথবা যে কাজ ইতিমধ্যে হয়ে গেছে সেটা আবার approve করতে যাবেন। ' +
+    'কার্ডের অবস্থা কখনো স্মৃতি থেকে বলবেন না — get_pending_approvals দিয়ে পড়ে নিন। ' +
+    'সত্যিই অনুমোদন দরকার হলে এখনই সঠিক approval tool call করে আসল কার্ড তৈরি করুন; ' +
+    'দরকার না হলে "অপেক্ষায় আছি" বাদ দিয়ে কাজের আসল অবস্থা বলুন।',
   general_write:
     'আপনি কাজ সম্পন্ন হওয়ার দাবি করেছেন কিন্তু এই turn-এ কোনো সফল write/action tool call হয়নি। ' +
     'এখনই প্রয়োজনীয় tool call করুন এবং success result পেলে তবেই confirm দিন। ' +

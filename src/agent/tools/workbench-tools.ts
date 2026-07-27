@@ -95,6 +95,8 @@ const run_workbench_task: AgentTool = {
           // approval card. Money/irreversible actions are impossible in the
           // sandbox by construction (binary allowlist, no private network).
           status: 'approved',
+          // Auto-run: no card reaches Boss, so the record must not say he approved it.
+          ownerDecided: false,
         },
       })
 

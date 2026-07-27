@@ -31,6 +31,23 @@ const TOOL_CALL_BLOCK = /<tool_call>[\s\S]*?(?:<\/tool_call>|$)/gi
  */
 const NAMED_TOOL_ARGS = /<[a-z_][a-z0-9_]*>\s*(?:<arg_key>[\s\S]*?<\/arg_value>\s*)+(?:<\/tool_call>)?/gi
 
+/**
+ * The JSON shape, seen live in the owner's own chat 2026-07-27 while he was
+ * asking about ad spend:
+ *
+ *   {"type": "tool_use", "id": "tooluse_fPsTqJdFhXJz8Qm9Kw2LxN", "name": "recommend_ad_actions", "input": {}}
+ *
+ * Same failure as the XML one — the model wrote its call as text — but none of
+ * the patterns above match it, so it went straight to his screen.
+ *
+ * Anchored on the literal `"type": "tool_use"` pair, and the match starts at the
+ * opening brace, so ordinary JSON he asked for is untouched. `input` values are
+ * shallow objects in practice; one level of nested braces is enough, and the
+ * alternative — a brace counter — would be a parser, which this file is not.
+ */
+const JSON_TOOL_USE =
+  /\{\s*"type"\s*:\s*"tool_(?:use|call)"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/gi
+
 /** Leftovers when a stream is cut mid-call, plus the DeepSeek/Qwen sentinels. */
 const STRAY_MARKERS =
   /<\/?tool_call>|<\/?arg_key>|<\/?arg_value>|<\|?tool[_▁]?calls?[_▁]?(?:begin|end|sep)\|?>|<｜tool▁calls?▁(?:begin|end|sep)｜>/gi
@@ -38,8 +55,9 @@ const STRAY_MARKERS =
 export function stripToolCallMarkup(text: string): string {
   if (!text) return text
   // Cheap guard: the overwhelming majority of rounds carry none of this.
-  if (!/<tool_call|<arg_key|tool▁call|<\|tool/i.test(text)) return text
+  if (!/<tool_call|<arg_key|tool▁call|<\|tool|"type"\s*:\s*"tool_(?:use|call)"/i.test(text)) return text
   const cleaned = text
+    .replace(JSON_TOOL_USE, '')
     .replace(TOOL_CALL_BLOCK, '')
     .replace(NAMED_TOOL_ARGS, '')
     .replace(STRAY_MARKERS, '')
