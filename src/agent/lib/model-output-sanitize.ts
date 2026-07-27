@@ -91,7 +91,7 @@ const INVOKE_BLOCK = /<invoke\b[\s\S]*?(?:<\/invoke>|$)/gi
  * an emptied ``` block renders as a bare card, which looks like a bug of its own.
  */
 const JSON_NAME_ARGS =
-  /\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|parameters)"\s*:\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*\}/gi
+  /\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|input|parameters)"\s*:\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*\}/gi
 /**
  * `<parameter name="x">value</parameter>` — removed as a PAIR, not as two tags.
  * `STRAY_MARKERS` deletes the tags only, which left the bare values behind:
@@ -102,6 +102,20 @@ const PARAMETER_BLOCK = /<parameter\b[^>]*>[\s\S]*?(?:<\/parameter>|$)/gi
 /** A fenced block the model labelled as a tool call — fence and contents both. */
 const FENCED_TOOL_BLOCK =
   /```(?:tool|tool_call|tool_code|function_calls?)\b[\s\S]*?(?:```|$)/gi
+
+/**
+ * …and the GENERIC fence patterns, which arrived from the other session's fix
+ * (#642) while this branch was in review. Both are kept: `FENCED_TOOL_BLOCK`
+ * above is anchored on the fence LABEL, these two also catch a fence whose label
+ * says nothing but whose body is plainly a typed call. Each catches what the
+ * other misses, and a model inventing a new spelling is exactly the case where
+ * two overlapping nets beat one clever one.
+ */
+const FENCED_TOOL_CALL =
+  /```[ \t]*(?:[a-z0-9_-]*[ \t]*)?(?:tool|function)[ _-]?calls?[a-z0-9_ \t-]*\r?\n[\s\S]*?(?:```|$)/gi
+
+const FENCED_TOOL_JSON =
+  /```[a-z0-9_ \t-]*\r?\n\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"(?:arguments|input|parameters)"\s*:[\s\S]*?\}\s*\r?\n?(?:```|$)/gi
 
 /** Leftovers when a stream is cut mid-call, plus the DeepSeek/Qwen sentinels. */
 const STRAY_MARKERS =
@@ -117,7 +131,7 @@ const STRAY_MARKERS =
  * runs first. Any pattern added above must have its opening marker added here.
  */
 const HAS_TOOL_MARKUP =
-  /<tool_call|<arg_key|<parameter\b|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|```(?:tool|function_calls?)\b|"type"\s*:\s*"tool_(?:use|call)"|\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|parameters)"\s*:/i
+  /<tool_call|<arg_key|<parameter\b|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|```[^\n]*(?:tool|function)[ _-]?calls?|```[^\n]*\r?\n\s*\{\s*"name"\s*:|"type"\s*:\s*"tool_(?:use|call)"|\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|input|parameters)"\s*:/i
 
 export function stripToolCallMarkup(text: string): string {
   if (!text) return text
@@ -126,6 +140,8 @@ export function stripToolCallMarkup(text: string): string {
     // Fences first: the block is removed WITH its contents, so a stripped call
     // cannot leave an empty ``` card behind.
     .replace(FENCED_TOOL_BLOCK, '')
+    .replace(FENCED_TOOL_CALL, '')
+    .replace(FENCED_TOOL_JSON, '')
     .replace(JSON_TOOL_USE, '')
     .replace(JSON_NAME_ARGS, '')
     .replace(FUNCTION_CALLS_BLOCK, '')
@@ -277,4 +293,56 @@ export function createMarkupStreamFilter(): MarkupStreamFilter {
       return out
     },
   }
+}
+
+/**
+ * Did the model TYPE its tool calls instead of making them?
+ *
+ * Stripping the markup fixes what Boss sees, and hides what actually went wrong:
+ * a round that narrates three calls and makes none did no work, so the
+ * think → tool → update → tool rhythm he watches for collapses into a wall of
+ * text. He noticed the missing rhythm before anyone noticed the cause; this is
+ * the detector that lets the turn notice it too.
+ *
+ * True only when the text carries tool syntax AND the round made no real call —
+ * a model that narrates while also calling properly is merely chatty.
+ */
+export function typedToolCallsInsteadOfCalling(input: {
+  rawText: string
+  realToolCallCount: number
+}): boolean {
+  if (input.realToolCallCount > 0) return false
+  if (!input.rawText?.trim()) return false
+  return stripToolCallMarkup(input.rawText) !== input.rawText
+}
+
+
+/**
+ * How many tool calls did the model TYPE?
+ *
+ * The round-level detector answers "did it type instead of calling", which is
+ * false the moment the model does both — and doing both is exactly what Qwen did
+ * live on 2026-07-28: one real call, three typed. So the turn needs the COUNT,
+ * not the boolean, to see that most of the work was narrated.
+ */
+export function countTypedToolCalls(text: string): number {
+  if (!text) return 0
+  const patterns = [
+    FENCED_TOOL_BLOCK,
+    FENCED_TOOL_CALL,
+    FENCED_TOOL_JSON,
+    JSON_NAME_ARGS,
+    PARAMETER_BLOCK,
+    JSON_TOOL_USE,
+    FUNCTION_CALLS_BLOCK,
+    INVOKE_BLOCK,
+    TOOL_CALL_BLOCK,
+    NAMED_TOOL_ARGS,
+  ]
+  let n = 0
+  for (const re of patterns) {
+    re.lastIndex = 0
+    n += (text.match(re) ?? []).length
+  }
+  return n
 }

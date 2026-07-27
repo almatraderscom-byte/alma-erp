@@ -2344,6 +2344,8 @@ final class AssistantVM {
 
     // Model pill + picker (web AgentModelSelector parity)
     var modelLabel: String?          // live label from the stream's model_info event
+    /// The answering model as Boss reads it — "DeepSeek V4 Flash", "Grok 4.20".
+    var answeringModelName: String = ""
     var modelId: String?             // nil or "auto" = Auto (router picks per turn)
     var models: [AgentModelInfo] = []
 
@@ -5017,8 +5019,12 @@ final class AssistantVM {
                 }
             case .personalMode(let active):
                 personalMode = active
-            case .modelInfo(let label):
+            case .modelInfo(let label, let displayName):
                 if !label.isEmpty { modelLabel = label }
+                // Owner, 2026-07-28: he wants to see WHO answered, every time —
+                // the live row used to name only the three families the old
+                // `variant` knew, so Grok and Gemini turns read as a bare ALMA.
+                if !displayName.isEmpty { answeringModelName = displayName }
             case .thinkingDelta(let chunk):
                 guard !chunk.isEmpty else { break }
                 if reconnecting { reconnecting = false }   // live content flows again
@@ -8232,6 +8238,7 @@ struct AgentMessageRow: View {
                     // Single starburst — bottom-left INSIDE the card while the turn runs.
                     if showWorkingIndicator {
                         AgentThinkingRow(mode: vm.liveMode, pal: pal,
+                                         modelName: vm.answeringModelName,
                                          message: message,
                                          lastThinkingGrowthAt: vm.lastThinkingGrowthAt,
                                          reconnecting: vm.reconnecting,
@@ -10320,6 +10327,8 @@ struct AgentModelSwitchCardView: View {
 struct AgentThinkingRow: View {
     let mode: String
     let pal: AgentPalette
+    /// The answering model's name (owner, 2026-07-28: "shob model er name nai").
+    var modelName: String = ""
     /// The streaming tail — live token estimate for the status label.
     var message: AgentChatMessage? = nil
     /// Thinking-delta freshness from the VM: quiet thinking ⇒ "almost done".
@@ -10338,6 +10347,12 @@ struct AgentThinkingRow: View {
         HStack(spacing: 8) {
             AlmaSpinnerView(mode: mode, size: 28, showVerb: false, haptics: true)
             AlmaShimmerWordmark(size: 12.5, weight: .semibold, tracking: 2.1)
+            if !modelName.isEmpty {
+                Text("· \(modelName)")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(pal.mutedHi)
+                    .lineLimit(1)
+            }
             if reconnecting {
                 Text("· কাজ চলছে — সংযোগ ফিরছে…")
                     .font(.system(size: 12, weight: .medium))

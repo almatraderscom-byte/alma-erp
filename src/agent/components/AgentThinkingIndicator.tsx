@@ -48,12 +48,16 @@ export function ModelSpinner({
 interface AgentThinkingIndicatorProps {
   mode?: ThinkingMode
   variant?: ModelVariant
+  /** The model's own name from `model_info` — shown for EVERY model, not the three
+   *  families `variant` happened to know (owner, 2026-07-28). */
+  modelName?: string
   className?: string
 }
 
 export function AgentThinkingIndicator({
   mode = 'thinking',
   variant = 'default',
+  modelName,
   className,
 }: AgentThinkingIndicatorProps) {
   const [displayMode, setDisplayMode] = useState<ThinkingMode>(mode)
@@ -102,7 +106,9 @@ export function AgentThinkingIndicator({
   // (thinking → "Pondering…", searching → "Searching…", writing → "Writing…"),
   // exactly the Claude-app feel the owner asked for.
   const spinnerMode: AlmaSpinnerMode = displayMode
-  const name = VARIANT_NAME[variant] ?? 'ALMA'
+  // The server now names the model on every turn; `variant` is the fallback for
+  // an older stream and for the sub-agent spinners that have no model_info.
+  const name = modelName?.trim() || VARIANT_NAME[variant] || 'ALMA'
 
   return (
     <div className={cn('flex items-center gap-2', className)}>
@@ -113,7 +119,7 @@ export function AgentThinkingIndicator({
       <AlmaSpinner mode={spinnerMode} size={20} showVerb haptics sound={false} />
       {/* Brand + model name so the owner always sees WHO is working. */}
       <span className="alma-brand-shimmer text-[12px] font-semibold">
-        {variant === 'default' ? 'ALMA' : `ALMA · ${name}`}
+        {name === 'ALMA' ? 'ALMA' : `ALMA · ${name}`}
       </span>
     </div>
   )
