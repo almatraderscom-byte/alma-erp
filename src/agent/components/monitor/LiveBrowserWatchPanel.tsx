@@ -48,10 +48,10 @@ const ACTION_BN: Record<string, string> = {
 }
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
-  queued: { label: 'অপেক্ষায়', cls: 'border-sky-300/40 bg-sky-400/10 text-sky-300' },
-  delivered: { label: 'চলছে…', cls: 'border-amber-300/40 bg-amber-400/10 text-amber-300' },
-  done: { label: 'হয়েছে', cls: 'border-emerald-300/40 bg-emerald-400/10 text-emerald-300' },
-  failed: { label: 'ব্যর্থ', cls: 'border-red-300/40 bg-red-400/10 text-red-300' },
+  queued: { label: 'অপেক্ষায়', cls: 'border-sky-300/40 bg-sky-400/10 txt-info' },
+  delivered: { label: 'চলছে…', cls: 'border-amber-300/40 bg-amber-400/10 txt-warn' },
+  done: { label: 'হয়েছে', cls: 'border-emerald-300/40 bg-emerald-400/10 txt-pos' },
+  failed: { label: 'ব্যর্থ', cls: 'border-red-300/40 bg-red-400/10 txt-neg' },
 }
 
 function fmtTime(iso: string | null): string {
@@ -144,14 +144,14 @@ export default function LiveBrowserWatchPanel() {
           <h2 className="text-[15px] font-bold text-cream">লাইভ ব্রাউজার — সরাসরি দেখুন</h2>
           <div className="ml-auto flex items-center gap-1.5">
             {running && (
-              <span className="rounded-full border border-amber-300/40 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-300">
+              <span className="rounded-full border border-amber-300/40 bg-amber-400/10 px-2 py-0.5 text-[10px] txt-warn">
                 🤖 কাজ চলছে
               </span>
             )}
             <span
               className={`rounded-full border px-2 py-0.5 text-[10px] ${
                 enabled
-                  ? 'border-emerald-300/40 bg-emerald-400/10 text-emerald-300'
+                  ? 'border-emerald-300/40 bg-emerald-400/10 txt-pos'
                   : 'border-border-subtle bg-white/[0.02] text-muted'
               }`}
             >
@@ -171,8 +171,8 @@ export default function LiveBrowserWatchPanel() {
             onClick={() => act(enabled ? 'stop' : 'resume')}
             className={`rounded-full px-3.5 py-1.5 text-[12px] font-semibold transition-colors disabled:opacity-50 ${
               enabled
-                ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
-                : 'bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25'
+                ? 'bg-red-500/20 txt-neg hover:bg-red-500/30'
+                : 'bg-emerald-500/15 txt-pos hover:bg-emerald-500/25'
             }`}
           >
             {enabled ? '⏹ সব থামাও' : '▶️ আবার চালু করো'}
@@ -220,7 +220,7 @@ export default function LiveBrowserWatchPanel() {
                     <div className="min-w-0 flex-1">
                       <p className="break-words text-[12px] leading-relaxed text-muted">
                         {s.target || '—'}
-                        {s.error ? <span className="text-red-300"> · {s.error.slice(0, 120)}</span> : null}
+                        {s.error ? <span className="txt-neg"> · {s.error.slice(0, 120)}</span> : null}
                       </p>
                     </div>
                     <span className={`rounded-full border px-2 py-0.5 text-[9px] ${badge.cls}`}>{badge.label}</span>

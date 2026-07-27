@@ -60,19 +60,43 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     const live = await discoverSkills(SKILLS_ROOT)
     const all = await discoverSkills(SKILLS_ROOT, { includeDraft: true })
 
-    expect(all.skills.length).toBeGreaterThanOrEqual(19)
+    // 19 → 18: `alma-seo-audit` and `alma-client-seo` are RETIRED (2026-07-27).
+    // They are superseded by the SK-5 skills and both claim "seo" — promoting a
+    // duplicate would recreate the exact collision SK-0 measured. Retired skills
+    // are dropped by discovery at every status, so they cannot route again; the
+    // files stay on disk and in git.
+    expect(all.skills.length).toBeGreaterThanOrEqual(18)
     // `alma-base` is active but `implicit: false` — inherited via `extends`,
     // never selected. It must not show up as a choice.
     const selectable = live.skills.filter((s) => s.implicit !== false).map((s) => s.name).sort()
+    // Promotions land here ONE AT A TIME, each with its own evals — this list is
+    // the record of which ones have actually been through that.
+    //   2026-07-27: alma-finance-brief, the first of the 16 originals.
+    //   2026-07-27: alma-research, the second.
+    //   2026-07-27: alma-staff-dispatch, the third.
+    //   2026-07-27: alma-product-listing, the fourth.
+    //   2026-07-27: alma-product-social-post, the fifth — promoted because the
+    //   fourth started winning its message.
+    //   2026-07-27: alma-website, the sixth — scope narrowed away from page copy.
+    //   2026-07-27: alma-marketing, the seventh — three keyword collisions freed.
+    //   2026-07-27: alma-invoice-to-erp, the eighth.
     expect(selectable).toEqual([
+      'alma-finance-brief',
+      'alma-invoice-to-erp',
+      'alma-marketing',
       'alma-owner-daily-briefing',
+      'alma-product-listing',
+      'alma-product-social-post',
+      'alma-research',
+      'alma-staff-dispatch',
+      'alma-website',
       'seo-auditing-own-site',
       'seo-fixing-client-site',
       'seo-fixing-own-site',
     ])
 
     const stillDraft = all.skills.length - live.skills.length
-    expect(stillDraft).toBeGreaterThanOrEqual(15)
+    expect(stillDraft).toBeGreaterThanOrEqual(5)
   })
 
   it('records the baseline table and the headline numbers', async () => {
@@ -135,7 +159,10 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     // romanised fix order ("slug thik koro") landing on the read-only audit
     // skill. The corpus only tested Bangla script, so the rule layer being
     // script-only was invisible to it.
-    expect(rows).toHaveLength(27)
+    // 27 → 28: the parcel-vs-person boundary added 2026-07-27 with
+    // alma-staff-dispatch. "customer er order ta kokhon asche" carries the same
+    // words as the staff question and must still pin nothing.
+    expect(rows).toHaveLength(30)
     expect(accuracy).toBeLessThanOrEqual(100)
     expect(hits + count('wrong') + count('missed')).toBe(shouldPick.length)
     expect(falseTriggers + count('correctly-silent')).toBe(shouldNotPick.length)

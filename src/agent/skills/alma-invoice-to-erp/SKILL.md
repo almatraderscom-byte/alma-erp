@@ -1,8 +1,8 @@
 ---
 name: alma-invoice-to-erp
-description: Extract fields from an invoice/bill document into an ERP entry draft; the entry stays gated.
-version: 0.1.0
-keywords: invoice, ইনভয়েস, bill, বিল, receipt, রশিদ, expense entry, khoroch tulo, document, ডকুমেন্ট, erp te tulo, voucher
+description: Reads an invoice, bill or receipt and turns it into a checked ERP entry draft — vendor, date, category, whole-taka amount — after making sure the same bill is not already in. Use when Boss hands over a bill to be recorded. The entry is an owner card.
+version: 1.0.0
+keywords: invoice, ইনভয়েস, bill, বিল, receipt, রশিদ, voucher, expense entry, khoroch tulo, erp te tulo, bill tulo, invoice tulo
 ---
 
 # Invoice → ERP — extract, verify, gated entry

@@ -935,7 +935,7 @@ export default function AgentStaffMonitor() {
                       ⚠️ Scan failed: {healthScanError}. Tap Scan Now to retry.
                     </div>
                   ) : healthReport?.ok ? (
-                    <div className="flex items-center gap-2 py-1 text-[11px] text-emerald-700">
+                    <div className="flex items-center gap-2 py-1 text-[11px] txt-pos">
                       <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]" />
                       {healthReport.summary}
                     </div>
@@ -1144,7 +1144,7 @@ export default function AgentStaffMonitor() {
                             </div>
                             <div className="shrink-0 text-right">
                               <div className="text-[10px] font-medium text-muted">{fmtTime(r.dueAt)}</div>
-                              <div className={cn('text-[9px]', r.status === 'snoozed' ? 'text-[#D4A84B]' : r.status === 'sent' ? 'text-emerald-600' : 'text-muted')}>{r.status}</div>
+                              <div className={cn('text-[9px]', r.status === 'snoozed' ? 'text-[#D4A84B]' : r.status === 'sent' ? 'txt-pos' : 'text-muted')}>{r.status}</div>
                             </div>
                           </div>
                         ))}

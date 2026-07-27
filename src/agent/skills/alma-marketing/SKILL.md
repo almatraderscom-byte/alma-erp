@@ -1,8 +1,8 @@
 ---
 name: alma-marketing
-description: Marketing readout + plan (performance, competitor, calendar) — spend owner-gated.
-version: 0.1.0
-keywords: marketing, মার্কেটিং, ad, বিজ্ঞাপন, campaign, ক্যাম্পেইন, boost, competitor ad, marketing plan, weekly brief, প্রচার
+description: Reads how marketing is actually going — spend and return, competitor creatives, what is on the calendar — and turns it into next week's plan. Use when Boss asks how marketing is doing or what to do next. Spend stays owner-gated.
+version: 1.0.0
+keywords: marketing, মার্কেটিং, প্রচার, marketing plan, weekly brief, competitor ad, competitor creative, roas, marketing kemon, prochar
 ---
 
 # Digital marketing — plan, competitor scan, weekly brief
@@ -17,6 +17,17 @@ keywords: marketing, মার্কেটিং, ad, বিজ্ঞাপন, 
 3. **Calendar (required):** content calendar + retail date; আগামী ২ সপ্তাহের planned content + ফাঁক। tools: `list_content_calendar`, `list_important_dates`।
 4. **Plan (optional):** `plan_marketing` দিয়ে খসড়া (owner approval card খোলে)। এই skill থেকে **কখনো সরাসরি campaign launch/scale/pause বা spend নয়** — শুধু সুপারিশ; execution existing owner-gated tool দিয়ে।
 5. **Brief (required):** weekly performance brief — কী চলেছে, কী ফেরত, competitor angle, পরের সপ্তাহে কী (প্রতিটার পেছনের ডেটাসহ)। artifact publish।
+
+## যে সংখ্যা বোঝোনি, তার গল্প বানিও না
+
+**2026-07-27, Boss নিজে ধরেছেন।** report-এ "৬৫৩টা alert" এসেছিল। এই skill বলে
+প্রতিটা সুপারিশের পেছনে সংখ্যা দিতে — সেটা দেওয়া হয়েছিল, কিন্তু সংখ্যাটা **কীসের**
+তা না দেখেই তার একটা কারণ বানানো হয়েছিল ("লিড আসছে, রিপ্লাই হচ্ছে না")। Boss
+জিজ্ঞেস করতেই উল্টো দিকের আরেকটা অনুমান বলা হয়েছিল।
+
+নিয়ম: একটা সংখ্যা **রিপোর্ট করা** আর তার **ব্যাখ্যা দেওয়া** এক জিনিস নয়।
+ব্যাখ্যা দিতে হলে আগে ভেতরটা খোলো (কোন ধরনের, কোন সময়ের, কে বানায়)। খুলতে
+না পারলে সংখ্যাটা বলো আর সোজা বলো — "এটা কীসের, নিশ্চিত নই"।
 
 ## Checklist
 

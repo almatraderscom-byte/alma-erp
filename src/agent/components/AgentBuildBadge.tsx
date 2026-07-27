@@ -69,7 +69,7 @@ export function AgentBuildBadge({ variant = 'inline', className }: AgentBuildBad
             {stale && (
               <button
                 type="button"
-                className="text-emerald-700 font-semibold hover:underline"
+                className="txt-pos font-semibold hover:underline"
                 onClick={() => {
                   toast.dismiss(t.id)
                   window.location.reload()
@@ -96,7 +96,7 @@ export function AgentBuildBadge({ variant = 'inline', className }: AgentBuildBad
           ? 'inline-flex min-h-[32px] items-center gap-1.5 px-3.5 py-1 text-[11px]'
           : 'hidden px-2 py-0.5 text-[9px] sm:inline-flex',
         stale
-          ? 'border-amber-300/60 bg-amber-400/12 text-amber-200 shadow-[0_0_14px_-2px_rgba(251,191,36,0.5)] animate-pulse'
+          ? 'border-amber-300/60 bg-amber-400/12 txt-warn shadow-[0_0_14px_-2px_rgba(251,191,36,0.5)] animate-pulse'
           : 'border-white/10 bg-white/[0.04] text-cream/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] hover:border-[#E07A5F]/45 hover:bg-[#E07A5F]/10 hover:text-cream hover:shadow-[0_0_16px_-3px_rgba(224,122,95,0.55)]',
         className,
       )}

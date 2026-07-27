@@ -477,7 +477,7 @@ export function MonitorAgentsPanel({
             <div className="mt-3 rounded-xl border border-sky-200/60 bg-sky-50/50 p-3">
               <div className="mb-2 flex items-center gap-1.5">
                 <span className="text-sm">🤝</span>
-                <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-sky-700/80">
+                <p className="text-[11px] font-bold uppercase tracking-[0.06em] txt-info">
                   সাব-এজেন্ট — কোন AI মডেল
                 </p>
               </div>
@@ -512,7 +512,7 @@ export function MonitorAgentsPanel({
 
               {data.specialistDelegationsToday && data.specialistDelegationsToday.length > 0 && (
                 <div className="mt-2.5 space-y-1.5 border-t border-sky-200/40 pt-2.5">
-                  <p className="text-[10px] font-semibold text-sky-800/70">কোন মডেল কী করেছে</p>
+                  <p className="text-[10px] font-semibold txt-info">কোন মডেল কী করেছে</p>
                   {data.specialistDelegationsToday.map((d, i) => (
                     <div
                       key={`${d.modelId}-${d.at}-${i}`}

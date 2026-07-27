@@ -7,6 +7,7 @@ import {
   createSeqDeduper,
   getReplayEvents,
   isTerminalEventType,
+  pollTurnEvents,
   subscribeTurnEvents,
 } from '@/agent/lib/turn-events'
 
@@ -116,13 +117,21 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         if (isTerminalEventType(evt.type)) finish()
       })
       if (!sub) {
-        // Redis unavailable: if the turn already reached a terminal state, close
-        // cleanly (client falls back to status polling); otherwise nothing to tail.
+        // No Redis. That used to end the stream — and it is exactly the state
+        // the shared Upstash has been in since its quota ran out, so a
+        // worker-run turn could not be watched at all however healthy the
+        // worker was. The durable log is written BEFORE each publish, so it is
+        // complete on its own: tail that instead, at ~1s instead of instant.
         const status = snap?.status ?? null
         if (status !== 'running') {
           safeEnqueue(`data: ${JSON.stringify({ type: 'error', message: 'turn_stream_unavailable' })}\n\n`)
+          return finish()
         }
-        return finish()
+        sub = pollTurnEvents(turnId, dedup.lastSeq, (evt) => {
+          if (!dedup.accept(evt.seq)) return
+          emitEvent(evt.seq, evt.payload)
+          if (isTerminalEventType(evt.type)) finish()
+        })
       }
 
       // Keepalive so idle proxies don't drop the stream during long tool steps.

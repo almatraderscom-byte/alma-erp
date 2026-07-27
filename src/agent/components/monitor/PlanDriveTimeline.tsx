@@ -210,7 +210,7 @@ function WorkingPlan({ drive, onOpen, onAction }: {
       {/* meta strip */}
       <div className="flex items-center gap-3 px-3.5 pb-2.5 text-[9px] text-muted">
         {/* Honest state first — "চলছে" only when it really is. */}
-        <span className={cn('font-semibold', live ? 'text-[#E07A5F]' : 'text-amber-600')}>
+        <span className={cn('font-semibold', live ? 'text-[#E07A5F]' : 'txt-warn')}>
           {drive.statusLabel ?? (live ? 'চলছে' : 'অপেক্ষায়')}
         </span>
         {!live && idle && <span>{idle} ধরে থেমে</span>}
@@ -239,7 +239,7 @@ function WorkingPlan({ drive, onOpen, onAction }: {
                         'text-[11px] leading-snug',
                         s.status === 'done' ? 'text-cream/55 line-through decoration-emerald-500/40' :
                         s.status === 'running' ? 'alma-thinking-shimmer font-medium' :
-                        s.status === 'failed' ? 'text-red-500/90' :
+                        s.status === 'failed' ? 'txt-neg' :
                         'text-cream/75',
                       )}>
                         {i + 1}. {s.action}
@@ -288,7 +288,7 @@ function GrindBlock({ grind, planId, onAction }: {
     <div className="mx-3.5 mb-2.5 rounded-xl border border-border-subtle bg-card/60 px-3 py-2.5">
       <p className="text-[10.5px] font-semibold text-cream/85">{grind.headline}</p>
       {grind.regressed > 0 && (
-        <p className="mt-1 text-[9.5px] font-semibold text-red-500/90">
+        <p className="mt-1 text-[9.5px] font-semibold txt-neg">
           ⚠️ {grind.regressed} টা আবার ভেঙেছে — ঠিক করতে গিয়ে নতুন সমস্যা হয়েছে
         </p>
       )}
@@ -364,13 +364,13 @@ function AttentionCard({ drive, onOpen, onAction }: {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className={cn('rounded-full px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide',
-              isDecision ? 'bg-red-500/15 text-red-600' : 'bg-amber-500/15 text-amber-700')}>
+              isDecision ? 'bg-red-500/15 txt-neg' : 'bg-amber-500/15 txt-warn')}>
               {isDecision ? 'সিদ্ধান্ত দরকার' : 'অনুমোদন দরকার'}
             </span>
             <span className="truncate text-[12px] font-bold text-cream/90">{drive.goal}</span>
           </div>
           {drive.waitingReason && (
-            <p className={cn('mt-1 text-[10.5px] leading-snug', isDecision ? 'text-red-700/80' : 'text-amber-800/80')}>
+            <p className={cn('mt-1 text-[10.5px] leading-snug', isDecision ? 'txt-neg' : 'txt-warn')}>
               {drive.waitingReason}
             </p>
           )}
@@ -396,7 +396,7 @@ function AttentionCard({ drive, onOpen, onAction }: {
             {isDecision && onAction && (
               <>
                 <button type="button" disabled={busy !== null} onClick={() => run('resume')}
-                  className={cn(actBtn, 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20')}>
+                  className={cn(actBtn, 'border border-emerald-500/40 bg-emerald-500/10 txt-pos hover:bg-emerald-500/20')}>
                   {busy === 'resume' ? '⏳' : '▶'} আবার চালাও
                 </button>
                 <button type="button" disabled={busy !== null} onClick={() => run('add-budget')}
@@ -467,17 +467,17 @@ export function PlanDriveTimeline({ data, onOpenConversation, onAction }: {
         <span className="text-[10px] text-muted">Plan-Drive</span>
         <div className="ml-auto flex items-center gap-1.5">
           {attention.length > 0 && (
-            <span className="rounded-full bg-red-500/12 px-2 py-0.5 text-[9px] font-bold text-red-600">
+            <span className="rounded-full bg-red-500/12 px-2 py-0.5 text-[9px] font-bold txt-neg">
               {attention.length} অপেক্ষায়
             </span>
           )}
           {runningNow.length > 0 && (
-            <span className="rounded-full bg-emerald-500/12 px-2 py-0.5 text-[9px] font-bold text-emerald-600">
+            <span className="rounded-full bg-emerald-500/12 px-2 py-0.5 text-[9px] font-bold txt-pos">
               {runningNow.length} চলছে
             </span>
           )}
           {working.length > runningNow.length && (
-            <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[9px] font-bold text-amber-600">
+            <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[9px] font-bold txt-warn">
               {working.length - runningNow.length} থেমে আছে
             </span>
           )}
@@ -491,7 +491,7 @@ export function PlanDriveTimeline({ data, onOpenConversation, onAction }: {
         {/* ⚠️ Attention zone */}
         {attention.length > 0 && (
           <div className="space-y-2">
-            <p className="px-1 text-[9.5px] font-bold uppercase tracking-[0.1em] text-red-500/70">⚠ আপনার নজর দরকার</p>
+            <p className="px-1 text-[9.5px] font-bold uppercase tracking-[0.1em] txt-neg">⚠ আপনার নজর দরকার</p>
             <AnimatePresence initial={false}>
               {attention.map((d) => (
                 <AttentionCard key={d.planId} drive={d} onOpen={onOpenConversation} onAction={onAction} />
@@ -503,7 +503,7 @@ export function PlanDriveTimeline({ data, onOpenConversation, onAction }: {
         {/* ▶ Working zone */}
         {working.length > 0 && (
           <div className="space-y-2">
-            <p className="px-1 text-[9.5px] font-bold uppercase tracking-[0.1em] text-emerald-600/70">▶ এখন কাজ করছে</p>
+            <p className="px-1 text-[9.5px] font-bold uppercase tracking-[0.1em] txt-pos">▶ এখন কাজ করছে</p>
             <AnimatePresence initial={false}>
               {working.map((d) => (
                 <WorkingPlan key={d.planId} drive={d} onOpen={onOpenConversation} onAction={onAction} />

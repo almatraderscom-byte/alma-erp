@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "publisher": "alma-native",
   "license": "proprietary",
-  "businessScopes": ["CDIT"],
+  "businessScopes": [
+    "CDIT"
+  ],
   "riskTier": "high",
   "requiredCapabilities": [
     "run_website_seo_audit",
@@ -21,5 +23,5 @@
   "approvalPolicy": "always",
   "entryWorkflow": "skill_pack:client_seo",
   "maxSteps": 6,
-  "status": "draft"
+  "status": "retired"
 }

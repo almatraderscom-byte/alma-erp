@@ -411,7 +411,7 @@ export default function KnownPeopleManager() {
                 <button className={btnGhostCls} onClick={() => void toggleActive(p)} disabled={busy}>
                   {p.active ? 'ON' : 'OFF'}
                 </button>
-                <button className={`${btnGhostCls} text-red-300`} onClick={() => void removePerson(p)} disabled={busy}>
+                <button className={`${btnGhostCls} txt-neg`} onClick={() => void removePerson(p)} disabled={busy}>
                   মুছুন
                 </button>
               </li>

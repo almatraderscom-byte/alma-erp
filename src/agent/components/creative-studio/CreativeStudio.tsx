@@ -1,6 +1,6 @@
 'use client'
 
-import { CreativeStudioShell } from '@/agent/components/creative-studio/CreativeStudioShell'
+import { CreativeStudioShell } from './CreativeStudioShell'
 
 export default function CreativeStudio() {
   return <CreativeStudioShell />

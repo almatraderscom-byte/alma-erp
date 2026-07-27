@@ -71,6 +71,28 @@ export const OWNER_CORPUS: OwnerCase[] = [
     note: 'Romanised AUDIT order — the mirror image, must not flip to fixing.',
   },
 
+  // ── FROM HIS REAL TRAFFIC, 2026-07-27 ───────────────────────────────────
+  // Both were found by reading the conversations that actually pinned a skill,
+  // not by imagining a message. Both are the expensive failure: a wrong pin also
+  // pins a tool allowlist, so the job loses the tools it needed.
+  {
+    id: 'seo-fix-title-thin',
+    text: 'almatraders.com এর পুরো দুর্বল title আর thin description gulo thik koro',
+    expected: 'seo-fixing-own-site',
+    note:
+      'An unmistakable on-page FIX that carries no seo/alt/meta word, so no rule '
+      + 'fired and the READ-ONLY audit skill won the tie. Live, twice.',
+  },
+  {
+    id: 'ads-audit-not-seo',
+    text: 'amar ads account ta ekbar valo kore audit koro',
+    expected: null,
+    note:
+      'Bare "audit" counted as an SEO topic outright, so an ADS question was '
+      + 'handed the SEO audit skill and none of the ads tools. Every audit is '
+      + 'not an SEO audit.',
+  },
+
   // ── Everyday business, each a different skill ────────────────────────────
   { id: 'staff', text: 'Mustahid ajke kokhon asche?', expected: 'alma-staff-dispatch' },
   { id: 'listing', text: 'notun panjabi ta website e tolo', expected: 'alma-product-listing' },
@@ -94,4 +116,13 @@ export const OWNER_CORPUS: OwnerCase[] = [
   { id: 'orders', text: 'kalker order gulo dekhao', expected: null, note: 'Plain ERP read — no procedure needed.' },
   { id: 'sales', text: 'ajker sale koto?', expected: null, note: 'Plain ERP read.' },
   { id: 'yes', text: 'ha koro', expected: null, note: 'Continuation — the pinned skill should carry, not a fresh pick.' },
+  {
+    id: 'parcel-eta',
+    text: 'customer er order ta kokhon asche?',
+    expected: null,
+    note:
+      'The boundary the staff-attendance rule must not cross (2026-07-27). Same '
+      + 'words as "Mustahid ajke kokhon asche", different subject — pinning the staff '
+      + 'skill here would strip the order tools the answer needs.',
+  },
 ]

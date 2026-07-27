@@ -692,3 +692,30 @@ function dbPlanToDto(plan: DbPlan): Plan {
     })),
   }
 }
+
+/**
+ * The newest plan for a conversation, projected for the chat's live checklist.
+ * Read-only, indexed on `conversationId`, and fail-open to null — a checklist
+ * that cannot load must never take a turn down.
+ */
+export async function loadLatestPlanProgress(conversationId: string): Promise<{
+  planId: string
+  goal: string
+  rows: Array<{ seq: number; action: string; status: string }>
+} | null> {
+  try {
+    const plan = await db.agentPlan.findFirst({
+      where: { conversationId, status: { notIn: ['abandoned'] } },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        goal: true,
+        steps: { select: { seq: true, action: true, status: true }, orderBy: { seq: 'asc' } },
+      },
+    })
+    if (!plan || !plan.steps?.length) return null
+    return { planId: plan.id, goal: plan.goal, rows: plan.steps }
+  } catch {
+    return null
+  }
+}

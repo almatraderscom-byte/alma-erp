@@ -48,16 +48,35 @@ const NAMED_TOOL_ARGS = /<[a-z_][a-z0-9_]*>\s*(?:<arg_key>[\s\S]*?<\/arg_value>\
 const JSON_TOOL_USE =
   /\{\s*"type"\s*:\s*"tool_(?:use|call)"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/gi
 
+/**
+ * The FOURTH shape, seen in his own chat 2026-07-27 — hours after the JSON one
+ * shipped, in a reply about the whole business:
+ *
+ *   <function_calls> [get_sales_summary, get_orders, get_inventory_status,
+ *   get_website_health, recommend_ad_actions] </function_calls>
+ *
+ * Not `<tool_call>`, not `<arg_key>`-anchored, not JSON — so all three existing
+ * patterns missed it AND the cheap guard rejected the text before they ran.
+ * `<function_results>` and `<invoke …>` are included with it: they are the rest
+ * of the same family, and waiting to be shown each one on his screen first is a
+ * bad way to find them.
+ */
+const FUNCTION_CALLS_BLOCK =
+  /<function_(?:calls|results)>[\s\S]*?(?:<\/function_(?:calls|results)>|$)/gi
+const INVOKE_BLOCK = /<invoke\b[\s\S]*?(?:<\/invoke>|$)/gi
+
 /** Leftovers when a stream is cut mid-call, plus the DeepSeek/Qwen sentinels. */
 const STRAY_MARKERS =
-  /<\/?tool_call>|<\/?arg_key>|<\/?arg_value>|<\|?tool[_▁]?calls?[_▁]?(?:begin|end|sep)\|?>|<｜tool▁calls?▁(?:begin|end|sep)｜>/gi
+  /<\/?tool_call>|<\/?arg_key>|<\/?arg_value>|<\/?function_(?:calls|results)>|<\/?invoke\b[^>]*>|<\/?parameter\b[^>]*>|<\|?tool[_▁]?calls?[_▁]?(?:begin|end|sep)\|?>|<｜tool▁calls?▁(?:begin|end|sep)｜>/gi
 
 export function stripToolCallMarkup(text: string): string {
   if (!text) return text
   // Cheap guard: the overwhelming majority of rounds carry none of this.
-  if (!/<tool_call|<arg_key|tool▁call|<\|tool|"type"\s*:\s*"tool_(?:use|call)"/i.test(text)) return text
+  if (!/<tool_call|<arg_key|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|"type"\s*:\s*"tool_(?:use|call)"/i.test(text)) return text
   const cleaned = text
     .replace(JSON_TOOL_USE, '')
+    .replace(FUNCTION_CALLS_BLOCK, '')
+    .replace(INVOKE_BLOCK, '')
     .replace(TOOL_CALL_BLOCK, '')
     .replace(NAMED_TOOL_ARGS, '')
     .replace(STRAY_MARKERS, '')
@@ -69,4 +88,62 @@ export function stripToolCallMarkup(text: string): string {
   // caller's own "this round said nothing" handling is the right outcome, and
   // that is what an empty string gives it.
   return cleaned
+}
+
+/**
+ * The same answer, twice, in one reply.
+ *
+ * Third sighting 2026-07-27/28 — the handoff already records "the same opening
+ * line twice", and on the benchmark question the whole verdict block came out
+ * twice: answer, evidence, ask for spec … answer, evidence, ask for spec. The
+ * style rule "do not write the same thing twice" shipped and the very next run
+ * did it again.
+ *
+ * So it is repaired rather than requested. Blocks are compared on their WORDS,
+ * not their characters, because the second pass is usually a paraphrase — the
+ * reason a plain equality check never caught it.
+ *
+ * Deliberately conservative:
+ *  - only blocks of real length are considered (a repeated "ঠিক আছে" is fine);
+ *  - the FIRST occurrence is always kept;
+ *  - list items and short lines are never touched, because a list legitimately
+ *    repeats its shape.
+ */
+const DUP_MIN_CHARS = 80
+const DUP_SIMILARITY = 0.82
+
+function wordSet(block: string): Set<string> {
+  return new Set(
+    (block.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => w.length > 2),
+  )
+}
+
+function similarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0
+  let shared = 0
+  for (const w of a) if (b.has(w)) shared++
+  return shared / Math.min(a.size, b.size)
+}
+
+/** Drop a later block that repeats an earlier one. Keeps the first. */
+export function dropRepeatedBlocks(text: string): string {
+  if (!text || text.length < DUP_MIN_CHARS * 2) return text
+  const blocks = text.split(/\n\s*\n/)
+  if (blocks.length < 2) return text
+
+  const kept: string[] = []
+  const keptWords: Array<Set<string>> = []
+  for (const block of blocks) {
+    const trimmed = block.trim()
+    // Short blocks, headings and list items pass through untouched.
+    if (trimmed.length < DUP_MIN_CHARS || /^\s*[-*•\d]/.test(trimmed)) {
+      kept.push(block)
+      continue
+    }
+    const words = wordSet(trimmed)
+    if (keptWords.some((prev) => similarity(words, prev) >= DUP_SIMILARITY)) continue
+    kept.push(block)
+    keptWords.push(words)
+  }
+  return kept.join('\n\n').replace(/\n{3,}/g, '\n\n').trim()
 }

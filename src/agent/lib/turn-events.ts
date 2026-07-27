@@ -194,6 +194,58 @@ export function createTurnEventPublisher(
  * `onEvent` registration and `close`, or null if Redis isn't configured.
  * ioredis is imported lazily so the route never pulls it in when unused.
  */
+/**
+ * The same live tail, over the DATABASE instead of Redis.
+ *
+ * Measured 2026-07-27 while planning the Upstash removal, and it corrects what
+ * the handoff notes say: that shared cloud Redis is not "only the queue". It is
+ * also the only live path from the VPS worker back to a Vercel stream — the
+ * worker publishes each event to it and this route subscribes. With the quota
+ * exhausted, `subscribeTurnEvents` returns null and a worker-run turn cannot be
+ * watched at all, however healthy the worker is.
+ *
+ * The durable log does not have that problem: the worker writes every event to
+ * `agent_turn_events` BEFORE publishing, so the rows are complete on their own.
+ * Polling them costs one indexed query per second per open stream — one owner,
+ * one or two streams — and it removes the metered dependency from the read path
+ * entirely. The trade is honest: ~1s of latency instead of instant.
+ */
+export function pollTurnEvents(
+  turnId: string,
+  afterSeq: number,
+  onEvent: (evt: TurnEvent) => void,
+  intervalMs = 1000,
+): { close: () => Promise<void> } {
+  let cursor = afterSeq
+  let stopped = false
+  let inFlight = false
+
+  const tick = async () => {
+    if (stopped || inFlight) return
+    inFlight = true
+    try {
+      const rows = await getReplayEvents(turnId, cursor, 500)
+      for (const evt of rows) {
+        if (stopped) break
+        cursor = Math.max(cursor, evt.seq)
+        onEvent(evt)
+      }
+    } finally {
+      inFlight = false
+    }
+  }
+
+  const timer = setInterval(() => void tick(), intervalMs)
+  void tick()
+
+  return {
+    close: async () => {
+      stopped = true
+      clearInterval(timer)
+    },
+  }
+}
+
 export async function subscribeTurnEvents(
   turnId: string,
   onEvent: (evt: TurnEvent) => void,

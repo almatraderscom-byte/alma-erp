@@ -1036,7 +1036,7 @@ export default function AgentCostsDashboard() {
       <>
         <AgentSubHeader title="AI খরচ" accent="ড্যাশবোর্ড" />
         <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-3 p-6 text-center bg-transparent">
-          <p className="text-sm text-red-500">⚠️ {error ?? 'ডেটা পাওয়া যায়নি'}</p>
+          <p className="text-sm txt-neg">⚠️ {error ?? 'ডেটা পাওয়া যায়নি'}</p>
           <button onClick={() => void load()} className="rounded-xl border border-border-subtle bg-card/80 px-4 py-2 text-xs text-muted hover:text-cream hover:border-[#E07A5F]/30 shadow-sm transition-all">
             আবার চেষ্টা
           </button>
@@ -1424,7 +1424,7 @@ export default function AgentCostsDashboard() {
                             : p.status === 'UNVERIFIED' ? 'API নেই' : '—'}
                         </td>
                         <td className={cn('py-1.5 pl-2 text-right tabular-nums font-semibold',
-                          flagged ? 'text-amber-500' : 'text-muted')}>
+                          flagged ? 'txt-warn' : 'text-muted')}>
                           {p.driftUsd != null && flagged
                             ? `${p.driftUsd > 0 ? '+' : ''}${fmtUsd(p.driftUsd)}${p.driftPct != null ? ` (${p.driftPct > 0 ? '+' : ''}${p.driftPct}%)` : ''}`
                             : p.status === 'RECONCILED' ? '✓'
@@ -1438,7 +1438,7 @@ export default function AgentCostsDashboard() {
             </table>
           </div>
           {reconcile.flagged.length > 0 && (
-            <p className="mt-2 text-[10px] leading-relaxed text-amber-600">
+            <p className="mt-2 text-[10px] leading-relaxed txt-warn">
               ⚠️ {reconcile.flagged[0].label}: {reconcile.flagged[0].note}
             </p>
           )}
@@ -1560,7 +1560,7 @@ export default function AgentCostsDashboard() {
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-muted">
                   <span>আজকের বাজেট ব্যবহার</span>
-                  <span className={data.dailyBudgetPct >= 100 ? 'text-red-500' : data.dailyBudgetPct >= 80 ? 'text-amber-600' : 'text-cream'}>
+                  <span className={data.dailyBudgetPct >= 100 ? 'txt-neg' : data.dailyBudgetPct >= 80 ? 'txt-warn' : 'text-cream'}>
                     {data.dailyBudgetPct}% ({fmtUsd(data.todayUsd)} / {fmtUsd(data.budgets.dailyUsd)})
                   </span>
                 </div>
@@ -1583,7 +1583,7 @@ export default function AgentCostsDashboard() {
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-muted">
                   <span>মাসিক বাজেট ব্যবহার</span>
-                  <span className={data.monthlyBudgetPct >= 100 ? 'text-red-500' : data.monthlyBudgetPct >= 80 ? 'text-amber-600' : 'text-cream'}>
+                  <span className={data.monthlyBudgetPct >= 100 ? 'txt-neg' : data.monthlyBudgetPct >= 80 ? 'txt-warn' : 'text-cream'}>
                     {data.monthlyBudgetPct}% ({fmtUsd(data.monthUsd)} / {fmtUsd(data.budgets.monthlyUsd)})
                   </span>
                 </div>

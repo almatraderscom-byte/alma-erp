@@ -367,7 +367,7 @@ export default function AgentSidebar({
         )}
         {!loading && loadError && (
           <div className="py-6 text-center space-y-2">
-            <p className="text-[11px] text-red-500">{loadError}</p>
+            <p className="text-[11px] txt-neg">{loadError}</p>
             <button
               onClick={() => void loadData()}
               className="rounded-lg border border-border-subtle bg-white/[0.04] px-3 py-1.5 text-[11px] text-muted-hi hover:text-cream"
@@ -459,7 +459,7 @@ export default function AgentSidebar({
                       </button>
                       <button
                         onClick={() => { setDeleteId(c.id); setMenuConvId(null) }}
-                        className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-red-500 hover:bg-red-500/10 rounded-b-xl"
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-xs txt-neg hover:bg-red-500/10 rounded-b-xl"
                       >
                         🗑️ মুছুন
                       </button>
@@ -739,7 +739,7 @@ function MemoryView() {
                 </button>
                 <button
                   onClick={() => setDeleteMemId(m.id)}
-                  className="rounded p-0.5 text-muted hover:text-red-500 transition-colors"
+                  className="rounded p-0.5 text-muted hover:txt-neg transition-colors"
                   title="মুছুন"
                 >
                   🗑️

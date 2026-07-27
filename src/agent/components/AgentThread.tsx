@@ -127,6 +127,30 @@ export interface ChatMessage {
    * competing with the speak-first rule lost that fight every time.
    */
   skill?: { name: string; source: 'owner' | 'router'; reason?: string }
+  /**
+   * SK-8 — the skill that MATCHED and was refused by the provenance gate. Drawn
+   * in the same place as the skill line, because the owner's question is the
+   * same one ("which skill is running?") and the honest answer is "none, and
+   * here is what it is waiting for". Silence here cost a day: `seo-fixing-own-site`
+   * sat in `changed` state after its files were edited and nothing said so.
+   */
+  skillHeldBack?: { name: string; state: string; reason: string }
+  /**
+   * Server-side "কী হচ্ছে এখন" line, replaced each time it ticks. Owner ask
+   * 2026-07-27: on a long tool-heavy turn he was left watching a spinner.
+   */
+  progressNote?: string
+  /**
+   * Live checklist for this turn — "৩/৫ ধাপ শেষ · এখন X". The plan rows have
+   * always ticked in the database; until 2026-07-27 nothing carried them here,
+   * so a plan was only the text the model typed once and never updated.
+   */
+  plan?: {
+    headline: string
+    doneCount: number
+    total: number
+    steps: Array<{ seq: number; action: string; status: string }>
+  }
   /** Live extended-thinking stream — how the agent reasoned before answering. */
   thinking?: string
   /** Seconds spent thinking (set once the reply text begins). */
@@ -482,7 +506,7 @@ function FeedbackButtons({ conversationId, messageId }: { conversationId: string
     })
   }
 
-  if (sent) return <span className="px-1.5 text-[10px] text-emerald-600/80">✓ নোট করেছি</span>
+  if (sent) return <span className="px-1.5 text-[10px] txt-pos">✓ নোট করেছি</span>
 
   return (
     <span className="inline-flex items-center gap-0.5">
@@ -729,7 +753,7 @@ function ToolIOSheet({ tool, onClose }: { tool: ToolRow | null; onClose: () => v
           {resultStr && (
             <div>
               <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">ফলাফল · output</div>
-              <pre className={`max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/[0.06] bg-black/25 p-3 text-[12px] leading-relaxed [overflow-wrap:anywhere] ${failed ? 'text-red-300/90' : 'text-cream/85'}`}>{resultStr}</pre>
+              <pre className={`max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/[0.06] bg-black/25 p-3 text-[12px] leading-relaxed [overflow-wrap:anywhere] ${failed ? 'txt-neg' : 'text-cream/85'}`}>{resultStr}</pre>
             </div>
           )}
           {!inputStr && !resultStr && !t?.shot && (
@@ -1155,7 +1179,7 @@ function ActivityTimeline({
                                     step shows its reason right here in the flow — not
                                     hidden behind a tap. */}
                                 {failed && t.result && t.result.trim() && (
-                                  <div className="mx-2 mb-1.5 rounded-md border border-danger/25 bg-danger/[0.07] px-2 py-1.5 text-[11.5px] leading-relaxed text-red-300/95 break-words [overflow-wrap:anywhere]">
+                                  <div className="mx-2 mb-1.5 rounded-md border border-danger/25 bg-danger/[0.07] px-2 py-1.5 text-[11.5px] leading-relaxed txt-neg break-words [overflow-wrap:anywhere]">
                                     <span className="mr-1 font-semibold">কারণ:</span>
                                     {t.result.trim().slice(0, 260)}
                                     {t.result.trim().length > 260 ? '…' : ''}
@@ -1546,6 +1570,32 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     // Chronological mode: the timeline carries the reply text too, so
                     // render ONE interleaved flow (text → steps → text) and skip the
                     // separate steps-card + body blocks below.
+                    const planBlock = msg.plan && msg.plan.steps.length > 0 ? (
+                      <div className="mb-2 rounded-xl border border-border-subtle bg-white/[0.02] px-3 py-2">
+                        <p className="mb-1.5 text-[11.5px] font-semibold text-cream">📋 {msg.plan.headline}</p>
+                        <ul className="space-y-0.5">
+                          {msg.plan.steps.map((st) => (
+                            <li key={st.seq} className="flex items-start gap-1.5 text-[11px] leading-snug">
+                              <span aria-hidden className="shrink-0">
+                                {st.status === 'done' ? '✅'
+                                  : st.status === 'running' ? '⏳'
+                                  : st.status === 'failed' ? '❌'
+                                  : st.status === 'blocked' ? '🚧'
+                                  : '⬜'}
+                              </span>
+                              <span className={st.status === 'done' ? 'text-muted line-through' : 'text-cream'}>
+                                {st.action}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null
+                    const progressLine = msg.progressNote ? (
+                      <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-muted">
+                        <span>{msg.progressNote}</span>
+                      </div>
+                    ) : null
                     const skillLine = msg.skill ? (
                       <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-muted">
                         <span aria-hidden>🧠</span>
@@ -1555,9 +1605,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                           {msg.skill.source === 'owner' ? ' (আপনার বেছে দেওয়া)' : ''}
                         </span>
                       </div>
+                    ) : msg.skillHeldBack ? (
+                      <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-coral">
+                        <span aria-hidden>⏸️</span>
+                        <span>{msg.skillHeldBack.reason}</span>
+                      </div>
                     ) : null
                     const chrono = (msg.timeline ?? []).some((e) => e.t === 'text')
-                    if (chrono) return <>{skillLine}<ChronoFlow msg={msg} onOpenFile={(id) => onArtifactOpen(id)} /></>
+                    if (chrono) return <>{skillLine}{planBlock}{progressLine}<ChronoFlow msg={msg} onOpenFile={(id) => onArtifactOpen(id)} /></>
                     // A RUNNING turn always shows the process section, even before
                     // there is anything in it (owner bug, verified live 2026-07-26:
                     // the first 10–20 seconds drew nothing at all, so there was
@@ -1573,6 +1628,8 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       return (
                         <>
                         {skillLine}
+                        {planBlock}
+                        {progressLine}
                         <ActivityTimeline
                           timeline={msg.timeline}
                           thinking={msg.thinking}
@@ -1746,11 +1803,11 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         </button>
                       )}
                       {artifactSaved.has(msg.id) && (
-                        <span className="px-2 text-[11px] text-emerald-600">সংরক্ষিত</span>
+                        <span className="px-2 text-[11px] txt-pos">সংরক্ষিত</span>
                       )}
                       {msg.selfCorrected && (
                         <span
-                          className="px-2 text-[10px] text-amber-600/80"
+                          className="px-2 text-[10px] txt-warn"
                           title="এজেন্ট নিজের একটা ভুল দাবি ধরে উত্তরটা যাচাই করে ঠিক করে নিয়েছে — মিথ্যা 'করে দিলাম' আটকানো হয়েছে"
                         >
                           🔁 নিজে যাচাই করে ঠিক করেছে

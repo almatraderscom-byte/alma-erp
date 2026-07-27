@@ -127,8 +127,8 @@ export default function AgentSalahTimesSettings() {
                 >
                   {saving ? 'সেভ…' : '💾 সেভ করুন'}
                 </button>
-                {ok && <span className="text-xs text-emerald-600 font-medium">✓ সেভ হয়েছে</span>}
-                {err && <span className="text-xs text-red-600">{err}</span>}
+                {ok && <span className="text-xs txt-pos font-medium">✓ সেভ হয়েছে</span>}
+                {err && <span className="text-xs txt-neg">{err}</span>}
               </div>
             </div>
           )}

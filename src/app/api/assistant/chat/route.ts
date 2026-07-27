@@ -47,7 +47,7 @@ import {
   type AgentBusinessId,
 } from '@/lib/agent-api/business-context'
 import { shouldPersistIncomingMessage } from '@/agent/lib/continuation-policy'
-import { type ChatMode, DEFAULT_CHAT_MODE, normalizeChatMode } from '@/agent/lib/chat-mode'
+import { type ChatMode, chatModeForPermission } from '@/agent/lib/chat-mode'
 import {
   type PermissionMode,
   type ElevationGrant,
@@ -63,6 +63,36 @@ export const runtime = 'nodejs'
 // (default 280s) clamped ≥20s under this — set the env to 780000 to use the room.
 export const maxDuration = 800
 
+/**
+ * Skill-engine diagnostic — measured HERE because this is where the turn runs.
+ *
+ * The engine is switched on in production and no turn has ever emitted
+ * `skill_pinned`, not even with an owner pin written straight into the
+ * conversation row. The standalone probe route proved the SKILL.md packages are
+ * on disk, discovered, and routed — but that is a DIFFERENT lambda with its own
+ * traced files. This GET runs the same `buildActiveSkills` call the turn makes,
+ * in this bundle, with a real conversation id, and reports the error the live
+ * path swallows by design.
+ *
+ * Internal-token only, read-only, no model call. It does not touch POST.
+ */
+export async function GET(req: NextRequest) {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
+  const { verifyAgentInternalToken, extractBearerToken } = await import('@/lib/agent-internal-auth')
+  if (!verifyAgentInternalToken(extractBearerToken(req.headers.get('authorization')))) {
+    return Response.json({ error: 'unauthorized' }, { status: 401 })
+  }
+  const { skillDiskSnapshot } = await import('@/agent/lib/skill-engine/probe')
+  return Response.json(
+    await skillDiskSnapshot({
+      probe: req.nextUrl.searchParams.get('probe'),
+      conversationId: req.nextUrl.searchParams.get('conversationId'),
+      includeActive: true,
+    }),
+  )
+}
+
 interface FileRef { bucket: string; path: string; mediaType: string }
 
 interface ChatBody {
@@ -71,8 +101,6 @@ interface ChatBody {
   files?: FileRef[]
   projectId?: string
   personalMode?: boolean
-  /** Chat mode picker value, sent with the FIRST message of a new conversation. */
-  chatMode?: string
   /**
    * PM-1 permission mode, sent with the FIRST message of a new conversation only.
    * For an EXISTING conversation the server reads the row and ignores this — a
@@ -284,7 +312,11 @@ export async function POST(req: NextRequest) {
   let projectSystemInstructions: string | null = null
   // Owner's chat mode picker (auto | direct | plan | plan_drive). Absent/unknown
   // ⇒ 'auto', which is exactly today's behaviour.
-  let chatMode: ChatMode = normalizeChatMode(body.chatMode)
+  // ONE mode chip (owner, 2026-07-28). The execution style is no longer chosen —
+  // it is derived from the permission mode below, so the two can never disagree
+  // and a chat saved with an old `direct`/`plan_drive` pick cannot keep acting on
+  // it silently. Declared here and assigned after the permission mode resolves.
+  let chatMode: ChatMode = 'auto'
   // PM-1 — the permission axis. Deliberately NOT taken from the request body:
   // the client may say what it likes, the server reads the conversation row.
   // That is the whole "must sync" guarantee — a tampered or stale client cannot
@@ -354,7 +386,6 @@ export async function POST(req: NextRequest) {
         }
       }
       conversationModelId = conv.modelId ?? defaultHeadModelId
-      chatMode = normalizeChatMode(conv.chatMode)
       permissionMode = normalizePermissionMode(conv.permissionMode)
       elevationGrant = parseElevationGrant(conv.elevationGrant)
       personalMode = isPersonalProject(conv.project) || personalMode
@@ -395,6 +426,8 @@ export async function POST(req: NextRequest) {
         : (message.slice(0, 60) || null)
 
       if (!conversationId) {
+        // ONE chip: the execution style follows the permission the owner picked.
+        chatMode = chatModeForPermission(permissionMode)
         const inherited = personalMode
           ? null
           : await inheritConversationBusinessId(requestedProjectId)
@@ -676,6 +709,10 @@ export async function POST(req: NextRequest) {
   const AUTO_CONTINUE_INSTRUCTION =
     '[SYSTEM CONTINUATION — Boss নতুন কোনো message পাঠাননি। আগের turn সত্যিই server deadline-এ থেমেছে এবং persisted continuation claim এই turn-কে একবারের জন্য চালু করেছে।] ' +
     'Unresolved checkpoint থেকে ঠিক পরের ধাপটি ধরো; completed tool/action/artifact আবার চালাবে না। কাজ ইতিমধ্যে complete হলে কোনো tool rerun না করে শুধু স্থির final status দাও।'
+  // An older chat may still hold `direct` or `plan_drive` in its row from when
+  // the second chip existed. Deriving here means that stale pick cannot keep
+  // shaping turns behind his back.
+  chatMode = chatModeForPermission(permissionMode)
   const turnOptions = {
     projectSystemInstructions:
       [

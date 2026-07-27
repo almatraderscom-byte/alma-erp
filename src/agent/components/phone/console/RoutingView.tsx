@@ -177,7 +177,7 @@ export function RoutingView() {
               >
                 {busy ? 'সেভ হচ্ছে…' : 'সেভ করুন'}
               </button>
-              {saved && <span className="text-[12px] text-emerald-500">সেভ হয়েছে — পরের কল থেকেই চালু।</span>}
+              {saved && <span className="text-[12px] txt-pos">সেভ হয়েছে — পরের কল থেকেই চালু।</span>}
             </div>
 
             {problem && <p className="mt-2 tone-red rounded-xl border px-3 py-2 text-[12px]">{problem}</p>}

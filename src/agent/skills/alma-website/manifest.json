@@ -1,11 +1,13 @@
 {
   "name": "alma-website",
-  "description": "Website content/product-page improvement — শুধু owner-gated proposal / PR হিসেবে, কখনো সরাসরি live নয়।",
-  "version": "0.1.0",
+  "description": "Finds what is actually wrong with almatraders.com — broken pages, health, structure, anything needing a code change — and delivers it as an owner-gated proposal or a workbench PR, never a live edit. Use when Boss asks what is wrong with the site, why a page is broken, or for a site change that is not page copy.",
+  "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
   "businessScopes": ["ALMA_LIFESTYLE"],
   "riskTier": "medium",
+  "extends": "alma-base",
+  "whenNotToUse": "পেজের লেখা — title, meta description, alt, product description → seo-fixing-own-site। একটা পণ্য সাইটে তোলা → alma-product-listing। শুধু SEO অবস্থা জানতে চাইলে → seo-auditing-own-site।",
   "requiredCapabilities": [
     "get_website_catalog",
     "get_website_health",
@@ -13,10 +15,22 @@
     "run_workbench_task",
     "check_workbench_task"
   ],
+  "outputContract": {
+    "kind": "approval_card",
+    "mustInclude": ["affected_pages", "before", "after", "delivery_form"]
+  },
+  "stopConditions": [
+    "সরাসরি লাইভে বদলাতে বলা হলে — এই skill শুধু proposal/PR বানায়, deploy করে না",
+    "সমস্যাটা আসলে পেজের লেখা হলে — নিজে লিখতে বসবে না, কোন skill লাগবে বলে দেবে",
+    "health বা catalog না এলে — অনুমান করে 'সব ঠিক আছে' বলবে না"
+  ],
+  "done": [
+    { "tool": "get_website_health" }
+  ],
   "networkPolicy": "allowlist",
   "writePolicy": "owner_gated",
   "approvalPolicy": "always",
   "entryWorkflow": "skill_pack:website",
   "maxSteps": 4,
-  "status": "draft"
+  "status": "active"
 }

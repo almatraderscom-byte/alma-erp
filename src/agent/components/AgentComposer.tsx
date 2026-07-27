@@ -7,9 +7,7 @@ import { cn } from '@/lib/utils'
 import { impactLight, impactMedium } from '@/lib/haptics'
 import AgentModelSelector from './AgentModelSelector'
 import AgentUsagePopover from './AgentUsagePopover'
-import AgentModeSelector from './AgentModeSelector'
 import AgentPermissionSelector from './AgentPermissionSelector'
-import { DEFAULT_CHAT_MODE, type ChatMode } from '@/agent/lib/chat-mode'
 import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@/agent/lib/permission-mode'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 
@@ -35,14 +33,12 @@ interface AgentComposerProps {
   activeModelId?: string
   onModelChange?: (modelId: string) => void
   /** Chat mode picker (auto | direct | plan | plan_drive). */
-  chatMode?: ChatMode
   /** PM-1 permission picker (plan | careful | standard | supervised | elevated). */
   permissionMode?: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
   /** SK-3: the skill pinned to this chat, shown as a chip. */
   pinnedSkill?: { skill: string; source: 'owner' | 'router'; reason: string } | null
   onClearSkillPin?: () => void
-  onChatModeChange?: (mode: ChatMode) => void
   onVoiceStart?: () => void
   /** Pre-fills the input once (e.g. a staff quick-action deep-link). Not auto-sent. */
   seedText?: string
@@ -57,12 +53,10 @@ export default function AgentComposer({
   conversationId,
   isMobile = false,
   activeModelId,
-  chatMode = DEFAULT_CHAT_MODE,
   permissionMode = DEFAULT_PERMISSION_MODE,
   onPermissionModeChange,
   pinnedSkill = null,
   onClearSkillPin,
-  onChatModeChange,
   onModelChange,
   onVoiceStart,
   seedText,
@@ -309,6 +303,12 @@ export default function AgentComposer({
                     type="button"
                     onClick={() => f.id && retryUpload(f.id)}
                     aria-label="আবার চেষ্টা করুন"
+                    // The one place a fixed pale shade is CORRECT: this overlay
+                    // carries its own near-black background (bg-red-950) over a
+                    // thumbnail, so it is dark in both themes. Everything else in
+                    // the agent UI moved to the theme-aware .txt-* tokens after
+                    // the owner found amber-on-amber unreadable (2026-07-27) —
+                    // do not "fix" this one to match.
                     className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 rounded-xl bg-red-950/55 text-[9px] font-semibold text-red-200 backdrop-blur-[1px]"
                   >
                     <span className="text-sm leading-none">↻</span>
@@ -372,19 +372,14 @@ export default function AgentComposer({
             </>
           )}
 
-          {/* How the work happens in this chat (auto / direct / plan / plan-drive) */}
-          {onChatModeChange && (
-            <AgentModeSelector
-              conversationId={conversationId}
-              mode={chatMode}
-              onModeChange={onChatModeChange}
-              disabled={streaming}
-            />
-          )}
-
-          {/* How much it may do without Boss (plan / careful / standard /
-              supervised / elevated). Deliberately the SECOND chip: the first
-              answers "how", this answers "how much". */}
+          {/* OWNER, 2026-07-28: *"web e 2 ta plan mode hoye ase … auto jeta lekha eta
+              remove koro, r porer ta hocche main"*. Two chips, and BOTH of them
+              had a mode called প্ল্যান — one meaning "only plan, run nothing", the
+              other meaning "withhold every effect tool". Nobody can hold that
+              distinction while typing a message, so the execution-style chip
+              (AgentModeSelector) is gone and the permission chip below is the one
+              mode control. Execution style is DERIVED from it server-side
+              (`chatModeForPermission`), so the two can never disagree again. */}
           {onPermissionModeChange && (
             <AgentPermissionSelector
               conversationId={conversationId}

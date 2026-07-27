@@ -26,6 +26,17 @@ const nextConfig = {
       // skill-engine/runtime.ts. Without tracing them into the chat lambda, Vercel
       // drops the source `.md`/`.json` and discovery silently finds nothing.
       '/api/assistant/chat': ['./src/agent/skills/**'],
+      // SK-8: the owner's approval SCREEN hashes the same packages, so it needs
+      // them on disk too. Without this the list comes back EMPTY on Vercel and
+      // nothing can be approved — the same silent-nothing the chat lambda hit.
+      '/api/assistant/skills': ['./src/agent/skills/**'],
+      // The probe that checks whether the line above actually worked. It must
+      // trace the same files the chat route does, or its answer is about a
+      // different lambda than the one that runs the agent.
+      '/api/assistant/internal/skill-probe': ['./src/agent/skills/**'],
+      // SK-8 approvals over the internal token (worker/scripts). Same bytes, a
+      // different door from the owner screen above — both need the files.
+      '/api/assistant/internal/skill-approvals': ['./src/agent/skills/**'],
     },
   },
   images: {

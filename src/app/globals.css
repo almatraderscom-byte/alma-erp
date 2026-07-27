@@ -438,10 +438,19 @@ a,
 .txt-neg { color:#b91c1c; }
 .txt-warn { color:#b45309; }
 .txt-info { color:#1d4ed8; }
+/* Owner-reported 2026-07-27: a failed approval card was amber text on an amber
+   card and could not be read at all. The cause was never the palette — it was
+   fixed Tailwind shades (text-amber-200, text-emerald-300…) which are DARK-THEME
+   colours, sitting on tints that follow the theme. In light mode that is pale on
+   pale. These four (plus accent) are the theme-aware answer that already existed
+   here; the agent screens simply were not using them. `.txt-accent` completes
+   the set so a violet/purple label has one too. */
+.txt-accent { color:#7e22ce; }
 :root[data-theme='dark'] .txt-pos { color:#4ade80; }
 :root[data-theme='dark'] .txt-neg { color:#f87171; }
 :root[data-theme='dark'] .txt-warn { color:#fcd34d; }
 :root[data-theme='dark'] .txt-info { color:#93c5fd; }
+:root[data-theme='dark'] .txt-accent { color:#d8b4fe; }
 
 /* Gold border pulse (coral) */
 @keyframes goldPulse {

@@ -1,11 +1,13 @@
 {
   "name": "alma-staff-dispatch",
-  "description": "স্টাফের কাজ/হাজিরা/লোকেশন দেখে dispatch সিদ্ধান্ত — assignment owner/existing card দিয়ে।",
-  "version": "0.1.0",
+  "description": "Reads who is present, what each person is already doing and where they are, then recommends who should take a job. Use when Boss asks whether someone is in, when a staff member arrived, who is free, or who should be sent. It recommends only — the actual assignment goes through the existing owner-gated card.",
+  "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
   "businessScopes": ["ALMA_LIFESTYLE"],
   "riskTier": "medium",
+  "extends": "alma-base",
+  "whenNotToUse": "কাস্টমারের অর্ডার/পার্সেল কখন পৌঁছাবে → এটা নয়, সাধারণ অর্ডার read। বেতন/অগ্রিম/হিসাব → alma-finance-brief। স্টাফকে সরাসরি মেসেজ পাঠানো এই skill-এর কাজ নয়।",
   "requiredCapabilities": [
     "get_all_staff",
     "get_staff_tasks",
@@ -13,9 +15,19 @@
     "get_staff_location",
     "get_dispatch_status"
   ],
+  "outputContract": {
+    "kind": "chat_brief",
+    "mustInclude": ["who_is_present", "who_is_free", "recommendation_with_reason"]
+  },
+  "stopConditions": [
+    "কাউকে কাজ assign করতে বলা হলে — এই skill নিজে assign করে না, owner-gated card দিয়ে যাবে",
+    "হাজিরার ডেটা না এলে — অনুমান করে 'আছে/নেই' বলবে না",
+    "স্টাফের লোকেশন ব্যক্তিগত তথ্য — কাজের কারণ ছাড়া বলবে না"
+  ],
+  "done": [{ "tool": "get_attendance" }],
   "networkPolicy": "none",
   "writePolicy": "owner_gated",
   "approvalPolicy": "inherit",
   "maxSteps": 5,
-  "status": "draft"
+  "status": "active"
 }

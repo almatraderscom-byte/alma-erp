@@ -1,8 +1,8 @@
 ---
 name: alma-product-listing
-description: List/refresh a product on the website (SEO-clean title/meta/desc/alt); publish stays gated.
-version: 0.1.0
-keywords: product listing, পণ্য লিস্ট, listing, website e add, সাইটে তোল, publish product, product page, নতুন পণ্য, catalog
+description: Puts one product onto the website with clean title, meta, description, alt and slug, checked against the SEO rules first. Use when Boss says to put a product up, add a new item, or refresh a listing. The publish is an owner-gated card.
+version: 1.0.0
+keywords: product listing, পণ্য লিস্ট, listing, website e add, সাইটে তোল, publish product, product page, নতুন পণ্য, catalog, website e tolo, site e tolo
 ---
 
 # Product listing — prepare a clean listing, gated publish

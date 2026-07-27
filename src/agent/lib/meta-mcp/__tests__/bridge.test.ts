@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 /**
  * Meta Ads MCP bridge (Phase MA1) — guards the plan's safety contract:
@@ -251,5 +251,78 @@ describe('handler success path', () => {
     callToolMock.mockRejectedValue(new MetaMcpError('rate_limited', 'meta_mcp: HTTP 429'))
     const r = await trend.handler({})
     expect(r).toMatchObject({ success: false, errorCode: 'rate_limited', retryable: true })
+  })
+})
+
+/**
+ * ADS-2 phase A — the account id the head never had.
+ *
+ * Production, 2026-07-27: four bridged tools in one turn came back
+ * `-32602: Missing required argument: ad_account_id`. The id was in the server's
+ * env the whole time and nothing put it on the wire, so 23 registered read tools
+ * were unusable. These tests hold the default in place.
+ */
+describe('ADS-2 A — ad_account_id default', () => {
+  const tools = createMetaAdsReadTools()
+  const trend = tools.find((t) => t.name === 'meta_ads_insights_performance_trend')!
+  const errors = tools.find((t) => t.name === 'meta_ads_get_errors')!
+  const accounts = tools.find((t) => t.name === 'meta_ads_get_ad_accounts')!
+
+  function catalog(entries: Array<{ name: string; inputSchema?: Record<string, unknown> }>) {
+    kvFindUniqueMock.mockResolvedValue({
+      value: JSON.stringify({ fetchedAt: new Date().toISOString(), tools: entries }),
+    })
+  }
+  const schema = (...keys: string[]) => ({
+    type: 'object',
+    properties: Object.fromEntries(keys.map((k) => [k, { type: 'string' }])),
+  })
+
+  beforeEach(() => {
+    process.env.META_AD_ACCOUNT_ID = 'act_555000111'
+    callToolMock.mockResolvedValue({ content: [{ type: 'text', text: 'null' }] })
+  })
+  afterEach(() => {
+    delete process.env.META_AD_ACCOUNT_ID
+  })
+
+  it('fills in the bare numeric id — Meta rejects the act_ prefix', async () => {
+    catalog([{ name: 'ads_insights_performance_trend', inputSchema: schema('ad_account_id', 'date_preset') }])
+    await trend.handler({ args: { date_preset: 'last_7d' } })
+    expect(callToolMock).toHaveBeenCalledWith('ads_insights_performance_trend', {
+      date_preset: 'last_7d',
+      ad_account_id: '555000111',
+    })
+  })
+
+  it('never overwrites an account the head named itself', async () => {
+    catalog([{ name: 'ads_insights_performance_trend', inputSchema: schema('ad_account_id') }])
+    await trend.handler({ args: { ad_account_id: '999' } })
+    expect(callToolMock).toHaveBeenCalledWith('ads_insights_performance_trend', { ad_account_id: '999' })
+  })
+
+  it('gives ads_get_errors the account as its entity id', async () => {
+    catalog([{ name: 'ads_get_errors', inputSchema: schema('entity_ids') }])
+    await errors.handler({})
+    expect(callToolMock).toHaveBeenCalledWith('ads_get_errors', { entity_ids: ['555000111'] })
+  })
+
+  it('does NOT pin the account-discovery tool to one account', async () => {
+    catalog([{ name: 'ads_get_ad_accounts', inputSchema: schema('ad_account_id') }])
+    await accounts.handler({})
+    expect(callToolMock).toHaveBeenCalledWith('ads_get_ad_accounts', {})
+  })
+
+  it('only injects keys the remote tool actually declares', async () => {
+    catalog([{ name: 'ads_insights_performance_trend', inputSchema: schema('date_preset') }])
+    await trend.handler({ args: { date_preset: 'last_7d' } })
+    expect(callToolMock).toHaveBeenCalledWith('ads_insights_performance_trend', { date_preset: 'last_7d' })
+  })
+
+  it('with no env account, behaves exactly as before', async () => {
+    delete process.env.META_AD_ACCOUNT_ID
+    catalog([{ name: 'ads_insights_performance_trend', inputSchema: schema('ad_account_id') }])
+    await trend.handler({ args: { date_preset: 'last_7d' } })
+    expect(callToolMock).toHaveBeenCalledWith('ads_insights_performance_trend', { date_preset: 'last_7d' })
   })
 })
