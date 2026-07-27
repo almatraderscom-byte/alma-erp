@@ -70,3 +70,21 @@ describe('the gates, before the owner is ever asked', () => {
     expect(res.success).toBe(false)
   })
 })
+
+/**
+ * Watched live on 2026-07-28: the owner named a product, the catalog read
+ * returned its first page, the product was not on it, and the agent concluded
+ * it was not on the site at all. A named product must be findable.
+ */
+describe('finding the product the owner named', () => {
+  const catalog = WEBSITE_TOOLS.find((t) => t.name === 'get_website_catalog')!
+
+  it('takes a search term', () => {
+    expect(Object.keys(catalog.input_schema.properties ?? {})).toContain('search')
+  })
+
+  it('tells the head to use it when one product is named', () => {
+    expect(catalog.description).toMatch(/search=/)
+    expect(catalog.description).toMatch(/unpublished/i)
+  })
+})

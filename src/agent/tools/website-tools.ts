@@ -80,7 +80,9 @@ const get_website_catalog: AgentTool = {
   name: 'get_website_catalog',
   description:
     'Lists the live almatraders.com product catalog from Supabase (published/draft, categories, featured). ' +
-    'Use for "website e ki ache" or before publish/price work. Source of truth for what is on the public site.',
+    'Use for "website e ki ache" or before publish/price work. Source of truth for what is on the public site. ' +
+    'When Boss names ONE product, pass search="<slug, name or SKU>" — it looks through the whole catalog, ' +
+    'including unpublished drafts, instead of the first page.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -89,6 +91,10 @@ const get_website_catalog: AgentTool = {
         description: 'Filter: panjabi, electronics, accessories, home-decor, islamic',
       },
       publishedOnly: { type: 'boolean', description: 'If true, only live/published products' },
+      search: {
+        type: 'string',
+        description: 'Find one product by slug, name or SKU — use this when Boss names a product instead of paging the whole catalog.',
+      },
       limit: { type: 'number', description: 'Max products (default 50)' },
       includeStats: { type: 'boolean', description: 'Include per-category counts and gaps summary' },
     },
@@ -101,10 +107,14 @@ const get_website_catalog: AgentTool = {
       }
     }
     try {
+      const search = input.search ? String(input.search).trim() : undefined
       const products = await listWebsiteProducts({
         category: input.category ? String(input.category) : undefined,
         publishedOnly: input.publishedOnly === true,
-        limit: Number(input.limit ?? 50),
+        // A named product must be findable wherever it sits in the catalog, so a
+        // search reads the whole table before filtering, not the first page.
+        limit: search ? 500 : Number(input.limit ?? 50),
+        search,
       })
       const stats = input.includeStats !== false ? await websiteCatalogStats() : null
       return {
