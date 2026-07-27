@@ -19,7 +19,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { skillApprovalGateEnabled } from '@/agent/config'
+import { AGENT_CONSTITUTION, AGENT_STYLE, AGENT_STYLE_GATE, skillApprovalGateEnabled } from '@/agent/config'
 import { discoverSkills } from '@/agent/lib/skill-engine/loader'
 import { isSkillEngineEnabled } from '@/agent/lib/skill-engine/enabled'
 import { loadApprovalLedger, approveSkill, revokeSkill } from '@/agent/lib/skill-engine/approval-store'
@@ -68,7 +68,20 @@ async function view() {
     loadApprovalLedger(),
     isSkillEngineEnabled(),
   ])
-  return buildApprovalView(skills, ledger, { gateOn: skillApprovalGateEnabled(), engineEnabled })
+  const view = buildApprovalView(skills, ledger, { gateOn: skillApprovalGateEnabled(), engineEnabled })
+  // 2026-07-27: the whole "talk like a person" layer — constitution, style
+  // module, exemplar bank, robotic-filler gate — is auto-ON for preview and OFF
+  // in production unless the env says `on`. Which meant nobody could answer
+  // "is it running on the real agent?" without reading Vercel's dashboard, and
+  // a month-old env dump proved nothing. Now it is on screen.
+  return {
+    ...view,
+    behaviourFlags: {
+      constitution: AGENT_CONSTITUTION,
+      style: AGENT_STYLE,
+      styleGate: AGENT_STYLE_GATE,
+    },
+  }
 }
 
 async function requireOwner(req: NextRequest) {

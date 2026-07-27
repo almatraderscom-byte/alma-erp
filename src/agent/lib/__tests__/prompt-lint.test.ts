@@ -140,8 +140,10 @@ describe('contradiction gates', () => {
 })
 
 describe('token budgets (roadmap Phase 6 exit gates)', () => {
-  it('stable core (identity + safety + style + work policy) ≤ 5k tokens', () => {
-    expect(estimateTokens(compileStableCore())).toBeLessThanOrEqual(5000)
+  it('stable core (identity + safety + style + work policy) ≤ 6k tokens', () => {
+    // 5k → 6k, 2026-07-27. `working_discipline` is core on purpose: it is what
+    // the agent IS, not task knowledge, so it must survive skill isolation.
+    expect(estimateTokens(compileStableCore())).toBeLessThanOrEqual(6000)
   })
 
   it('narrow routed turn stays inside its stable-prompt ceiling', () => {
@@ -165,12 +167,21 @@ describe('token budgets (roadmap Phase 6 exit gates)', () => {
     //
     // The real fix is a trim pass on the always-on prompt. Until that happens,
     // treat the next request to raise this number as a refusal.
+    //
+    // 13,000 → 14,500, 2026-07-27 — and the refusal note above is MINE, so
+    // overriding it needs to be said out loud rather than quietly edited. The
+    // owner lifted the constraint explicitly for the harness-parity work:
+    // *"Budget বা Prompt Size নিয়ে আমার কোনো আপত্তি নেই … Cost কিছুটা বাড়ে,
+    // সেটাও আমার জন্য গ্রহণযোগ্য"*. Measured cost of the +1,043 tokens this
+    // buys, from his own turn meters (~$0.20 per million cached-read tokens,
+    // and the always-on prompt is cached): about ৳৭৫/month at 100 turns a day.
+    // The note stands for anyone who has NOT been given that permission.
     const narrow = buildSystemPromptBlocks({
       businessId: 'ALMA_LIFESTYLE',
       activeGroups: ['base'],
       activeToolNames: ['get_current_datetime', 'save_memory', 'ask_user', 'post_to_facebook'],
     }).stable.map((b) => b.text).join('')
-    expect(estimateTokens(narrow)).toBeLessThanOrEqual(13_000)
+    expect(estimateTokens(narrow)).toBeLessThanOrEqual(14_500)
   })
 
   it('assembly is deterministic (same args → same bytes)', () => {
