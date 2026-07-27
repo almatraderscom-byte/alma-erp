@@ -1,19 +1,43 @@
 {
   "name": "alma-audience-builder",
-  "description": "কাস্টমার segment/intelligence থেকে টার্গেট audience সংজ্ঞা — তৈরি owner-gated।",
-  "version": "0.1.0",
+  "description": "Defines WHO an ad should reach, from our own segment data — which group, how many, why them, and what it will be used for. Use when Boss asks who to target, or wants a target group worked out. It defines only: its allowlist holds no tool that creates or exports an audience, so nobody's personal data leaves on this skill's say-so.",
+  "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
-  "businessScopes": ["ALMA_LIFESTYLE"],
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
   "riskTier": "medium",
   "requiredCapabilities": [
     "list_audiences",
     "get_customer_segments",
     "get_customer_intelligence"
   ],
-  "networkPolicy": "allowlist",
-  "writePolicy": "owner_gated",
+  "networkPolicy": "none",
+  "writePolicy": "none",
   "approvalPolicy": "inherit",
   "maxSteps": 4,
-  "status": "draft"
+  "status": "active",
+  "extends": "alma-base",
+  "whenNotToUse": "ক্যাম্পেইন চালু/বুস্ট/বাজেট → alma-meta-campaign-launch (audience সেখানে ইনপুট, কাজ নয়)। মার্কেটিং কেমন চলছে → alma-marketing। কাস্টমারকে মেসেজ পাঠানো → alma-customer-support।",
+  "outputContract": {
+    "kind": "report",
+    "mustInclude": [
+      "who",
+      "why_this_group",
+      "size_estimate",
+      "existing_audience_overlap",
+      "intended_campaign"
+    ]
+  },
+  "stopConditions": [
+    "সংজ্ঞা ডেটা থেকে হবে — segment টুল যা দেখায়নি এমন বৈশিষ্ট্য বানিয়ে লিখবে না",
+    "একই রকম audience আগে থেকে থাকলে নতুন সংজ্ঞা না দিয়ে আগে সেটাই দেখাবে",
+    "ব্যক্তিগত তথ্য (নাম-ফোন-ঠিকানার তালিকা) বের বা রপ্তানি করবে না — গ্রুপের সংজ্ঞা, ব্যক্তির তালিকা নয়"
+  ],
+  "done": [
+    {
+      "tool": "get_customer_segments"
+    }
+  ]
 }

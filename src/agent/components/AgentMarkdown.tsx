@@ -131,7 +131,12 @@ function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
           li({ children }) { return <li className="leading-relaxed text-cream">{children}</li> },
           code({ className: cls, children, ...props }) {
             const isBlock = cls?.startsWith('language-')
-            const codeText = String(children).replace(/\n$/, '')
+            // `children` is undefined for an EMPTY fence, and `String(undefined)`
+            // is the literal word "undefined" — which is exactly what Boss saw on
+            // his screen 2026-07-28: three cards in a row reading `undefined`.
+            // An empty block has nothing to show, so it renders as nothing.
+            const codeText = (children == null ? '' : String(children)).replace(/\n$/, '')
+            if (isBlock && !codeText.trim()) return null
             if (isBlock) {
               const lang = cls?.replace('language-', '') ?? ''
               // Copyable DELIVERABLE block (caption / post / ready-to-send text).

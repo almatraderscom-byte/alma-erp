@@ -359,18 +359,36 @@ the iOS simulator build, which no change here touches.
 
 ### What is left, honestly
 
-**Item 3 — skill promotion: 9 of 14 done, 5 remain.**
+**Item 3 — skill promotion: 14 of 14 done (2026-07-28). Nothing left in `draft`.**
 
-| still `draft` | the known blocker |
-|---|---|
-| `alma-customer-support` | takes the parcel message in the drafts-included run; customer-facing, so it goes late |
-| `alma-meta-campaign-launch` | spends money — decide whether it should be `implicit: false` (Boss names it) first |
-| `alma-audience-builder` | "audience" was a keyword collision with the campaign skill; check it is really gone |
-| `alma-agent-incident-diagnosis` | SK-0's only false trigger came from its bare "dekho" keyword |
-| `alma-browser-operator` | highest risk in the set — last, deliberately |
+The last five, in the order they were done and with what each one's recorded
+blocker actually turned out to be:
+
+| # | skill | the blocker, and what it really was |
+|---|---|---|
+| 9 | `alma-agent-incident-diagnosis` | bare `problem` / `সমস্যা` keywords. Dropped — a website problem is alma-website's. Lowest blast radius left (`writePolicy: none`), so it went first |
+| 10 | `alma-audience-builder` | the `audience` collision. Fixed on the OTHER side: audience is what a campaign consumes, so the word left `alma-meta-campaign-launch`. Lint's keyword-collision count is now 0 |
+| 11 | `alma-customer-support` | the parcel message. The cause was its own NAME — selection scores name tokens, so `customer` was worth 1 before the description said a word |
+| 12 | `alma-meta-campaign-launch` | "should it be `implicit: false`?" — no. The gate is the card plus Meta creating everything PAUSED. It got a REQUIRED pre-flight instead (`ads_campaign_plan` before any card) |
+| 13 | `alma-browser-operator` | highest risk, deliberately last. Nothing was widened: the final-submit block and credential refusal are in code, so the promotion only added order (status check, look-before-act) |
+
+Three of the five had their `writePolicy` / `networkPolicy` corrected on the way
+through, because the drafts described gates that did not exist — an allowlist with
+no write tool in it is not "owner_gated", it is `none`, and saying so is the
+difference between a promise and a guarantee.
+
+**The live meter closed the set:** 22 of 22 corpus messages now pin the right
+skill on the LIVE path (was 17), **0 wrong**, **0 false triggers**. Lint 39 → 16.
+The browser message was the one row that had never matched anything at all.
 
 `alma-seo-audit` and `alma-client-seo` are **retired**, not pending: superseded by
 the SK-5 skills, and both claimed "seo".
+
+**Owner action, and the reason it cannot be done from here.** The approval gate is
+ON in Preview, and these five are `unapproved` — so the engine will hold them back
+until Boss approves each one at `/agent/staff-monitor`. That is the ledger working
+as designed (approving is a person clicking, because the ledger's whole question is
+*who* said yes), not a bug to route around.
 
 **Item 5 — Upstash: built, flag OFF, worker NOT deployed.**
 The read path (poll the durable log when there is no Redis to tail) is live and
@@ -378,9 +396,65 @@ already helping. The write path is `AGENT_TURN_HANDOFF_HTTP`, default off, and
 `worker/src/diagnostic-http.mjs` still needs a manual `pm2 restart` on the VPS —
 his call, not something to do from here.
 
-**Roadmap-2's own remaining list:** the router's last misses (all skill-library
-gaps, not router gaps) and the registry budget, which is written but never
-exercised at scale — revisit past ~10 active skills. There are 13 now.
+**Registry budget — measured 2026-07-28, no longer an assumption.** It had only
+ever been exercised against `fake()` skills with 300 identical characters. With
+all 14 promoted there are **17 selectable skills using 5,490 of 6,000 characters**
+— headroom of roughly ONE skill. The failure at that edge is not a truncated list,
+it is a cliff: one character over and `shortened` flips for the whole registry,
+cutting every description to 80 characters at once. That matters because three of
+these five promotions were only possible by writing a description precise enough
+to stop stealing another skill's message, and 80 characters is about where a
+description stops saying WHEN to use a skill. `router.test.ts` now asserts the
+cliff has not been crossed, so the day it does is a decision — raise the budget or
+trim the descriptions — instead of a silent drop in routing quality.
+
+**And the thing that measurement turned up:** `buildRegistryBlock` has **no caller**
+anywhere in `src` or `worker`. It is real code with real tests that nothing loads.
+So the 5,490 characters cost nothing today, and anyone reading that number as
+"skills are expensive" would be wrong. Wiring it is a separate decision — the
+budget should be proven useful before it is proven cheap.
+
+The router's misses are gone: the skill-library gap that caused every one of them
+was the drafts, and there are none.
+
+**The next isolation candidate is `alma-browser-operator`,** and it is written
+down here rather than done: it is the only skill that reads pages nobody here
+wrote, which is exactly the argument item 4 used for the two SEO skills. It needs
+his paired Chrome to prove live, so it waits for him.
+
+### What the LIVE skill test found — 2026-07-28
+
+Promoting the five skills was verified by tests and by the router meter. Then the
+same five were driven with his own sentences in his own browser, and the test that
+mattered was the one nobody wrote: **look at the screen.** Four defects, all of
+them shipping already, none visible from the test suite.
+
+| # | what he would have seen | root cause |
+|---|---|---|
+| 1 | `{"name": "marketing_report", "arguments": …}` and `<parameter name="limit">20</parameter>` in the reply | the JSON `name/arguments` shape matched no pattern; `<parameter>` had a pattern but the cheap guard never listed it, so the function returned before any pattern ran |
+| 2 | cards reading `undefined` | `String(children)` on an EMPTY markdown fence is the literal word |
+| 3 | "The first line has been outputted as required." as the whole visible thought | the rule's NAME was matched; the model reporting that it obeyed the rule was not |
+| 4 | a four-step skill stopping after step one | two sign-off shapes no guard covered: "এবার X দেখতে হবে" (obligation) and "ফল এলে আপডেট দেব" with nothing queued |
+
+**And then the leak came back on the very next turn**, which is the part worth
+keeping. The first fix was proven by tests and by one clean live run — and it was
+only half the story: the round's prose is emitted as ONE block after cleaning, but
+**thinking is streamed token by token and nothing cleaned that path**. The repair
+had fixed the stored transcript and left his live screen exactly as broken. It now
+runs through a stream filter that holds an opener until it closes, because
+`<parameter name="fullScan">` arrives as `<param` + `eter name="fullScan"` +
+`>true</parameter>` and any per-delta strip releases it one delta early.
+
+Two lessons recorded against myself: **one clean live run is not proof** (the same
+mistake this document already records about single-run comparisons), and **a test
+as narrow as the bug passes while the bug survives** — the first `<parameter>` test
+asserted the tag name was gone and never checked the value, so stripping tags
+without their contents produced `truetruetrue…` and went green.
+
+All four re-verified live after the fixes: no markup, no `undefined`, no harness
+chatter, and both skills that used to stop now finish — the audience skill refused
+to invent a segment because purchase history is missing (its own stop condition,
+firing live) and customer-support delivered drafts with evidence per line.
 
 ### Harness parity — where it actually stands
 

@@ -134,9 +134,23 @@ describe('layer 3 — hand the close calls to the head, do not guess', () => {
   // The false trigger SK-0 measured: one incidental token ("dekho") pinned the
   // incident-diagnosis skill on a score of 1. A wrong pin costs tools, so a weak
   // match must produce NO skill.
+  //
+  // 2026-07-28: promoting alma-agent-incident-diagnosis dropped its bare
+  // `problem` / `সমস্যা` keywords, so this message now matches NOTHING at all —
+  // a better outcome than a weak candidate, but it stops exercising the weak
+  // branch. So the weak branch moved to a message that still produces one, and
+  // this message keeps the assertion that actually matters: no pin.
   it('refuses to pin on one incidental word', async () => {
     const index = await discoverSkills(SKILLS_ROOT, { includeDraft: true })
     const d = routeSkill(index, 'kalker order gulo dekhao')
+
+    expect(d.skill).toBeNull()
+  })
+
+  it('a weak best match is still no pin, and still says what it considered', async () => {
+    const index = await discoverSkills(SKILLS_ROOT, { includeDraft: true })
+    // "audit" alone scores 1 for the SEO audit skill; an ads question is not it.
+    const d = routeSkill(index, 'amar ads account ta ekbar valo kore audit koro')
 
     expect(d.skill).toBeNull()
     expect(d.reason).toContain('দুর্বল')
@@ -178,6 +192,35 @@ describe('U3 — the registry budget', () => {
     expect(b.text.length).toBeLessThanOrEqual(REGISTRY_BUDGET_CHARS)
     expect(b.dropped.length).toBeGreaterThan(0)
     expect(b.included.length + b.dropped.length).toBe(200)
+  })
+
+  /**
+   * The roadmap item this closes: the budget was only ever exercised against
+   * `fake()` skills with 300 identical characters, so "it works past 10 skills"
+   * was an assumption. Measured 2026-07-28 with all 14 originals promoted:
+   * **17 selectable skills, 5,490 of 6,000 characters.**
+   *
+   * The headroom is one skill. And the failure at the edge is not a truncated
+   * list — it is a CLIFF: one character over, and `shortened` flips for the
+   * whole registry, cutting every description to 80 characters at once. The
+   * promotions above are the proof of what that would cost, because three of
+   * them were only possible by writing a description precise enough to stop
+   * stealing another skill's message, and 80 characters is roughly the point
+   * where a description stops saying WHEN to use the skill.
+   *
+   * So this asserts the cliff has not been crossed. The day it fails, it is a
+   * decision — raise the budget or trim the descriptions — not a silent
+   * quality drop.
+   */
+  it('the REAL registry still fits, and has not hit the shortening cliff', async () => {
+    const live = await discoverSkills(SKILLS_ROOT)
+    const selectable = live.skills.filter((s) => s.implicit !== false)
+    const b = buildRegistryBlock(selectable)
+
+    expect(selectable.length).toBeGreaterThanOrEqual(14)
+    expect(b.dropped).toEqual([])
+    expect(b.shortened).toBe(false)
+    expect(b.text.length).toBeLessThanOrEqual(REGISTRY_BUDGET_CHARS)
   })
 })
 
