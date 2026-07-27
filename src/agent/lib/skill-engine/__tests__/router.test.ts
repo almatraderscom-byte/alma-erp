@@ -136,6 +136,57 @@ describe('U3 — the registry budget', () => {
   })
 })
 
+/**
+ * The number above is measured with DRAFTS INCLUDED — it is what routing would
+ * score if every skill were promoted. It is not what he experiences.
+ *
+ * On the live path the loader offers only `active` skills, so a corpus message
+ * whose skill is still draft gets nothing pinned. That is the RIGHT outcome (a
+ * wrong pin also removes the tools the real job needed), but it means the two
+ * numbers measure different things, and reporting only the optimistic one is how
+ * "81%" would quietly become a claim about his Tuesday.
+ *
+ * So this section records the live picture as a promotion meter: how much of his
+ * corpus is covered by skills that have actually been promoted, and — the number
+ * that must never slip — how many of the pins made are wrong.
+ */
+async function livePromotionSection(): Promise<string[]> {
+  const live = await discoverSkills(SKILLS_ROOT)
+  const promoted = live.skills.filter((s) => s.implicit !== false).map((s) => s.name).sort()
+
+  let covered = 0
+  let correct = 0
+  let wrong = 0
+  let falseTriggers = 0
+  for (const c of OWNER_CORPUS) {
+    const d = routeSkill(live, c.text)
+    if (c.expected === null) {
+      if (d.skill !== null) falseTriggers++
+      continue
+    }
+    if (d.skill === null) continue
+    covered++
+    if (d.skill === c.expected) correct++
+    else wrong++
+  }
+  const shouldPick = OWNER_CORPUS.filter((c) => c.expected !== null).length
+
+  return [
+    '## Live path — only the skills actually promoted',
+    '',
+    `Promoted so far (**${promoted.length}**): ${promoted.map((n) => `\`${n}\``).join(', ')}`,
+    '',
+    `- Corpus messages that need a skill: **${shouldPick}** — one is pinned for **${covered}**`,
+    `- Of those pins, correct: **${correct}** · wrong: **${wrong}**`,
+    `- False triggers on messages that should pin nothing: **${falseTriggers}**`,
+    '',
+    '> The uncovered messages are not router failures — their skills are still',
+    '> `draft`. Promotion is one at a time with evals, so this coverage number is',
+    '> the progress meter; **wrong** and **false triggers** are what must stay at 0.',
+    '',
+  ]
+}
+
 describe('the whole router on the owner’s corpus', () => {
   it('beats keyword-only routing, and records by how much', async () => {
     const index = await discoverSkills(SKILLS_ROOT, { includeDraft: true })
@@ -181,6 +232,7 @@ describe('the whole router on the owner’s corpus', () => {
       '|---|---|---|---|---|---|',
       ...rows,
       '',
+      ...(await livePromotionSection()),
     ].join('\n')
 
     await fs.writeFile(path.join(process.cwd(), 'docs', 'skill-router-result.md'), doc, 'utf8')

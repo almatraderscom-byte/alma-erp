@@ -1,11 +1,13 @@
 {
   "name": "alma-finance-brief",
-  "description": "Boss-এর জন্য আর্থিক সারসংক্ষেপ: বিক্রি, খরচ, ledger, health — এক জায়গায়, read-only।",
-  "version": "0.1.0",
+  "description": "Reads the business money position — sales, expense, ledger dues and overall financial health — and answers with one prioritised Bangla brief. Use when Boss asks how much came in or went out, what the balance or পাওনা-দেনা is, or how the business is doing financially. Read-only: it holds no tool that moves money and never approves a payment.",
+  "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
   "businessScopes": ["ALMA_LIFESTYLE", "ALMA_TRADING", "CDIT"],
   "riskTier": "low",
+  "extends": "alma-base",
+  "whenNotToUse": "খরচ/লেনদেন লিখে রাখতে বা বিল পরিশোধ করতে বলা হলে — এটা read-only, ওটা অন্য পথ। মার্কেটিং খরচের হিসাব চাইলে → alma-marketing। একটা নির্দিষ্ট অর্ডারের টাকা → সাধারণ ERP read, skill লাগে না।",
   "requiredCapabilities": [
     "get_financial_health",
     "get_sales_summary",
@@ -14,9 +16,24 @@
     "list_recent_transactions",
     "list_bills"
   ],
+  "outputContract": {
+    "kind": "chat_brief",
+    "mustInclude": ["net_position", "sales", "expense", "dues"]
+  },
+  "stopConditions": [
+    "Boss টাকা পাঠাতে/খরচ লিখতে/বিল পরিশোধ করতে বললে — এই skill-এ সে ক্ষমতা নেই, সোজা বলে থামবে",
+    "চারটি required read-এর কোনোটা fail করলে — অনুমান করে সংখ্যা বানাবে না, কোনটা আনা যায়নি বলবে",
+    "একই সংখ্যা দুই টুলে দুই রকম এলে — নিজে মিলিয়ে না নিয়ে Boss-কে জানাবে"
+  ],
+  "done": [
+    { "tool": "get_financial_health" },
+    { "tool": "get_sales_summary" },
+    { "tool": "get_expense_summary" },
+    { "tool": "get_ledger_balances" }
+  ],
   "networkPolicy": "none",
   "writePolicy": "none",
   "approvalPolicy": "inherit",
   "maxSteps": 6,
-  "status": "draft"
+  "status": "active"
 }

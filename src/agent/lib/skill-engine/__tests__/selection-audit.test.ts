@@ -64,7 +64,11 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     // `alma-base` is active but `implicit: false` — inherited via `extends`,
     // never selected. It must not show up as a choice.
     const selectable = live.skills.filter((s) => s.implicit !== false).map((s) => s.name).sort()
+    // Promotions land here ONE AT A TIME, each with its own evals — this list is
+    // the record of which ones have actually been through that.
+    //   2026-07-27: alma-finance-brief, the first of the 16 originals.
     expect(selectable).toEqual([
+      'alma-finance-brief',
       'alma-owner-daily-briefing',
       'seo-auditing-own-site',
       'seo-fixing-client-site',
@@ -72,7 +76,7 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     ])
 
     const stillDraft = all.skills.length - live.skills.length
-    expect(stillDraft).toBeGreaterThanOrEqual(15)
+    expect(stillDraft).toBeGreaterThanOrEqual(14)
   })
 
   it('records the baseline table and the headline numbers', async () => {
