@@ -78,11 +78,13 @@ describe('Creative Studio production responsive and a11y contract', () => {
   })
 
   it('keeps viewport overlays outside transformed containing blocks', () => {
+    const imageLab = readFileSync(join(v3Root, 'StudioV3ImageLab.tsx'), 'utf8')
     const pageRule = v3Styles.match(/\.page\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
     const enterFrames = v3Styles.match(/@keyframes studioEnter\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
     expect(pageRule).not.toContain('transform:')
     expect(enterFrames).not.toContain('transform:')
     expect(v3Styles).toContain('.v3Composer.v4FloatingComposer.v6ComposerExpanded')
-    expect(v3Styles).toContain('inset: 0;')
+    expect(v3Styles).toContain('inset: 68px 0 0;')
+    expect(imageLab).toContain("composerRef.current?.scrollTo({ top: 0")
   })
 })

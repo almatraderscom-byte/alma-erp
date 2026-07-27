@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import type {
   GalleryItem,
@@ -198,6 +198,7 @@ export function StudioV3ImageLab({
   }) | null>(null)
   const [estimating, setEstimating] = useState(false)
   const [queueing, setQueueing] = useState(false)
+  const composerRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
     let live = true
@@ -268,6 +269,11 @@ export function StudioV3ImageLab({
       window.removeEventListener('keydown', onKeyDown)
     }
   }, [isExpanded])
+
+  useEffect(() => {
+    if (!isExpanded) return
+    composerRef.current?.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }, [architecture, isExpanded])
 
   useEffect(
     () => () => {
@@ -745,6 +751,7 @@ export function StudioV3ImageLab({
               architecture === 'auto' ? styles.v4ComposerAuto : styles.v4ComposerAdvanced
             } ${isExpanded ? styles.v6ComposerExpanded : ''}`}
             data-workspace={isExpanded ? 'expanded' : 'compact'}
+            ref={composerRef}
           >
             {architecture === 'auto' && (
               <div className={styles.v4ComposerRecipes} aria-label="Project recipes">
