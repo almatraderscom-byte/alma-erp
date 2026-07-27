@@ -926,7 +926,7 @@ function ImageComposer({
 
       <div className={styles.v3ComposerBody}>
         <details className={styles.v5ComposerDisclosure}>
-          <summary>
+          <summary role="button">
             <span>
               <StudioV2Icon name="assets" size={15} />
               Sources
@@ -1105,7 +1105,7 @@ function ImageComposer({
 
         {mode !== 'reel' && (
           <details className={styles.v5ComposerDisclosure}>
-            <summary>
+            <summary role="button">
               <span>
                 <StudioV2Icon name="inspector" size={15} />
                 Production controls
