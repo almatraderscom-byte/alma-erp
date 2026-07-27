@@ -190,6 +190,7 @@ describe('scenario hygiene', () => {
       'alma-staff-dispatch',
       'alma-product-listing',
       'alma-product-social-post',
+      'alma-website',
     ]) {
       expect(ALL_SCENARIOS.filter((s) => s.expectSkill === skill).length).toBeGreaterThanOrEqual(3)
     }

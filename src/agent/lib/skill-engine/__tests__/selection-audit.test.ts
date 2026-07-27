@@ -77,6 +77,7 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     //   2026-07-27: alma-product-listing, the fourth.
     //   2026-07-27: alma-product-social-post, the fifth — promoted because the
     //   fourth started winning its message.
+    //   2026-07-27: alma-website, the sixth — scope narrowed away from page copy.
     expect(selectable).toEqual([
       'alma-finance-brief',
       'alma-owner-daily-briefing',
@@ -84,13 +85,14 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
       'alma-product-social-post',
       'alma-research',
       'alma-staff-dispatch',
+      'alma-website',
       'seo-auditing-own-site',
       'seo-fixing-client-site',
       'seo-fixing-own-site',
     ])
 
     const stillDraft = all.skills.length - live.skills.length
-    expect(stillDraft).toBeGreaterThanOrEqual(8)
+    expect(stillDraft).toBeGreaterThanOrEqual(7)
   })
 
   it('records the baseline table and the headline numbers', async () => {

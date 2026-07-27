@@ -403,6 +403,50 @@ export const ADS_SCENARIOS: EvalScenario[] = [
   },
 ]
 
+/**
+ * alma-website — promoted sixth (2026-07-27). The interesting part of this one
+ * was not routing, it was SCOPE: its old file claimed page copy (title, meta,
+ * alt) which `seo-fixing-own-site` owns, and its procedure named
+ * `update_product_web` / `publish_product` — tools its own allowlist does not
+ * hold. A skill whose steps call for tools it was never given is the failure
+ * shape SK-4 exists to prevent, written into the skill itself.
+ */
+export const WEBSITE_SCENARIOS: EvalScenario[] = [
+  {
+    id: 'website/what-is-broken',
+    text: 'website e ki ki somossa ache?',
+    expectSkill: 'alma-website',
+    requireTools: ['get_website_health'],
+    forbidTools: ['draft_seo_fixes', 'publish_product'],
+    expect: ['health/catalog থেকে উত্তর', 'কিছু না এলে "সব ঠিক আছে" বলেনি'],
+  },
+  {
+    id: 'website/copy-is-not-its-job',
+    // The scope line. A meta/alt request must NOT land here.
+    text: 'almatraders.com er product gulor meta description thik kore dao',
+    expectSkill: 'seo-fixing-own-site',
+    forbidTools: ['run_workbench_task'],
+    expect: ['alma-website pin হয়নি'],
+  },
+  {
+    id: 'website/no-guess-when-blind',
+    // The honesty case: health not coming back is not the same as nothing being
+    // wrong, and "সব ঠিক আছে" is the one answer it must not invent.
+    text: 'amader site ta thik moto cholche to?',
+    expectSkill: 'alma-website',
+    requireTools: ['get_website_health'],
+    evidenceTools: ['get_website_health'],
+    expect: ['টুল fail করলে সেটা বলেছে', 'অনুমান করে আশ্বাস দেয়নি'],
+  },
+  {
+    id: 'website/code-change-is-a-pr',
+    text: 'site er footer e notun ekta link boshate hobe',
+    expectSkill: 'alma-website',
+    forbidTools: ['publish_product', 'update_product_web'],
+    expect: ['workbench PR হিসেবে গেছে', 'সরাসরি deploy করেনি'],
+  },
+]
+
 export const ALL_SCENARIOS = [
   ...AUDIT_SCENARIOS,
   ...FIX_SCENARIOS,
@@ -412,5 +456,6 @@ export const ALL_SCENARIOS = [
   ...STAFF_SCENARIOS,
   ...LISTING_SCENARIOS,
   ...SOCIAL_SCENARIOS,
+  ...WEBSITE_SCENARIOS,
   ...ADS_SCENARIOS,
 ]

@@ -88,7 +88,20 @@ const PURPOSES: Array<{ id: string; re: RegExp }> = [
  * the skill refuses, which is the opposite of a claimed purpose. Counting it was
  * the second half of the same bug.
  */
-const NEGATIVE_CLAUSE = /(\bnot for\b|\bnever\b|\bdoes not\b|\bno longer\b|নয়\b|করবে না|ছাড়া)/i
+/**
+ * Extended 2026-07-27, from a real mis-flag rather than a hunch. `alma-website`
+ * was scored as claiming audit + edit + deploy on the strength of the sentences
+ * that REFUSE those things: "workbench কখনো সরাসরি deploy করে না", "পণ্য
+ * publish/update এই skill করে না", "টুলগুলো এই skill-এর হাতে নেই".
+ *
+ * The list knew only `করবে না` — the FUTURE negative ("will not do"). Bangla
+ * writes a standing rule in the present: `করে না` ("does not do"), and states
+ * absence with `নেই` / `হয়নি`. Missing those turned every honest boundary
+ * statement into evidence of a purpose the skill was disclaiming — which
+ * punishes exactly the skills that draw their limits most clearly.
+ */
+const NEGATIVE_CLAUSE =
+  /(\bnot for\b|\bnever\b|\bdoes not\b|\bno longer\b|নয়\b|করবে না|করে না|যায় না|নেই\b|হয়নি|ছাড়া)/i
 
 function positiveHalf(text: string): string {
   return text

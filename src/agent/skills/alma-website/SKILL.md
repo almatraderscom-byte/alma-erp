@@ -1,8 +1,8 @@
 ---
 name: alma-website
-description: Website improvements shipped as PROPOSALS / PRs only — never a direct live change.
-version: 0.1.0
-keywords: website, ওয়েবসাইট, product page, landing page, site content, পণ্যের পেজ, সাইট ঠিক কর, web copy, meta
+description: Finds what is actually wrong with almatraders.com — broken pages, health, structure, anything needing a code change — and delivers it as an owner-gated proposal or a workbench PR, never a live edit. Use when Boss asks what is wrong with the site or wants a site change that is not page copy.
+version: 1.0.0
+keywords: website, ওয়েবসাইট, site content, landing page, সাইটের সমস্যা, site broken, page broken, sitename kaj korche na, website health, workbench
 ---
 
 # Website — improvements shipped as PROPOSALS / PRs only
@@ -13,9 +13,13 @@ proposal বা PR হিসেবে** — কখনো সরাসরি live
 ## ধাপ
 
 1. **Baseline (required):** বর্তমান অবস্থা পড়ো — catalog + health + (content কাজ হলে) improve-হবে এমন live পেজ fetch। tools: `get_website_catalog`, `get_website_health`, `fetch_website_page`।
-2. **Draft (required):** প্রতি পেজ/প্রোডাক্টে উন্নত copy/structure (title, meta, description, alt) — প্রতিটার পূর্ণ before/after।
-3. **Propose (required):** প্রতিটা পরিবর্তন owner-gated প্রস্তাব হিসেবে (`update_product_web` / `publish_product` / `unpublish_product`)। কোড-লেভেল সাইট পরিবর্তন workbench-এ **PR হিসেবে তৈরি — কখনো সরাসরি deploy নয়**। tools: `run_workbench_task`, `check_workbench_task`।
-4. **Summary (required):** change summary — প্রতিটা touched পেজ/প্রোডাক্ট, before → after, কোন proposal/PR বহন করছে। artifact publish।
+2. **Draft (required):** কী বদলাতে হবে — গঠন, ভাঙা লিংক, টেমপ্লেটের ফাঁক, কোড — প্রতিটার পূর্ণ before/after।
+   **পেজের লেখা এই skill-এর কাজ নয়** (title/meta/alt/description) — সেটা `seo-fixing-own-site`; দরকার হলে Boss-কে বলে দাও।
+3. **Propose (required):** কোড-লেভেল পরিবর্তন workbench-এ **PR হিসেবে — কখনো সরাসরি deploy নয়**।
+   tools: `run_workbench_task`, `check_workbench_task`।
+   পণ্যের row বদলানোর টুলগুলো এই skill-এর হাতে **নেই** — ওটা `alma-product-listing`।
+   দরকার হলে Boss-কে সেটাই বলো, ঘুরপথ খুঁজো না।
+4. **Summary (required):** change summary — প্রতিটা ছোঁয়া পেজ, before → after, কোন proposal/PR বহন করছে। artifact হিসেবে সেভ করো।
 
 ## Checklist
 
@@ -26,7 +30,7 @@ proposal বা PR হিসেবে** — কখনো সরাসরি live
 ## Guardrails
 
 - PR-only, always — workbench কখনো সরাসরি deploy করে না।
-- publish/unpublish/feature/update সবই owner approval card-এর ভেতর দিয়ে।
+- পণ্য publish/unpublish/update এই skill করে না — টুলগুলোই দেওয়া হয়নি।
 
 ## Done
 
