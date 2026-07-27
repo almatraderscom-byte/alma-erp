@@ -1172,15 +1172,23 @@ function ImageComposer({
         </label>
 
         {mode !== 'reel' && (
-          <details className={styles.v5ComposerDisclosure}>
-            <summary aria-label="Production controls" role="button">
+          <section
+            aria-labelledby="advanced-production-controls-title"
+            className={styles.v8InlineProductionControls}
+          >
+            <header>
               <span>
-                <StudioV2Icon name="inspector" size={15} />
-                Production controls
+                <i>
+                  <StudioV2Icon name="inspector" size={14} />
+                </i>
+                <span>
+                  <strong id="advanced-production-controls-title">Production controls</strong>
+                  <small>Set the final render contract</small>
+                </span>
               </span>
-              <small>{provider.label} · {aspect} · {resolution} · {quality} · {count} output</small>
-            </summary>
-            <div className={`${styles.v5DisclosureBody} ${styles.v6ProductionControlDeck}`}>
+              <em>Always available</em>
+            </header>
+            <div className={styles.v6ProductionControlDeck}>
               <div className={styles.v3ControlGrid}>
                 <label>
                   <span>Provider / model</span>
@@ -1308,7 +1316,7 @@ function ImageComposer({
                 </div>
               </div>
             </div>
-          </details>
+          </section>
         )}
       </div>
 

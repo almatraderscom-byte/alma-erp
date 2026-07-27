@@ -16018,3 +16018,103 @@
     min-height: 210px;
   }
 }
+
+/* V8 owner correction: advanced render settings belong directly in the composer. */
+.v8InlineProductionControls {
+  background:
+    radial-gradient(circle at 100% 0, rgb(var(--c-accent) / 0.07), transparent 34%),
+    linear-gradient(145deg, rgb(255 255 255 / 0.78), rgb(var(--c-card) / 0.56));
+  border: 1px solid rgb(var(--c-ink) / 0.085);
+  border-radius: 16px;
+  box-shadow:
+    0 20px 42px -40px rgb(var(--c-black) / 0.54),
+    0 1px 0 rgb(255 255 255 / 0.94) inset;
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.v8InlineProductionControls > header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 0 2px;
+}
+
+.v8InlineProductionControls > header > span {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.v8InlineProductionControls > header > span > i {
+  align-items: center;
+  background: rgb(var(--c-accent) / 0.1);
+  border: 1px solid rgb(var(--c-accent) / 0.16);
+  border-radius: 9px;
+  color: rgb(var(--c-accent));
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+
+.v8InlineProductionControls > header > span > span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.v8InlineProductionControls > header strong {
+  color: rgb(var(--c-ink));
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1.2;
+}
+
+.v8InlineProductionControls > header small {
+  color: var(--studio-muted);
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+.v8InlineProductionControls > header > em {
+  background: rgb(var(--c-success) / 0.08);
+  border: 1px solid rgb(var(--c-success) / 0.14);
+  border-radius: 999px;
+  color: rgb(var(--c-success));
+  flex: 0 0 auto;
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 760;
+  letter-spacing: 0.055em;
+  padding: 5px 8px;
+  text-transform: uppercase;
+}
+
+.v8InlineProductionControls .v6ProductionControlDeck {
+  gap: 8px;
+}
+
+.v8InlineProductionControls .v6ProductionControlDeck > .v3ControlGrid,
+.v8InlineProductionControls .v6ProductionControlDeck > .v3OptionGroup {
+  background: rgb(255 255 255 / 0.48);
+  border-color: rgb(var(--c-ink) / 0.065);
+  padding: 9px;
+}
+
+@media (max-width: 760px) {
+  .v8InlineProductionControls {
+    border-radius: 14px;
+    padding: 8px;
+  }
+
+  .v8InlineProductionControls > header {
+    align-items: flex-start;
+  }
+}
