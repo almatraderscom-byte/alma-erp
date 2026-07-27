@@ -86,6 +86,16 @@ describe('the block itself', () => {
     expect(buildOwnerCorrectionNudge('tumi bhul korecho keno?')).toBeNull()
   })
 
+  it('handles the case where HE misread, without telling him he misread', () => {
+    // 2026-07-27, live: he read a table cell as "artifact reports are wrong"
+    // when it said the opposite. Answering "you misunderstood" is a fight;
+    // owning the wording and quoting the real text is not.
+    const text = buildOwnerCorrectionNudge('tumi eta keno bhul bolle? ami to report na banale client ke pathabo kivabe?') ?? ''
+    expect(text).toContain('উল্টো বুঝে')
+    expect(text).toContain('দোষটা')
+    expect(text).toContain('হুবহু তুলে দাও')
+  })
+
   it('is silent on a message that is not a correction', () => {
     expect(buildOwnerCorrectionNudge('ajker sale koto?')).toBeNull()
   })

@@ -775,6 +775,33 @@ const OWNER_DELIVERY_DEFAULTS_RULE = `
 - কিউ করা ≠ শেষ হওয়া; আগেভাগে "সম্পন্ন" নয়।
 `
 
+/**
+ * Harness parity gap 20 (2026-07-27). His agent produces the client SEO reports
+ * and the marketing content that LEAVE the business — so the rules my own
+ * harness carries about published work apply here, and were missing entirely.
+ * Gated on the tools that actually produce outward-facing output, so an ERP
+ * lookup never pays for it.
+ */
+const OUTWARD_CONTENT_RULE = `
+## যা ব্যবসার বাইরে যায় (HARD)
+- **বানানো জিনিস আসল বলে চালানো নিষেধ** — রিভিউ, রসিদ, অর্ডার, স্ক্রিনশট, testimonial, সংখ্যা। নমুনা হলে "নমুনা" লিখে দাও।
+- **অন্যের নামে লিখো না** — যাকে represent করি না। ক্লায়েন্টের নিজের সাইটের জন্য তার নামে লেখা ঠিক আছে।
+- **নিজে না লেখা ফাইল না পড়ে পাঠাবে না** — "খুলো না" বলা থাকলেও।
+- **ক্লায়েন্ট-রিপোর্ট = স্বাক্ষর করা কাগজ:** প্রতিটা দাবির প্রমাণ, প্রতিটা সংখ্যার উৎস।
+`
+
+/**
+ * Harness parity gaps 18–19. `run_workbench_task` calls itself "a mini Claude
+ * Code" and `git` is in its allowed binaries, but nothing told the agent how to
+ * behave in someone else's codebase. Gated on the workbench tools.
+ */
+const WORKBENCH_DISCIPLINE_RULE = `
+## Workbench-এ কোড লেখার নিয়ম
+- **আশপাশের কোডের মতো লেখো** — একই নাম-রীতি, একই কমেন্টের ঘনত্ব, একই ধরন। নিজের আলাদা স্টাইল চাপিয়ো না; পরে মানুষ পড়বে।
+- **না বললে commit/push কোরো না।** বলা হলেও: main-এ সরাসরি নয় — আগে branch।
+- **কমান্ড ok মানে কাজ হয়েছে নয়** — exit 0 মানে শুধু চলেছে। stdout পড়ে নিশ্চিত হও এটা আসল ডেটা, error পেজ নয়।
+`
+
 export const PROMPT_MODULES: PromptModule[] = [
   { id: 'system_core_identity', cls: 'core_identity', version: '2026.07.14', text: SYSTEM_CORE_IDENTITY, core: true },
   { id: 'memory_first', cls: 'memory_context', version: '2026.07.14', text: MEMORY_FIRST_RULE },
@@ -790,6 +817,8 @@ export const PROMPT_MODULES: PromptModule[] = [
   { id: 'live_browser', cls: 'domain_role', version: '2026.07.14', text: LIVE_BROWSER_RULE },
   { id: 'computer_capabilities', cls: 'domain_role', version: '2026.07.14', text: COMPUTER_CAPABILITIES_RULE },
   { id: 'knowledge_graph', cls: 'memory_context', version: '2026.07.14', text: KNOWLEDGE_GRAPH_RULE },
+  { id: 'outward_content', cls: 'global_safety', version: '2026.07.27', text: OUTWARD_CONTENT_RULE },
+  { id: 'workbench_discipline', cls: 'workflow_policy', version: '2026.07.27', text: WORKBENCH_DISCIPLINE_RULE },
   { id: 'planning_block', cls: 'workflow_policy', version: '2026.07.15', text: LIFESTYLE_PLANNING_BLOCK, core: true },
   { id: 'operations', cls: 'business_context', version: '2026.07.14', text: OPERATIONS_RULE },
   { id: 'staff_and_approvals', cls: 'global_safety', version: '2026.07.14', text: STAFF_AND_APPROVALS_RULE },
@@ -856,6 +885,11 @@ const LIFESTYLE_HEAD_ORDER: Array<{ id: string; groups?: ToolGroupName[]; tools?
   // phrasings the router pins a skill on all ten, so the "no skill pinned but
   // the job is client-SEO" case this text existed to cover did not occur.
   { id: 'knowledge_graph' },
+  {
+    id: 'outward_content',
+    tools: ['save_artifact', 'post_to_facebook', 'plan_marketing', 'draft_seo_fixes', 'generate_image', 'send_customer_message'],
+  },
+  { id: 'workbench_discipline', tools: ['run_workbench_task', 'check_workbench_task'] },
 ]
 
 const LIFESTYLE_TAIL_ORDER: Array<{ id: string; groups?: ToolGroupName[] }> = [

@@ -54,13 +54,31 @@ higher is worth more than a better-worded rule one rung lower.
 | 15 | Confirm before irreversible | present in CODE | approval cards, autonomy ladder | — |
 | 16 | Task/plan tracking | present | plan driver, open tasks, todos | — |
 | 17 | Background work + notification | present | worker queue, turn events, Telegram | — |
-| 18 | Code style / file links / git rules | **N/A** | his agent does not write code for him | not a gap |
-| 19 | Artifact publishing rules | **N/A** | different product surface | not a gap |
-| 20 | they/them pronoun default | **N/A** | Bangla, one owner, named staff | not a gap |
+| 18 | Code reads like the code around it | absent | `run_workbench_task` — "like a mini Claude Code: write files, run node/python3/**git**" — and `alma-website` ships code changes as a workbench PR | **GAP — medium** |
+| 19 | Git: don't commit/push unasked, branch first | absent | `git` is in the workbench `ALLOWED_BINARIES`; no rule anywhere governs its use | **GAP — medium** |
+| 20 | Never present fabricated records/reviews as genuine; never impersonate a real person or org; read a file fully before distributing it | absent | `save_artifact` builds the client reports and marketing content that LEAVE the business | **GAP — high** |
+| 21 | Cite the exact location of a finding | partial | skills ask for "কোন পেজ"; nothing general | GAP — low |
+| 22 | they/them pronoun default | **N/A** | Bangla, one owner, named staff | not a gap |
 
-Items 18–20 are listed only so the audit cannot be accused of padding: four of my
-sections do not apply to his agent at all, and pretending otherwise would inflate
-the work — which is itself against his rules.
+### Correction to this audit's own first draft
+
+The first version of this table dismissed rows 18–21 as **N/A — "his agent does
+not write code"**. He challenged it, and he was right: that was asserted, not
+checked, in an audit whose whole point is checking.
+
+`run_workbench_task` describes itself as *"like a mini Claude Code — write files,
+run allowlisted programs (node, python3, **git**, curl…)"*, `git` is in the
+executor's `ALLOWED_BINARIES`, and `alma-website` — promoted earlier the same day,
+by me — routes code-level site changes through a workbench PR. The agent writes
+code and touches git.
+
+Row 20 is the one that matters most, and dismissing it was the worst of the four:
+`save_artifact` produces the client SEO reports and marketing content that leave
+the business. "Never present a fabricated record, receipt or review as genuine"
+is not a theoretical rule for a company that sells marketing.
+
+Row 22 stays N/A honestly. One of my sections genuinely does not apply — and
+saying so is the point, because padding an audit is its own failure.
 
 ## Gap 1 is the one that matters, and it is not a prompt problem
 
