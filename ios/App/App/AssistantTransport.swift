@@ -82,6 +82,7 @@ struct AgentSSEEvent: Decodable {
     let delta: String?
     let text: String?           // preamble
     let label: String?
+    let displayName: String?     // model_info — the name Boss reads
     let name: String?
     let success: Bool?
     let resultPreview: String?
@@ -141,7 +142,7 @@ enum AgentTurnEvent: Sendable {
     case conversationId(String)
     case turnId(String)
     case personalMode(Bool)
-    case modelInfo(label: String)
+    case modelInfo(label: String, displayName: String)
     case modelSwitchRequired(toLabel: String, fromLabel: String, fallbackModelId: String?)
     case thinkingDelta(String)
     case textDelta(String)
@@ -189,7 +190,7 @@ enum AgentTurnEvent: Sendable {
         case "personal_mode":
             self = .personalMode(ev.active == true)
         case "model_info":
-            self = .modelInfo(label: ev.label ?? "")
+            self = .modelInfo(label: ev.label ?? "", displayName: ev.displayName ?? "")
         case "model_switch_required":
             self = .modelSwitchRequired(toLabel: ev.toLabel ?? "প্রিমিয়াম মডেল", fromLabel: ev.fromLabel ?? "",
                                         fallbackModelId: ev.fallbackModelId)

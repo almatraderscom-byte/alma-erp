@@ -365,3 +365,24 @@ export function isAnthropicModel(id: string): boolean {
   const m = MODEL_REGISTRY.find((e) => e.id === id)
   return m?.provider === 'anthropic'
 }
+
+
+/**
+ * The model's name as Boss should read it.
+ *
+ * Owner, 2026-07-28: *"ami cai amr jei model reply dibe thik erokom name jeno
+ * show kore, currently shob model er name nai, deepseek ase"*. The chat only
+ * ever named three families — Claude, Qwen, DeepSeek — because the label came
+ * from a four-value `variant`; every other head (Grok, Gemini, GPT) fell into
+ * `default` and showed a bare "ALMA", so he could not tell who had answered.
+ *
+ * The registry label is the truth and already carries the version, so this only
+ * strips the plumbing note in brackets: "DeepSeek V4 Flash (OpenRouter)" reads
+ * as "DeepSeek V4 Flash", "Grok 4.20 (xAI direct)" as "Grok 4.20". Which vendor
+ * we happen to buy it through is our concern, not his.
+ */
+export function modelDisplayName(id: string): string {
+  const model = MODEL_REGISTRY.find((m) => m.id === id)
+  if (!model) return 'ALMA'
+  return model.label.replace(/\s*\([^)]*\)\s*$/, '').trim() || model.label
+}
