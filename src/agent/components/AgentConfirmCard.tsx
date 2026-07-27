@@ -137,7 +137,10 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
         <div className="flex items-center gap-1.5 font-semibold">
           <span aria-hidden>{rec.icon}</span>
           <span>{rec.label}</span>
-          <span className="ml-auto text-[10px] font-normal opacity-70">{rec.text}</span>
+          {/* Was opacity-70 on 10px text — legible in a mockup, faint on the real
+              card next to the reason line. The colour is already the tone's own
+              ink, so the only thing the fade bought was weakness. */}
+          <span className="ml-auto text-[10px] font-normal opacity-85">{rec.text}</span>
         </div>
         <pre className="mt-1.5 max-w-full overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-sans text-[11px] leading-relaxed text-cream opacity-90">{action.summary}</pre>
         {action.resolvedStatus === 'failed' && action.failReason && (
