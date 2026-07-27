@@ -8797,7 +8797,10 @@ struct AgentBrandWordmark: View {
 
     private var currentBody: some View {
         HStack(spacing: 6) {
-            AlmaStarburstLoader(mode: autonomousLoaderActive ? .thinking : .idle, size: 18)
+            AlmaLoaderArtwork(
+                mode: autonomousLoaderActive ? .thinking : .idle,
+                size: 18,
+                animated: autonomousLoaderActive)
                 .scaleEffect(shown ? 1 : 0.01)
                 .rotationEffect(.degrees(shown ? 0 : -300))
             HStack(spacing: 0.5) {
@@ -12175,7 +12178,10 @@ private struct AgentBackgroundTasksSheet: View {
                         .frame(width: 42, height: 42)
                     // A cron check alone is not an executing task. Animate only
                     // for an explicit Plan-Drive sleep or a live autonomous wake.
-                    AlmaStarburstLoader(mode: loaderActive ? .thinking : .idle, size: 22)
+                    AlmaLoaderArtwork(
+                        mode: loaderActive ? .thinking : .idle,
+                        size: 22,
+                        animated: loaderActive)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Background execution")

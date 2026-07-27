@@ -306,7 +306,7 @@ struct MoreMenuScreen: View {
     let openPath: (_ path: String, _ title: String) -> Void
     /// Pushes the NATIVE Phone Companion screen (the "native:companion" row in UIKit).
     let openCompanion: () -> Void
-    /// DEBUG: pushes the native 12-spoke loader preview (native:spinner-preview row).
+    /// Pushes the native Agent Loader preference and live preview screen.
     var openSpinnerPreview: (() -> Void)? = nil
     /// Flips the app-wide theme (host calls AlmaTheme; we never touch it directly).
     let toggleDark: () -> Void
@@ -354,9 +354,6 @@ struct MoreMenuScreen: View {
             MenuItem(title: "Agent Hub",       icon: "square.grid.2x2.fill",             path: "/agent/hub"),
             MenuItem(title: "Phone Companion", icon: "iphone.radiowaves.left.and.right", path: "native:companion"),
         ]
-        #if DEBUG
-        agentItems.append(MenuItem(title: "Loader Preview", icon: "sparkles", path: "native:spinner-preview"))
-        #endif
         return [
         MenuGroup(header: "Agent", icon: "sparkles", items: agentItems),
         MenuGroup(header: "Workspace", icon: "square.grid.2x2", items: [
@@ -389,6 +386,7 @@ struct MoreMenuScreen: View {
             MenuItem(title: "Audit",     icon: "checklist", path: "/audit"),
         ]),
         MenuGroup(header: "Settings", icon: "gearshape", items: [
+            MenuItem(title: "Agent Loader",  icon: "sparkles",           path: "native:spinner-preview"),
             MenuItem(title: "Users",         icon: "person.3",           path: "/settings/users"),
             MenuItem(title: "Notifications", icon: "bell.badge",         path: "/settings/notifications"),
             MenuItem(title: "Branding",      icon: "paintpalette",       path: "/settings/branding"),
