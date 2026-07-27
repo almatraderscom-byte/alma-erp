@@ -90,3 +90,33 @@ describe('the JSON shape (owner’s own chat, 2026-07-27)', () => {
     }
   })
 })
+
+describe('the FOURTH shape — his own chat, 2026-07-27', () => {
+  it('strips <function_calls> …, which all three earlier patterns missed', () => {
+    // Verbatim from his screenshot, in a reply about the whole business.
+    const raw = [
+      'বস, পুরো ব্যবসার বর্তমান অবস্থা দেখতে ERP, ওয়েবসাইট আর মার্কেটিং — সব দিক থেকে লাইভ ডেটা টেনে আনছি।',
+      '',
+      '<function_calls> [get_sales_summary, get_orders, get_inventory_status, get_website_health, recommend_ad_actions] </function_calls>',
+      '',
+      'বস, লাইভ ডেটা এসেছে — পুরো ব্যবসার অবস্থা:',
+    ].join('\n')
+    const out = stripToolCallMarkup(raw)
+    expect(out).not.toContain('function_calls')
+    expect(out).not.toContain('get_sales_summary')
+    expect(out).toContain('পুরো ব্যবসার বর্তমান অবস্থা')
+    expect(out).toContain('লাইভ ডেটা এসেছে')
+  })
+
+  it('strips the rest of the same family before he has to see them too', () => {
+    expect(stripToolCallMarkup('আগে <invoke name="get_orders"><parameter name="day">today</parameter></invoke> পরে'))
+      .not.toContain('invoke')
+    expect(stripToolCallMarkup('ফল: <function_results>{"ok":true}</function_results> শেষ'))
+      .not.toContain('function_results')
+  })
+
+  it('still leaves ordinary angle-bracket text alone', () => {
+    const html = 'সাইজ চার্ট: <table><tr><td>M</td></tr></table> — এটা রেখে দাও'
+    expect(stripToolCallMarkup(html)).toBe(html)
+  })
+})

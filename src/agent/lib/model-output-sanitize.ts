@@ -48,16 +48,35 @@ const NAMED_TOOL_ARGS = /<[a-z_][a-z0-9_]*>\s*(?:<arg_key>[\s\S]*?<\/arg_value>\
 const JSON_TOOL_USE =
   /\{\s*"type"\s*:\s*"tool_(?:use|call)"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/gi
 
+/**
+ * The FOURTH shape, seen in his own chat 2026-07-27 — hours after the JSON one
+ * shipped, in a reply about the whole business:
+ *
+ *   <function_calls> [get_sales_summary, get_orders, get_inventory_status,
+ *   get_website_health, recommend_ad_actions] </function_calls>
+ *
+ * Not `<tool_call>`, not `<arg_key>`-anchored, not JSON — so all three existing
+ * patterns missed it AND the cheap guard rejected the text before they ran.
+ * `<function_results>` and `<invoke …>` are included with it: they are the rest
+ * of the same family, and waiting to be shown each one on his screen first is a
+ * bad way to find them.
+ */
+const FUNCTION_CALLS_BLOCK =
+  /<function_(?:calls|results)>[\s\S]*?(?:<\/function_(?:calls|results)>|$)/gi
+const INVOKE_BLOCK = /<invoke\b[\s\S]*?(?:<\/invoke>|$)/gi
+
 /** Leftovers when a stream is cut mid-call, plus the DeepSeek/Qwen sentinels. */
 const STRAY_MARKERS =
-  /<\/?tool_call>|<\/?arg_key>|<\/?arg_value>|<\|?tool[_▁]?calls?[_▁]?(?:begin|end|sep)\|?>|<｜tool▁calls?▁(?:begin|end|sep)｜>/gi
+  /<\/?tool_call>|<\/?arg_key>|<\/?arg_value>|<\/?function_(?:calls|results)>|<\/?invoke\b[^>]*>|<\/?parameter\b[^>]*>|<\|?tool[_▁]?calls?[_▁]?(?:begin|end|sep)\|?>|<｜tool▁calls?▁(?:begin|end|sep)｜>/gi
 
 export function stripToolCallMarkup(text: string): string {
   if (!text) return text
   // Cheap guard: the overwhelming majority of rounds carry none of this.
-  if (!/<tool_call|<arg_key|tool▁call|<\|tool|"type"\s*:\s*"tool_(?:use|call)"/i.test(text)) return text
+  if (!/<tool_call|<arg_key|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|"type"\s*:\s*"tool_(?:use|call)"/i.test(text)) return text
   const cleaned = text
     .replace(JSON_TOOL_USE, '')
+    .replace(FUNCTION_CALLS_BLOCK, '')
+    .replace(INVOKE_BLOCK, '')
     .replace(TOOL_CALL_BLOCK, '')
     .replace(NAMED_TOOL_ARGS, '')
     .replace(STRAY_MARKERS, '')
