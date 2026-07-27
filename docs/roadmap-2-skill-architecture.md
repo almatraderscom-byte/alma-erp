@@ -351,6 +351,60 @@ separate pm2 process, so the locked audio is not in the blast radius — but
 restarting a live worker is his call, not something to do inside a session about
 skills.
 
+## MERGED TO MAIN — 2026-07-27 (PR #625, 36 commits)
+
+Everything below the line was on a branch until this point. It is now on main.
+`gate` (tsc + lint), `checks` and Vercel all green; the only pending check was
+the iOS simulator build, which no change here touches.
+
+### What is left, honestly
+
+**Item 3 — skill promotion: 9 of 14 done, 5 remain.**
+
+| still `draft` | the known blocker |
+|---|---|
+| `alma-customer-support` | takes the parcel message in the drafts-included run; customer-facing, so it goes late |
+| `alma-meta-campaign-launch` | spends money — decide whether it should be `implicit: false` (Boss names it) first |
+| `alma-audience-builder` | "audience" was a keyword collision with the campaign skill; check it is really gone |
+| `alma-agent-incident-diagnosis` | SK-0's only false trigger came from its bare "dekho" keyword |
+| `alma-browser-operator` | highest risk in the set — last, deliberately |
+
+`alma-seo-audit` and `alma-client-seo` are **retired**, not pending: superseded by
+the SK-5 skills, and both claimed "seo".
+
+**Item 5 — Upstash: built, flag OFF, worker NOT deployed.**
+The read path (poll the durable log when there is no Redis to tail) is live and
+already helping. The write path is `AGENT_TURN_HANDOFF_HTTP`, default off, and
+`worker/src/diagnostic-http.mjs` still needs a manual `pm2 restart` on the VPS —
+his call, not something to do from here.
+
+**Roadmap-2's own remaining list:** the router's last misses (all skill-library
+gaps, not router gaps) and the registry budget, which is written but never
+exercised at scale — revisit past ~10 active skills. There are 13 now.
+
+### Harness parity — where it actually stands
+
+Full matrix: `docs/harness-parity-matrix.md`. Implemented today: the
+instruction-source classifier wired to every external-content tool, the
+working-discipline layer, privacy/authorship, outward-content, workbench
+discipline, the owner-correction nudge with its misread branch, control-note
+ordering, visible-thinking cleanup, the live checklist, the status line, and a
+fourth shape of leaked tool-call markup.
+
+**What is NOT fixed, and will not be by another prompt rule:**
+
+- The head still sometimes **invents numbers** on a question that has no answer.
+  It refused correctly on one run of the benchmark question and fabricated
+  "50–200 ms, 70–95% CPU" on the next, with no code change in between.
+- It still **re-answers itself** in one reply when the second pass carries new
+  information — block dedup deliberately does not fire there.
+- It still **asks instead of deriving** what it could compute.
+
+**And a methodological note against myself:** every "better/worse" judgement in
+this session came from a SINGLE run. That model varies run to run, so single-run
+comparisons cannot separate a real change from noise. Anything claimed about
+behaviour from here needs several runs of the same prompt, not one.
+
 ## Not done — start here
 
 ### SK-6 finished — 2026-07-27
