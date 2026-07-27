@@ -14,6 +14,7 @@
  */
 import { promises as fs } from 'fs'
 import path from 'path'
+import { computeSkillHash } from '@/agent/lib/skill-engine/provenance'
 import type {
   ActivatedSkill,
   SkillIndex,
@@ -121,6 +122,9 @@ export async function discoverSkills(
       keywords,
       implicit: manifest.implicit !== false,
       dir,
+      // SK-8: computed at discovery, which runs once per process, so the
+      // approval check later costs nothing per turn.
+      hash: await computeSkillHash(dir),
     })
   }
 

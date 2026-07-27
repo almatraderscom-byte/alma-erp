@@ -99,6 +99,41 @@ export async function buildActiveSkills(
     }
     if (picked.length === 0) return none
 
+    // SK-8 — provenance. Which version is this, who approved it, and is it still
+    // approved? With the gate OFF this only observes and logs, so the ledger can
+    // be filled from real traffic before it starts refusing anything; with it ON
+    // an unapproved, edited or revoked skill does not run at all.
+    let heldBack: { skill: string; state: string } | null = null
+    try {
+      const [{ loadApprovalLedger }, { approvalState, mayRun }, { skillApprovalGateEnabled }] =
+        await Promise.all([
+          import('@/agent/lib/skill-engine/approval-store'),
+          import('@/agent/lib/skill-engine/provenance'),
+          import('@/agent/config'),
+        ])
+      const ledger = await loadApprovalLedger()
+      const gateOn = skillApprovalGateEnabled()
+      const allowed = picked.filter((meta) => {
+        const state = approvalState({ name: meta.name, version: meta.version, hash: meta.hash }, ledger)
+        if (state !== 'approved') {
+          console.info('[skill-provenance]', { skill: meta.name, version: meta.version, state, gateOn })
+        }
+        if (mayRun(state, gateOn)) return true
+        heldBack = { skill: meta.name, state }
+        return false
+      })
+      if (allowed.length === 0 && heldBack) {
+        // Say WHY rather than behaving as if no skill matched — a skill silently
+        // withheld is the same failure shape as the silent continuation.
+        const { heldBackReason } = await import('@/agent/lib/skill-engine/provenance')
+        const h = heldBack as { skill: string; state: string }
+        return { ...none, block: `\n## Skill\n${heldBackReason(h.skill, h.state as never)}\n` }
+      }
+      picked = allowed
+    } catch {
+      /* provenance must never break a turn — fall through with the picked set */
+    }
+
     const bodies: string[] = []
     let manifest: SkillManifest | null = null
     // SK-7: the FIRST activated skill is the one that can isolate. Isolation is

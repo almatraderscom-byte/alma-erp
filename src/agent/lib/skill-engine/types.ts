@@ -111,6 +111,12 @@ export interface SkillMetadata {
   implicit: boolean
   /** Absolute path to the skill package directory. */
   dir: string
+  /**
+   * SK-8 — sha256 over the files that define this skill (manifest + SKILL.md +
+   * SYSTEM.md). `version` is a promise a human typed; this is what actually ran,
+   * and it is what an approval is granted against. See `provenance.ts`.
+   */
+  hash: string
 }
 
 /**
