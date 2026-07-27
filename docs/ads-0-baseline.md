@@ -131,11 +131,11 @@ most valuable thing the next phase produces.
    $47–48 spent, CTR 8.9%, $5/day budget. Run B, live: four active, $25.57,
    CTR 3.47–6.23%. At most one of these is true. This is the stale-memory hazard
    the system prompt already forbids, caught in the act.
-2. **Source label.** Run B said the numbers came from *"Meta-র অফিসিয়াল Ads
-   MCP"*. `recommend_ad_actions` is explicitly documented to say Meta MCP **only**
-   when `provenance.source === 'meta_mcp'` and to state the degrade reason
-   otherwise. Run C, on the same account minutes later, said "Meta Graph". Both
-   cannot be right.
+2. ~~**Source label.**~~ **Withdrawn by ADS-1 — this one was my error.** The
+   stored payload shows `provenance.source = "meta_mcp"` with
+   `degradedReason: null`, so run B quoted the label it was told to quote, and
+   run C's "Meta Graph" was equally correct for `growth_control_room`. Both were
+   right.
 3. **The ৳ conversion moves.** $25.57 became ৳3,068 in run B and ৳৩,০৬০ in run C
    — 120.0 vs 119.7 per USD, no rate quoted either time.
 4. **A campaign spending $0.00 is listed ACTIVE.** Either it is real (an ad set
@@ -201,7 +201,15 @@ have pinned it. Report this dimension separately until ADS-2 exists.
 
 ---
 
-## 6. Stop point
+## 6. Verified — see ADS-1
+
+[docs/ads-1-verification.md](docs/ads-1-verification.md) settles every
+disagreement above and adds one that outranks all of them: **the same question,
+asked again four hours later, was answered with fabricated numbers while a
+correct tool result sat in the same turn.** Two items here changed on
+verification — #2 was withdrawn, #3 turned out to be worse than recorded.
+
+## 7. Stop point
 
 ADS-0 ends here, as instructed. Not started, and not to be started without a
 word: ADS-1 (independent verification against the Graph API and the owner's own
