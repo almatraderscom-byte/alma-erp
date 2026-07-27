@@ -165,6 +165,55 @@ struct AlmaAgentGlassBackground<S: Shape>: ViewModifier {
     }
 }
 
+/// The composer's surface.
+///
+/// iOS 26 draws it as Liquid Glass: one system material that carries its own
+/// edge highlight, refraction and shadow, and that reacts to what scrolls under
+/// it. Before 26 there is no such thing, so the original stack is kept verbatim
+/// — an ultraThin material, a hairline stroke and the ALMA ring — rather than
+/// approximating glass badly on a phone that cannot do it.
+///
+/// Focus stays legible in both: the ring brightens, it does not bounce.
+@available(iOS 17.0, *)
+struct AlmaComposerSurface: ViewModifier {
+    let pal: AgentPalette
+    let focused: Bool
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 30, style: .continuous) }
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            content
+                .glassEffect(.regular.interactive(), in: shape)
+                .overlay {
+                    shape.strokeBorder(
+                        AgentPalette.coral.opacity(focused ? 0.34 : 0.10),
+                        lineWidth: focused ? 1.0 : 0.6)
+                        .animation(.easeOut(duration: 0.2), value: focused)
+                }
+        } else {
+            content
+                .background(pal.glassFill)
+                .modifier(AlmaAgentGlassBackground(shape: shape, pal: pal))
+                .clipShape(shape)
+                .overlay {
+                    ZStack {
+                        shape.strokeBorder(focused
+                            ? Color.white.opacity(pal.dark ? 0.28 : 0.62)
+                            : pal.borderSubtle.opacity(0.95),
+                            lineWidth: focused ? 1.1 : 0.8)
+                        AgentNeonBorder(cornerRadius: 30)
+                            .opacity(focused ? 0.72 : 0.22)
+                    }
+                    .animation(.easeOut(duration: 0.2), value: focused)
+                }
+                .shadow(color: Color.black.opacity(pal.dark ? 0.28 : 0.10), radius: 18, y: 8)
+                .shadow(color: AgentPalette.coral.opacity(focused ? 0.12 : 0.04), radius: 18, y: 2)
+        }
+    }
+}
+
 /// Bangla digits — same convention as the web `toBn()`.
 func almaBn(_ n: Int) -> String {
     let bn = ["০","১","২","৩","৪","৫","৬","৭","৮","৯"]
@@ -181,7 +230,80 @@ struct AgentConversation: Decodable, Identifiable, Equatable {
     var source: String?
     var archived: Bool?
     var pinned: Bool?
+    /// PM-1 — how much the agent may do without Boss in THIS chat. The server has
+    /// returned it since the permission axis shipped; the phone had no picker at
+    /// all until 2026-07-28, so on the phone every chat silently ran on the
+    /// default no matter what he had chosen on the web.
+    var permissionMode: String?
     var updatedAt: String?
+}
+
+/// The five modes, mirroring `src/agent/lib/permission-mode.ts`.
+///
+/// OWNER, 2026-07-28: the web carried TWO mode chips and both had a mode called
+/// প্ল্যান — one meaning "only plan, run nothing", the other "withhold every
+/// effect tool". He asked for the execution-style chip to go and this one to be
+/// the mode control, on the phone too. So this is the single axis: how much may
+/// it do without me.
+///
+/// The labels are copied, not re-invented: a mode that reads differently on the
+/// phone than on the web is a second thing to learn for no gain.
+enum AgentPermissionMode: String, CaseIterable, Identifiable {
+    case plan, careful, standard, supervised, elevated
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .plan: return "প্ল্যান"
+        case .careful: return "সতর্ক"
+        case .standard: return "স্বাভাবিক"
+        case .supervised: return "তত্ত্বাবধান"
+        case .elevated: return "জরুরি অনুমতি"
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .plan: return "শুধু দেখব আর প্ল্যান দেব — কিছুই বদলাবে না, কার্ডও যাবে না"
+        case .careful: return "যা কিছু বদলায় সবই আপনার অনুমোদনে — ছোট কাজও"
+        case .standard: return "রোজকার কাজ নিজে করব, ঝুঁকির কাজ আপনার অনুমোদনে"
+        case .supervised: return "কাজ করে পরে জানাব, এক ট্যাপে ফেরানো যাবে"
+        case .elevated: return "বেঁধে দেওয়া কাজে, বেঁধে দেওয়া সময়ের জন্য — নিজেই মেয়াদ শেষ"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .plan: return "list.clipboard"
+        case .careful: return "shield"
+        case .standard: return "scalemass"
+        case .supervised: return "eye"
+        case .elevated: return "timer"
+        }
+    }
+
+    /// A colour per rung, so the mode reads at a glance without being read.
+    ///
+    /// Owner, 2026-07-28: *"jei mode jemon eta jeno bujha jay, color jeno change
+    /// hoy chip er"*. The order is the ladder itself — the further the agent may
+    /// go on its own, the warmer the chip. All four hues are ALMA's own (teal,
+    /// gold, coral, coralDim); nothing invented, and স্বাভাবিক stays deliberately
+    /// colourless because the ordinary setting should not shout.
+    @available(iOS 17.0, *)
+    var tint: Color? {
+        switch self {
+        case .plan: return AgentPalette.teal            // reads only — calm
+        case .careful: return AgentMotionColor.gold     // every change asks first
+        case .standard: return nil                      // the quiet default
+        case .supervised: return AgentPalette.coral     // acts, then reports
+        case .elevated: return AgentPalette.coralDim    // widest, and time-boxed
+        }
+    }
+
+    static func from(_ raw: String?) -> AgentPermissionMode {
+        guard let raw, let mode = AgentPermissionMode(rawValue: raw) else { return .standard }
+        return mode
+    }
 }
 
 struct ActiveConversationPointer: Decodable {
@@ -753,6 +875,16 @@ struct AgentChatMessage: Identifiable, Equatable {
         var status: String = "pending"   // pending | approved | declined
     }
     var modelSwitch: ModelSwitch?
+    /// SK-3 — the skill running this turn, announced before any work starts. Web
+    /// parity: the phone showed nothing at all because the transport never
+    /// decoded `skill_pinned` (owner, 2026-07-27).
+    struct PinnedSkill: Equatable {
+        var name: String
+        var source: String   // "owner" | "router"
+        var reason: String
+        var isolated: Bool
+    }
+    var skill: PinnedSkill?
     var tools: [Tool] = []            // flat list (live streaming + fallback)
     var timeline: [TimelineEntry] = []
     var blocks: [TurnBlock] = []      // interleaved prose ↔ activity (streaming UI)
@@ -1364,6 +1496,10 @@ final class AssistantVM {
     // Thread state
     var conversationId: String?
     var conversationTitle: String = "ALMA AI"
+    /// PM-1 on the phone — the ONE mode chip (owner, 2026-07-28). The web carried
+    /// two mode pickers and both had a rung called প্ল্যান; the execution-style
+    /// picker is retired and this ladder is the only mode control, here as well.
+    var permissionMode: AgentPermissionMode = .standard
     var currentProjectId: String?
     var messages: [AgentChatMessage] = []
     var loadingHistory = false
@@ -1936,6 +2072,62 @@ final class AssistantVM {
             !decided.contains($0.id) && actionRegistry[$0.id]?.state.isTerminal != true
         }
     }
+
+    /// Decide an approval straight from the Background-tasks sheet.
+    ///
+    /// OWNER, 2026-07-27: *"amr iOS theke ami approve ba reject korte pari na,
+    /// mane only just pending approve dekha jay."* He was right — the sheet's
+    /// attention rows were a display, and the hint on them pointed at the
+    /// Approvals TAB, which is the ERP approvals system (`/api/approvals`) and
+    /// has never carried agent cards at all. So an approval staged by a
+    /// background turn, or in any chat other than the open one, was visible and
+    /// unreachable on the phone.
+    ///
+    /// Two paths on purpose. When the card belongs to the chat that is open,
+    /// this is exactly the inline card's decision — `approveAction` owns the
+    /// loader, the continuation tail and the reject follow-up message, and none
+    /// of that may be duplicated. When it belongs to ANOTHER conversation, none
+    /// of that applies: the decision is posted, the row settles, and the current
+    /// chat is left alone. Sending the reject follow-up into the wrong chat is
+    /// the specific bug this split exists to avoid.
+    @discardableResult
+    fileprivate func decideAttention(_ item: AgentBackgroundAttention, approve: Bool) async -> Bool {
+        if let cid = item.conversationId, cid == conversationId {
+            return await approveAction(item.id, approve: approve)
+        }
+        guard beginSubmitting("action:\(item.id)") else { return false }
+        defer { finishSubmitting("action:\(item.id)") }
+        AlmaAgentHaptics.commit()
+        do {
+            let _: OkResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/actions/\(item.id)/\(approve ? "approve" : "reject")")
+            // Terminal state drops the row out of `mergedAttention` immediately —
+            // the 12s poll would otherwise leave a decided approval sitting there
+            // looking undecided.
+            setActionState(item.id, kind: "approval", state: approve ? .approved : .rejected)
+            backgroundAttention.removeAll { $0.id == item.id }
+            AlmaAgentHaptics.success()
+            await loadActiveBackgroundTurns()
+            return true
+        } catch {
+            // Someone may have decided it on another device between the poll and
+            // the tap; reconcile rather than showing a failure for work that is
+            // in fact done.
+            let reconciled = await reconcileActionFailure(cardId: item.id, error: error)
+            if reconciled {
+                backgroundAttention.removeAll { $0.id == item.id }
+            } else {
+                // Found in the simulator, 2026-07-27: the approve route answers
+                // 400 `unknown_action_type` for a `coworker_request` card, and the
+                // row simply sat there — a tap that does nothing and says nothing
+                // is the same silence this whole surface existed to end.
+                errorToast = approve ? "অনুমোদন করা গেল না — আবার চেষ্টা করুন" : "বাতিল করা গেল না — আবার চেষ্টা করুন"
+                AlmaAgentHaptics.error()
+            }
+            await loadActiveBackgroundTurns()
+            return reconciled
+        }
+    }
     private var usesBackgroundTaskDebugFixture = false
     var planDriveBusyPlanId: String?
     var dailyTodoBusyId: String?
@@ -2444,6 +2636,21 @@ final class AssistantVM {
         })
     }
 
+    /// Read this chat's mode from the SERVER row.
+    ///
+    /// Found in the simulator, 2026-07-28: setting প্ল্যান stuck until the app was
+    /// restarted, then the chip read স্বাভাবিক again — the cold-start restore
+    /// never carried the mode, and the conversation list it would have read from
+    /// may not even be loaded yet. A chip that forgets what he chose is the same
+    /// failure as a chip that lies about it.
+    fileprivate func refreshPermissionModeFromServer() async {
+        guard let cid = conversationId else { return }
+        struct Row: Decodable { let permissionMode: String? }
+        guard let row: Row = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)") else { return }
+        let mode = AgentPermissionMode.from(row.permissionMode)
+        if mode != permissionMode { permissionMode = mode }
+    }
+
     private func loadActiveConversation() async {
         do {
             let ptr: ActiveConversationPointer = try await AlmaAPI.shared.get("/api/assistant/active-conversation")
@@ -2452,6 +2659,7 @@ final class AssistantVM {
                 selectedSessionIdentity = "server:\(cid)"
                 currentProjectId = ptr.projectId
                 modelId = ptr.modelId
+                await refreshPermissionModeFromServer()
                 await loadMessages(showSpinner: messages.isEmpty)
                 await loadArtifacts()
                 await recoverTurnState(trigger: "bootstrap")
@@ -3555,6 +3763,10 @@ final class AssistantVM {
         selectedSessionIdentity = "server:\(id)"
         let selected = conversations.first { $0.id == id }
         modelId = selected?.modelId   // pinned model follows the chat
+        // The mode belongs to the CHAT, not to the phone: opening a chat he had
+        // set to সতর্ক must not show স্বাভাবিক while the server runs সতর্ক.
+        permissionMode = AgentPermissionMode.from(selected?.permissionMode)
+        Task { await refreshPermissionModeFromServer() }
         currentProjectId = selected?.projectId
         conversationTitle = selected?.title?.isEmpty == false ? selected!.title! : "ALMA AI"
         localIdByServerId = [:]   // 1.5: optimistic-ID maps never leak across conversations
@@ -3578,6 +3790,29 @@ final class AssistantVM {
         scheduleQueuedOwnerMessage()
     }
 
+    /// Change the mode for THIS chat.
+    ///
+    /// Optimistic, then persisted — and reverted if the server refuses. Believing
+    /// the agent is restrained when it is not is the one failure this control must
+    /// never produce, which is also why a brand-new chat sends the mode with its
+    /// first message instead of assuming the default.
+    func setPermissionMode(_ next: AgentPermissionMode) async {
+        guard next != permissionMode else { return }
+        let previous = permissionMode
+        permissionMode = next
+        AlmaAgentHaptics.selection()
+        guard let cid = conversationId else { return }  // new chat — rides with the first send
+        do {
+            let _: OkResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/assistant/conversations/\(cid)",
+                body: ["permissionMode": next.rawValue])
+        } catch {
+            permissionMode = previous
+            errorToast = "মোড বদলানো গেল না — আবার চেষ্টা করুন"
+            AlmaAgentHaptics.error()
+        }
+    }
+
     func newChat() async {
         if isStreaming || recoverableTurn != nil {
             errorToast = "চলতি উত্তর শেষ হলে নতুন কথোপকথন খুলুন — বর্তমান কাজটি সুরক্ষিত আছে"
@@ -3590,6 +3825,7 @@ final class AssistantVM {
         selectedSessionIdentity = UUID().uuidString
         currentProjectId = nil
         conversationTitle = "ALMA AI"
+        permissionMode = .standard
         localIdByServerId = [:]  // 1.5: optimistic-ID maps never leak across conversations
         lastSyncStamp = nil      // 4.1: window/delta cursors are per-conversation
         resetHistoryWindowState()
@@ -4069,6 +4305,10 @@ final class AssistantVM {
         /// route creates no owner message and atomically consumes the predecessor
         /// continuation flag (web parity).
         var autoContinueFromTurnId: String? = nil
+        /// A brand-new chat has no row yet, so the chip he is looking at is the
+        /// only source. Once the row exists the SERVER reads the mode off it and
+        /// ignores whatever a client claims — that guarantee is not weakened here.
+        var permissionMode: String? = nil
     }
 
     private struct SteeringBody: Encodable {
@@ -4274,7 +4514,10 @@ final class AssistantVM {
                             files: files, modelId: modelId ?? "auto",
                             projectId: currentProjectId,
                             clientMessageId: clientMessageId, askCardId: askCardId,
-                            autoContinueFromTurnId: autoContinueFromTurnId)
+                            autoContinueFromTurnId: autoContinueFromTurnId,
+                            // Only for a chat that has no row yet — once it exists
+                            // the server reads the mode off the row and ignores this.
+                            permissionMode: conversationId == nil ? permissionMode.rawValue : nil)
         if let clientMessageId {
             // Persist BEFORE starting network work. Process death between POST and
             // conversation_id/turn_id can now replay the exact idempotent request.
@@ -4882,6 +5125,16 @@ final class AssistantVM {
                                                       options: options, status: "pending",
                                                       selectedOption: nil))
                     messages[i].blocks.append(.askCard(id: "bq-\(messages[i].id)-\(aid)", askCardId: aid))
+                }
+            case .skillPinned(let skill, let source, let reason, let isolated):
+                // Stamp it on the turn being built so the thread can draw the
+                // system line BEFORE the agent's first sentence — the shape Boss
+                // pointed at in ChatGPT. Arrives before any work starts.
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }), !skill.isEmpty {
+                    messages[i].skill = .init(name: skill, source: source,
+                                              reason: reason, isolated: isolated)
+                    touchedStream = true
                 }
             case .preamble:
                 // The line already streamed in as text_delta; pin whichever prose
@@ -5976,6 +6229,18 @@ final class AssistantVM {
             .flatMap(\.confirmCards)
             .first(where: { $0.id == cardId })?
             .summary.split(separator: "\n").first.map(String.init) ?? ""
+        // OWNER, 2026-07-27: on the phone an approval looked like nothing had
+        // happened — the loader only appeared after the POST came back, and the
+        // continuation runs on the WORKER, so no thinking ever reached the phone
+        // at all. Web fixed both on 2026-07-26; this is the native half.
+        // The indicator starts on the TAP, before the request.
+        if approve {
+            isStreaming = true
+            thinkingLive = true
+            lastLiveEventAt = Date()
+            beginUnderstanding()
+            ensureStreamingTail()
+        }
         do {
             let _: OkResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/actions/\(cardId)/\(approve ? "approve" : "reject")")
@@ -6007,10 +6272,54 @@ final class AssistantVM {
                 return true
             }
         } catch {
+            // The work never started — take the indicator back down, or the phone
+            // would spin forever on a request that failed.
+            if approve { thinkingLive = false; isStreaming = false }
             return await reconcileActionFailure(cardId: cardId, error: error)
+        }
+        if approve {
+            // The continuation turn runs server-side. Attach to its durable
+            // stream so its REAL thinking and tool rows land on the phone, the
+            // same events the web subscribes to. Fire-and-forget: a failed
+            // attach must never block the approval that already succeeded.
+            Task { [weak self] in await self?.followApprovalContinuation() }
         }
         await loadMessages()
         return true
+    }
+
+    /// After an approval, find the continuation turn and tail it.
+    ///
+    /// The turn is created server-side a moment after the approve route returns,
+    /// so this polls briefly for it rather than assuming it is already there. If
+    /// nothing shows up, the indicator is released — an honest "nothing is
+    /// running" beats a spinner that never ends (the exact complaint on web,
+    /// 2026-07-26).
+    private func followApprovalContinuation() async {
+        guard let convId = conversationId else { thinkingLive = false; isStreaming = false; return }
+        struct TurnStatus: Decodable { let status: String?; let turnId: String? }
+        for attempt in 0..<10 {
+            if Task.isCancelled { return }
+            try? await Task.sleep(nanoseconds: attempt == 0 ? 400_000_000 : 1_200_000_000)
+            let st: TurnStatus? = try? await AlmaAPI.shared.send(
+                "GET", "/api/assistant/conversations/\(convId)/turn-status")
+            guard let st else { continue }
+            if st.status == "running", let tid = st.turnId {
+                currentTurnId = tid
+                let buffer = AgentEventBuffer { [weak self] events in
+                    self?.apply(events)
+                }
+                try? await tailDurableTurn(tid, afterSeq: -1, buffer: buffer)
+                await buffer.finish()
+                thinkingLive = false
+                isStreaming = false
+                await loadMessages()
+                return
+            }
+            if st.status != nil && st.status != "running" { break }
+        }
+        thinkingLive = false
+        isStreaming = false
     }
 
     private func currentConfirmStatus(_ cardId: String) -> String? {
@@ -8665,7 +8974,10 @@ struct AgentBrandWordmark: View {
 
     private var currentBody: some View {
         HStack(spacing: 6) {
-            AlmaStarburstLoader(mode: autonomousLoaderActive ? .thinking : .idle, size: 18)
+            AlmaLoaderArtwork(
+                mode: autonomousLoaderActive ? .thinking : .idle,
+                size: 18,
+                animated: autonomousLoaderActive)
                 .scaleEffect(shown ? 1 : 0.01)
                 .rotationEffect(.degrees(shown ? 0 : -300))
             HStack(spacing: 0.5) {
@@ -9770,6 +10082,27 @@ struct AgentTurnBlocksView: View {
         let hiddenCount = max(0, message.blocks.count - blocks.count)
         let lastBlockId = message.blocks.last?.id
         VStack(alignment: .leading, spacing: 6) {
+            // SK-3 — which skill is running, as a system line ABOVE the agent's
+            // first sentence. Web has had it since 2026-07-26; the phone showed
+            // nothing because the transport dropped `skill_pinned` entirely.
+            if let skill = message.skill, !skill.name.isEmpty {
+                HStack(spacing: 6) {
+                    Text("🧠").font(.system(size: 11))
+                    Text("\(skill.name) skill ব্যবহার করছি")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(pal.muted)
+                        .lineLimit(1)
+                    if skill.source == "owner" {
+                        Text("আপনার বাছাই")
+                            .font(.system(size: 10))
+                            .foregroundStyle(pal.muted.opacity(0.8))
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(pal.muted.opacity(0.10)))
+                .accessibilityLabel("\(skill.name) skill ব্যবহার করছি")
+            }
             if hiddenCount > 0 {
                 AgentCompactActivityRow(icon: "clock.arrow.circlepath",
                                         label: "আগের \(almaBn(hiddenCount)) ধাপ",
@@ -10156,6 +10489,124 @@ enum AlmaAssistantLibraryRequest {
     static let note = Notification.Name("almaAssistantOpenSessionLibrary")
 }
 
+/// The mode chip's menu, built in UIKit so it is the SYSTEM menu.
+///
+/// SwiftUI's `Menu` is the right tool and the app uses it elsewhere (the ⋯
+/// button, the project picker) — but inside the composer it never opens: the
+/// menu's window lands behind the layer the composer is presented in. Rather
+/// than substitute something that merely resembles a menu (a popover did open,
+/// and looked like a panel from another app), this hands the job to UIKit, which
+/// presents the menu from the button and gets the real iOS 26 treatment: the
+/// glass panel, the spring, the haptic, the checkmark on the current rung, and
+/// the subtitle under each one.
+@available(iOS 17.0, *)
+struct AlmaPermissionModeMenuButton: UIViewControllerRepresentable {
+    let mode: AgentPermissionMode
+    let pal: AgentPalette
+    let onPick: (AgentPermissionMode) -> Void
+
+    /// A view CONTROLLER, not a bare view.
+    ///
+    /// A UIMenu needs a presentation context in the responder chain, and inside
+    /// the composer — which SwiftUI hosts as a `safeAreaInset` — a bare
+    /// representable does not provide one, so the menu never appeared while the
+    /// app's own ⋯ menu (a bar-button item, which has a controller) opened fine.
+    /// Wrapping the button in a controller puts that context back.
+    final class Host: UIViewController {
+        let button = UIButton(type: .system)
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            button.showsMenuAsPrimaryAction = true
+            button.translatesAutoresizingMaskIntoConstraints = false
+            view.backgroundColor = .clear
+            view.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                button.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
+                button.topAnchor.constraint(equalTo: view.topAnchor),
+                button.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+        }
+    }
+
+    func makeUIViewController(context: Context) -> Host {
+        let host = Host()
+        host.loadViewIfNeeded()
+        apply(to: host.button)
+        return host
+    }
+
+    func updateUIViewController(_ host: Host, context: Context) {
+        apply(to: host.button)
+    }
+
+    /// Without this the representable is laid out at ZERO height: the button
+    /// still draws at its natural size, so the chip looked right and the tap fell
+    /// straight through to the text field underneath. Visible-but-untappable, the
+    /// same failure the tab-bar strip produced — hence this note.
+    /// Without this the representable lays out at zero height: the button still
+    /// DRAWS at its natural size, so the chip looked right while the tap fell
+    /// through to whatever was behind it.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiViewController: Host, context: Context) -> CGSize? {
+        let fitted = uiViewController.button.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        return CGSize(width: max(fitted.width, 96), height: max(fitted.height, 32))
+    }
+
+    private func apply(to button: UIButton) {
+        var config = UIButton.Configuration.plain()
+        config.title = mode.label
+        config.image = UIImage(systemName: mode.symbol)
+        config.imagePadding = 5
+        config.imagePlacement = .leading
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 11, bottom: 6, trailing: 9)
+        config.cornerStyle = .capsule
+        // The system's own popup chevron — the mark that says "this opens a menu"
+        // everywhere else in iOS, instead of a hand-drawn one.
+        config.indicator = .popup
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var out = incoming
+            out.font = .systemFont(ofSize: 12, weight: .medium)
+            return out
+        }
+        // The colour IS the mode. Foreground, fill and stroke all move together so
+        // the chip reads at a glance from across the room, and the standard rung
+        // stays neutral so a changed mode is what catches the eye.
+        let accent = mode.tint.map { UIColor($0) }
+        config.baseForegroundColor = accent ?? UIColor(pal.mutedHi)
+        config.background.backgroundColor = accent?.withAlphaComponent(0.16)
+            ?? UIColor.white.withAlphaComponent(pal.dark ? 0.05 : 0.35)
+        config.background.strokeColor = accent?.withAlphaComponent(0.45) ?? UIColor(pal.borderSubtle)
+        config.background.strokeWidth = accent == nil ? 1 : 1.2
+        button.configuration = config
+        button.menu = buildMenu()
+    }
+
+    private func buildMenu() -> UIMenu {
+        let actions: [UIMenuElement] = AgentPermissionMode.allCases.map { candidate in
+            let action = UIAction(
+                title: candidate.label,
+                subtitle: candidate.hint,
+                image: UIImage(systemName: candidate.symbol),
+                state: candidate == mode ? .on : .off,
+            ) { _ in
+                guard candidate != mode else { return }
+                onPick(candidate)
+            }
+            return action
+        }
+        // True in every rung, and the reason a looser one is still safe: the
+        // risk-tier ceiling in the policy kernel, not this menu, keeps money and
+        // permissions in his hands.
+        return UIMenu(
+            title: "আমার অনুমোদন কতটুকু লাগবে",
+            subtitle: "টাকা সরানো ও নিরাপত্তার কাজ সব মোডেই আপনার হাতে",
+            options: .singleSelection,
+            children: actions,
+        )
+    }
+}
+
 @available(iOS 17.0, *)
 struct AgentComposerView: View {
     @Bindable var vm: AssistantVM
@@ -10228,29 +10679,28 @@ struct AgentComposerView: View {
                 if vm.isRecording {
                     recordingBar(pal)
                 } else {
+                    // ABOVE the input, not below it: the strip under the composer
+                    // is inside the floating tab bar's hit area, so a chip drawn
+                    // there is visible and untappable — three sim rounds proved it
+                    // (Menu, popover and sheet all failed from that row alone).
+                    HStack(spacing: 8) {
+                        permissionModeChip(pal)
+                        Spacer(minLength: 0)
+                    }
+                    .frame(height: 34)
+                    .padding(.horizontal, 4)
+                    .padding(.bottom, 2)
                     composerInputRow(pal)
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
-            .background(pal.glassFill)
-            .modifier(AlmaAgentGlassBackground(
-                shape: RoundedRectangle(cornerRadius: 30, style: .continuous), pal: pal))
-            .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-            .overlay {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 30, style: .continuous)
-                        .strokeBorder(focused
-                            ? Color.white.opacity(pal.dark ? 0.28 : 0.62)
-                            : pal.borderSubtle.opacity(0.95),
-                            lineWidth: focused ? 1.1 : 0.8)
-                    AgentNeonBorder(cornerRadius: 30)
-                        .opacity(focused ? 0.72 : 0.22)
-                }
-                .animation(.easeOut(duration: 0.2), value: focused)
-            }
-            .shadow(color: Color.black.opacity(pal.dark ? 0.28 : 0.10), radius: 18, y: 8)
-            .shadow(color: AgentPalette.coral.opacity(focused ? 0.12 : 0.04), radius: 18, y: 2)
+            // NATIVE POLISH (owner, 2026-07-28). On iOS 26 the bar is real Liquid
+            // Glass — the system material, its own specular edge and its own
+            // shadow — instead of four hand-rolled layers (a fill, a material, a
+            // stroke and a neon ring) impersonating one. The pre-26 path keeps
+            // exactly what shipped, so nothing changes on an older phone.
+            .modifier(AlmaComposerSurface(pal: pal, focused: focused))
             .padding(.horizontal, 10)
             .padding(.bottom, 7)
         }
@@ -10457,6 +10907,27 @@ struct AgentComposerView: View {
         case .uploading: return AgentPalette.coral
         case .waitingForNetwork: return pal.muted
         }
+    }
+
+    /// The ONE mode chip (owner, 2026-07-28) — "how much may it do without me".
+    ///
+    /// A real UIKit menu button, so it opens the SYSTEM menu: the iOS 26 glass
+    /// panel, its spring, its haptic, its checkmark — the same thing the ⋯ button
+    /// gives, which is what the owner asked for ("iOS feel").
+    ///
+    /// Why UIKit and not SwiftUI's `Menu`: a SwiftUI Menu placed inside this
+    /// composer does not open at all in the simulator, while the app's own ⋯ Menu
+    /// on the same screen opens fine — the composer is presented in a layer where
+    /// the menu's own window ends up behind it. A `.popover` did open, but a
+    /// popover is not a menu; it looked like a panel from another app. UIKit
+    /// presents the menu from the button itself and sidesteps the whole problem.
+    @ViewBuilder private func permissionModeChip(_ pal: AgentPalette) -> some View {
+        AlmaPermissionModeMenuButton(
+            mode: vm.permissionMode,
+            pal: pal,
+            onPick: { next in Task { await vm.setPermissionMode(next) } })
+            .accessibilityLabel("মোড: \(vm.permissionMode.label)")
+            .accessibilityHint(vm.permissionMode.hint)
     }
 
     @ViewBuilder private func composerInputRow(_ pal: AgentPalette) -> some View {
@@ -12022,7 +12493,10 @@ private struct AgentBackgroundTasksSheet: View {
                         .frame(width: 42, height: 42)
                     // A cron check alone is not an executing task. Animate only
                     // for an explicit Plan-Drive sleep or a live autonomous wake.
-                    AlmaStarburstLoader(mode: loaderActive ? .thinking : .idle, size: 22)
+                    AlmaLoaderArtwork(
+                        mode: loaderActive ? .thinking : .idle,
+                        size: 22,
+                        animated: loaderActive)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Background execution")
@@ -12130,6 +12604,7 @@ private struct AgentBackgroundTasksSheet: View {
             VStack(spacing: 0) {
                 ForEach(Array(attention.enumerated()), id: \.element.id) { index, item in
                     attentionRow(item, pal: pal)
+                    attentionActions(item, pal: pal)
                     if index < attention.count - 1 {
                         Divider().overlay(pal.borderSubtle).padding(.leading, 47)
                     }
@@ -12232,14 +12707,73 @@ private struct AgentBackgroundTasksSheet: View {
                 }
             }
             Spacer(minLength: 4)
-            Image(systemName: "checkmark.seal")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(AgentPalette.coral.opacity(0.8))
-                .accessibilityHidden(true)
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
+        .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 2)
         .accessibilityElement(children: .combine)
-        .accessibilityHint("Approvals tab থেকে অনুমোদন বা বাতিল করুন")
+    }
+
+    /// The decision, here, on the phone.
+    ///
+    /// This row used to end in a decorative seal and an accessibility hint that
+    /// said "Approvals tab থেকে অনুমোদন বা বাতিল করুন" — a dead end twice over:
+    /// the Approvals TAB is the ERP approvals screen and never lists agent
+    /// cards, and the one native surface that could decide one
+    /// (`AgentOpenTasksChipView`) is written but never placed on screen. So the
+    /// owner could see every pending approval on his phone and act on none of
+    /// them unless the card happened to be inline in the chat he had open.
+    @ViewBuilder
+    private func attentionActions(_ item: AgentBackgroundAttention, pal: AgentPalette) -> some View {
+        let busy = vm.isSubmittingAction("action:\(item.id)")
+        let foreign = item.conversationId != nil && item.conversationId != vm.conversationId
+        HStack(spacing: 8) {
+            if busy {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Button {
+                    Task { await vm.decideAttention(item, approve: true) }
+                } label: {
+                    Text("অনুমোদন")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity).padding(.vertical, 8)
+                        .background(AgentPalette.coral, in: Capsule())
+                }
+                .buttonStyle(AlmaAgentPressStyle())
+                Button {
+                    Task { await vm.decideAttention(item, approve: false) }
+                } label: {
+                    Text("বাতিল")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(pal.mutedHi)
+                        .frame(maxWidth: .infinity).padding(.vertical, 8)
+                        .background(Color.white.opacity(0.07), in: Capsule())
+                        .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+                }
+                .buttonStyle(AlmaAgentPressStyle())
+                // Deciding a card that belongs to another chat must not drag that
+                // chat's reply into this one — so when it is foreign, offer the
+                // chat itself instead of pretending the answer lands here.
+                if foreign, let cid = item.conversationId {
+                    Button {
+                        dismiss()
+                        Task { await vm.openConversation(cid, explicit: true) }
+                    } label: {
+                        Image(systemName: "bubble.left.and.text.bubble.right")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(pal.mutedHi)
+                            .frame(width: 40).padding(.vertical, 8)
+                            .background(Color.white.opacity(0.07), in: Capsule())
+                            .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+                            .accessibilityLabel("এই কার্ডের চ্যাট খুলুন")
+                    }
+                    .buttonStyle(AlmaAgentPressStyle())
+                }
+            }
+        }
+        .padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 10)
+        .disabled(busy)
     }
 
     private func attentionAge(_ raw: String, now: Date) -> String {

@@ -1040,7 +1040,6 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           // New conversation: persist the owner's model choice ('auto' or a pinned model)
           // and the mode chip he is looking at right now.
           body.modelId = activeModelId
-          body.chatMode = chatMode
           body.permissionMode = permissionMode
         }
         if (fileRefs.length > 0) body.files = fileRefs
@@ -2131,8 +2130,6 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           isMobile={isMobile}
           activeModelId={activeModelId}
           onModelChange={setActiveModelId}
-          chatMode={chatMode}
-          onChatModeChange={setChatMode}
           permissionMode={permissionMode}
           onPermissionModeChange={setPermissionMode}
           pinnedSkill={pinnedSkill}

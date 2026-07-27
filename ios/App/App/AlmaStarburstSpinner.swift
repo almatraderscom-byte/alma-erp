@@ -84,6 +84,25 @@ enum AlmaStarburstMode: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Loader style preference
+
+@available(iOS 17.0, *)
+enum AlmaLoaderStyle: String, CaseIterable, Identifiable {
+    case starburst
+    case robotPet
+
+    static let defaultsKey = "alma.agent.loader.style"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .starburst: return "বর্তমান Starburst"
+        case .robotPet: return "Robot Pet"
+        }
+    }
+}
+
 // MARK: - Palette + organic ray data
 
 @available(iOS 17.0, *)
@@ -366,12 +385,345 @@ private final class StarburstAnimState {
 struct AlmaMiniLoader: View {
     var mode: AlmaStarburstMode = .searching
     var size: CGFloat = 13
-    var body: some View { AlmaStarburstLoader(mode: mode, size: size) }
+    var body: some View { AlmaLoaderArtwork(mode: mode, size: size) }
 }
 
 @available(iOS 17.0, *)
 struct AlmaPageLoader: View {
     var body: some View { Color.clear.frame(height: 1) }
+}
+
+// MARK: - Robot Pet loader
+
+@available(iOS 17.0, *)
+private struct AlmaRobotPetConfig {
+    let row: Int
+    let columns: [Int]
+    let durations: [TimeInterval]
+
+    var totalDuration: TimeInterval {
+        max(0.001, durations.reduce(0, +))
+    }
+
+    func column(at elapsed: TimeInterval) -> Int {
+        guard !columns.isEmpty, columns.count == durations.count else { return 0 }
+        var cursor = elapsed.truncatingRemainder(dividingBy: totalDuration)
+        for (index, duration) in durations.enumerated() {
+            if cursor < duration { return columns[index] }
+            cursor -= duration
+        }
+        return columns.last ?? 0
+    }
+}
+
+@available(iOS 17.0, *)
+private extension AlmaStarburstMode {
+    var robotPetConfig: AlmaRobotPetConfig {
+        switch self {
+        case .understanding:
+            return .init(
+                row: 3,
+                columns: [0, 1, 2, 3, 2, 1],
+                durations: [0.43, 0.17, 0.19, 0.31, 0.18, 0.22])
+        case .thinking:
+            return .init(
+                row: 6,
+                columns: [0, 1, 2, 3, 4, 5],
+                durations: [0.64, 0.42, 0.52, 0.52, 0.44, 0.60])
+        case .researching:
+            return .init(
+                row: 7,
+                columns: [0, 1, 2, 3, 4, 5],
+                durations: [0.58, 0.52, 0.64, 0.52, 0.58, 0.68])
+        case .searching:
+            return .init(
+                row: 9,
+                columns: [0, 1, 2, 3, 4, 5, 6, 7],
+                durations: [0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.19])
+        case .writing:
+            // Owner-approved: keep the original laptop frames untouched; only
+            // play the baked hand movement faster and add a slightly stronger bob.
+            return .init(
+                row: 7,
+                columns: [0, 1, 2, 3, 4, 5],
+                durations: [0.105, 0.095, 0.105, 0.095, 0.105, 0.120])
+        case .idle:
+            return .init(
+                row: 8,
+                columns: [0, 1, 2, 3, 4, 5],
+                durations: [0.72, 0.42, 0.52, 0.62, 0.52, 0.76])
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private enum AlmaRobotPetFrameStore {
+    private static let sheetColumns = 8
+    private static let sheetRows = 11
+    private static let requiredFrames: [(row: Int, columns: Range<Int>)] = [
+        (3, 0..<4),
+        (6, 0..<6),
+        (7, 0..<6),
+        (8, 0..<6),
+        (9, 0..<8),
+    ]
+
+    // Crop the source sheet once. Timeline updates then draw only a 192×208
+    // frame instead of resizing the full 1536×2288 texture on every tick.
+    static let frames: [Int: UIImage] = {
+        guard let source = UIImage(named: "AlmaRobotPetSprite")?.cgImage else { return [:] }
+        let frameWidth = source.width / sheetColumns
+        let frameHeight = source.height / sheetRows
+        var result: [Int: UIImage] = [:]
+
+        for required in requiredFrames {
+            for column in required.columns {
+                let rect = CGRect(
+                    x: CGFloat(column * frameWidth),
+                    y: CGFloat(required.row * frameHeight),
+                    width: CGFloat(frameWidth),
+                    height: CGFloat(frameHeight))
+                guard let crop = source.cropping(to: rect) else { continue }
+                result[required.row * sheetColumns + column] = UIImage(cgImage: crop)
+            }
+        }
+        return result
+    }()
+
+    static func image(row: Int, column: Int) -> UIImage? {
+        frames[row * sheetColumns + column]
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AlmaRobotPetSpriteFrame: View {
+    let row: Int
+    let column: Int
+    let width: CGFloat
+
+    private var height: CGFloat { width * 208 / 192 }
+
+    @ViewBuilder
+    var body: some View {
+        if let frame = AlmaRobotPetFrameStore.image(row: row, column: column) {
+            Image(uiImage: frame)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: width, height: height)
+        } else {
+            Color.clear.frame(width: width, height: height)
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AlmaRobotPetLoader: View {
+    let mode: AlmaStarburstMode
+    var size: CGFloat = 22
+    var animated = true
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var modeStartedAt = Date()
+
+    private var spriteWidth: CGFloat { size * 1.35 }
+    private var boxWidth: CGFloat { size * 2.05 }
+    private var boxHeight: CGFloat { size * 1.72 }
+
+    var body: some View {
+        let playbackPaused = reduceMotion || !animated
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: playbackPaused)) { timeline in
+            let elapsed = playbackPaused
+                ? 0
+                : max(0, timeline.date.timeIntervalSince(modeStartedAt))
+            let config = mode.robotPetConfig
+            let motion = bodyMotion(elapsed: elapsed)
+
+            ZStack {
+                Ellipse()
+                    .fill(Color.primary.opacity(mode == .idle ? 0.10 : 0.16))
+                    .frame(width: spriteWidth * 0.54, height: max(2, spriteWidth * 0.065))
+                    .blur(radius: max(1, size * 0.045))
+                    .scaleEffect(x: 1 - abs(motion.y) / max(1, size) * 2.4)
+                    .offset(y: size * 0.64)
+
+                AlmaRobotPetSpriteFrame(
+                    row: config.row,
+                    column: config.column(at: reduceMotion ? 0 : elapsed),
+                    width: spriteWidth)
+                    .offset(x: motion.x, y: motion.y)
+                    .rotationEffect(.degrees(motion.rotation))
+                    .shadow(
+                        color: AlmaRayBurst.colors[1].opacity(mode == .idle ? 0.15 : 0.28),
+                        radius: size > 40 ? size * 0.08 : 2,
+                        y: size > 40 ? size * 0.04 : 1)
+
+                if size >= 20 {
+                    modeDecoration(elapsed: reduceMotion ? 0 : elapsed)
+                }
+            }
+            .frame(width: boxWidth, height: boxHeight)
+        }
+        .onChange(of: mode) { _, _ in modeStartedAt = Date() }
+        .accessibilityLabel(mode.verbs.first ?? "ALMA")
+    }
+
+    private func bodyMotion(elapsed: TimeInterval)
+        -> (x: CGFloat, y: CGFloat, rotation: Double) {
+        guard !reduceMotion else { return (0, 0, 0) }
+
+        let period: Double
+        let xAmount: CGFloat
+        let yAmount: CGFloat
+        let rotation: Double
+        switch mode {
+        case .understanding:
+            period = 1.75; xAmount = size * 0.075; yAmount = size * 0.055; rotation = 3.2
+        case .thinking:
+            period = 2.55; xAmount = size * 0.035; yAmount = size * 0.075; rotation = 2.6
+        case .researching:
+            period = 2.20; xAmount = size * 0.018; yAmount = size * 0.026; rotation = 0.7
+        case .searching:
+            period = 0.90; xAmount = size * 0.055; yAmount = size * 0.032; rotation = 1.8
+        case .writing:
+            period = 0.44; xAmount = size * 0.040; yAmount = size * 0.038; rotation = 0.8
+        case .idle:
+            period = 1.20; xAmount = size * 0.010; yAmount = size * 0.060; rotation = 0.5
+        }
+
+        let wave = sin(elapsed / period * .pi * 2)
+        let lift = -abs(sin(elapsed / period * .pi))
+        return (
+            x: CGFloat(wave) * xAmount,
+            y: CGFloat(lift) * yAmount,
+            rotation: wave * rotation)
+    }
+
+    @ViewBuilder
+    private func modeDecoration(elapsed: TimeInterval) -> some View {
+        switch mode {
+        case .understanding:
+            ZStack {
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.13), lineWidth: 0.8))
+                HStack(spacing: max(1.5, size * 0.055)) {
+                    ForEach(0..<3, id: \.self) { index in
+                        Circle()
+                            .fill(AlmaRayBurst.colors[4])
+                            .frame(width: max(2.2, size * 0.085),
+                                   height: max(2.2, size * 0.085))
+                            .offset(y: -sin(elapsed * 7 + Double(index) * 0.8) * size * 0.035)
+                    }
+                }
+            }
+            .frame(width: size * 0.72, height: size * 0.40)
+            .scaleEffect(0.96 + sin(elapsed * 4.2) * 0.045)
+            .offset(x: -size * 0.67, y: -size * 0.52)
+
+        case .thinking:
+            ZStack {
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.13), lineWidth: 0.8))
+                HStack(spacing: max(1.5, size * 0.055)) {
+                    ForEach(0..<3, id: \.self) { index in
+                        Circle()
+                            .fill(AlmaRayBurst.colors[2])
+                            .frame(width: max(2.2, size * 0.085),
+                                   height: max(2.2, size * 0.085))
+                            .scaleEffect(0.72 + 0.28 * sin(elapsed * 5 + Double(index) * 0.8))
+                    }
+                }
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .frame(width: size * 0.13, height: size * 0.13)
+                    .offset(x: -size * 0.25, y: size * 0.27)
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .frame(width: size * 0.075, height: size * 0.075)
+                    .offset(x: -size * 0.34, y: size * 0.37)
+            }
+            .frame(width: size * 0.76, height: size * 0.43)
+            .scaleEffect(0.95 + sin(elapsed * 3.1) * 0.05)
+            .offset(x: size * 0.66, y: -size * 0.55)
+
+        case .researching:
+            ZStack(alignment: .top) {
+                RoundedRectangle(cornerRadius: max(3, size * 0.11), style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: max(3, size * 0.11), style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.13), lineWidth: 0.8))
+                VStack(spacing: max(2, size * 0.055)) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        Capsule()
+                            .fill(Color.secondary.opacity(0.68))
+                            .frame(width: size * 0.34, height: max(1.5, size * 0.035))
+                    }
+                }
+                .padding(.top, size * 0.13)
+                Capsule()
+                    .fill(AlmaRayBurst.colors[0].opacity(0.58))
+                    .frame(width: size * 0.42, height: max(2, size * 0.07))
+                    .offset(y: size * (0.12 + 0.28 * (0.5 + 0.5 * sin(elapsed * 3.8))))
+            }
+            .frame(width: size * 0.58, height: size * 0.70)
+            .offset(x: size * 0.69, y: -size * 0.48)
+
+        case .searching:
+            ZStack {
+                Circle()
+                    .stroke(
+                        AlmaRayBurst.colors[0].opacity(0.72),
+                        style: StrokeStyle(
+                            lineWidth: max(1.2, size * 0.045),
+                            lineCap: .round,
+                            dash: [size * 0.10, size * 0.18]))
+                    .rotationEffect(.degrees(elapsed * 150))
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: size * 0.34, weight: .semibold))
+                    .foregroundStyle(AlmaRayBurst.colors[0])
+                    .offset(x: size * 0.44, y: -size * 0.39)
+            }
+            .frame(width: size * 1.30, height: size * 1.30)
+
+        case .writing:
+            // The approved laptop artwork already contains the complete typing
+            // scene. Never draw a second laptop, keyboard, or synthetic arms here.
+            EmptyView()
+
+        case .idle:
+            Image(systemName: "sparkles")
+                .font(.system(size: size * 0.30, weight: .medium))
+                .foregroundStyle(AlmaRayBurst.colors[4])
+                .opacity(0.55 + 0.35 * sin(elapsed * 4.2))
+                .offset(x: size * 0.65, y: -size * 0.42)
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+struct AlmaLoaderArtwork: View {
+    let mode: AlmaStarburstMode
+    var size: CGFloat = 22
+    var animated = true
+
+    @AppStorage(AlmaLoaderStyle.defaultsKey)
+    private var loaderStyleRaw = AlmaLoaderStyle.starburst.rawValue
+
+    private var style: AlmaLoaderStyle {
+        AlmaLoaderStyle(rawValue: loaderStyleRaw) ?? .starburst
+    }
+
+    @ViewBuilder
+    var body: some View {
+        switch style {
+        case .starburst:
+            AlmaStarburstLoader(mode: mode, size: size)
+        case .robotPet:
+            AlmaRobotPetLoader(mode: mode, size: size, animated: animated)
+        }
+    }
 }
 
 @available(iOS 17.0, *)
@@ -445,7 +797,7 @@ struct AlmaSpinnerView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            AlmaStarburstLoader(mode: starburstMode, size: size)
+            AlmaLoaderArtwork(mode: starburstMode, size: size)
             if showVerb {
                 Text("\(starburstMode.verbs[verbIdx % max(1, starburstMode.verbs.count)])…")
                     .font(.system(size: size * 0.62 + 2, weight: .medium))
@@ -514,6 +866,8 @@ struct AlmaSpinnerPreviewScreen: View {
     @State private var mode: AlmaStarburstMode = .idle
     @State private var autoCycle = true
     @State private var flowTask: Task<Void, Never>?
+    @AppStorage(AlmaLoaderStyle.defaultsKey)
+    private var loaderStyleRaw = AlmaLoaderStyle.starburst.rawValue
     @Environment(\.colorScheme) private var scheme
 
     private var ink: Color {
@@ -521,13 +875,61 @@ struct AlmaSpinnerPreviewScreen: View {
             : Color(red: 0.102, green: 0.102, blue: 0.180)
     }
 
+    private var loaderStyle: AlmaLoaderStyle {
+        AlmaLoaderStyle(rawValue: loaderStyleRaw) ?? .starburst
+    }
+
     var body: some View {
         ZStack {
             AgentAuroraBackground()
             ScrollView {
                 VStack(spacing: 24) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Agent loader")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(ink.opacity(0.72))
+                        HStack(spacing: 4) {
+                            ForEach(AlmaLoaderStyle.allCases) { style in
+                                Button {
+                                    loaderStyleRaw = style.rawValue
+                                } label: {
+                                    Text(style.label)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(
+                                            loaderStyleRaw == style.rawValue
+                                                ? ink
+                                                : ink.opacity(0.62)
+                                        )
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 8)
+                                        .background {
+                                            if loaderStyleRaw == style.rawValue {
+                                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                                    .fill(.ultraThinMaterial)
+                                                    .shadow(color: .black.opacity(0.10),
+                                                            radius: 3, y: 1)
+                                            }
+                                        }
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(style.label)
+                                .accessibilityValue(
+                                    loaderStyleRaw == style.rawValue ? "Selected" : ""
+                                )
+                            }
+                        }
+                        .padding(3)
+                        .background(
+                            ink.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        )
+                    }
+                    .padding(14)
+                    .background(.ultraThinMaterial,
+                                in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
                     HStack(spacing: 12) {
-                        AlmaStarburstLoader(mode: mode, size: 118)
+                        AlmaLoaderArtwork(mode: mode, size: 118)
                         AlmaShimmerWordmark(size: 24, weight: .bold, tracking: 4.8)
                     }
                     .frame(minHeight: 180)
@@ -573,8 +975,11 @@ struct AlmaSpinnerPreviewScreen: View {
                 .padding(20)
             }
         }
-        .navigationTitle("Loader Preview")
+        .navigationTitle("Agent Loader")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: loaderStyleRaw) { _, _ in
+            UISelectionFeedbackGenerator().selectionChanged()
+        }
         .onAppear { runFlow() }
         .onDisappear { flowTask?.cancel() }
     }
@@ -618,6 +1023,17 @@ struct AlmaSpinnerPreviewScreen: View {
     }
 
     private var statusLine: String {
+        if loaderStyle == .robotPet {
+            switch mode {
+            case .understanding: return "Understanding · playful handoff"
+            case .thinking: return "Thinking · animated thought bubble"
+            case .researching: return "Research · calm reading + page scan"
+            case .searching: return "Using tool · quick search orbit"
+            case .writing: return "Writing · fast original laptop typing"
+            case .idle: return "Idle · cheerful ALMA ready"
+            }
+        }
+
         switch mode {
         case .understanding: return "Understanding → smooth handoff"
         case .thinking: return "Thinking · clustered rays · 2.1s/rev"

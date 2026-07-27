@@ -17,6 +17,24 @@
  * listen mode).
  */
 
+/**
+ * RETIRED AS AN OWNER CONTROL — 2026-07-28.
+ *
+ * This picker and the permission ladder (`permission-mode.ts`) were built two
+ * days apart and both shipped as chips, so the composer carried TWO mode
+ * controls and BOTH of them had a mode called প্ল্যান — one meaning "read only,
+ * but you may still write a plan", the other "every effect tool is out of your
+ * hands". Their filters ran back to back in run-owner-turn, so twenty
+ * combinations existed and nobody had designed most of them; `সরাসরি` (no plans,
+ * do it now) plus `প্ল্যান` (change nothing) is a contradiction the code answers
+ * by accident.
+ *
+ * The owner asked for ONE chip, Claude Code style. The permission ladder is that
+ * chip, because it is the axis that understands risk. This module stays because
+ * its tool-withholding is how the plan promise is kept — but the value is now
+ * DERIVED from the permission mode (`chatModeForPermission`) instead of being a
+ * second thing to choose.
+ */
 export type ChatMode = 'auto' | 'direct' | 'plan' | 'plan_drive'
 
 export const CHAT_MODES: readonly ChatMode[] = ['auto', 'direct', 'plan', 'plan_drive']
@@ -146,4 +164,21 @@ export function chatModeDirective(mode: ChatMode): string | null {
         'যাতে Boss জানেন কাজটা এখন হচ্ছে নাকি পেছনে চলবে।'
       )
   }
+}
+
+
+/**
+ * The one mapping — permission mode in, execution style out.
+ *
+ * Only `plan` needs anything but `auto`: the promise "nothing will change" is
+ * kept by BOTH filters, and the plan-mode directive is the sentence that tells
+ * the head to say so plainly instead of answering vaguely. Every other rung
+ * differs in what needs a card, not in how the work is executed.
+ *
+ * `direct` and `plan_drive` are deliberately unreachable now: "do it now, no
+ * plan" is a sentence he can type, and a durable plan is something a big job
+ * becomes — neither was ever a permission.
+ */
+export function chatModeForPermission(permissionMode: string): ChatMode {
+  return permissionMode === 'plan' ? 'plan' : 'auto'
 }
