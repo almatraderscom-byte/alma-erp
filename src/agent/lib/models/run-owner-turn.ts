@@ -67,7 +67,7 @@ import { isTurnCancelRequested, getTurnInstructionOrigin } from '@/agent/lib/tur
 import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
 import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUserTextPeek } from '@/agent/lib/history-trim'
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
-import { normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
+import { adviseForAction, filterToolsForPermissionMode, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
 import { stripLeakedToolCalls } from '@/agent/lib/strip-leaked-tool-calls'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
@@ -1253,11 +1253,23 @@ async function* runAlternateProviderTurn(
   const noQuestionsTurn = /(?:জিজ্ঞেস\s*কর(?:তে|ার)?\s*(?:হবে\s*না|দরকার\s*নেই|লাগবে\s*না)|নিজে\s*থেকে(?:ই)?\s*(?:কাজ\s*)?(?:চালিয়ে|শেষ|কর)|do\s+not\s+ask|don'?t\s+ask|without\s+asking)/i
     .test(lastUserText)
   const modeFiltered = filterToolsForMode(chatMode, anthropicToolsToNeutral(cappedTools), isReadOnlyTool)
+  // PM-2 — the permission mode becomes a GUARANTEE here. Plan mode promises that
+  // nothing changes, and the only way to keep that promise is for the changing
+  // tools not to be in the model's hands at all. (Careful does not withhold: its
+  // answer to a write is a card, and a tool that was never offered cannot be
+  // staged into one.)
+  const permissionFiltered = filterToolsForPermissionMode(permissionMode, modeFiltered, isReadOnlyTool)
+  if (permissionFiltered.removed.length > 0) {
+    console.info('[run-owner-turn] permission mode withheld tools:', {
+      permissionMode,
+      count: permissionFiltered.removed.length,
+    })
+  }
   const neutralTools = listenMode
     ? []
     : noQuestionsTurn
-      ? modeFiltered.filter((t) => t.name !== 'ask_user')
-      : modeFiltered
+      ? permissionFiltered.tools.filter((t) => t.name !== 'ask_user')
+      : permissionFiltered.tools
   // Harness Gap 5 — schemas dynamically loaded by find_tool for the rest of this
   // turn (appended after the base list; execution guards unchanged).
   const dynamicNeutralTools: NeutralTool[] = []
@@ -2407,9 +2419,60 @@ async function* runAlternateProviderTurn(
           toolResults.push({ id: call.id, name: call.name, result: skipped })
           continue
         }
+        // ── PM-2: the permission mode decides, before anything runs ─────────
+        // Plan mode already has no effect tools, so reaching here means the head
+        // guessed a name — refuse it with the remedy attached, never a bare
+        // "cannot". Careful mode turns an ordinary write into a real card,
+        // through the same staging machinery AIOS uses, so Boss gets something
+        // to tap instead of a lecture.
+        const permissionTier = (await import('@/agent/lib/autonomy-task-catalog'))
+          .taskClassForTool(call.name, {
+            mode: getCapability(call.name)?.mode ?? 'write',
+            risk: getCapability(call.name)?.risk ?? 'medium',
+            domain: getCapability(call.name)?.domain ?? 'unclassified',
+          })
+        const permissionVerdict = modeVerdict({
+          mode: permissionMode,
+          tier: permissionTier.tier,
+          taskClass: permissionTier.taskClass,
+          grant: elevationGrant,
+          now: Date.now(),
+        })
+        if (permissionVerdict === 'blocked') {
+          const advice = adviseForAction({
+            mode: permissionMode,
+            tier: permissionTier.tier,
+            taskClass: permissionTier.taskClass,
+            grant: elevationGrant,
+            now: Date.now(),
+            whatBn: `\`${call.name}\` দিয়ে যা করতে চাইছ`,
+          })
+          const blocked = { success: false as const, error: advice.reasonBn }
+          toolRecords.push({
+            id: call.id, toolName: call.name, input: call.input,
+            output: null, status: 'error', durationMs: 0, error: blocked.error,
+            errorCode: 'permission_mode_blocked',
+          })
+          toolResults.push({ id: call.id, name: call.name, result: blocked })
+          yield {
+            type: 'tool_end', id: call.id, name: call.name,
+            success: false, error: blocked.error, resultPreview: blocked.error,
+          }
+          continue
+        }
         // Re-emit tool_start with the parsed input so the UI shows the real target.
         yield { type: 'tool_start', id: call.id, name: call.name, input: call.input }
         const started = Date.now()
+        // Careful mode: an R1/R2 write that would normally just run gets staged
+        // as a card instead. Stage-mode tools already make their own card, and
+        // R3/R4 are handled by the ladder above — this only covers the everyday
+        // writes that Standard lets through silently.
+        const carefulNeedsCard =
+          permissionVerdict === 'card'
+          && permissionMode === 'careful'
+          && (permissionTier.tier === 'R1' || permissionTier.tier === 'R2')
+          && getCapability(call.name)?.mode === 'write'
+          && conversationId
         const ownerIntentViolation = personalMode
           ? null
           : validateToolCallAgainstOwnerIntent({
@@ -2465,6 +2528,17 @@ async function* runAlternateProviderTurn(
                 klass: aiosGuard.klass as Exclude<typeof aiosGuard.klass, 'routine'>,
               })
             : { success: false as const, error: aiosGuard.message }
+          : carefulNeedsCard
+          ? await stageEnforcedToolApproval({
+              conversationId: conversationId!,
+              businessId: String(businessId ?? 'ALMA_LIFESTYLE'),
+              turnId,
+              toolCallId: call.id,
+              toolName: call.name,
+              toolInput: call.input as Record<string, unknown>,
+              model: model.id,
+              klass: 'unknown',
+            })
           : personalMode
           ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested })
           : await executeTool(call.name, call.input, {

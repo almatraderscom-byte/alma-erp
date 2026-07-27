@@ -284,6 +284,49 @@ export function adviseForAction(input: ModeVerdictInput & { whatBn?: string }): 
   return { verdict, blockedByMode: false, suggestedMode: null, reasonBn: '' }
 }
 
+// ── PM-2: the mode as a GUARANTEE, not a request ─────────────────────────────
+//
+// The lesson this repo keeps relearning (listen mode, chat-mode, the plan turn):
+// a sentence in the prompt is a request, an empty tool list is a guarantee. PM-1
+// told the head its mode; PM-2 takes the tools away when the mode says so, and
+// makes the refusal carry its own remedy.
+
+/**
+ * Tools Plan mode keeps even though they are not pure reads — asking, planning
+ * and remembering are how a plan gets written. Mirrors `chat-mode.ts`, which
+ * learned the same list the hard way.
+ */
+const PLAN_MODE_ALLOWED = new Set<string>([
+  'make_plan',
+  'ask_user',
+  'save_memory', 'update_memory', 'graph_remember',
+  'save_task_checkpoint',
+  'find_tool',
+])
+
+/**
+ * The model-facing tool list for a permission mode.
+ *
+ * Only Plan withholds: it is the mode that promises nothing will change, and the
+ * only way to keep that promise is for the tools not to be there. Careful does
+ * NOT withhold — its answer to a write is a card, and you cannot stage a card
+ * for a tool the model was never offered.
+ */
+export function filterToolsForPermissionMode<T extends { name: string }>(
+  mode: PermissionMode,
+  tools: T[],
+  isRead: (name: string) => boolean,
+): { tools: T[]; removed: string[] } {
+  if (mode !== 'plan') return { tools, removed: [] }
+  const kept: T[] = []
+  const removed: string[] = []
+  for (const t of tools) {
+    if (isRead(t.name) || PLAN_MODE_ALLOWED.has(t.name)) kept.push(t)
+    else removed.push(t.name)
+  }
+  return { tools: kept, removed }
+}
+
 // ── The banner the agent reads every turn ────────────────────────────────────
 
 /** Marker shared with card-state.ts — a system note is never a Boss message. */

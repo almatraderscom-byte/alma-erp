@@ -77,8 +77,8 @@ mode itself. Covered in §3.6 and shipped as part of PM-0's advisor.
 | Phase | Ships | Status |
 |---|---|---|
 | **PM-0** | `permission-mode.ts` — the table, the advisor, the per-turn banner. Pure, no wiring | **done** — 22 tests |
-| **PM-1** | conversation column, API, composer chip, per-turn echo, mode on every tool event. **Shadow: recorded and shown, nothing enforced** | next |
-| **PM-2** | enforce Plan and Careful (tightening only) + the advisor wired into the guard's refusal | |
+| **PM-1** | conversation column, API, composer chip, per-turn echo, mode on every tool event. **Shadow: recorded and shown, nothing enforced** | **done** — chip + persistence live-proven in his Chrome (`permissionMode:"plan"` survived a reload) |
+| **PM-2** | enforce Plan and Careful (tightening only) + the advisor wired into the guard's refusal | **done** — Plan withholds every effect tool; Careful stages an R1/R2 write as a real card; a mode refusal carries the minimum mode that would allow it |
 | **PM-3** | allow/ask/deny rules with resource patterns + the organisation-policy tier | |
 | **PM-4** | grants on the card: once / this job / 30 min / always, server-side expiry, revoke screen | |
 | **PM-5** | context inheritance — `turnId` + origin + mode into sub-agents; declared modes for cron/heartbeat/plan-driver | **pull early: this is an open hole today**, not just design |
@@ -110,27 +110,45 @@ mode itself. Covered in §3.6 and shipped as part of PM-0's advisor.
 
 ## Still broken — start here
 
-1. **An announced next step after an ARGUMENT failure is suppressed.** Live
-   2026-07-27: the head said "এখন সঠিকভাবে চালাচ্ছি" and the turn ended.
-   `turn-loop-policy.ts:114` refuses to push when the head names the same tool
-   that just failed — right for hammering a broken call, wrong when the head
-   itself said the *arguments* were wrong. Needs the failure's error class, not
-   its name.
-2. **The turn's work class resets on every follow-up turn.** "পুরো …" earns 60
-   rounds; tapping "হ্যাঁ, এখনই শুরু করুন" earns 8, because the class is derived
-   from the latest message alone. A job must keep its class for its lifetime.
-3. **It asks again after he has already answered once.** The prose-choice rule
-   turned narration containing "(recommended)?" into a second ask card.
-4. **The approval card lies about who approved.** `AgentConfirmCard.tsx:36` shows
-   "আপনি অনুমোদন করেছিলেন" for any row that reaches `executed`, including the SEO
-   audit rows that are created already-approved and never went to him.
-5. **"approved" means "still crawling"** in the audit tool, and the head repeats
-   the raw word to him — it reads as "waiting for your approval".
-6. **The 2 tagless pages** (`7-b`, `mm03`) need a storefront fix, not agent copy.
-7. **Nothing is merged to main.** Everything is on the branch, live-verified
+1. **`run_website_seo_audit` is missing from the `seo-auditing-own-site` tool
+   list.** Live 2026-07-27 on the DeepSeek head: the first rounds of an audit
+   turn all failed with "run_website_seo_audit was NOT in my tool list". It
+   recovered by fetching pages directly, but those rounds were wasted.
+2. **Skill routing sends a FIX request to the AUDIT skill.** "…ঠিক করে দাও"
+   pinned `seo-auditing-own-site` more than once. Roadmap-2 territory, recorded
+   here because it costs rounds today.
+3. **The 2 tagless pages** (`7-b`, `mm03`) need a storefront fix, not agent copy.
+4. **Nothing is merged to main.** Everything is on the branch, live-verified
    piece by piece.
 
----
+## Fixed later on 2026-07-27 (second pass, each live-checked)
+
+7. **A corrected retry is not hammering.** The failure guard refused to push when
+   the head named the same tool that just failed — right for a broken call, wrong
+   when the head itself said the ARGUMENTS were wrong. It now reads the failure's
+   error class. An honest admission that comes with work in flight is no longer
+   read as a sign-off either.
+8. **A job keeps its size.** The work class is remembered for the conversation
+   (45-minute expiry, widening only), so a two-word answer to the agent's own
+   card no longer shrinks a 60-round job back to an 8-round chat reply.
+9. **After he answers, it works instead of asking again.** On an answer turn the
+   prose-choice rule no longer promotes a stray question into a second card.
+10. **The card may only report a decision he actually made.** `owner_decided` is
+    written solely by the approve/reject routes; `resolvedAt` was the wrong
+    signal (the worker's job-result callback stamps it too). **Live-proven** —
+    the audit card now reads "অনুমোদন লাগেনি — নিজে থেকেই হয়ে গেছে".
+11. **"approved" no longer reaches him meaning "still crawling"** — the audit
+    tool returns a `stateBn` the head can say out loud.
+12. **Leaked tool-call text is stripped** before it reaches the chat, with the
+    tool names logged so a claim resting on a fake call stays catchable.
+13. **The loop.** Raising the push limit without changing the sentence produced
+    one: three server notes arrived as plain `user` messages, the head read them
+    as Boss repeating himself, and answered each by saving memory — 45 steps,
+    $0.90. Fixed on three legs: every server note now carries an INTERNAL CONTROL
+    marker (including the periodic constitution reminder), a push must be EARNED
+    by a non-bookkeeping tool success, and the push ESCALATES instead of
+    repeating. **Live-proven on DeepSeek V4 Flash: 21 steps, $0.03, no loop, and
+    an honest negative finding** ("দুর্বল title বা thin description আসলে নেই").
 
 ## How he wants this tested (his correction, and it stands)
 
