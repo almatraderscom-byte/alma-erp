@@ -117,6 +117,22 @@ export function isSeoTopic(text: string): boolean {
   return META_BARE.test(text) && ANY_DOMAIN.test(text)
 }
 
+/**
+ * "কে কখন আসছে" — a person's attendance. Keyword scoring cannot reach this at
+ * all: he names the STAFF MEMBER ("Mustahid ajke kokhon asche?"), and a name is
+ * not a keyword any skill can claim. It is the same shape as fix-vs-audit — a
+ * deterministic distinction a model should never be asked to make.
+ */
+const STAFF_PRESENCE =
+  /(kokhon\s*(?:asche|ashbe|eshe|ase)|কখন\s*(?:আসছে|আসবে|এসেছে|আসে)|\bke\s*ache\b|কে\s*আছে|hajir|হাজির|hajira|হাজিরা|attendance|উপস্থিত)/i
+/**
+ * …unless it is a PARCEL arriving, not a person. "order kokhon asche" is a
+ * customer question and pinning the staff skill there would remove the order
+ * tools the answer actually needs. `delivery` is deliberately NOT here: "delivery
+ * ke korbe" is a dispatch question, which is exactly this skill's job.
+ */
+const PARCEL_CONTEXT = /(\border\b|অর্ডার|parcel|পার্সেল|courier|কুরিয়ার|shipment|চালান)/i
+
 export interface RouterRule {
   id: string
   skill: string
@@ -146,6 +162,12 @@ export const RULES: RouterRule[] = [
     skill: 'seo-fixing-own-site',
     test: (t) => isSeoTopic(t) && (FIX_VERB.test(t) || FIX_VERB_BANGLISH.test(t)) && !AUDIT_ASK.test(t),
     why: 'কাজের ক্রিয়াপদ + SEO বিষয় = ফিক্স, রিপোর্ট নয়',
+  },
+  {
+    id: 'staff-attendance',
+    skill: 'alma-staff-dispatch',
+    test: (t) => STAFF_PRESENCE.test(t) && !PARCEL_CONTEXT.test(t),
+    why: 'কে কখন আসছে/আছে — মানুষের হাজিরার প্রশ্ন, পার্সেলের নয়',
   },
 ]
 

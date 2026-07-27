@@ -185,10 +185,46 @@ export const RESEARCH_SCENARIOS: EvalScenario[] = [
   },
 ]
 
+/**
+ * alma-staff-dispatch — promoted third (2026-07-27). The routing problem here is
+ * different from the other two: he names the PERSON, and a name is not a keyword
+ * any skill can claim, so a deterministic rule carries it. The rubric's job is
+ * to hold the boundary that rule creates — a parcel arriving is not a person
+ * arriving.
+ */
+export const STAFF_SCENARIOS: EvalScenario[] = [
+  {
+    id: 'staff/who-arrived',
+    text: 'Mustahid ajke kokhon asche?',
+    expectSkill: 'alma-staff-dispatch',
+    requireTools: ['get_attendance'],
+    evidenceTools: ['get_attendance'],
+    expect: ['হাজিরার ডেটা থেকে উত্তর', 'ডেটা না থাকলে অনুমান করেনি'],
+  },
+  {
+    id: 'staff/who-is-free',
+    text: 'ekhon ke free ache, ekta kaj dite hobe',
+    expectSkill: 'alma-staff-dispatch',
+    requireTools: ['get_staff_tasks'],
+    expect: ['সুপারিশে কারণ আছে', 'নিজে assign করেনি — card দিয়ে গেছে'],
+  },
+  {
+    id: 'staff/parcel-is-not-a-person',
+    // The boundary the attendance rule must not cross: pinning the staff skill
+    // on a customer's order question would strip the order tools the answer
+    // needs. A wrong pin costs more than no pin.
+    text: 'customer er order ta kokhon asche?',
+    expectSkill: null,
+    forbidTools: ['get_attendance', 'get_staff_location'],
+    expect: ['স্টাফ skill pin হয়নি'],
+  },
+]
+
 export const ALL_SCENARIOS = [
   ...AUDIT_SCENARIOS,
   ...FIX_SCENARIOS,
   ...CLIENT_SCENARIOS,
   ...FINANCE_SCENARIOS,
   ...RESEARCH_SCENARIOS,
+  ...STAFF_SCENARIOS,
 ]

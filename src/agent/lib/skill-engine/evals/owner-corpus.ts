@@ -94,4 +94,13 @@ export const OWNER_CORPUS: OwnerCase[] = [
   { id: 'orders', text: 'kalker order gulo dekhao', expected: null, note: 'Plain ERP read — no procedure needed.' },
   { id: 'sales', text: 'ajker sale koto?', expected: null, note: 'Plain ERP read.' },
   { id: 'yes', text: 'ha koro', expected: null, note: 'Continuation — the pinned skill should carry, not a fresh pick.' },
+  {
+    id: 'parcel-eta',
+    text: 'customer er order ta kokhon asche?',
+    expected: null,
+    note:
+      'The boundary the staff-attendance rule must not cross (2026-07-27). Same '
+      + 'words as "Mustahid ajke kokhon asche", different subject — pinning the staff '
+      + 'skill here would strip the order tools the answer needs.',
+  },
 ]

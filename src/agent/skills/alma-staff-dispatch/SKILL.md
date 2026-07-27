@@ -1,8 +1,8 @@
 ---
 name: alma-staff-dispatch
-description: Staff task/attendance/location → dispatch decision (assignment stays gated).
-version: 0.1.0
-keywords: staff, স্টাফ, kormi, কর্মী, dispatch, ডেলিভারি, delivery, kaj dao, task dao, ke ache, hajira, হাজিরা, assign
+description: Reads who is present, what each person is doing and where they are, then recommends who should take a job. Use when Boss asks who is in, when someone arrived, who is free, or who to send. Recommends only — assignment stays owner-gated.
+version: 1.0.0
+keywords: staff, স্টাফ, kormi, কর্মী, dispatch, ডেলিভারি, delivery, kaj dao, task dao, ke ache, hajira, হাজিরা, assign, ke free ache, chuti, ছুটি, duty
 ---
 
 # Staff dispatch — who does what

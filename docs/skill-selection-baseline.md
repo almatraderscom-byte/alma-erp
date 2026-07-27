@@ -10,7 +10,7 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 
 - Messages that SHOULD pin a skill: **21** — correct top pick: **13** (**62%**)
 - Wrong skill chosen: **6** · nothing chosen: **2**
-- Messages that should pin NOTHING: **6** — false triggers: **1**
+- Messages that should pin NOTHING: **7** — false triggers: **2**
 
 | # | message | expected | picked (top 3) | result |
 |---|---|---|---|---|
@@ -41,6 +41,7 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 | orders | kalker order gulo dekhao | — | alma-agent-incident-diagnosis | ⚠️ false trigger |
 | sales | ajker sale koto? | — | — | ✅ correctly silent |
 | yes | ha koro | — | — | ✅ correctly silent |
+| parcel-eta | customer er order ta kokhon asche? | — | alma-customer-support, alma-agent-incident-diagnosis | ⚠️ false trigger |
 
 ## What the failures mean
 

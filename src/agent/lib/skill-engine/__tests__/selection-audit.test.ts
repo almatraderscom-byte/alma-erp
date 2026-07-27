@@ -68,17 +68,19 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     // the record of which ones have actually been through that.
     //   2026-07-27: alma-finance-brief, the first of the 16 originals.
     //   2026-07-27: alma-research, the second.
+    //   2026-07-27: alma-staff-dispatch, the third.
     expect(selectable).toEqual([
       'alma-finance-brief',
       'alma-owner-daily-briefing',
       'alma-research',
+      'alma-staff-dispatch',
       'seo-auditing-own-site',
       'seo-fixing-client-site',
       'seo-fixing-own-site',
     ])
 
     const stillDraft = all.skills.length - live.skills.length
-    expect(stillDraft).toBeGreaterThanOrEqual(13)
+    expect(stillDraft).toBeGreaterThanOrEqual(12)
   })
 
   it('records the baseline table and the headline numbers', async () => {
@@ -141,7 +143,10 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     // romanised fix order ("slug thik koro") landing on the read-only audit
     // skill. The corpus only tested Bangla script, so the rule layer being
     // script-only was invisible to it.
-    expect(rows).toHaveLength(27)
+    // 27 → 28: the parcel-vs-person boundary added 2026-07-27 with
+    // alma-staff-dispatch. "customer er order ta kokhon asche" carries the same
+    // words as the staff question and must still pin nothing.
+    expect(rows).toHaveLength(28)
     expect(accuracy).toBeLessThanOrEqual(100)
     expect(hits + count('wrong') + count('missed')).toBe(shouldPick.length)
     expect(falseTriggers + count('correctly-silent')).toBe(shouldNotPick.length)
