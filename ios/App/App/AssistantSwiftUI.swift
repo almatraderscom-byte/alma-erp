@@ -10738,10 +10738,16 @@ struct AgentComposerView: View {
 
     /// The ONE mode chip (owner, 2026-07-28) — "how much may it do without me".
     ///
-    /// The web used to carry a second chip for execution style and both had a rung
-    /// called প্ল্যান; that one is retired and its behaviour is derived from this.
-    /// The phone had no picker at all, so every chat here silently ran on the
-    /// default however he had set it on the web.
+    /// Opens ANCHORED TO THE CHIP, like the ⋯ menu and the model picker, not as a
+    /// sheet from the bottom of the screen (owner correction). A SwiftUI `Menu`
+    /// is what those two use, but a Menu placed inside this composer container
+    /// does not open at all in the simulator while the app's own ⋯ Menu does —
+    /// so this uses the popover the composer's own attachment chooser uses, with
+    /// `.presentationCompactAdaptation(.popover)` to keep it a popover on iPhone
+    /// instead of letting it adapt into a sheet.
+    ///
+    /// It lives ABOVE the input row: below it, the strip is inside the floating
+    /// tab bar's hit area and the chip is visible but untappable.
     @ViewBuilder private func permissionModeChip(_ pal: AgentPalette) -> some View {
         Button {
             AlmaAgentHaptics.selection()
@@ -10752,15 +10758,14 @@ struct AgentComposerView: View {
                     .font(.system(size: 11, weight: .semibold))
                 Text(vm.permissionMode.label)
                     .font(.system(size: 12, weight: .medium))
-                Image(systemName: "chevron.up.chevron.down")
+                Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(pal.muted)
             }
             .foregroundStyle(vm.permissionMode == .standard ? pal.mutedHi : AgentPalette.coral)
-            .padding(.horizontal, 10).padding(.vertical, 6)
+            .padding(.horizontal, 10).padding(.vertical, 7)
             .background(
                 vm.permissionMode == .standard
-                    ? AnyShapeStyle(Color.white.opacity(0.06))
+                    ? AnyShapeStyle(Color.white.opacity(scheme == .dark ? 0.05 : 0.35))
                     : AnyShapeStyle(AgentPalette.coral.opacity(0.12)),
                 in: Capsule())
             .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
@@ -10769,14 +10774,10 @@ struct AgentComposerView: View {
         .buttonStyle(AlmaAgentPressStyle())
         .accessibilityLabel("মোড: \(vm.permissionMode.label)")
         .accessibilityHint(vm.permissionMode.hint)
-        // A SwiftUI `Menu` and then a popover both failed to open from this strip
-        // in the simulator; a sheet is unambiguous and, on a phone, is the shape
-        // this list wants anyway — five rungs with a sentence each do not fit in
-        // a popover thumb-reach.
-        .sheet(isPresented: $showModePicker) {
+        .popover(isPresented: $showModePicker, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
             modeMenu(pal)
-                .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
+                .presentationCompactAdaptation(.popover)
+                .presentationBackground(.ultraThinMaterial)
         }
     }
 
@@ -10817,15 +10818,15 @@ struct AgentComposerView: View {
                 }
                 .buttonStyle(AlmaAgentPressStyle())
             }
-            // True in every mode, and the reason this chip can be relaxed safely:
-            // the risk-tier ceiling in the policy kernel, not this menu, is what
-            // keeps money and permissions in his hands.
+            // True in every mode, and the reason a looser rung is still safe: the
+            // risk-tier ceiling in the policy kernel, not this menu, keeps money
+            // and permissions in his hands.
             Text("টাকা সরানো ও নিরাপত্তার কাজ সব মোডেই আপনার হাতে থাকবে।")
                 .font(.system(size: 11))
                 .foregroundStyle(pal.muted)
                 .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 12)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(width: 330)
     }
 
     @ViewBuilder private func composerInputRow(_ pal: AgentPalette) -> some View {
