@@ -4,7 +4,9 @@
   "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
-  "businessScopes": ["ALMA_LIFESTYLE"],
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
   "riskTier": "medium",
   "extends": "alma-base",
   "whenNotToUse": "একটা নির্দিষ্ট ক্যাম্পেইন চালু/বন্ধ/বাজেট বদল → alma-meta-campaign-launch। কোন গ্রাহকদের নিয়ে audience → alma-audience-builder। একটা পণ্যের পোস্ট বা ক্যাপশন → alma-product-social-post। খরচের হিসাব-নিকাশ → alma-finance-brief।",
@@ -19,15 +21,23 @@
   ],
   "outputContract": {
     "kind": "artifact_report",
-    "mustInclude": ["spend_and_return", "competitor_angles", "calendar_gaps", "next_week_plan"]
+    "mustInclude": [
+      "spend_and_return",
+      "competitor_angles",
+      "calendar_gaps",
+      "next_week_plan"
+    ]
   },
   "stopConditions": [
+    "যে সংখ্যাটা নিজে খুলে দেখোনি, তার কারণ ব্যাখ্যা কোরো না — সংখ্যা বলো, তারপর 'এটা কীসের' জানতে আলাদা টুল চালাও বা Boss-কে বলো জানো না",
     "কোনো ক্যাম্পেইন চালু/বন্ধ/বাজেট বদলাতে বলা হলে — এই skill সেটা করে না, সুপারিশ দিয়ে থামবে",
     "marketing report না এলে — অনুমান করে ROAS বা খরচ বলবে না",
     "competitor scan-এ খরচ লাগলে — আগে Boss-এর অনুমোদন"
   ],
   "done": [
-    { "tool": "marketing_report" }
+    {
+      "tool": "marketing_report"
+    }
   ],
   "networkPolicy": "allowlist",
   "writePolicy": "owner_gated",
