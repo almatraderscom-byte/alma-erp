@@ -63,6 +63,36 @@ export const runtime = 'nodejs'
 // (default 280s) clamped ≥20s under this — set the env to 780000 to use the room.
 export const maxDuration = 800
 
+/**
+ * Skill-engine diagnostic — measured HERE because this is where the turn runs.
+ *
+ * The engine is switched on in production and no turn has ever emitted
+ * `skill_pinned`, not even with an owner pin written straight into the
+ * conversation row. The standalone probe route proved the SKILL.md packages are
+ * on disk, discovered, and routed — but that is a DIFFERENT lambda with its own
+ * traced files. This GET runs the same `buildActiveSkills` call the turn makes,
+ * in this bundle, with a real conversation id, and reports the error the live
+ * path swallows by design.
+ *
+ * Internal-token only, read-only, no model call. It does not touch POST.
+ */
+export async function GET(req: NextRequest) {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
+  const { verifyAgentInternalToken, extractBearerToken } = await import('@/lib/agent-internal-auth')
+  if (!verifyAgentInternalToken(extractBearerToken(req.headers.get('authorization')))) {
+    return Response.json({ error: 'unauthorized' }, { status: 401 })
+  }
+  const { skillDiskSnapshot } = await import('@/agent/lib/skill-engine/probe')
+  return Response.json(
+    await skillDiskSnapshot({
+      probe: req.nextUrl.searchParams.get('probe'),
+      conversationId: req.nextUrl.searchParams.get('conversationId'),
+      includeActive: true,
+    }),
+  )
+}
+
 interface FileRef { bucket: string; path: string; mediaType: string }
 
 interface ChatBody {
