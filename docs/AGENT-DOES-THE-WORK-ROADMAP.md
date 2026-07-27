@@ -108,7 +108,7 @@ is not a new mechanism; it is *coverage* and *proof*.
 |---|---|---|---|
 | **A1** | `storefront-editing` skill: the seven writable fields, batched, one card per batch, before→after, verified after write | alma-erp | Possible today, no schema change |
 | **A2** | **tags + canonical + og** — add the columns, then the tools | **alma-lifestyle** migration, then alma-erp | Column first, tool second |
-| **A3** | **slug, done safely**: a `redirects` table + middleware 301, then a slug tool that writes BOTH in one transaction, regenerates the sitemap and pings IndexNow | **alma-lifestyle** first | Without the redirect this is a ranking-destroying button. Fixes `7-b` |
+| **A3** | **slug, done safely** | both | **DONE (code)** — alma-lifestyle#84 (redirects table + resolver; migration applied to the live project), alma-erp#626 (staged rename, redirect written first), alma-erp#627 (the skill manifest had to name the tool or the head could not see it). **Not yet proven on `7-b`** — that last step needs one sentence in his chat and his approval, by design |
 | **A4** | Images: upload, reorder, replace, alt in one place | both | Storage bucket rules live in the storefront repo |
 | **A5** | New product end-to-end: create draft → copy → images → variants → publish, as ONE approval | both | The first "full job" a storefront skill can own |
 
@@ -147,6 +147,23 @@ is not a new mechanism; it is *coverage* and *proof*.
 6. **C** throughout, not at the end.
 
 ---
+
+## 4b. What A3 taught, worth carrying into every later phase
+
+1. **A tool is invisible until EVERY allowlist names it.** `change_product_slug`
+   was registered, classified, tested, on the head shortlist and in the role
+   prompt — and the head still never called it, because
+   `seo-fixing-own-site/manifest.json` carries its own five-tool
+   `requiredCapabilities`. Its visible thinking said so outright: *"I know
+   draft_seo_fixes exists because it was mentioned in my context."* Every phase
+   below must update the skill manifests too, and prove it by running it once.
+2. **Write order is a safety property, not a detail.** The redirect is written
+   before the slug, so a half-failure leaves a harmless pointer instead of a dead
+   URL. Every later write phase should ask the same question: which half, if it
+   lands alone, is survivable?
+3. **The two-repo split is real.** A storefront schema change is a PR in
+   `alma-lifestyle` and a migration run against the website Supabase project —
+   the ERP cannot apply it. A2, A4 and A5 all inherit this.
 
 ## 5. What this does NOT promise
 
