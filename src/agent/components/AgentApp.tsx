@@ -1105,6 +1105,23 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               ? { ...m, skill: { name: pin.skill, source: pin.source, reason: pin.reason } }
               : m,
           ))
+        } else if (evt.type === 'skill_held_back') {
+          // SK-8: the gate refused a skill. Deliberately does NOT set the chip —
+          // nothing is pinned — but the reason is drawn as a system line, because
+          // the first live revoke proved the head will not say it on its own.
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? {
+                  ...m,
+                  skill: {
+                    name: String(evt.skill ?? ''),
+                    source: 'router' as const,
+                    reason: String(evt.reason ?? ''),
+                    heldBack: String(evt.state ?? 'unapproved'),
+                  },
+                }
+              : m,
+          ))
         } else if (evt.type === 'model_info') {
           const variant = (evt.variant as 'claude' | 'qwen' | 'deepseek' | 'default') ?? 'claude'
           setStreamVariant(variant)

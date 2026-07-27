@@ -146,6 +146,17 @@ export type AgentEvent =
        */
       isolated?: boolean
     }
+  // SK-8: a skill matched and the approval gate refused it. Its own event rather
+  // than a flag on `skill_pinned`, because nothing IS pinned — the chip must stay
+  // empty while the reason is still shown. Measured 2026-07-27: with the reason
+  // only in the prompt, the head said nothing at all.
+  | {
+      type: 'skill_held_back'
+      skill: string
+      /** approved | changed | revoked | unapproved — decides the wording. */
+      state: string
+      reason: string
+    }
   | {
       type: 'verification_retry'
       attempt: number

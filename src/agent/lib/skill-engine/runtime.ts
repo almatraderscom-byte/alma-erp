@@ -58,6 +58,17 @@ export interface ActiveSkills {
    * uses this instead — never both, or the procedure would ship twice.
    */
   isolated: IsolatedSkillPrompt | null
+  /**
+   * SK-8. A skill matched but the approval gate refused it.
+   *
+   * This started life as a sentence in the prompt asking the head to explain
+   * itself, and the FIRST live revoke test showed exactly what that is worth:
+   * the skill correctly did not run, and the head said nothing about it — it
+   * just answered as though nothing had matched. A prompt rule is a request.
+   * So the reason goes on the wire as its own event and the UI draws it, the
+   * same way the pin announcement had to stop being a prompt instruction.
+   */
+  heldBack: { skill: string; state: string; reason: string } | null
 }
 
 /** Thin wrapper for callers that only want the prompt text. */
@@ -72,7 +83,7 @@ export async function buildActiveSkills(
   lastUserText: string,
   opts: { conversationId?: string } = {},
 ): Promise<ActiveSkills> {
-  const none: ActiveSkills = { block: '', pinned: null, manifest: null, isolated: null }
+  const none: ActiveSkills = { block: '', pinned: null, manifest: null, isolated: null, heldBack: null }
   if (!(await isSkillEngineEnabled())) return none
   if (!lastUserText || !lastUserText.trim()) return none
   try {
@@ -137,7 +148,8 @@ export async function buildActiveSkills(
         // withheld is the same failure shape as the silent continuation.
         const { heldBackReason } = await import('@/agent/lib/skill-engine/provenance')
         const h = heldBack as { skill: string; state: string }
-        return { ...none, block: `\n## Skill\n${heldBackReason(h.skill, h.state as never)}\n` }
+        const reason = heldBackReason(h.skill, h.state as never)
+        return { ...none, block: `\n## Skill\n${reason}\n`, heldBack: { skill: h.skill, state: h.state, reason } }
       }
       picked = allowed
     } catch {
@@ -201,7 +213,7 @@ export async function buildActiveSkills(
           }
         : null
 
-    return { block, pinned, manifest, isolated }
+    return { block, pinned, manifest, isolated, heldBack: null }
   } catch {
     return none
   }
