@@ -133,6 +133,11 @@ export interface ChatMessage {
      * asking the head to explain itself was measured and it stayed silent.
      */
     heldBack?: string }
+  /**
+   * Server-side "কী হচ্ছে এখন" line, replaced each time it ticks. Owner ask
+   * 2026-07-27: on a long tool-heavy turn he was left watching a spinner.
+   */
+  progressNote?: string
   /** Live extended-thinking stream — how the agent reasoned before answering. */
   thinking?: string
   /** Seconds spent thinking (set once the reply text begins). */
@@ -1552,6 +1557,11 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     // Chronological mode: the timeline carries the reply text too, so
                     // render ONE interleaved flow (text → steps → text) and skip the
                     // separate steps-card + body blocks below.
+                    const progressLine = msg.progressNote ? (
+                      <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-muted">
+                        <span>{msg.progressNote}</span>
+                      </div>
+                    ) : null
                     const skillLine = msg.skill ? (
                       <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-muted">
                         <span aria-hidden>{msg.skill.heldBack ? '🚫' : '🧠'}</span>
@@ -1569,7 +1579,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       </div>
                     ) : null
                     const chrono = (msg.timeline ?? []).some((e) => e.t === 'text')
-                    if (chrono) return <>{skillLine}<ChronoFlow msg={msg} onOpenFile={(id) => onArtifactOpen(id)} /></>
+                    if (chrono) return <>{skillLine}{progressLine}<ChronoFlow msg={msg} onOpenFile={(id) => onArtifactOpen(id)} /></>
                     // A RUNNING turn always shows the process section, even before
                     // there is anything in it (owner bug, verified live 2026-07-26:
                     // the first 10–20 seconds drew nothing at all, so there was
@@ -1585,6 +1595,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       return (
                         <>
                         {skillLine}
+                        {progressLine}
                         <ActivityTimeline
                           timeline={msg.timeline}
                           thinking={msg.thinking}

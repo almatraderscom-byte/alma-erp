@@ -54,6 +54,7 @@ import { runPreToolHooks, runPostToolHooks } from '@/agent/lib/turn-hooks'
 import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
 import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
 import { buildOwnerCorrectionNudge } from '@/agent/lib/owner-correction'
+import { newTurnProgressState, nextTurnProgress } from '@/agent/lib/turn-progress'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
@@ -527,6 +528,11 @@ async function* runAlternateProviderTurn(
   // how to answer a correction — concede first, rank the complaints himself,
   // name the failure, then go VERIFY instead of arguing. Appended after the
   // cached prefix, so the prompt cache is untouched (self-correct.ts pattern).
+  // Status-line state for this turn (see turn-progress.ts). Declared here so the
+  // speak-first line before the loop also counts as the model having spoken.
+  let progressState = newTurnProgressState()
+  let spokeSinceProgress = false
+  const turnStartedMs = Date.now()
   const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
   if (ownerCorrectionNudge) {
     messages = [...messages, { role: 'user', content: ownerCorrectionNudge }]
@@ -1862,6 +1868,8 @@ async function* runAlternateProviderTurn(
       })) {
         if (ev.type === 'text_delta') {
           line += ev.text
+          // The model is narrating — the status line stays quiet while it does.
+          if (ev.text.trim()) spokeSinceProgress = true
           yield { type: 'text_delta', delta: ev.text }
         } else if (ev.type === 'usage') {
           totalInputTokens += ev.inputTokens
@@ -2987,6 +2995,21 @@ async function* runAlternateProviderTurn(
         .slice(-calls.length)
         .filter((r) => r.status === 'error')
         .map((r) => ({ toolName: r.toolName, error: String(r.error ?? '') }))
+      // "কী হচ্ছে এখন" — deterministic, server-side, and silent while the model
+      // is talking. Owner ask 2026-07-27: never leave him watching a spinner.
+      const progressTick = nextTurnProgress(progressState, {
+        round: iteration + 1,
+        spokeSinceLast: spokeSinceProgress,
+        elapsedMs: Date.now() - turnStartedMs,
+        lastToolLabel: calls[calls.length - 1]?.name ?? null,
+        nowMs: Date.now(),
+      })
+      if (progressTick) {
+        progressState = progressTick.state
+        spokeSinceProgress = false
+        yield { type: 'turn_progress', ...progressTick.progress }
+      }
+
       const selfCorrectionNudge = buildSelfCorrectionNudge(failedThisRound)
       if (selfCorrectionNudge) {
         messages = [...messages, { role: 'user', content: selfCorrectionNudge }]

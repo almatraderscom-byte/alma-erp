@@ -154,6 +154,16 @@ export type AgentEvent =
   // than a flag on `skill_pinned`, because nothing IS pinned — the chip must stay
   // empty while the reason is still shown. Measured 2026-07-27: with the reason
   // only in the prompt, the head said nothing at all.
+  // A status line while the agent is heads-down. The server knows the round
+  // count and elapsed time; the model does not reliably volunteer them on a long
+  // tool-heavy turn, which is exactly when the owner is left watching a spinner.
+  | {
+      type: 'turn_progress'
+      round: number
+      elapsedSec: number
+      lastToolLabel: string | null
+      text: string
+    }
   | {
       type: 'skill_held_back'
       skill: string

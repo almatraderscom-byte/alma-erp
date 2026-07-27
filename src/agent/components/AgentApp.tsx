@@ -1123,6 +1123,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               ? { ...m, skill: { name: pin.skill, source: pin.source, reason: pin.reason } }
               : m,
           ))
+        } else if (evt.type === 'turn_progress') {
+          // Server-side status line during a silent stretch. Stamped on the
+          // message being built so it survives a reload like every other step.
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? { ...m, progressNote: String(evt.text ?? '') }
+              : m,
+          ))
         } else if (evt.type === 'skill_held_back') {
           // SK-8: the gate refused a skill. Deliberately does NOT set the chip —
           // nothing is pinned — but the reason is drawn as a system line, because
