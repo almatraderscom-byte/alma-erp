@@ -156,7 +156,7 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     // 27 → 28: the parcel-vs-person boundary added 2026-07-27 with
     // alma-staff-dispatch. "customer er order ta kokhon asche" carries the same
     // words as the staff question and must still pin nothing.
-    expect(rows).toHaveLength(28)
+    expect(rows).toHaveLength(30)
     expect(accuracy).toBeLessThanOrEqual(100)
     expect(hits + count('wrong') + count('missed')).toBe(shouldPick.length)
     expect(falseTriggers + count('correctly-silent')).toBe(shouldNotPick.length)

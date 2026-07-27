@@ -8,9 +8,9 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 > engine on today would expose exactly one skill (`alma-owner-daily-briefing`).
 > That alone explains why the skills have never done anything.
 
-- Messages that SHOULD pin a skill: **21** — correct top pick: **15** (**71%**)
-- Wrong skill chosen: **4** · nothing chosen: **2**
-- Messages that should pin NOTHING: **7** — false triggers: **2**
+- Messages that SHOULD pin a skill: **22** — correct top pick: **15** (**68%**)
+- Wrong skill chosen: **5** · nothing chosen: **2**
+- Messages that should pin NOTHING: **8** — false triggers: **3**
 
 | # | message | expected | picked (top 3) | result |
 |---|---|---|---|---|
@@ -21,6 +21,8 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 | seo-fix-slug-banglish | almatraders.com er baki slug problem gulo thik kore dao | seo-fixing-own-site | alma-agent-incident-diagnosis, seo-auditing-own-site, seo-fixing-client-site | ❌ wrong skill |
 | seo-fix-meta-banglish | almatraders.com er product gulor meta description thik kore dao | seo-fixing-own-site | alma-product-listing, alma-website, seo-fixing-own-site | ❌ wrong skill |
 | seo-audit-banglish | almatraders.com er purno seo audit koro | seo-auditing-own-site | seo-auditing-own-site, seo-fixing-own-site, seo-fixing-client-site | ✅ hit |
+| seo-fix-title-thin | almatraders.com এর পুরো দুর্বল title আর thin description gulo thik koro | seo-fixing-own-site | alma-product-listing, seo-auditing-own-site, seo-fixing-client-site | ❌ wrong skill |
+| ads-audit-not-seo | amar ads account ta ekbar valo kore audit koro | — | alma-agent-incident-diagnosis, seo-auditing-own-site, seo-fixing-own-site | ⚠️ false trigger |
 | staff | Mustahid ajke kokhon asche? | alma-staff-dispatch | — | ⬜ nothing picked |
 | listing | notun panjabi ta website e tolo | alma-product-listing | alma-product-listing, alma-website, seo-fixing-client-site | ✅ hit |
 | finance | ei masher khoroch koto holo? | alma-finance-brief | alma-finance-brief | ✅ hit |

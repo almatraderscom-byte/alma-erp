@@ -98,14 +98,26 @@ const AUDIT_ASK =
  * above happen (the sentence carried no `seo`/`alt`/`meta` word at all).
  */
 const SEO_TOPIC_CLEAR =
-  /\bseo\b|এসইও|\balt\b|meta\s*(?:description|title|tag)|অডিট|audit|sitemap|canonical|\bslug\b|স্লাগ/i
+  /\bseo\b|এসইও|\balt\b|meta\s*(?:description|title|tag)|sitemap|canonical|\bslug\b|স্লাগ/i
 /**
- * Bare "meta" is the ambiguity SK-0 caught: "meta description লিখে দাও" routed to
- * the Meta ADS campaign skill. One word, two businesses. It only counts as SEO
- * when a website is in the sentence — an ads message names a campaign or a
- * budget, not a domain.
+ * Words that mean SEO **only when a website is in the sentence**. Each one is
+ * here because of a message that went wrong, not because it looked risky:
+ *
+ *  • `meta` — SK-0: "meta description লিখে দাও" routed to the Meta ADS campaign
+ *    skill. One word, two businesses; an ads message names a campaign, not a
+ *    domain.
+ *  • `audit` — FOUND IN HIS REAL TRAFFIC 2026-07-27: "amar ads account ta ekbar
+ *    valo kore audit koro" pinned `seo-auditing-own-site`, because bare `audit`
+ *    counted as an SEO topic outright. An ads question was handed the SEO
+ *    skill's allowlist and none of the ads tools. Every audit is not an SEO
+ *    audit.
+ *  • `title` / `description` — the same traffic: "almatraders.com এর পুরো দুর্বল
+ *    title আর thin description gulo thik koro" is an unmistakable on-page fix,
+ *    but carried no `seo`/`alt`/`meta` word, so no rule fired and the read-only
+ *    AUDIT skill won the tie. Bare, they belong to captions and products too —
+ *    with a domain, they are page copy.
  */
-const META_BARE = /\bmeta\b/i
+const DOMAIN_GATED_SEO = /\bmeta\b|\baudit\b|অডিট|\btitle\b|\bdescription\b|শিরোনাম|বিবরণ/i
 
 const OWN_SITE = /almatraders\.com|আমাদের\s*(?:সাইট|ওয়েবসাইট)|our\s+site/i
 /** Any other domain mentioned — a client's site. */
@@ -114,7 +126,7 @@ const ANY_DOMAIN = /\b[a-z0-9-]+\.(?:com|net|org|io|xyz|shop|co)\b/i
 
 export function isSeoTopic(text: string): boolean {
   if (SEO_TOPIC_CLEAR.test(text)) return true
-  return META_BARE.test(text) && ANY_DOMAIN.test(text)
+  return DOMAIN_GATED_SEO.test(text) && (ANY_DOMAIN.test(text) || OWN_SITE.test(text))
 }
 
 /**
