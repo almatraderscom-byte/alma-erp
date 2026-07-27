@@ -57,3 +57,36 @@ describe('tool-call markup never reaches the owner', () => {
     expect(stripToolCallMarkup('')).toBe('')
   })
 })
+
+describe('the JSON shape (owner’s own chat, 2026-07-27)', () => {
+  it('strips the exact block he was shown while asking about ad spend', () => {
+    const input = [
+      'বস, আপনার অ্যাডস অ্যাকাউন্টের লাইভ খরচ আর লিমিট চেক করছি।',
+      '',
+      '{"type": "tool_use", "id": "tooluse_fPsTqJdFhXJz8Qm9Kw2LxN", "name": "recommend_ad_actions", "input": {}}',
+    ].join('\n')
+    const out = stripToolCallMarkup(input)
+    expect(out).not.toContain('tool_use')
+    expect(out).not.toContain('tooluse_fPsTqJdFhXJz8Qm9Kw2LxN')
+    expect(out).toContain('লাইভ খরচ আর লিমিট চেক করছি')
+  })
+
+  it('strips one with a populated input object', () => {
+    const out = stripToolCallMarkup(
+      'দেখছি।\n{"type":"tool_use","id":"x1","name":"get_orders","input":{"limit":10,"status":"pending"}}\nশেষ।',
+    )
+    expect(out).not.toContain('get_orders')
+    expect(out).toContain('দেখছি')
+    expect(out).toContain('শেষ')
+  })
+
+  it('leaves ordinary JSON he asked for completely alone', () => {
+    for (const text of [
+      '{"name":"ALMA","type":"shop","orders":42}',
+      'API উত্তর: {"type":"product","id":"7-b","price":1200}',
+      '{"type":"tool_belt","id":"x"}',
+    ]) {
+      expect(stripToolCallMarkup(text)).toBe(text)
+    }
+  })
+})
