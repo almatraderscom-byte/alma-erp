@@ -147,12 +147,30 @@ describe('token budgets (roadmap Phase 6 exit gates)', () => {
   it('narrow routed turn stays inside its stable-prompt ceiling', () => {
     // A state-routed continuation: base group, no browser/workbench tools —
     // the lean prompt the router-mode head sees (tools add ~3k more).
+    //
+    // 12,500 → 13,000 on 2026-07-27, deliberately and with the owner's decision,
+    // because the measurement that forced the question is worth recording: the
+    // prompt was sitting at ~12,492 tokens. EIGHT tokens of headroom. Nothing
+    // could be added anywhere without removing something first, and moving text
+    // to another module does not help — the narrow build includes every
+    // unconditional module anyway.
+    //
+    // The money was never the reason to hold the line. Derived from his own
+    // turn meters that day: ~$0.20 per million CACHED-read tokens, and the
+    // always-on prompt is cached, so +500 tokens is about ৳৩৫/month at 100
+    // turns a day. The ceiling exists because a budget with no ceiling is never
+    // defended — every addition is individually tiny, and that is exactly how
+    // the full prompt reached ~93k chars. This raise is a stated allowance with
+    // a reason, not "enough to fit what I just wrote".
+    //
+    // The real fix is a trim pass on the always-on prompt. Until that happens,
+    // treat the next request to raise this number as a refusal.
     const narrow = buildSystemPromptBlocks({
       businessId: 'ALMA_LIFESTYLE',
       activeGroups: ['base'],
       activeToolNames: ['get_current_datetime', 'save_memory', 'ask_user', 'post_to_facebook'],
     }).stable.map((b) => b.text).join('')
-    expect(estimateTokens(narrow)).toBeLessThanOrEqual(12_500)
+    expect(estimateTokens(narrow)).toBeLessThanOrEqual(13_000)
   })
 
   it('assembly is deterministic (same args → same bytes)', () => {
