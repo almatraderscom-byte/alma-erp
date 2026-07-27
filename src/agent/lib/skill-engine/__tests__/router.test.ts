@@ -187,6 +187,36 @@ async function livePromotionSection(): Promise<string[]> {
   ]
 }
 
+describe('promoting a skill must not steal another skill’s message', () => {
+  /**
+   * The lesson from promotions 4 and 5, turned into a guard.
+   *
+   * `selectSkills` scores every token of a skill's NAME and DESCRIPTION, so a
+   * promoted skill about products repeats "product" and becomes the best
+   * keyword match for a message that belongs to a skill still in `draft`. It
+   * happened twice in one afternoon, and both times the meter caught it rather
+   * than review.
+   *
+   * A miss is acceptable while a skill is unpromoted — the head just works
+   * without a procedure. A WRONG pin is not: it also pins a tool allowlist, so
+   * it removes the tools the real job needed. This test is the difference.
+   */
+  it('a live pin is either the expected skill or nothing', async () => {
+    const live = await discoverSkills(SKILLS_ROOT)
+    const stolen: string[] = []
+    for (const c of OWNER_CORPUS) {
+      const d = routeSkill(live, c.text)
+      if (!d.skill) continue
+      if (c.expected === null) {
+        stolen.push(`${c.id}: should pin NOTHING, got ${d.skill} (${d.layer})`)
+      } else if (d.skill !== c.expected) {
+        stolen.push(`${c.id}: expected ${c.expected}, got ${d.skill} (${d.layer})`)
+      }
+    }
+    expect(stolen).toEqual([])
+  })
+})
+
 describe('the whole router on the owner’s corpus', () => {
   it('beats keyword-only routing, and records by how much', async () => {
     const index = await discoverSkills(SKILLS_ROOT, { includeDraft: true })
