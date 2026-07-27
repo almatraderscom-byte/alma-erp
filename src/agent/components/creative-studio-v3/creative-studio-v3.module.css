@@ -4833,6 +4833,10 @@ label.secondaryButton[aria-disabled='true'] {
   max-width: 1320px;
 }
 
+.v6ComposerExpanded > .v3ModeScroller {
+  min-height: 38px;
+}
+
 .v6ComposerExpanded .v4SourceTray {
   position: fixed;
   z-index: 390;

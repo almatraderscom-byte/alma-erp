@@ -90,6 +90,9 @@ describe('Creative Studio production responsive and a11y contract', () => {
     expect(floatingComposerRule).toContain('bottom: 22px;')
     expect(v3Styles).toContain('.v3Composer.v4FloatingComposer.v6ComposerExpanded')
     expect(v3Styles).toContain('inset: 68px 0 0;')
+    expect(v3Styles).toMatch(
+      /\.v6ComposerExpanded > \.v3ModeScroller\s*\{[\s\S]*?min-height:\s*38px;/,
+    )
     expect(imageLab).toContain("composerRef.current?.scrollTo({ top: 0")
   })
 })
