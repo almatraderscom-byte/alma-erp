@@ -124,6 +124,14 @@ struct AgentSSEEvent: Decodable {
     let assistantMessageId: String? // turn_snapshot
     let afterSeq: Int?          // replay_continue
     let turnId: String?         // turn_snapshot
+    // SK-3 — skill_pinned. The web has shown this since 2026-07-26; the native
+    // transport never decoded it, so the phone silently dropped the one line the
+    // owner asked for ("🧠 <skill> ব্যবহার করছি").
+    let skill: String?          // skill_pinned
+    let source: String?         // skill_pinned — "owner" | "router"
+    let layer: String?          // skill_pinned
+    let reason: String?         // skill_pinned
+    let isolated: Bool?         // skill_pinned — SK-7, ran on the skill's own prompt
 }
 
 /// Roadmap 2.1 — the typed native event contract. Mirrors `src/agent/lib/core.ts`
@@ -150,6 +158,9 @@ enum AgentTurnEvent: Sendable {
     /// says "that prose is the line Boss read" so the client can keep it while
     /// still clearing ordinary mid-turn narration.
     case preamble(String)
+    /// SK-3 — which skill is running this job, announced BEFORE any work starts
+    /// so the owner sees it up front and can change it.
+    case skillPinned(skill: String, source: String, reason: String, isolated: Bool)
     case conversationCompacted(newConversationId: String)
     case done(messageId: String?, tokensIn: Int?, tokensOut: Int?, costUsd: Double?,
               needContinue: Bool, apiRounds: Int?, cacheCreation: Int?, cacheRead: Int?,
@@ -216,6 +227,11 @@ enum AgentTurnEvent: Sendable {
             self = .verificationRetry(attempt: ev.attempt ?? 1, maxAttempts: ev.maxAttempts ?? 1)
         case "preamble":
             self = .preamble(ev.text ?? ev.delta ?? "")
+        case "skill_pinned":
+            self = .skillPinned(skill: ev.skill ?? "",
+                                source: ev.source == "owner" ? "owner" : "router",
+                                reason: ev.reason ?? "",
+                                isolated: ev.isolated == true)
         case "conversation_compacted":
             self = ev.conversationId.map(AgentTurnEvent.conversationCompacted)
                 ?? .unknown(type: "conversation_compacted/noid")

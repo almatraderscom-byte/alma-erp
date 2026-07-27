@@ -388,7 +388,7 @@ extension AlmaTabBarController {
                 openSpinnerPreview: {
                     let host = AlmaHostingController(
                         rootView: NavigationStack { AlmaSpinnerPreviewScreen() })
-                    host.title = "Loader Preview"
+                    host.title = "Agent Loader"
                     navRef.value?.pushViewController(host, animated: true)
                 },
                 toggleDark: { AlmaTheme.toggle() },
