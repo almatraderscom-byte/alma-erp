@@ -170,17 +170,34 @@ Two things stayed on purpose:
   production, delete. Keeping it documents the pattern in code rather than in
   someone's memory.
 
-1. **Eval-gate the isolated path** against the inline baseline with
+### SK-8 shipped — 2026-07-27 (PR #620)
+
+Provenance: content hash per skill (`manifest.json` + `SKILL.md` + `SYSTEM.md`),
+an approval ledger in KV (who, which version, when, note), and revoke as the
+runtime rollback — it takes a skill out of service on the next turn, no deploy.
+A held-back skill says why in Bangla rather than behaving as if nothing matched.
+
+`AGENT_SKILL_APPROVAL_GATE` is OFF and does NOT auto-enable on preview: turning
+it on against an empty ledger would disable every skill at once. See item 1.
+
+**The four enterprise pillars are now all present** — eval harness (SK-1), tool
+allowlist (SK-4), selection trace (SK-3), provenance (SK-8).
+
+1. **Populate the approval ledger, then turn the gate on.** Run with
+   `AGENT_SKILL_APPROVAL_GATE` off, read the `[skill-provenance]` lines, approve
+   what should run via `approveSkill()`, then switch the gate on and prove a
+   revoked skill actually stops running.
+2. **Eval-gate the isolated path** against the inline baseline with
    `compareToBaseline()`. The harness is a pure scorer, so it needs recorded
    runs; the runs now exist, nobody has scored them.
-2. **Promote the 16 originals**, one at a time, each with evals — 79 lint
+3. **Promote the 16 originals**, one at a time, each with evals — 79 lint
    findings are the work list (`docs/skill-lint-report.md`).
-3. **`isolation: subagent` for the other two SEO skills** — each needs its own
+4. **`isolation: subagent` for the other two SEO skills** — each needs its own
    `SYSTEM.md` written, and promotion is one at a time, never a batch.
-4. **Router's last misses** — all skill-description gaps, not router gaps.
-5. **Registry budget and the selection trace** are written but never exercised at
+5. **Router's last misses** — all skill-description gaps, not router gaps.
+6. **Registry budget and the selection trace** are written but never exercised at
    scale; revisit when more than ~10 skills are active.
-6. **Drop Upstash from the turn queue** (optional). It exists only because
+7. **Drop Upstash from the turn queue** (optional). It exists only because
    Vercel and the VPS must share one queue; a Vercel→VPS HTTP handoff would let
    the VPS use its own local Redis and remove the metered dependency entirely.
 
