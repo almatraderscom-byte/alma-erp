@@ -163,3 +163,53 @@ describe('the same answer twice — third sighting', () => {
     expect(dropRepeatedBlocks(`${a}\n\n${b}`)).toBe(`${a}\n\n${b}`)
   })
 })
+
+describe('the FIFTH shape — live skill test, 2026-07-28', () => {
+  it('strips {"name": …, "arguments": …}, which no pattern covered at all', () => {
+    // Verbatim from the campaign turn: four of these in a row, each in its own
+    // fenced block the UI labelled "TOOL".
+    const raw = [
+      'বস, একটা meta campaign চালু করতে বলছেন — alma-meta-campaign-launch skill ধরে এগোচ্ছি।',
+      '',
+      '```tool',
+      '{"name": "marketing_report", "arguments": {"period": "last_7_days"}}',
+      '```',
+      '```tool',
+      '{"name": "list_audiences", "arguments": {}}',
+      '```',
+      '',
+      'এবার প্ল্যান তৈরি করছি।',
+    ].join('\n')
+    const out = stripToolCallMarkup(raw)
+
+    expect(out).not.toContain('marketing_report')
+    expect(out).not.toContain('arguments')
+    // …and the fence goes with it, so no empty card is left behind.
+    expect(out).not.toContain('```')
+    expect(out).toContain('meta campaign চালু করতে বলছেন')
+    expect(out).toContain('এবার প্ল্যান তৈরি করছি')
+  })
+
+  it('strips a bare <parameter …> — the pattern existed, the GUARD blocked it', () => {
+    // The customer-support turn. `<parameter>` was already in STRAY_MARKERS, but
+    // the cheap guard did not list it, so the function returned untouched.
+    const raw = 'বস, ইনবক্স স্ক্যান করছি।\n\n<parameter name="limit">20</parameter>'
+    const out = stripToolCallMarkup(raw)
+
+    expect(out).not.toContain('parameter')
+    expect(out).not.toContain('limit')
+    expect(out).toContain('ইনবক্স স্ক্যান করছি')
+  })
+
+  it('leaves JSON he actually asked for alone', () => {
+    // The guard for this shape is the tool-name/arguments PAIR, so ordinary
+    // JSON — even JSON with a `name` field — survives.
+    const json = 'এই যে বস: {"name": "Panjabi Blue", "price": 1200, "stock": 8}'
+    expect(stripToolCallMarkup(json)).toBe(json)
+  })
+
+  it('leaves a normal code block alone — only tool-labelled fences go', () => {
+    const md = 'এই কোডটা:\n\n```json\n{"ok": true}\n```\n\nচালাও'
+    expect(stripToolCallMarkup(md)).toBe(md)
+  })
+})

@@ -2301,6 +2301,11 @@ async function* runAlternateProviderTurn(
             toolRecords: toolRecords.map((r) => ({ status: r.status, toolName: r.toolName, errorCode: r.errorCode })),
             hasAskCard: emittedAskCards.length > 0,
             ownerRequestedAction: turnAuthorization.allowMutations,
+            // "ফল এলে জানাব" is honest when a crawl or worker job really is
+            // queued — the hop system comes back for it. With nothing queued it
+            // is a promise the ending turn can never keep, so the policy needs
+            // the evidence, not the sentence (owner, live 2026-07-28).
+            hasPendingAsyncJob: summarizeAsyncJobEvidence(toolRecords).pendingJobSeen,
           })
         ) {
           intentNudges++

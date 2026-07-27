@@ -65,16 +65,62 @@ const FUNCTION_CALLS_BLOCK =
   /<function_(?:calls|results)>[\s\S]*?(?:<\/function_(?:calls|results)>|$)/gi
 const INVOKE_BLOCK = /<invoke\b[\s\S]*?(?:<\/invoke>|$)/gi
 
+/**
+ * The FIFTH shape, seen live 2026-07-28 while testing the newly promoted skills.
+ * Two different leaks in two consecutive turns, both from Qwen, both wrapped in
+ * a markdown fence the UI then labelled "TOOL":
+ *
+ *   ```tool
+ *   {"name": "marketing_report", "arguments": {"period": "last_7_days"}}
+ *   ```
+ *   ```tool
+ *   <parameter name="limit">20</parameter>
+ *   ```
+ *
+ * Two separate gaps, and the second one is the more embarrassing:
+ *
+ *  • `{"name": …, "arguments": …}` matched NO pattern here. `JSON_TOOL_USE` is
+ *    anchored on `"type": "tool_use"`, which this shape does not carry.
+ *  • `<parameter …>` was already in `STRAY_MARKERS` — but the cheap guard did
+ *    not list it, so the function returned before any pattern ran. A pattern
+ *    behind a guard that cannot reach it is not protection, it is decoration.
+ *    That is why the guard below is now derived from the patterns rather than
+ *    written out again by hand.
+ *
+ * The fence itself is removed with its contents, not just the call inside it:
+ * an emptied ``` block renders as a bare card, which looks like a bug of its own.
+ */
+const JSON_NAME_ARGS =
+  /\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|parameters)"\s*:\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*\}/gi
+/** A fenced block the model labelled as a tool call — fence and contents both. */
+const FENCED_TOOL_BLOCK =
+  /```(?:tool|tool_call|tool_code|function_calls?)\b[\s\S]*?(?:```|$)/gi
+
 /** Leftovers when a stream is cut mid-call, plus the DeepSeek/Qwen sentinels. */
 const STRAY_MARKERS =
   /<\/?tool_call>|<\/?arg_key>|<\/?arg_value>|<\/?function_(?:calls|results)>|<\/?invoke\b[^>]*>|<\/?parameter\b[^>]*>|<\|?tool[_▁]?calls?[_▁]?(?:begin|end|sep)\|?>|<｜tool▁calls?▁(?:begin|end|sep)｜>/gi
 
+/**
+ * Cheap guard: the overwhelming majority of rounds carry none of this, and
+ * running six regexes over every reply for nothing is waste.
+ *
+ * It is written as one list next to the patterns it guards, because the 2026-07-28
+ * leak was caused by exactly the drift a second hand-written copy invites: a
+ * `<parameter …>` pattern existed, the guard did not mention it, and the guard
+ * runs first. Any pattern added above must have its opening marker added here.
+ */
+const HAS_TOOL_MARKUP =
+  /<tool_call|<arg_key|<parameter\b|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|```(?:tool|function_calls?)\b|"type"\s*:\s*"tool_(?:use|call)"|\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|parameters)"\s*:/i
+
 export function stripToolCallMarkup(text: string): string {
   if (!text) return text
-  // Cheap guard: the overwhelming majority of rounds carry none of this.
-  if (!/<tool_call|<arg_key|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|"type"\s*:\s*"tool_(?:use|call)"/i.test(text)) return text
+  if (!HAS_TOOL_MARKUP.test(text)) return text
   const cleaned = text
+    // Fences first: the block is removed WITH its contents, so a stripped call
+    // cannot leave an empty ``` card behind.
+    .replace(FENCED_TOOL_BLOCK, '')
     .replace(JSON_TOOL_USE, '')
+    .replace(JSON_NAME_ARGS, '')
     .replace(FUNCTION_CALLS_BLOCK, '')
     .replace(INVOKE_BLOCK, '')
     .replace(TOOL_CALL_BLOCK, '')

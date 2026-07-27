@@ -62,3 +62,18 @@ describe('cleaning a whole round', () => {
     expect(cleanVisibleThinking(raw)).toBe('')
   })
 })
+
+describe('the rule being ticked off — live customer-support turn, 2026-07-28', () => {
+  it('drops the model reporting that it obeyed the first-line rule', () => {
+    // This sentence WAS the whole visible thought of that turn.
+    expect(cleanVisibleThinking('The first line has been outputted as required.')).toBe('')
+    expect(cleanVisibleThinking('The mandatory first line was already emitted.')).toBe('')
+  })
+
+  it('still keeps real work that happens to mention a first line', () => {
+    const real = 'পণ্যের description-এর প্রথম লাইনটাই দুর্বল — ওখানেই keyword বসাতে হবে।'
+    expect(cleanVisibleThinking(real)).toBe(real)
+    const english = 'The first line of the product description is weak, so the keyword goes there.'
+    expect(cleanVisibleThinking(english)).toBe(english)
+  })
+})

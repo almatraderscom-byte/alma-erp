@@ -40,6 +40,13 @@ const PLUMBING_LINE: RegExp[] = [
   // injected style/first-line rules
   /mandatory first line/i,
   /first line rule/i,
+  // …and the model REPORTING that it obeyed the rule, which is the same leak
+  // wearing a different sentence. Seen live 2026-07-28 as the entire visible
+  // thought of a customer-support turn: "The first line has been outputted as
+  // required." Matching the rule's name was not enough — it also has to match
+  // the model ticking the rule off.
+  /\bfirst line\b[^.]{0,40}\b(?:output|outputted|emitted|already|done|complete)/i,
+  /\b(?:as|per) (?:required|instructed|the instruction)\b/i,
   /\bthe (?:system|instruction) (?:note|says|is)\b/i,
   // the server-side claim verifier
   /verification failed/i,
