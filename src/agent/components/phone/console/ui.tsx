@@ -215,7 +215,7 @@ export function DirectionMark({ direction }: { direction: 'inbound' | 'outbound'
   const inbound = direction === 'inbound'
   return (
     <span
-      className={cn('inline-block text-base leading-none', inbound ? 'text-emerald-500' : 'text-[#E07A5F]')}
+      className={cn('inline-block text-base leading-none', inbound ? 'txt-pos' : 'text-[#E07A5F]')}
       title={inbound ? 'ইনকামিং' : 'আউটগোয়িং'}
     >
       {inbound ? '↙' : '↗'}

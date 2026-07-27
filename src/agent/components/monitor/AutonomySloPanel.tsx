@@ -48,7 +48,7 @@ function pct(v: SloValue): string {
 
 function pctClass(v: SloValue, target: number): string {
   if (v === 'insufficient_data') return 'text-neutral-400'
-  return v >= target ? 'text-emerald-300' : 'text-rose-300'
+  return v >= target ? 'txt-pos' : 'txt-neg'
 }
 
 export default function AutonomySloPanel() {
@@ -76,7 +76,7 @@ export default function AutonomySloPanel() {
           {slo && <span className="ml-auto text-[10px] text-muted">গত {Math.round(slo.windowHours / 24)} দিন</span>}
         </div>
 
-        {error && <p className="mt-2 text-[12px] text-rose-300">তথ্য আনা যায়নি: {error}</p>}
+        {error && <p className="mt-2 text-[12px] txt-neg">তথ্য আনা যায়নি: {error}</p>}
         {!error && !view && <p className="mt-2 text-[12px] text-muted">লোড হচ্ছে…</p>}
 
         {slo && (
@@ -90,11 +90,11 @@ export default function AutonomySloPanel() {
             </div>
 
             {breaches.length > 0 && (
-              <div className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/10 p-2 text-[12px] text-rose-200">
+              <div className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/10 p-2 text-[12px] txt-neg">
                 {breaches.map((b, i) => (
                   <div key={i}>🛑 {b.detailBn}</div>
                 ))}
-                <div className="mt-1 text-[10px] text-rose-300/80">লঙ্ঘন হলে শ্রেণিটা নিজে থেকেই এক ধাপ নেমে যায়।</div>
+                <div className="mt-1 text-[10px] txt-neg">লঙ্ঘন হলে শ্রেণিটা নিজে থেকেই এক ধাপ নেমে যায়।</div>
               </div>
             )}
 
@@ -148,7 +148,7 @@ function Invariant({ label, value, mustBeZero, good }: { label: string; value: n
   return (
     <div className={`rounded-lg border p-2 ${isGood ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-rose-500/40 bg-rose-500/10'}`}>
       <div className="text-[10px] text-muted">{label}</div>
-      <div className={`text-[15px] font-bold ${isGood ? 'text-emerald-300' : 'text-rose-300'}`}>{value}</div>
+      <div className={`text-[15px] font-bold ${isGood ? 'txt-pos' : 'txt-neg'}`}>{value}</div>
     </div>
   )
 }

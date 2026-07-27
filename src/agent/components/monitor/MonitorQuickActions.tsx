@@ -78,7 +78,7 @@ export function MonitorQuickActions({ data, isLive, onDeploy, deploying, lastDep
               >
                 ⟳ Retrigger Duty
                 {failedDuties.length > 0 && (
-                  <span className="rounded-full bg-red-500/15 px-1.5 py-0.5 text-[8px] font-bold text-red-600">{failedDuties.length}</span>
+                  <span className="rounded-full bg-red-500/15 px-1.5 py-0.5 text-[8px] font-bold txt-neg">{failedDuties.length}</span>
                 )}
               </button>
               {retriggerOpen && (

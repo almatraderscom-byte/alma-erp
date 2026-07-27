@@ -141,7 +141,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
         </div>
         <pre className="mt-1.5 max-w-full overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-sans text-[11px] leading-relaxed text-cream opacity-90">{action.summary}</pre>
         {action.resolvedStatus === 'failed' && action.failReason && (
-          <div className="mt-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.07] px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-200/90 break-words [overflow-wrap:anywhere]">
+          <div className="mt-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.07] px-2.5 py-1.5 text-[11px] leading-relaxed txt-warn break-words [overflow-wrap:anywhere]">
             <b>কারণ:</b> {action.failReason}
           </div>
         )}

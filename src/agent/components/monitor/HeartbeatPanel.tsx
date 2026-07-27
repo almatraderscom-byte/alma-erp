@@ -114,13 +114,13 @@ export default function HeartbeatPanel() {
           <h2 className="text-[15px] font-bold text-cream">হার্টবিট</h2>
           <div className="ml-auto flex items-center gap-1.5">
             {!enabled && autoArm && (
-              <span className="rounded-full border border-sky-300/40 bg-sky-400/10 px-2 py-0.5 text-[10px] text-sky-300">
+              <span className="rounded-full border border-sky-300/40 bg-sky-400/10 px-2 py-0.5 text-[10px] txt-info">
                 🤖 নিজে চালু হবে
               </span>
             )}
             <span
               className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                enabled ? 'border-emerald-300/40 bg-emerald-400/10 text-emerald-300' : 'border-border-subtle bg-white/[0.02] text-muted'
+                enabled ? 'border-emerald-300/40 bg-emerald-400/10 txt-pos' : 'border-border-subtle bg-white/[0.02] text-muted'
               }`}
             >
               {enabled ? '🟢 চালু' : '🔴 বন্ধ'}
@@ -139,7 +139,7 @@ export default function HeartbeatPanel() {
             disabled={busy || loading}
             onClick={() => act(enabled ? 'disable' : 'enable', enabled ? 'হার্টবিট বন্ধ করলাম' : 'হার্টবিট চালু করলাম')}
             className={`rounded-full px-3.5 py-1.5 text-[12px] font-semibold transition-colors disabled:opacity-50 ${
-              enabled ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25' : 'bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25'
+              enabled ? 'bg-red-500/15 txt-neg hover:bg-red-500/25' : 'bg-emerald-500/15 txt-pos hover:bg-emerald-500/25'
             }`}
           >
             {enabled ? '⏸️ বন্ধ করো' : '▶️ চালু করো'}
@@ -174,7 +174,7 @@ export default function HeartbeatPanel() {
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] font-semibold text-cream">{KIND_LABEL[e.kind]}</span>
                       <span className="text-[10px] text-muted">{fmtTime(e.at)}</span>
-                      {e.headWoke && <span className="rounded-full bg-amber-400/10 px-1.5 text-[9px] text-amber-300">head</span>}
+                      {e.headWoke && <span className="rounded-full bg-amber-400/10 px-1.5 text-[9px] txt-warn">head</span>}
                     </div>
                     <p className="mt-0.5 break-words text-[12px] leading-relaxed text-muted">{e.summary}</p>
                   </div>

@@ -302,6 +302,12 @@ export default function AgentComposer({
                     type="button"
                     onClick={() => f.id && retryUpload(f.id)}
                     aria-label="আবার চেষ্টা করুন"
+                    // The one place a fixed pale shade is CORRECT: this overlay
+                    // carries its own near-black background (bg-red-950) over a
+                    // thumbnail, so it is dark in both themes. Everything else in
+                    // the agent UI moved to the theme-aware .txt-* tokens after
+                    // the owner found amber-on-amber unreadable (2026-07-27) —
+                    // do not "fix" this one to match.
                     className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 rounded-xl bg-red-950/55 text-[9px] font-semibold text-red-200 backdrop-blur-[1px]"
                   >
                     <span className="text-sm leading-none">↻</span>

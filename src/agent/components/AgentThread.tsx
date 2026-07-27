@@ -488,7 +488,7 @@ function FeedbackButtons({ conversationId, messageId }: { conversationId: string
     })
   }
 
-  if (sent) return <span className="px-1.5 text-[10px] text-emerald-600/80">✓ নোট করেছি</span>
+  if (sent) return <span className="px-1.5 text-[10px] txt-pos">✓ নোট করেছি</span>
 
   return (
     <span className="inline-flex items-center gap-0.5">
@@ -735,7 +735,7 @@ function ToolIOSheet({ tool, onClose }: { tool: ToolRow | null; onClose: () => v
           {resultStr && (
             <div>
               <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">ফলাফল · output</div>
-              <pre className={`max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/[0.06] bg-black/25 p-3 text-[12px] leading-relaxed [overflow-wrap:anywhere] ${failed ? 'text-red-300/90' : 'text-cream/85'}`}>{resultStr}</pre>
+              <pre className={`max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/[0.06] bg-black/25 p-3 text-[12px] leading-relaxed [overflow-wrap:anywhere] ${failed ? 'txt-neg' : 'text-cream/85'}`}>{resultStr}</pre>
             </div>
           )}
           {!inputStr && !resultStr && !t?.shot && (
@@ -1161,7 +1161,7 @@ function ActivityTimeline({
                                     step shows its reason right here in the flow — not
                                     hidden behind a tap. */}
                                 {failed && t.result && t.result.trim() && (
-                                  <div className="mx-2 mb-1.5 rounded-md border border-danger/25 bg-danger/[0.07] px-2 py-1.5 text-[11.5px] leading-relaxed text-red-300/95 break-words [overflow-wrap:anywhere]">
+                                  <div className="mx-2 mb-1.5 rounded-md border border-danger/25 bg-danger/[0.07] px-2 py-1.5 text-[11.5px] leading-relaxed txt-neg break-words [overflow-wrap:anywhere]">
                                     <span className="mr-1 font-semibold">কারণ:</span>
                                     {t.result.trim().slice(0, 260)}
                                     {t.result.trim().length > 260 ? '…' : ''}
@@ -1758,11 +1758,11 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         </button>
                       )}
                       {artifactSaved.has(msg.id) && (
-                        <span className="px-2 text-[11px] text-emerald-600">সংরক্ষিত</span>
+                        <span className="px-2 text-[11px] txt-pos">সংরক্ষিত</span>
                       )}
                       {msg.selfCorrected && (
                         <span
-                          className="px-2 text-[10px] text-amber-600/80"
+                          className="px-2 text-[10px] txt-warn"
                           title="এজেন্ট নিজের একটা ভুল দাবি ধরে উত্তরটা যাচাই করে ঠিক করে নিয়েছে — মিথ্যা 'করে দিলাম' আটকানো হয়েছে"
                         >
                           🔁 নিজে যাচাই করে ঠিক করেছে

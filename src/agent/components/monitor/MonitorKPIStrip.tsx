@@ -72,7 +72,7 @@ export function MonitorKPIStrip({ data, brainStats }: {
       value: doneDuties,
       displayValue: `${doneDuties}/${totalDuties}`,
       sub: failedDuties > 0 ? `${failedDuties} failed` : 'on track',
-      color: failedDuties > 0 ? 'text-red-500' : 'text-emerald-600',
+      color: failedDuties > 0 ? 'txt-neg' : 'txt-pos',
       trend: failedDuties > 0 ? 'down' : 'up',
     },
     {
@@ -86,7 +86,7 @@ export function MonitorKPIStrip({ data, brainStats }: {
       label: 'Pending Ack',
       value: data.unackedMessages?.length ?? 0,
       sub: 'unseen msgs',
-      color: (data.unackedMessages?.length ?? 0) > 0 ? 'text-amber-500' : 'text-emerald-600',
+      color: (data.unackedMessages?.length ?? 0) > 0 ? 'txt-warn' : 'txt-pos',
       pulse: (data.unackedMessages?.length ?? 0) > 0,
       trend: (data.unackedMessages?.length ?? 0) > 0 ? 'up' : 'flat',
     },
@@ -94,7 +94,7 @@ export function MonitorKPIStrip({ data, brainStats }: {
       label: 'Approvals',
       value: pendingApprovals,
       sub: pendingApprovals > 0 ? 'waiting' : 'all clear',
-      color: pendingApprovals > 0 ? 'text-amber-500' : 'text-emerald-600',
+      color: pendingApprovals > 0 ? 'txt-warn' : 'txt-pos',
       pulse: pendingApprovals > 0,
     },
     {
@@ -108,7 +108,7 @@ export function MonitorKPIStrip({ data, brainStats }: {
       label: 'Failures',
       value: data.failures?.length ?? 0,
       sub: 'delivery',
-      color: (data.failures?.length ?? 0) > 0 ? 'text-red-500' : 'text-emerald-600',
+      color: (data.failures?.length ?? 0) > 0 ? 'txt-neg' : 'txt-pos',
       trend: (data.failures?.length ?? 0) > 0 ? 'down' : 'flat',
     },
   ]
@@ -137,7 +137,7 @@ export function MonitorKPIStrip({ data, brainStats }: {
               {kpi.trend && (
                 <span className={cn(
                   'text-[10px]',
-                  kpi.trend === 'up' ? 'text-emerald-500' : kpi.trend === 'down' ? 'text-red-500' : 'text-muted',
+                  kpi.trend === 'up' ? 'txt-pos' : kpi.trend === 'down' ? 'txt-neg' : 'text-muted',
                 )}>
                   {kpi.trend === 'up' ? '↑' : kpi.trend === 'down' ? '↓' : '→'}
                 </span>

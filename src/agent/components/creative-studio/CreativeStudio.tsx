@@ -1943,7 +1943,7 @@ function GalleryView() {
           <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.07] px-3 py-2.5">
             <span className="text-sm">☁️</span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[12px] font-semibold text-emerald-300">
+              <p className="truncate text-[12px] font-semibold txt-pos">
                 Google Drive যুক্ত — ছবি/ভিডিও অটো সেভ হচ্ছে
               </p>
               {drive.email && <p className="truncate text-[10px] text-emerald-400/70">{drive.email}</p>}
@@ -2164,7 +2164,7 @@ function GalleryView() {
                   </span>
                 )}
                 {selected.qc?.flagged && (
-                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-amber-300">{selected.qc.flagged}</span>
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] txt-warn">{selected.qc.flagged}</span>
                 )}
                 {/* CS10 — plain-Bangla QC/protection summary */}
                 {selected.qcDetailsBn && (

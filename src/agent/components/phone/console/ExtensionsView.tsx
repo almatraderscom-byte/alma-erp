@@ -120,7 +120,7 @@ function CreateRow({ user, onCreated }: { user: { id: string; name: string; role
         {user.name} <span className="text-muted">· {user.role}</span>
       </span>
       <span className="flex items-center gap-2">
-        {problem && <span className="text-[11px] text-red-500">{problem}</span>}
+        {problem && <span className="text-[11px] txt-neg">{problem}</span>}
         <button
           type="button"
           disabled={busy}
@@ -337,7 +337,7 @@ function ExtensionHistory({ ext }: { ext: string }) {
             {data.rows.map((r, i) => (
               <li key={i} className="flex items-baseline justify-between gap-3 text-[12px]">
                 <span className="min-w-0 truncate text-cream">
-                  <span className={r.direction === 'inbound' ? 'text-emerald-500' : 'text-[#E07A5F]'}>
+                  <span className={r.direction === 'inbound' ? 'txt-pos' : 'text-[#E07A5F]'}>
                     {r.direction === 'inbound' ? '↙' : '↗'}
                   </span>{' '}
                   {r.other || 'অজানা'}

@@ -1963,12 +1963,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
             <span className="alma-ai-wordmark truncate text-[15px] font-bold tracking-wide">ALMA AI</span>
             {activePersonalMode && (
-              <span className="shrink-0 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+              <span className="shrink-0 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium txt-pos">
                 ব্যক্তিগত
               </span>
             )}
             {dayShift?.active && activeConvId === dayShift.conversationId && (
-              <span className="shrink-0 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300 animate-pulse">
+              <span className="shrink-0 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium txt-pos animate-pulse">
                 অফিস লাইভ
               </span>
             )}
@@ -2035,7 +2035,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             </div>
           ) : convLoadError ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-              <p className="text-sm text-red-500/90">{convLoadError}</p>
+              <p className="text-sm txt-neg">{convLoadError}</p>
               <button
                 onClick={() => activeConvId && loadConversation({ id: activeConvId, title: null, projectId: null, archived: false, updatedAt: '' })}
                 className="rounded-xl border border-border px-4 py-2 text-xs text-muted transition-all hover:bg-white/[0.03] hover:text-cream"

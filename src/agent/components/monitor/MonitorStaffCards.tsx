@@ -112,8 +112,8 @@ export function MonitorStaffCards({ staffSummaries }: { staffSummaries: StaffSum
                     <h4 className="truncate text-[13px] font-semibold text-cream">{s.staffName}</h4>
                     <span className={cn(
                       'shrink-0 rounded-md border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider',
-                      s.completionPct >= 100 ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600' :
-                      s.completionPct >= 50 ? 'border-amber-500/25 bg-amber-500/10 text-amber-600' :
+                      s.completionPct >= 100 ? 'border-emerald-500/25 bg-emerald-500/10 txt-pos' :
+                      s.completionPct >= 50 ? 'border-amber-500/25 bg-amber-500/10 txt-warn' :
                       'border-border-subtle bg-transparent text-muted',
                     )}>
                       {info.label}
@@ -135,7 +135,7 @@ export function MonitorStaffCards({ staffSummaries }: { staffSummaries: StaffSum
                   <div className="mt-2 flex items-center gap-3 text-[10px] text-muted">
                     <span className="flex items-center gap-1">📤 {s.dispatched}</span>
                     <span className="flex items-center gap-1">✓ {s.delivered}</span>
-                    {s.failed > 0 && <span className="text-red-500">✗ {s.failed}</span>}
+                    {s.failed > 0 && <span className="txt-neg">✗ {s.failed}</span>}
                     <span className="ml-auto font-medium">🎯 {s.tasksDone}/{s.tasksTotal}</span>
                   </div>
                 </div>

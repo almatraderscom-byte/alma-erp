@@ -61,10 +61,10 @@ function dutyTimeSlot(d: AgentDutyRow): 'morning' | 'afternoon' | 'evening' | 'n
 }
 
 const slotConfig = {
-  morning: { label: 'সকাল', icon: '🌅', color: 'text-amber-600' },
+  morning: { label: 'সকাল', icon: '🌅', color: 'txt-warn' },
   afternoon: { label: 'দুপুর', icon: '☀️', color: 'text-[#D4A84B]' },
   evening: { label: 'সন্ধ্যা', icon: '🌆', color: 'text-[#E07A5F]' },
-  night: { label: 'রাত', icon: '🌙', color: 'text-blue-500' },
+  night: { label: 'রাত', icon: '🌙', color: 'txt-info' },
 }
 
 function DutyDot({ duty, isExpanded, onClick }: {
@@ -134,17 +134,17 @@ function DutyDetailInline({ duty, enabled, onRetrigger, retriggering, onToggleDu
           )}
           <span className={cn(
             'rounded px-1.5 py-0.5 text-[9px] font-bold uppercase',
-            duty.status === 'done' ? 'bg-emerald-500/15 text-emerald-600' :
-            isFailed ? 'bg-red-500/15 text-red-600' :
+            duty.status === 'done' ? 'bg-emerald-500/15 txt-pos' :
+            isFailed ? 'bg-red-500/15 txt-neg' :
             duty.status === 'skipped' ? 'bg-zinc-200 text-muted' :
-            'bg-amber-500/15 text-amber-600',
+            'bg-amber-500/15 txt-warn',
           )}>
             {duty.status}
           </span>
           {duty.ranAt && <span className="text-[10px] text-muted">at {fmtTime(duty.ranAt)}</span>}
         </div>
         {duty.detail && (
-          <p className={cn('mt-1.5 text-[10px]', isFailed ? 'text-red-600/70' : 'text-muted')}>{duty.detail}</p>
+          <p className={cn('mt-1.5 text-[10px]', isFailed ? 'txt-neg' : 'text-muted')}>{duty.detail}</p>
         )}
         <div className="mt-2 flex items-center gap-2">
           {onToggleDuty && (
@@ -211,7 +211,7 @@ export function MonitorDutyTimeline({ data, onRetrigger, retriggering, isLive, d
             {doneDuties}/{enabledCount} done
           </span>
           {failedDuties > 0 && (
-            <span className="rounded-md bg-red-500/10 px-1.5 py-0.5 text-[9px] font-bold text-red-600">
+            <span className="rounded-md bg-red-500/10 px-1.5 py-0.5 text-[9px] font-bold txt-neg">
               {failedDuties} failed
             </span>
           )}

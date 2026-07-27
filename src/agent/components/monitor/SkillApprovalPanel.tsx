@@ -45,9 +45,9 @@ interface View {
 }
 
 const STATE_TAG: Record<Row['state'], { label: string; cls: string }> = {
-  approved: { label: 'অনুমোদিত', cls: 'border-emerald-300/40 bg-emerald-400/10 text-emerald-300' },
-  changed: { label: 'অনুমোদনের পর বদলেছে', cls: 'border-amber-300/40 bg-amber-400/10 text-amber-300' },
-  revoked: { label: 'অনুমোদন তোলা', cls: 'border-rose-300/40 bg-rose-400/10 text-rose-300' },
+  approved: { label: 'অনুমোদিত', cls: 'border-emerald-300/40 bg-emerald-400/10 txt-pos' },
+  changed: { label: 'অনুমোদনের পর বদলেছে', cls: 'border-amber-300/40 bg-amber-400/10 txt-warn' },
+  revoked: { label: 'অনুমোদন তোলা', cls: 'border-rose-300/40 bg-rose-400/10 txt-neg' },
   unapproved: { label: 'অনুমোদন নেই', cls: 'border-border-subtle bg-white/[0.02] text-muted' },
 }
 
@@ -133,7 +133,7 @@ export default function SkillApprovalPanel() {
           {view && (
             <span className="ml-auto text-[11px] text-muted">
               চলছে {view.summary.live} · অনুমোদন বাকি{' '}
-              <b className={view.summary.needsApproval > 0 ? 'text-amber-300' : 'text-cream'}>
+              <b className={view.summary.needsApproval > 0 ? 'txt-warn' : 'text-cream'}>
                 {view.summary.needsApproval}
               </b>
               {view.summary.revoked > 0 ? ` · তোলা ${view.summary.revoked}` : ''}
@@ -142,7 +142,7 @@ export default function SkillApprovalPanel() {
         </div>
 
         {view && !view.gateOn && view.summary.needsApproval > 0 && (
-          <p className="border-t border-border-subtle bg-amber-400/[0.06] px-4 py-2 text-[11.5px] leading-snug text-amber-200">
+          <p className="border-t border-border-subtle bg-amber-400/[0.06] px-4 py-2 text-[11.5px] leading-snug txt-warn">
             gate এখন বন্ধ — তাই অনুমোদন ছাড়াও সব চলছে। এখনই চালু করলে{' '}
             {view.summary.needsApproval}টা skill একসাথে বন্ধ হয়ে যাবে।
           </p>
@@ -158,7 +158,7 @@ export default function SkillApprovalPanel() {
                   <span className="truncate">{r.name}</span>
                   <span className="shrink-0 text-[10px] text-muted">v{r.version}</span>
                   {r.isolation === 'subagent' && (
-                    <span className="shrink-0 rounded-full border border-sky-300/40 bg-sky-400/10 px-1.5 py-0.5 text-[9.5px] text-sky-300">
+                    <span className="shrink-0 rounded-full border border-sky-300/40 bg-sky-400/10 px-1.5 py-0.5 text-[9.5px] txt-info">
                       isolated
                     </span>
                   )}
@@ -180,7 +180,7 @@ export default function SkillApprovalPanel() {
                   type="button"
                   disabled={busy !== null || r.state === 'approved'}
                   onClick={() => void act(r.name, 'approve')}
-                  className="rounded-full border border-emerald-300/40 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-400/20 disabled:opacity-35"
+                  className="rounded-full border border-emerald-300/40 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-semibold txt-pos transition-colors hover:bg-emerald-400/20 disabled:opacity-35"
                 >
                   {r.state === 'changed' ? 'নতুন version অনুমোদন' : 'অনুমোদন'}
                 </button>
@@ -188,7 +188,7 @@ export default function SkillApprovalPanel() {
                   type="button"
                   disabled={busy !== null || !r.approval || r.state === 'revoked'}
                   onClick={() => void act(r.name, 'revoke')}
-                  className="rounded-full border border-rose-300/40 bg-rose-400/10 px-2.5 py-1 text-[11px] font-semibold text-rose-300 transition-colors hover:bg-rose-400/20 disabled:opacity-35"
+                  className="rounded-full border border-rose-300/40 bg-rose-400/10 px-2.5 py-1 text-[11px] font-semibold txt-neg transition-colors hover:bg-rose-400/20 disabled:opacity-35"
                 >
                   তুলে নাও
                 </button>
@@ -206,7 +206,7 @@ function Pill({ on, label }: { on: boolean; label: string }) {
     <span
       className={`rounded-full border px-2 py-0.5 text-[10.5px] font-semibold ${
         on
-          ? 'border-emerald-300/40 bg-emerald-400/10 text-emerald-300'
+          ? 'border-emerald-300/40 bg-emerald-400/10 txt-pos'
           : 'border-border-subtle bg-white/[0.02] text-muted'
       }`}
     >
