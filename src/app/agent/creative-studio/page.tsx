@@ -7,7 +7,9 @@ import {
   listAccessibleStudioBrands,
   type StudioActor,
 } from '@/lib/creative-studio/studio-access'
-import { getCreativeStudioV3FoundationFlags } from '@/lib/creative-studio/composition-feature-flags'
+import {
+  getCreativeStudioV4PreviewFoundationFlags,
+} from '@/lib/creative-studio/composition-feature-flags'
 import { listProjects } from '@/lib/creative-studio/project-service'
 import CreativeStudio from '@/agent/components/creative-studio/CreativeStudio'
 import { CreativeStudioV3 } from '@/agent/components/creative-studio-v3/CreativeStudioV3'
@@ -93,7 +95,10 @@ export default async function CreativeStudioPage({
   })
 
   if (decision.kind === 'v3') {
-    const foundation = getCreativeStudioV3FoundationFlags()
+    const foundation = getCreativeStudioV4PreviewFoundationFlags({
+      actorIsSystemOwner,
+      requestedStudio,
+    })
     const initialProjectId = selectCreativeStudioV3InitialProjectId({
       accessibleProjects,
       brandProfileId: decision.brand.brandProfileId,

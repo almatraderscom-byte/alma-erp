@@ -22,6 +22,11 @@ export type CreativeStudioV3FoundationFlags = {
   rollbackActive: boolean
 }
 
+export type CreativeStudioV4PreviewContext = {
+  actorIsSystemOwner: boolean
+  requestedStudio: string | null
+}
+
 function normalizeMode(value: unknown): CreativeStudioV3FoundationMode {
   const normalized = String(value ?? '').trim().toLowerCase()
   if (
@@ -57,11 +62,40 @@ export function getCreativeStudioV3FoundationFlags(
   }
 }
 
+/**
+ * The owner-approved V4 implementation is exercised on an isolated Vercel
+ * preview before any production rollout. This override makes that exact
+ * owner-only preview testable end-to-end without changing the default-off
+ * production flags.
+ */
+export function getCreativeStudioV4PreviewFoundationFlags(
+  context: CreativeStudioV4PreviewContext,
+  env: Record<string, string | undefined> = process.env,
+): CreativeStudioV3FoundationFlags {
+  const flags = getCreativeStudioV3FoundationFlags(env)
+  if (
+    env.VERCEL_ENV !== 'preview'
+    || !context.actorIsSystemOwner
+    || context.requestedStudio !== 'v4'
+  ) return flags
+  return {
+    ...flags,
+    mode: 'enforce',
+    readEnabled: true,
+    commandPlanningEnabled: true,
+    writesEnabled: true,
+    rollbackActive: false,
+  }
+}
+
 export function creativeStudioV3FeatureResponse(
   capability: 'read' | 'plan' | 'write',
   env: Record<string, string | undefined> = process.env,
+  previewContext?: CreativeStudioV4PreviewContext,
 ): Response | null {
-  const flags = getCreativeStudioV3FoundationFlags(env)
+  const flags = previewContext
+    ? getCreativeStudioV4PreviewFoundationFlags(previewContext, env)
+    : getCreativeStudioV3FoundationFlags(env)
   const enabled = capability === 'read'
     ? flags.readEnabled
     : capability === 'plan'

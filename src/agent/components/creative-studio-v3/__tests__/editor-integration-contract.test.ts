@@ -51,7 +51,7 @@ describe('Creative Studio V3 cross-stream Editor integration', () => {
     expect(routeSource).toContain('actorUserId: actor.userId')
     expect(routeSource).toContain('studioRole: decision.brand.role')
     expect(routeSource).toContain('accessibleProjects')
-    expect(routeSource).toContain('getCreativeStudioV3FoundationFlags')
+    expect(routeSource).toContain('getCreativeStudioV4PreviewFoundationFlags')
     expect(studio).toContain('accessRole: resolved.composition.accessRole')
     expect(journey).toContain('userId: actorUserId')
     expect(journey).toContain('role: accessRole')

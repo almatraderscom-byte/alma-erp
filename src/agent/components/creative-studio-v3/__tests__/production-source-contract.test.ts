@@ -18,6 +18,7 @@ describe('Creative Studio V3 production source contract', () => {
     expect(routeSource).toContain("const forceLegacy = requestedStudio === 'legacy'")
     expect(routeSource).toContain("requestedStudio === 'v4'")
     expect(routeSource).toContain("process.env.VERCEL_ENV === 'preview'")
+    expect(routeSource).toContain('getCreativeStudioV4PreviewFoundationFlags')
     expect(routeSource).toContain('return <CreativeStudio />')
     expect(policy).toContain("CREATIVE_STUDIO_V3_UI_ENABLED !== '1'")
   })

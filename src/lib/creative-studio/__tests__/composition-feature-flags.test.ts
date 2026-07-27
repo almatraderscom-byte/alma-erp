@@ -3,6 +3,7 @@ import {
   CREATIVE_STUDIO_V3_COMPOSITION_WRITES_ENV,
   CREATIVE_STUDIO_V3_FOUNDATION_MODE_ENV,
   getCreativeStudioV3FoundationFlags,
+  getCreativeStudioV4PreviewFoundationFlags,
 } from '@/lib/creative-studio/composition-feature-flags'
 
 describe('Creative Studio V3 foundation feature flags', () => {
@@ -54,5 +55,44 @@ describe('Creative Studio V3 foundation feature flags', () => {
       legacyDefault: true,
       legacyFallback: true,
     })
+  })
+
+  it('enables the complete foundation only for the system-owner V4 preview', () => {
+    expect(getCreativeStudioV4PreviewFoundationFlags({
+      actorIsSystemOwner: true,
+      requestedStudio: 'v4',
+    }, {
+      VERCEL_ENV: 'preview',
+    })).toMatchObject({
+      mode: 'enforce',
+      readEnabled: true,
+      commandPlanningEnabled: true,
+      writesEnabled: true,
+      rollbackActive: false,
+    })
+
+    for (const input of [
+      {
+        context: { actorIsSystemOwner: false, requestedStudio: 'v4' },
+        env: { VERCEL_ENV: 'preview' },
+      },
+      {
+        context: { actorIsSystemOwner: true, requestedStudio: 'legacy' },
+        env: { VERCEL_ENV: 'preview' },
+      },
+      {
+        context: { actorIsSystemOwner: true, requestedStudio: 'v4' },
+        env: { VERCEL_ENV: 'production' },
+      },
+    ]) {
+      expect(getCreativeStudioV4PreviewFoundationFlags(
+        input.context,
+        input.env,
+      )).toMatchObject({
+        mode: 'off',
+        readEnabled: false,
+        writesEnabled: false,
+      })
+    }
   })
 })
