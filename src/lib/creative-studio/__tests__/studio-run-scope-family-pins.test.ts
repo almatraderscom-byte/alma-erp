@@ -43,7 +43,7 @@ vi.mock('@/lib/creative-studio/studio-access', () => ({
 
 vi.mock('@/lib/creative-studio/studio-resource-scope', () => ({
   assertStudioResourceScope: async (
-    _kind: string,
+    kind: string,
     id: string,
     expected: Record<string, unknown>,
   ) => {
@@ -53,6 +53,19 @@ vi.mock('@/lib/creative-studio/studio-resource-scope', () => ({
       projectId: 'project-1',
     })
     state.scopedModels.push(id)
+    if (kind === 'reference') {
+      return id === 'product-reference'
+        ? {
+            version: 1,
+            referenceKind: 'product',
+            sourcePath: 'references/product.jpg',
+          }
+        : {
+            version: 1,
+            referenceKind: 'model',
+            sourcePath: 'references/model.jpg',
+          }
+    }
     return { version: 1 }
   },
 }))
@@ -141,5 +154,40 @@ describe('server-derived family run scope', () => {
     expect(scoped.scope.familyModelPins).toEqual(
       scoped.request.familyModelPins,
     )
+  })
+
+  it('pins uploaded product and model paths to the current project scope', async () => {
+    const scoped = await resolveScopedStudioRun({
+      userId: 'owner-1',
+      name: 'Owner',
+      email: 'owner@example.com',
+      erpRole: 'OWNER',
+    }, {
+      mode: 'try_on',
+      brandProfileId: 'brand-1',
+      projectId: 'project-1',
+      productId: 'AL-101',
+      productImagePath: 'references/product.jpg',
+      modelImagePath: 'references/model.jpg',
+      productReferenceId: 'product-reference',
+      modelReferenceId: 'model-reference',
+    })
+
+    expect(scoped.scope.referencePins).toEqual([
+      {
+        id: 'product-reference',
+        kind: 'product',
+        sourcePath: 'references/product.jpg',
+      },
+      {
+        id: 'model-reference',
+        kind: 'model',
+        sourcePath: 'references/model.jpg',
+      },
+    ])
+    expect(scoped.request).toEqual(expect.objectContaining({
+      productReferenceId: 'product-reference',
+      modelReferenceId: 'model-reference',
+    }))
   })
 })

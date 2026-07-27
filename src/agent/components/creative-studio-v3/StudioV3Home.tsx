@@ -65,6 +65,33 @@ function canvasFromDimensions(widthValue: number, heightValue: number): Creative
   }
 }
 
+async function measureCanvasMedia(file: File): Promise<{ width: number; height: number }> {
+  const url = URL.createObjectURL(file)
+  try {
+    if (file.type.startsWith('image/')) {
+      const bitmap = await createImageBitmap(file)
+      const dimensions = { width: bitmap.width, height: bitmap.height }
+      bitmap.close()
+      return dimensions
+    }
+    if (file.type.startsWith('video/')) {
+      return await new Promise((resolve, reject) => {
+        const video = document.createElement('video')
+        video.preload = 'metadata'
+        video.onloadedmetadata = () => resolve({
+          width: video.videoWidth,
+          height: video.videoHeight,
+        })
+        video.onerror = () => reject(new Error('The video dimensions could not be read.'))
+        video.src = url
+      })
+    }
+    throw new Error('Choose an image or video file.')
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
 function AssetPreview({
   url,
   type,
@@ -120,10 +147,11 @@ export function StudioV3Home({
   const [projectName, setProjectName] = useState('')
   const [projectDescription, setProjectDescription] = useState('')
   const [createdProject, setCreatedProject] = useState<StudioProjectSummary | null>(null)
-  const [canvasPreset, setCanvasPreset] = useState<'4:5' | '1:1' | '9:16' | '16:9' | 'custom' | 'media'>('4:5')
+  const [canvasPreset, setCanvasPreset] = useState<'4:5' | '1:1' | '9:16' | '16:9' | 'custom' | 'media' | 'upload'>('4:5')
   const [customWidth, setCustomWidth] = useState(1080)
   const [customHeight, setCustomHeight] = useState(1350)
   const [canvasMediaId, setCanvasMediaId] = useState('')
+  const [canvasUploadName, setCanvasUploadName] = useState('')
   const [creatingProject, setCreatingProject] = useState(false)
 
   const resetProjectSetup = useCallback(() => {
@@ -136,6 +164,7 @@ export function StudioV3Home({
     setCustomWidth(1080)
     setCustomHeight(1350)
     setCanvasMediaId('')
+    setCanvasUploadName('')
   }, [])
 
   const load = useCallback(async () => {
@@ -208,6 +237,12 @@ export function StudioV3Home({
       action: () => onNavigate({ id: 'video-lab' }),
     },
     {
+      title: 'Avatar',
+      description: 'Create, select, and manage reusable model identity references.',
+      icon: 'account',
+      action: () => onNavigate({ id: 'desk', desk: 'systems' }),
+    },
+    {
       title: 'Voice',
       description: 'Consent, immutable identity versions and lifecycle.',
       icon: 'voice',
@@ -269,7 +304,8 @@ export function StudioV3Home({
       })
       setCreatedProject(project)
       setProjectSetupStep('canvas')
-      toast.success(`${project.name} created. Choose its canvas next.`)
+      setProjectSetupOpen(false)
+      toast.success(`${project.name} opened. Set its canvas in the project workspace.`)
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : 'The project could not be created.')
     } finally {
@@ -296,6 +332,22 @@ export function StudioV3Home({
     return canvasFromDimensions(customWidth, customHeight)
   }
 
+  const selectUploadedCanvas = async (file: File) => {
+    try {
+      const dimensions = await measureCanvasMedia(file)
+      if (!dimensions.width || !dimensions.height) {
+        throw new Error('The media has no readable dimensions.')
+      }
+      setCustomWidth(dimensions.width)
+      setCustomHeight(dimensions.height)
+      setCanvasUploadName(file.name)
+      setCanvasPreset('upload')
+      toast.success(`${file.name} · ${dimensions.width} × ${dimensions.height} selected.`)
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : 'The media dimensions could not be read.')
+    }
+  }
+
   const openCreatedProject = async () => {
     if (!createdProject) return
     if (canvasPreset === 'media' && !canvasMediaId) {
@@ -309,6 +361,129 @@ export function StudioV3Home({
     } finally {
       setCreatingProject(false)
     }
+  }
+
+  if (createdProject && projectSetupStep === 'canvas') {
+    const selectedCanvas = canvasInput()
+    return (
+      <div className={`${styles.page} ${styles.projectCanvasPage}`}>
+        <header className={styles.workspaceHeader}>
+          <div className={styles.workspaceTitle}>
+            <span><StudioV3Icon name="project" /></span>
+            <div>
+              <span className={styles.eyebrow}>PROJECT OPEN · CANVAS SETUP</span>
+              <h1>{createdProject.name}</h1>
+              <p>
+                The project already exists in the active workspace. Choose its first canvas now,
+                or finish later without creating a composition.
+              </p>
+            </div>
+          </div>
+          <span className={styles.serverBadge}><StudioV3Icon name="check" /> Project saved</span>
+        </header>
+
+        <section aria-labelledby="project-canvas-heading" className={styles.projectCanvasSurface}>
+          <header>
+            <div>
+              <span className={styles.eyebrow}>CANVAS</span>
+              <h2 id="project-canvas-heading">Choose the working frame</h2>
+              <p>Use a standard preset, exact custom dimensions, scoped current media, or a local image/video frame.</p>
+            </div>
+            <strong>{selectedCanvas.width} × {selectedCanvas.height} px</strong>
+          </header>
+
+          <div className={styles.canvasSetupStep}>
+            <div className={styles.canvasPresetGrid}>
+              {([
+                ['4:5', 'Portrait', '1080 × 1350'],
+                ['1:1', 'Square', '1080 × 1080'],
+                ['9:16', 'Story / Reel', '1080 × 1920'],
+                ['16:9', 'Landscape', '1920 × 1080'],
+                ['custom', 'Custom size', `${customWidth} × ${customHeight}`],
+                ['media', 'Current media', canvasMedia.length ? 'Use asset dimensions' : 'No measured media'],
+              ] as const).map(([id, label, meta]) => (
+                <button
+                  aria-pressed={canvasPreset === id}
+                  disabled={id === 'media' && canvasMedia.length === 0}
+                  key={id}
+                  onClick={() => setCanvasPreset(id)}
+                  type="button"
+                >
+                  <span>{id}</span>
+                  <strong>{label}</strong>
+                  <small>{meta}</small>
+                </button>
+              ))}
+              <label
+                aria-label="Use dimensions from an uploaded image or video"
+                className={styles.canvasUploadCard}
+                data-selected={canvasPreset === 'upload'}
+              >
+                <input
+                  accept="image/*,video/*"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    event.currentTarget.value = ''
+                    if (file) void selectUploadedCanvas(file)
+                  }}
+                  type="file"
+                />
+                <span>UPLOAD</span>
+                <strong>Image / video frame</strong>
+                <small>{canvasUploadName || 'Read local media dimensions'}</small>
+              </label>
+            </div>
+
+            {(canvasPreset === 'custom' || canvasPreset === 'upload') && (
+              <div className={styles.customCanvasFields}>
+                <label>
+                  <span>Width</span>
+                  <input min={64} max={16384} onChange={(event) => setCustomWidth(Number(event.target.value))} type="number" value={customWidth} />
+                </label>
+                <span>×</span>
+                <label>
+                  <span>Height</span>
+                  <input min={64} max={16384} onChange={(event) => setCustomHeight(Number(event.target.value))} type="number" value={customHeight} />
+                </label>
+                <em>px</em>
+              </div>
+            )}
+
+            {canvasPreset === 'media' && (
+              <label className={styles.field}>
+                <span>Use dimensions from scoped current media</span>
+                <select onChange={(event) => setCanvasMediaId(event.target.value)} value={canvasMediaId}>
+                  <option value="">Choose media…</option>
+                  {canvasMedia.map((asset) => (
+                    <option key={asset.id} value={asset.id}>
+                      {asset.summary ?? asset.mode} · {asset.originalVariant?.width} × {asset.originalVariant?.height}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            <p className={styles.scopeNotice}>
+              <StudioV3Icon name="lock" />
+              Local media is read only to measure the canvas. This step does not upload, generate, or spend.
+            </p>
+
+            <div className={styles.projectSetupActions}>
+              <button className={styles.secondaryButton} onClick={resetProjectSetup} type="button">Finish later</button>
+              <button
+                className={styles.primaryButton}
+                disabled={creatingProject || (canvasPreset === 'media' && !canvasMediaId)}
+                onClick={() => void openCreatedProject()}
+                type="button"
+              >
+                {creatingProject ? 'Opening editor…' : 'Open canvas in editor'}
+                <StudioV3Icon name="arrow" />
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
+    )
   }
 
   return (
@@ -556,14 +731,8 @@ export function StudioV3Home({
             <header>
               <div>
                 <span className={styles.eyebrow}>NEW PRODUCTION PROJECT</span>
-                <h2 id="studio-project-setup-title">
-                  {projectSetupStep === 'name' ? 'Name the project first' : `Set ${createdProject?.name ?? 'project'} canvas`}
-                </h2>
-                <p>
-                  {projectSetupStep === 'name'
-                    ? 'The project opens before any canvas decision. Nothing is generated.'
-                    : 'Choose a standard frame, exact custom size, or dimensions from an existing scoped media asset.'}
-                </p>
+                <h2 id="studio-project-setup-title">Name the project first</h2>
+                <p>The project opens before any canvas decision. Nothing is generated.</p>
               </div>
               <button
                 aria-label="Close project setup"
@@ -575,108 +744,39 @@ export function StudioV3Home({
               </button>
             </header>
 
-            {projectSetupStep === 'name' ? (
-              <div className={styles.projectNameStep}>
-                <label className={styles.field}>
-                  <span>Project name <em>Required</em></span>
-                  <input
-                    autoFocus
-                    maxLength={160}
-                    onChange={(event) => setProjectName(event.target.value)}
-                    placeholder="Eid campaign · Panjabi launch"
-                    value={projectName}
-                  />
-                </label>
-                <label className={styles.field}>
-                  <span>Description <em>Optional</em></span>
-                  <textarea
-                    maxLength={500}
-                    onChange={(event) => setProjectDescription(event.target.value)}
-                    placeholder="What this production project will deliver…"
-                    value={projectDescription}
-                  />
-                </label>
-                <div className={styles.projectSetupActions}>
-                  <button className={styles.secondaryButton} onClick={resetProjectSetup} type="button">Cancel</button>
-                  <button
-                    className={styles.primaryButton}
-                    disabled={!projectName.trim() || creatingProject}
-                    onClick={() => void createNamedProject()}
-                    type="button"
-                  >
-                    {creatingProject ? 'Creating project…' : 'Create project, then canvas'}
-                    <StudioV3Icon name="arrow" />
-                  </button>
-                </div>
+            <div className={styles.projectNameStep}>
+              <label className={styles.field}>
+                <span>Project name <em>Required</em></span>
+                <input
+                  autoFocus
+                  maxLength={160}
+                  onChange={(event) => setProjectName(event.target.value)}
+                  placeholder="Eid campaign · Panjabi launch"
+                  value={projectName}
+                />
+              </label>
+              <label className={styles.field}>
+                <span>Description <em>Optional</em></span>
+                <textarea
+                  maxLength={500}
+                  onChange={(event) => setProjectDescription(event.target.value)}
+                  placeholder="What this production project will deliver…"
+                  value={projectDescription}
+                />
+              </label>
+              <div className={styles.projectSetupActions}>
+                <button className={styles.secondaryButton} onClick={resetProjectSetup} type="button">Cancel</button>
+                <button
+                  className={styles.primaryButton}
+                  disabled={!projectName.trim() || creatingProject}
+                  onClick={() => void createNamedProject()}
+                  type="button"
+                >
+                  {creatingProject ? 'Creating project…' : 'Create & open project'}
+                  <StudioV3Icon name="arrow" />
+                </button>
               </div>
-            ) : (
-              <div className={styles.canvasSetupStep}>
-                <div className={styles.canvasPresetGrid}>
-                  {([
-                    ['4:5', 'Portrait', '1080 × 1350'],
-                    ['1:1', 'Square', '1080 × 1080'],
-                    ['9:16', 'Story / Reel', '1080 × 1920'],
-                    ['16:9', 'Landscape', '1920 × 1080'],
-                    ['custom', 'Custom size', `${customWidth} × ${customHeight}`],
-                    ['media', 'Current media', canvasMedia.length ? 'Use asset dimensions' : 'No measured media'],
-                  ] as const).map(([id, label, meta]) => (
-                    <button
-                      aria-pressed={canvasPreset === id}
-                      disabled={id === 'media' && canvasMedia.length === 0}
-                      key={id}
-                      onClick={() => setCanvasPreset(id)}
-                      type="button"
-                    >
-                      <span>{id}</span>
-                      <strong>{label}</strong>
-                      <small>{meta}</small>
-                    </button>
-                  ))}
-                </div>
-
-                {canvasPreset === 'custom' && (
-                  <div className={styles.customCanvasFields}>
-                    <label>
-                      <span>Width</span>
-                      <input min={64} max={16384} onChange={(event) => setCustomWidth(Number(event.target.value))} type="number" value={customWidth} />
-                    </label>
-                    <span>×</span>
-                    <label>
-                      <span>Height</span>
-                      <input min={64} max={16384} onChange={(event) => setCustomHeight(Number(event.target.value))} type="number" value={customHeight} />
-                    </label>
-                    <em>px</em>
-                  </div>
-                )}
-
-                {canvasPreset === 'media' && (
-                  <label className={styles.field}>
-                    <span>Use dimensions from scoped media</span>
-                    <select onChange={(event) => setCanvasMediaId(event.target.value)} value={canvasMediaId}>
-                      <option value="">Choose media…</option>
-                      {canvasMedia.map((asset) => (
-                        <option key={asset.id} value={asset.id}>
-                          {asset.summary ?? asset.mode} · {asset.originalVariant?.width} × {asset.originalVariant?.height}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-
-                <div className={styles.projectSetupActions}>
-                  <button className={styles.secondaryButton} onClick={resetProjectSetup} type="button">Finish later</button>
-                  <button
-                    className={styles.primaryButton}
-                    disabled={creatingProject || (canvasPreset === 'media' && !canvasMediaId)}
-                    onClick={() => void openCreatedProject()}
-                    type="button"
-                  >
-                    {creatingProject ? 'Opening canvas…' : 'Open project canvas'}
-                    <StudioV3Icon name="arrow" />
-                  </button>
-                </div>
-              </div>
-            )}
+            </div>
           </section>
         </div>
       )}

@@ -43,6 +43,12 @@ export type StudioRunFamilyModelPin = {
   modelNotes?: string
 }
 
+export type StudioRunReferencePin = {
+  id: string
+  kind: 'product' | 'model'
+  sourcePath: string
+}
+
 export type StudioRunScope = {
   actorUserId: string
   ownerId: string
@@ -52,6 +58,7 @@ export type StudioRunScope = {
   productId: string | null
   sourceAssetIds: string[]
   familyModelPins?: StudioRunFamilyModelPin[]
+  referencePins?: StudioRunReferencePin[]
 }
 
 export type StudioRunResolvedSelection = {

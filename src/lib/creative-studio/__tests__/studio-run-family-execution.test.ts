@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({
   modelPaths: new Map<string, { imagePath: string; role: string }>(),
+  referenceScopes: new Map<string, { referenceKind: 'product' | 'model'; sourcePath: string }>(),
   scopeChecks: [] as string[],
 }))
 
@@ -44,8 +45,11 @@ vi.mock('@/lib/creative-studio/studio-access', () => ({
 }))
 
 vi.mock('@/lib/creative-studio/studio-resource-scope', () => ({
-  assertStudioResourceScope: async (_kind: string, id: string) => {
+  assertStudioResourceScope: async (kind: string, id: string) => {
     state.scopeChecks.push(id)
+    if (kind === 'reference') {
+      return state.referenceScopes.get(id) ?? null
+    }
     return { version: 1 }
   },
 }))
@@ -88,6 +92,7 @@ beforeEach(() => {
   process.env.CREATIVE_STUDIO_RUN_CONFIRMATION_SECRET =
     'test-only-studio-run-confirmation-secret'
   state.modelPaths.clear()
+  state.referenceScopes.clear()
   state.scopeChecks.length = 0
   for (const pin of pins) {
     state.modelPaths.set(pin.modelId, {
@@ -171,6 +176,79 @@ describe('family pins at the execution boundary', () => {
       checkProviderAvailability: false,
     })).rejects.toMatchObject({
       message: 'studio_run_family_model_changed',
+      status: 409,
+    })
+  })
+
+  it('revalidates immutable uploaded-reference pins before a paid job executes', async () => {
+    state.referenceScopes.set('reference-product', {
+      referenceKind: 'product',
+      sourcePath: 'references/product.jpg',
+    })
+    const estimate = issueStudioRunEstimate({
+      scope: {
+        actorUserId: 'owner-1',
+        ownerId: 'owner-1',
+        role: 'owner',
+        brandProfileId: 'brand-1',
+        projectId: 'project-1',
+        productId: 'AL-101',
+        sourceAssetIds: [],
+        referencePins: [{
+          id: 'reference-product',
+          kind: 'product',
+          sourcePath: 'references/product.jpg',
+        }],
+      },
+      request: {
+        mode: 'try_on',
+        productImagePath: 'references/product.jpg',
+      },
+      selection: {
+        mode: 'try_on',
+        architecture: 'advanced',
+        provider: 'fashn',
+        model: 'tryon-max',
+        providers: ['fashn'],
+        models: ['tryon-max'],
+        plan: ['single_try_on'],
+        paidAttemptLimit: 1,
+      },
+      estimateBdt: 25,
+      requestedCapBdt: 25,
+    })
+    const claims = verifyStudioRunEstimateReceipt(estimate.receipt, {
+      phase: 'execute',
+    })
+    const authorized = await withStudioRunExecutionContext({
+      claims,
+      receipt: estimate.receipt,
+      idempotencyKey: `reference-execution:${claims.receiptId}`,
+    }, async () => studioRunAuthorizedJobFields({
+      provider: 'garment_prep',
+      productImagePath: 'references/product.jpg',
+    }))
+
+    await expect(assertStudioRunExecutionGate({
+      receipt: estimate.receipt,
+      payload: authorized.payload,
+      expectedClaims: claims,
+      checkProviderAvailability: false,
+    })).resolves.toEqual(expect.objectContaining({
+      receiptId: claims.receiptId,
+    }))
+
+    state.referenceScopes.set('reference-product', {
+      referenceKind: 'product',
+      sourcePath: 'references/replaced.jpg',
+    })
+    await expect(assertStudioRunExecutionGate({
+      receipt: estimate.receipt,
+      payload: authorized.payload,
+      expectedClaims: claims,
+      checkProviderAvailability: false,
+    })).rejects.toMatchObject({
+      message: 'studio_run_reference_changed',
       status: 409,
     })
   })

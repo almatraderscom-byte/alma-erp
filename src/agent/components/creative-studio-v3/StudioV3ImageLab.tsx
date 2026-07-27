@@ -110,7 +110,9 @@ function SourceArtwork({
   label: string
   preview: string | null | undefined
 }) {
-  const hasPreview = Boolean(preview)
+  const [previewFailed, setPreviewFailed] = useState(false)
+  useEffect(() => setPreviewFailed(false), [preview])
+  const hasPreview = Boolean(preview) && !previewFailed
   return (
     <div
       aria-label={hasPreview ? `${kind} preview: ${label}` : undefined}
@@ -120,8 +122,14 @@ function SourceArtwork({
           : styles.v3Tone_coral
       } ${hasPreview ? styles.v7HasSourcePreview : ''}`}
       role={hasPreview ? 'img' : undefined}
-      style={previewBackground(preview)}
     >
+      {hasPreview && (
+        <img
+          alt=""
+          onError={() => setPreviewFailed(true)}
+          src={preview ?? ''}
+        />
+      )}
       {!hasPreview && (
         <>
           <span>{kind === 'model' ? 'MODEL' : 'PRODUCT'}</span>
@@ -170,9 +178,11 @@ export function StudioV3ImageLab({
   const [includeFamily, setIncludeFamily] = useState(false)
   const [includeReel, setIncludeReel] = useState(false)
   const [uploadedProductPath, setUploadedProductPath] = useState('')
+  const [uploadedProductReferenceId, setUploadedProductReferenceId] = useState('')
   const [uploadedProductPreview, setUploadedProductPreview] = useState('')
   const [uploadedProductName, setUploadedProductName] = useState('')
   const [uploadedModelPath, setUploadedModelPath] = useState('')
+  const [uploadedModelReferenceId, setUploadedModelReferenceId] = useState('')
   const [uploadedModelPreview, setUploadedModelPreview] = useState('')
   const [uploadedModelName, setUploadedModelName] = useState('')
   const [uploadingKind, setUploadingKind] = useState<'product' | 'model' | null>(null)
@@ -193,7 +203,12 @@ export function StudioV3ImageLab({
     let live = true
     setLoading(true)
     void Promise.allSettled([
-      Promise.resolve(activeProject?.product ? [activeProject.product] : []),
+      activeProject?.product
+        ? port.listProducts(activeProject.product.code).then((products) => {
+            const exact = products.find((product) => product.code === activeProject.product?.code)
+            return [exact ?? activeProject.product!]
+          })
+        : Promise.resolve([]),
       port.listModels(activeBrand?.brandProfileId, activeProject?.id),
       port.listRecipes(activeBrand?.brandProfileId),
       port.listGallery(
@@ -354,34 +369,64 @@ export function StudioV3ImageLab({
     }
     setUploadingKind(kind)
     try {
-      const path = await port.uploadImage(file, `creative-studio-v4-${kind}`)
+      const uploaded = await port.uploadReference(file, {
+        brandProfileId: activeBrand.brandProfileId,
+        projectId: activeProject.id,
+        kind,
+      })
       const preview = URL.createObjectURL(file)
       if (kind === 'product') {
-        setUploadedProductPath(path)
+        setUploadedProductPath(uploaded.path)
+        setUploadedProductReferenceId(uploaded.id)
         setUploadedProductPreview(preview)
         setUploadedProductName(file.name)
       } else {
-        setUploadedModelPath(path)
+        setUploadedModelPath(uploaded.path)
+        setUploadedModelReferenceId(uploaded.id)
         setUploadedModelPreview(preview)
         setUploadedModelName(file.name)
         setSelectedModelId('')
-        if (architecture === 'auto') {
-          setArchitecture('advanced')
-          setMode('try_on')
-        }
       }
       setLocalStatus(
         `${file.name} uploaded to the scoped Studio workspace. No generation was queued.`,
       )
       toast.success(
         kind === 'model' && architecture === 'auto'
-          ? 'Model uploaded. Advanced Try-On opened because Auto requires a saved identity.'
+          ? 'Model uploaded. Auto stayed open; save it as an identity before a paid run.'
           : `${kind === 'product' ? 'Product' : 'Model'} reference uploaded.`,
       )
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : 'The upload failed.')
     } finally {
       setUploadingKind(null)
+    }
+  }
+
+  const pasteProductReference = async () => {
+    if (!navigator.clipboard?.read) {
+      toast.error('Image paste is not available in this browser. Use Upload instead.')
+      return
+    }
+    try {
+      const items = await navigator.clipboard.read()
+      for (const item of items) {
+        const imageType = item.types.find((type) => type.startsWith('image/'))
+        if (!imageType) continue
+        const blob = await item.getType(imageType)
+        const extension = imageType.split('/')[1]?.replace('jpeg', 'jpg') || 'png'
+        await uploadReference(
+          new File([blob], `pasted-product-${Date.now()}.${extension}`, { type: imageType }),
+          'product',
+        )
+        return
+      }
+      toast.error('The clipboard does not contain an image.')
+    } catch (reason) {
+      toast.error(
+        reason instanceof Error && reason.name === 'NotAllowedError'
+          ? 'Allow clipboard access, then press Paste again.'
+          : 'The clipboard image could not be read. Use Upload instead.',
+      )
     }
   }
 
@@ -407,6 +452,7 @@ export function StudioV3ImageLab({
         auto: true,
         mode: 'try_on',
         productImagePath: productPath,
+        productReferenceId: uploadedProductReferenceId || undefined,
         modelId: selectedModel.id,
         includeFamily,
         includeReel,
@@ -421,6 +467,8 @@ export function StudioV3ImageLab({
       vtonEngine: engine === 'xai_imagine' || isVton ? engine : undefined,
       productImagePath: productPath ?? undefined,
       modelImagePath: uploadedModelPath || undefined,
+      productReferenceId: uploadedProductReferenceId || undefined,
+      modelReferenceId: uploadedModelReferenceId || undefined,
       faceReferencePath: mode === 'face_to_model' ? personPath ?? undefined : undefined,
       modelId: uploadedModelPath ? undefined : selectedModelId || undefined,
       sourceImagePath: sourcePath ?? undefined,
@@ -524,12 +572,11 @@ export function StudioV3ImageLab({
           <small>{productMeta}</small>
           <div className={styles.v4SourceActions}>
             <button
-              aria-expanded={sourceTray === 'product'}
-              onClick={() => setSourceTray((current) => current === 'product' ? null : 'product')}
+              onClick={() => void pasteProductReference()}
               type="button"
             >
-              <StudioV3Icon name="gallery" />
-              Gallery
+              <StudioV3Icon name="project" />
+              Paste
             </button>
             <label aria-disabled={uploadingKind !== null}>
               <input
@@ -546,11 +593,12 @@ export function StudioV3ImageLab({
               {uploadingKind === 'product' ? 'Uploading…' : 'Upload'}
             </label>
             <button
-              onClick={() => onNavigate({ id: 'gallery', initialType: 'image' })}
+              aria-expanded={sourceTray === 'product'}
+              onClick={() => setSourceTray((current) => current === 'product' ? null : 'product')}
               type="button"
             >
-              <StudioV3Icon name="grid" />
-              Assets
+              <StudioV3Icon name="gallery" />
+              Gallery
             </button>
           </div>
         </div>
@@ -822,6 +870,7 @@ export function StudioV3ImageLab({
                           onClick={() => {
                             setSelectedProductCode(product.code)
                             setUploadedProductPath('')
+                            setUploadedProductReferenceId('')
                             setUploadedProductPreview('')
                             setUploadedProductName('')
                             setSourceTray(null)
@@ -842,6 +891,7 @@ export function StudioV3ImageLab({
                           onClick={() => {
                             setSelectedModelId(model.id)
                             setUploadedModelPath('')
+                            setUploadedModelReferenceId('')
                             setUploadedModelPreview('')
                             setUploadedModelName('')
                             setSourceTray(null)
@@ -908,7 +958,7 @@ export function StudioV3ImageLab({
                   {autoReady
                     ? localStatus
                     : uploadedModelPath
-                      ? 'Uploaded model references run in Advanced mode; Auto requires a saved identity.'
+                      ? 'Auto stayed open. Save this upload as an identity from Avatar before requesting a paid run.'
                       : 'Choose a product source and saved identity to request an exact estimate.'}
                 </p>
               </>

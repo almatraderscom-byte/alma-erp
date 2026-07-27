@@ -27,7 +27,7 @@ function sourceFiles(directory: string): string[] {
 describe('Creative Studio production responsive and a11y contract', () => {
   it('keeps every explicit production text size at a readable 11px minimum', () => {
     const violations: string[] = []
-    for (const file of sourceFiles(legacyRoot)) {
+    for (const file of [...sourceFiles(v3Root), ...sourceFiles(legacyRoot)]) {
       const content = readFileSync(file, 'utf8')
       for (const match of content.matchAll(
         /font-size:\s*([0-9.]+)(px|rem)|fontSize\s*:\s*['"]?([0-9.]+)(px)?/g,
@@ -70,8 +70,19 @@ describe('Creative Studio production responsive and a11y contract', () => {
     )
     expect(shell).toContain('className={styles.skipLink}')
     expect(shell).toContain('aria-label="Creative Studio navigation"')
+    expect(shell).toContain('aria-label={item.label}')
+    expect(shell).toContain('mainRef.current?.scrollTo')
     expect(shell).toContain(
       'aria-label="Creative Studio capability navigation"',
     )
+  })
+
+  it('keeps viewport overlays outside transformed containing blocks', () => {
+    const pageRule = v3Styles.match(/\.page\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
+    const enterFrames = v3Styles.match(/@keyframes studioEnter\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
+    expect(pageRule).not.toContain('transform:')
+    expect(enterFrames).not.toContain('transform:')
+    expect(v3Styles).toContain('.v3Composer.v4FloatingComposer.v6ComposerExpanded')
+    expect(v3Styles).toContain('inset: 0;')
   })
 })

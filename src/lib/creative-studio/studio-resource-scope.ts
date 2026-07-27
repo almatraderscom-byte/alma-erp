@@ -9,7 +9,13 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-export type StudioScopedResourceKind = 'model' | 'voice' | 'video' | 'music' | 'mask'
+export type StudioScopedResourceKind =
+  | 'model'
+  | 'voice'
+  | 'video'
+  | 'music'
+  | 'mask'
+  | 'reference'
 
 export type StudioResourceScope = {
   version: 1
@@ -20,6 +26,7 @@ export type StudioResourceScope = {
   createdAt: string
   sourceAssetIds?: string[]
   sourcePath?: string
+  referenceKind?: 'product' | 'model'
 }
 
 export type StudioResourceContext = {

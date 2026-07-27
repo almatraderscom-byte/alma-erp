@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { StudioBrandProfile } from '@/agent/components/creative-studio/studio-api'
 import { StudioV3Icon, type StudioV3IconName } from '@/agent/components/creative-studio-v3/StudioV3Icon'
 import type {
@@ -47,6 +47,19 @@ function isCurrent(current: CreativeStudioV3View, candidate: CreativeStudioV3Vie
   return current.id === candidate.id
 }
 
+function studioViewKey(view: CreativeStudioV3View): string {
+  if (view.id === 'desk') return `${view.id}:${view.desk}:${view.projectId ?? ''}`
+  if (view.id === 'editor') return `${view.id}:${view.compositionId}`
+  if (view.id === 'gallery') {
+    return `${view.id}:${view.initialType ?? ''}:${view.reviewTarget?.projectAssetId ?? ''}`
+  }
+  if (view.id === 'finishing') return `${view.id}:${view.assetId ?? ''}`
+  if (view.id === 'image-lab' || view.id === 'video-lab') {
+    return `${view.id}:${view.sourceAssetId ?? ''}:${view.avatarId ?? ''}`
+  }
+  return view.id
+}
+
 export function StudioV3Shell({
   children,
   currentView,
@@ -78,7 +91,53 @@ export function StudioV3Shell({
   legacyAllowed: boolean
   studioRole: StudioAccessRole
 }) {
+  const [creativeAgentOpen, setCreativeAgentOpen] = useState(false)
+  const mainRef = useRef<HTMLElement>(null)
+  const agentTriggerRef = useRef<HTMLButtonElement>(null)
+  const agentDialogRef = useRef<HTMLElement>(null)
   const activeBrand = brands.find((brand) => brand.brandProfileId === activeBrandId) ?? brands[0] ?? null
+  const activeProject = projects.find((project) => project.id === activeProjectId) ?? null
+  const viewKey = studioViewKey(currentView)
+
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }, [viewKey])
+
+  useEffect(() => {
+    if (!creativeAgentOpen) return
+    const previousOverflow = document.body.style.overflow
+    const trigger = agentTriggerRef.current
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setCreativeAgentOpen(false)
+        return
+      }
+      if (event.key !== 'Tab') return
+      const controls = Array.from(
+        agentDialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      )
+      const first = controls[0]
+      const last = controls.at(-1)
+      if (!first || !last) return
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKeyDown)
+    agentDialogRef.current?.querySelector<HTMLElement>('button')?.focus()
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+      trigger?.focus()
+    }
+  }, [creativeAgentOpen])
   const legacyQuery = new URLSearchParams({ studio: 'legacy' })
   if (activeBrandId) legacyQuery.set('brand', activeBrandId)
   if (activeProjectId) legacyQuery.set('project', activeProjectId)
@@ -123,6 +182,7 @@ export function StudioV3Shell({
     const active = isCurrent(currentView, item.view)
     return (
       <button
+        aria-label={item.label}
         aria-current={active ? 'page' : undefined}
         className={active ? styles.navItemActive : styles.navItem}
         key={`${item.view.id}-${item.label}`}
@@ -182,8 +242,9 @@ export function StudioV3Shell({
           <span className={styles.guardBadge}><StudioV3Icon name="lock" /> Server gated</span>
           <button
             className={styles.agentButton}
-            disabled={!activeProjectId || immersive}
-            onClick={onAskCreativeAgent}
+            disabled={!activeProject || immersive}
+            onClick={() => setCreativeAgentOpen(true)}
+            ref={agentTriggerRef}
             type="button"
           >
             <StudioV3Icon name="spark" />
@@ -219,6 +280,7 @@ export function StudioV3Shell({
         <main
           className={`${styles.main} ${immersive ? styles.mainImmersive : ''}`}
           id="creative-studio-v3-main"
+          ref={mainRef}
           tabIndex={-1}
         >
           {children}
@@ -229,6 +291,66 @@ export function StudioV3Shell({
         <nav aria-label="Creative Studio mobile navigation" className={styles.mobileNav}>
           {mobileNav.map(navButton)}
         </nav>
+      )}
+
+      {creativeAgentOpen && (
+        <div
+          className={styles.agentLaunchBackdrop}
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) setCreativeAgentOpen(false)
+          }}
+        >
+          <section
+            aria-labelledby="creative-agent-launch-title"
+            aria-modal="true"
+            className={styles.agentLaunchDialog}
+            ref={agentDialogRef}
+            role="dialog"
+          >
+            <header>
+              <span><StudioV3Icon name="spark" /></span>
+              <div>
+                <span className={styles.eyebrow}>CREATIVE AGENT</span>
+                <h2 id="creative-agent-launch-title">Work inside this project</h2>
+              </div>
+              <button
+                aria-label="Close Creative Agent panel"
+                className={styles.iconButton}
+                onClick={() => setCreativeAgentOpen(false)}
+                type="button"
+              >
+                <StudioV3Icon name="close" />
+              </button>
+            </header>
+            <div className={styles.agentLaunchContext}>
+              <span><StudioV3Icon name="project" /></span>
+              <div>
+                <small>ACTIVE PROJECT</small>
+                <strong>{activeProject?.name ?? 'No project selected'}</strong>
+                <p>
+                  The Agent opens in this project&apos;s versioned workspace. It will not
+                  queue generation, publish, or spend without the separate guarded action.
+                </p>
+              </div>
+            </div>
+            <div className={styles.projectSetupActions}>
+              <button className={styles.secondaryButton} onClick={() => setCreativeAgentOpen(false)} type="button">
+                Stay here
+              </button>
+              <button
+                className={styles.primaryButton}
+                onClick={() => {
+                  setCreativeAgentOpen(false)
+                  onAskCreativeAgent()
+                }}
+                type="button"
+              >
+                Open project Agent
+                <StudioV3Icon name="arrow" />
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </section>
   )

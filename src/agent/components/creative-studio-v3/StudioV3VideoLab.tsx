@@ -88,6 +88,8 @@ export function StudioV3VideoLab({
   const [reviewRequest, setReviewRequest] = useState<RunPayload | null>(null)
   const [estimating, setEstimating] = useState(false)
   const [queueing, setQueueing] = useState(false)
+  const [uploadingVideo, setUploadingVideo] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
 
   useEffect(() => {
     let live = true
@@ -145,7 +147,7 @@ export function StudioV3VideoLab({
       : null
   const ready = stillMode
     ? Boolean(startFramePath && prompt.trim())
-    : false
+    : Boolean(selectedUpload)
 
   useEffect(() => {
     if (stillMode) {
@@ -176,14 +178,6 @@ export function StudioV3VideoLab({
       ? selectedAvatar?.name ?? 'No avatar source'
       : selectedUpload?.name ?? 'No owned footage'
 
-  const legacyVideoHref = `/agent/creative-studio?${new URLSearchParams({
-    studio: 'legacy',
-    mode: 'video',
-    ...(activeBrand ? { brand: activeBrand.brandProfileId } : {}),
-    ...(activeProject ? { project: activeProject.id } : {}),
-    ...(selectedSource?.id ? { asset: selectedSource.id } : {}),
-  }).toString()}`
-
   const buildStillRequest = (): RunPayload => {
     if (!activeBrand || !activeProject || !startFramePath) {
       throw new Error('Choose an accessible project source.')
@@ -208,7 +202,7 @@ export function StudioV3VideoLab({
 
   const openReview = async () => {
     if (!creationAvailable || !stillMode) {
-      toast.error('Owned-footage edits use the scoped Legacy handoff until their V3 adapter is connected.')
+      toast.error('Choose a scoped generated-video source.')
       return
     }
     setEstimating(true)
@@ -222,6 +216,66 @@ export function StudioV3VideoLab({
       toast.error(reason instanceof Error ? reason.message : 'The server could not issue an exact estimate.')
     } finally {
       setEstimating(false)
+    }
+  }
+
+  const uploadOwnedFootage = async (file: File) => {
+    if (!activeBrand || !activeProject || !creationAvailable) {
+      toast.error('Choose an editable project before uploading footage.')
+      return
+    }
+    setUploadingVideo(true)
+    setUploadProgress(0)
+    try {
+      const upload = await port.uploadVideo(file, setUploadProgress, {
+        brandProfileId: activeBrand.brandProfileId,
+        projectId: activeProject.id,
+      })
+      setData((current) => ({
+        ...current,
+        uploads: [upload, ...current.uploads.filter((item) => item.id !== upload.id)],
+      }))
+      setSelectedUploadId(upload.id)
+      setSourceMode('owned')
+      toast.success(`${upload.name} uploaded and verified in this project.`)
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : 'The video upload failed.')
+    } finally {
+      setUploadingVideo(false)
+      setUploadProgress(0)
+    }
+  }
+
+  const queueOwnedEdit = async () => {
+    if (!activeBrand || !activeProject || !selectedUpload || !creationAvailable) {
+      toast.error('Choose a scoped owned video first.')
+      return
+    }
+    setQueueing(true)
+    try {
+      const result = await port.runVideoRecipe({
+        uploadId: selectedUpload.id,
+        brandProfileId: activeBrand.brandProfileId,
+        projectId: activeProject.id,
+        videoPath: selectedUpload.path,
+        videoName: selectedUpload.name,
+        recipeId,
+        targets: [duration],
+        aspect,
+        options: {
+          captions,
+          audioMode,
+          musicTrackId,
+          voiceoverText: voiceover.trim(),
+          stings,
+        },
+      })
+      toast.success(result.message)
+      setWorkspaceTab('history')
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : 'The scoped video edit was rejected.')
+    } finally {
+      setQueueing(false)
     }
   }
 
@@ -367,7 +421,23 @@ export function StudioV3VideoLab({
             {sourceMode === 'owned' && (
               <>
                 <section className={styles.sourceSection}>
-                  <header><div><span className={styles.eyebrow}>Owned footage</span><h2>Choose an uploaded shoot</h2></div><a className={styles.secondaryButton} href={legacyVideoHref}>Open scoped Legacy video</a></header>
+                  <header>
+                    <div><span className={styles.eyebrow}>Owned footage</span><h2>Choose or upload a shoot</h2></div>
+                    <label aria-disabled={uploadingVideo} className={styles.secondaryButton}>
+                      <input
+                        accept="video/mp4,video/quicktime,video/x-m4v"
+                        disabled={uploadingVideo}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0]
+                          event.currentTarget.value = ''
+                          if (file) void uploadOwnedFootage(file)
+                        }}
+                        type="file"
+                      />
+                      <StudioV3Icon name="video" />
+                      {uploadingVideo ? `Uploading ${uploadProgress}%` : 'Upload footage'}
+                    </label>
+                  </header>
                   {data.uploads.length === 0 ? <p className={styles.emptyState}>No owned footage is registered. Upload verifies the storage object before it enters the library.</p> : (
                     <div className={styles.ownedList}>
                       {data.uploads.map((item) => (
@@ -507,10 +577,20 @@ export function StudioV3VideoLab({
                 <StudioV3Icon name={ready ? 'check' : 'warning'} />
                 <div>
                   <strong>{ready ? 'Ready for authorized review' : 'Source or required input missing'}</strong>
-                  <span>{stillMode ? 'Request the signed server estimate to see the exact resolved model, worst-case retry ceiling and hard BDT cap.' : 'V3 owned-footage upload/edit is disabled; use the context-preserving Legacy handoff.'}</span>
+                  <span>{stillMode ? 'Request the signed server estimate to see the exact resolved model, worst-case retry ceiling and hard BDT cap.' : 'The scoped ffmpeg recipe is deterministic, reversible at source, and costs ৳0 API spend.'}</span>
                 </div>
               </div>
-              <button className={styles.primaryButton} disabled={!creationAvailable || !ready || estimating} onClick={() => void openReview()} type="button">{estimating ? 'Getting exact estimate…' : 'Review exact estimate'} <StudioV3Icon name="arrow" /></button>
+              <button
+                className={styles.primaryButton}
+                disabled={!creationAvailable || !ready || estimating || queueing}
+                onClick={() => stillMode ? void openReview() : void queueOwnedEdit()}
+                type="button"
+              >
+                {stillMode
+                  ? estimating ? 'Getting exact estimate…' : 'Review exact estimate'
+                  : queueing ? 'Queueing scoped edit…' : 'Queue ৳0 owned-footage edit'}
+                <StudioV3Icon name="arrow" />
+              </button>
             </div>
           </aside>
         </div>

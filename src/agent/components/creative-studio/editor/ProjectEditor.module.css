@@ -1252,6 +1252,7 @@
 .timelineContent {
   display: grid;
   grid-template-columns: 106px var(--timeline-lane-width);
+  align-content: start;
   width: calc(106px + var(--timeline-lane-width));
   min-height: 100%;
   background: var(--editor-surface);
@@ -2390,6 +2391,12 @@
   font-weight: 800;
 }
 
+.planButton:disabled {
+  color: rgba(255, 255, 255, 0.82);
+  background: #575451;
+  opacity: 1;
+}
+
 .reviewPanel,
 .activityPanel {
   padding-bottom: 14px;
@@ -3029,6 +3036,7 @@
   .timelineContent {
     grid-template-columns: 92px var(--timeline-lane-width);
     width: calc(92px + var(--timeline-lane-width));
+    padding-bottom: calc(60px + env(safe-area-inset-bottom));
   }
 
   .timelineTrackLabel {

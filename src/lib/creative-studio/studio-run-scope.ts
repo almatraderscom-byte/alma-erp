@@ -9,6 +9,7 @@ import {
 import type {
   StudioRunFamilyModelPin,
   StudioRunFamilyRole,
+  StudioRunReferencePin,
   StudioRunScope,
 } from '@/lib/creative-studio/studio-run-authorization'
 import { assertStudioResourceScope } from '@/lib/creative-studio/studio-resource-scope'
@@ -29,6 +30,8 @@ export type ScopedStudioRunRequest = CreativeStudioRunInput & {
   brandProfileId?: string
   projectId?: string
   productId?: string
+  productReferenceId?: string
+  modelReferenceId?: string
   requestedCapBdt?: number
 }
 
@@ -128,6 +131,7 @@ export async function resolveScopedStudioRun(
   }
 
   const allowedPaths = new Set<string>()
+  const referencePins: StudioRunReferencePin[] = []
   if (project.productSourceImage) allowedPaths.add(String(project.productSourceImage))
   for (const asset of assets as Array<{
     latestStoragePath: string | null
@@ -148,8 +152,35 @@ export async function resolveScopedStudioRun(
   ) {
     throw new StudioAccessError('project_product_id_required', 422)
   }
+  const productReferenceId = cleanId(request.productReferenceId)
+  if (productReferenceId) {
+    if (!request.productImagePath) {
+      throw new StudioAccessError('product_reference_path_required', 422)
+    }
+    const referenceScope = await assertStudioResourceScope('reference', productReferenceId, {
+      ownerId: access.ownerId,
+      brandProfileId,
+      projectId,
+    })
+    if (
+      referenceScope.referenceKind !== 'product'
+      || referenceScope.sourcePath !== request.productImagePath
+    ) {
+      throw new StudioAccessError('product_reference_lineage_mismatch', 403)
+    }
+    allowedPaths.add(request.productImagePath)
+    referencePins.push({
+      id: productReferenceId,
+      kind: 'product',
+      sourcePath: request.productImagePath,
+    })
+  }
 
   const modelId = cleanId(request.modelId)
+  const modelReferenceId = cleanId(request.modelReferenceId)
+  if (modelId && modelReferenceId) {
+    throw new StudioAccessError('model_reference_ambiguous', 422)
+  }
   if (modelId) {
     await assertStudioResourceScope('model', modelId, {
       ownerId: access.ownerId,
@@ -190,6 +221,33 @@ export async function resolveScopedStudioRun(
       // an arbitrary private path through an otherwise valid scoped model id.
       throw new StudioAccessError('avatar_lineage_scope_mismatch', 403)
     }
+  } else if (modelReferenceId) {
+    if (!request.modelImagePath) {
+      throw new StudioAccessError('model_reference_path_required', 422)
+    }
+    const referenceScope = await assertStudioResourceScope('reference', modelReferenceId, {
+      ownerId: access.ownerId,
+      brandProfileId,
+      projectId,
+    })
+    if (
+      referenceScope.referenceKind !== 'model'
+      || referenceScope.sourcePath !== request.modelImagePath
+      || (
+        request.faceReferencePath
+        && request.faceReferencePath !== referenceScope.sourcePath
+      )
+    ) {
+      throw new StudioAccessError('model_reference_lineage_mismatch', 403)
+    }
+    if (request.avatarSheetPath) {
+      throw new StudioAccessError('scoped_model_id_required', 422)
+    }
+    referencePins.push({
+      id: modelReferenceId,
+      kind: 'model',
+      sourcePath: request.modelImagePath,
+    })
   } else if (request.modelImagePath || request.faceReferencePath || request.avatarSheetPath) {
       throw new StudioAccessError('scoped_model_id_required', 422)
   }
@@ -267,6 +325,8 @@ export async function resolveScopedStudioRun(
       sourceAssetIds: assets.map((asset: { id: string }) => asset.id),
       sourcePendingActionId: sourcePendingActionId || undefined,
       familyModelPins,
+      productReferenceId: productReferenceId || undefined,
+      modelReferenceId: modelReferenceId || undefined,
     },
     scope: {
       actorUserId: actor.userId,
@@ -277,6 +337,7 @@ export async function resolveScopedStudioRun(
       productId,
       sourceAssetIds: assets.map((asset: { id: string }) => asset.id),
       familyModelPins,
+      referencePins,
     },
     access,
   }

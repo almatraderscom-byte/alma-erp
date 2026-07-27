@@ -62,8 +62,11 @@ describe('Creative Studio V3 production source contract', () => {
       expect(content).toContain("activeBrand.role !== 'reviewer'")
       expect(content).toContain('estimateRun')
       expect(content).toContain('confirmRun')
-      expect(content).not.toMatch(/queue(?:Advanced|Auto|Owned)/)
     }
+    expect(source('StudioV3ImageLab.tsx')).not.toMatch(/queue(?:Advanced|Auto)/)
+    expect(source('StudioV3VideoLab.tsx')).toContain('port.runVideoRecipe')
+    expect(source('StudioV3VideoLab.tsx')).toContain('brandProfileId: activeBrand.brandProfileId')
+    expect(source('StudioV3VideoLab.tsx')).toContain('projectId: activeProject.id')
     const finishing = source('StudioV3Finishing.tsx')
     expect(finishing).toContain("activeBrand?.role === 'owner'")
     expect(finishing).toContain('ownerScopedActionAvailable')
@@ -78,20 +81,67 @@ describe('Creative Studio V3 production source contract', () => {
     const shell = source('StudioV3Shell.tsx')
     const studio = source('CreativeStudioV3.tsx')
     const adapter = source('production-adapter.ts')
+    const ownedVideoRoute = readFileSync(
+      join(process.cwd(), 'src/app/api/assistant/creative-studio/video/run/route.ts'),
+      'utf8',
+    )
+    const ownedVideoUploadUrlRoute = readFileSync(
+      join(process.cwd(), 'src/app/api/assistant/creative-studio/video/upload-url/route.ts'),
+      'utf8',
+    )
+    const ownedVideoRegistryRoute = readFileSync(
+      join(process.cwd(), 'src/app/api/assistant/creative-studio/video/route.ts'),
+      'utf8',
+    )
+    const referenceUploadRoute = readFileSync(
+      join(process.cwd(), 'src/app/api/assistant/creative-studio/reference-upload/route.ts'),
+      'utf8',
+    )
+    const runScope = readFileSync(
+      join(process.cwd(), 'src/lib/creative-studio/studio-run-scope.ts'),
+      'utf8',
+    )
+    const executionGate = readFileSync(
+      join(process.cwd(), 'src/lib/creative-studio/studio-run-execution-gate.ts'),
+      'utf8',
+    )
 
-    expect(home).toContain('Create project, then canvas')
-    expect(home).toContain('Use dimensions from scoped media')
+    expect(home).toContain('Create & open project')
+    expect(home).toContain('PROJECT OPEN · CANVAS SETUP')
+    expect(home).toContain('Use dimensions from scoped current media')
+    expect(home).toContain('accept="image/*,video/*"')
+    expect(home).toContain("title: 'Avatar'")
     expect(home).toContain('onCreateProject')
     expect(image).toContain('Expand image workspace')
     expect(image).toContain('Always visible inside the composer')
-    expect(image).toContain('uploadImage')
+    expect(image).toContain('port.uploadReference')
+    expect(image).toContain('productReferenceId')
+    expect(image).toContain('modelReferenceId')
+    expect(image).toContain('pasteProductReference')
+    expect(image.slice(
+      image.indexOf('const uploadReference'),
+      image.indexOf('const pasteProductReference'),
+    )).not.toContain("setArchitecture('advanced')")
     expect(video).toContain('Expand video workspace')
     expect(video).toContain('v6VideoStage')
+    expect(video).toContain('uploadOwnedFootage')
+    expect(video).toContain('projectId: activeProject.id')
+    expect(video).toContain('queueOwnedEdit')
     expect(shell).toContain('Ask Creative Agent')
     expect(studio).toContain("openComposition(activeProject, 'home', true)")
     expect(studio).toContain("openComposition(project, 'home', false, canvas)")
     expect(adapter).toContain('createProject: createStudioProject')
-    expect(adapter).toContain('uploadImage: uploadStudioFile')
+    expect(adapter).toContain('uploadReference: uploadStudioReference')
+    expect(adapter).toContain('runVideoRecipe')
+    expect(ownedVideoRoute).toContain("assertStudioResourceScope('video', uploadId")
+    expect(ownedVideoRoute).toContain('registeredPath !== videoPath')
+    expect(ownedVideoUploadUrlRoute).toContain("assertStudioCapability(context.access.role, 'draft')")
+    expect(ownedVideoRegistryRoute).toContain("assertStudioCapability(resourceContext.access.role, 'draft')")
+    expect(referenceUploadRoute).toContain("writeStudioResourceScope('reference'")
+    expect(referenceUploadRoute).toContain("assertStudioCapability(context.access.role, 'draft')")
+    expect(runScope).toContain("assertStudioResourceScope('reference', productReferenceId")
+    expect(runScope).toContain("assertStudioResourceScope('reference', modelReferenceId")
+    expect(executionGate).toContain('claims.scope.referencePins')
   })
 
   it('wires Lifecycle through a zero-cost typed port with no paid or external command', () => {

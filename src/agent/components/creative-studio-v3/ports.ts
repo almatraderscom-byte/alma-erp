@@ -86,7 +86,45 @@ export interface CreativeStudioV3ProductionPort
   getHealth(): Promise<StudioHealth>
   getAudioStatus(): Promise<AudioLabStatus>
   uploadImage(file: File, folder: string): Promise<string>
-  uploadVideo(file: File, onProgress?: (percent: number) => void): Promise<StudioVideoUpload>
+  uploadReference(file: File, input: {
+    brandProfileId: string
+    projectId: string
+    kind: 'product' | 'model'
+  }): Promise<{
+    id: string
+    path: string
+    kind: 'product' | 'model'
+    name: string
+    sizeBytes: number
+    width: number
+    height: number
+  }>
+  uploadVideo(
+    file: File,
+    onProgress?: (percent: number) => void,
+    scope?: { brandProfileId: string; projectId: string },
+  ): Promise<StudioVideoUpload>
+  runVideoRecipe(input: {
+    uploadId: string
+    brandProfileId: string
+    projectId: string
+    videoPath: string
+    videoName: string
+    recipeId: string
+    targets: number[]
+    aspect: string
+    options?: {
+      captions?: boolean
+      audioMode?: 'original' | 'music' | 'music_duck'
+      musicTrackId?: string
+      voiceoverText?: string
+      stings?: boolean
+      aiAssist?: boolean
+    }
+  }): Promise<{
+    jobs: Array<{ pendingActionId: string; label: string; targetSec: number }>
+    message: string
+  }>
   estimateRun(
     payload: RunPayload & { auto?: boolean; includeFamily?: boolean; includeReel?: boolean },
     maxCostBdt?: number,

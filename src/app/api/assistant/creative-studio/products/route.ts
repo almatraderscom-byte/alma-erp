@@ -7,6 +7,10 @@ import {
   ContentOsServiceError,
   searchErpProducts,
 } from '@/lib/creative-studio/project-service'
+import {
+  listProductImages,
+} from '@/agent/lib/catalog/product-images'
+import { DEFAULT_CATALOG_BUSINESS } from '@/agent/lib/catalog/inventory-lookup'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -22,6 +26,10 @@ async function ownerAllowed(req: NextRequest): Promise<Response | null> {
 
 function isRemoteOrAppPath(value: string) {
   return /^https?:\/\//i.test(value) || value.startsWith('/')
+}
+
+function isLegacyAppProductPath(value: string | null) {
+  return Boolean(value?.startsWith('/agent/product-images/'))
 }
 
 export async function GET(req: NextRequest) {
@@ -40,12 +48,33 @@ export async function GET(req: NextRequest) {
         signed = {}
       }
     }
+    const hydratedProducts = await Promise.all(products.map(async (product) => {
+      if (!isLegacyAppProductPath(product.sourceImage)) return product
+      try {
+        const [catalogImage] = await listProductImages(
+          product.code,
+          DEFAULT_CATALOG_BUSINESS,
+          1,
+        )
+        return {
+          ...product,
+          // The project snapshot still owns generation lineage. A catalog image
+          // may repair the visual preview, but a read route must not silently
+          // replace that authoritative source path for a paid run.
+          sourceImage: null,
+          previewImage: catalogImage?.url ?? null,
+        }
+      } catch {
+        return { ...product, sourceImage: null, previewImage: null }
+      }
+    }))
     return Response.json({
-      products: products.map((product) => ({
+      products: hydratedProducts.map((product) => ({
         ...product,
-        previewImage: product.sourceImage && !isRemoteOrAppPath(product.sourceImage)
-          ? signed[product.sourceImage] ?? null
-          : product.sourceImage,
+        previewImage: product.previewImage
+          ?? (product.sourceImage && !isRemoteOrAppPath(product.sourceImage)
+            ? signed[product.sourceImage] ?? null
+            : product.sourceImage),
       })),
       readOnly: true,
     })

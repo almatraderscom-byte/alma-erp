@@ -294,6 +294,19 @@ export async function assertStudioRunExecutionGate(input: {
       throw new StudioAccessError('studio_run_family_model_changed', 409)
     }
   }
+  for (const pin of claims.scope.referencePins ?? []) {
+    const referenceScope = await assertStudioResourceScope('reference', pin.id, {
+      ownerId: access.ownerId,
+      brandProfileId: claims.scope.brandProfileId,
+      projectId: claims.scope.projectId,
+    })
+    if (
+      referenceScope.referenceKind !== pin.kind
+      || referenceScope.sourcePath !== pin.sourcePath
+    ) {
+      throw new StudioAccessError('studio_run_reference_changed', 409)
+    }
+  }
   assertStudioRunFamilyPayloadReferences(claims, payload)
   assertStudioSpendAllowed(
     access.role,

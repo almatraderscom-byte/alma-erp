@@ -11,6 +11,7 @@ import { prisma } from '@/lib/prisma'
 import { agentStorageObjectInfo, agentStorageDelete, agentStorageSignedUrls } from '@/agent/lib/storage'
 import { createHash } from 'crypto'
 import {
+  assertStudioCapability,
   authenticateStudioRequest,
   studioAccessErrorResponse,
   type StudioActor,
@@ -115,7 +116,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const actor = await ownerActor(req)
+  const actor = await authenticateStudioRequest(req)
   if (actor instanceof Response) return actor
 
   let body: {
@@ -133,9 +134,12 @@ export async function POST(req: NextRequest) {
   if (body.brandProfileId || body.projectId) {
     try {
       resourceContext = await requireStudioResourceContext(actor, body)
+      assertStudioCapability(resourceContext.access.role, 'draft')
     } catch (error) {
       return studioAccessErrorResponse(error, 'creative-video-register')
     }
+  } else if (!isSystemOwner(actor.erpRole)) {
+    return Response.json({ error: 'forbidden' }, { status: 403 })
   }
   const uploadId = String(body.uploadId ?? '').trim()
   const path = String(body.path ?? '').trim()

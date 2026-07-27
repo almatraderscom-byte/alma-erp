@@ -858,6 +858,8 @@ export type RunPayload = {
   baseHeight?: number
   productImagePath?: string
   modelImagePath?: string
+  productReferenceId?: string
+  modelReferenceId?: string
   sourceImagePath?: string
   secondSourceImagePath?: string
   faceReferencePath?: string
@@ -973,6 +975,37 @@ export async function uploadStudioFile(file: File, folder: string): Promise<stri
   fd.append('conversationId', folder)
   const data = await studioRequest<{ path: string }>('/api/assistant/upload', { method: 'POST', body: fd }, 'upload_failed')
   return data.path
+}
+
+export type StudioReferenceUpload = {
+  id: string
+  path: string
+  kind: 'product' | 'model'
+  name: string
+  sizeBytes: number
+  width: number
+  height: number
+}
+
+export async function uploadStudioReference(
+  file: File,
+  input: {
+    brandProfileId: string
+    projectId: string
+    kind: 'product' | 'model'
+  },
+): Promise<StudioReferenceUpload> {
+  const prepared = await prepareImageForUpload(file)
+  const fd = new FormData()
+  fd.append('file', prepared)
+  fd.append('brandProfileId', input.brandProfileId)
+  fd.append('projectId', input.projectId)
+  fd.append('kind', input.kind)
+  return studioRequest<StudioReferenceUpload>(
+    '/api/assistant/creative-studio/reference-upload',
+    { method: 'POST', body: fd },
+    'reference_upload_failed',
+  )
 }
 
 /** CS7 — upload a painted FLUX Fill mask; server validates dims vs base + coverage. */
@@ -1306,8 +1339,12 @@ export async function fetchStudioVideos(
  * signed upload URL — Vercel never sees the body. XHR (not fetch) so the owner
  * gets a real progress bar on a multi-minute upload.
  */
-export async function uploadStudioVideo(file: File, onProgress?: (pct: number) => void): Promise<StudioVideoUpload> {
-  const context = getActiveStudioContentContext()
+export async function uploadStudioVideo(
+  file: File,
+  onProgress?: (pct: number) => void,
+  explicitScope?: { brandProfileId: string; projectId: string },
+): Promise<StudioVideoUpload> {
+  const context = explicitScope ?? getActiveStudioContentContext()
   const urlData = await studioRequest<{
     uploadUrl: string
     uploadId: string
@@ -1318,7 +1355,16 @@ export async function uploadStudioVideo(file: File, onProgress?: (pct: number) =
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fileName: file.name, sizeBytes: file.size }),
+      body: JSON.stringify({
+        fileName: file.name,
+        sizeBytes: file.size,
+        ...(context
+          ? {
+              brandProfileId: context.brandProfileId,
+              projectId: context.projectId,
+            }
+          : {}),
+      }),
     },
     'upload_url_failed',
   )
@@ -1963,6 +2009,9 @@ export type VideoRunOptions = {
 }
 
 export async function runVideoRecipe(body: {
+  uploadId?: string
+  brandProfileId?: string
+  projectId?: string
   videoPath: string
   videoName: string
   recipeId: string
