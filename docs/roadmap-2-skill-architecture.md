@@ -396,11 +396,26 @@ already helping. The write path is `AGENT_TURN_HANDOFF_HTTP`, default off, and
 `worker/src/diagnostic-http.mjs` still needs a manual `pm2 restart` on the VPS —
 his call, not something to do from here.
 
-**Roadmap-2's own remaining list:** the registry budget, which is written but
-never exercised at scale — revisit past ~10 active skills. There are **18** now
-(14 selectable + `alma-base` + 3 already counted above), so this is the next thing
-that should be measured rather than assumed. The router's misses are gone: the
-skill-library gap that caused every one of them was the drafts, and there are none.
+**Registry budget — measured 2026-07-28, no longer an assumption.** It had only
+ever been exercised against `fake()` skills with 300 identical characters. With
+all 14 promoted there are **17 selectable skills using 5,490 of 6,000 characters**
+— headroom of roughly ONE skill. The failure at that edge is not a truncated list,
+it is a cliff: one character over and `shortened` flips for the whole registry,
+cutting every description to 80 characters at once. That matters because three of
+these five promotions were only possible by writing a description precise enough
+to stop stealing another skill's message, and 80 characters is about where a
+description stops saying WHEN to use a skill. `router.test.ts` now asserts the
+cliff has not been crossed, so the day it does is a decision — raise the budget or
+trim the descriptions — instead of a silent drop in routing quality.
+
+**And the thing that measurement turned up:** `buildRegistryBlock` has **no caller**
+anywhere in `src` or `worker`. It is real code with real tests that nothing loads.
+So the 5,490 characters cost nothing today, and anyone reading that number as
+"skills are expensive" would be wrong. Wiring it is a separate decision — the
+budget should be proven useful before it is proven cheap.
+
+The router's misses are gone: the skill-library gap that caused every one of them
+was the drafts, and there are none.
 
 **The next isolation candidate is `alma-browser-operator`,** and it is written
 down here rather than done: it is the only skill that reads pages nobody here

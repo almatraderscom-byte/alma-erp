@@ -193,6 +193,35 @@ describe('U3 — the registry budget', () => {
     expect(b.dropped.length).toBeGreaterThan(0)
     expect(b.included.length + b.dropped.length).toBe(200)
   })
+
+  /**
+   * The roadmap item this closes: the budget was only ever exercised against
+   * `fake()` skills with 300 identical characters, so "it works past 10 skills"
+   * was an assumption. Measured 2026-07-28 with all 14 originals promoted:
+   * **17 selectable skills, 5,490 of 6,000 characters.**
+   *
+   * The headroom is one skill. And the failure at the edge is not a truncated
+   * list — it is a CLIFF: one character over, and `shortened` flips for the
+   * whole registry, cutting every description to 80 characters at once. The
+   * promotions above are the proof of what that would cost, because three of
+   * them were only possible by writing a description precise enough to stop
+   * stealing another skill's message, and 80 characters is roughly the point
+   * where a description stops saying WHEN to use the skill.
+   *
+   * So this asserts the cliff has not been crossed. The day it fails, it is a
+   * decision — raise the budget or trim the descriptions — not a silent
+   * quality drop.
+   */
+  it('the REAL registry still fits, and has not hit the shortening cliff', async () => {
+    const live = await discoverSkills(SKILLS_ROOT)
+    const selectable = live.skills.filter((s) => s.implicit !== false)
+    const b = buildRegistryBlock(selectable)
+
+    expect(selectable.length).toBeGreaterThanOrEqual(14)
+    expect(b.dropped).toEqual([])
+    expect(b.shortened).toBe(false)
+    expect(b.text.length).toBeLessThanOrEqual(REGISTRY_BUDGET_CHARS)
+  })
 })
 
 /**
