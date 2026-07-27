@@ -273,6 +273,9 @@ const recommend_ad_actions: AgentTool = {
     'cite them ("CTR ইন্ডাস্ট্রি গড়ের নিচে…") instead of judging on spend alone. ' +
     'SOURCE: quote `provenance.sourceLabel` verbatim; say "Meta MCP" ONLY if provenance.source === "meta_mcp", otherwise state ' +
     'provenance.degradedReason honestly. MONEY: use windowPerformance[].spendLabel / windowSpendLabel — never ৳ unless BDT. ' +
+    'RESULTS: judge each campaign by its OWN objective — windowPerformance[].objective + primaryResult/primaryCount/primaryCostLabel. ' +
+    'An OUTCOME_ENGAGEMENT / MESSAGES campaign is measured in messages (windowPerformance[].messages), NOT purchases: saying ' +
+    '"ROAS 0, টাকা নষ্ট" about a messaging campaign is a category error. Purchases/ROAS only for SALES/CONVERSION objectives. ' +
     'HOW MANY ARE RUNNING: quote `deliveringCount` / `deliveringNames` — a campaign is RUNNING only when it has a live ad set AND a live ad. ' +
     '`stalledNames` are campaign-level ACTIVE with nothing live underneath: report them as "চলছে না (ad set/ad বন্ধ)", never inside the running count. ' +
     'Boss counts what Ads Manager shows delivering, and that is deliveringCount.',
@@ -333,6 +336,21 @@ const recommend_ad_actions: AgentTool = {
         impressions: c.impressionsWeek,
         clicks: c.clicksWeek,
         ctrPct: Number(c.ctrWeekPct.toFixed(2)),
+        // ADS-2 phase B: what the campaign is FOR, and what it actually produced.
+        // Meta sent these with every call; we used to read `purchase` and throw
+        // the rest away, so "কত মেসেজ পাচ্ছি" was unanswerable.
+        objective: c.objective,
+        primaryResult: c.primaryWeek.label,
+        primaryCount: c.primaryWeek.count,
+        primaryCostLabel: c.primaryWeek.costPer > 0
+          ? formatAdSpend(c.primaryWeek.costPer, insights?.currency ?? 'USD')
+          : null,
+        messages: c.resultsWeek.messagingConversations,
+        linkClicks: c.resultsWeek.linkClicks,
+        leads: c.resultsWeek.leads,
+        postEngagement: c.resultsWeek.postEngagement,
+        videoViews: c.resultsWeek.videoViews,
+        purchases: c.resultsWeek.purchases,
       }))
 
       // ADS-2: "কয়টা চলছে" is the DELIVERING count, not the campaign-level

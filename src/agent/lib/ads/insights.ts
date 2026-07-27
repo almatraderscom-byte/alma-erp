@@ -29,6 +29,120 @@ function purchaseValueFromActions(actions: Array<{ action_type?: string; value?:
     .reduce((s, a) => s + safeNum(a.value), 0)
 }
 
+/**
+ * ADS-2 phase B — everything else in `actions`.
+ *
+ * Meta returns one `actions` array per row carrying every result the campaign
+ * produced: messaging conversations started, link clicks, landing page views,
+ * leads, post engagement, video views, purchases. Until now this file read ONE
+ * of them (`purchase`) and dropped the rest on the floor — which is why Boss
+ * could not ask the agent the most basic question about his own account
+ * ("কত মেসেজ পাচ্ছি") even though the answer arrived with every single call.
+ *
+ * Meta's action_type names are versioned and verbose
+ * (`onsite_conversion.messaging_conversation_started_7d`), so match on a stable
+ * fragment rather than an exact string that a Graph version bump would break.
+ */
+export type AdResults = {
+  messagingConversations: number
+  linkClicks: number
+  landingPageViews: number
+  leads: number
+  postEngagement: number
+  videoViews: number
+  purchases: number
+  /** Every action_type Meta sent, verbatim — so a result we have no name for is
+   *  still visible instead of silently discarded. */
+  raw: Record<string, number>
+}
+
+const EMPTY_RESULTS: AdResults = {
+  messagingConversations: 0,
+  linkClicks: 0,
+  landingPageViews: 0,
+  leads: 0,
+  postEngagement: 0,
+  videoViews: 0,
+  purchases: 0,
+  raw: {},
+}
+
+export function resultsFromActions(
+  actions: Array<{ action_type?: string; value?: string }> | undefined,
+): AdResults {
+  if (!actions?.length) return { ...EMPTY_RESULTS, raw: {} }
+  const out: AdResults = { ...EMPTY_RESULTS, raw: {} }
+  for (const a of actions) {
+    const type = a.action_type ?? ''
+    if (!type) continue
+    const n = safeNum(a.value)
+    out.raw[type] = (out.raw[type] ?? 0) + n
+
+    if (type.includes('messaging_conversation_started')) out.messagingConversations += n
+    else if (type === 'link_click') out.linkClicks += n
+    else if (type.includes('landing_page_view')) out.landingPageViews += n
+    else if (type.includes('lead')) out.leads += n
+    else if (type === 'post_engagement') out.postEngagement += n
+    else if (type === 'video_view') out.videoViews += n
+    else if (type === 'purchase') out.purchases += n
+  }
+  return out
+}
+
+/**
+ * What this campaign is FOR, and therefore what it should be judged on.
+ *
+ * The agent told Boss his engagement campaign was "money waste, ROAS 0.0" on
+ * 2026-07-27. ROAS on an OUTCOME_ENGAGEMENT campaign is 0.0 by construction —
+ * it was never buying purchases. Judging every campaign by purchases is how a
+ * working messaging campaign gets recommended for the chop.
+ */
+export type PrimaryResult = {
+  key: keyof Omit<AdResults, 'raw'>
+  /** Bangla label for the owner-facing line. */
+  label: string
+  count: number
+  /** Spend ÷ count, in the account currency. 0 when there are no results yet. */
+  costPer: number
+}
+
+export function primaryResultFor(
+  objective: string,
+  results: AdResults,
+  spend: number,
+): PrimaryResult {
+  const pick = (key: PrimaryResult['key'], label: string): PrimaryResult => {
+    const count = results[key]
+    return { key, label, count, costPer: count > 0 ? spend / count : 0 }
+  }
+  const o = (objective || '').toUpperCase()
+  if (o.includes('MESSAGE')) return pick('messagingConversations', 'মেসেজ/কথোপকথন')
+  if (o.includes('ENGAGEMENT')) {
+    // An engagement campaign optimised for messages reports both; conversations
+    // are the ones worth money, so they win when present.
+    return results.messagingConversations > 0
+      ? pick('messagingConversations', 'মেসেজ/কথোপকথন')
+      : pick('postEngagement', 'এনগেজমেন্ট')
+  }
+  if (o.includes('LEAD')) return pick('leads', 'লিড')
+  if (o.includes('TRAFFIC') || o.includes('LINK_CLICKS')) return pick('linkClicks', 'লিংক ক্লিক')
+  if (o.includes('VIDEO')) return pick('videoViews', 'ভিডিও ভিউ')
+  if (o.includes('SALES') || o.includes('CONVERSION')) return pick('purchases', 'পারচেজ')
+  // Unknown objective: fall back to the first result type that carries real
+  // business value, NOT the biggest number. Post engagements always out-count
+  // conversations by an order of magnitude, so "whichever is largest" would
+  // report 210 likes and bury the 14 people who actually messaged him.
+  const ladder: Array<[PrimaryResult['key'], string]> = [
+    ['messagingConversations', 'মেসেজ/কথোপকথন'],
+    ['leads', 'লিড'],
+    ['purchases', 'পারচেজ'],
+    ['linkClicks', 'লিংক ক্লিক'],
+    ['postEngagement', 'এনগেজমেন্ট'],
+  ]
+  const found = ladder.find(([key]) => results[key] > 0)
+  return found ? pick(found[0], found[1]) : pick('purchases', 'পারচেজ')
+}
+
 async function adsApi<T = Record<string, unknown>>(
   path: string,
   params: Record<string, string> = {},
@@ -89,6 +203,14 @@ export type CampaignMetrics = {
    * the truth, it is just not the answer to "কয়টা চলছে".
    */
   delivering: boolean
+  /** Everything Meta's `actions` array carried for the window — messages, link
+   *  clicks, leads, engagement, video views, purchases. Read `raw` for anything
+   *  without a named field. */
+  resultsWeek: AdResults
+  resultsToday: AdResults
+  /** The ONE number this campaign should be judged on, chosen from its objective,
+   *  with its cost. An engagement campaign is not a failed shop. */
+  primaryWeek: PrimaryResult
 }
 
 /**
@@ -249,6 +371,9 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
       const ctrWeekPct = safeNum(weekInsight.ctr)
       const cpcToday = safeNum(todayInsight.cpc)
 
+      const resultsWeek = resultsFromActions(
+        weekInsight.actions as Array<{ action_type?: string; value?: string }>,
+      )
       const roasToday = spendToday > 0
         ? purchaseValueFromActions(todayInsight.actions as Array<{ action_type?: string; value?: string }>) / spendToday
         : 0
@@ -294,6 +419,11 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
         roasWeek,
         dailyBudgetBdt,
         effectiveStatus: campaign.effective_status ?? 'ACTIVE',
+        resultsWeek,
+        resultsToday: resultsFromActions(
+          todayInsight.actions as Array<{ action_type?: string; value?: string }>,
+        ),
+        primaryWeek: primaryResultFor(campaign.objective ?? 'UNKNOWN', resultsWeek, spendWeek),
         ...deliveringFrom(structure, campaign.id, (campaign.effective_status ?? 'ACTIVE') === 'ACTIVE'),
         hasEnoughData: spendWeek >= minSpendForCurrency(accountCurrency) && impressionsWeek >= INSIGHT_MIN_IMPRESSIONS,
       })
@@ -364,6 +494,9 @@ export async function fetchCampaignMetricsWindow(windowDays = 7): Promise<Campai
 
     const spendWeek = safeNum(row.spend)
     const spendToday = safeNum(todayRow.spend)
+    const windowResults = resultsFromActions(
+      row.actions as Array<{ action_type?: string; value?: string }>,
+    )
 
     let dailyBudgetBdt = meta?.daily_budget ? Math.round(safeNum(meta.daily_budget) / 100) : 0
     if (dailyBudgetBdt === 0) {
@@ -402,6 +535,11 @@ export async function fetchCampaignMetricsWindow(windowDays = 7): Promise<Campai
       // The TRUE current status (may be PAUSED) — historical rows must never be
       // presented as currently running.
       effectiveStatus: meta?.effective_status ?? 'UNKNOWN',
+      resultsWeek: windowResults,
+      resultsToday: resultsFromActions(
+        todayRow.actions as Array<{ action_type?: string; value?: string }>,
+      ),
+      primaryWeek: primaryResultFor(meta?.objective ?? 'UNKNOWN', windowResults, spendWeek),
       ...deliveringFrom(structure, id, (meta?.effective_status ?? 'UNKNOWN') === 'ACTIVE'),
       hasEnoughData: spendWeek >= minSpendForCurrency(currency) && safeNum(row.impressions) >= INSIGHT_MIN_IMPRESSIONS,
     })
