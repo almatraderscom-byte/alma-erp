@@ -92,6 +92,13 @@ const INVOKE_BLOCK = /<invoke\b[\s\S]*?(?:<\/invoke>|$)/gi
  */
 const JSON_NAME_ARGS =
   /\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|parameters)"\s*:\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*\}/gi
+/**
+ * `<parameter name="x">value</parameter>` — removed as a PAIR, not as two tags.
+ * `STRAY_MARKERS` deletes the tags only, which left the bare values behind:
+ * stripping the live spill by tag alone produced `truetruetruetrue…`, which is
+ * no better on his screen than the markup was.
+ */
+const PARAMETER_BLOCK = /<parameter\b[^>]*>[\s\S]*?(?:<\/parameter>|$)/gi
 /** A fenced block the model labelled as a tool call — fence and contents both. */
 const FENCED_TOOL_BLOCK =
   /```(?:tool|tool_call|tool_code|function_calls?)\b[\s\S]*?(?:```|$)/gi
@@ -123,6 +130,7 @@ export function stripToolCallMarkup(text: string): string {
     .replace(JSON_NAME_ARGS, '')
     .replace(FUNCTION_CALLS_BLOCK, '')
     .replace(INVOKE_BLOCK, '')
+    .replace(PARAMETER_BLOCK, '')
     .replace(TOOL_CALL_BLOCK, '')
     .replace(NAMED_TOOL_ARGS, '')
     .replace(STRAY_MARKERS, '')
@@ -192,4 +200,81 @@ export function dropRepeatedBlocks(text: string): string {
     keptWords.push(words)
   }
   return kept.join('\n\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/**
+ * The STREAMING case, found the hard way 2026-07-28: the fixes above ran on the
+ * finished round, and Boss's screen filled with `<parameter name="fullScanAll…">`
+ * anyway — hundreds of lines of it, live, while the turn was still running.
+ *
+ * Reason: the round's PROSE is emitted as one block after cleaning, but the
+ * model's THINKING is yielded token by token as it arrives. Nothing cleaned that
+ * path, so a head that spills markup into its reasoning spills it onto his
+ * screen, and the cleanup only ever fixed what got stored.
+ *
+ * Per-delta stripping cannot work on its own — `<param` and `eter name=…` arrive
+ * as separate deltas. So this holds back the tail that could still turn into
+ * markup, releases everything before it, and strips whatever completes.
+ *
+ * The hold-back is capped: ordinary reasoning that happens to contain a `<` (a
+ * comparison, a size chart) must not stall the live thought forever, so once the
+ * held tail passes MAX_HOLD without becoming markup it is released as prose.
+ */
+const MAX_HOLD = 300
+
+/**
+ * Where the still-unresolved tail begins, or -1.
+ *
+ * Not a regex over the tail: the live spill proved why. `<parameter name="fullScan"`
+ * arrives as `<param` + `eter name="fullScan"` + `>true</parameter>`, and the
+ * middle state contains spaces and quotes, so any "letters only after <" pattern
+ * releases it one delta before it becomes markup. The honest question is simply
+ * "is there an opener here that has not closed yet".
+ */
+function holdFrom(s: string): number {
+  const lt = s.lastIndexOf('<')
+  if (lt !== -1 && !s.includes('>', lt) && s.length - lt <= MAX_HOLD) return lt
+  const fence = s.lastIndexOf('```')
+  if (fence !== -1 && s.indexOf('```', fence + 3) === -1 && s.length - fence <= MAX_HOLD) return fence
+  const brace = s.lastIndexOf('{')
+  if (
+    brace !== -1
+    && !s.includes('}', brace)
+    && s.length - brace <= MAX_HOLD
+    && /^\{\s*"?(?:t(?:ype)?|n(?:ame)?)?/i.test(s.slice(brace))
+  ) return brace
+  return -1
+}
+
+export interface MarkupStreamFilter {
+  /** Feed one delta; returns the text that is safe to show now (may be ''). */
+  push(delta: string): string
+  /** End of stream: returns whatever was held back, cleaned. */
+  flush(): string
+}
+
+export function createMarkupStreamFilter(): MarkupStreamFilter {
+  let held = ''
+  return {
+    push(delta: string): string {
+      held = stripToolCallMarkup(held + delta)
+      const cut = holdFrom(held)
+      // An opener that has not closed yet: keep it back until it resolves, or
+      // until it grows past MAX_HOLD without becoming markup — ordinary prose
+      // with a "<" in it must never stall the live thought.
+      if (cut !== -1) {
+        const out = held.slice(0, cut)
+        held = held.slice(cut)
+        return out
+      }
+      const out = held
+      held = ''
+      return out
+    },
+    flush(): string {
+      const out = stripToolCallMarkup(held)
+      held = ''
+      return out
+    },
+  }
 }

@@ -10,7 +10,7 @@ import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-to
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_MODULES, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
-import { stripToolCallMarkup, dropRepeatedBlocks } from '@/agent/lib/model-output-sanitize'
+import { createMarkupStreamFilter, stripToolCallMarkup, dropRepeatedBlocks } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
   claimsCompletion,
@@ -1959,6 +1959,10 @@ async function* runAlternateProviderTurn(
       // Reasoning produced in THIS round only — one timeline segment before this
       // round's tool calls, keeping cross-round order faithful.
       let iterThinking = ''
+      // Thinking streams token by token, so markup in it needs a filter that
+      // survives a call split across deltas. One per round: what it holds back
+      // belongs to this round and is released when the round ends.
+      const thinkingStream = createMarkupStreamFilter()
 
       // Serverless deadline close → no more tools; force a Bangla progress
       // wrap-up instead of the function dying mid-task with a blank reply.
@@ -2151,7 +2155,14 @@ async function* runAlternateProviderTurn(
           if (!thinkingStartedAt) thinkingStartedAt = Date.now()
           thinkingText += ev.text
           iterThinking += ev.text
-          yield { type: 'thinking_delta', delta: ev.text }
+          // …but never RAW. Unlike the round's prose, thinking is yielded token by
+          // token, so the once-per-round cleanup below can only fix what gets
+          // stored — and on 2026-07-28 his screen filled live with hundreds of
+          // `<parameter name="fullScanAll…">` while the turn was still running.
+          // The filter holds back an opener until it resolves, so a call split
+          // across deltas cannot slip through in pieces.
+          const safeThinking = thinkingStream.push(ev.text)
+          if (safeThinking) yield { type: 'thinking_delta', delta: safeThinking }
         } else if (ev.type === 'tool_start') {
           toolNames.set(ev.id, ev.name)
           yield { type: 'tool_start', id: ev.id, name: ev.name }
@@ -2198,7 +2209,11 @@ async function* runAlternateProviderTurn(
       // Plumbing out of the thought before it is shown or stored: he asked to
       // watch the reasoning, not to read our control banners and verifier
       // notes back to himself (visible-thinking.ts).
-      const shownThinking = cleanVisibleThinking(iterThinking)
+      // Release anything the live filter was still holding, then clean the
+      // stored copy the same way: markup out first, harness-chatter out second.
+      const heldThinking = thinkingStream.flush()
+      if (heldThinking) yield { type: 'thinking_delta', delta: heldThinking }
+      const shownThinking = cleanVisibleThinking(stripToolCallMarkup(iterThinking))
       if (shownThinking) timeline.push({ t: 'think', text: shownThinking.slice(0, 4000) })
       // Round's visible text joins the timeline too, so the persisted stream keeps
       // the true text↔step order after reload (ChronoFlow) — same as core.ts.
