@@ -144,6 +144,10 @@ export const DOMAIN_PACKS = {
     'get_website_catalog', 'get_website_health', 'fetch_website_page', 'publish_product',
     'unpublish_product', 'set_product_featured', 'update_product_web', 'get_design_group', 'get_size_for_age',
   ],
+  // change_product_slug is deliberately NOT here. The seo pack is already at the
+  // 24-tool hard limit, and a URL rename is an owner-facing decision the HEAD
+  // stages (it is on the head shortlist) — never something a delegated worker
+  // should reach for on its own.
   seo: [
     'audit_product_seo', 'draft_seo_fixes', 'run_website_seo_audit', 'check_website_seo_audit',
     'track_keyword', 'list_tracked_keywords', 'untrack_keyword', 'submit_to_indexnow',
