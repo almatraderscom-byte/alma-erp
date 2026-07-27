@@ -86,9 +86,14 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     //   2026-07-28: alma-audience-builder, the tenth — promoted only after the
     //   `audience` keyword was removed from alma-meta-campaign-launch, which is
     //   the collision lint had been reporting. Audience is that skill's INPUT.
+    //   2026-07-28: alma-customer-support, the eleventh — the first skill whose
+    //   output is read by someone outside the company. Bare `customer` had to go
+    //   from its keywords first: it was taking "customer er order ta kokhon
+    //   asche", a message that must pin NOTHING.
     expect(selectable).toEqual([
       'alma-agent-incident-diagnosis',
       'alma-audience-builder',
+      'alma-customer-support',
       'alma-finance-brief',
       'alma-invoice-to-erp',
       'alma-marketing',
@@ -103,11 +108,11 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
       'seo-fixing-own-site',
     ])
 
-    // 5 → 4 → 3 on 2026-07-28 (alma-agent-incident-diagnosis promoted). This is the
+    // 5 → 4 → 3 → 2 on 2026-07-28 (alma-agent-incident-diagnosis promoted). This is the
     // countdown, so it is asserted exactly: a draft that quietly turns active
     // without going through evals fails here.
     const stillDraft = all.skills.length - live.skills.length
-    expect(stillDraft).toBe(3)
+    expect(stillDraft).toBe(2)
   })
 
   it('records the baseline table and the headline numbers', async () => {

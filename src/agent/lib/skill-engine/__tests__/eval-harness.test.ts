@@ -195,6 +195,7 @@ describe('scenario hygiene', () => {
       'alma-invoice-to-erp',
       'alma-agent-incident-diagnosis',
       'alma-audience-builder',
+      'alma-customer-support',
     ]) {
       expect(ALL_SCENARIOS.filter((s) => s.expectSkill === skill).length).toBeGreaterThanOrEqual(3)
     }

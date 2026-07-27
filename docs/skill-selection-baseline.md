@@ -27,7 +27,7 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 | listing | notun panjabi ta website e tolo | alma-product-listing | alma-product-listing, alma-website, seo-fixing-client-site | ✅ hit |
 | finance | ei masher khoroch koto holo? | alma-finance-brief | alma-finance-brief | ✅ hit |
 | cs | customer der message gulor reply dao | alma-customer-support | alma-customer-support | ✅ hit |
-| social | facebook e notun product er post dao | alma-product-social-post | alma-product-social-post, alma-product-listing | ✅ hit |
+| social | facebook e notun product er post dao | alma-product-social-post | alma-product-social-post, alma-product-listing, alma-customer-support | ✅ hit |
 | briefing | ajker briefing dao | alma-owner-daily-briefing | alma-owner-daily-briefing | ✅ hit |
 | marketing | marketing kemon cholche? | alma-marketing | alma-marketing | ✅ hit |
 | campaign | ekta meta campaign chalu koro 5000 takar | alma-meta-campaign-launch | alma-meta-campaign-launch, alma-product-listing, seo-fixing-own-site | ✅ hit |

@@ -1,10 +1,12 @@
 {
   "name": "alma-customer-support",
-  "description": "কাস্টমার inbox/comment দেখে জবাবের খসড়া — পাঠানো owner-gated, বাংলা, Islamic guardrail।",
-  "version": "0.1.0",
+  "description": "Works the unanswered messages and comments sitting in our Messenger, WhatsApp and Facebook inboxes, and drafts a Bangla reply for each one. Use when Boss asks for the inbox to be cleared or replies to be written. Nothing goes out on this skill's say-so: sending is an owner-gated card, so a bad draft costs a correction rather than a relationship.",
+  "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
-  "businessScopes": ["ALMA_LIFESTYLE"],
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
   "riskTier": "high",
   "requiredCapabilities": [
     "get_fb_messenger_inbox",
@@ -18,5 +20,26 @@
   "writePolicy": "owner_gated",
   "approvalPolicy": "always",
   "maxSteps": 5,
-  "status": "draft"
+  "status": "active",
+  "extends": "alma-base",
+  "whenNotToUse": "একটা নির্দিষ্ট অর্ডার কোথায়/কবে আসবে → অর্ডার টুল, এই skill নয়। ফেসবুকে পোস্ট/ক্যাপশন বানানো → alma-product-social-post। কাকে টার্গেট করব → alma-audience-builder।",
+  "outputContract": {
+    "kind": "approval_card",
+    "mustInclude": [
+      "channel",
+      "who_asked_what",
+      "draft_reply_bangla",
+      "facts_used_and_their_source"
+    ]
+  },
+  "stopConditions": [
+    "দাম, স্টক বা ডেলিভারির তারিখ অনিশ্চিত হলে খসড়ায় বানিয়ে লিখবে না — ওই জায়গাটা ফাঁকা রেখে Boss-কে জিজ্ঞেস করবে",
+    "অনুমোদন ছাড়া একটাও মেসেজ বা কমেন্ট যাবে না — gate কোডে, প্রম্পটে নয়",
+    "রাগী বা টাকা ফেরতের অভিযোগ হলে নিজে সিদ্ধান্ত নেবে না — Boss-কে দেখিয়ে নেবে"
+  ],
+  "done": [
+    {
+      "tool": "get_unanswered_comments"
+    }
+  ]
 }
