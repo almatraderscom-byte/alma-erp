@@ -15027,6 +15027,13 @@
 .v4ComposerAdvanced .v3ComposerBody::-webkit-scrollbar,
 .v3Composer.v4FloatingComposer.v6ComposerExpanded::-webkit-scrollbar {
   display: none;
+  height: 0;
+  width: 0;
+}
+
+.v4ComposerAdvanced .v3ComposerBody {
+  overflow-x: hidden;
+  scrollbar-width: none;
 }
 
 .v4ComposerAdvanced .v3ModeScroller button,
