@@ -80,7 +80,11 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     //   2026-07-27: alma-website, the sixth — scope narrowed away from page copy.
     //   2026-07-27: alma-marketing, the seventh — three keyword collisions freed.
     //   2026-07-27: alma-invoice-to-erp, the eighth.
+    //   2026-07-28: alma-agent-incident-diagnosis, the ninth — lowest blast
+    //   radius left in the set (`writePolicy: none`), and its bare `problem` /
+    //   `সমস্যা` keywords were dropped first: a website problem is alma-website's.
     expect(selectable).toEqual([
+      'alma-agent-incident-diagnosis',
       'alma-finance-brief',
       'alma-invoice-to-erp',
       'alma-marketing',
@@ -95,8 +99,11 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
       'seo-fixing-own-site',
     ])
 
+    // 5 → 4 on 2026-07-28 (alma-agent-incident-diagnosis promoted). This is the
+    // countdown, so it is asserted exactly: a draft that quietly turns active
+    // without going through evals fails here.
     const stillDraft = all.skills.length - live.skills.length
-    expect(stillDraft).toBeGreaterThanOrEqual(5)
+    expect(stillDraft).toBe(4)
   })
 
   it('records the baseline table and the headline numbers', async () => {

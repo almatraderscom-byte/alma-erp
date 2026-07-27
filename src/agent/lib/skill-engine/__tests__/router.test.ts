@@ -134,9 +134,23 @@ describe('layer 3 — hand the close calls to the head, do not guess', () => {
   // The false trigger SK-0 measured: one incidental token ("dekho") pinned the
   // incident-diagnosis skill on a score of 1. A wrong pin costs tools, so a weak
   // match must produce NO skill.
+  //
+  // 2026-07-28: promoting alma-agent-incident-diagnosis dropped its bare
+  // `problem` / `সমস্যা` keywords, so this message now matches NOTHING at all —
+  // a better outcome than a weak candidate, but it stops exercising the weak
+  // branch. So the weak branch moved to a message that still produces one, and
+  // this message keeps the assertion that actually matters: no pin.
   it('refuses to pin on one incidental word', async () => {
     const index = await discoverSkills(SKILLS_ROOT, { includeDraft: true })
     const d = routeSkill(index, 'kalker order gulo dekhao')
+
+    expect(d.skill).toBeNull()
+  })
+
+  it('a weak best match is still no pin, and still says what it considered', async () => {
+    const index = await discoverSkills(SKILLS_ROOT, { includeDraft: true })
+    // "audit" alone scores 1 for the SEO audit skill; an ads question is not it.
+    const d = routeSkill(index, 'amar ads account ta ekbar valo kore audit koro')
 
     expect(d.skill).toBeNull()
     expect(d.reason).toContain('দুর্বল')

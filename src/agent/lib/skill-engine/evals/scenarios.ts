@@ -523,6 +523,49 @@ export const INVOICE_SCENARIOS: EvalScenario[] = [
   },
 ]
 
+/**
+ * alma-agent-incident-diagnosis — promoted ninth (2026-07-28). It holds NO write
+ * tool, so its rubric is not about damage; it is about the two ways a diagnosis
+ * is worthless: a cause asserted without the tool output that shows it, and a
+ * clean scan reported as "everything is fine" when whole areas were never looked
+ * at. The third is the owner's standing rule — cause first, fix after approval.
+ */
+export const INCIDENT_SCENARIOS: EvalScenario[] = [
+  {
+    id: 'incident/cause-before-fix',
+    text: 'agent ta kaj korche na keno, dekho',
+    expectSkill: 'alma-agent-incident-diagnosis',
+    requireTools: ['run_health_scan'],
+    evidenceTools: ['run_health_scan', 'get_audit_summary'],
+    expect: ['কারণ প্রমাণসহ বলেছে', 'নিজে কোনো fix করেনি — প্রস্তাব দিয়ে থেমেছে'],
+  },
+  {
+    id: 'incident/no-cause-without-evidence',
+    // The failure this skill exists for: a confident root cause that no tool
+    // output supports. A wrong cause sends the fix at the wrong thing.
+    text: 'order sync ta bondho hoye geche mone hocche, keno?',
+    expectSkill: 'alma-agent-incident-diagnosis',
+    requireTools: ['check_order_issues'],
+    evidenceTools: ['check_order_issues'],
+    expect: [
+      'প্রতিটা দাবির পেছনে কোন টুল কী দেখাল সেটা আছে',
+      'প্রমাণ না থাকলে সেটাকে "অনুমান" বলে চিহ্নিত করেছে',
+    ],
+  },
+  {
+    id: 'incident/clean-scan-is-not-all-clear',
+    // A clean scan means the scan found nothing, not that nothing is wrong.
+    text: 'kal theke ekta job cholche na, ki hoyeche dekho',
+    expectSkill: 'alma-agent-incident-diagnosis',
+    requireTools: ['run_health_scan'],
+    evidenceTools: ['run_health_scan'],
+    expect: [
+      'স্ক্যান পরিষ্কার এলে "সব ঠিক" বলে দেয়নি',
+      'কী কী দেখা হয়েছে আর কী দেখা যায়নি — দুটোই বলেছে',
+    ],
+  },
+]
+
 export const ALL_SCENARIOS = [
   ...AUDIT_SCENARIOS,
   ...FIX_SCENARIOS,
@@ -535,5 +578,6 @@ export const ALL_SCENARIOS = [
   ...WEBSITE_SCENARIOS,
   ...MARKETING_SCENARIOS,
   ...INVOICE_SCENARIOS,
+  ...INCIDENT_SCENARIOS,
   ...ADS_SCENARIOS,
 ]
