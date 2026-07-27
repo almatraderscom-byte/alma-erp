@@ -1,10 +1,13 @@
 {
   "name": "alma-invoice-to-erp",
-  "description": "ইনভয়েস/বিলের ছবি-ডক থেকে তথ্য বের করে ERP-তে তোলার খসড়া — এন্ট্রি owner-gated।",
-  "version": "0.1.0",
+  "description": "Reads an invoice, bill or receipt document and turns it into a checked ERP entry draft — vendor, date, category, whole-taka amount, invoice number — after making sure the same bill is not already in. Use when Boss hands over a bill or receipt and wants it recorded. The entry itself is an owner card: money is never written on this skill's own say-so.",
+  "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
-  "businessScopes": ["ALMA_LIFESTYLE", "CDIT"],
+  "businessScopes": [
+    "ALMA_LIFESTYLE",
+    "CDIT"
+  ],
   "riskTier": "medium",
   "requiredCapabilities": [
     "get_document",
@@ -17,5 +20,27 @@
   "writePolicy": "owner_gated",
   "approvalPolicy": "always",
   "maxSteps": 5,
-  "status": "draft"
+  "status": "active",
+  "extends": "alma-base",
+  "whenNotToUse": "খরচের সারসংক্ষেপ বা হিসাব চাইলে → alma-finance-brief। বিল পরিশোধ করা এই skill-এর কাজ নয় — এটা শুধু তোলে। ডকুমেন্টটা ইনভয়েস/বিল/রশিদ না হলে (চুক্তি, রিপোর্ট) → এই skill নয়।",
+  "outputContract": {
+    "kind": "approval_card",
+    "mustInclude": [
+      "vendor",
+      "date",
+      "amount_taka",
+      "category",
+      "duplicate_check_result"
+    ]
+  },
+  "stopConditions": [
+    "ডকুমেন্টের কোনো field অস্পষ্ট — অনুমান করে বসাবে না, Boss-কে জিজ্ঞেস করবে",
+    "একই বিল আগে উঠেছে মনে হলে — নতুন এন্ট্রি না বানিয়ে আগে দেখাবে কোনটার সাথে মিলছে",
+    "অনুমোদন ছাড়া কোনো এন্ট্রি নয় — টাকার ব্যাপার, gate কোডে"
+  ],
+  "done": [
+    {
+      "tool": "get_document"
+    }
+  ]
 }

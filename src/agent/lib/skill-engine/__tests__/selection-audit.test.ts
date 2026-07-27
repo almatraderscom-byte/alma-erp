@@ -79,8 +79,10 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     //   fourth started winning its message.
     //   2026-07-27: alma-website, the sixth — scope narrowed away from page copy.
     //   2026-07-27: alma-marketing, the seventh — three keyword collisions freed.
+    //   2026-07-27: alma-invoice-to-erp, the eighth.
     expect(selectable).toEqual([
       'alma-finance-brief',
+      'alma-invoice-to-erp',
       'alma-marketing',
       'alma-owner-daily-briefing',
       'alma-product-listing',
@@ -94,7 +96,7 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     ])
 
     const stillDraft = all.skills.length - live.skills.length
-    expect(stillDraft).toBeGreaterThanOrEqual(6)
+    expect(stillDraft).toBeGreaterThanOrEqual(5)
   })
 
   it('records the baseline table and the headline numbers', async () => {

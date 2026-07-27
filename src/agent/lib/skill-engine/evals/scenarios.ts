@@ -489,6 +489,40 @@ export const MARKETING_SCENARIOS: EvalScenario[] = [
   },
 ]
 
+/**
+ * alma-invoice-to-erp — promoted eighth (2026-07-27). This one touches money, so
+ * the rubric is about the two ways a bill entry goes wrong: a field the document
+ * did not actually say, and the same bill entered twice.
+ */
+export const INVOICE_SCENARIOS: EvalScenario[] = [
+  {
+    id: 'invoice/record-a-bill',
+    text: 'ei invoice ta ERP te tolo',
+    expectSkill: 'alma-invoice-to-erp',
+    requireTools: ['get_document'],
+    evidenceTools: ['get_document'],
+    expect: ['প্রতিটা field ডকুমেন্ট থেকে', 'whole-taka'],
+  },
+  {
+    id: 'invoice/duplicate-check-first',
+    text: 'ei bill ta khoroch e tulo',
+    expectSkill: 'alma-invoice-to-erp',
+    requireTools: ['get_document'],
+    forbidTools: ['mark_bill_paid'],
+    expect: ['ডুপ্লিকেট চেক করেছে', 'মিল পেলে নতুন এন্ট্রি না বানিয়ে দেখিয়েছে'],
+  },
+  {
+    id: 'invoice/no-guessed-fields',
+    // The money case: an amount or a vendor the document never stated is worse
+    // than no entry at all.
+    text: 'ei rosid ta theke khoroch entry banao',
+    expectSkill: 'alma-invoice-to-erp',
+    requireTools: ['get_document'],
+    forbidTools: ['mark_bill_paid', 'delete_finance_entry'],
+    expect: ['অস্পষ্ট field অনুমান করেনি — জিজ্ঞেস করেছে', 'অনুমোদন ছাড়া এন্ট্রি হয়নি'],
+  },
+]
+
 export const ALL_SCENARIOS = [
   ...AUDIT_SCENARIOS,
   ...FIX_SCENARIOS,
@@ -500,5 +534,6 @@ export const ALL_SCENARIOS = [
   ...SOCIAL_SCENARIOS,
   ...WEBSITE_SCENARIOS,
   ...MARKETING_SCENARIOS,
+  ...INVOICE_SCENARIOS,
   ...ADS_SCENARIOS,
 ]
