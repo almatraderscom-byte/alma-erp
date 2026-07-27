@@ -4,6 +4,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { isSelectableModelId } from '@/agent/lib/models/registry'
 import { isChatMode } from '@/agent/lib/chat-mode'
+import { isPermissionMode } from '@/agent/lib/permission-mode'
 import { prisma } from '@/lib/prisma'
 
 /**
@@ -25,7 +26,10 @@ export async function GET(
   const { id } = await Promise.resolve(params)
   const conv = await prisma.agentConversation.findUnique({
     where: { id },
-    select: { id: true, title: true, projectId: true, archived: true, pinned: true, modelId: true, chatMode: true, updatedAt: true },
+    select: {
+      id: true, title: true, projectId: true, archived: true, pinned: true,
+      modelId: true, chatMode: true, permissionMode: true, updatedAt: true,
+    },
   })
   if (!conv) return Response.json({ error: 'not_found' }, { status: 404 })
   return Response.json(conv)
@@ -70,10 +74,27 @@ export async function PATCH(
     data.chatMode = body.chatMode
   }
 
+  // PM-1 — the permission axis: plan | careful | standard | supervised |
+  // elevated. Same reasoning as above, and more so: a silently ignored
+  // permission change would leave Boss believing the agent is restrained when it
+  // is not. Rejected loudly, never defaulted.
+  if (body.permissionMode !== undefined) {
+    if (!isPermissionMode(body.permissionMode)) {
+      return Response.json({ error: 'invalid_permission_mode' }, { status: 400 })
+    }
+    data.permissionMode = body.permissionMode
+    // Leaving 'elevated' drops the grant with it — a time-boxed permission must
+    // never survive the mode that justified it.
+    if (body.permissionMode !== 'elevated') data.elevationGrant = null
+  }
+
   const updated = await prisma.agentConversation.update({
     where: { id },
     data,
-    select: { id: true, title: true, projectId: true, archived: true, pinned: true, modelId: true, chatMode: true, updatedAt: true },
+    select: {
+      id: true, title: true, projectId: true, archived: true, pinned: true,
+      modelId: true, chatMode: true, permissionMode: true, updatedAt: true,
+    },
   })
 
   return Response.json(updated)

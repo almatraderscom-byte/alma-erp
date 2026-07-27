@@ -171,6 +171,10 @@ const run_website_seo_audit: AgentTool = {
             costEstimate: 0,
             // Read-only crawl, no owner-side effects → runs without an approval card.
             status: 'approved',
+            // …and because no card ever reaches him, the settled record must not
+            // claim he approved it. The one-time backfill fixed history; this
+            // fixes every row from now on (owner caught the lie 2026-07-27).
+            ownerDecided: false,
           },
           select: { id: true },
         })
@@ -204,10 +208,25 @@ const run_website_seo_audit: AgentTool = {
   },
 }
 
+/**
+ * This tool's row is created ALREADY approved (a read-only crawl needs no card),
+ * so here 'approved' means "crawling", not "Boss said yes". Never let that word
+ * reach him — see the owner incident note below.
+ */
+function auditStateBn(status: string): string {
+  if (status === 'approved') return 'এখনো ক্রল চলছে (শেষ হয়নি)'
+  if (status === 'executed') return 'শেষ হয়েছে'
+  if (status === 'failed') return 'ব্যর্থ হয়েছে'
+  if (status === 'expired') return 'সময় শেষ হয়ে গেছে'
+  return `অবস্থা: ${status}`
+}
+
 const check_website_seo_audit: AgentTool = {
   name: 'check_website_seo_audit',
   description:
-    'Check a website SEO audit started with run_website_seo_audit: status (approved=crawling, ' +
+    'Check a website SEO audit started with run_website_seo_audit: status (approved=STILL CRAWLING — '
+    + 'this row is auto-approved, it does NOT mean Boss must approve anything; use the stateBn field '
+    + 'when telling him, never the raw word, ' +
     'executed=done, failed), the 0-100 score, issue counts by severity, pages crawled, and the storage ' +
     'paths of the report (report.md) + full findings (audit.json).\n' +
     'To READ the FULL report, call this tool again with read:"report" — it returns the whole ' +
@@ -302,7 +321,7 @@ const check_website_seo_audit: AgentTool = {
       }
 
       if (read && action.status !== 'executed') {
-        return { success: false, error: `Audit এখনো ${action.status} — status "executed" হওয়ার পর read:"${read}" দিয়ে ডাকো।` }
+        return { success: false, error: `Audit ${auditStateBn(action.status)} — শেষ হলে (status "executed") read:"${read}" দিয়ে ডাকো।` }
       }
 
       if (read === 'links') {
@@ -407,6 +426,12 @@ const check_website_seo_audit: AgentTool = {
         data: {
           id: action.id,
           status: action.status, // approved = still crawling, executed = done, failed = error
+          // Owner incident 2026-07-27: the head repeated the raw word to him —
+          // "অডিট এখনো approved অবস্থায় আছে" — and he read it as "waiting for your
+          // approval", because in every other card that is exactly what it means.
+          // This tool's 'approved' means the crawl is RUNNING. Give the head a
+          // phrase it can safely say out loud.
+          stateBn: auditStateBn(action.status),
           summary: action.summary,
           result: action.result ?? null,
           ...(artifactText != null ? { [read === 'report' ? 'reportMarkdown' : 'auditJson']: artifactText } : {}),

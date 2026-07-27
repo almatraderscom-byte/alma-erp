@@ -8,7 +8,9 @@ import { impactLight, impactMedium } from '@/lib/haptics'
 import AgentModelSelector from './AgentModelSelector'
 import AgentUsagePopover from './AgentUsagePopover'
 import AgentModeSelector from './AgentModeSelector'
+import AgentPermissionSelector from './AgentPermissionSelector'
 import { DEFAULT_CHAT_MODE, type ChatMode } from '@/agent/lib/chat-mode'
+import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@/agent/lib/permission-mode'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 
 export interface PendingFile {
@@ -34,6 +36,9 @@ interface AgentComposerProps {
   onModelChange?: (modelId: string) => void
   /** Chat mode picker (auto | direct | plan | plan_drive). */
   chatMode?: ChatMode
+  /** PM-1 permission picker (plan | careful | standard | supervised | elevated). */
+  permissionMode?: PermissionMode
+  onPermissionModeChange?: (mode: PermissionMode) => void
   /** SK-3: the skill pinned to this chat, shown as a chip. */
   pinnedSkill?: { skill: string; source: 'owner' | 'router'; reason: string } | null
   onClearSkillPin?: () => void
@@ -53,6 +58,8 @@ export default function AgentComposer({
   isMobile = false,
   activeModelId,
   chatMode = DEFAULT_CHAT_MODE,
+  permissionMode = DEFAULT_PERMISSION_MODE,
+  onPermissionModeChange,
   pinnedSkill = null,
   onClearSkillPin,
   onChatModeChange,
@@ -377,6 +384,18 @@ export default function AgentComposer({
               conversationId={conversationId}
               mode={chatMode}
               onModeChange={onChatModeChange}
+              disabled={streaming}
+            />
+          )}
+
+          {/* How much it may do without Boss (plan / careful / standard /
+              supervised / elevated). Deliberately the SECOND chip: the first
+              answers "how", this answers "how much". */}
+          {onPermissionModeChange && (
+            <AgentPermissionSelector
+              conversationId={conversationId}
+              mode={permissionMode}
+              onModeChange={onPermissionModeChange}
               disabled={streaming}
             />
           )}

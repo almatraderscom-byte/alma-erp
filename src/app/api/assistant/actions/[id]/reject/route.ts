@@ -91,7 +91,8 @@ export async function POST(
 
   await db.agentPendingAction.update({
     where: { id: actionId },
-    data: { status: 'rejected', resolvedAt: new Date() },
+    // ownerDecided: rejection is always his — nothing in this system auto-rejects.
+    data: { status: 'rejected', resolvedAt: new Date(), ownerDecided: true },
   })
 
   // Phase 4 sync: a rejected card cancels its canonical WorkflowRun and the

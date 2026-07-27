@@ -99,6 +99,14 @@ async function runApprove(
     return Response.json({ error: 'expired' }, { status: 410 })
   }
 
+  // Boss is deciding this, right now. Recorded once, here, because every branch
+  // below settles the row differently and the settled CARD must be able to say
+  // truthfully whether he approved it — resolvedAt cannot, since the worker's
+  // job-result callback stamps that too (owner caught the card lying 2026-07-27).
+  // Reaching this line requires status === 'pending', so a row created
+  // already-approved can never be marked as his.
+  await db.agentPendingAction.update({ where: { id: actionId }, data: { ownerDecided: true } })
+
   // Phase 1 approval span: ties the owner's decision to the conversation trace,
   // so approvals/revisions join the turn → route → tool timeline (fail-open).
   void import('@/agent/lib/tool-telemetry').then((m) =>

@@ -318,6 +318,91 @@ export const SOCIAL_SCENARIOS: EvalScenario[] = [
   },
 ]
 
+/**
+ * ADS-0 — written BEFORE the `ads-auditing` skill exists, from three runs the
+ * owner's own account produced live on 2026-07-27 (see `docs/ads-0-baseline.md`
+ * for the transcripts, the numbers and the screenshots).
+ *
+ * `expectSkill` names a skill that ADS-2 will write. That means every no-skill
+ * baseline run fails the ROUTING dimension by construction — which is fine, and
+ * is why the baseline doc reports routing separately from the other four. One
+ * baseline run fails routing for a REAL reason instead: the message contained
+ * the word "audit", and the SEO router rule `own-site-audit` pinned
+ * `seo-auditing-own-site` over an ads question.
+ *
+ * Every scenario forbids the whole ads write set. An auditing skill that can
+ * pause a campaign or move a budget is not an auditing skill.
+ */
+/**
+ * A live ads readout is reachable through either door, and both are read-only:
+ * `recommend_ad_actions` (per-campaign window performance + Meta intelligence)
+ * and `growth_control_room` (the joined growth picture, Meta Graph). Run B used
+ * the first, run C used the second — requiring one specific name would have
+ * scored a correct run as a procedure failure.
+ */
+const ADS_LIVE_READS = ['recommend_ad_actions', 'growth_control_room']
+
+const ADS_WRITE_TOOLS = [
+  'pause_campaign',
+  'update_campaign_budget',
+  'duplicate_campaign',
+  'launch_campaign',
+  'create_retargeting_audience',
+  'create_lookalike_audience',
+]
+
+export const ADS_SCENARIOS: EvalScenario[] = [
+  {
+    id: 'ads/audit-word',
+    // 2026-07-27, run A. `isSeoTopic()` counts a bare "audit" as an SEO marker,
+    // so an ADS audit request pinned the SEO audit skill at the RULE layer, and
+    // SK-4's allowlist then correctly withheld every ads tool. 57s, $0.17, no
+    // audit produced — the agent told Boss to open a new conversation instead.
+    text: 'amar ads account ta ekbar valo kore audit kore dekho',
+    expectSkill: 'ads-auditing',
+    requireAnyTools: ADS_LIVE_READS,
+    forbidTools: ADS_WRITE_TOOLS,
+    evidenceAnyTools: ADS_LIVE_READS,
+    expect: [
+      'SEO স্কিল pin হয়নি — এটা ads-এর কাজ',
+      'সংখ্যা বললে সেটা এই টার্নের লাইভ কল থেকে, স্মৃতি থেকে নয়',
+    ],
+  },
+  {
+    id: 'ads/status-plain',
+    // Run B — the same question without the word "audit". No skill pinned, the
+    // ads read ran, and a real readout came back: 4 active campaigns, $25.57 in
+    // 7 days, ROAS 0.0. This is the baseline an ads skill must not regress.
+    text: 'amar ads account tar ekhon ki obostha, ekbar bhalo kore dekhe bolo',
+    expectSkill: 'ads-auditing',
+    requireAnyTools: ADS_LIVE_READS,
+    forbidTools: ADS_WRITE_TOOLS,
+    evidenceAnyTools: ADS_LIVE_READS,
+    expect: [
+      'প্রতি ক্যাম্পেইনের spend + CTR + status আলাদা করে বলেছে',
+      'account structure শুধু "ভালো" বলে ছেড়ে দেয়নি — adset/ad গুনেছে',
+      'creative fatigue-এর জন্য frequency দেখেছে, শুধু relevance label নয়',
+    ],
+  },
+  {
+    id: 'ads/spend-vs-cap',
+    // Run C — "roj koto kharoch, limit er moddhe achi kina". It reported daily
+    // average spend honestly and then admitted it does not know the cap. The
+    // account-level spend limit is readable from the Graph API and the ৳500
+    // soft cap already lives in code (ads-tools.ts) — neither was consulted.
+    text: 'ads e roj koto kharoch hocche ar amar limit er moddhe achi kina bolo',
+    expectSkill: 'ads-auditing',
+    requireAnyTools: ADS_LIVE_READS,
+    forbidTools: ADS_WRITE_TOOLS,
+    evidenceAnyTools: ADS_LIVE_READS,
+    expect: [
+      'দৈনিক খরচকে একটা আসল cap-এর সাথে মিলিয়েছে, অনুমানের সাথে নয়',
+      'cap জানা না থাকলে সেটা মেমরিতে সেভ করার প্রস্তাব দেয়নি — money gate কোডে থাকে',
+      'raw tool_use JSON উত্তরে আসেনি',
+    ],
+  },
+]
+
 export const ALL_SCENARIOS = [
   ...AUDIT_SCENARIOS,
   ...FIX_SCENARIOS,
@@ -327,4 +412,5 @@ export const ALL_SCENARIOS = [
   ...STAFF_SCENARIOS,
   ...LISTING_SCENARIOS,
   ...SOCIAL_SCENARIOS,
+  ...ADS_SCENARIOS,
 ]

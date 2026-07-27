@@ -100,24 +100,30 @@ const AUDIT_ASK =
 const SEO_TOPIC_CLEAR =
   /\bseo\b|এসইও|\balt\b|meta\s*(?:description|title|tag)|sitemap|canonical|\bslug\b|স্লাগ/i
 /**
- * Words that mean SEO **only when a website is in the sentence**. Each one is
- * here because of a message that went wrong, not because it looked risky:
+ * Words that mean SEO **only when a website is in the sentence**. Two sessions
+ * found this list independently on the same day, from two different live runs,
+ * and both findings are kept because each catches what the other misses.
  *
  *  • `meta` — SK-0: "meta description লিখে দাও" routed to the Meta ADS campaign
- *    skill. One word, two businesses; an ads message names a campaign, not a
- *    domain.
- *  • `audit` — FOUND IN HIS REAL TRAFFIC 2026-07-27: "amar ads account ta ekbar
- *    valo kore audit koro" pinned `seo-auditing-own-site`, because bare `audit`
- *    counted as an SEO topic outright. An ads question was handed the SEO
- *    skill's allowlist and none of the ads tools. Every audit is not an SEO
- *    audit.
+ *    skill. One word, two businesses.
+ *  • `audit` — ADS-0: "amar ads account ta ekbar valo kore audit kore dekho"
+ *    pinned `seo-auditing-own-site` at the RULE layer, and that skill's
+ *    allowlist then correctly withheld every ads tool. Eight tool calls, no
+ *    audit. SEO is not the only thing that gets audited — ads, money and stock
+ *    all do.
  *  • `title` / `description` — the same traffic: "almatraders.com এর পুরো দুর্বল
  *    title আর thin description gulo thik koro" is an unmistakable on-page fix,
- *    but carried no `seo`/`alt`/`meta` word, so no rule fired and the read-only
- *    AUDIT skill won the tie. Bare, they belong to captions and products too —
- *    with a domain, they are page copy.
+ *    but carried no seo/alt/meta word, so no rule fired and the READ-ONLY audit
+ *    skill won the tie. Bare, they belong to captions and products too.
  */
 const DOMAIN_GATED_SEO = /\bmeta\b|\baudit\b|অডিট|\btitle\b|\bdescription\b|শিরোনাম|বিবরণ/i
+/**
+ * …and a site name is not enough on its own: "almatraders.com er ads audit
+ * koro" is an ADS job about our own domain. Any ads vocabulary vetoes the SEO
+ * reading unless a clear SEO word is also present.
+ */
+const ADS_TOPIC =
+  /\bads?\b|\bad\s*account\b|বিজ্ঞাপন|ক্যাম্পেইন|\bcampaign\b|\bboost\b|বুস্ট|\broas\b|\bctr\b|\bcpc\b|\bcpm\b|\bbudget\b|বাজেট|\baudience\b|\bpixel\b/i
 
 const OWN_SITE = /almatraders\.com|আমাদের\s*(?:সাইট|ওয়েবসাইট)|our\s+site/i
 /** Any other domain mentioned — a client's site. */
@@ -126,6 +132,7 @@ const ANY_DOMAIN = /\b[a-z0-9-]+\.(?:com|net|org|io|xyz|shop|co)\b/i
 
 export function isSeoTopic(text: string): boolean {
   if (SEO_TOPIC_CLEAR.test(text)) return true
+  if (ADS_TOPIC.test(text)) return false
   return DOMAIN_GATED_SEO.test(text) && (ANY_DOMAIN.test(text) || OWN_SITE.test(text))
 }
 
