@@ -93,6 +93,9 @@ describe('Creative Studio production responsive and a11y contract', () => {
     expect(v3Styles).toMatch(
       /\.v6ComposerExpanded > \.v3ModeScroller\s*\{[\s\S]*?min-height:\s*38px;/,
     )
+    expect(v3Styles).toMatch(
+      /\.v6ComposerExpanded > \.v3ComposerHeader\s*\{[\s\S]*?min-height:\s*70px;/,
+    )
     expect(imageLab).toContain("composerRef.current?.scrollTo({ top: 0")
   })
 })

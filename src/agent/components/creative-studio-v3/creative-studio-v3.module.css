@@ -4781,6 +4781,10 @@ label.secondaryButton[aria-disabled='true'] {
   max-width: 1180px;
 }
 
+.v6ComposerExpanded > .v3ComposerHeader {
+  min-height: 70px;
+}
+
 .v6ComposerExpanded .v4AutoSourceGrid,
 .v6ComposerExpanded .v6AdvancedSourceGrid {
   align-self: center;
