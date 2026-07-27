@@ -10,7 +10,7 @@ import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-to
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_MODULES, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
-import { createMarkupStreamFilter, stripToolCallMarkup, dropRepeatedBlocks } from '@/agent/lib/model-output-sanitize'
+import { stripToolCallMarkup, dropRepeatedBlocks } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
   claimsCompletion,
@@ -56,7 +56,7 @@ import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
 import { buildOwnerCorrectionNudge } from '@/agent/lib/owner-correction'
 import { newTurnProgressState, nextTurnProgress } from '@/agent/lib/turn-progress'
 import { insertControlNote } from '@/agent/lib/control-note-order'
-import { cleanVisibleThinking } from '@/agent/lib/visible-thinking'
+import { cleanVisibleThinking, createThinkingStreamFilter } from '@/agent/lib/visible-thinking'
 import { buildPlanProgress, planProgressSignature } from '@/agent/lib/plan-progress'
 import { loadLatestPlanProgress } from '@/agent/lib/planner'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
@@ -1969,7 +1969,7 @@ async function* runAlternateProviderTurn(
       // Thinking streams token by token, so markup in it needs a filter that
       // survives a call split across deltas. One per round: what it holds back
       // belongs to this round and is released when the round ends.
-      const thinkingStream = createMarkupStreamFilter()
+      const thinkingStream = createThinkingStreamFilter()
 
       // Serverless deadline close → no more tools; force a Bangla progress
       // wrap-up instead of the function dying mid-task with a blank reply.

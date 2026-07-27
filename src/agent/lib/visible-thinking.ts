@@ -28,6 +28,8 @@
  * the honest outcome, because that round contained no thinking he wanted.
  */
 
+import { createMarkupStreamFilter } from '@/agent/lib/model-output-sanitize'
+
 /**
  * Line shapes that are unmistakably about the harness rather than the work.
  * Every entry here comes from a line he actually saw on screen.
@@ -82,4 +84,47 @@ export function cleanVisibleThinking(text: string): string {
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+/**
+ * The live stream, not the stored copy — same lesson as the markup filter, and
+ * learned the same way: on the shipped fix, one turn later.
+ *
+ * `cleanVisibleThinking` runs once per round on the text being STORED. Thinking
+ * is yielded token by token, so on 2026-07-28 the fix above was live and his
+ * screen still read *"The response already started with the mandatory first line
+ * as required."* — the transcript was clean and the screen was not.
+ *
+ * A thought can only be judged as a LINE (that is what `isPlumbingThought` reads),
+ * so this holds the tail until a newline arrives. The visible effect is that
+ * reasoning appears line by line instead of character by character, which is the
+ * price of not showing him our control notes at all.
+ */
+export interface ThinkingStreamFilter {
+  push(delta: string): string
+  flush(): string
+}
+
+export function createThinkingStreamFilter(): ThinkingStreamFilter {
+  const markup = createMarkupStreamFilter()
+  let partial = ''
+
+  const takeLines = (chunk: string, final: boolean): string => {
+    partial += chunk
+    if (!final && !partial.includes('\n')) return ''
+    const pieces = partial.split('\n')
+    partial = final ? '' : (pieces.pop() ?? '')
+    const kept = pieces.filter((line) => !isPlumbingThought(line))
+    if (final && chunk === '' && kept.length === 0) return ''
+    return kept.length > 0 ? kept.join('\n') + (final ? '' : '\n') : ''
+  }
+
+  return {
+    push(delta: string): string {
+      return takeLines(markup.push(delta), false)
+    },
+    flush(): string {
+      return takeLines(markup.flush(), true)
+    },
+  }
 }
