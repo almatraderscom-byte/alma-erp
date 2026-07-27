@@ -14,11 +14,19 @@ type CompositionScope = {
   projectId: string
 }
 
+export type CreativeStudioV4CanvasInput = {
+  width: number
+  height: number
+  aspectWidth: number
+  aspectHeight: number
+}
+
 export type CreativeStudioV3CompositionClient = {
   listCompositions(scope: CompositionScope): Promise<CreativeCompositionSummary[]>
   createComposition(input: CompositionScope & {
     idempotencyKey: string
     title?: string
+    canvas?: CreativeStudioV4CanvasInput
   }): Promise<{
     composition: CreativeCompositionView
     idempotent: boolean
@@ -218,6 +226,7 @@ export function createCreativeStudioV3CompositionClient(
           brandProfileId: input.brandProfileId,
           idempotencyKey: input.idempotencyKey,
           ...(input.title ? { title: input.title } : {}),
+          ...(input.canvas ? { canvas: input.canvas } : {}),
         }),
       }))
       const composition = parseCompositionView(payload.composition)
@@ -261,12 +270,16 @@ async function deterministicCreationKey(input: {
   actorUserId: string
   brandProfileId: string
   projectId: string
+  canvas?: CreativeStudioV4CanvasInput
 }): Promise<string> {
   const payload = new TextEncoder().encode([
     'creative-studio-v3-composition',
     input.actorUserId,
     input.brandProfileId,
     input.projectId,
+    input.canvas
+      ? `${input.canvas.width}x${input.canvas.height}:${input.canvas.aspectWidth}:${input.canvas.aspectHeight}`
+      : 'default-canvas',
   ].join('\u0000'))
   const digest = await globalThis.crypto.subtle.digest('SHA-256', payload)
   const hex = [...new Uint8Array(digest)]
@@ -306,6 +319,7 @@ export async function resolveStudioProjectComposition(input: {
   client: CreativeStudioV3CompositionClient
   projectId: string
   projectName: string
+  canvas?: CreativeStudioV4CanvasInput
 }): Promise<ResolvedStudioComposition> {
   const scope = {
     brandProfileId: input.brandProfileId,
@@ -341,6 +355,7 @@ export async function resolveStudioProjectComposition(input: {
       ...scope,
       idempotencyKey,
       title: `${input.projectName} composition`,
+      canvas: input.canvas,
     })
     return {
       composition: created.composition,

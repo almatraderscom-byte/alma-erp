@@ -8,6 +8,7 @@ import {
   creativeStudioV3CompositionClient,
   creativeStudioV3CompositionErrorMessage,
   resolveStudioProjectComposition,
+  type CreativeStudioV4CanvasInput,
 } from '@/agent/components/creative-studio-v3/composition-client'
 import { StudioV3CapabilityDesk } from '@/agent/components/creative-studio-v3/StudioV3CapabilityDesk'
 import { StudioV3EditorJourney } from '@/agent/components/creative-studio-v3/StudioV3EditorJourney'
@@ -37,6 +38,9 @@ export function CreativeStudioV3({
   const searchParams = useSearchParams()
   const [view, setView] = useState<CreativeStudioV3View>({ id: 'home' })
   const [brands, setBrands] = useState<Awaited<ReturnType<typeof creativeStudioV3ProductionPort.listBrands>>>([])
+  const [accessibleProjects, setAccessibleProjects] = useState(
+    initialContext.accessibleProjects,
+  )
   const [activeBrandId, setActiveBrandId] = useState<string | null>(initialContext.brandId)
   const [activeProjectId, setActiveProjectId] = useState<string | null>(initialContext.projectId)
   const [launchingProjectId, setLaunchingProjectId] = useState<string | null>(null)
@@ -72,9 +76,9 @@ export function CreativeStudioV3({
     [activeBrandId, brands],
   )
   const availableProjects = useMemo(
-    () => initialContext.accessibleProjects.filter((project) =>
+    () => accessibleProjects.filter((project) =>
       project.brandProfileId === activeBrandId && !project.readonly),
-    [activeBrandId, initialContext.accessibleProjects],
+    [accessibleProjects, activeBrandId],
   )
   const activeProject = useMemo(
     () => availableProjects.find((project) => project.id === activeProjectId)
@@ -117,7 +121,7 @@ export function CreativeStudioV3({
     const brand = brands.find((item) => item.brandProfileId === brandId)
     if (!brand) return
     setActiveBrandId(brandId)
-    const firstProject = initialContext.accessibleProjects.find((project) =>
+    const firstProject = accessibleProjects.find((project) =>
       project.brandProfileId === brandId && !project.readonly)
     setActiveProjectId(firstProject?.id ?? null)
     setView({ id: 'home' })
@@ -127,7 +131,7 @@ export function CreativeStudioV3({
     query.set('brand', brandId)
     query.delete('project')
     router.replace(`${pathname}?${query.toString()}`, { scroll: false })
-  }, [brands, initialContext.accessibleProjects, pathname, router, searchParams])
+  }, [accessibleProjects, brands, pathname, router, searchParams])
 
   const changeProject = useCallback((projectId: string) => {
     const project = availableProjects.find((item) => item.id === projectId)
@@ -142,21 +146,23 @@ export function CreativeStudioV3({
   const openComposition = useCallback(async (
     requestedProject: StudioProjectSummary,
     returnTo: 'home' | 'projects',
+    openAgent = false,
+    canvas?: CreativeStudioV4CanvasInput,
   ) => {
     if (!activeBrand || !initialContext.foundation.readEnabled) {
       toast.error(
         'The Foundation read rollout is off. No composition request was sent.',
       )
-      return
+      return false
     }
-    const project = initialContext.accessibleProjects.find((candidate) =>
+    const project = accessibleProjects.find((candidate) =>
       candidate.id === requestedProject.id
       && candidate.brandProfileId === activeBrand.brandProfileId)
     if (!project || project.readonly || !project.brandProfileId) {
       toast.error(
         'That project is not in the current server-derived accessible scope.',
       )
-      return
+      return false
     }
     setLaunchingProjectId(project.id)
     try {
@@ -169,6 +175,7 @@ export function CreativeStudioV3({
         client: creativeStudioV3CompositionClient,
         projectId: project.id,
         projectName: project.name,
+        canvas,
       })
       setView({
         id: 'editor',
@@ -178,26 +185,57 @@ export function CreativeStudioV3({
         compositionId: resolved.composition.id,
         projectId: resolved.composition.projectId,
         returnTo,
+        openAgent,
       })
       toast.success(
         resolved.source === 'created'
           ? `Created ${resolved.composition.title} v${resolved.composition.currentVersion}.`
           : `Opened ${resolved.composition.title} v${resolved.composition.currentVersion}.`,
       )
+      return true
     } catch (error) {
       toast.error(creativeStudioV3CompositionErrorMessage(error), {
         duration: 6000,
       })
+      return false
     } finally {
       setLaunchingProjectId(null)
     }
   }, [
     activeBrand,
-    initialContext.accessibleProjects,
+    accessibleProjects,
     initialContext.actorUserId,
     initialContext.foundation.readEnabled,
     initialContext.foundation.writesEnabled,
   ])
+
+  const createProject = useCallback(async (input: {
+    name: string
+    description?: string
+  }) => {
+    if (!activeBrand || activeBrand.role !== 'owner') {
+      throw new Error('Project creation is available only to the workspace owner.')
+    }
+    const created = await creativeStudioV3ProductionPort.createProject({
+      name: input.name,
+      description: input.description,
+      brandName: activeBrand.name,
+      defaultFolder: 'Creative Studio',
+    })
+    if (created.brandProfileId !== activeBrand.brandProfileId) {
+      throw new Error('The created project crossed the active brand scope.')
+    }
+    setAccessibleProjects((current) => [
+      created,
+      ...current.filter((project) => project.id !== created.id),
+    ])
+    setActiveProjectId(created.id)
+    const query = new URLSearchParams(searchParams.toString())
+    query.set('brand', activeBrand.brandProfileId)
+    query.set('project', created.id)
+    router.replace(`${pathname}?${query.toString()}`, { scroll: false })
+    return created
+  }, [activeBrand, pathname, router, searchParams])
 
   let content
   if (view.id === 'editor') {
@@ -209,6 +247,7 @@ export function CreativeStudioV3({
         actorUserId={initialContext.actorUserId}
         brandName={editorView.brandName}
         foundationWritesEnabled={initialContext.foundation.writesEnabled}
+        initiallyOpenAgent={editorView.openAgent}
         key={[
           editorView.brandProfileId,
           editorView.projectId,
@@ -287,15 +326,16 @@ export function CreativeStudioV3({
     content = (
       <StudioV3CapabilityDesk
         activeBrand={activeBrand}
-        accessibleProjects={initialContext.accessibleProjects}
+        accessibleProjects={accessibleProjects}
         desk={view.desk}
         key={`${view.desk}-${activeBrandId ?? 'unscoped'}`}
         foundationReadEnabled={initialContext.foundation.readEnabled}
         initialProjectId={view.projectId ?? initialContext.projectId}
         launchingProjectId={launchingProjectId}
         onNavigate={setView}
-        onOpenComposition={(project) =>
-          openComposition(project, 'projects')}
+        onOpenComposition={async (project) => {
+          await openComposition(project, 'projects')
+        }}
         port={creativeStudioV3ProductionPort}
       />
     )
@@ -304,13 +344,15 @@ export function CreativeStudioV3({
       <StudioV3Home
         activeBrand={activeBrand}
         activeProject={activeProject}
-        accessibleProjects={initialContext.accessibleProjects}
+        accessibleProjects={accessibleProjects}
         foundationReadEnabled={initialContext.foundation.readEnabled}
         initialProjectId={initialContext.projectId}
         key={`home-${activeBrandId ?? 'unscoped'}`}
         launchingProjectId={launchingProjectId}
         onNavigate={setView}
-        onOpenComposition={(project) => openComposition(project, 'home')}
+        onCreateProject={createProject}
+        onOpenComposition={(project, canvas) =>
+          openComposition(project, 'home', false, canvas)}
         port={creativeStudioV3ProductionPort}
       />
     )
@@ -328,6 +370,9 @@ export function CreativeStudioV3({
       onBrandChange={changeBrand}
       onProjectChange={changeProject}
       onNavigate={setView}
+      onAskCreativeAgent={() => {
+        if (activeProject) void openComposition(activeProject, 'home', true)
+      }}
       legacyAllowed={initialContext.legacyAllowed}
       studioRole={initialContext.studioRole}
     >

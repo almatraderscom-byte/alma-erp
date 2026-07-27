@@ -9,6 +9,7 @@ import type {
   SavedStudioModel,
   StudioBrandProfile,
   StudioConfig,
+  StudioHealth,
   StudioSettings,
   StudioRunEstimateClient,
   RunPayload,
@@ -57,6 +58,7 @@ type LabData = {
   recipes: StudioBrandRecipe[]
   sources: GalleryItem[]
   config: StudioConfig | null
+  health: StudioHealth | null
   settings: StudioSettings | null
   issues: string[]
 }
@@ -67,6 +69,7 @@ const EMPTY_DATA: LabData = {
   recipes: [],
   sources: [],
   config: null,
+  health: null,
   settings: null,
   issues: [],
 }
@@ -94,30 +97,39 @@ function sourceImage(item: GalleryItem | null): string | null {
   return item?.originalVariant?.storagePath ?? item?.storagePath ?? null
 }
 
-function ImageTile({
-  active,
-  image,
+function previewBackground(value: string | null | undefined) {
+  return value ? { backgroundImage: `url(${JSON.stringify(value)})` } : undefined
+}
+
+function SourceArtwork({
+  kind,
   label,
-  meta,
-  onClick,
+  preview,
 }: {
-  active: boolean
-  image: string | null | undefined
+  kind: 'product' | 'model'
   label: string
-  meta: string
-  onClick: () => void
+  preview: string | null | undefined
 }) {
+  const hasPreview = Boolean(preview)
   return (
-    <button
-      aria-pressed={active}
-      className={active ? styles.mediaChoiceActive : styles.mediaChoice}
-      onClick={onClick}
-      type="button"
+    <div
+      aria-label={hasPreview ? `${kind} preview: ${label}` : undefined}
+      className={`${styles.v4SourceArtwork} ${
+        kind === 'model'
+          ? `${styles.v4ModelArtwork} ${styles.v3Tone_ink}`
+          : styles.v3Tone_coral
+      } ${hasPreview ? styles.v7HasSourcePreview : ''}`}
+      role={hasPreview ? 'img' : undefined}
+      style={previewBackground(preview)}
     >
-      <span>{image ? <img alt="" src={image} /> : <StudioV3Icon name="image" />}</span>
-      <strong>{label}</strong>
-      <small>{meta}</small>
-    </button>
+      {!hasPreview && (
+        <>
+          <span>{kind === 'model' ? 'MODEL' : 'PRODUCT'}</span>
+          <i />
+          <b />
+        </>
+      )}
+    </div>
   )
 }
 
@@ -140,6 +152,8 @@ export function StudioV3ImageLab({
   const [loading, setLoading] = useState(true)
   const [workspaceTab, setWorkspaceTab] = useState<'explore' | 'history'>('explore')
   const [architecture, setArchitecture] = useState<'auto' | 'advanced'>('auto')
+  const [isExpanded, setIsExpanded] = useState(false)
+  const [sourceTray, setSourceTray] = useState<'product' | 'model' | null>(null)
   const [mode, setMode] = useState<StudioModeId>('product_to_model')
   const [engine, setEngine] = useState<StudioEngineId>('fashn')
   const [familyPreset, setFamilyPreset] = useState<FamilyPresetId>('single')
@@ -155,6 +169,16 @@ export function StudioV3ImageLab({
   const [numImages, setNumImages] = useState(1)
   const [includeFamily, setIncludeFamily] = useState(false)
   const [includeReel, setIncludeReel] = useState(false)
+  const [uploadedProductPath, setUploadedProductPath] = useState('')
+  const [uploadedProductPreview, setUploadedProductPreview] = useState('')
+  const [uploadedProductName, setUploadedProductName] = useState('')
+  const [uploadedModelPath, setUploadedModelPath] = useState('')
+  const [uploadedModelPreview, setUploadedModelPreview] = useState('')
+  const [uploadedModelName, setUploadedModelName] = useState('')
+  const [uploadingKind, setUploadingKind] = useState<'product' | 'model' | null>(null)
+  const [localStatus, setLocalStatus] = useState(
+    'Production APIs are connected. Nothing has been queued.',
+  )
   const [reviewOpen, setReviewOpen] = useState(false)
   const [reviewEstimate, setReviewEstimate] = useState<StudioRunEstimateClient | null>(null)
   const [reviewRequest, setReviewRequest] = useState<(RunPayload & {
@@ -179,6 +203,7 @@ export function StudioV3ImageLab({
       ),
       port.getConfig(),
       port.getSettings(),
+      port.getHealth(),
     ]).then((results) => {
       if (!live) return
       const issues: string[] = []
@@ -195,6 +220,7 @@ export function StudioV3ImageLab({
         sources: take<{ items: GalleryItem[] }>(3, 'Gallery', { items: [] }).items,
         config: take(4, 'Capability config', null),
         settings: take(5, 'Studio settings', null),
+        health: take(6, 'Operational health', null),
         issues,
       }
       setData(next)
@@ -214,10 +240,36 @@ export function StudioV3ImageLab({
     return () => { live = false }
   }, [activeBrand?.brandProfileId, activeProject, port])
 
+  useEffect(() => {
+    if (!isExpanded) return
+    const previousOverflow = document.body.style.overflow
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsExpanded(false)
+    }
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [isExpanded])
+
+  useEffect(
+    () => () => {
+      if (uploadedProductPreview) URL.revokeObjectURL(uploadedProductPreview)
+    },
+    [uploadedProductPreview],
+  )
+  useEffect(
+    () => () => {
+      if (uploadedModelPreview) URL.revokeObjectURL(uploadedModelPreview)
+    },
+    [uploadedModelPreview],
+  )
+
   const selectedProduct = data.products.find((product) => product.code === selectedProductCode) ?? null
   const selectedModel = data.models.find((model) => model.id === selectedModelId) ?? null
   const selectedSource = data.sources.find((asset) => asset.id === selectedSourceId) ?? null
-  const selectedRecipe = data.recipes.find((recipe) => recipe.id === recipeId) ?? null
   const requirements = fieldRequirement(mode)
   const multiPerson = familyPreset !== 'single'
     && (mode === 'product_to_model' || mode === 'try_on')
@@ -274,8 +326,8 @@ export function StudioV3ImageLab({
     }
   }, [aspectRatio, resolution, resolutionState])
 
-  const productPath = selectedProduct?.sourceImage ?? null
-  const personPath = selectedModel?.imagePath ?? null
+  const productPath = uploadedProductPath || selectedProduct?.sourceImage || null
+  const personPath = uploadedModelPath || selectedModel?.imagePath || null
   const sourcePath = sourceImage(selectedSource)
   const needsPrompt = mode === 'generate' || mode === 'edit'
   const hasPerson = Boolean(selectedModelId || personPath)
@@ -295,9 +347,42 @@ export function StudioV3ImageLab({
     && resolutionState.kind !== 'unsupported'
     && engine !== 'fal_flux_fill'
 
-  const openUpload = (kind: 'product' | 'person' | 'source') => {
-    void kind
-    toast.error('Use a canonical project product, scoped identity, or project Gallery asset. Unscoped uploads cannot enter a paid run.')
+  const uploadReference = async (file: File, kind: 'product' | 'model') => {
+    if (!activeBrand || !activeProject || !creationAvailable) {
+      toast.error('Choose an editable, access-scoped project before uploading.')
+      return
+    }
+    setUploadingKind(kind)
+    try {
+      const path = await port.uploadImage(file, `creative-studio-v4-${kind}`)
+      const preview = URL.createObjectURL(file)
+      if (kind === 'product') {
+        setUploadedProductPath(path)
+        setUploadedProductPreview(preview)
+        setUploadedProductName(file.name)
+      } else {
+        setUploadedModelPath(path)
+        setUploadedModelPreview(preview)
+        setUploadedModelName(file.name)
+        setSelectedModelId('')
+        if (architecture === 'auto') {
+          setArchitecture('advanced')
+          setMode('try_on')
+        }
+      }
+      setLocalStatus(
+        `${file.name} uploaded to the scoped Studio workspace. No generation was queued.`,
+      )
+      toast.success(
+        kind === 'model' && architecture === 'auto'
+          ? 'Model uploaded. Advanced Try-On opened because Auto requires a saved identity.'
+          : `${kind === 'product' ? 'Product' : 'Model'} reference uploaded.`,
+      )
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : 'The upload failed.')
+    } finally {
+      setUploadingKind(null)
+    }
   }
 
   const buildRequest = (): RunPayload & {
@@ -335,7 +420,9 @@ export function StudioV3ImageLab({
       provider,
       vtonEngine: engine === 'xai_imagine' || isVton ? engine : undefined,
       productImagePath: productPath ?? undefined,
-      modelId: selectedModelId || undefined,
+      modelImagePath: uploadedModelPath || undefined,
+      faceReferencePath: mode === 'face_to_model' ? personPath ?? undefined : undefined,
+      modelId: uploadedModelPath ? undefined : selectedModelId || undefined,
       sourceImagePath: sourcePath ?? undefined,
       sourcePendingActionId: selectedSource?.id,
       familyPreset: isVton ? familyPreset : undefined,
@@ -389,21 +476,153 @@ export function StudioV3ImageLab({
   }
 
   const selectedEngineDefinition = STUDIO_ENGINES.find((item) => item.id === engine)
-  const autoReady = Boolean(productPath && selectedModel)
+  const autoReady = Boolean(productPath && selectedModel && !uploadedModelPath)
+  const liveEngineCount = data.config?.engines.filter((item) =>
+    item.configured && item.enabled && item.runnable && !item.killed).length ?? 0
+  const selectedProductPreview =
+    uploadedProductPreview
+    || selectedProduct?.previewImage
+    || selectedProduct?.sourceImage
+  const selectedModelPreview =
+    uploadedModelPreview
+    || selectedModel?.imageUrl
+    || selectedModel?.imagePath
+
+  const productLabel = uploadedProductName || selectedProduct?.name || 'Choose product'
+  const productMeta = uploadedProductName
+    ? 'Uploaded project reference'
+    : selectedProduct?.code ?? 'Required for garment modes'
+  const modelLabel = uploadedModelName || selectedModel?.name || 'Choose model'
+  const modelMeta = uploadedModelName
+    ? 'Uploaded temporary reference'
+    : selectedModel
+      ? `${selectedModel.role ?? 'Identity'} · ${selectedModel.avatar?.built ? `${selectedModel.avatar.count} angles` : 'single reference'}`
+      : 'Saved identity or upload'
+
+  const sourceCards = (
+    <div
+      aria-label="Image composer sources"
+      className={architecture === 'auto' ? styles.v4AutoSourceGrid : styles.v6AdvancedSourceGrid}
+    >
+      <section
+        className={styles.v4SourceCard}
+        data-required={architecture === 'auto' || requirements.needsProduct}
+      >
+        <SourceArtwork
+          kind="product"
+          label={productLabel}
+          preview={selectedProductPreview}
+        />
+        <div className={styles.v4SourceContent}>
+          <span>
+            PRODUCT
+            {architecture === 'advanced' && (
+              <em>{requirements.needsProduct ? 'REQUIRED' : 'OPTIONAL'}</em>
+            )}
+          </span>
+          <strong>{productLabel}</strong>
+          <small>{productMeta}</small>
+          <div className={styles.v4SourceActions}>
+            <button
+              aria-expanded={sourceTray === 'product'}
+              onClick={() => setSourceTray((current) => current === 'product' ? null : 'product')}
+              type="button"
+            >
+              <StudioV3Icon name="gallery" />
+              Gallery
+            </button>
+            <label aria-disabled={uploadingKind !== null}>
+              <input
+                accept="image/*"
+                disabled={uploadingKind !== null}
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  event.currentTarget.value = ''
+                  if (file) void uploadReference(file, 'product')
+                }}
+                type="file"
+              />
+              <StudioV3Icon name="image" />
+              {uploadingKind === 'product' ? 'Uploading…' : 'Upload'}
+            </label>
+            <button
+              onClick={() => onNavigate({ id: 'gallery', initialType: 'image' })}
+              type="button"
+            >
+              <StudioV3Icon name="grid" />
+              Assets
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section
+        className={styles.v4SourceCard}
+        data-required={architecture === 'auto' || requirements.needsModel}
+      >
+        <SourceArtwork
+          kind="model"
+          label={modelLabel}
+          preview={selectedModelPreview}
+        />
+        <div className={styles.v4SourceContent}>
+          <span>
+            MODEL
+            {architecture === 'advanced' && (
+              <em>{requirements.needsModel ? 'REQUIRED' : 'OPTIONAL'}</em>
+            )}
+          </span>
+          <strong>{modelLabel}</strong>
+          <small>{modelMeta}</small>
+          <div className={styles.v4SourceActions}>
+            <button
+              aria-expanded={sourceTray === 'model'}
+              onClick={() => setSourceTray((current) => current === 'model' ? null : 'model')}
+              type="button"
+            >
+              <StudioV3Icon name="systems" />
+              Library
+            </button>
+            <label aria-disabled={uploadingKind !== null}>
+              <input
+                accept="image/*"
+                disabled={uploadingKind !== null}
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  event.currentTarget.value = ''
+                  if (file) void uploadReference(file, 'model')
+                }}
+                type="file"
+              />
+              <StudioV3Icon name="image" />
+              {uploadingKind === 'model' ? 'Uploading…' : 'Upload'}
+            </label>
+            <button
+              onClick={() => onNavigate({ id: 'desk', desk: 'systems' })}
+              type="button"
+            >
+              <StudioV3Icon name="voice" />
+              Avatar
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+  )
 
   return (
-    <div className={styles.page}>
+    <div className={`${styles.page} ${styles.v4LabWithFloatingComposer}`}>
       <header className={styles.workspaceHeader}>
         <div className={styles.workspaceTitle}>
           <span><StudioV3Icon name="image" /></span>
           <div>
-            <span className={styles.eyebrow}>Create / Explore</span>
+            <span className={styles.eyebrow}>Production create</span>
             <h1>Image Lab</h1>
-            <p>Start with real catalog, identity and source context; capability truth follows the selected engine.</p>
+            <p>{activeProject?.name ?? 'Choose a project'} · real catalog, identity and provider contracts.</p>
           </div>
         </div>
         <div className={styles.segmented}>
-          <button aria-pressed={workspaceTab === 'explore'} onClick={() => setWorkspaceTab('explore')} type="button">Explore</button>
+          <button aria-pressed={workspaceTab === 'explore'} onClick={() => setWorkspaceTab('explore')} type="button">Compose</button>
           <button aria-pressed={workspaceTab === 'history'} onClick={() => setWorkspaceTab('history')} type="button">History</button>
         </div>
       </header>
@@ -414,17 +633,12 @@ export function StudioV3ImageLab({
           <span>{data.issues.join(' · ')}</span>
         </div>
       )}
-      <p className={styles.scopeNotice}>
-        <StudioV3Icon name="lock" />
-        Brand or project changes reload this Lab through authenticated access-scoped APIs:
-        {' '}{STUDIO_V3_SCOPE_BOUNDARY.gallery}; {STUDIO_V3_SCOPE_BOUNDARY.models}.
-      </p>
       {!creationAvailable && (
         <div className={styles.truthBoundary}>
           <StudioV3Icon name="lock" />
           <div>
             <strong>{activeBrand?.role ?? 'Unassigned'} cannot create in this scope</strong>
-            <p>Choose an accessible project. Reviewers remain read-only; owner/creator requests still require the server spend threshold and signed confirmation gate.</p>
+            <p>Choose an editable project. Reviewer access remains read-only.</p>
           </div>
         </div>
       )}
@@ -440,7 +654,15 @@ export function StudioV3ImageLab({
           ) : (
             <div className={styles.historyGrid}>
               {data.sources.map((asset) => (
-                <button key={asset.id} onClick={() => { setSelectedSourceId(asset.id); setWorkspaceTab('explore'); setArchitecture('advanced') }} type="button">
+                <button
+                  key={asset.id}
+                  onClick={() => {
+                    setSelectedSourceId(asset.id)
+                    setWorkspaceTab('explore')
+                    setArchitecture('advanced')
+                  }}
+                  type="button"
+                >
                   <span>{asset.thumbUrl || asset.previewUrl ? <img alt="" src={asset.thumbUrl ?? asset.previewUrl ?? ''} /> : <StudioV3Icon name="image" />}</span>
                   <strong>{asset.summary ?? asset.mode}</strong>
                   <small>{asset.provider} · {asset.assetState}</small>
@@ -450,263 +672,441 @@ export function StudioV3ImageLab({
           )}
         </section>
       ) : (
-        <div className={styles.labLayout}>
-          <section aria-label="Image source explorer" className={styles.labExplore}>
-            <div className={styles.architectureSwitch}>
-              <button aria-pressed={architecture === 'auto'} onClick={() => setArchitecture('auto')} type="button">
-                <StudioV3Icon name="spark" /><span><strong>Auto</strong><small>Product + default identity</small></span>
-              </button>
-              <button aria-pressed={architecture === 'advanced'} onClick={() => setArchitecture('advanced')} type="button">
-                <StudioV3Icon name="operations" /><span><strong>Advanced</strong><small>Seven exact production modes</small></span>
-              </button>
-            </div>
+        <>
+          <section className={styles.historyPanel}>
+            <header>
+              <div>
+                <span className={styles.eyebrow}>Active production scope</span>
+                <h2>{activeProject?.name ?? 'No project selected'}</h2>
+              </div>
+              <span className={styles.serverBadge}>
+                <StudioV3Icon name="lock" />
+                {data.health?.worker.healthy ? 'Worker healthy' : 'Server-gated'}
+              </span>
+            </header>
+            <p className={styles.scopeNotice}>
+              <StudioV3Icon name="lock" />
+              Product, identity and Gallery reads are authenticated and project-scoped:
+              {' '}{STUDIO_V3_SCOPE_BOUNDARY.gallery}; {STUDIO_V3_SCOPE_BOUNDARY.models}.
+            </p>
+          </section>
 
-            <section className={styles.sourceSection}>
-              <header><div><span className={styles.eyebrow}>Project product</span><h2>Canonical product source</h2></div><button disabled onClick={() => openUpload('product')} type="button">Project sources only</button></header>
-              {loading ? <div className={styles.laneSkeleton} /> : data.products.length === 0 ? (
-                <p className={styles.emptyState}>The active project has no canonical product snapshot. Add one from Projects before generation.</p>
-              ) : (
-                <div className={styles.mediaLane}>
-                  {data.products.slice(0, 14).map((product) => (
-                    <ImageTile
-                      active={selectedProductCode === product.code}
-                      image={product.previewImage ?? product.sourceImage}
-                      key={product.code}
-                      label={product.name}
-                      meta={`${product.code} · ৳${product.priceBdt.toLocaleString('en-BD')}`}
-                      onClick={() => setSelectedProductCode(product.code)}
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
+          <section
+            aria-labelledby="image-composer-title"
+            className={`${styles.v3Composer} ${styles.v4FloatingComposer} ${
+              architecture === 'auto' ? styles.v4ComposerAuto : styles.v4ComposerAdvanced
+            } ${isExpanded ? styles.v6ComposerExpanded : ''}`}
+            data-workspace={isExpanded ? 'expanded' : 'compact'}
+          >
+            {architecture === 'auto' && (
+              <div className={styles.v4ComposerRecipes} aria-label="Project recipes">
+                {data.recipes.slice(0, 3).map((recipe) => (
+                  <button
+                    aria-pressed={recipeId === recipe.id}
+                    key={recipe.id}
+                    onClick={() => setRecipeId(recipe.id)}
+                    type="button"
+                  >
+                    <StudioV3Icon name="systems" />
+                    {recipe.name}
+                  </button>
+                ))}
+              </div>
+            )}
 
-            <section className={styles.sourceSection}>
-              <header><div><span className={styles.eyebrow}>Brand-isolated identity</span><h2>Avatar / saved model</h2></div><button disabled onClick={() => openUpload('person')} type="button">Scoped identities only</button></header>
-              {data.models.length === 0 ? (
-                <p className={styles.emptyState}>No saved model is available in this brand and project. Add a scoped identity from Recipes &amp; Models.</p>
-              ) : (
-                <div className={styles.identityLane}>
-                  {data.models.map((model) => (
+            <header className={architecture === 'auto' ? styles.v4ComposerHeader : styles.v3ComposerHeader}>
+              <div>
+                <span className={styles.eyebrow}>IMAGE COMPOSER</span>
+                <h2 id="image-composer-title">
+                  {architecture === 'auto' ? 'Create a product image' : 'Advanced control desk'}
+                </h2>
+                {architecture === 'advanced' && <p>Mode-aware references, exact provider truth and owner-reviewed cost.</p>}
+              </div>
+              <div className={styles.v4ComposerTabs} role="tablist" aria-label="Image workflow">
+                <button
+                  aria-selected={architecture === 'auto'}
+                  className={architecture === 'auto' ? styles.v4ComposerTabActive : undefined}
+                  onClick={() => setArchitecture('auto')}
+                  role="tab"
+                  type="button"
+                >
+                  Auto
+                </button>
+                <button
+                  aria-selected={architecture === 'advanced'}
+                  className={architecture === 'advanced' ? styles.v4ComposerTabActive : undefined}
+                  onClick={() => setArchitecture('advanced')}
+                  role="tab"
+                  type="button"
+                >
+                  Advanced
+                </button>
+              </div>
+              <div className={styles.v6ComposerHeaderActions}>
+                <button
+                  aria-label={isExpanded ? 'Collapse image workspace' : 'Expand image workspace'}
+                  className={styles.v6ComposerExpand}
+                  onClick={() => setIsExpanded((current) => !current)}
+                  title={isExpanded ? 'Return to compact composer' : 'Open full workspace'}
+                  type="button"
+                >
+                  <span aria-hidden="true" className={styles.v6ExpandGlyph}><i /><i /></span>
+                </button>
+                <span
+                  className={`${styles.v9ComposerApiBadge} ${
+                    data.config && data.health ? '' : styles.v9ComposerApiBadgeWarning
+                  }`}
+                >
+                  <i />
+                  <span>
+                    <strong>{loading ? 'Checking API' : data.config ? `Live API · ${liveEngineCount} ready` : 'API unavailable'}</strong>
+                    <small>৳0 read-only status</small>
+                  </span>
+                </span>
+              </div>
+            </header>
+
+            {architecture === 'advanced' && (
+              <>
+                <div className={styles.v3ModeScroller} role="tablist" aria-label="Advanced image modes">
+                  {STUDIO_MODES.map((item) => (
                     <button
-                      aria-pressed={selectedModelId === model.id}
-                      key={model.id}
-                      onClick={() => setSelectedModelId(model.id)}
+                      aria-selected={mode === item.id}
+                      className={mode === item.id ? styles.v3ModeActive : undefined}
+                      key={item.id}
+                      onClick={() => {
+                        setMode(item.id)
+                        if (item.id === 'image_to_video') {
+                          setLocalStatus('Choose a ready Gallery image, then continue in Video Lab.')
+                        }
+                      }}
+                      role="tab"
                       type="button"
                     >
-                      <span>{model.imageUrl ? <img alt="" src={model.imageUrl} /> : <StudioV3Icon name="voice" />}</span>
-                      <strong>{model.name}</strong>
-                      <small>{model.role ?? 'No role'} · {model.avatar?.built ? `${model.avatar.count} angles` : 'single image'}</small>
-                      {model.isDefault && <em>Default</em>}
+                      <StudioV3Icon name={item.id === 'generate' ? 'spark' : item.id === 'image_to_video' ? 'video' : item.id === 'edit' ? 'operations' : 'image'} />
+                      <span><strong>{item.label}</strong><small>{item.short}</small></span>
                     </button>
                   ))}
                 </div>
-              )}
-            </section>
+                <div className={styles.v3ModeExplanation}>
+                  <span>{requirements.short}</span>
+                  <p>
+                    {requirements.needsProduct ? 'Product reference' : 'No product required'}
+                    {' · '}
+                    {requirements.needsModel ? 'model identity required' : 'model optional'}
+                    {requirements.needsSource ? ' · source image required' : ''}
+                  </p>
+                </div>
+              </>
+            )}
 
-            {architecture === 'advanced' && requirements.needsSource && (
-              <section className={styles.sourceSection}>
-                <header><div><span className={styles.eyebrow}>Project Gallery source</span><h2>Canonical source image</h2></div><button disabled onClick={() => openUpload('source')} type="button">Project assets only</button></header>
-                {data.sources.length === 0 ? (
-                  <p className={styles.emptyState}>No ready Gallery image is available for this mode.</p>
-                ) : (
-                  <div className={styles.mediaLane}>
-                    {data.sources.map((asset) => (
-                      <ImageTile
-                        active={selectedSourceId === asset.id}
-                        image={asset.thumbUrl ?? asset.previewUrl}
-                        key={asset.id}
-                        label={asset.summary ?? asset.mode}
-                        meta={`${asset.provider} · ${asset.originalVariant ? `${asset.originalVariant.width}×${asset.originalVariant.height}` : asset.assetState}`}
-                        onClick={() => setSelectedSourceId(asset.id)}
-                      />
-                    ))}
+            {sourceCards}
+
+            {sourceTray && (
+              <section className={`${styles.v4SourceTray} ${architecture === 'advanced' ? styles.v6AdvancedSourceTray : ''}`}>
+                <header>
+                  <div>
+                    <span className={styles.eyebrow}>{sourceTray === 'product' ? 'PRODUCT GALLERY' : 'MODEL & AVATAR LIBRARY'}</span>
+                    <strong>{sourceTray === 'product' ? 'Choose an approved project product' : 'Choose a scoped identity'}</strong>
                   </div>
-                )}
+                  <button aria-label="Close source picker" onClick={() => setSourceTray(null)} type="button">
+                    <StudioV3Icon name="close" />
+                  </button>
+                </header>
+                <div>
+                  {sourceTray === 'product'
+                    ? data.products.map((product) => (
+                        <button
+                          aria-pressed={selectedProductCode === product.code && !uploadedProductPath}
+                          key={product.code}
+                          onClick={() => {
+                            setSelectedProductCode(product.code)
+                            setUploadedProductPath('')
+                            setUploadedProductPreview('')
+                            setUploadedProductName('')
+                            setSourceTray(null)
+                          }}
+                          type="button"
+                        >
+                          <span
+                            className={styles.v3ProductSwatch}
+                            style={previewBackground(product.previewImage ?? product.sourceImage)}
+                          />
+                          <span><strong>{product.name}</strong><small>{product.code}</small></span>
+                        </button>
+                      ))
+                    : data.models.map((model) => (
+                        <button
+                          aria-pressed={selectedModelId === model.id && !uploadedModelPath}
+                          key={model.id}
+                          onClick={() => {
+                            setSelectedModelId(model.id)
+                            setUploadedModelPath('')
+                            setUploadedModelPreview('')
+                            setUploadedModelName('')
+                            setSourceTray(null)
+                          }}
+                          type="button"
+                        >
+                          <span
+                            className={styles.v3AvatarPortrait}
+                            style={previewBackground(model.imageUrl ?? model.imagePath)}
+                          />
+                          <span><strong>{model.name}</strong><small>{model.role ?? 'Identity'} · {model.avatar?.built ? `${model.avatar.count} angles` : 'single image'}</small></span>
+                        </button>
+                      ))}
+                </div>
               </section>
             )}
 
-            <section className={styles.sourceSection}>
-              <header><div><span className={styles.eyebrow}>Approved starting systems</span><h2>Recipes</h2></div><button onClick={() => onNavigate({ id: 'desk', desk: 'systems' })} type="button">Manage</button></header>
-              {data.recipes.length === 0 ? (
-                <p className={styles.emptyState}>No recipe is available. Recipe selection will not be claimed in the request.</p>
-              ) : (
-                <div className={styles.recipeLane}>
-                  {data.recipes.map((recipe) => (
-                    <button aria-pressed={recipeId === recipe.id} key={recipe.id} onClick={() => setRecipeId(recipe.id)} type="button">
-                      <strong>{recipe.name}</strong>
-                      <small>v{recipe.version} · {recipe.locked ? 'locked' : 'editable'} · ৳{recipe.spendCeilingBdt} cap</small>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {selectedRecipe && <p className={styles.truthNote}>Recipe is visible context only. Existing Advanced generation APIs do not yet consume every recipe field.</p>}
-            </section>
-          </section>
-
-          <aside aria-label="Image generation composer" className={styles.composer}>
-            <header className={styles.composerHeader}>
-              <div><span className={styles.eyebrow}>{architecture === 'auto' ? 'Guided workflow' : 'Capability-aware composer'}</span><h2>{architecture === 'auto' ? 'Auto image' : 'Advanced image'}</h2></div>
-              <span className={styles.serverBadge}><StudioV3Icon name="lock" /> Server authority</span>
-            </header>
+            <label className={styles.v3PromptField}>
+              <span>
+                Creative direction
+                <em>{needsPrompt ? 'required' : 'optional'}</em>
+              </span>
+              <textarea
+                aria-label="Creative direction"
+                maxLength={1_200}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder={mode === 'generate' ? 'Describe the campaign visual…' : 'Describe styling, light, setting or the exact edit…'}
+                value={prompt}
+              />
+            </label>
 
             {architecture === 'auto' ? (
-              <div className={styles.composerBody}>
-                <div className={styles.selectionSummary}>
-                  <div><span>Product</span><strong>{selectedProduct?.name ?? 'Required'}</strong></div>
-                  <div><span>Identity</span><strong>{selectedModel?.name ?? 'Default saved model required'}</strong></div>
-                  <div><span>Engine path</span><strong>{data.config?.singleVtonDefault ?? 'Server default unavailable'}</strong></div>
-                </div>
-                <label className={styles.toggleRow}>
-                  <span><strong>Family variant</strong><small>Uses saved role identities; server validates required roles.</small></span>
-                  <input checked={includeFamily} onChange={(event) => setIncludeFamily(event.target.checked)} type="checkbox" />
-                </label>
-                <label className={styles.toggleRow}>
-                  <span><strong>Six-second Reel</strong><small>Queues a separate Veo action only after confirmation.</small></span>
-                  <input checked={includeReel} onChange={(event) => setIncludeReel(event.target.checked)} type="checkbox" />
-                </label>
-                <div className={styles.readiness} data-ready={autoReady}>
+              <>
+                <footer className={styles.v4ComposerFooter}>
+                  <div className={styles.v4ComposerControls} aria-label="Auto image settings">
+                    <button type="button"><StudioV3Icon name="image" />{data.config?.singleVtonDefault ?? 'Server default'}</button>
+                    <button type="button">4:5</button>
+                    <button type="button">Server resolution</button>
+                    <label>
+                      <input checked={includeFamily} onChange={(event) => setIncludeFamily(event.target.checked)} type="checkbox" />
+                      Family
+                    </label>
+                    <label>
+                      <input checked={includeReel} onChange={(event) => setIncludeReel(event.target.checked)} type="checkbox" />
+                      + 6s reel
+                    </label>
+                  </div>
+                  <span className={styles.v4ComposerEstimate}>
+                    <strong>Server estimate</strong>
+                    <small>signed review first</small>
+                  </span>
+                  <button
+                    aria-label="Review exact production estimate"
+                    className={styles.v4ComposerSubmit}
+                    disabled={!creationAvailable || !autoReady || estimating}
+                    onClick={() => void openReview()}
+                    type="button"
+                  >
+                    <StudioV3Icon name="arrow" />
+                  </button>
+                </footer>
+                <p className={styles.v4ComposerStatus}>
                   <StudioV3Icon name={autoReady ? 'check' : 'warning'} />
-                  <div>
-                    <strong>{autoReady ? 'Ready for authorized review' : 'Missing production context'}</strong>
-                    <span>{autoReady ? 'The server will recompute engine, readiness and cost policy.' : 'Choose a product with a source image and a saved default identity.'}</span>
-                  </div>
-                </div>
-              <button className={styles.primaryButton} disabled={!creationAvailable || !autoReady || estimating} onClick={() => void openReview()} type="button">
-                {estimating ? 'Getting exact estimate…' : 'Review exact estimate'} <StudioV3Icon name="arrow" />
-                </button>
-              </div>
+                  {autoReady
+                    ? localStatus
+                    : uploadedModelPath
+                      ? 'Uploaded model references run in Advanced mode; Auto requires a saved identity.'
+                      : 'Choose a product source and saved identity to request an exact estimate.'}
+                </p>
+              </>
             ) : (
-              <div className={styles.composerBody}>
-                <fieldset className={styles.optionGroup}>
-                  <legend>Mode</legend>
-                  <div className={styles.modeGrid}>
-                    {STUDIO_MODES.map((item) => (
-                      <button aria-pressed={mode === item.id} key={item.id} onClick={() => setMode(item.id)} type="button">{item.short}</button>
-                    ))}
-                  </div>
-                </fieldset>
-
-                {(mode === 'product_to_model' || mode === 'try_on') && (
-                  <fieldset className={styles.optionGroup}>
-                    <legend>Family</legend>
-                    <div className={styles.chipRow}>
-                      {FAMILY_PRESETS.map((item) => (
-                        <button aria-pressed={familyPreset === item.id} key={item.id} onClick={() => setFamilyPreset(item.id)} type="button">{item.labelBn}</button>
-                      ))}
+              <>
+                <section
+                  aria-labelledby="advanced-production-controls-title"
+                  className={styles.v8InlineProductionControls}
+                >
+                  <header>
+                    <span>
+                      <i><StudioV3Icon name="operations" /></i>
+                      <span>
+                        <strong id="advanced-production-controls-title">Production controls</strong>
+                        <small>Always visible inside the composer</small>
+                      </span>
+                    </span>
+                    <em>Live contract</em>
+                  </header>
+                  <div className={styles.v6ProductionControlDeck}>
+                    <div className={styles.v3ControlGrid}>
+                      <label>
+                        <span>Provider / model</span>
+                        <select onChange={(event) => setEngine(event.target.value as StudioEngineId)} value={engine}>
+                          {engines.map((item) => {
+                            const availability = engineAvailability(data.config, item.id)
+                            const selectable = engineIsSelectable(data.config, item.id)
+                            return (
+                              <option disabled={!selectable} key={item.id} value={item.id}>
+                                {item.label} · {selectable ? 'Live' : availability?.killed ? 'Killed' : 'Unavailable'}
+                              </option>
+                            )
+                          })}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Background</span>
+                        <select onChange={(event) => setBackgroundId(event.target.value)} value={backgroundId}>
+                          {BACKGROUND_PRESETS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                        </select>
+                      </label>
                     </div>
-                  </fieldset>
-                )}
 
-                <fieldset className={styles.optionGroup}>
-                  <legend>Engine</legend>
-                  <div className={styles.engineList}>
-                    {engines.map((item) => {
-                      const availability = engineAvailability(data.config, item.id)
-                      const selectable = engineIsSelectable(data.config, item.id)
-                      return (
-                        <button
-                          aria-pressed={engine === item.id}
-                          disabled={!selectable}
-                          key={item.id}
-                          onClick={() => setEngine(item.id)}
-                          type="button"
-                        >
-                          <span><strong>{item.label}</strong><small>{item.status.replace('_', ' ')} · {item.approxCost ?? 'server-priced'}</small></span>
-                          <em>{selectable ? 'Available' : availability?.killed ? 'Killed' : availability?.configured ? 'Disabled' : 'Not configured'}</em>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </fieldset>
-
-                <div className={styles.fidelityCard}>
-                  <span>{capability ? fidelityLabel[capability.fidelity] : 'Unsupported combination'}</span>
-                  <strong>{selectedEngineDefinition?.label ?? engine}</strong>
-                  <p>{capability?.limitationBn ?? 'The server blocks this engine/mode combination before queueing.'}</p>
-                  {capability && <small>Required references: {capability.required.join(', ') || 'none'} · max {capability.maxReferences}</small>}
-                </div>
-
-                <label className={styles.field}>
-                  <span>Creative direction {needsPrompt && <em>Required</em>}</span>
-                  <textarea
-                    maxLength={1_200}
-                    onChange={(event) => setPrompt(event.target.value)}
-                    placeholder={mode === 'generate' ? 'Describe the campaign visual…' : 'Optional style and exact change instructions…'}
-                    rows={4}
-                    value={prompt}
-                  />
-                </label>
-
-                <fieldset className={styles.optionGroup}>
-                  <legend>Background</legend>
-                  <div className={styles.chipRow}>
-                    {BACKGROUND_PRESETS.map((item) => <button aria-pressed={backgroundId === item.id} key={item.id} onClick={() => setBackgroundId(item.id)} type="button">{item.label}</button>)}
-                  </div>
-                </fieldset>
-
-                {resolutionState.kind === 'tiered' && (
-                  <>
-                    <fieldset className={styles.optionGroup}>
-                      <legend>Aspect</legend>
-                      <div className={styles.chipRow}>
-                        {ASPECT_RATIOS.map((value) => (
-                          <button
-                            aria-pressed={aspectRatio === value}
-                            disabled={!resolutionState.supportedAspects.includes(value)}
-                            key={value}
-                            onClick={() => setAspectRatio(value)}
-                            type="button"
-                          >
-                            {value}
-                          </button>
-                        ))}
-                      </div>
-                    </fieldset>
-                    <fieldset className={styles.optionGroup}>
-                      <legend>Requested resolution</legend>
-                      <div className={styles.resolutionGrid}>
-                        {(['1k', '2k', '4k'] as FashnResolution[]).map((value) => {
-                          const option = resolutionState.resolutionOptions.find((item) => item.value === value)
-                          return (
-                            <button aria-pressed={resolution === value} disabled={!option} key={value} onClick={() => setResolution(value)} type="button">
-                              <strong>{value.toUpperCase()}</strong><small>{option?.label.replace(`${value.toUpperCase()} · `, '') ?? 'Unsupported'}</small>
+                    {(mode === 'product_to_model' || mode === 'try_on') && (
+                      <div className={styles.v3OptionGroup}>
+                        <div className={styles.v3FieldLabel}><span>Composition</span><em>family roles</em></div>
+                        <div className={styles.v3OptionRow}>
+                          {FAMILY_PRESETS.map((item) => (
+                            <button
+                              aria-pressed={familyPreset === item.id}
+                              className={familyPreset === item.id ? styles.v3SegmentActive : undefined}
+                              key={item.id}
+                              onClick={() => setFamilyPreset(item.id)}
+                              type="button"
+                            >
+                              {item.label}
                             </button>
-                          )
-                        })}
+                          ))}
+                        </div>
                       </div>
-                    </fieldset>
-                  </>
-                )}
+                    )}
 
-                <div className={styles.resolutionTruth} data-kind={resolutionState.kind}>
-                  <StudioV3Icon name={resolutionState.kind === 'unsupported' ? 'warning' : 'check'} />
-                  <div><strong>{resolutionState.labelBn}</strong><span>{resolutionState.detailBn}</span></div>
+                    {resolutionState.kind === 'tiered' && (
+                      <>
+                        <div className={styles.v3OptionGroup}>
+                          <div className={styles.v3FieldLabel}><span>Aspect</span><em>request</em></div>
+                          <div className={styles.v3OptionRow}>
+                            {ASPECT_RATIOS.map((value) => (
+                              <button
+                                aria-pressed={aspectRatio === value}
+                                className={aspectRatio === value ? styles.v3SegmentActive : undefined}
+                                disabled={!resolutionState.supportedAspects.includes(value)}
+                                key={value}
+                                onClick={() => setAspectRatio(value)}
+                                type="button"
+                              >
+                                {value}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className={styles.v3OptionGroup}>
+                          <div className={styles.v3FieldLabel}><span>Resolution</span><em>verified after delivery</em></div>
+                          <div className={styles.v3OptionRow}>
+                            {(['1k', '2k', '4k'] as FashnResolution[]).map((value) => {
+                              const option = resolutionState.resolutionOptions.find((item) => item.value === value)
+                              return (
+                                <button
+                                  aria-pressed={resolution === value}
+                                  className={resolution === value ? styles.v3SegmentActive : undefined}
+                                  disabled={!option}
+                                  key={value}
+                                  onClick={() => setResolution(value)}
+                                  type="button"
+                                >
+                                  {value.toUpperCase()}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    <div className={styles.v3ControlGrid}>
+                      <div className={styles.v3OptionGroup}>
+                        <div className={styles.v3FieldLabel}><span>Quality</span><em>safety checks on</em></div>
+                        <div className={styles.v3OptionRow}>
+                          {GEN_MODES.map((value) => (
+                            <button
+                              aria-pressed={generationMode === value}
+                              className={generationMode === value ? styles.v3SegmentActive : undefined}
+                              key={value}
+                              onClick={() => setGenerationMode(value)}
+                              type="button"
+                            >
+                              {value}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className={styles.v3OptionGroup}>
+                        <div className={styles.v3FieldLabel}><span>Outputs</span><em>1–4</em></div>
+                        <div className={styles.v3OptionRow}>
+                          {[1, 2, 3, 4].map((value) => (
+                            <button
+                              aria-pressed={numImages === value}
+                              className={numImages === value ? styles.v3SegmentActive : undefined}
+                              key={value}
+                              onClick={() => setNumImages(value)}
+                              type="button"
+                            >
+                              {value}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <div className={styles.v3ComposerReadiness}>
+                  <div>
+                    <span className={ready ? styles.v3ReadinessReady : styles.v3ReadinessBlocked}>
+                      <StudioV3Icon name={ready ? 'check' : 'lock'} />
+                    </span>
+                    <span>
+                      <strong>{ready ? 'Configuration ready for owner cost review' : 'Required production context is incomplete'}</strong>
+                      <small>
+                        {ready
+                          ? `${selectedEngineDefinition?.label ?? engine} · ${resolutionState.labelBn} · ${generationMode}`
+                          : 'Check required product, model, source, prompt, engine and resolution.'}
+                      </small>
+                    </span>
+                  </div>
+                  <div>
+                    <span>ESTIMATE</span>
+                    <strong>Server-signed</strong>
+                    <small>Requested before any paid provider call</small>
+                  </div>
                 </div>
 
-                <div className={styles.inlineFields}>
-                  <label><span>Quality</span><select onChange={(event) => setGenerationMode(event.target.value as FashnGenerationMode)} value={generationMode}>{GEN_MODES.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-                  <label><span>Outputs</span><select onChange={(event) => setNumImages(Number(event.target.value))} value={numImages}>{[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-                </div>
-
-                {engine === 'fal_flux_fill' ? (
-                  <button className={styles.secondaryButton} onClick={() => onNavigate({ id: 'finishing', assetId: selectedSource?.id })} type="button">
-                    Open Mask Repair <StudioV3Icon name="arrow" />
-                  </button>
-                ) : (
-                  <button className={styles.primaryButton} disabled={!creationAvailable || !ready || estimating} onClick={() => void openReview()} type="button">
-                    {estimating ? 'Getting exact estimate…' : 'Review exact estimate'} <StudioV3Icon name="arrow" />
-                  </button>
-                )}
-                {!ready && engine !== 'fal_flux_fill' && (
-                  <p className={styles.blockReason}>
-                    Missing a required product/person/source/prompt, unavailable engine, or unsupported resolution combination.
-                  </p>
-                )}
-              </div>
+                <footer className={styles.v3ComposerFooter}>
+                  <div>
+                    <StudioV3Icon name="lock" />
+                    <span>
+                      <strong>{capability ? fidelityLabel[capability.fidelity] : 'Unsupported combination'}</strong>
+                      <small>{capability?.limitationBn ?? localStatus}</small>
+                    </span>
+                  </div>
+                  {mode === 'image_to_video' ? (
+                    <button
+                      className={styles.primaryButton}
+                      disabled={!selectedSource}
+                      onClick={() => onNavigate({ id: 'video-lab', sourceAssetId: selectedSource?.id })}
+                      type="button"
+                    >
+                      Continue in Video Lab <StudioV3Icon name="arrow" />
+                    </button>
+                  ) : engine === 'fal_flux_fill' ? (
+                    <button className={styles.secondaryButton} onClick={() => onNavigate({ id: 'finishing', assetId: selectedSource?.id })} type="button">
+                      Open Mask Repair <StudioV3Icon name="arrow" />
+                    </button>
+                  ) : (
+                    <button
+                      className={styles.primaryButton}
+                      disabled={!creationAvailable || !ready || estimating}
+                      onClick={() => void openReview()}
+                      type="button"
+                    >
+                      {estimating ? 'Getting exact estimate…' : 'Review exact estimate'} <StudioV3Icon name="arrow" />
+                    </button>
+                  )}
+                </footer>
+              </>
             )}
-          </aside>
-        </div>
+          </section>
+        </>
       )}
 
       <StudioConfirmationDialog

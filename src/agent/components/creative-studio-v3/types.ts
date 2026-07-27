@@ -47,6 +47,7 @@ export type CreativeStudioV3View =
       compositionId: string
       projectId: string
       returnTo: 'home' | 'projects'
+      openAgent?: boolean
     }
 
 export type CreativeStudioV3Navigate = (view: CreativeStudioV3View) => void

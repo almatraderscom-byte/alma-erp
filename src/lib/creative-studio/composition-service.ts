@@ -16,6 +16,7 @@ import {
   creativeSha256,
   CreativeCompositionEncodingError,
   CreativeCompositionSizeError,
+  finalizeCreativeCompositionDocument,
   parseCreativeCompositionDocument,
   type CreativeCompositionDocument,
 } from '@/lib/creative-studio/composition-document'
@@ -48,6 +49,12 @@ const createCompositionSchema = z.object({
   projectId: z.string().trim().min(1).max(160),
   brandProfileId: z.string().trim().min(1).max(160).optional(),
   title: z.string().trim().min(1).max(240).optional(),
+  canvas: z.object({
+    width: z.number().int().min(64).max(16_384),
+    height: z.number().int().min(64).max(16_384),
+    aspectWidth: z.number().int().min(1).max(100),
+    aspectHeight: z.number().int().min(1).max(100),
+  }).strict().optional(),
   idempotencyKey: z.unknown(),
 }).strict()
 
@@ -540,6 +547,7 @@ export async function createCreativeComposition(
     projectId: parsed.projectId,
     brandProfileId: context.access.brandProfileId,
     title,
+    canvas: parsed.canvas ?? null,
   })
   const replay = await replayCreatedComposition(
     actor,
@@ -550,11 +558,35 @@ export async function createCreativeComposition(
   if (replay) return { composition: replay, idempotent: true }
 
   const compositionId = randomUUID()
-  const projected = projectToReadonlyComposition({
+  const defaultProjection = projectToReadonlyComposition({
     ...context.projectionInput,
     compositionId,
     readonly: false,
   })
+  const requestedCanvas = parsed.canvas
+  const projected = requestedCanvas
+    ? finalizeCreativeCompositionDocument({
+        ...defaultProjection.document,
+        canvases: defaultProjection.document.canvases.map((canvas, index) =>
+          index === 0
+            ? {
+                ...canvas,
+                aspect: {
+                  width: requestedCanvas.aspectWidth,
+                  height: requestedCanvas.aspectHeight,
+                },
+                resolution: {
+                  width: requestedCanvas.width,
+                  height: requestedCanvas.height,
+                },
+              }
+            : canvas),
+      }, {
+        compositionId,
+        documentVersion: 1,
+        readonly: false,
+      })
+    : defaultProjection
   const createBatchId = `cob_${creativeSha256({
     requestFingerprint,
     idempotencyKey,

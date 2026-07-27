@@ -15,7 +15,9 @@ describe('Creative Studio V3 production source contract', () => {
 
     expect(routeSource).toContain('listAccessibleStudioBrands')
     expect(routeSource).toContain('resolveCreativeStudioV3RouteDecision')
-    expect(routeSource).toContain("first(searchParams?.studio) === 'legacy'")
+    expect(routeSource).toContain("const forceLegacy = requestedStudio === 'legacy'")
+    expect(routeSource).toContain("requestedStudio === 'v4'")
+    expect(routeSource).toContain("process.env.VERCEL_ENV === 'preview'")
     expect(routeSource).toContain('return <CreativeStudio />')
     expect(policy).toContain("CREATIVE_STUDIO_V3_UI_ENABLED !== '1'")
   })
@@ -66,6 +68,29 @@ describe('Creative Studio V3 production source contract', () => {
     expect(finishing).toContain('ownerScopedActionAvailable')
     expect(finishing).toContain('projectAssetId')
     expect(source('types.ts')).toContain('CreativeStudioV3ReviewQueuePort')
+  })
+
+  it('keeps the owner-approved V4 workflow on production adapters, not demo state', () => {
+    const home = source('StudioV3Home.tsx')
+    const image = source('StudioV3ImageLab.tsx')
+    const video = source('StudioV3VideoLab.tsx')
+    const shell = source('StudioV3Shell.tsx')
+    const studio = source('CreativeStudioV3.tsx')
+    const adapter = source('production-adapter.ts')
+
+    expect(home).toContain('Create project, then canvas')
+    expect(home).toContain('Use dimensions from scoped media')
+    expect(home).toContain('onCreateProject')
+    expect(image).toContain('Expand image workspace')
+    expect(image).toContain('Always visible inside the composer')
+    expect(image).toContain('uploadImage')
+    expect(video).toContain('Expand video workspace')
+    expect(video).toContain('v6VideoStage')
+    expect(shell).toContain('Ask Creative Agent')
+    expect(studio).toContain("openComposition(activeProject, 'home', true)")
+    expect(studio).toContain("openComposition(project, 'home', false, canvas)")
+    expect(adapter).toContain('createProject: createStudioProject')
+    expect(adapter).toContain('uploadImage: uploadStudioFile')
   })
 
   it('wires Lifecycle through a zero-cost typed port with no paid or external command', () => {

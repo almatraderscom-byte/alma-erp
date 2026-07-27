@@ -68,6 +68,7 @@ export function StudioV3VideoLab({
   const [data, setData] = useState<VideoLabData>(EMPTY_DATA)
   const [loading, setLoading] = useState(true)
   const [workspaceTab, setWorkspaceTab] = useState<'explore' | 'history'>('explore')
+  const [isExpanded, setIsExpanded] = useState(false)
   const [sourceMode, setSourceMode] = useState<'gallery' | 'avatar' | 'owned'>('gallery')
   const [selectedSourceId, setSelectedSourceId] = useState(initialSourceAssetId ?? '')
   const [selectedAvatarId, setSelectedAvatarId] = useState(initialAvatarId ?? '')
@@ -155,6 +156,20 @@ export function StudioV3VideoLab({
     if (!recipe.targets.includes(duration)) setDuration(recipe.defaultTarget)
   }, [aspect, duration, recipe, stillMode])
 
+  useEffect(() => {
+    if (!isExpanded) return
+    const previousOverflow = document.body.style.overflow
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsExpanded(false)
+    }
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [isExpanded])
+
   const selectedSourceLabel = sourceMode === 'gallery'
     ? selectedSource?.summary ?? selectedSource?.mode ?? 'No Gallery source'
     : sourceMode === 'avatar'
@@ -238,7 +253,7 @@ export function StudioV3VideoLab({
     : VIDEO_ASPECTS
 
   return (
-    <div className={styles.page}>
+    <div className={`${styles.page} ${styles.v4LabWithFloatingComposer}`}>
       <header className={styles.workspaceHeader}>
         <div className={styles.workspaceTitle}>
           <span><StudioV3Icon name="video" /></span>
@@ -297,7 +312,7 @@ export function StudioV3VideoLab({
           </div>
         </section>
       ) : (
-        <div className={styles.labLayout}>
+        <div className={`${styles.labLayout} ${styles.v4VideoLabLayout}`}>
           <section aria-label="Video source explorer" className={styles.labExplore}>
             <div className={styles.sourceModeGrid}>
               {([
@@ -381,17 +396,47 @@ export function StudioV3VideoLab({
             )}
           </section>
 
-          <aside aria-label="Video generation composer" className={styles.composer}>
-            <header className={styles.composerHeader}>
+          <aside
+            aria-label="Video generation composer"
+            className={`${styles.composer} ${styles.v3Composer} ${styles.v4FloatingComposer} ${styles.v5VideoComposer} ${
+              isExpanded ? styles.v6ComposerExpanded : ''
+            }`}
+          >
+            <header className={`${styles.composerHeader} ${styles.v3ComposerHeader}`}>
               <div><span className={styles.eyebrow}>Source-first composer</span><h2>{stillMode ? 'Generated reel' : 'Owned-footage edit'}</h2></div>
-              <span className={styles.serverBadge}><StudioV3Icon name="lock" /> Server authority</span>
+              <div className={styles.v6ComposerHeaderActions}>
+                <button
+                  aria-label={isExpanded ? 'Collapse video workspace' : 'Expand video workspace'}
+                  className={styles.v6ComposerExpand}
+                  onClick={() => setIsExpanded((current) => !current)}
+                  title={isExpanded ? 'Return to compact composer' : 'Open full workspace'}
+                  type="button"
+                >
+                  <span aria-hidden="true" className={styles.v6ExpandGlyph}><i /><i /></span>
+                </button>
+                <span className={styles.serverBadge}><StudioV3Icon name="lock" /> Server authority</span>
+              </div>
             </header>
             <div className={styles.composerBody}>
-              <div className={styles.selectionSummary}>
-                <div><span>Source</span><strong>{selectedSourceLabel}</strong></div>
-                <div><span>Model</span><strong>{stillMode ? 'Veo 3.1' : 'ffmpeg recipe engine'}</strong></div>
-                <div><span>Brand</span><strong>{activeBrand?.name ?? 'Server access context'}</strong></div>
-              </div>
+              <section className={styles.v6VideoStage}>
+                <div className={styles.v6VideoStageArtwork}>
+                  {sourceMode === 'gallery' && selectedSource?.previewUrl
+                    ? <img alt="" src={selectedSource.previewUrl} />
+                    : sourceMode === 'avatar' && selectedAvatar?.imageUrl
+                      ? <img alt="" src={selectedAvatar.imageUrl} />
+                      : <StudioV3Icon name={sourceMode === 'owned' ? 'video' : 'image'} />}
+                  <span><StudioV3Icon name="video" /></span>
+                </div>
+                <div className={styles.v6VideoStageCopy}>
+                  <span>ACTIVE SOURCE</span>
+                  <strong>{selectedSourceLabel}</strong>
+                  <small>{activeBrand?.name ?? 'Server access context'} · {activeProject?.name ?? 'Choose project'}</small>
+                </div>
+                <div className={styles.v6VideoStageSpecs}>
+                  <span><small>MODEL / ENGINE</small><strong>{stillMode ? 'Veo 3.1' : 'ffmpeg recipe'}</strong></span>
+                  <span><small>DELIVERY</small><strong>{duration}s · {aspect} · {stillMode ? '720p' : 'source'}</strong></span>
+                </div>
+              </section>
 
               <fieldset className={styles.optionGroup}>
                 <legend>Duration</legend>

@@ -42,6 +42,7 @@ export type CreativeProjectEditorProps = {
   commandPort: CompositionCommandPort
   embedded?: boolean
   generationProvider?: AgentProviderContext | null
+  initialWorkbenchTab?: EditorWorkbenchTab
   onExit?: () => void
   onRequestPendingAction?: PendingActionRequestHandler
   readOnly?: boolean
@@ -55,6 +56,7 @@ export function CreativeProjectEditor({
   commandPort,
   embedded = false,
   generationProvider = null,
+  initialWorkbenchTab = 'inspector',
   onExit,
   onRequestPendingAction,
   readOnly = false,
@@ -67,7 +69,7 @@ export function CreativeProjectEditor({
   const [selection, setSelection] = useState<EditorSelection | null>(null)
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
   const [activeTool, setActiveTool] = useState<EditorTool>('project')
-  const [workbenchTab, setWorkbenchTab] = useState<EditorWorkbenchTab>('inspector')
+  const [workbenchTab, setWorkbenchTab] = useState<EditorWorkbenchTab>(initialWorkbenchTab)
   const [focusMode, setFocusMode] = useState<EditorFocusMode>('stage')
   const [playheadSec, setPlayheadSec] = useState(0)
   const [playing, setPlaying] = useState(false)

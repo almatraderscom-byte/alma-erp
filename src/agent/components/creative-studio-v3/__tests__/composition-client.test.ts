@@ -196,6 +196,53 @@ describe('Creative Studio V3 access-scoped composition client', () => {
     expect(keys[0]).toBe(keys[1])
   })
 
+  it('sends the selected project canvas and binds it into the deterministic creation key', async () => {
+    const view = composition('owner')
+    const posts: Array<Record<string, unknown>> = []
+    const client = createCreativeStudioV3CompositionClient(async (_input, init = {}) => {
+      if (init.method === 'POST') {
+        posts.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+        return json({ composition: view, idempotent: false }, 201)
+      }
+      return json({ compositions: [] })
+    })
+
+    const base = {
+      actorUserId: 'owner-a',
+      allowCreate: true,
+      client,
+      projectName: 'Access-scoped project',
+      ...scope,
+    }
+    await resolveStudioProjectComposition({
+      ...base,
+      canvas: {
+        width: 1080,
+        height: 1920,
+        aspectWidth: 9,
+        aspectHeight: 16,
+      },
+    })
+    await resolveStudioProjectComposition({
+      ...base,
+      canvas: {
+        width: 1080,
+        height: 1350,
+        aspectWidth: 4,
+        aspectHeight: 5,
+      },
+    })
+
+    expect(posts).toHaveLength(2)
+    expect(posts[0]?.canvas).toEqual({
+      width: 1080,
+      height: 1920,
+      aspectWidth: 9,
+      aspectHeight: 16,
+    })
+    expect(posts[0]?.idempotencyKey).not.toBe(posts[1]?.idempotencyKey)
+  })
+
   it('never attempts creation for a reviewer with no canonical composition', async () => {
     let posts = 0
     const client = createCreativeStudioV3CompositionClient(async (_input, init = {}) => {

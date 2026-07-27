@@ -56,6 +56,7 @@ export function StudioV3Shell({
   activeProjectId,
   onBrandChange,
   onProjectChange,
+  onAskCreativeAgent,
   projects,
   accountLabel,
   immersive,
@@ -70,6 +71,7 @@ export function StudioV3Shell({
   activeProjectId: string | null
   onBrandChange: (brandId: string) => void
   onProjectChange: (projectId: string) => void
+  onAskCreativeAgent: () => void
   projects: StudioProjectSummary[]
   accountLabel: string
   immersive: boolean
@@ -134,7 +136,7 @@ export function StudioV3Shell({
   }
 
   return (
-    <section aria-label="ALMA Creative Studio V3" className={styles.shell}>
+    <section aria-label="ALMA Creative Studio V4" className={styles.shell}>
       <a className={styles.skipLink} href="#creative-studio-v3-main">Skip to Studio workspace</a>
 
       <header className={styles.topbar}>
@@ -178,6 +180,15 @@ export function StudioV3Shell({
             </select>
           </label>
           <span className={styles.guardBadge}><StudioV3Icon name="lock" /> Server gated</span>
+          <button
+            className={styles.agentButton}
+            disabled={!activeProjectId || immersive}
+            onClick={onAskCreativeAgent}
+            type="button"
+          >
+            <StudioV3Icon name="spark" />
+            Ask Creative Agent
+          </button>
           {legacyAllowed && <Link className={styles.legacyLink} href={legacyHref}>Legacy Studio</Link>}
           <span
             aria-label={`${accountLabel} · ${accessLabel}`}

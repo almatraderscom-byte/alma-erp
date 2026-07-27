@@ -63,6 +63,12 @@ export interface CreativeStudioV3ProductionPort
   loadHome(brandProfileId?: string | null, projectId?: string | null): Promise<StudioV3HomeSnapshot>
   listBrands(): Promise<StudioBrandProfile[]>
   listProjects(brandProfileId?: string | null): Promise<StudioProjectSummary[]>
+  createProject(input: {
+    name: string
+    description?: string
+    brandName?: string
+    defaultFolder?: string
+  }): Promise<StudioProjectSummary>
   listRecipes(brandProfileId?: string | null): Promise<StudioBrandRecipe[]>
   listProducts(query?: string): Promise<StudioProductOption[]>
   listCompositions(input: {

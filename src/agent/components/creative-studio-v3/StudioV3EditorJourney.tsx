@@ -17,6 +17,7 @@ export function StudioV3EditorJourney({
   actorUserId,
   brandName,
   foundationWritesEnabled,
+  initiallyOpenAgent = false,
   onExit,
   scope,
 }: {
@@ -25,6 +26,7 @@ export function StudioV3EditorJourney({
   actorUserId: string
   brandName: string
   foundationWritesEnabled: boolean
+  initiallyOpenAgent?: boolean
   onExit: () => void
   scope: EditorCompositionScope
 }) {
@@ -75,6 +77,7 @@ export function StudioV3EditorJourney({
         commandPort={commandPort}
         embedded
         generationProvider={null}
+        initialWorkbenchTab={initiallyOpenAgent ? 'agent' : 'inspector'}
         onExit={onExit}
         readOnly={readOnly}
         readOnlyReason={readOnlyReason}

@@ -53,7 +53,12 @@ export default async function CreativeStudioPage({
   const actorIsSystemOwner = isSystemOwner(actor.erpRole)
   const requestedBrandId = first(searchParams?.brand)
   const requestedProjectId = first(searchParams?.project)
-  const forceLegacy = first(searchParams?.studio) === 'legacy'
+  const requestedStudio = first(searchParams?.studio)
+  const forceLegacy = requestedStudio === 'legacy'
+  const forceOwnerV4Preview =
+    requestedStudio === 'v4'
+    && process.env.VERCEL_ENV === 'preview'
+    && actorIsSystemOwner
 
   const accessibleBrands = await listAccessibleStudioBrands(actor)
   const ownerIds = [...new Set(accessibleBrands.map((brand) => brand.ownerId))]
@@ -76,9 +81,13 @@ export default async function CreativeStudioPage({
     requestedProjectId,
     forceLegacy,
     environment: {
-      CREATIVE_STUDIO_V3_UI_ENABLED: process.env.CREATIVE_STUDIO_V3_UI_ENABLED,
+      CREATIVE_STUDIO_V3_UI_ENABLED: forceOwnerV4Preview
+        ? '1'
+        : process.env.CREATIVE_STUDIO_V3_UI_ENABLED,
       CREATIVE_STUDIO_V3_OWNER_IDS: process.env.CREATIVE_STUDIO_V3_OWNER_IDS,
-      CREATIVE_STUDIO_V3_BRAND_IDS: process.env.CREATIVE_STUDIO_V3_BRAND_IDS,
+      CREATIVE_STUDIO_V3_BRAND_IDS: forceOwnerV4Preview
+        ? '*'
+        : process.env.CREATIVE_STUDIO_V3_BRAND_IDS,
       CREATIVE_STUDIO_V3_PROJECT_IDS: process.env.CREATIVE_STUDIO_V3_PROJECT_IDS,
     },
   })
