@@ -96,6 +96,8 @@ export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
   const [agentBrief, setAgentBrief] = useState(
     'Turn the approved Eid product selects into a 24-second reel. Plan the edit only.',
   )
+  const [agentWorkspaceOpen, setAgentWorkspaceOpen] = useState(false)
+  const [agentPlanReady, setAgentPlanReady] = useState(false)
   const [notice, setNotice] = useState(
     'V3 prototype · safe fixtures only · providers and publishing disconnected',
   )
@@ -175,7 +177,10 @@ export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
           </span>
           <button
             className={styles.secondaryButton}
-            onClick={() => onNavigate({ id: 'editor', kind: 'video', openAgent: true })}
+            onClick={() => {
+              setAgentPlanReady(false)
+              setAgentWorkspaceOpen(true)
+            }}
             type="button"
           >
             <StudioV2Icon name="agent" size={18} />
@@ -533,7 +538,10 @@ export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
                 <label>
                   <span className={styles.srOnly}>Creative Agent brief</span>
                   <textarea
-                    onChange={(event) => setAgentBrief(event.target.value)}
+                    onChange={(event) => {
+                      setAgentBrief(event.target.value)
+                      setAgentPlanReady(false)
+                    }}
                     value={agentBrief}
                   />
                 </label>
@@ -545,7 +553,10 @@ export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
                 <button
                   className={styles.agentPlanButton}
                   disabled={!agentBrief.trim()}
-                  onClick={() => onNavigate({ id: 'editor', kind: 'video', openAgent: true })}
+                  onClick={() => {
+                    setAgentPlanReady(true)
+                    setAgentWorkspaceOpen(true)
+                  }}
                   type="button"
                 >
                   Build reviewable plan
@@ -665,6 +676,128 @@ export function CreativeStudioHome({ onNavigate }: CreativeStudioHomeProps) {
           <StudioV2Icon name="close" size={15} />
         </button>
       </div>
+
+      {agentWorkspaceOpen && (
+        <div className={styles.v7AgentOverlay}>
+          <button
+            aria-label="Close Creative Agent workspace"
+            className={styles.v7AgentBackdrop}
+            onClick={() => setAgentWorkspaceOpen(false)}
+            type="button"
+          />
+          <aside
+            aria-labelledby="creative-agent-workspace-title"
+            aria-modal="true"
+            className={styles.v7AgentWorkspace}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setAgentWorkspaceOpen(false)
+            }}
+            role="dialog"
+          >
+            <header>
+              <span className={styles.agentMark}>
+                <StudioV2Icon name="agent" size={21} />
+              </span>
+              <div>
+                <span>CREATIVE AGENT</span>
+                <h2 id="creative-agent-workspace-title">Plan inside Creative Studio</h2>
+              </div>
+              <button
+                aria-label="Close Creative Agent workspace"
+                onClick={() => setAgentWorkspaceOpen(false)}
+                type="button"
+              >
+                <StudioV2Icon name="close" size={17} />
+              </button>
+            </header>
+
+            <div className={styles.v7AgentSafetyRow}>
+              <span><StudioV2Icon name="lock" size={13} /> Plan only</span>
+              <span>ALMA Lifestyle</span>
+              <span>৳0</span>
+            </div>
+
+            <label className={styles.v7AgentBriefField}>
+              <span>What should the studio prepare?</span>
+              <textarea
+                autoFocus
+                onChange={(event) => {
+                  setAgentBrief(event.target.value)
+                  setAgentPlanReady(false)
+                }}
+                value={agentBrief}
+              />
+            </label>
+
+            {agentPlanReady ? (
+              <section className={styles.v7AgentPlan} aria-label="Reviewable Creative Agent plan">
+                <header>
+                  <span>
+                    <StudioV2Icon name="check" size={15} />
+                    Reviewable plan ready
+                  </span>
+                  <em>No project opened</em>
+                </header>
+                <ol>
+                  <li>
+                    <span>01</span>
+                    <div>
+                      <strong>Collect approved inputs</strong>
+                      <small>Use only selected products, saved models and owner-approved recipes.</small>
+                    </div>
+                  </li>
+                  <li>
+                    <span>02</span>
+                    <div>
+                      <strong>Prepare the creative sequence</strong>
+                      <small>Draft the visual order, timing and copy without generating media.</small>
+                    </div>
+                  </li>
+                  <li>
+                    <span>03</span>
+                    <div>
+                      <strong>Return for owner review</strong>
+                      <small>Show estimated cost and publish gates before any paid action.</small>
+                    </div>
+                  </li>
+                </ol>
+                <p>
+                  This prototype keeps the agent in Creative Studio. Creating a project,
+                  generating media and publishing remain separate owner actions.
+                </p>
+              </section>
+            ) : (
+              <section className={styles.v7AgentEmptyPlan}>
+                <StudioV2Icon name="template" size={22} />
+                <strong>Start with a plan, not an editor</strong>
+                <p>The agent will structure this brief here before any project is created.</p>
+              </section>
+            )}
+
+            <footer>
+              <button
+                className={styles.secondaryButton}
+                onClick={() => setAgentWorkspaceOpen(false)}
+                type="button"
+              >
+                Keep as draft
+              </button>
+              <button
+                className={styles.agentPlanButton}
+                disabled={!agentBrief.trim()}
+                onClick={() => {
+                  setAgentPlanReady(true)
+                  setNotice('Creative Agent prepared a local reviewable plan. No editor or job was opened.')
+                }}
+                type="button"
+              >
+                Build reviewable plan
+                <StudioV2Icon name="chevron-right" size={18} />
+              </button>
+            </footer>
+          </aside>
+        </div>
+      )}
 
     </section>
   )
