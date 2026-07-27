@@ -70,6 +70,87 @@ export type CampaignMetrics = {
   currency: string
   /** Campaign objective (e.g. OUTCOME_ENGAGEMENT / MESSAGES / OUTCOME_SALES) — judge performance by THIS, not always purchases. */
   objective: string
+  /** Ad sets under this campaign whose own effective_status is ACTIVE. */
+  activeAdSets: number
+  /** Ads under this campaign whose own effective_status is ACTIVE. */
+  activeAds: number
+  /**
+   * Is this campaign actually RUNNING, in the sense Boss means when he counts
+   * campaigns in Ads Manager?
+   *
+   * ADS-2, 2026-07-27: he said two campaigns were active; we reported four. Both
+   * were "right" — we were counting campaign-level `effective_status === ACTIVE`,
+   * which stays ACTIVE while every ad set and ad beneath it is paused. One of the
+   * four had spent $0.00 with 0 impressions for seven days and was still being
+   * counted as running. A campaign that cannot deliver is not running, so
+   * `delivering` requires a live ad set AND a live ad underneath.
+   *
+   * `effectiveStatus` is kept as-is next to it: the campaign-level truth is still
+   * the truth, it is just not the answer to "কয়টা চলছে".
+   */
+  delivering: boolean
+}
+
+/**
+ * Live ad sets and ads per campaign, in TWO account-level calls regardless of
+ * how many campaigns exist — the per-campaign loop this file already runs is
+ * expensive enough. Never throws: a failed structure read degrades to "unknown",
+ * and an unknown structure must not turn a running campaign into a stopped one.
+ */
+export type CampaignStructure = { activeAdSets: number; activeAds: number; known: boolean }
+
+export async function fetchCampaignStructure(
+  accountId: string,
+): Promise<Map<string, CampaignStructure>> {
+  const byCampaign = new Map<string, CampaignStructure>()
+  const bump = (id: string | undefined, key: 'activeAdSets' | 'activeAds') => {
+    if (!id) return
+    const row = byCampaign.get(id) ?? { activeAdSets: 0, activeAds: 0, known: true }
+    row[key] += 1
+    byCampaign.set(id, row)
+  }
+
+  const [adsets, ads] = await Promise.all([
+    adsApi<{ data?: Array<{ campaign_id?: string; effective_status?: string }> }>(
+      `${accountId}/adsets`,
+      { fields: 'campaign_id,effective_status', limit: '200' },
+    ).catch(() => null),
+    adsApi<{ data?: Array<{ campaign_id?: string; effective_status?: string }> }>(
+      `${accountId}/ads`,
+      { fields: 'campaign_id,effective_status', limit: '200' },
+    ).catch(() => null),
+  ])
+
+  if (!adsets || !ads) return byCampaign // empty map = "unknown", see deliveringFrom()
+
+  for (const a of adsets.data ?? []) {
+    if (a.effective_status === 'ACTIVE') bump(a.campaign_id, 'activeAdSets')
+  }
+  for (const a of ads.data ?? []) {
+    if (a.effective_status === 'ACTIVE') bump(a.campaign_id, 'activeAds')
+  }
+  return byCampaign
+}
+
+/**
+ * Fail SAFE, not silent: with no structure data at all we fall back to the old
+ * campaign-level answer rather than reporting every campaign as stopped. A wrong
+ * "everything is off" would be read as an outage.
+ */
+export function deliveringFrom(
+  structure: Map<string, CampaignStructure>,
+  campaignId: string,
+  campaignIsActive: boolean,
+): { activeAdSets: number; activeAds: number; delivering: boolean } {
+  if (structure.size === 0) {
+    return { activeAdSets: 0, activeAds: 0, delivering: campaignIsActive }
+  }
+  const row = structure.get(campaignId) ?? { activeAdSets: 0, activeAds: 0, known: true }
+  return {
+    activeAdSets: row.activeAdSets,
+    activeAds: row.activeAds,
+    delivering: campaignIsActive && row.activeAdSets > 0 && row.activeAds > 0,
+  }
 }
 
 export const INSIGHT_MIN_SPEND_BDT = 500
@@ -135,6 +216,7 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
 
   const today = new Date().toISOString().slice(0, 10)
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
+  const structure = await fetchCampaignStructure(accountId)
   const rows: CampaignMetrics[] = []
 
   for (const campaign of activeCampaigns) {
@@ -212,6 +294,7 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
         roasWeek,
         dailyBudgetBdt,
         effectiveStatus: campaign.effective_status ?? 'ACTIVE',
+        ...deliveringFrom(structure, campaign.id, (campaign.effective_status ?? 'ACTIVE') === 'ACTIVE'),
         hasEnoughData: spendWeek >= minSpendForCurrency(accountCurrency) && impressionsWeek >= INSIGHT_MIN_IMPRESSIONS,
       })
     } catch (err) {
@@ -268,6 +351,7 @@ export async function fetchCampaignMetricsWindow(windowDays = 7): Promise<Campai
   ])
 
   const currency = acctRes.currency ?? 'USD'
+  const structure = await fetchCampaignStructure(accountId)
   const metaById = new Map((campaignsRes.data ?? []).map((c) => [c.id, c]))
   const todayById = new Map((todayRes.data ?? []).filter((r) => r.campaign_id).map((r) => [r.campaign_id as string, r]))
 
@@ -318,6 +402,7 @@ export async function fetchCampaignMetricsWindow(windowDays = 7): Promise<Campai
       // The TRUE current status (may be PAUSED) — historical rows must never be
       // presented as currently running.
       effectiveStatus: meta?.effective_status ?? 'UNKNOWN',
+      ...deliveringFrom(structure, id, (meta?.effective_status ?? 'UNKNOWN') === 'ACTIVE'),
       hasEnoughData: spendWeek >= minSpendForCurrency(currency) && safeNum(row.impressions) >= INSIGHT_MIN_IMPRESSIONS,
     })
   }

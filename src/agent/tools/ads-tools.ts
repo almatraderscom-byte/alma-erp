@@ -272,7 +272,10 @@ const recommend_ad_actions: AgentTool = {
     '`metaIntelligence` carries Meta\'s own trend / anomaly / opportunity-score / industry + auction benchmarks when available — ' +
     'cite them ("CTR ইন্ডাস্ট্রি গড়ের নিচে…") instead of judging on spend alone. ' +
     'SOURCE: quote `provenance.sourceLabel` verbatim; say "Meta MCP" ONLY if provenance.source === "meta_mcp", otherwise state ' +
-    'provenance.degradedReason honestly. MONEY: use windowPerformance[].spendLabel / windowSpendLabel — never ৳ unless BDT.',
+    'provenance.degradedReason honestly. MONEY: use windowPerformance[].spendLabel / windowSpendLabel — never ৳ unless BDT. ' +
+    'HOW MANY ARE RUNNING: quote `deliveringCount` / `deliveringNames` — a campaign is RUNNING only when it has a live ad set AND a live ad. ' +
+    '`stalledNames` are campaign-level ACTIVE with nothing live underneath: report them as "চলছে না (ad set/ad বন্ধ)", never inside the running count. ' +
+    'Boss counts what Ads Manager shows delivering, and that is deliveringCount.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -332,15 +335,26 @@ const recommend_ad_actions: AgentTool = {
         ctrPct: Number(c.ctrWeekPct.toFixed(2)),
       }))
 
+      // ADS-2: "কয়টা চলছে" is the DELIVERING count, not the campaign-level
+      // ACTIVE count. Boss counted 2 in Ads Manager while this tool said 4 —
+      // both were reading a real field, and his is the one that spends money.
+      const deliveringCampaigns = metrics.filter((m) => m.delivering)
+      const deliveringCount = deliveringCampaigns.length
+      const stalledNames = metrics.filter((m) => !m.delivering).map((m) => m.name)
+
       if (activeCampaignCount === 0) {
         message =
           windowPerformance.length > 0
             ? `এই মুহূর্তে কোনো ACTIVE ক্যাম্পেইন নেই (সব paused), কিন্তু গত ৭ দিনের পারফরম্যান্স আসল ডেটা windowPerformance-এ আছে — quote it (impressions/clicks/CTR সহ, paused লেবেলসহ), "ডেটা নেই" বলবেন না।`
             : 'এই অ্যাড অ্যাকাউন্টে গত ৭ দিনে কোনো ক্যাম্পেইন ডেলিভারি করেনি।'
-      } else if (actionable.length > 0) {
-        message = `${activeCampaignCount}টি ACTIVE ক্যাম্পেইন চলছে — ${actionable.length}টিতে actionable rec; owner approve ছাড়া budget/spend change হবে না।`
       } else {
-        message = `${activeCampaignCount}টি ACTIVE ক্যাম্পেইন চলছে, সবগুলো এখন hold — thin data বা middle performance; noise-এ action নয়।`
+        const stalledNote = stalledNames.length
+          ? ` আরও ${stalledNames.length}টি campaign-level ACTIVE কিন্তু ডেলিভারি করছে না (ad set/ad বন্ধ): ${stalledNames.join(', ')}।`
+          : ''
+        message =
+          actionable.length > 0
+            ? `${deliveringCount}টি ক্যাম্পেইন আসলে চলছে — ${actionable.length}টিতে actionable rec; owner approve ছাড়া budget/spend change হবে না।${stalledNote}`
+            : `${deliveringCount}টি ক্যাম্পেইন আসলে চলছে, সবগুলো এখন hold — thin data বা middle performance; noise-এ action নয়।${stalledNote}`
       }
 
       return {
@@ -362,7 +376,13 @@ const recommend_ad_actions: AgentTool = {
           // The real last-7-days per-campaign performance (paused-inclusive) —
           // this is what a "impressions/clicks/CTR কত?" question is answered from.
           windowPerformance,
-          campaignCount: activeCampaignCount,
+          // THE number to quote when Boss asks how many campaigns are running.
+          deliveringCount,
+          deliveringNames: deliveringCampaigns.map((m) => m.name),
+          // Campaign-level ACTIVE but nothing live underneath — real campaigns,
+          // spending nothing, and the reason his count and ours disagreed.
+          stalledNames,
+          campaignCount: deliveringCount,
           activeCampaignCount,
           activeCampaignNames: activeNames,
           actionableCount: actionable.length,
