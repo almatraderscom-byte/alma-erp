@@ -277,6 +277,18 @@ export function skillIsolationEnabled(
   return flag === 'on' || (vercelEnv === 'preview' && flag !== 'off')
 }
 
+/**
+ * SK-8 — refuse to run a skill nobody approved, or one edited since approval.
+ *
+ * OFF everywhere unless explicitly `on`, and NOT auto-on for preview like the
+ * other flags. Turning this on with an empty ledger disables every skill at
+ * once, so the intended order is: run with it off, watch the approval states in
+ * the logs, populate the ledger, then switch it on deliberately.
+ */
+export function skillApprovalGateEnabled(flag = process.env.AGENT_SKILL_APPROVAL_GATE): boolean {
+  return flag === 'on'
+}
+
 /** Hard ceiling on a trimmed specialist sub-agent's tool count. */
 export const SUBAGENT_TOOL_CAP = Number(process.env.SUBAGENT_TOOL_CAP) || 40
 
