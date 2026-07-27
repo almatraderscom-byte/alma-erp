@@ -254,6 +254,8 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   // ── SEO (on-page + rank tracking) ──────────────────────────────────────────
   audit_product_seo: read('seo'),
   draft_seo_fixes: stage('seo'),
+  // A URL rename is higher-stakes than copy: done wrong it deletes a page's ranking.
+  change_product_slug: stage('seo'),
   track_keyword: write('seo'),
   list_tracked_keywords: read('seo'),
   untrack_keyword: write('seo'),
