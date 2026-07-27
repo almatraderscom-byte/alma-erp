@@ -70,21 +70,119 @@ so the single-variable claim is the behaviour, not the 28× price.
 
 ---
 
+## SK-7 — `isolation: subagent` (2026-07-27, branch `claude/skills-architecture`)
+
+Built. The measured gap first: **`SYSTEM.md` had sat on disk since SK-5 and no
+code ever opened it**, and `extends: alma-base` was never resolved either. The
+file meant to replace the general prompt was never read, which is why isolation
+"existed" only as a manifest field.
+
+A pinned skill declaring `isolation: subagent` now makes the STABLE prompt
+`compileStableCore()` + alma-base + its `SYSTEM.md` + its `SKILL.md`. The ~25
+business-domain modules are not assembled at all. Only the stable prompt is
+swapped — per-turn state (memory, time, project instructions, dependency
+preflight) is not behavioural prose and an isolated job needs it too.
+
+| | inline (today) | isolated |
+|---|---|---|
+| stable prompt | 99,245 chars | **19,401** (−80%) |
+| unrelated modules present | 22 | **0** |
+
+Enforcement is measured, not asserted: `findPromptLeaks()` searches the prompt
+that was actually built for the text of any non-kernel module. A companion test
+asserts a NORMAL turn still shows 22, so the check cannot pass vacuously. The
+`skill_pinned` SSE event carries `isolated`, so the claim is checkable from
+outside the server.
+
+**Deliberately not `runSubAgent`,** which the plan suggested. That runner caps at
+4 tool iterations and 2048 output tokens, does not stream, and returns a summary
+string — the SEO batch needs 5–7 rounds and the owner asked to watch the work.
+Isolation is the two things that carry the guarantee — own system prompt, own
+tool list — delivered inside the streaming turn.
+
+Gate: `AGENT_SKILL_ISOLATION` (off in prod, auto-on preview) **and** a
+conversation pin. Without a pin the selection can move mid-chat, and swapping
+the system prompt per turn would rewrite the cached prefix every message.
+
+## SK-6 — global hacks into skills (2026-07-27, same branch)
+
+Two slices shipped. The rule applied throughout: **global code keeps what is
+true of every job; a skill keeps what is true of one job.**
+
+1. `buildOwnerRequirementNote` stopped emitting the client-SEO procedure, and
+   `run-owner-turn` stopped hardcoding an injection of `run_website_seo_audit` /
+   `check_website_seo_audit` / `save_artifact`. With a skill pinned that
+   injection is worse than redundant — it hands back tools the skill withheld.
+2. The big one: **6.2 KB (2,993 chars) of client-SEO procedure was living inside
+   the `computer_capabilities` prompt module** and shipped on every turn holding
+   a browser or workbench tool. It was extracted into its own module, skipped
+   whenever a skill was pinned, and then — later the same day, once measured —
+   **deleted outright**. The knowledge lives in `seo-fixing-client-site/SKILL.md`.
+   See "SK-6 finished" below.
+
+**Corrections to this file's own candidate list.** The "alt false-positive lore
+in global code" does not exist: it is correct crawler logic in
+`grind/page-measure.ts` and `seo/technical-audit.ts` (code, not prose) plus a
+historical comment in `turn-loop-policy.ts` that changes no behaviour. And the
+durable client-SEO batch machinery is a RUNNER, not task knowledge — it stays,
+by the same line that keeps the skill-pack runner in code.
+
+**A correction to what this file said earlier.** It claimed the engine was
+"preview only, production untouched". Measured 2026-07-27: the KV row
+`skill_engine_enabled = "true"` exists, and `isSkillEngineEnabled()` reads KV
+BEFORE env — so the engine has been on in production too. The env var only
+matters while no KV row exists, which stopped being true at some point nobody
+recorded. `AGENT_SKILL_ISOLATION` has no KV path and is genuinely env-only.
+
+### SK-7 live proof — done 2026-07-27, in his own Chrome
+
+`"isolated":true` on the `skill_pinned` SSE frame, on the preview host, with the
+chip visible and the job running to an approval card. The claim is checkable
+from outside the server, which is the whole point of putting it on the wire.
+
+The same session proved the rest of the loop end to end: a Banglish fix order
+pins the fixing skill at the RULE layer, a pin follows the job when the job
+changes, an answered card leads to WORK rather than another question, and an
+approval makes the agent carry on by itself.
+
 ## Not done — start here
 
-1. **SK-6** — move the global hacks into skills and delete them from global code.
-   This is the whole point of the programme and it has not started. Candidates:
-   the fix-vs-audit intent regex, the alt false-positive lore, the SEO parts of
-   the client-seo batch contract.
-2. **`isolation: subagent`** — the lean-system-prompt runner. The field and the
-   plan exist; nothing routes through `runSubAgent` yet, so today a skill is
-   still injected into the big prompt rather than replacing it. **This is the
-   half of his original ask that is still missing.**
-3. **Promote the 16 originals**, one at a time, each with evals — 79 lint
+### SK-6 finished — 2026-07-27
+
+`CLIENT_SEO_AUDIT_PROCEDURE` and its registry entry are **deleted**, not
+skipped. `seo-fixing-client-site/SKILL.md` is now the only description of that
+job anywhere. The always-on prompt went **95,883 → 92,890 chars**.
+
+Measured before removing it, because the whole programme is about not
+asserting: ten client-SEO phrasings, **ten pins, zero "SEO job with no skill
+pinned"** — the case the text existed to cover did not occur.
+
+Two things stayed on purpose:
+
+- **The two one-line contract statements** in `buildOwnerRequirementNote`
+  ("a crawl per target", "prose alone is not delivery"). ~150 characters, silent
+  when a skill is pinned. They are the floor if the engine is ever switched off
+  — it is a KV row, flippable in a second, and without them a client-SEO turn
+  would then carry no procedure at all. Delete when the engine being off stops
+  being a plausible Tuesday.
+- **`SKILL_OWNED_MODULES`**, now empty. The mechanism is what makes the next
+  migration cheap: move the text into a skill, list the module id, prove it in
+  production, delete. Keeping it documents the pattern in code rather than in
+  someone's memory.
+
+1. **Eval-gate the isolated path** against the inline baseline with
+   `compareToBaseline()`. The harness is a pure scorer, so it needs recorded
+   runs; the runs now exist, nobody has scored them.
+2. **Promote the 16 originals**, one at a time, each with evals — 79 lint
    findings are the work list (`docs/skill-lint-report.md`).
-4. **Router's last 4 misses** — all skill-description gaps, not router gaps.
+3. **`isolation: subagent` for the other two SEO skills** — each needs its own
+   `SYSTEM.md` written, and promotion is one at a time, never a batch.
+4. **Router's last misses** — all skill-description gaps, not router gaps.
 5. **Registry budget and the selection trace** are written but never exercised at
    scale; revisit when more than ~10 skills are active.
+6. **Drop Upstash from the turn queue** (optional). It exists only because
+   Vercel and the VPS must share one queue; a Vercel→VPS HTTP handoff would let
+   the VPS use its own local Redis and remove the metered dependency entirely.
 
 ## Flags
 

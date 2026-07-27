@@ -8,13 +8,16 @@ import { prisma } from '@/lib/prisma'
 import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET, PROGRESS_UPDATE_EVERY, MAX_PROGRESS_NUDGES, headToolBudgetFor, maxIntentNudgesFor, type TurnWorkClass } from '@/agent/config'
 import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
-import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_MODULES, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
+import { stripToolCallMarkup } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
   claimsCompletion,
   dependencyBlockMessage,
   doneGateMessage,
   filterToolsForSkill,
+  skillAllowlist,
   skillDependencyGaps,
   skillDoneMisses,
 } from '@/agent/lib/skill-engine/enforcement'
@@ -69,13 +72,13 @@ import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUser
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
 import { adviseForAction, filterToolsForPermissionMode, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
-import { stripLeakedToolCalls } from '@/agent/lib/strip-leaked-tool-calls'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/lib/plan-first'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import {
+  isRepeatedOpener,
   shouldNudgeAdapterIntent,
   shouldRestartHeadAfterFailure,
 } from '@/agent/lib/turn-loop-policy'
@@ -856,9 +859,11 @@ async function* runAlternateProviderTurn(
   // Skill Engine V2 (gated OFF by default) — pick ≤3 on-demand skill procedures for
   // this turn from the message text; '' when disabled or nothing matches (fail-open).
   const activeSkills = suppressWork
-    ? { block: '', pinned: null, manifest: null }
+    ? { block: '', pinned: null, manifest: null, isolated: null }
     : await buildActiveSkills(lastUserText, { conversationId })
-  const activeSkillsBlock = activeSkills.block
+  // SK-7: when the pinned skill runs isolated, its procedure becomes the STABLE
+  // system prompt instead of a volatile add-on. Sending both would ship it twice.
+  const activeSkillsBlock = activeSkills.isolated ? '' : activeSkills.block
   // SK-4: a skill that declared what it needs gets checked BEFORE step 0, so a
   // dead connection is one honest sentence rather than a paid tour of the
   // failure (15 steps / 1m36s, watched live 2026-07-26).
@@ -881,6 +886,8 @@ async function* runAlternateProviderTurn(
       source: activeSkills.pinned.source,
       layer: activeSkills.pinned.layer,
       reason: activeSkills.pinned.reason,
+      // SK-7 — say on the wire whether the skill actually got its own prompt.
+      isolated: Boolean(activeSkills.isolated),
     }
   }
   let ownerIntentTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
@@ -910,6 +917,69 @@ async function* runAlternateProviderTurn(
       })
     }
     ownerIntentTools = gated.tools
+    // SK-7 (found on the first live isolated run, 2026-07-27): the allowlist
+    // FILTERS, it never ADDS — so a skill was narrowed to tools the router had
+    // not selected in the first place. Watched live: `seo-fixing-own-site` was
+    // pinned, `audit_product_seo` and `draft_seo_fixes` were absent, and the
+    // head spent a whole round on find_tool to reach its OWN declared tools.
+    //
+    // A skill declaring a capability is a statement that the job needs it. Same
+    // principle as the requirement-contract rule below — whatever the selector
+    // decides, a declared requirement brings its own tools. It cannot widen
+    // anything: every name added is one the allowlist already permits.
+    const missing = (activeSkills.manifest.requiredCapabilities ?? []).filter(
+      (n) => !ownerIntentTools.some((t) => t.name === n),
+    )
+    if (missing.length) {
+      try {
+        const extra = await resolveToolsByName(missing)
+        ownerIntentTools = [
+          ...ownerIntentTools,
+          ...extra.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema })),
+        ]
+        console.info('[skill-allowlist] supplied', {
+          skill: activeSkills.manifest.name,
+          added: extra.map((t) => t.name),
+        })
+      } catch (err) {
+        console.warn('[skill-allowlist] tool supply failed:', err instanceof Error ? err.message : err)
+      }
+    }
+  }
+  // ── The restrictions this turn must keep, even against find_tool ──────────
+  //
+  // FOUND 2026-07-27 while wiring the ask_user withholding below. `find_tool`
+  // resolves ANY tool in the registry by name and pushes it into the live tool
+  // list mid-turn. Every list-time restriction — the skill allowlist included —
+  // was therefore a suggestion: a read-only audit skill could search its way to
+  // a write tool, and the claim "an absent tool is a guarantee" was not true of
+  // this path. I had repeated that claim to Boss; it needed to become true.
+  //
+  // `turnAllowlist` is the pinned skill's allowlist (null = does not narrow);
+  // `turnDenylist` is what this specific turn withheld for a reason of its own.
+  // Both are enforced at the dynamic-load site, so the guarantee survives a
+  // search. find_tool itself is never denied — a skill must never be trapped.
+  const turnAllowlist = activeSkills.manifest ? skillAllowlist(activeSkills.manifest) : null
+  const turnDenylist = new Set<string>()
+
+  // ANSWERING A QUESTION IS NOT THE MOMENT TO ASK ANOTHER ONE (owner report
+  // 2026-07-27). He answered a card — "এখন কোনো SEO fix কাজ করার দরকার নেই" —
+  // and the very next thing he got was a SECOND card, with the work no further
+  // along. That is the drip of questions he has objected to from the start
+  // ("ask everything ONCE, then work").
+  //
+  // Withholding the tool is the only version of this that holds. `ask_user` is
+  // in ALWAYS_ALLOWED precisely so a skill can never be trapped, so a prompt
+  // rule here would be a request the head could decline. It still has every
+  // honest way out: say plainly what it needs and stop, or stage a card. And it
+  // is one turn only — the next message can ask again if the fork is real.
+  if (!listenMode && explicitAskCardId) {
+    turnDenylist.add('ask_user')
+    const before = ownerIntentTools.length
+    ownerIntentTools = ownerIntentTools.filter((t) => t.name !== 'ask_user')
+    if (ownerIntentTools.length < before) {
+      console.info('[ask-card] withheld ask_user on the answering turn', { conversationId })
+    }
   }
   // A CONTRACT MUST NEVER DEMAND A TOOL THE HEAD DOES NOT HAVE (live prod run
   // 2026-07-25). The state router is only shadow-logging in production, so the
@@ -918,7 +988,12 @@ async function* runAlternateProviderTurn(
   // demanded run_website_seo_audit, the head could not call it, and Boss got a
   // progress line instead of an audit. Whatever the selector decides, a derived
   // requirement brings its own tools.
-  if (!listenMode && (ownerRequirements.clientSeo || driveClientSeoBatch)) {
+  // SK-6: with a skill pinned, its `requiredCapabilities` ARE the tool list —
+  // that is the allowlist enforcement, and a hardcoded SEO injection here would
+  // hand back tools the pinned skill deliberately does not have (a read-only
+  // audit skill being handed the crawl tools is exactly the failure SK-4 exists
+  // to prevent). `seo-fixing-client-site` already declares all three.
+  if (!listenMode && !activeSkills.pinned && (ownerRequirements.clientSeo || driveClientSeoBatch)) {
     const present = new Set(ownerIntentTools.map((t) => t.name))
     const needed = ['run_website_seo_audit', 'check_website_seo_audit', 'save_artifact'].filter((n) => !present.has(n))
     if (needed.length) {
@@ -1015,6 +1090,9 @@ async function* runAlternateProviderTurn(
     businessId,
     activePlaybook,
     activeSkillsBlock,
+    isolatedSkill: activeSkills.isolated ?? undefined,
+    // SK-6: with a skill pinned, global modules that narrate a JOB step aside.
+    skillPinned: Boolean(activeSkills.pinned),
     intakeContextBlock,
     outcomeLearnings,
     ownerDecisions,
@@ -1036,6 +1114,20 @@ async function* runAlternateProviderTurn(
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
+  // SK-7 enforcement — the isolation claim is MEASURED on the prompt that was
+  // actually built, not asserted. A leak means the swap silently did not happen
+  // (a caller passing both, a module pushed outside the branch), and the owner
+  // would be paying for the pollution he asked to remove without any sign of it.
+  if (activeSkills.isolated) {
+    const stableText = stable.map((b) => b.text).join('')
+    const leaks = findPromptLeaks(stableText, PROMPT_MODULES)
+    console.info('[skill-isolation]', {
+      conversationId,
+      skill: activeSkills.isolated.skillName,
+      promptChars: stableText.length,
+      leaks: leaks.length ? leaks : undefined,
+    })
+  }
   // Volatile per-turn context goes INTO the current owner user turn, not the
   // system text — same rationale as the native Claude path (core.ts): a stable
   // system prefix is what prefix-caching (native + Gemini/OpenRouter implicit)
@@ -1085,7 +1177,11 @@ async function* runAlternateProviderTurn(
   const authorizationNote =
     process.env.AGENT_OWNER_INTENT_GATE !== 'false' ? ownerTurnAuthorizationNote(turnAuthorization) : ''
   if (authorizationNote) volatileSections.push(authorizationNote)
-  const requirementNote = !listenMode ? buildOwnerRequirementNote(ownerRequirements) : ''
+  // SK-6: a pinned skill owns its own procedure, so the SEO-specific contract
+  // lines are not repeated here (see buildOwnerRequirementNote).
+  const requirementNote = !listenMode
+    ? buildOwnerRequirementNote(ownerRequirements, { skillPinned: Boolean(activeSkills.pinned) })
+    : ''
   if (requirementNote) volatileSections.push(requirementNote)
   // Phase 32 — the conversation-focus block leads the job state: the durable
   // "where we are / what's next / what is already verified-done" record, plus
@@ -1754,7 +1850,9 @@ async function* runAlternateProviderTurn(
           apiRounds++
         }
       }
-      line = line.trim()
+      // The opening line is a whole round of its own, so it can carry the same
+      // leaked markup — clean it before it becomes the first thing Boss reads.
+      line = stripToolCallMarkup(line).trim()
       if (line) {
         preambleSpoken = true
         preambleText = line
@@ -1999,6 +2097,10 @@ async function* runAlternateProviderTurn(
             thinkingMs = Date.now() - thinkingStartedAt
           }
           iterationText += ev.text
+          // NOTE: sanitising happens once on the finished round below, not here.
+          // A tool-call fragment arrives split across deltas, so a per-delta
+          // strip would miss it — and the whole round's prose is emitted as one
+          // block, so waiting costs Boss nothing.
         } else if (ev.type === 'thinking_delta') {
           // Surface DeepSeek/Qwen reasoning as the same live "Thought for Ns" block
           // the native Claude head produces — the UI (AgentApp) already handles this.
@@ -2029,25 +2131,22 @@ async function* runAlternateProviderTurn(
         }
       }
 
-      // A tool call is not a sentence (owner saw this twice, 2026-07-27). Some
-      // OpenRouter-hosted heads fall back to an XML-ish tool dialect the adapter
-      // does not recognise, and it lands in the chat as prose:
-      //   <get_website_catalog> <arg_key>scope</arg_key> … </tool_call>
-      // Text deltas are buffered rather than streamed, so removing it here keeps
-      // it off his screen entirely. The names are kept for the record — a claim
-      // built on a call that only LOOKED like it ran must still be catchable.
-      if (iterationText) {
-        const stripped = stripLeakedToolCalls(iterationText)
-        if (stripped.count > 0) {
-          console.warn('[run-owner-turn] leaked tool-call text removed:', {
-            model: model.id,
-            count: stripped.count,
-            tools: stripped.toolNames,
-          })
-          iterationText = stripped.text
-        }
+      // RAW TOOL-CALL MARKUP MUST NEVER REACH BOSS (seen live 2026-07-27 on the
+      // Qwen head: "<get_website_catalog> <arg_key>scope</arg_key> …</tool_call>"
+      // sitting inside a Bangla sentence). The model wrote its call as text
+      // instead of emitting a structured one; the work recovered on the next
+      // round, but he was shown machine syntax and no reply should ever contain
+      // it. Cleaned ONCE here, on the finished round, before it reaches the
+      // timeline or either emission path — a fragment spans several deltas, so
+      // this is the only place it can be done completely.
+      const rawIterationText = iterationText
+      iterationText = stripToolCallMarkup(iterationText)
+      if (iterationText !== rawIterationText) {
+        console.info('[model-output] stripped tool-call markup from visible text', {
+          conversationId,
+          model: model.id,
+        })
       }
-
       // Record this round's reasoning as a timeline segment BEFORE its tool calls.
       if (iterThinking.trim()) timeline.push({ t: 'think', text: iterThinking.trim().slice(0, 4000) })
       // Round's visible text joins the timeline too, so the persisted stream keeps
@@ -2056,6 +2155,22 @@ async function* runAlternateProviderTurn(
       // Tool-round prose streams right away so the live view and reload both keep
       // the narration between steps; final-round text is emitted AFTER the
       // requirement-contract checks below (which may replace it).
+      // The model sometimes restates the spoken opening line in its first tool
+      // round — close paraphrase, not an exact copy, so seeding the transcript
+      // did not stop it and no equality check could catch it. Dropped here,
+      // before Boss sees it: the tool-round prose arrives as ONE block, so there
+      // is nothing half-streamed to take back. Only ever the first prose after
+      // the preamble; every later progress line is left alone.
+      if (
+        iterationText.trim()
+        && calls.length > 0
+        && preambleText.trim()
+        && !answerBody()
+        && isRepeatedOpener(preambleText, iterationText)
+      ) {
+        console.info('[speak-first] dropped a restated opening line', { conversationId })
+        iterationText = ''
+      }
       if (iterationText.trim() && calls.length > 0) {
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + iterationText
@@ -2809,7 +2924,21 @@ async function* runAlternateProviderTurn(
           ...neutralTools.map((t) => t.name),
           ...dynamicNeutralTools.map((t) => t.name),
         ])
-        for (const tool of await resolveToolsByName(matchNames.filter((n) => !already.has(n)))) {
+        // A SEARCH MUST NOT WIDEN WHAT THIS TURN IS ALLOWED TO DO. Without this
+        // the skill allowlist was list-time only: a read-only audit skill could
+        // find_tool its way to a write tool, and "an absent tool is a guarantee"
+        // was untrue exactly where it was quoted most.
+        const permitted = matchNames.filter((n) => {
+          if (already.has(n)) return false
+          if (turnDenylist.has(n)) return false
+          if (turnAllowlist && !turnAllowlist.has(n)) return false
+          return true
+        })
+        const refused = matchNames.filter((n) => !already.has(n) && !permitted.includes(n))
+        if (refused.length > 0) {
+          console.info('[find-tool] refused outside this turn’s permissions', { conversationId, refused })
+        }
+        for (const tool of await resolveToolsByName(permitted)) {
           if (dynamicNeutralTools.length >= MAX_DYNAMIC_TOOLS_PER_TURN) break
           dynamicNeutralTools.push({
             name: tool.name,

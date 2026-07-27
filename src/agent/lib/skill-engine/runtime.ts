@@ -13,6 +13,8 @@
 import path from 'path'
 import { discoverSkills, selectSkills, activateSkill } from '@/agent/lib/skill-engine/loader'
 import { isSkillEngineEnabled } from '@/agent/lib/skill-engine/enabled'
+import { isIsolatedSkill, type IsolatedSkillPrompt } from '@/agent/lib/skill-engine/isolation'
+import { skillIsolationEnabled } from '@/agent/config'
 import type { SkillIndex, SkillManifest } from '@/agent/lib/skill-engine/types'
 
 const SKILLS_ROOT = path.join(process.cwd(), 'src', 'agent', 'skills')
@@ -45,6 +47,17 @@ export interface ActiveSkills {
   pinned: { skill: string; source: 'owner' | 'router'; layer: string; reason: string } | null
   /** SK-4: the pinned skill's manifest — allowlist, dependencies, done gate. */
   manifest: SkillManifest | null
+  /**
+   * SK-7. Set ONLY when the pinned skill declares `isolation: subagent` and the
+   * flag is on — the skill's own system prompt, to REPLACE the behavioural
+   * prompt rather than ride in its volatile tail (skill-engine/isolation.ts).
+   *
+   * `block` stays populated alongside it on purpose: a caller that does not know
+   * about isolation (core.ts's native path, tests) keeps the exact inline
+   * behaviour it has today. The caller that DOES support it drops `block` and
+   * uses this instead — never both, or the procedure would ship twice.
+   */
+  isolated: IsolatedSkillPrompt | null
 }
 
 /** Thin wrapper for callers that only want the prompt text. */
@@ -59,7 +72,7 @@ export async function buildActiveSkills(
   lastUserText: string,
   opts: { conversationId?: string } = {},
 ): Promise<ActiveSkills> {
-  const none: ActiveSkills = { block: '', pinned: null, manifest: null }
+  const none: ActiveSkills = { block: '', pinned: null, manifest: null, isolated: null }
   if (!(await isSkillEngineEnabled())) return none
   if (!lastUserText || !lastUserText.trim()) return none
   try {
@@ -86,11 +99,51 @@ export async function buildActiveSkills(
     }
     if (picked.length === 0) return none
 
+    // SK-8 — provenance. Which version is this, who approved it, and is it still
+    // approved? With the gate OFF this only observes and logs, so the ledger can
+    // be filled from real traffic before it starts refusing anything; with it ON
+    // an unapproved, edited or revoked skill does not run at all.
+    let heldBack: { skill: string; state: string } | null = null
+    try {
+      const [{ loadApprovalLedger }, { approvalState, mayRun }, { skillApprovalGateEnabled }] =
+        await Promise.all([
+          import('@/agent/lib/skill-engine/approval-store'),
+          import('@/agent/lib/skill-engine/provenance'),
+          import('@/agent/config'),
+        ])
+      const ledger = await loadApprovalLedger()
+      const gateOn = skillApprovalGateEnabled()
+      const allowed = picked.filter((meta) => {
+        const state = approvalState({ name: meta.name, version: meta.version, hash: meta.hash }, ledger)
+        if (state !== 'approved') {
+          console.info('[skill-provenance]', { skill: meta.name, version: meta.version, state, gateOn })
+        }
+        if (mayRun(state, gateOn)) return true
+        heldBack = { skill: meta.name, state }
+        return false
+      })
+      if (allowed.length === 0 && heldBack) {
+        // Say WHY rather than behaving as if no skill matched — a skill silently
+        // withheld is the same failure shape as the silent continuation.
+        const { heldBackReason } = await import('@/agent/lib/skill-engine/provenance')
+        const h = heldBack as { skill: string; state: string }
+        return { ...none, block: `\n## Skill\n${heldBackReason(h.skill, h.state as never)}\n` }
+      }
+      picked = allowed
+    } catch {
+      /* provenance must never break a turn — fall through with the picked set */
+    }
+
     const bodies: string[] = []
     let manifest: SkillManifest | null = null
+    // SK-7: the FIRST activated skill is the one that can isolate. Isolation is
+    // a one-skill decision by construction — a lean prompt built from two
+    // competing skills would not be lean or coherent.
+    let primary: Awaited<ReturnType<typeof activateSkill>> = null
     for (const meta of picked) {
       const activated = await activateSkill(meta)
       if (!activated) continue
+      primary = primary ?? activated
       manifest = manifest ?? activated.manifest
       const body = activated.instructions.slice(0, MAX_SKILL_BODY_CHARS)
       bodies.push(`### ${activated.manifest.name} (v${activated.manifest.version})\n${body}`)
@@ -121,7 +174,24 @@ export async function buildActiveSkills(
       `\n` +
       bodies.join('\n\n')
     )
-    return { block, pinned, manifest }
+
+    // SK-7 — isolation needs BOTH: the skill asked for it, and the flag allows
+    // it. Only a pinned skill can isolate: without a pin the selection can shift
+    // mid-conversation, and swapping the whole system prompt between turns would
+    // rewrite the cached prefix every message (the cost failure the pin exists
+    // to prevent). Anything missing → the normal inline block, unchanged.
+    const isolated: IsolatedSkillPrompt | null =
+      primary && pinned && isIsolatedSkill(primary.manifest) && skillIsolationEnabled()
+        ? {
+            skillName: primary.manifest.name,
+            baseInstructions: primary.baseInstructions,
+            systemPrompt: primary.systemPrompt,
+            instructions: primary.instructions.slice(0, MAX_SKILL_BODY_CHARS),
+            announce,
+          }
+        : null
+
+    return { block, pinned, manifest, isolated }
   } catch {
     return none
   }

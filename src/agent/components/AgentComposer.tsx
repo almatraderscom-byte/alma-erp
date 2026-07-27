@@ -448,9 +448,32 @@ export default function AgentComposer({
             </button>
           )}
 
+          {/* OWNER REPORT 2026-07-27: while the agent worked there was no way to
+              stop it. The stop button used to appear only when the box was EMPTY
+              (`streaming && !canSend`), so typing one character swapped it back to
+              send — and pressing it queued the message instead of stopping.
+              Whichever he wanted, the button did the other thing.
+
+              While work is running the round button is now ALWAYS stop. Queueing a
+              message mid-run is still right and still works — Enter queues it, and
+              this pill appears next to stop the moment there is something to queue,
+              so the two are separate controls instead of one that changes meaning
+              under him. */}
+          {streaming && canSend && (
+            <button
+              type="button"
+              onClick={send}
+              className="flex shrink-0 items-center gap-1 rounded-full border border-[var(--alma-coral)]/40 bg-[var(--alma-coral)]/10 px-2.5 py-1 text-[11px] text-[var(--alma-coral)] active:scale-90"
+              aria-label="কাজ শেষে পাঠাও (queue)"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+              queue
+            </button>
+          )}
+
           {/* Right: coral circular send ↔ stop — springy icon swap (Claude feel) */}
           <AnimatePresence mode="popLayout" initial={false}>
-            {streaming && !canSend ? (
+            {streaming ? (
               <motion.button
                 key="stop"
                 type="button"

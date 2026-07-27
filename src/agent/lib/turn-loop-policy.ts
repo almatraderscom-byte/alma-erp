@@ -104,6 +104,44 @@ function isWorkInFlight(text: string): boolean {
   return IN_FLIGHT_RE.test(tail)
 }
 
+/**
+ * OWNER OBSERVATION 2026-07-27 — one reply opened with the same sentence twice:
+ *
+ *   "বস, আপনি এখন কোনো SEO fix কাজ করার দরকার নেই বলেছেন — চলমান seo task-এর স্ট্যাটাস যাচাই করছি।"
+ *   "বস, আপনি এখন কোনো SEO fix কাজ করার দরকার নেই বলেছেন — seo task-এর চলমান স্ট্যাটাস যাচাই করছি।"
+ *
+ * Speak-first streams the opening line in its own round and seeds it into the
+ * transcript as the assistant's own words, precisely so the model continues
+ * instead of greeting Boss again. It mostly works — and when it does not, the
+ * paraphrase is close but not identical, so no exact-match check catches it.
+ *
+ * Asking the prompt more firmly is a request. Comparing the two lines is a
+ * guarantee, and it is cheap: the tool-round prose arrives as one block, so a
+ * duplicate is dropped before Boss ever sees it.
+ *
+ * Deliberately conservative. The threshold is high and the check only applies to
+ * the FIRST prose after the preamble; a genuine progress line ("catalogue পড়া
+ * শেষ, এখন audit চালাচ্ছি") shares few words with the opener and survives.
+ */
+const OPENER_SIMILARITY = 0.75
+
+function words(s: string): string[] {
+  return (s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => w.length > 1)
+}
+
+export function isRepeatedOpener(preamble: string, next: string): boolean {
+  const a = words(preamble)
+  const b = words(next)
+  if (a.length < 4 || b.length < 4) return false
+  // A restatement is not usually much longer than the line it restates; a real
+  // progress update that happens to echo some words is.
+  if (b.length > a.length * 1.8) return false
+  const setA = new Set(a)
+  const shared = b.filter((w) => setA.has(w)).length
+  const union = new Set([...a, ...b]).size
+  return shared / union >= OPENER_SIMILARITY || shared / b.length >= 0.9
+}
+
 export function shouldNudgeAdapterIntent(input: {
   text: string
   toolRecords: TurnLoopToolRecord[]

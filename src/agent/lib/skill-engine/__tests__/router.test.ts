@@ -112,6 +112,7 @@ describe('U3 — the registry budget', () => {
       keywords: [],
       implicit: true,
       dir: '',
+      hash: `hash-${i}`,
     }))
 
   it('passes a small registry through untouched', () => {

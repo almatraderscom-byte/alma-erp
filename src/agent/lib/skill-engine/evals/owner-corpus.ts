@@ -47,6 +47,30 @@ export const OWNER_CORPUS: OwnerCase[] = [
     note: 'Someone else’s site — different tools, no DB access.',
   },
 
+  // ── BANGLISH fix orders — the gap he caught live, 2026-07-27 ────────────
+  // Every work verb in the rule layer was Bangla SCRIPT only, so "slug thik
+  // koro" matched nothing, three skills tied on keyword score, and the
+  // READ-ONLY audit skill won a FIX order. He types romanised most of the time;
+  // a corpus that only tests the script measures the wrong agent.
+  {
+    id: 'seo-fix-slug-banglish',
+    text: 'almatraders.com er baki slug problem gulo thik kore dao',
+    expected: 'seo-fixing-own-site',
+    note: 'Romanised fix order, and no seo/alt/meta word anywhere in it.',
+  },
+  {
+    id: 'seo-fix-meta-banglish',
+    text: 'almatraders.com er product gulor meta description thik kore dao',
+    expected: 'seo-fixing-own-site',
+    note: 'The message that actually pinned the right skill — keep it pinned.',
+  },
+  {
+    id: 'seo-audit-banglish',
+    text: 'almatraders.com er purno seo audit koro',
+    expected: 'seo-auditing-own-site',
+    note: 'Romanised AUDIT order — the mirror image, must not flip to fixing.',
+  },
+
   // ── Everyday business, each a different skill ────────────────────────────
   { id: 'staff', text: 'Mustahid ajke kokhon asche?', expected: 'alma-staff-dispatch' },
   { id: 'listing', text: 'notun panjabi ta website e tolo', expected: 'alma-product-listing' },

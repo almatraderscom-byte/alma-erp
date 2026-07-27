@@ -261,6 +261,34 @@ export function speakFirstEnabled(flag = process.env.AGENT_SPEAK_FIRST): boolean
   return flag !== 'off'
 }
 
+/**
+ * SK-7 — a pinned skill declaring `isolation: subagent` REPLACES the general
+ * behavioural prompt with its own (kernel + alma-base + SYSTEM.md + SKILL.md)
+ * instead of being appended to it. This is the owner's original ask; the tool
+ * allowlist (SK-4) is the other half and is already live.
+ *
+ * OFF in production until he has seen it work; auto-ON on preview, which is
+ * where SKILL_ENGINE_ENABLED already is.
+ */
+export function skillIsolationEnabled(
+  flag = process.env.AGENT_SKILL_ISOLATION,
+  vercelEnv = process.env.VERCEL_ENV,
+): boolean {
+  return flag === 'on' || (vercelEnv === 'preview' && flag !== 'off')
+}
+
+/**
+ * SK-8 — refuse to run a skill nobody approved, or one edited since approval.
+ *
+ * OFF everywhere unless explicitly `on`, and NOT auto-on for preview like the
+ * other flags. Turning this on with an empty ledger disables every skill at
+ * once, so the intended order is: run with it off, watch the approval states in
+ * the logs, populate the ledger, then switch it on deliberately.
+ */
+export function skillApprovalGateEnabled(flag = process.env.AGENT_SKILL_APPROVAL_GATE): boolean {
+  return flag === 'on'
+}
+
 /** Hard ceiling on a trimmed specialist sub-agent's tool count. */
 export const SUBAGENT_TOOL_CAP = Number(process.env.SUBAGENT_TOOL_CAP) || 40
 

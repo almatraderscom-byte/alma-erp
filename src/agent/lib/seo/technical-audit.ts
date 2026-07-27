@@ -11,6 +11,7 @@
  * (regex-based, no HTML-parser dependency — good enough for the checks below,
  * NOT a rendering engine; JavaScript-rendered content needs the browser path).
  */
+import { contentImages, imagesMissingAlt } from '@/agent/lib/grind/page-measure'
 
 export interface PageSnapshot {
   url: string
@@ -40,8 +41,19 @@ export function analyzePageLite(html: string, url: string, statusCode?: number):
   const canonical = pick(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i) || null
   const robots = (pick(/<meta[^>]+name=["']robots["'][^>]+content=["']([^"']*)["']/i) || '').toLowerCase()
   const h1Count = (html.match(/<h1[\s>]/gi) ?? []).length
-  const imgs = html.match(/<img[\s>][^>]*>/gi) ?? []
-  const missingAlt = imgs.filter((tag) => !/alt=["'][^"']+["']/i.test(tag)).length
+  // DECORATIVE IMAGES ARE SUPPOSED TO CARRY alt="" — this counter did not know
+  // that, and it is the one the owner reads. The correction from 2026-07-26
+  // (the "52+ images without alt" that turned out to be zero real defects) was
+  // applied to the grind page-measure and to the worker crawler, but NOT here:
+  // so tonight's site audit still reported "12 of 13 images missing alt" for
+  // markup that is already correct, in the same session where the agent's own
+  // product-level audit said zero. Two numbers, one site, and he had no way to
+  // tell which was lying.
+  //
+  // One shared rule now, imported rather than re-implemented — the third copy is
+  // exactly how the first two drifted apart.
+  const imgs = contentImages(html)
+  const missingAlt = imagesMissingAlt(html).length
   const jsonLdTypes: string[] = []
   for (const m of html.matchAll(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
     try {

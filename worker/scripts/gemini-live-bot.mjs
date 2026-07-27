@@ -356,7 +356,6 @@ class Call {
     this.outText = ''            // rolling model transcript (for hang-up detection)
     this.spoken = ''             // longer rolling transcript (for a tool call read aloud)
     this._spokenToolFired = false
-    this._muteTurn = false      // silence the rest of a turn that leaked a tool call
     this.hangingUp = false
     this.callerSpoke = false     // arm the goodbye→hangup only after the caller has spoken once
     this.callerWantsEnd = false  // the OTHER side asked to finish — see CALLER_END_RE
@@ -462,8 +461,6 @@ class Call {
     if (m.goAway) console.log(`[glive] ${this.id} goAway — reconnect will follow`)
     if (m.toolCall?.functionCalls?.length) void this.handleToolCalls(m.toolCall.functionCalls)
     const sc = m.serverContent
-    // A new turn starts clean: the mute belongs to the turn that leaked, not to the call.
-    if (sc?.turnComplete || sc?.interrupted) this._muteTurn = false
     if (sc?.interrupted) { // native barge-in — drop everything queued, re-buffer fresh
       console.log(`[glive] ${this.id} <barge-in> flush`)
       this.out = Buffer.alloc(0); this.playing = false
@@ -473,10 +470,6 @@ class Call {
       const d = p.inlineData?.data
       if (!d) continue
       if (!this._loggedRate) { this._loggedRate = true; console.log(`[glive] ${this.id} out mime=${p.inlineData.mimeType}`) }
-      // The model is reading a tool call out loud. Drop the REST of the turn, not just what
-      // was already queued: flushing once and then letting the following chunks through is
-      // why the caller still heard "forward_call reason target support" after the first fix.
-      if (this._muteTurn) continue
       this.out = Buffer.concat([this.out, pcm16ToMuLaw(this.down24to8(Buffer.from(d, 'base64')))])
     }
     if (sc?.outputTranscription?.text) {
@@ -590,6 +583,23 @@ class Call {
 
   finishHangup() {
     if (this._hangTimer || this.closed) return
+    /*
+     * NEVER hang up on someone we have just promised to connect.
+     *
+     * Live on 2026-07-26: `tool forward_call(...) -> ok` was followed immediately by
+     * `hang-up (goodbye spoken)`. finishForward() fires from the drain loop ~1200 ms after the
+     * request, so the goodbye path wins the race and the caller is cut off mid-promise — they
+     * asked for a human, were told one was coming, and got dead air. The owner heard no farewell
+     * at all, which fits: the detector matches the model's transcript, not what he registered.
+     *
+     * This is the same shape as the guard above it (a farewell inside a question is ignored):
+     * for this class of failure the guarantee belongs in code, because the prompt has asked the
+     * model not to do it since the tool was added and it does it anyway.
+     */
+    if (this.forwarding) {
+      console.log(`[glive] ${this.id} goodbye while a transfer is pending — IGNORED`)
+      return
+    }
     console.log(`[glive] ${this.id} hang-up (goodbye spoken)`)
     // Let the goodbye's last frames play, then END the PSTN call via the NGS API
     // (closing our WS alone leaves the caller on a silent-but-connected line).
@@ -769,12 +779,7 @@ class Call {
   catchSpokenToolCall() {
     if (this._spokenToolFired || this.forwarding || this.closed) return
     const said = this.spoken || ''
-    // Fire on the FIRST recognisable fragment rather than the whole signature. The transcript
-    // arrives in chunks and the audio for it is already on its way, so waiting for the closing
-    // bracket means the caller hears most of it. `forward_ca` is enough to be sure — no Bangla
-    // sentence contains it — and `target=` / `reason=` catch the shapes where the model names
-    // the arguments without the function.
-    if (!/forward_ca|target\s*[=:]\s*["']?(support|boss)|reason\s*[=:]\s*["']/i.test(said)) return
+    if (!/forward_call/i.test(said)) return
 
     this._spokenToolFired = true
     const target = /target\s*[=:]\s*["']?boss/i.test(said) ? 'boss' : 'support'
@@ -782,9 +787,7 @@ class Call {
       || 'কলদাতা মানুষের সাথে কথা বলতে চাইছেন (এজেন্ট টুলটা মুখে বলে ফেলেছিল)'
 
     console.log(`[glive] ${this.id} SPOKEN tool call detected -> forwarding to ${target}`)
-    // Stop the spoken function signature from playing any further: drop what is queued AND
-    // everything else this turn produces.
-    this._muteTurn = true
+    // Stop the spoken function signature from playing any further.
     this.out = Buffer.alloc(0)
     this.playing = false
     try { this.sendNgs({ event: 'clear', [this.streamKey]: this.streamSid }) } catch { /* best effort */ }
@@ -794,7 +797,6 @@ class Call {
       console.log(`[glive] ${this.id} spoken-tool forward failed: ${res?.error || 'unknown'}`)
       // Let the model try again properly rather than leaving the caller in silence.
       this._spokenToolFired = false
-      this._muteTurn = false
     }
   }
 
@@ -821,7 +823,18 @@ class Call {
           signal: AbortSignal.timeout(10_000),
         }).catch(() => {})
       }
-      return { ok: true, status: 'message_mode', instruction: 'কলদাতাকে ভদ্রভাবে বলো: "উনি এই মুহূর্তে ব্যস্ত আছেন — আপনার নাম আর প্রয়োজনটা বলুন, আমি এখনই ওনাকে পৌঁছে দিচ্ছি।" তারপর নাম/নম্বর/বিষয় জেনে নাও; কল ট্রান্সফার হবে না।' }
+      /*
+       * The model has usually ALREADY told the caller "যুক্ত করে দিচ্ছি" before calling this
+       * tool, and in this mode no transfer happens — so the caller waits for something that was
+       * never coming, with no hold music, until the line goes quiet. The owner hit exactly that.
+       * The instruction now tells the model to CORRECT itself out loud rather than leaving a
+       * promise standing that the system will not keep.
+       */
+      return {
+        ok: true,
+        status: 'message_mode',
+        instruction: 'ট্রান্সফার হবে না — এই মুহূর্তে কাউকে লাইনে যুক্ত করা যাচ্ছে না। তুমি যদি ইতিমধ্যে "যুক্ত করে দিচ্ছি" বা "একটু ধরুন" বলে ফেলেছ, তাহলে সাথে সাথে ভদ্রভাবে সংশোধন করো — যেমন: "দুঃখিত, এখন সরাসরি যুক্ত করা যাচ্ছে না, তবে আপনার কথা আমি এখনই পৌঁছে দিচ্ছি।" তারপর নাম, নম্বর ও প্রয়োজনটা জেনে নাও। কলদাতাকে অপেক্ষায় রেখে দেবে না, আর যুক্ত করার প্রতিশ্রুতি আর দেবে না।',
+      }
     }
     if (!this.callId || !NGS_KEY) return { ok: false, error: 'forward not configured (callId/creds)' }
     const dest = this.forwardNumber(target)
