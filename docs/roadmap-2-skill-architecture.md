@@ -359,18 +359,36 @@ the iOS simulator build, which no change here touches.
 
 ### What is left, honestly
 
-**Item 3 — skill promotion: 9 of 14 done, 5 remain.**
+**Item 3 — skill promotion: 14 of 14 done (2026-07-28). Nothing left in `draft`.**
 
-| still `draft` | the known blocker |
-|---|---|
-| `alma-customer-support` | takes the parcel message in the drafts-included run; customer-facing, so it goes late |
-| `alma-meta-campaign-launch` | spends money — decide whether it should be `implicit: false` (Boss names it) first |
-| `alma-audience-builder` | "audience" was a keyword collision with the campaign skill; check it is really gone |
-| `alma-agent-incident-diagnosis` | SK-0's only false trigger came from its bare "dekho" keyword |
-| `alma-browser-operator` | highest risk in the set — last, deliberately |
+The last five, in the order they were done and with what each one's recorded
+blocker actually turned out to be:
+
+| # | skill | the blocker, and what it really was |
+|---|---|---|
+| 9 | `alma-agent-incident-diagnosis` | bare `problem` / `সমস্যা` keywords. Dropped — a website problem is alma-website's. Lowest blast radius left (`writePolicy: none`), so it went first |
+| 10 | `alma-audience-builder` | the `audience` collision. Fixed on the OTHER side: audience is what a campaign consumes, so the word left `alma-meta-campaign-launch`. Lint's keyword-collision count is now 0 |
+| 11 | `alma-customer-support` | the parcel message. The cause was its own NAME — selection scores name tokens, so `customer` was worth 1 before the description said a word |
+| 12 | `alma-meta-campaign-launch` | "should it be `implicit: false`?" — no. The gate is the card plus Meta creating everything PAUSED. It got a REQUIRED pre-flight instead (`ads_campaign_plan` before any card) |
+| 13 | `alma-browser-operator` | highest risk, deliberately last. Nothing was widened: the final-submit block and credential refusal are in code, so the promotion only added order (status check, look-before-act) |
+
+Three of the five had their `writePolicy` / `networkPolicy` corrected on the way
+through, because the drafts described gates that did not exist — an allowlist with
+no write tool in it is not "owner_gated", it is `none`, and saying so is the
+difference between a promise and a guarantee.
+
+**The live meter closed the set:** 22 of 22 corpus messages now pin the right
+skill on the LIVE path (was 17), **0 wrong**, **0 false triggers**. Lint 39 → 16.
+The browser message was the one row that had never matched anything at all.
 
 `alma-seo-audit` and `alma-client-seo` are **retired**, not pending: superseded by
 the SK-5 skills, and both claimed "seo".
+
+**Owner action, and the reason it cannot be done from here.** The approval gate is
+ON in Preview, and these five are `unapproved` — so the engine will hold them back
+until Boss approves each one at `/agent/staff-monitor`. That is the ledger working
+as designed (approving is a person clicking, because the ledger's whole question is
+*who* said yes), not a bug to route around.
 
 **Item 5 — Upstash: built, flag OFF, worker NOT deployed.**
 The read path (poll the durable log when there is no Redis to tail) is live and
@@ -378,9 +396,16 @@ already helping. The write path is `AGENT_TURN_HANDOFF_HTTP`, default off, and
 `worker/src/diagnostic-http.mjs` still needs a manual `pm2 restart` on the VPS —
 his call, not something to do from here.
 
-**Roadmap-2's own remaining list:** the router's last misses (all skill-library
-gaps, not router gaps) and the registry budget, which is written but never
-exercised at scale — revisit past ~10 active skills. There are 13 now.
+**Roadmap-2's own remaining list:** the registry budget, which is written but
+never exercised at scale — revisit past ~10 active skills. There are **18** now
+(14 selectable + `alma-base` + 3 already counted above), so this is the next thing
+that should be measured rather than assumed. The router's misses are gone: the
+skill-library gap that caused every one of them was the drafts, and there are none.
+
+**The next isolation candidate is `alma-browser-operator`,** and it is written
+down here rather than done: it is the only skill that reads pages nobody here
+wrote, which is exactly the argument item 4 used for the two SEO skills. It needs
+his paired Chrome to prove live, so it waits for him.
 
 ### Harness parity — where it actually stands
 
