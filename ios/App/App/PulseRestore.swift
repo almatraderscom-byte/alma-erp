@@ -85,7 +85,7 @@ enum PulseRestore {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
         let json = #"""
-        {"mode":"approval","headline":"আপনার অনুমোদন দরকার","subtitle":"১টা অনুরোধ অপেক্ষায় · এখনই সিদ্ধান্ত দিন","pendingTaskCount":40,"approvalCount":1,"runningOrderCount":1,"orderProgress":0.5,"pendingApprovals":1,"openTasks":40,"approvalId":"erp:demo-approval-000","approvalTitle":"ওয়ালেট উত্তোলন — টেস্ট","approvalCounterparty":"PAYROLL · এখন","approvalAmountText":"৳৭,৪০০"}
+        {"ordersToday":1,"statusLine":"১টা অনুমোদন অপেক্ষায়","mode":"approval","headline":"আপনার অনুমোদন দরকার","subtitle":"১টা অনুরোধ অপেক্ষায় · এখনই সিদ্ধান্ত দিন","pendingTaskCount":40,"approvalCount":1,"runningOrderCount":1,"orderProgress":0.5,"pendingApprovals":1,"openTasks":40,"approvalId":"erp:demo-approval-000","approvalTitle":"ওয়ালেট উত্তোলন — টেস্ট","approvalCounterparty":"PAYROLL · এখন","approvalAmountText":"৳৭,৪০০"}
         """#
         guard let data = json.data(using: .utf8),
               let state = try? JSONDecoder().decode(PulseActivityAttributes.ContentState.self, from: data) else {
