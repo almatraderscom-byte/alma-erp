@@ -143,6 +143,12 @@ jobs:
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
 
+          # Preserve diagnostics even when an iOS/Xcode helper rejects a fresh
+          # Simulator. This directory is uploaded by the always() step.
+          PREVIEW_DIR="$RUNNER_TEMP/ios-preview"
+          mkdir -p "$PREVIEW_DIR"
+          printf 'capture initialized\n' > "$PREVIEW_DIR/capture-started.txt"
+
           APP_PATH="$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/App.app"
           test -d "$APP_PATH"
           test -s "$APP_PATH/PlugIns/AlmaWidgetExtension.appex/Assets.car"
@@ -160,17 +166,12 @@ jobs:
           applesimutils \
             --byId "$UDID" \
             --bundle com.almatraders.erp \
-            --setPermissions "notifications=YES"
+            --setPermissions "notifications=YES" || true
           # Notification permission changes restart Simulator SpringBoard.
           # Give both SpringBoard and Spotlight their documented helper window,
           # then re-confirm boot readiness before launching or recording.
           sleep 15
           xcrun simctl bootstatus "$UDID" -b
-
-          # Create the artifact directory before cosmetic Simulator setup so a
-          # future capture failure still leaves diagnostics for upload.
-          PREVIEW_DIR="$RUNNER_TEMP/ios-preview"
-          mkdir -p "$PREVIEW_DIR"
 
           # Xcode 26 can transiently reject status-bar overrides immediately
           # after AppleSimulatorUtils restarts SpringBoard. This is cosmetic
@@ -200,7 +201,7 @@ jobs:
           # DEBUG-only interaction sequence runs, so the preview records the
           # Robot instead of a Simulator passcode sheet. This changes only the
           # ephemeral CI Simulator, never app or TestFlight behaviour.
-          applesimutils --byId "$UDID" --biometricEnrollment YES
+          applesimutils --byId "$UDID" --biometricEnrollment YES || true
           (
             for _ in {1..45}; do
               applesimutils --byId "$UDID" --biometricMatch \
