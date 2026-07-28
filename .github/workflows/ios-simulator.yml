@@ -63,6 +63,13 @@ jobs:
         working-directory: ios/App
         run: pod install
 
+      - name: Install Simulator permission helper
+        if: github.event_name == 'pull_request'
+        run: |
+          brew tap wix/brew
+          brew install applesimutils
+          applesimutils --version
+
       - name: Build for iOS Simulator (unsigned)
         working-directory: ios/App
         run: |
@@ -138,6 +145,18 @@ jobs:
             > "$RUNNER_TEMP/alma-widget-assets.json"
           grep -q "AlmaWidgetRobotStrip" "$RUNNER_TEMP/alma-widget-assets.json"
           xcrun simctl install "$UDID" "$APP_PATH"
+          # A fresh Simulator otherwise presents OneSignal's notification sheet
+          # over the whole demo. AppleSimulatorUtils handles this non-TCC
+          # permission and restarts SpringBoard before the recording begins.
+          applesimutils \
+            --byId "$UDID" \
+            --bundle com.almatraders.erp \
+            --setPermissions "notifications=YES"
+          # Notification permission changes restart Simulator SpringBoard.
+          # Give both SpringBoard and Spotlight their documented helper window,
+          # then re-confirm boot readiness before launching or recording.
+          sleep 15
+          xcrun simctl bootstatus "$UDID" -b
           xcrun simctl status_bar "$UDID" override \
             --time 9:41 \
             --batteryState charged \

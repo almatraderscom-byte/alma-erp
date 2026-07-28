@@ -74,7 +74,13 @@ enum PulseRestore {
     static func debugStartDemoApprovalIfRequested() async -> Bool {
         #if canImport(ActivityKit)
         guard ProcessInfo.processInfo.environment["ALMA_PULSE_DEMO"] == "approval" else { return false }
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { note("demo_activities_disabled"); return false }
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            if ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" {
+                RobotSelfTestTrace.mark("robotSelfTest.dynamicIslandDisabled")
+            }
+            note("demo_activities_disabled")
+            return false
+        }
         for activity in Activity<PulseActivityAttributes>.activities {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
@@ -83,9 +89,16 @@ enum PulseRestore {
         """#
         guard let data = json.data(using: .utf8),
               let state = try? JSONDecoder().decode(PulseActivityAttributes.ContentState.self, from: data) else {
-            note("demo_decode_failed"); return false
+            if ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" {
+                RobotSelfTestTrace.mark("robotSelfTest.dynamicIslandDecodeFailed")
+            }
+            note("demo_decode_failed")
+            return false
         }
         do {
+            if ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" {
+                RobotSelfTestTrace.mark("robotSelfTest.dynamicIslandRequesting")
+            }
             _ = try Activity.request(
                 attributes: PulseActivityAttributes(title: "ALMA"),
                 content: ActivityContent(state: state, staleDate: nil),
@@ -97,6 +110,9 @@ enum PulseRestore {
             }
             return true
         } catch {
+            if ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" {
+                RobotSelfTestTrace.mark("robotSelfTest.dynamicIslandRequestFailed")
+            }
             note("demo_request_failed: \(error.localizedDescription)")
             return false
         }
