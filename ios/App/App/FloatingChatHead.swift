@@ -339,6 +339,7 @@ final class FloatingChatHead {
 
 /// UIKit drag shell around the tightly-sized SwiftUI robot. Tap and long-press
 /// remain inside `OfficeRobotPetButton`; this view owns only movement/snap.
+@available(iOS 17.0, *)
 final class OfficeRobotPetContainerView: UIView {
     var onDragChanged: ((CGPoint) -> Void)?
     var onDragEnded: ((CGPoint) -> Void)?
