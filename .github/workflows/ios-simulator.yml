@@ -228,6 +228,7 @@ jobs:
           BIOMETRIC_PID=$!
 
           SIMCTL_CHILD_ALMA_ROBOT_SELFTEST=1 \
+          SIMCTL_CHILD_ALMA_ROBOT_ISLAND_ENTRY_SELFTEST=1 \
           SIMCTL_CHILD_ALMA_PULSE_DEMO=approval \
             xcrun simctl launch "$UDID" com.almatraders.erp
           printf 'app-launched\n' >> "$PREVIEW_DIR/capture-stages.txt"
@@ -270,6 +271,30 @@ jobs:
           xcrun simctl io "$UDID" screenshot \
             "$PREVIEW_DIR/office-robot-dynamic-island.png"
 
+          # Foreground ALMA through the same production arrival coordinator
+          # used by the Dynamic Island deep link. Simulator SpringBoard owns
+          # actual Island taps and may show a confirmation sheet in headless
+          # CI, so the DEBUG-only environment gate arms the coordinator on the
+          # real background→active lifecycle instead. The recording captures
+          # the Robot growing from the Island position and running to its dock.
+          xcrun simctl launch "$UDID" com.almatraders.erp
+          ISLAND_ENTRY_FINISHED=0
+          for _ in {1..10}; do
+            if grep -Fxq "robotSelfTest.islandEntryCompleted" \
+              "$TRACE" 2>/dev/null; then
+              ISLAND_ENTRY_FINISHED=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ISLAND_ENTRY_FINISHED" != "1" ]]; then
+            echo "Robot Island entry demo did not complete within 10 seconds."
+            test ! -f "$TRACE" || cat "$TRACE"
+            exit 1
+          fi
+          xcrun simctl io "$UDID" screenshot \
+            "$PREVIEW_DIR/office-robot-island-entry.png"
+
           kill -INT "$VIDEO_PID"
           wait "$VIDEO_PID" || true
           VIDEO_PID=""
@@ -289,6 +314,9 @@ jobs:
           grep -Fxq "robotSelfTest.dragDone" "$TRACE"
           grep -Fxq "robotSelfTest.completed" "$TRACE"
           grep -Fxq "robotSelfTest.dynamicIslandStarted" "$TRACE"
+          grep -Fxq "robotSelfTest.islandEntryReceived" "$TRACE"
+          grep -Fxq "robotSelfTest.islandEntryAnimationStarted" "$TRACE"
+          grep -Fxq "robotSelfTest.islandEntryCompleted" "$TRACE"
 
       - name: Upload Office Robot Simulator preview
         if: always() && github.event_name == 'pull_request'

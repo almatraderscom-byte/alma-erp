@@ -82,8 +82,9 @@ struct OfficeRobotLiveGlyph: View {
         return dates.filter { $0 >= now.addingTimeInterval(-0.05) }
     }
 
-    /// Voice already has a 0.4s ribbon schedule. The tiny Robot stays slower;
-    /// Pulse is slower still so it does not become a background battery tax.
+    /// Voice already has a 0.4s ribbon schedule. Pulse remains deliberately
+    /// low-frequency, but its poses change often enough that the compact Robot
+    /// visibly looks around during a normal 10–20 second glance.
     private var refreshInterval: TimeInterval {
         switch context {
         case .voice:
@@ -91,10 +92,10 @@ struct OfficeRobotLiveGlyph: View {
         case .pulse(let mode, _):
             switch mode {
             case .success: return 0.65 * cadenceMultiplier
-            case .urgent: return 1.8 * cadenceMultiplier
-            case .orders, .working: return 2.4 * cadenceMultiplier
-            case .approval: return 2.6 * cadenceMultiplier
-            default: return 2.4 * cadenceMultiplier
+            case .urgent: return 1.15 * cadenceMultiplier
+            case .orders, .working: return 1.35 * cadenceMultiplier
+            case .approval: return 1.25 * cadenceMultiplier
+            default: return 1.50 * cadenceMultiplier
             }
         }
     }
@@ -151,15 +152,15 @@ struct OfficeRobotLiveGlyph: View {
         switch mode {
         case .overview:
             return sequence(
-                [0, 0, 0, 1, 0, 0, 2, 3, 2, 0, 0, 0, 4, 5, 4, 0],
+                [0, 1, 0, 2, 3, 2, 0, 4, 5, 4, 0],
                 date: date
             )
         case .working, .orders:
-            return sequence([6, 7, 8, 9, 8, 7], date: date)
+            return sequence([6, 7, 8, 9, 8, 7, 6, 1], date: date)
         case .approval:
-            return sequence([0, 16, 0, 1], date: date)
+            return sequence([0, 16, 1, 0, 4, 5, 4, 0], date: date)
         case .urgent:
-            return sequence([0, 10, 0, 11], date: date)
+            return sequence([0, 10, 1, 11], date: date)
         case .stale:
             return sequence([8, 8, 1, 8], date: date)
         case .offline:

@@ -242,6 +242,43 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
         // .almaOpenPath and let AlmaTabBarController.routeNotificationTap decide
         // (native / tab / allowlisted web / fail-loud) via AlmaNavCoordinator.
         if url.scheme == "almaerp" {
+            // Dynamic Island Robot taps use a dedicated host so the app can
+            // finish the system-owned launch with its own small-to-large Robot
+            // arrival. The nested target stays restricted to this app's custom
+            // scheme; an invalid or external target safely falls back to Agent.
+            if url.host == "office-robot" {
+                let components = URLComponents(
+                    url: url,
+                    resolvingAgainstBaseURL: false
+                )
+                let targetValue = components?.queryItems?
+                    .first(where: { $0.name == "target" })?.value
+                let targetURL = targetValue.flatMap(URL.init(string:))
+                var path = "/agent"
+                if let targetURL, targetURL.scheme == "almaerp" {
+                    path = "/" + (targetURL.host ?? "") + targetURL.path
+                    if path.count > 1, path.hasSuffix("/") {
+                        path = String(path.dropLast())
+                    }
+                    if let query = targetURL.query, !query.isEmpty {
+                        path += "?\(query)"
+                    }
+                }
+
+                AlmaPerfLog.event("route.dynamicIslandRobot", path)
+                if #available(iOS 17.0, *) {
+                    Task { @MainActor in
+                        FloatingChatHead.shared.requestIslandEntryTransition()
+                    }
+                }
+                NotificationCenter.default.post(
+                    name: .almaOpenPath,
+                    object: nil,
+                    userInfo: ["path": path]
+                )
+                return true
+            }
+
             #if DEBUG
             // Headless voice-conversation test hook (simulator only): inject a
             // "spoken" user turn into a live AI call. simctl openurl

@@ -381,9 +381,9 @@ struct AlmaVoiceLiveActivity: Widget {
             } compactLeading: {
                 OfficeRobotLiveGlyph(
                     context: .voice(phase: phase),
-                    size: 20
+                    size: 23
                 )
-                    .padding(.leading, 3)
+                    .padding(.leading, 1)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(VoiceHue.status(phase))
             } compactTrailing: {
@@ -393,13 +393,13 @@ struct AlmaVoiceLiveActivity: Widget {
             } minimal: {
                 OfficeRobotLiveGlyph(
                     context: .voice(phase: phase),
-                    size: 17,
-                    cadenceMultiplier: 1.75
+                    size: 20,
+                    cadenceMultiplier: 1.30
                 )
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(VoiceHue.status(phase))
             }
-            .widgetURL(URL(string: "almaerp://agent"))
+            .widgetURL(URL(string: "almaerp://office-robot?target=almaerp%3A%2F%2Fagent"))
             .keylineTint(hcol(hue, 0.8, 0.9))
         }
     }

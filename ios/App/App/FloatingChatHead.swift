@@ -93,6 +93,8 @@ final class FloatingChatHead {
     private var incomingUp = false
     private var suppressionReasons: Set<String> = []
     private var presentationHidesRobot = false
+    private var islandEntryPending = false
+    private var islandEntryAnimating = false
 
     /// Contextual native sheets own the full interaction plane. Hide the global
     /// chat head while one is presented so it cannot cover or intercept a row;
@@ -177,8 +179,190 @@ final class FloatingChatHead {
         NotificationCenter.default.addObserver(
             self, selector: #selector(callCoordinatorChanged),
             name: .officeCallCoordinatorDidChange, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appDidBecomeActiveForRobotEntry),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appWillResignActiveForRobotEntry),
+            name: UIApplication.willResignActiveNotification, object: nil)
+        #if DEBUG
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(debugAppDidEnterBackgroundForRobotEntry),
+            name: UIApplication.didEnterBackgroundNotification, object: nil)
+        #endif
         startCallWatch()
+
+        if islandEntryPending {
+            DispatchQueue.main.async { [weak self] in
+                self?.playPendingIslandEntryIfPossible()
+            }
+        }
     }
+
+    /// Called by the dedicated Dynamic Island deep link. iOS owns the
+    /// SpringBoard-to-app transition; once ALMA is active, this finite animation
+    /// continues it by growing the same global Robot from the Island's position
+    /// and landing it at its saved dock.
+    func requestIslandEntryTransition() {
+        islandEntryPending = true
+        AlmaPerfLog.event("robotIslandEntry.received")
+        playPendingIslandEntryIfPossible()
+    }
+
+    @objc private func appDidBecomeActiveForRobotEntry() {
+        #if DEBUG
+        if debugIslandEntryWasBackgrounded,
+           ProcessInfo.processInfo.environment[
+               "ALMA_ROBOT_ISLAND_ENTRY_SELFTEST"
+           ] == "1" {
+            debugIslandEntryWasBackgrounded = false
+            islandEntryPending = true
+            RobotSelfTestTrace.mark("robotSelfTest.islandEntryReceived")
+        }
+        #endif
+        playPendingIslandEntryIfPossible()
+    }
+
+    @objc private func appWillResignActiveForRobotEntry() {
+        guard islandEntryAnimating, let b = button else { return }
+        b.layer.removeAllAnimations()
+        b.transform = .identity
+        b.alpha = 1
+        b.isUserInteractionEnabled = true
+        robotHostState.isDragging = false
+        islandEntryAnimating = false
+        AlmaPerfLog.event("robotIslandEntry.cancelled")
+    }
+
+    private func playPendingIslandEntryIfPossible() {
+        guard islandEntryPending,
+              !islandEntryAnimating,
+              UIApplication.shared.applicationState == .active,
+              suppressionReasons.isEmpty,
+              !presentationHidesRobot,
+              let w = overlay,
+              let b = button
+        else { return }
+
+        islandEntryPending = false
+        islandEntryAnimating = true
+        b.layer.removeAllAnimations()
+
+        let destination = b.center
+        let start = CGPoint(
+            x: w.bounds.midX,
+            y: max(w.safeAreaInsets.top + 16, 34)
+        )
+        let shouldAnimate = !AlmaOverlayCoordinator.shared.reduceMotion
+
+        presentationHidesRobot = false
+        applyRobotVisibility()
+        b.isUserInteractionEnabled = false
+        b.alpha = shouldAnimate ? 0.18 : 1
+        b.center = shouldAnimate ? start : destination
+        b.transform = shouldAnimate
+            ? CGAffineTransform(scaleX: 0.34, y: 0.34)
+                .rotated(by: destination.x < start.x ? -0.10 : 0.10)
+            : .identity
+        robotHostState.dragDirection = destination.x < start.x ? .left : .right
+        robotHostState.isDragging = shouldAnimate
+
+        AlmaPerfLog.event("robotIslandEntry.animationStarted")
+        #if DEBUG
+        if ProcessInfo.processInfo.environment[
+            "ALMA_ROBOT_ISLAND_ENTRY_SELFTEST"
+        ] == "1" {
+            RobotSelfTestTrace.mark("robotSelfTest.islandEntryAnimationStarted")
+        }
+        #endif
+
+        guard shouldAnimate else {
+            finishIslandEntry(on: b, destination: destination)
+            return
+        }
+
+        UIView.animate(
+            withDuration: 0.20,
+            delay: 0,
+            options: [.curveEaseOut, .allowUserInteraction]
+        ) {
+            b.alpha = 1
+            b.center = CGPoint(
+                x: start.x + (destination.x - start.x) * 0.18,
+                y: start.y + 34
+            )
+            b.transform = CGAffineTransform(scaleX: 0.58, y: 0.58)
+                .rotated(by: destination.x < start.x ? -0.06 : 0.06)
+        } completion: { [weak self, weak b] _ in
+            guard let self, let b else { return }
+            UIView.animate(
+                withDuration: 0.72,
+                delay: 0,
+                usingSpringWithDamping: 0.64,
+                initialSpringVelocity: 0.72,
+                options: [.curveEaseInOut, .allowUserInteraction]
+            ) {
+                b.center = destination
+                b.transform = CGAffineTransform(scaleX: 1.08, y: 1.08)
+            } completion: { [weak self, weak b] _ in
+                guard let self, let b else { return }
+                UIView.animate(
+                    withDuration: 0.16,
+                    delay: 0,
+                    options: [.curveEaseOut, .allowUserInteraction]
+                ) {
+                    b.transform = .identity
+                } completion: { [weak self, weak b] _ in
+                    guard let self, let b else { return }
+                    self.finishIslandEntry(on: b, destination: destination)
+                }
+            }
+        }
+    }
+
+    private func finishIslandEntry(
+        on button: OfficeRobotPetContainerView,
+        destination: CGPoint
+    ) {
+        button.layer.removeAllAnimations()
+        button.center = destination
+        button.transform = .identity
+        button.alpha = 1
+        button.isUserInteractionEnabled = true
+        robotHostState.isDragging = false
+        islandEntryAnimating = false
+        AlmaPerfLog.event("robotIslandEntry.completed")
+        #if DEBUG
+        if ProcessInfo.processInfo.environment[
+            "ALMA_ROBOT_ISLAND_ENTRY_SELFTEST"
+        ] == "1" {
+            RobotSelfTestTrace.mark("robotSelfTest.islandEntryCompleted")
+        }
+        #endif
+    }
+
+    #if DEBUG
+    private var debugIslandEntryWasBackgrounded: Bool {
+        get {
+            UserDefaults.standard.bool(
+                forKey: "alma.robot.debugIslandEntryWasBackgrounded"
+            )
+        }
+        set {
+            UserDefaults.standard.set(
+                newValue,
+                forKey: "alma.robot.debugIslandEntryWasBackgrounded"
+            )
+        }
+    }
+
+    @objc private func debugAppDidEnterBackgroundForRobotEntry() {
+        guard ProcessInfo.processInfo.environment[
+            "ALMA_ROBOT_ISLAND_ENTRY_SELFTEST"
+        ] == "1" else { return }
+        debugIslandEntryWasBackgrounded = true
+    }
+    #endif
 
     #if DEBUG
     /// IOSP-2 test hook: park the head at the bottom exclusion edge so a subsequent
