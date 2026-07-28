@@ -902,16 +902,28 @@ struct PulseLiveActivity: Widget {
                     PulseExpandedBody(state: context.state, mode: mode)
                 }
             } compactLeading: {
-                Image(systemName: PulseTheme.icon(for: mode))
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(tint)
+                OfficeRobotLiveGlyph(
+                    context: .pulse(
+                        mode: mode,
+                        successAtEpoch: context.state.successAtEpoch
+                    ),
+                    size: 20
+                )
+                    .padding(.leading, 2)
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel(PulseTheme.label(for: mode))
             } compactTrailing: {
                 PulseCompactPriority(state: context.state, mode: mode)
             } minimal: {
-                Image(systemName: PulseTheme.icon(for: mode))
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(tint)
+                OfficeRobotLiveGlyph(
+                    context: .pulse(
+                        mode: mode,
+                        successAtEpoch: context.state.successAtEpoch
+                    ),
+                    size: 17,
+                    cadenceMultiplier: 1.75
+                )
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel(PulseTheme.label(for: mode))
             }
             .widgetURL(deepLink(for: context.state, mode: mode))

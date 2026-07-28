@@ -281,6 +281,7 @@ final class FloatingChatHead {
                     self.robotHostState.isDragging = false
                     self.snap(to: left)
                     AlmaPerfLog.event("robotSelfTest.dragDone")
+                    AlmaPerfLog.event("robotSelfTest.completed")
                 }
             }
         }

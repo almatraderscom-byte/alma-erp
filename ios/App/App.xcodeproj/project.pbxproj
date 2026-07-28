@@ -62,6 +62,8 @@
 		CA11C17700000000B0FECA11 /* CallKitVoIP.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11C17700000000A0FECA11 /* CallKitVoIP.swift */; };
 		CD24687123B1E85C414A573D /* cs_sample_6.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 0CE6BFDD03747701FD223CA6 /* cs_sample_6.jpg */; };
 		D1AA4400000000000000B001 /* NativeIntelligenceBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */; };
+		D7AA8800000000000000B001 /* OfficeRobotLiveGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7AA8800000000000000A001 /* OfficeRobotLiveGlyph.swift */; };
+		D7AA8800000000000000B002 /* RobotAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D7AA8800000000000000A002 /* RobotAssets.xcassets */; };
 		DD1E6C29144CBD386AB459B8 /* DigitalClientsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97A60B31F639A640D07DCF08 /* DigitalClientsSwiftUI.swift */; };
 		E1AA5500000000000000B001 /* NativeSpeechBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1AA5500000000000000A001 /* NativeSpeechBridge.swift */; };
 		E1AA9900000000000000B001 /* alma_approval.caf in Resources */ = {isa = PBXBuildFile; fileRef = E1AA9900000000000000A001 /* alma_approval.caf */; };
@@ -254,6 +256,8 @@
 		C1AA3300000000000000A006 /* PulseRestore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseRestore.swift; sourceTree = "<group>"; };
 		CA11C17700000000A0FECA11 /* CallKitVoIP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitVoIP.swift; sourceTree = "<group>"; };
 		D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeIntelligenceBridge.swift; sourceTree = "<group>"; };
+		D7AA8800000000000000A001 /* OfficeRobotLiveGlyph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeRobotLiveGlyph.swift; sourceTree = "<group>"; };
+		D7AA8800000000000000A002 /* RobotAssets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = RobotAssets.xcassets; sourceTree = "<group>"; };
 		E1AA5500000000000000A001 /* NativeSpeechBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeechBridge.swift; sourceTree = "<group>"; };
 		E1AA9900000000000000A001 /* alma_approval.caf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = alma_approval.caf; sourceTree = "<group>"; };
 		E1AA9900000000000000A002 /* alma_urgent.caf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = alma_urgent.caf; sourceTree = "<group>"; };
@@ -554,6 +558,8 @@
 				B1AA2200000000000000A004 /* AlmaWidget.swift */,
 				C1AA3300000000000000A004 /* PulseLiveActivity.swift */,
 				A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */,
+				D7AA8800000000000000A001 /* OfficeRobotLiveGlyph.swift */,
+				D7AA8800000000000000A002 /* RobotAssets.xcassets */,
 				B1AA2200000000000000A005 /* Info.plist */,
 				F1AA6600000000000000A003 /* AlmaWidget.entitlements */,
 			);
@@ -772,6 +778,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D7AA8800000000000000B002 /* RobotAssets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -953,6 +960,7 @@
 				F548794AB3AB4CA9983C0435 /* AlmaPulseIntents.swift in Sources */,
 				C1AA3300000000000000B005 /* PulseActivityAttributes.swift in Sources */,
 				A3CC8800000000000000B003 /* AlmaVoiceLiveActivity.swift in Sources */,
+				D7AA8800000000000000B001 /* OfficeRobotLiveGlyph.swift in Sources */,
 				A3CC8800000000000000B004 /* AlmaVoiceActivityAttributes.swift in Sources */,
 				A3CC8800000000000000B005 /* AlmaStarburstSpinner.swift in Sources */,
 			);

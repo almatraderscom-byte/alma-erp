@@ -132,6 +132,11 @@ jobs:
 
           APP_PATH="$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/App.app"
           test -d "$APP_PATH"
+          test -s "$APP_PATH/PlugIns/AlmaWidgetExtension.appex/Assets.car"
+          xcrun assetutil --info \
+            "$APP_PATH/PlugIns/AlmaWidgetExtension.appex/Assets.car" \
+            > "$RUNNER_TEMP/alma-widget-assets.json"
+          grep -q "AlmaWidgetRobotStrip" "$RUNNER_TEMP/alma-widget-assets.json"
           xcrun simctl install "$UDID" "$APP_PATH"
           xcrun simctl status_bar "$UDID" override \
             --time 9:41 \
@@ -144,6 +149,7 @@ jobs:
           mkdir -p "$PREVIEW_DIR"
           xcrun simctl spawn "$UDID" log stream \
             --level debug \
+            --signpost \
             --style compact \
             --predicate 'subsystem == "com.almatraders.erp.perf"' \
             > "$PREVIEW_DIR/robot-selftest.log" 2>&1 &
@@ -156,11 +162,25 @@ jobs:
           VIDEO_PID=$!
 
           SIMCTL_CHILD_ALMA_ROBOT_SELFTEST=1 \
+          SIMCTL_CHILD_ALMA_PULSE_DEMO=approval \
             xcrun simctl launch "$UDID" com.almatraders.erp
 
           # DEBUG-only in-app harness shows the long-press quick actions,
           # Office Chat, Walkie/Call, and directional running while dragged.
-          sleep 32
+          sleep 30
+
+          xcrun simctl io "$UDID" screenshot \
+            "$PREVIEW_DIR/office-robot-interactions.png"
+
+          # Keep recording while ALMA moves to the background. A fresh Pulse
+          # activity makes the compact Dynamic Island Robot visible in the same
+          # unsigned Simulator preview.
+          xcrun simctl launch "$UDID" com.apple.Preferences >/dev/null 2>&1 \
+            || xcrun simctl launch "$UDID" com.apple.mobilesafari >/dev/null
+          sleep 10
+
+          xcrun simctl io "$UDID" screenshot \
+            "$PREVIEW_DIR/office-robot-dynamic-island.png"
 
           kill -INT "$VIDEO_PID"
           wait "$VIDEO_PID" || true
@@ -173,9 +193,8 @@ jobs:
           grep -q "robotSelfTest.tapChat" "$PREVIEW_DIR/robot-selftest.log"
           grep -q "robotSelfTest.openCall" "$PREVIEW_DIR/robot-selftest.log"
           grep -q "robotSelfTest.dragDone" "$PREVIEW_DIR/robot-selftest.log"
-
-          xcrun simctl io "$UDID" screenshot \
-            "$PREVIEW_DIR/office-robot-interactions.png"
+          grep -q "robotSelfTest.completed" "$PREVIEW_DIR/robot-selftest.log"
+          grep -q "robotSelfTest.dynamicIslandStarted" "$PREVIEW_DIR/robot-selftest.log"
 
       - name: Upload Office Robot Simulator preview
         if: always() && github.event_name == 'pull_request'
