@@ -194,10 +194,10 @@ jobs:
           # DEBUG-only interaction sequence runs, so the preview records the
           # Robot instead of a Simulator passcode sheet. This changes only the
           # ephemeral CI Simulator, never app or TestFlight behaviour.
-          xcrun simctl biometric "$UDID" enroll
+          applesimutils --byId "$UDID" --biometricEnrollment YES
           (
             for _ in {1..45}; do
-              xcrun simctl biometric "$UDID" match face \
+              applesimutils --byId "$UDID" --biometricMatch \
                 >/dev/null 2>&1 || true
               sleep 1
             done
