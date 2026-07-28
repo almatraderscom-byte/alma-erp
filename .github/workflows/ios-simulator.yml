@@ -166,15 +166,21 @@ jobs:
           # then re-confirm boot readiness before launching or recording.
           sleep 15
           xcrun simctl bootstatus "$UDID" -b
+
+          # Create the artifact directory before cosmetic Simulator setup so a
+          # future capture failure still leaves diagnostics for upload.
+          PREVIEW_DIR="$RUNNER_TEMP/ios-preview"
+          mkdir -p "$PREVIEW_DIR"
+
+          # Xcode 26 can transiently reject status-bar overrides immediately
+          # after AppleSimulatorUtils restarts SpringBoard. This is cosmetic
+          # and must never block the Robot interaction capture.
           xcrun simctl status_bar "$UDID" override \
             --time 9:41 \
             --batteryState charged \
             --batteryLevel 100 \
             --wifiBars 3 \
-            --cellularBars 4
-
-          PREVIEW_DIR="$RUNNER_TEMP/ios-preview"
-          mkdir -p "$PREVIEW_DIR"
+            --cellularBars 4 || true
           xcrun simctl spawn "$UDID" log stream \
             --level debug \
             --signpost \
