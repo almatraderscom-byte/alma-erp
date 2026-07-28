@@ -92,6 +92,7 @@ enum PulseRestore {
                 pushType: nil)
             note("debug_demo_approval")
             if ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" {
+                RobotSelfTestTrace.mark("robotSelfTest.dynamicIslandStarted")
                 AlmaPerfLog.event("robotSelfTest.dynamicIslandStarted")
             }
             return true

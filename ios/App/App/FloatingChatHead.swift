@@ -197,6 +197,7 @@ final class FloatingChatHead {
     /// presentation methods and drag state, but never ships in TestFlight.
     func debugRunInteractionSelfTestIfRequested() {
         guard ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" else { return }
+        RobotSelfTestTrace.reset()
         AlmaPerfLog.event("robotSelfTest.start")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -208,21 +209,27 @@ final class FloatingChatHead {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             AlmaPerfLog.event("robotSelfTest.longPress")
-            self?.openQuickActions()
+            self?.openQuickActions {
+                RobotSelfTestTrace.mark("robotSelfTest.longPress")
+            }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 9) { [weak self] in
             self?.debugDismissRobotPresentation()
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
             AlmaPerfLog.event("robotSelfTest.tapChat")
-            self?.openChat()
+            self?.openChat {
+                RobotSelfTestTrace.mark("robotSelfTest.tapChat")
+            }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 14) { [weak self] in
             self?.debugDismissRobotPresentation()
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
             AlmaPerfLog.event("robotSelfTest.openCall")
-            self?.openIntercom()
+            self?.openIntercom {
+                RobotSelfTestTrace.mark("robotSelfTest.openCall")
+            }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 19) { [weak self] in
             self?.debugDismissRobotPresentation()
@@ -280,7 +287,9 @@ final class FloatingChatHead {
                     guard let self else { return }
                     self.robotHostState.isDragging = false
                     self.snap(to: left)
+                    RobotSelfTestTrace.mark("robotSelfTest.dragDone")
                     AlmaPerfLog.event("robotSelfTest.dragDone")
+                    RobotSelfTestTrace.mark("robotSelfTest.completed")
                     AlmaPerfLog.event("robotSelfTest.completed")
                 }
             }
@@ -402,7 +411,11 @@ final class FloatingChatHead {
         }
     }
 
-    private func present<Content: View>(_ view: Content, fullScreen: Bool = false) {
+    private func present<Content: View>(
+        _ view: Content,
+        fullScreen: Bool = false,
+        completion: (() -> Void)? = nil
+    ) {
         guard let w = overlay, let root = w.rootViewController else { return }
         // Dismiss anything already up (e.g. the quick-actions sheet) before presenting.
         let target = root.presentedViewController ?? root
@@ -420,22 +433,27 @@ final class FloatingChatHead {
             host.modalPresentationStyle = .overFullScreen
             host.view.backgroundColor = .clear
         }
-        target.present(host, animated: true)
+        target.present(host, animated: true, completion: completion)
     }
 
-    private func openChat() {
+    private func openChat(completion: (() -> Void)? = nil) {
         if #available(iOS 17.0, *) {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            if OfficeCallCoordinator.shared.hasActiveCall { openIntercom() }
-            else { present(OfficeChatStandalone()) }
+            if OfficeCallCoordinator.shared.hasActiveCall {
+                openIntercom(completion: completion)
+            } else {
+                present(OfficeChatStandalone(), completion: completion)
+            }
         }
     }
 
-    private func openIntercom() {
-        if #available(iOS 17.0, *) { present(IntercomView()) }
+    private func openIntercom(completion: (() -> Void)? = nil) {
+        if #available(iOS 17.0, *) {
+            present(IntercomView(), completion: completion)
+        }
     }
 
-    private func openQuickActions() {
+    private func openQuickActions(completion: (() -> Void)? = nil) {
         guard #available(iOS 17.0, *) else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         guard let root = overlay?.rootViewController else { return }
@@ -454,7 +472,7 @@ final class FloatingChatHead {
                 self?.applyRobotVisibility()
             }
         }
-        root.present(host, animated: true)
+        root.present(host, animated: true, completion: completion)
     }
 
     private func applyRobotVisibility() {
