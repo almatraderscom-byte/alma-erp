@@ -148,18 +148,26 @@ jobs:
           PREVIEW_DIR="$RUNNER_TEMP/ios-preview"
           mkdir -p "$PREVIEW_DIR"
           printf 'capture initialized\n' > "$PREVIEW_DIR/capture-started.txt"
+          printf 'first-boot-ready\n' > "$PREVIEW_DIR/capture-stages.txt"
 
           APP_PATH="$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/App.app"
           test -d "$APP_PATH"
           test -s "$APP_PATH/PlugIns/AlmaWidgetExtension.appex/Assets.car"
+          # assetutil's Xcode 26 JSON can omit optimized image-set names. Keep
+          # its output for diagnosis, but rely on the build plus the captured
+          # Dynamic Island screenshot as the authoritative render check.
           xcrun assetutil --info \
             "$APP_PATH/PlugIns/AlmaWidgetExtension.appex/Assets.car" \
-            > "$RUNNER_TEMP/alma-widget-assets.json"
+            > "$PREVIEW_DIR/alma-widget-assets.json" || true
           for FRAME in {00..19}; do
-            grep -q "AlmaWidgetRobotFrame${FRAME}" \
-              "$RUNNER_TEMP/alma-widget-assets.json"
+            if ! grep -q "AlmaWidgetRobotFrame${FRAME}" \
+              "$PREVIEW_DIR/alma-widget-assets.json"; then
+              printf 'asset-name-optimized:%s\n' "$FRAME" \
+                >> "$PREVIEW_DIR/capture-stages.txt"
+            fi
           done
           xcrun simctl install "$UDID" "$APP_PATH"
+          printf 'app-installed\n' >> "$PREVIEW_DIR/capture-stages.txt"
           # A fresh Simulator otherwise presents OneSignal's notification sheet
           # over the whole demo. AppleSimulatorUtils handles this non-TCC
           # permission and restarts SpringBoard before the recording begins.
@@ -167,11 +175,14 @@ jobs:
             --byId "$UDID" \
             --bundle com.almatraders.erp \
             --setPermissions "notifications=YES" || true
+          printf 'notification-helper-finished\n' \
+            >> "$PREVIEW_DIR/capture-stages.txt"
           # Notification permission changes restart Simulator SpringBoard.
           # Give both SpringBoard and Spotlight their documented helper window,
           # then re-confirm boot readiness before launching or recording.
           sleep 15
           xcrun simctl bootstatus "$UDID" -b
+          printf 'second-boot-ready\n' >> "$PREVIEW_DIR/capture-stages.txt"
 
           # Xcode 26 can transiently reject status-bar overrides immediately
           # after AppleSimulatorUtils restarts SpringBoard. This is cosmetic
@@ -182,6 +193,8 @@ jobs:
             --batteryLevel 100 \
             --wifiBars 3 \
             --cellularBars 4 || true
+          printf 'status-bar-helper-finished\n' \
+            >> "$PREVIEW_DIR/capture-stages.txt"
           xcrun simctl spawn "$UDID" log stream \
             --level debug \
             --signpost \
@@ -195,6 +208,7 @@ jobs:
             --force \
             "$PREVIEW_DIR/office-robot.mp4" &
           VIDEO_PID=$!
+          printf 'recording-started\n' >> "$PREVIEW_DIR/capture-stages.txt"
 
           # The production web shell enables its Face ID gate by default. Enrol
           # the test device and satisfy any prompt that appears while the
@@ -202,6 +216,8 @@ jobs:
           # Robot instead of a Simulator passcode sheet. This changes only the
           # ephemeral CI Simulator, never app or TestFlight behaviour.
           applesimutils --byId "$UDID" --biometricEnrollment YES || true
+          printf 'biometric-helper-finished\n' \
+            >> "$PREVIEW_DIR/capture-stages.txt"
           (
             for _ in {1..45}; do
               applesimutils --byId "$UDID" --biometricMatch \
@@ -214,6 +230,7 @@ jobs:
           SIMCTL_CHILD_ALMA_ROBOT_SELFTEST=1 \
           SIMCTL_CHILD_ALMA_PULSE_DEMO=approval \
             xcrun simctl launch "$UDID" com.almatraders.erp
+          printf 'app-launched\n' >> "$PREVIEW_DIR/capture-stages.txt"
 
           # DEBUG-only in-app harness shows the long-press quick actions,
           # Office Chat, Walkie/Call, and directional running while dragged.
