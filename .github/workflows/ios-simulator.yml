@@ -30,6 +30,9 @@ concurrency:
   group: ios-simulator-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build-simulator:
     runs-on: macos-latest
@@ -70,3 +73,98 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath "$RUNNER_TEMP/dd" \
             CODE_SIGNING_ALLOWED=NO
+
+      - name: Capture Office Robot Simulator preview
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RUNTIME="$(
+            xcrun simctl list runtimes --json |
+              jq -r '
+                [.runtimes[]
+                  | select(.isAvailable == true and (.name | startswith("iOS")))]
+                | sort_by(.version | split(".") | map(tonumber))
+                | last.identifier
+              '
+          )"
+          RUNTIME_VERSION="$(
+            xcrun simctl list runtimes --json |
+              jq -r '
+                [.runtimes[]
+                  | select(.isAvailable == true and (.name | startswith("iOS")))]
+                | sort_by(.version | split(".") | map(tonumber))
+                | last.version
+              '
+          )"
+          test -n "$RUNTIME"
+          test "${RUNTIME_VERSION%%.*}" -ge 17
+
+          DEVICE_TYPE="$(
+            xcrun simctl list devicetypes --json |
+              jq -r '
+                ([.devicetypes[] | select(.name == "iPhone 16 Pro")][0].identifier)
+                // ([.devicetypes[] | select(.name | startswith("iPhone"))][-1].identifier)
+              '
+          )"
+          test -n "$DEVICE_TYPE"
+
+          UDID="$(xcrun simctl create "ALMA-PR-${GITHUB_RUN_ID}" "$DEVICE_TYPE" "$RUNTIME")"
+          VIDEO_PID=""
+          cleanup() {
+            if [[ -n "$VIDEO_PID" ]]; then
+              kill -INT "$VIDEO_PID" 2>/dev/null || true
+              wait "$VIDEO_PID" 2>/dev/null || true
+            fi
+            xcrun simctl shutdown "$UDID" 2>/dev/null || true
+            xcrun simctl delete "$UDID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+
+          APP_PATH="$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/App.app"
+          test -d "$APP_PATH"
+          xcrun simctl install "$UDID" "$APP_PATH"
+          xcrun simctl status_bar "$UDID" override \
+            --time 9:41 \
+            --batteryState charged \
+            --batteryLevel 100 \
+            --wifiBars 3 \
+            --cellularBars 4
+
+          PREVIEW_DIR="$RUNNER_TEMP/ios-preview"
+          mkdir -p "$PREVIEW_DIR"
+          xcrun simctl io "$UDID" recordVideo \
+            --codec=h264 \
+            --force \
+            "$PREVIEW_DIR/office-robot.mp4" &
+          VIDEO_PID=$!
+
+          SIMCTL_CHILD_ALMA_NAV_SELFTEST=1 \
+          SIMCTL_CHILD_ALMA_NAV_SELFTEST_ROUTES=/orders \
+            xcrun simctl launch "$UDID" com.almatraders.erp
+
+          sleep 7
+          xcrun simctl io "$UDID" screenshot \
+            "$PREVIEW_DIR/office-robot-dashboard.png"
+          sleep 7
+          xcrun simctl io "$UDID" screenshot \
+            "$PREVIEW_DIR/office-robot-orders.png"
+          sleep 3
+
+          kill -INT "$VIDEO_PID"
+          wait "$VIDEO_PID" || true
+          VIDEO_PID=""
+
+      - name: Upload Office Robot Simulator preview
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-office-robot-pr-${{ github.event.pull_request.number }}
+          path: ${{ runner.temp }}/ios-preview/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0
