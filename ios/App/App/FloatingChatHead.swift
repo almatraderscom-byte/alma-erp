@@ -39,6 +39,8 @@ final class ChatHostController<Content: View>: UIHostingController<Content> {
 private final class GlobalOfficeRobotHostState: ObservableObject {
     @Published var isCallActive = false
     @Published var isSuppressed = false
+    @Published var isDragging = false
+    @Published var dragDirection: OfficeRobotDragDirection = .right
 }
 
 /// The one app-wide SwiftUI robot surface. The task store is shared and
@@ -63,6 +65,8 @@ private struct GlobalOfficeRobotView: View {
             // that setting changes; this input carries the current motion policy.
             reduceMotion: accessibilityReduceMotion,
             isVisible: !hostState.isSuppressed,
+            isDragging: hostState.isDragging,
+            dragDirection: hostState.dragDirection,
             onTap: onTap,
             onLongPress: onLongPress
         )
@@ -133,8 +137,26 @@ final class FloatingChatHead {
 
         let b = OfficeRobotPetContainerView(
             frame: CGRect(origin: .zero, size: petSize))
-        b.onDragChanged = { [weak self] center in self?.button?.center = center }
-        b.onDragEnded = { [weak self] center in self?.snap(to: center) }
+        b.onDragChanged = { [weak self] center, velocityX in
+            guard let self else { return }
+            let previousX = self.button?.center.x ?? center.x
+            let deltaX = center.x - previousX
+            let directionSignal = abs(velocityX) >= 18 ? velocityX : deltaX
+            if abs(directionSignal) >= 0.5 {
+                self.updateDragDirection(
+                    velocityX: directionSignal,
+                    minimumMagnitude: 0.5
+                )
+                self.robotHostState.isDragging = true
+            }
+            self.button?.center = center
+        }
+        b.onDragEnded = { [weak self] center, velocityX in
+            guard let self else { return }
+            self.updateDragDirection(velocityX: velocityX)
+            self.robotHostState.isDragging = false
+            self.snap(to: center)
+        }
         root.addChild(host)
         host.view.frame = b.bounds
         host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -167,6 +189,101 @@ final class FloatingChatHead {
             inWindow: w, overlayHeight: petSize.height)
         b.center = CGPoint(x: b.center.x, y: maxY)
         AlmaPerfLog.event("chatHead.parked", "y=\(Int(maxY)) winH=\(Int(w.bounds.height)) kb=\(Int(AlmaOverlayCoordinator.shared.keyboardHeight))")
+    }
+
+    /// Headless Simulator proof for the owner's Robot presentation and motion
+    /// state contract. Production touch recognizers still own the real gestures.
+    /// DEBUG-only and environment-gated: it exercises the same production
+    /// presentation methods and drag state, but never ships in TestFlight.
+    func debugRunInteractionSelfTestIfRequested() {
+        guard ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" else { return }
+        AlmaPerfLog.event("robotSelfTest.start")
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            NotificationCenter.default.post(
+                name: .almaOpenPath,
+                object: nil,
+                userInfo: ["path": "/orders"]
+            )
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            AlmaPerfLog.event("robotSelfTest.longPress")
+            self?.openQuickActions()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 9) { [weak self] in
+            self?.debugDismissRobotPresentation()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            AlmaPerfLog.event("robotSelfTest.tapChat")
+            self?.openChat()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 14) { [weak self] in
+            self?.debugDismissRobotPresentation()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            AlmaPerfLog.event("robotSelfTest.openCall")
+            self?.openIntercom()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 19) { [weak self] in
+            self?.debugDismissRobotPresentation()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 21) { [weak self] in
+            self?.debugAnimateDirectionalDrag()
+        }
+    }
+
+    private func debugDismissRobotPresentation() {
+        overlay?.rootViewController?.dismiss(animated: true)
+    }
+
+    private func debugAnimateDirectionalDrag() {
+        guard let w = overlay, let b = button else { return }
+        presentationHidesRobot = false
+        applyRobotVisibility()
+        robotHostState.isDragging = true
+
+        let left = CGPoint(
+            x: margin + petSize.width / 2 + 24,
+            y: min(b.center.y + 70, w.bounds.height * 0.68)
+        )
+        let right = CGPoint(
+            x: w.bounds.width - margin - petSize.width / 2 - 24,
+            y: max(b.center.y - 50, w.bounds.height * 0.38)
+        )
+
+        robotHostState.dragDirection = .left
+        UIView.animate(
+            withDuration: 2.2,
+            delay: 0,
+            options: [.curveLinear, .allowUserInteraction]
+        ) {
+            b.center = left
+        } completion: { [weak self] _ in
+            guard let self else { return }
+            self.robotHostState.dragDirection = .right
+            UIView.animate(
+                withDuration: 2.2,
+                delay: 0,
+                options: [.curveLinear, .allowUserInteraction]
+            ) {
+                b.center = right
+            } completion: { [weak self] _ in
+                guard let self else { return }
+                self.robotHostState.dragDirection = .left
+                UIView.animate(
+                    withDuration: 1.7,
+                    delay: 0,
+                    options: [.curveLinear, .allowUserInteraction]
+                ) {
+                    b.center = left
+                } completion: { [weak self] _ in
+                    guard let self else { return }
+                    self.robotHostState.isDragging = false
+                    self.snap(to: left)
+                    AlmaPerfLog.event("robotSelfTest.dragDone")
+                }
+            }
+        }
     }
     #endif
 
@@ -273,6 +390,17 @@ final class FloatingChatHead {
         UserDefaults.standard.set(Double(y), forKey: posKey)
     }
 
+    private func updateDragDirection(
+        velocityX: CGFloat,
+        minimumMagnitude: CGFloat = 18
+    ) {
+        guard abs(velocityX) >= minimumMagnitude else { return }
+        let direction: OfficeRobotDragDirection = velocityX < 0 ? .left : .right
+        if robotHostState.dragDirection != direction {
+            robotHostState.dragDirection = direction
+        }
+    }
+
     private func present<Content: View>(_ view: Content, fullScreen: Bool = false) {
         guard let w = overlay, let root = w.rootViewController else { return }
         // Dismiss anything already up (e.g. the quick-actions sheet) before presenting.
@@ -331,6 +459,10 @@ final class FloatingChatHead {
     private func applyRobotVisibility() {
         let overlaySuppressed = !suppressionReasons.isEmpty
         let robotHidden = overlaySuppressed || presentationHidesRobot
+        if robotHidden {
+            robotHostState.isDragging = false
+            button?.transform = .identity
+        }
         overlay?.isHidden = overlaySuppressed
         button?.isHidden = robotHidden
         robotHostState.isSuppressed = robotHidden
@@ -341,8 +473,8 @@ final class FloatingChatHead {
 /// remain inside `OfficeRobotPetButton`; this view owns only movement/snap.
 @available(iOS 17.0, *)
 final class OfficeRobotPetContainerView: UIView {
-    var onDragChanged: ((CGPoint) -> Void)?
-    var onDragEnded: ((CGPoint) -> Void)?
+    var onDragChanged: ((CGPoint, CGFloat) -> Void)?
+    var onDragEnded: ((CGPoint, CGFloat) -> Void)?
 
     private var grabOffset: CGSize = .zero
 
@@ -367,11 +499,17 @@ final class OfficeRobotPetContainerView: UIView {
                 }
             }
         case .changed:
-            onDragChanged?(CGPoint(x: p.x + grabOffset.width, y: p.y + grabOffset.height))
+            onDragChanged?(
+                CGPoint(x: p.x + grabOffset.width, y: p.y + grabOffset.height),
+                g.velocity(in: parent).x
+            )
         case .ended, .cancelled, .failed:
             let duration = AlmaOverlayCoordinator.shared.reduceMotion ? 0 : 0.15
             UIView.animate(withDuration: duration) { self.transform = .identity }
-            onDragEnded?(CGPoint(x: p.x + grabOffset.width, y: p.y + grabOffset.height))
+            onDragEnded?(
+                CGPoint(x: p.x + grabOffset.width, y: p.y + grabOffset.height),
+                g.velocity(in: parent).x
+            )
         default:
             break
         }

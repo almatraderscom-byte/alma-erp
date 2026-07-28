@@ -112,10 +112,15 @@ jobs:
 
           UDID="$(xcrun simctl create "ALMA-PR-${GITHUB_RUN_ID}" "$DEVICE_TYPE" "$RUNTIME")"
           VIDEO_PID=""
+          LOG_PID=""
           cleanup() {
             if [[ -n "$VIDEO_PID" ]]; then
               kill -INT "$VIDEO_PID" 2>/dev/null || true
               wait "$VIDEO_PID" 2>/dev/null || true
+            fi
+            if [[ -n "$LOG_PID" ]]; then
+              kill -TERM "$LOG_PID" 2>/dev/null || true
+              wait "$LOG_PID" 2>/dev/null || true
             fi
             xcrun simctl shutdown "$UDID" 2>/dev/null || true
             xcrun simctl delete "$UDID" 2>/dev/null || true
@@ -137,27 +142,40 @@ jobs:
 
           PREVIEW_DIR="$RUNNER_TEMP/ios-preview"
           mkdir -p "$PREVIEW_DIR"
+          xcrun simctl spawn "$UDID" log stream \
+            --level debug \
+            --style compact \
+            --predicate 'subsystem == "com.almatraders.erp.perf"' \
+            > "$PREVIEW_DIR/robot-selftest.log" 2>&1 &
+          LOG_PID=$!
+
           xcrun simctl io "$UDID" recordVideo \
             --codec=h264 \
             --force \
             "$PREVIEW_DIR/office-robot.mp4" &
           VIDEO_PID=$!
 
-          SIMCTL_CHILD_ALMA_NAV_SELFTEST=1 \
-          SIMCTL_CHILD_ALMA_NAV_SELFTEST_ROUTES=/orders \
+          SIMCTL_CHILD_ALMA_ROBOT_SELFTEST=1 \
             xcrun simctl launch "$UDID" com.almatraders.erp
 
-          sleep 7
-          xcrun simctl io "$UDID" screenshot \
-            "$PREVIEW_DIR/office-robot-dashboard.png"
-          sleep 7
-          xcrun simctl io "$UDID" screenshot \
-            "$PREVIEW_DIR/office-robot-orders.png"
-          sleep 3
+          # DEBUG-only in-app harness shows the long-press quick actions,
+          # Office Chat, Walkie/Call, and directional running while dragged.
+          sleep 32
 
           kill -INT "$VIDEO_PID"
           wait "$VIDEO_PID" || true
           VIDEO_PID=""
+
+          kill -TERM "$LOG_PID" 2>/dev/null || true
+          wait "$LOG_PID" || true
+          LOG_PID=""
+          grep -q "robotSelfTest.longPress" "$PREVIEW_DIR/robot-selftest.log"
+          grep -q "robotSelfTest.tapChat" "$PREVIEW_DIR/robot-selftest.log"
+          grep -q "robotSelfTest.openCall" "$PREVIEW_DIR/robot-selftest.log"
+          grep -q "robotSelfTest.dragDone" "$PREVIEW_DIR/robot-selftest.log"
+
+          xcrun simctl io "$UDID" screenshot \
+            "$PREVIEW_DIR/office-robot-interactions.png"
 
       - name: Upload Office Robot Simulator preview
         if: always() && github.event_name == 'pull_request'

@@ -11,6 +11,25 @@ import Combine
 import SwiftUI
 import UIKit
 
+enum OfficeRobotDragDirection: Equatable {
+    case left
+    case right
+
+    var runningSpriteRow: Int {
+        switch self {
+        case .left: 2
+        case .right: 1
+        }
+    }
+
+    var horizontalSign: CGFloat {
+        switch self {
+        case .left: -1
+        case .right: 1
+        }
+    }
+}
+
 @available(iOS 17.0, *)
 struct OfficeRobotPetButton: View {
     let isCallActive: Bool
@@ -18,17 +37,21 @@ struct OfficeRobotPetButton: View {
     let completionToken: Int
     let reduceMotion: Bool
     let isVisible: Bool
+    let isDragging: Bool
+    let dragDirection: OfficeRobotDragDirection
     let onTap: () -> Void
     let onLongPress: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @Environment(\.scenePhase) private var scenePhase
 
     @State private var row = 0
     @State private var column = 0
     @State private var lift: CGFloat = 0
     @State private var robotScale: CGFloat = 1
+    @State private var ambientOffsetX: CGFloat = 0
+    @State private var ambientRotationDegrees: Double = 0
     @State private var isCelebrating = false
+    @State private var isAppActive = false
     @State private var isLowPowerMode: Bool
     @State private var lastHandledCompletionToken: Int
     @State private var pendingCompletionToken: Int?
@@ -40,22 +63,64 @@ struct OfficeRobotPetButton: View {
         let row: Int
         let column: Int
         let milliseconds: Int
+        let offsetX: CGFloat
+        let rotationDegrees: Double
+
+        init(
+            row: Int,
+            column: Int,
+            milliseconds: Int,
+            offsetX: CGFloat = 0,
+            rotationDegrees: Double = 0
+        ) {
+            self.row = row
+            self.column = column
+            self.milliseconds = milliseconds
+            self.offsetX = offsetX
+            self.rotationDegrees = rotationDegrees
+        }
     }
 
     private struct PlaybackContext: Equatable {
         let motionAllowed: Bool
         let isVisible: Bool
-        let isSceneActive: Bool
+        let isAppActive: Bool
+        let isDragging: Bool
+        let dragDirection: OfficeRobotDragDirection
     }
 
-    // Codex companion cadence: a quiet 6.6-second breathing/blinking cycle.
-    private static let idleBeats = [
-        SpriteBeat(row: 0, column: 0, milliseconds: 1_680),
-        SpriteBeat(row: 0, column: 1, milliseconds: 660),
-        SpriteBeat(row: 0, column: 2, milliseconds: 660),
-        SpriteBeat(row: 0, column: 3, milliseconds: 840),
-        SpriteBeat(row: 0, column: 4, milliseconds: 840),
-        SpriteBeat(row: 0, column: 5, milliseconds: 1_920),
+    // Short, intermittent micro-actions feel alive without becoming distracting.
+    // Rows 9 and 10 contain the atlas's real right/left head-turn poses.
+    private static let blinkBeats = [
+        SpriteBeat(row: 0, column: 1, milliseconds: 115),
+        SpriteBeat(row: 0, column: 0, milliseconds: 180),
+    ]
+
+    private static let doubleBlinkBeats = [
+        SpriteBeat(row: 0, column: 1, milliseconds: 100),
+        SpriteBeat(row: 0, column: 0, milliseconds: 125),
+        SpriteBeat(row: 0, column: 1, milliseconds: 100),
+        SpriteBeat(row: 0, column: 0, milliseconds: 210),
+    ]
+
+    private static let lookRightBeats = [
+        SpriteBeat(row: 9, column: 1, milliseconds: 180, offsetX: 0.5, rotationDegrees: 0.7),
+        SpriteBeat(row: 9, column: 2, milliseconds: 720, offsetX: 1.2, rotationDegrees: 1.2),
+        SpriteBeat(row: 9, column: 1, milliseconds: 180, offsetX: 0.5, rotationDegrees: 0.7),
+        SpriteBeat(row: 0, column: 0, milliseconds: 260),
+    ]
+
+    private static let lookLeftBeats = [
+        SpriteBeat(row: 10, column: 7, milliseconds: 180, offsetX: -0.5, rotationDegrees: -0.7),
+        SpriteBeat(row: 10, column: 6, milliseconds: 720, offsetX: -1.2, rotationDegrees: -1.2),
+        SpriteBeat(row: 10, column: 7, milliseconds: 180, offsetX: -0.5, rotationDegrees: -0.7),
+        SpriteBeat(row: 0, column: 0, milliseconds: 260),
+    ]
+
+    private static let swayBeats = [
+        SpriteBeat(row: 0, column: 0, milliseconds: 420, offsetX: -1.1, rotationDegrees: -1.0),
+        SpriteBeat(row: 0, column: 0, milliseconds: 560, offsetX: 1.1, rotationDegrees: 1.0),
+        SpriteBeat(row: 0, column: 0, milliseconds: 420),
     ]
 
     private static let celebrationBeats = (0..<5).map {
@@ -68,6 +133,8 @@ struct OfficeRobotPetButton: View {
         completionToken: Int,
         reduceMotion: Bool,
         isVisible: Bool = true,
+        isDragging: Bool = false,
+        dragDirection: OfficeRobotDragDirection = .right,
         onTap: @escaping () -> Void,
         onLongPress: @escaping () -> Void
     ) {
@@ -76,6 +143,8 @@ struct OfficeRobotPetButton: View {
         self.completionToken = completionToken
         self.reduceMotion = reduceMotion
         self.isVisible = isVisible
+        self.isDragging = isDragging
+        self.dragDirection = dragDirection
         self.onTap = onTap
         self.onLongPress = onLongPress
         _isLowPowerMode = State(initialValue: ProcessInfo.processInfo.isLowPowerModeEnabled)
@@ -87,7 +156,7 @@ struct OfficeRobotPetButton: View {
             && !systemReduceMotion
             && !isLowPowerMode
             && isVisible
-            && scenePhase == .active
+            && isAppActive
     }
 
     private var normalizedTaskCount: Int { max(0, taskCount) }
@@ -96,7 +165,9 @@ struct OfficeRobotPetButton: View {
         PlaybackContext(
             motionAllowed: motionAllowed,
             isVisible: isVisible,
-            isSceneActive: scenePhase == .active
+            isAppActive: isAppActive,
+            isDragging: isDragging,
+            dragDirection: dragDirection
         )
     }
 
@@ -125,7 +196,8 @@ struct OfficeRobotPetButton: View {
             OfficeRobotSpriteFrame(row: row, column: column)
                 .frame(width: 52, height: 56.34)
                 .scaleEffect(robotScale)
-                .offset(y: lift - 2)
+                .rotationEffect(.degrees(ambientRotationDegrees))
+                .offset(x: ambientOffsetX, y: lift - 2)
                 .shadow(
                     color: isCallActive
                         ? Color(red: 0.20, green: 0.84, blue: 0.67).opacity(0.34)
@@ -171,6 +243,7 @@ struct OfficeRobotPetButton: View {
         .accessibilityAction { onTap() }
         .accessibilityAction(named: Text("আরও অপশন")) { onLongPress() }
         .onAppear {
+            isAppActive = UIApplication.shared.applicationState == .active
             isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
             restartPlayback()
         }
@@ -185,6 +258,8 @@ struct OfficeRobotPetButton: View {
             isCelebrating = false
             lift = 0
             robotScale = 1
+            ambientOffsetX = 0
+            ambientRotationDegrees = 0
         }
         .onChange(of: playbackContext) { _, _ in
             restartPlayback()
@@ -198,6 +273,20 @@ struct OfficeRobotPetButton: View {
             )
         ) { _ in
             isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            isAppActive = true
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIApplication.willResignActiveNotification
+            )
+        ) { _ in
+            isAppActive = false
         }
     }
 
@@ -246,7 +335,7 @@ struct OfficeRobotPetButton: View {
         guard token != lastHandledCompletionToken else { return }
         lastHandledCompletionToken = token
 
-        guard scenePhase == .active, isVisible else {
+        guard isAppActive, isVisible, !isDragging else {
             pendingCompletionToken = token
             pendingCompletionShouldEmitHaptic = true
             return
@@ -268,12 +357,22 @@ struct OfficeRobotPetButton: View {
         isCelebrating = false
         lift = 0
         robotScale = 1
+        ambientOffsetX = 0
+        ambientRotationDegrees = 0
 
-        if pendingCompletionToken != nil, scenePhase == .active, isVisible {
+        if pendingCompletionToken != nil, isAppActive, isVisible, !isDragging {
             pendingCompletionToken = nil
             let emitHaptic = pendingCompletionShouldEmitHaptic
             pendingCompletionShouldEmitHaptic = true
             playCompletionCelebration(emitHaptic: emitHaptic)
+            return
+        }
+
+        if isDragging {
+            row = dragDirection.runningSpriteRow
+            column = 0
+            guard motionAllowed else { return }
+            startDragPlayback()
             return
         }
 
@@ -293,16 +392,85 @@ struct OfficeRobotPetButton: View {
         playbackGeneration = generation
         playbackTask = Task { @MainActor in
             while !Task.isCancelled {
-                for beat in Self.idleBeats {
+                row = 0
+                column = 0
+                withAnimation(.easeInOut(duration: 0.24)) {
+                    ambientOffsetX = 0
+                    ambientRotationDegrees = 0
+                }
+
+                do {
+                    try await Task.sleep(
+                        for: .milliseconds(Int.random(in: 1_600...3_600))
+                    )
+                } catch {
+                    return
+                }
+
+                let beats = Self.idleAction(for: Int.random(in: 0..<10))
+                for beat in beats {
                     guard !Task.isCancelled,
                           playbackGeneration == generation,
                           motionAllowed,
+                          !isDragging,
                           !isCelebrating
                     else { return }
                     row = beat.row
                     column = beat.column
+                    withAnimation(.easeInOut(duration: min(0.34, Double(beat.milliseconds) / 1_000 * 0.72))) {
+                        ambientOffsetX = beat.offsetX
+                        ambientRotationDegrees = beat.rotationDegrees
+                    }
                     do {
                         try await Task.sleep(for: .milliseconds(beat.milliseconds))
+                    } catch {
+                        return
+                    }
+                }
+            }
+        }
+    }
+
+    private static func idleAction(for roll: Int) -> [SpriteBeat] {
+        switch roll {
+        case 0...3:
+            return blinkBeats
+        case 4:
+            return doubleBlinkBeats
+        case 5...6:
+            return lookRightBeats
+        case 7...8:
+            return lookLeftBeats
+        default:
+            return swayBeats
+        }
+    }
+
+    private func startDragPlayback() {
+        playbackTask?.cancel()
+        guard motionAllowed, isDragging, !isCelebrating else { return }
+
+        let generation = UUID()
+        let direction = dragDirection
+        playbackGeneration = generation
+        playbackTask = Task { @MainActor in
+            while !Task.isCancelled {
+                for frame in 0..<8 {
+                    guard !Task.isCancelled,
+                          playbackGeneration == generation,
+                          motionAllowed,
+                          isDragging,
+                          dragDirection == direction,
+                          !isCelebrating
+                    else { return }
+                    row = direction.runningSpriteRow
+                    column = frame
+                    withAnimation(.linear(duration: 0.07)) {
+                        ambientOffsetX = direction.horizontalSign * 1.2
+                        ambientRotationDegrees = direction.horizontalSign * 0.8
+                    }
+                    do {
+                        try await Task.sleep(for: .milliseconds(82))
                     } catch {
                         return
                     }
@@ -316,6 +484,8 @@ struct OfficeRobotPetButton: View {
         playbackTask?.cancel()
         playbackTask = nil
         isCelebrating = true
+        ambientOffsetX = 0
+        ambientRotationDegrees = 0
 
         if emitHaptic {
             let feedback = UINotificationFeedbackGenerator()
@@ -383,6 +553,8 @@ struct OfficeRobotPetButton: View {
             column = 0
             lift = 0
             robotScale = 1
+            ambientOffsetX = 0
+            ambientRotationDegrees = 0
             isCelebrating = false
             playbackTask = nil
             startIdlePlayback()
@@ -416,7 +588,11 @@ private enum OfficeRobotFrameStore {
     private static let sheetRows = 11
     private static let requiredFrames: [(row: Int, columns: Range<Int>)] = [
         (0, 0..<6),
+        (1, 0..<8),
+        (2, 0..<8),
         (4, 0..<5),
+        (9, 1..<3),
+        (10, 6..<8),
     ]
 
     // Crop once, then switch small frames. This avoids scaling the full atlas for

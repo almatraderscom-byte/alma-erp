@@ -110,4 +110,11 @@ final class GlobalOfficeRobotTests: XCTestCase {
         XCTAssertEqual(reduction.state.completionToken, 4)
         XCTAssertNil(reduction.latestCompletion)
     }
+
+    func testDragDirectionsUseMatchingRunningSpriteRows() {
+        XCTAssertEqual(OfficeRobotDragDirection.right.runningSpriteRow, 1)
+        XCTAssertEqual(OfficeRobotDragDirection.left.runningSpriteRow, 2)
+        XCTAssertEqual(OfficeRobotDragDirection.right.horizontalSign, 1)
+        XCTAssertEqual(OfficeRobotDragDirection.left.horizontalSign, -1)
+    }
 }

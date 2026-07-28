@@ -19,6 +19,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
         #if DEBUG
         runNavSelfTestIfRequested()
         if #available(iOS 17.0, *) { runOverlaySelfTestIfRequested() }
+        if #available(iOS 17.0, *) {
+            FloatingChatHead.shared.debugRunInteractionSelfTestIfRequested()
+        }
         runCacheSelfTestIfRequested()
         if #available(iOS 17.0, *) { runCallResetCrashReproIfRequested() }
         #endif
