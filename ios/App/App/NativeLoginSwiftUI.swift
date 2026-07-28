@@ -31,6 +31,7 @@ private enum NativeLoginFlow {
 
     /// Full credentials round-trip. Returns the signed-in display name (if any).
     /// Throws .badCredentials on a NextAuth error, .transport on anything else.
+    @MainActor
     static func signIn(identifier: String, password: String) async throws -> String? {
         // Default config → HTTPCookieStorage.shared, the same store AlmaAPI reads.
         let config = URLSessionConfiguration.default
@@ -92,12 +93,15 @@ private enum NativeLoginFlow {
         // 4. Push the fresh cookies into the WebView store (reverse of syncCookies)
         //    so web tabs/escapes are signed in without a separate web login.
         let cookies = HTTPCookieStorage.shared.cookies(for: base) ?? []
-        await MainActor.run {
-            let store = WKWebsiteDataStore.default().httpCookieStore
-            for cookie in cookies { store.setCookie(cookie) }
+        let store = WKWebsiteDataStore.default().httpCookieStore
+        for cookie in cookies {
+            // Await WebKit's completion before waking auth-dependent observers;
+            // otherwise AlmaAPI can sync stale WK cookies back over this session.
+            await store.setCookie(cookie)
         }
         // AlmaAPI's lazy sync must not overwrite the new session with stale WK state.
         AlmaAPI.shared.invalidateCookieCache()
+        NotificationCenter.default.post(name: .almaAuthenticationDidRestore, object: nil)
         return confirmed.name ?? confirmed.email
     }
 

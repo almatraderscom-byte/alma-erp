@@ -902,16 +902,28 @@ struct PulseLiveActivity: Widget {
                     PulseExpandedBody(state: context.state, mode: mode)
                 }
             } compactLeading: {
-                Image(systemName: PulseTheme.icon(for: mode))
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(tint)
+                OfficeRobotLiveGlyph(
+                    context: .pulse(
+                        mode: mode,
+                        successAtEpoch: context.state.successAtEpoch
+                    ),
+                    size: 23
+                )
+                    .padding(.leading, 1)
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel(PulseTheme.label(for: mode))
             } compactTrailing: {
                 PulseCompactPriority(state: context.state, mode: mode)
             } minimal: {
-                Image(systemName: PulseTheme.icon(for: mode))
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(tint)
+                OfficeRobotLiveGlyph(
+                    context: .pulse(
+                        mode: mode,
+                        successAtEpoch: context.state.successAtEpoch
+                    ),
+                    size: 20,
+                    cadenceMultiplier: 1.30
+                )
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel(PulseTheme.label(for: mode))
             }
             .widgetURL(deepLink(for: context.state, mode: mode))
@@ -922,8 +934,12 @@ struct PulseLiveActivity: Widget {
     /// Every event resolves to a precise destination (spec §16): the focused
     /// row's own link, else the agent hub.
     private func deepLink(for state: PulseActivityAttributes.ContentState, mode: PulseMode) -> URL? {
-        if let link = state.feedItems.first?.link, let url = URL(string: link) { return url }
-        return URL(string: "almaerp://agent")
+        let target = state.feedItems.first?.link ?? "almaerp://agent"
+        var components = URLComponents()
+        components.scheme = "almaerp"
+        components.host = "office-robot"
+        components.queryItems = [URLQueryItem(name: "target", value: target)]
+        return components.url
     }
 }
 #endif

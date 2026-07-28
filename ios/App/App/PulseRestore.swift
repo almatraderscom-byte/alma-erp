@@ -74,25 +74,45 @@ enum PulseRestore {
     static func debugStartDemoApprovalIfRequested() async -> Bool {
         #if canImport(ActivityKit)
         guard ProcessInfo.processInfo.environment["ALMA_PULSE_DEMO"] == "approval" else { return false }
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { note("demo_activities_disabled"); return false }
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            if ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" {
+                RobotSelfTestTrace.mark("robotSelfTest.dynamicIslandDisabled")
+            }
+            note("demo_activities_disabled")
+            return false
+        }
         for activity in Activity<PulseActivityAttributes>.activities {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
         let json = #"""
-        {"mode":"approval","headline":"আপনার অনুমোদন দরকার","subtitle":"১টা অনুরোধ অপেক্ষায় · এখনই সিদ্ধান্ত দিন","pendingTaskCount":40,"approvalCount":1,"runningOrderCount":1,"orderProgress":0.5,"pendingApprovals":1,"openTasks":40,"approvalId":"erp:demo-approval-000","approvalTitle":"ওয়ালেট উত্তোলন — টেস্ট","approvalCounterparty":"PAYROLL · এখন","approvalAmountText":"৳৭,৪০০"}
+        {"ordersToday":1,"statusLine":"১টা অনুমোদন অপেক্ষায়","mode":"approval","headline":"আপনার অনুমোদন দরকার","subtitle":"১টা অনুরোধ অপেক্ষায় · এখনই সিদ্ধান্ত দিন","pendingTaskCount":40,"approvalCount":1,"runningOrderCount":1,"orderProgress":0.5,"pendingApprovals":1,"openTasks":40,"approvalId":"erp:demo-approval-000","approvalTitle":"ওয়ালেট উত্তোলন — টেস্ট","approvalCounterparty":"PAYROLL · এখন","approvalAmountText":"৳৭,৪০০"}
         """#
         guard let data = json.data(using: .utf8),
               let state = try? JSONDecoder().decode(PulseActivityAttributes.ContentState.self, from: data) else {
-            note("demo_decode_failed"); return false
+            if ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" {
+                RobotSelfTestTrace.mark("robotSelfTest.dynamicIslandDecodeFailed")
+            }
+            note("demo_decode_failed")
+            return false
         }
         do {
+            if ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" {
+                RobotSelfTestTrace.mark("robotSelfTest.dynamicIslandRequesting")
+            }
             _ = try Activity.request(
                 attributes: PulseActivityAttributes(title: "ALMA"),
                 content: ActivityContent(state: state, staleDate: nil),
                 pushType: nil)
             note("debug_demo_approval")
+            if ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" {
+                RobotSelfTestTrace.mark("robotSelfTest.dynamicIslandStarted")
+                AlmaPerfLog.event("robotSelfTest.dynamicIslandStarted")
+            }
             return true
         } catch {
+            if ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" {
+                RobotSelfTestTrace.mark("robotSelfTest.dynamicIslandRequestFailed")
+            }
             note("demo_request_failed: \(error.localizedDescription)")
             return false
         }

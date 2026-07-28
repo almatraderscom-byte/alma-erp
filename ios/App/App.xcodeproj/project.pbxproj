@@ -43,6 +43,7 @@
 		A4237B4ED88F800E5B5737D2 /* cs_sample_11.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 137D30126CAA6F1E0C061519 /* cs_sample_11.jpg */; };
 		A5C36F71F82ACE4FBBC13662 /* TradingAccountsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F367DE330E6E725D15C1AF4 /* TradingAccountsSwiftUI.swift */; };
 		A9F000000000000000000003 /* AssistantParityV2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F000000000000000000002 /* AssistantParityV2Tests.swift */; };
+		A9F10000000000000000C003 /* GlobalOfficeRobotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000C002 /* GlobalOfficeRobotTests.swift */; };
 		AC2AC4C9A34A493F17E9405F /* TradingAnalyticsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE5866B4C8C32791D73AF40 /* TradingAnalyticsSwiftUI.swift */; };
 		B10C00596905806603ADCDC1 /* DigitalInvoicesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 471B8BE931F61C7162672A60 /* DigitalInvoicesSwiftUI.swift */; };
 		B1AA2200000000000000B001 /* AlmaWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AA2200000000000000A003 /* AlmaWidgetBundle.swift */; };
@@ -61,6 +62,8 @@
 		CA11C17700000000B0FECA11 /* CallKitVoIP.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11C17700000000A0FECA11 /* CallKitVoIP.swift */; };
 		CD24687123B1E85C414A573D /* cs_sample_6.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 0CE6BFDD03747701FD223CA6 /* cs_sample_6.jpg */; };
 		D1AA4400000000000000B001 /* NativeIntelligenceBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */; };
+		D7AA8800000000000000B001 /* OfficeRobotLiveGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7AA8800000000000000A001 /* OfficeRobotLiveGlyph.swift */; };
+		D7AA8800000000000000B002 /* RobotAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D7AA8800000000000000A002 /* RobotAssets.xcassets */; };
 		DD1E6C29144CBD386AB459B8 /* DigitalClientsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97A60B31F639A640D07DCF08 /* DigitalClientsSwiftUI.swift */; };
 		E1AA5500000000000000B001 /* NativeSpeechBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1AA5500000000000000A001 /* NativeSpeechBridge.swift */; };
 		E1AA9900000000000000B001 /* alma_approval.caf in Resources */ = {isa = PBXBuildFile; fileRef = E1AA9900000000000000A001 /* alma_approval.caf */; };
@@ -140,6 +143,8 @@
 		F2AA7704000000000000B0FE /* PortalStaffOfficeSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */; };
 		F2AA7705000000000000B0FE /* ConnectivityBeacon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7705000000000000A0FE /* ConnectivityBeacon.swift */; };
 		F2AA7706000000000000B0FE /* AlmaIslandBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7706000000000000A0FE /* AlmaIslandBanner.swift */; };
+		A9F10000000000000000B001 /* GlobalOfficeRobotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */; };
+		A9F10000000000000000B002 /* GlobalOfficeRobotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */; };
 		F548794AB3AB4CA9983C0435 /* AlmaPulseIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98A853183508427ABE4D3B70 /* AlmaPulseIntents.swift */; };
 		FA22BB00000000000000B901 /* AssistantTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA22BB00000000000000A901 /* AssistantTransport.swift */; };
 		FA22BB00000000000000B902 /* AlmaPerfLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA22BB00000000000000A902 /* AlmaPerfLog.swift */; };
@@ -230,6 +235,7 @@
 		A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceLiveActivityController.swift; sourceTree = "<group>"; };
 		A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceLiveActivity.swift; sourceTree = "<group>"; };
 		A9F000000000000000000002 /* AssistantParityV2Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantParityV2Tests.swift; sourceTree = "<group>"; };
+		A9F10000000000000000C002 /* GlobalOfficeRobotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotTests.swift; sourceTree = "<group>"; };
 		A9F000000000000000000008 /* AppParityV2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppParityV2Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_App.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1AA2200000000000000A002 /* AlmaWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AlmaWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -250,6 +256,8 @@
 		C1AA3300000000000000A006 /* PulseRestore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseRestore.swift; sourceTree = "<group>"; };
 		CA11C17700000000A0FECA11 /* CallKitVoIP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitVoIP.swift; sourceTree = "<group>"; };
 		D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeIntelligenceBridge.swift; sourceTree = "<group>"; };
+		D7AA8800000000000000A001 /* OfficeRobotLiveGlyph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeRobotLiveGlyph.swift; sourceTree = "<group>"; };
+		D7AA8800000000000000A002 /* RobotAssets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = RobotAssets.xcassets; sourceTree = "<group>"; };
 		E1AA5500000000000000A001 /* NativeSpeechBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeechBridge.swift; sourceTree = "<group>"; };
 		E1AA9900000000000000A001 /* alma_approval.caf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = alma_approval.caf; sourceTree = "<group>"; };
 		E1AA9900000000000000A002 /* alma_urgent.caf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = alma_urgent.caf; sourceTree = "<group>"; };
@@ -327,6 +335,8 @@
 		F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalStaffOfficeSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7705000000000000A0FE /* ConnectivityBeacon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectivityBeacon.swift; sourceTree = "<group>"; };
 		F2AA7706000000000000A0FE /* AlmaIslandBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaIslandBanner.swift; sourceTree = "<group>"; };
+		A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotView.swift; sourceTree = "<group>"; };
+		A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotStore.swift; sourceTree = "<group>"; };
 		FA22BB00000000000000A901 /* AssistantTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantTransport.swift; sourceTree = "<group>"; };
 		FA22BB00000000000000A902 /* AlmaPerfLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaPerfLog.swift; sourceTree = "<group>"; };
 		FA22BB00000000000000A903 /* AlmaNavCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaNavCoordinator.swift; sourceTree = "<group>"; };
@@ -445,6 +455,8 @@
 				F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */,
 				F2AA7700000000000000A0FE /* KeyboardDismiss.swift */,
 				F2AA7701000000000000A0FE /* FloatingChatHead.swift */,
+				A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */,
+				A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */,
 				F2AA7702000000000000A0FE /* AgoraIntercom.swift */,
 				CA11C17700000000A0FECA11 /* CallKitVoIP.swift */,
 				F2AA7703000000000000A0FE /* IntercomUI.swift */,
@@ -534,6 +546,7 @@
 			isa = PBXGroup;
 			children = (
 				A9F000000000000000000002 /* AssistantParityV2Tests.swift */,
+				A9F10000000000000000C002 /* GlobalOfficeRobotTests.swift */,
 			);
 			path = AppParityV2Tests;
 			sourceTree = "<group>";
@@ -545,6 +558,8 @@
 				B1AA2200000000000000A004 /* AlmaWidget.swift */,
 				C1AA3300000000000000A004 /* PulseLiveActivity.swift */,
 				A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */,
+				D7AA8800000000000000A001 /* OfficeRobotLiveGlyph.swift */,
+				D7AA8800000000000000A002 /* RobotAssets.xcassets */,
 				B1AA2200000000000000A005 /* Info.plist */,
 				F1AA6600000000000000A003 /* AlmaWidget.entitlements */,
 			);
@@ -763,6 +778,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D7AA8800000000000000B002 /* RobotAssets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -855,6 +871,8 @@
 				F2AA7700000000000000B060 /* CatalogImagesSwiftUI.swift in Sources */,
 				F2AA7700000000000000B0FE /* KeyboardDismiss.swift in Sources */,
 				F2AA7701000000000000B0FE /* FloatingChatHead.swift in Sources */,
+				A9F10000000000000000B001 /* GlobalOfficeRobotView.swift in Sources */,
+				A9F10000000000000000B002 /* GlobalOfficeRobotStore.swift in Sources */,
 				F2AA7702000000000000B0FE /* AgoraIntercom.swift in Sources */,
 				CA11C17700000000B0FECA11 /* CallKitVoIP.swift in Sources */,
 				F2AA7703000000000000B0FE /* IntercomUI.swift in Sources */,
@@ -928,6 +946,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A9F000000000000000000003 /* AssistantParityV2Tests.swift in Sources */,
+				A9F10000000000000000C003 /* GlobalOfficeRobotTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -941,6 +960,7 @@
 				F548794AB3AB4CA9983C0435 /* AlmaPulseIntents.swift in Sources */,
 				C1AA3300000000000000B005 /* PulseActivityAttributes.swift in Sources */,
 				A3CC8800000000000000B003 /* AlmaVoiceLiveActivity.swift in Sources */,
+				D7AA8800000000000000B001 /* OfficeRobotLiveGlyph.swift in Sources */,
 				A3CC8800000000000000B004 /* AlmaVoiceActivityAttributes.swift in Sources */,
 				A3CC8800000000000000B005 /* AlmaStarburstSpinner.swift in Sources */,
 			);

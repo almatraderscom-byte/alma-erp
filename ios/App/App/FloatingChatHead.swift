@@ -9,6 +9,7 @@
 //  straight through to the app underneath, so nothing else is affected.
 //
 
+import Combine
 import UIKit
 import SwiftUI
 
@@ -32,28 +33,80 @@ final class ChatHostController<Content: View>: UIHostingController<Content> {
     }
 }
 
+/// UIKit-owned state that can change without rebuilding the SwiftUI robot.
 @available(iOS 17.0, *)
+@MainActor
+private final class GlobalOfficeRobotHostState: ObservableObject {
+    @Published var isCallActive = false
+    @Published var isSuppressed = false
+    @Published var isDragging = false
+    @Published var dragDirection: OfficeRobotDragDirection = .right
+}
+
+/// The one app-wide SwiftUI robot surface. The task store is shared and
+/// server-authoritative; the call state remains owned by the existing native
+/// CallKit/office-call path.
+@available(iOS 17.0, *)
+@MainActor
+private struct GlobalOfficeRobotView: View {
+    @ObservedObject var store: GlobalOfficeRobotStore
+    @ObservedObject var hostState: GlobalOfficeRobotHostState
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+
+    let onTap: () -> Void
+    let onLongPress: () -> Void
+
+    var body: some View {
+        OfficeRobotPetButton(
+            isCallActive: hostState.isCallActive,
+            taskCount: store.taskCount,
+            completionToken: store.completionToken,
+            // The robot observes Low Power Mode itself so it can resume live when
+            // that setting changes; this input carries the current motion policy.
+            reduceMotion: accessibilityReduceMotion,
+            isVisible: !hostState.isSuppressed,
+            isDragging: hostState.isDragging,
+            dragDirection: hostState.dragDirection,
+            onTap: onTap,
+            onLongPress: onLongPress
+        )
+    }
+}
+
+@available(iOS 17.0, *)
+@MainActor
 final class FloatingChatHead {
     static let shared = FloatingChatHead()
     private init() {}
 
     private var overlay: PassthroughWindow?
-    private var button: FloatingHeadButton?
-    private let size: CGFloat = 60
+    private var button: OfficeRobotPetContainerView?
+    private var robotHost: UIHostingController<GlobalOfficeRobotView>?
+    private let robotHostState = GlobalOfficeRobotHostState()
+    /// The robot draws at roughly 64×64. Extra room keeps the task badge,
+    /// glow and enlarged accessibility hit target inside the interactive view.
+    private let petSize = CGSize(width: 88, height: 88)
     private let margin: CGFloat = 12
     private let posKey = "office.chathead.y"
     private var onRight = true
     private var callWatch: Timer?
     private var incomingUp = false
     private var suppressionReasons: Set<String> = []
+    private var presentationHidesRobot = false
+    private var islandEntryPending = false
+    private var islandEntryAnimating = false
 
     /// Contextual native sheets own the full interaction plane. Hide the global
     /// chat head while one is presented so it cannot cover or intercept a row;
     /// restore it as soon as the presentation ends.
     func setSuppressed(_ suppressed: Bool, reason: String) {
+        // The old chat glyph covered the Assistant composer, so the entire
+        // Assistant screen suppressed it. The compact Robot is intentionally
+        // global; presentation-specific reasons still hide it when required.
+        guard reason != "assistant-screen" else { return }
         if suppressed { suppressionReasons.insert(reason) }
         else { suppressionReasons.remove(reason) }
-        overlay?.isHidden = !suppressionReasons.isEmpty
+        applyRobotVisibility()
     }
 
     /// Create the overlay window + head. Safe to call more than once (no-op after first).
@@ -70,15 +123,53 @@ final class FloatingChatHead {
         w.rootViewController = root
         w.isHidden = !suppressionReasons.isEmpty
 
-        let b = FloatingHeadButton(frame: CGRect(x: 0, y: 0, width: size, height: size))
-        b.onTap = { [weak self] in self?.openChat() }
-        b.onLongPress = { [weak self] in self?.openQuickActions() }
-        b.onDragChanged = { [weak self] center in self?.button?.center = center }
-        b.onDragEnded = { [weak self] center in self?.snap(to: center) }
+        let store = GlobalOfficeRobotStore.shared
+        store.install()
+        robotHostState.isCallActive = OfficeCallCoordinator.shared.hasActiveCall
+        robotHostState.isSuppressed = !suppressionReasons.isEmpty
+
+        let robot = GlobalOfficeRobotView(
+            store: store,
+            hostState: robotHostState,
+            onTap: { [weak self] in self?.openChat() },
+            onLongPress: { [weak self] in self?.openQuickActions() }
+        )
+        let host = UIHostingController(rootView: robot)
+        host.view.backgroundColor = .clear
+
+        let b = OfficeRobotPetContainerView(
+            frame: CGRect(origin: .zero, size: petSize))
+        b.onDragChanged = { [weak self] center, velocityX in
+            guard let self else { return }
+            let previousX = self.button?.center.x ?? center.x
+            let deltaX = center.x - previousX
+            let directionSignal = abs(velocityX) >= 18 ? velocityX : deltaX
+            if abs(directionSignal) >= 0.5 {
+                self.updateDragDirection(
+                    velocityX: directionSignal,
+                    minimumMagnitude: 0.5
+                )
+                self.robotHostState.isDragging = true
+            }
+            self.button?.center = center
+        }
+        b.onDragEnded = { [weak self] center, velocityX in
+            guard let self else { return }
+            self.updateDragDirection(velocityX: velocityX)
+            self.robotHostState.isDragging = false
+            self.snap(to: center)
+        }
+        root.addChild(host)
+        host.view.frame = b.bounds
+        host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        b.addSubview(host.view)
+        host.didMove(toParent: root)
         root.view.addSubview(b)
         button = b
+        robotHost = host
 
         overlay = w
+        applyRobotVisibility()
         DispatchQueue.main.async { [weak self] in self?.placeInitial() }
         // IOSP-2: when the keyboard rises (or the tab-bar exclusion changes), lift
         // the head above it so it never sits under the keyboard/composer.
@@ -88,25 +179,314 @@ final class FloatingChatHead {
         NotificationCenter.default.addObserver(
             self, selector: #selector(callCoordinatorChanged),
             name: .officeCallCoordinatorDidChange, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appDidBecomeActiveForRobotEntry),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appWillResignActiveForRobotEntry),
+            name: UIApplication.willResignActiveNotification, object: nil)
+        #if DEBUG
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(debugAppDidEnterBackgroundForRobotEntry),
+            name: UIApplication.didEnterBackgroundNotification, object: nil)
+        #endif
         startCallWatch()
+
+        if islandEntryPending {
+            DispatchQueue.main.async { [weak self] in
+                self?.playPendingIslandEntryIfPossible()
+            }
+        }
     }
+
+    /// Called by the dedicated Dynamic Island deep link. iOS owns the
+    /// SpringBoard-to-app transition; once ALMA is active, this finite animation
+    /// continues it by growing the same global Robot from the Island's position
+    /// and landing it at its saved dock.
+    func requestIslandEntryTransition() {
+        islandEntryPending = true
+        AlmaPerfLog.event("robotIslandEntry.received")
+        playPendingIslandEntryIfPossible()
+    }
+
+    @objc private func appDidBecomeActiveForRobotEntry() {
+        #if DEBUG
+        if debugIslandEntryWasBackgrounded,
+           ProcessInfo.processInfo.environment[
+               "ALMA_ROBOT_ISLAND_ENTRY_SELFTEST"
+           ] == "1" {
+            debugIslandEntryWasBackgrounded = false
+            islandEntryPending = true
+            RobotSelfTestTrace.mark("robotSelfTest.islandEntryReceived")
+        }
+        #endif
+        playPendingIslandEntryIfPossible()
+    }
+
+    @objc private func appWillResignActiveForRobotEntry() {
+        guard islandEntryAnimating, let b = button else { return }
+        b.layer.removeAllAnimations()
+        b.transform = .identity
+        b.alpha = 1
+        b.isUserInteractionEnabled = true
+        robotHostState.isDragging = false
+        islandEntryAnimating = false
+        AlmaPerfLog.event("robotIslandEntry.cancelled")
+    }
+
+    private func playPendingIslandEntryIfPossible() {
+        guard islandEntryPending,
+              !islandEntryAnimating,
+              UIApplication.shared.applicationState == .active,
+              suppressionReasons.isEmpty,
+              !presentationHidesRobot,
+              let w = overlay,
+              let b = button
+        else { return }
+
+        islandEntryPending = false
+        islandEntryAnimating = true
+        b.layer.removeAllAnimations()
+
+        let destination = b.center
+        let start = CGPoint(
+            x: w.bounds.midX,
+            y: max(w.safeAreaInsets.top + 16, 34)
+        )
+        let shouldAnimate = !AlmaOverlayCoordinator.shared.reduceMotion
+
+        presentationHidesRobot = false
+        applyRobotVisibility()
+        b.isUserInteractionEnabled = false
+        b.alpha = shouldAnimate ? 0.18 : 1
+        b.center = shouldAnimate ? start : destination
+        b.transform = shouldAnimate
+            ? CGAffineTransform(scaleX: 0.34, y: 0.34)
+                .rotated(by: destination.x < start.x ? -0.10 : 0.10)
+            : .identity
+        robotHostState.dragDirection = destination.x < start.x ? .left : .right
+        robotHostState.isDragging = shouldAnimate
+
+        AlmaPerfLog.event("robotIslandEntry.animationStarted")
+        #if DEBUG
+        if ProcessInfo.processInfo.environment[
+            "ALMA_ROBOT_ISLAND_ENTRY_SELFTEST"
+        ] == "1" {
+            RobotSelfTestTrace.mark("robotSelfTest.islandEntryAnimationStarted")
+        }
+        #endif
+
+        guard shouldAnimate else {
+            finishIslandEntry(on: b, destination: destination)
+            return
+        }
+
+        UIView.animate(
+            withDuration: 0.20,
+            delay: 0,
+            options: [.curveEaseOut, .allowUserInteraction]
+        ) {
+            b.alpha = 1
+            b.center = CGPoint(
+                x: start.x + (destination.x - start.x) * 0.18,
+                y: start.y + 34
+            )
+            b.transform = CGAffineTransform(scaleX: 0.58, y: 0.58)
+                .rotated(by: destination.x < start.x ? -0.06 : 0.06)
+        } completion: { [weak self, weak b] _ in
+            guard let self, let b else { return }
+            UIView.animate(
+                withDuration: 0.72,
+                delay: 0,
+                usingSpringWithDamping: 0.64,
+                initialSpringVelocity: 0.72,
+                options: [.curveEaseInOut, .allowUserInteraction]
+            ) {
+                b.center = destination
+                b.transform = CGAffineTransform(scaleX: 1.08, y: 1.08)
+            } completion: { [weak self, weak b] _ in
+                guard let self, let b else { return }
+                UIView.animate(
+                    withDuration: 0.16,
+                    delay: 0,
+                    options: [.curveEaseOut, .allowUserInteraction]
+                ) {
+                    b.transform = .identity
+                } completion: { [weak self, weak b] _ in
+                    guard let self, let b else { return }
+                    self.finishIslandEntry(on: b, destination: destination)
+                }
+            }
+        }
+    }
+
+    private func finishIslandEntry(
+        on button: OfficeRobotPetContainerView,
+        destination: CGPoint
+    ) {
+        button.layer.removeAllAnimations()
+        button.center = destination
+        button.transform = .identity
+        button.alpha = 1
+        button.isUserInteractionEnabled = true
+        robotHostState.isDragging = false
+        islandEntryAnimating = false
+        AlmaPerfLog.event("robotIslandEntry.completed")
+        #if DEBUG
+        if ProcessInfo.processInfo.environment[
+            "ALMA_ROBOT_ISLAND_ENTRY_SELFTEST"
+        ] == "1" {
+            RobotSelfTestTrace.mark("robotSelfTest.islandEntryCompleted")
+        }
+        #endif
+    }
+
+    #if DEBUG
+    private var debugIslandEntryWasBackgrounded: Bool {
+        get {
+            UserDefaults.standard.bool(
+                forKey: "alma.robot.debugIslandEntryWasBackgrounded"
+            )
+        }
+        set {
+            UserDefaults.standard.set(
+                newValue,
+                forKey: "alma.robot.debugIslandEntryWasBackgrounded"
+            )
+        }
+    }
+
+    @objc private func debugAppDidEnterBackgroundForRobotEntry() {
+        guard ProcessInfo.processInfo.environment[
+            "ALMA_ROBOT_ISLAND_ENTRY_SELFTEST"
+        ] == "1" else { return }
+        debugIslandEntryWasBackgrounded = true
+    }
+    #endif
 
     #if DEBUG
     /// IOSP-2 test hook: park the head at the bottom exclusion edge so a subsequent
     /// keyboard-raise visibly lifts it (proves the exclusion actually moves it).
     func debugParkAtBottomEdge() {
         guard let w = overlay, let b = button else { return }
-        let maxY = AlmaOverlayCoordinator.shared.maxCenterY(inWindow: w, overlayHeight: size)
+        let maxY = AlmaOverlayCoordinator.shared.maxCenterY(
+            inWindow: w, overlayHeight: petSize.height)
         b.center = CGPoint(x: b.center.x, y: maxY)
         AlmaPerfLog.event("chatHead.parked", "y=\(Int(maxY)) winH=\(Int(w.bounds.height)) kb=\(Int(AlmaOverlayCoordinator.shared.keyboardHeight))")
+    }
+
+    /// Headless Simulator proof for the owner's Robot presentation and motion
+    /// state contract. Production touch recognizers still own the real gestures.
+    /// DEBUG-only and environment-gated: it exercises the same production
+    /// presentation methods and drag state, but never ships in TestFlight.
+    func debugRunInteractionSelfTestIfRequested() {
+        guard ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" else { return }
+        RobotSelfTestTrace.reset()
+        AlmaPerfLog.event("robotSelfTest.start")
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            NotificationCenter.default.post(
+                name: .almaOpenPath,
+                object: nil,
+                userInfo: ["path": "/orders"]
+            )
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            AlmaPerfLog.event("robotSelfTest.longPress")
+            self?.openQuickActions {
+                RobotSelfTestTrace.mark("robotSelfTest.longPress")
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 9) { [weak self] in
+            self?.debugDismissRobotPresentation()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            AlmaPerfLog.event("robotSelfTest.tapChat")
+            self?.openChat {
+                RobotSelfTestTrace.mark("robotSelfTest.tapChat")
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 14) { [weak self] in
+            self?.debugDismissRobotPresentation()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            AlmaPerfLog.event("robotSelfTest.openCall")
+            self?.openIntercom {
+                RobotSelfTestTrace.mark("robotSelfTest.openCall")
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 19) { [weak self] in
+            self?.debugDismissRobotPresentation()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 21) { [weak self] in
+            self?.debugAnimateDirectionalDrag()
+        }
+    }
+
+    private func debugDismissRobotPresentation() {
+        overlay?.rootViewController?.dismiss(animated: true)
+    }
+
+    private func debugAnimateDirectionalDrag() {
+        guard let w = overlay, let b = button else { return }
+        presentationHidesRobot = false
+        applyRobotVisibility()
+        robotHostState.isDragging = true
+
+        let left = CGPoint(
+            x: margin + petSize.width / 2 + 24,
+            y: min(b.center.y + 70, w.bounds.height * 0.68)
+        )
+        let right = CGPoint(
+            x: w.bounds.width - margin - petSize.width / 2 - 24,
+            y: max(b.center.y - 50, w.bounds.height * 0.38)
+        )
+
+        robotHostState.dragDirection = .left
+        UIView.animate(
+            withDuration: 2.2,
+            delay: 0,
+            options: [.curveLinear, .allowUserInteraction]
+        ) {
+            b.center = left
+        } completion: { [weak self] _ in
+            guard let self else { return }
+            self.robotHostState.dragDirection = .right
+            UIView.animate(
+                withDuration: 2.2,
+                delay: 0,
+                options: [.curveLinear, .allowUserInteraction]
+            ) {
+                b.center = right
+            } completion: { [weak self] _ in
+                guard let self else { return }
+                self.robotHostState.dragDirection = .left
+                UIView.animate(
+                    withDuration: 1.7,
+                    delay: 0,
+                    options: [.curveLinear, .allowUserInteraction]
+                ) {
+                    b.center = left
+                } completion: { [weak self] _ in
+                    guard let self else { return }
+                    self.robotHostState.isDragging = false
+                    self.snap(to: left)
+                    RobotSelfTestTrace.mark("robotSelfTest.dragDone")
+                    AlmaPerfLog.event("robotSelfTest.dragDone")
+                    RobotSelfTestTrace.mark("robotSelfTest.completed")
+                    AlmaPerfLog.event("robotSelfTest.completed")
+                }
+            }
+        }
     }
     #endif
 
     /// Re-clamp the head into the current exclusion zone (keyboard/tab bar).
     @objc private func exclusionChanged() {
         guard let w = overlay, let b = button else { return }
-        let minY = w.safeAreaInsets.top + size / 2 + 44
-        let maxY = AlmaOverlayCoordinator.shared.maxCenterY(inWindow: w, overlayHeight: size)
+        let minY = w.safeAreaInsets.top + petSize.height / 2 + 44
+        let maxY = AlmaOverlayCoordinator.shared.maxCenterY(
+            inWindow: w, overlayHeight: petSize.height)
         let y = min(max(b.center.y, minY), max(minY, maxY))
         #if DEBUG
         AlmaPerfLog.event("chatHead.exclusion", "from=\(Int(b.center.y)) to=\(Int(y)) maxY=\(Int(maxY)) kb=\(Int(AlmaOverlayCoordinator.shared.keyboardHeight))")
@@ -158,8 +538,7 @@ final class FloatingChatHead {
     }
 
     @objc private func callCoordinatorChanged() {
-        let active = OfficeCallCoordinator.shared.hasActiveCall
-        button?.setCallActive(active)
+        robotHostState.isCallActive = OfficeCallCoordinator.shared.hasActiveCall
     }
 
     @MainActor private func pollIncoming() async {
@@ -177,21 +556,25 @@ final class FloatingChatHead {
         guard let w = overlay, let b = button else { return }
         let inset = w.safeAreaInsets
         let savedY = CGFloat(UserDefaults.standard.double(forKey: posKey))
-        let minY = inset.top + size / 2 + 44
+        let minY = inset.top + petSize.height / 2 + 44
         // IOSP-2: bottom clamp is now the shared tab-bar/keyboard exclusion, not a
         // magic -70. Keeps the head off the tab bar and above any live keyboard.
-        let maxY = AlmaOverlayCoordinator.shared.maxCenterY(inWindow: w, overlayHeight: size)
+        let maxY = AlmaOverlayCoordinator.shared.maxCenterY(
+            inWindow: w, overlayHeight: petSize.height)
         let y = savedY > 0 ? min(max(savedY, minY), max(minY, maxY)) : w.bounds.height * 0.60
-        b.center = CGPoint(x: w.bounds.width - margin - size / 2, y: y)
+        b.center = CGPoint(x: w.bounds.width - margin - petSize.width / 2, y: y)
     }
 
     private func snap(to center: CGPoint) {
         guard let w = overlay, let b = button else { return }
         let inset = w.safeAreaInsets
         onRight = center.x >= w.bounds.width / 2
-        let x = onRight ? w.bounds.width - margin - size / 2 : margin + size / 2
-        let minY = inset.top + size / 2 + 44
-        let maxY = AlmaOverlayCoordinator.shared.maxCenterY(inWindow: w, overlayHeight: size)
+        let x = onRight
+            ? w.bounds.width - margin - petSize.width / 2
+            : margin + petSize.width / 2
+        let minY = inset.top + petSize.height / 2 + 44
+        let maxY = AlmaOverlayCoordinator.shared.maxCenterY(
+            inWindow: w, overlayHeight: petSize.height)
         let y = min(max(center.y, minY), max(minY, maxY))
         let animate = !AlmaOverlayCoordinator.shared.reduceMotion
         UIView.animate(withDuration: animate ? 0.38 : 0, delay: 0, usingSpringWithDamping: 0.62,
@@ -201,41 +584,65 @@ final class FloatingChatHead {
         UserDefaults.standard.set(Double(y), forKey: posKey)
     }
 
-    private func present<Content: View>(_ view: Content, fullScreen: Bool = false) {
+    private func updateDragDirection(
+        velocityX: CGFloat,
+        minimumMagnitude: CGFloat = 18
+    ) {
+        guard abs(velocityX) >= minimumMagnitude else { return }
+        let direction: OfficeRobotDragDirection = velocityX < 0 ? .left : .right
+        if robotHostState.dragDirection != direction {
+            robotHostState.dragDirection = direction
+        }
+    }
+
+    private func present<Content: View>(
+        _ view: Content,
+        fullScreen: Bool = false,
+        completion: (() -> Void)? = nil
+    ) {
         guard let w = overlay, let root = w.rootViewController else { return }
         // Dismiss anything already up (e.g. the quick-actions sheet) before presenting.
         let target = root.presentedViewController ?? root
-        button?.isHidden = true
+        presentationHidesRobot = true
+        applyRobotVisibility()
         let host = ChatHostController(rootView: view)
         host.onDisappear = { [weak self] in
             // Only restore the head once nothing is presented over the overlay.
             if self?.overlay?.rootViewController?.presentedViewController == nil {
-                self?.button?.isHidden = false
+                self?.presentationHidesRobot = false
+                self?.applyRobotVisibility()
             }
         }
         if fullScreen {
             host.modalPresentationStyle = .overFullScreen
             host.view.backgroundColor = .clear
         }
-        target.present(host, animated: true)
+        target.present(host, animated: true, completion: completion)
     }
 
-    private func openChat() {
+    private func openChat(completion: (() -> Void)? = nil) {
         if #available(iOS 17.0, *) {
-            if OfficeCallCoordinator.shared.hasActiveCall { openIntercom() }
-            else { present(OfficeChatStandalone()) }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            if OfficeCallCoordinator.shared.hasActiveCall {
+                openIntercom(completion: completion)
+            } else {
+                present(OfficeChatStandalone(), completion: completion)
+            }
         }
     }
 
-    private func openIntercom() {
-        if #available(iOS 17.0, *) { present(IntercomView()) }
+    private func openIntercom(completion: (() -> Void)? = nil) {
+        if #available(iOS 17.0, *) {
+            present(IntercomView(), completion: completion)
+        }
     }
 
-    private func openQuickActions() {
+    private func openQuickActions(completion: (() -> Void)? = nil) {
         guard #available(iOS 17.0, *) else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         guard let root = overlay?.rootViewController else { return }
-        button?.isHidden = true
+        presentationHidesRobot = true
+        applyRobotVisibility()
         let actions = ChatHeadQuickActions(
             onChat: { [weak self] in root.dismiss(animated: true) { self?.openChat() } },
             onWalkie: { [weak self] in root.dismiss(animated: true) { self?.openIntercom() } },
@@ -245,84 +652,43 @@ final class FloatingChatHead {
         host.view.backgroundColor = .clear
         host.onDisappear = { [weak self] in
             if self?.overlay?.rootViewController?.presentedViewController == nil {
-                self?.button?.isHidden = false
+                self?.presentationHidesRobot = false
+                self?.applyRobotVisibility()
             }
         }
-        root.present(host, animated: true)
+        root.present(host, animated: true, completion: completion)
+    }
+
+    private func applyRobotVisibility() {
+        let overlaySuppressed = !suppressionReasons.isEmpty
+        let robotHidden = overlaySuppressed || presentationHidesRobot
+        if robotHidden {
+            robotHostState.isDragging = false
+            button?.transform = .identity
+        }
+        overlay?.isHidden = overlaySuppressed
+        button?.isHidden = robotHidden
+        robotHostState.isSuppressed = robotHidden
     }
 }
 
-/// The draggable coral→violet circle with a chat glyph.
-final class FloatingHeadButton: UIView {
-    var onTap: (() -> Void)?
-    var onLongPress: (() -> Void)?
-    var onDragChanged: ((CGPoint) -> Void)?
-    var onDragEnded: ((CGPoint) -> Void)?
+/// UIKit drag shell around the tightly-sized SwiftUI robot. Tap and long-press
+/// remain inside `OfficeRobotPetButton`; this view owns only movement/snap.
+@available(iOS 17.0, *)
+final class OfficeRobotPetContainerView: UIView {
+    var onDragChanged: ((CGPoint, CGFloat) -> Void)?
+    var onDragEnded: ((CGPoint, CGFloat) -> Void)?
 
-    private let gradient = CAGradientLayer()
-    private let iconView = UIImageView()
     private var grabOffset: CGSize = .zero
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = true
-        gradient.colors = [
-            UIColor(red: 0.902, green: 0.471, blue: 0.369, alpha: 1).cgColor,   // coral
-            UIColor(red: 0.545, green: 0.361, blue: 0.965, alpha: 1).cgColor,   // violet
-        ]
-        gradient.startPoint = CGPoint(x: 0, y: 0)
-        gradient.endPoint = CGPoint(x: 1, y: 1)
-        gradient.cornerRadius = frame.width / 2
-        gradient.frame = bounds
-        layer.addSublayer(gradient)
-
-        layer.cornerRadius = frame.width / 2
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.28
-        layer.shadowRadius = 9
-        layer.shadowOffset = CGSize(width: 0, height: 4)
-
-        iconView.image = UIImage(
-            systemName: "bubble.left.and.bubble.right.fill",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 23, weight: .semibold))
-        iconView.tintColor = .white
-        iconView.contentMode = .center
-        iconView.frame = bounds
-        iconView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        addSubview(iconView)
-
+        clipsToBounds = false
         addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(pan(_:))))
-        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tap)))
-        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(longPress(_:)))
-        longPress.minimumPressDuration = 0.45
-        addGestureRecognizer(longPress)
-        accessibilityLabel = "অফিস চ্যাট"
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        gradient.frame = bounds
-    }
-
-    func setCallActive(_ active: Bool) {
-        iconView.image = UIImage(
-            systemName: active ? "phone.fill" : "bubble.left.and.bubble.right.fill",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 23, weight: .semibold))
-        accessibilityLabel = active ? "চলমান কলে ফিরুন" : "অফিস চ্যাট"
-        layer.shadowColor = active ? UIColor.systemGreen.cgColor : UIColor.black.cgColor
-    }
-
-    @objc private func tap() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        onTap?()
-    }
-
-    @objc private func longPress(_ g: UILongPressGestureRecognizer) {
-        guard g.state == .began else { return }
-        onLongPress?()
-    }
 
     @objc private func pan(_ g: UIPanGestureRecognizer) {
         guard let parent = superview else { return }
@@ -330,12 +696,23 @@ final class FloatingHeadButton: UIView {
         switch g.state {
         case .began:
             grabOffset = CGSize(width: center.x - p.x, height: center.y - p.y)
-            UIView.animate(withDuration: 0.15) { self.transform = CGAffineTransform(scaleX: 1.12, y: 1.12) }
+            if !AlmaOverlayCoordinator.shared.reduceMotion {
+                UIView.animate(withDuration: 0.15) {
+                    self.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
+                }
+            }
         case .changed:
-            onDragChanged?(CGPoint(x: p.x + grabOffset.width, y: p.y + grabOffset.height))
+            onDragChanged?(
+                CGPoint(x: p.x + grabOffset.width, y: p.y + grabOffset.height),
+                g.velocity(in: parent).x
+            )
         case .ended, .cancelled, .failed:
-            UIView.animate(withDuration: 0.15) { self.transform = .identity }
-            onDragEnded?(CGPoint(x: p.x + grabOffset.width, y: p.y + grabOffset.height))
+            let duration = AlmaOverlayCoordinator.shared.reduceMotion ? 0 : 0.15
+            UIView.animate(withDuration: duration) { self.transform = .identity }
+            onDragEnded?(
+                CGPoint(x: p.x + grabOffset.width, y: p.y + grabOffset.height),
+                g.velocity(in: parent).x
+            )
         default:
             break
         }

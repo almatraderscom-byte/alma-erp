@@ -27,3 +27,48 @@ enum AlmaPerfLog {
         os_signpost(.event, log: log, name: name, "%{public}s", info)
     }
 }
+
+#if DEBUG
+/// Deterministic companion to Simulator signposts for the headless Robot preview.
+///
+/// `simctl log stream` can omit signpost point events even when the app completed
+/// the interaction sequence. This tiny cache file is read only by CI from the
+/// Simulator app container; it is never compiled into TestFlight/Release builds.
+enum RobotSelfTestTrace {
+    static let fileName = "alma-robot-selftest.txt"
+
+    private static let lock = NSLock()
+
+    private static var fileURL: URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent(fileName, isDirectory: false)
+    }
+
+    static func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let fileURL else { return }
+        try? "robotSelfTest.start\n".write(
+            to: fileURL,
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
+    static func mark(_ event: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let fileURL,
+              let data = "\(event)\n".data(using: .utf8) else { return }
+
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            _ = FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: fileURL) else { return }
+        defer { try? handle.close() }
+        try? handle.seekToEnd()
+        try? handle.write(contentsOf: data)
+    }
+}
+#endif
