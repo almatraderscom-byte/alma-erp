@@ -99,21 +99,16 @@ struct OfficeRobotLiveGlyph: View {
         }
     }
 
-    /// The strip is 20 equal 12:13 cells: ~176 KB on disk and ~0.8 MB decoded.
-    /// GeometryReader exposes one cell without loading the app's 14 MB atlas.
+    /// Dynamic Island's compact renderer replaces oversized, runtime-cropped
+    /// images with a grey placeholder on some OS/Simulator versions. Each
+    /// frame therefore lives as its own tiny 96×104 widget asset.
     private func frame(index: Int) -> some View {
-        GeometryReader { proxy in
-            Image("AlmaWidgetRobotStrip")
-                .resizable()
-                .renderingMode(.original)
-                .interpolation(.none)
-                .frame(
-                    width: proxy.size.width * CGFloat(Self.frameCount),
-                    height: proxy.size.height
-                )
-                .offset(x: -proxy.size.width * CGFloat(clamped(index)))
-        }
-        .clipped()
+        Image(frameAssetName(index))
+            .resizable()
+            .renderingMode(.original)
+            .interpolation(.none)
+            .scaledToFit()
+            .accessibilityHidden(true)
     }
 
     private var staticFrameIndex: Int {
@@ -206,5 +201,12 @@ struct OfficeRobotLiveGlyph: View {
 
     private func clamped(_ index: Int) -> Int {
         min(Self.frameCount - 1, max(0, index))
+    }
+
+    private func frameAssetName(_ index: Int) -> String {
+        String(
+            format: "AlmaWidgetRobotFrame%02d",
+            clamped(index)
+        )
     }
 }

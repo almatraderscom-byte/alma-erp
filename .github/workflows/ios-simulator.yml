@@ -121,6 +121,7 @@ jobs:
           UDID="$(xcrun simctl create "ALMA-PR-${GITHUB_RUN_ID}" "$DEVICE_TYPE" "$RUNTIME")"
           VIDEO_PID=""
           LOG_PID=""
+          BIOMETRIC_PID=""
           cleanup() {
             if [[ -n "$VIDEO_PID" ]]; then
               kill -INT "$VIDEO_PID" 2>/dev/null || true
@@ -129,6 +130,10 @@ jobs:
             if [[ -n "$LOG_PID" ]]; then
               kill -TERM "$LOG_PID" 2>/dev/null || true
               wait "$LOG_PID" 2>/dev/null || true
+            fi
+            if [[ -n "$BIOMETRIC_PID" ]]; then
+              kill -TERM "$BIOMETRIC_PID" 2>/dev/null || true
+              wait "$BIOMETRIC_PID" 2>/dev/null || true
             fi
             xcrun simctl shutdown "$UDID" 2>/dev/null || true
             xcrun simctl delete "$UDID" 2>/dev/null || true
@@ -144,7 +149,10 @@ jobs:
           xcrun assetutil --info \
             "$APP_PATH/PlugIns/AlmaWidgetExtension.appex/Assets.car" \
             > "$RUNNER_TEMP/alma-widget-assets.json"
-          grep -q "AlmaWidgetRobotStrip" "$RUNNER_TEMP/alma-widget-assets.json"
+          for FRAME in {00..19}; do
+            grep -q "AlmaWidgetRobotFrame${FRAME}" \
+              "$RUNNER_TEMP/alma-widget-assets.json"
+          done
           xcrun simctl install "$UDID" "$APP_PATH"
           # A fresh Simulator otherwise presents OneSignal's notification sheet
           # over the whole demo. AppleSimulatorUtils handles this non-TCC
@@ -181,6 +189,21 @@ jobs:
             "$PREVIEW_DIR/office-robot.mp4" &
           VIDEO_PID=$!
 
+          # The production web shell enables its Face ID gate by default. Enrol
+          # the test device and satisfy any prompt that appears while the
+          # DEBUG-only interaction sequence runs, so the preview records the
+          # Robot instead of a Simulator passcode sheet. This changes only the
+          # ephemeral CI Simulator, never app or TestFlight behaviour.
+          xcrun simctl biometric "$UDID" enroll
+          (
+            for _ in {1..45}; do
+              xcrun simctl biometric "$UDID" match face \
+                >/dev/null 2>&1 || true
+              sleep 1
+            done
+          ) &
+          BIOMETRIC_PID=$!
+
           SIMCTL_CHILD_ALMA_ROBOT_SELFTEST=1 \
           SIMCTL_CHILD_ALMA_PULSE_DEMO=approval \
             xcrun simctl launch "$UDID" com.almatraders.erp
@@ -202,6 +225,12 @@ jobs:
             echo "Robot Simulator demo did not complete within 60 seconds."
             test ! -f "$TRACE" || cat "$TRACE"
             exit 1
+          fi
+
+          if [[ -n "$BIOMETRIC_PID" ]]; then
+            kill -TERM "$BIOMETRIC_PID" 2>/dev/null || true
+            wait "$BIOMETRIC_PID" 2>/dev/null || true
+            BIOMETRIC_PID=""
           fi
 
           xcrun simctl io "$UDID" screenshot \
