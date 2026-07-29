@@ -145,6 +145,13 @@ final class AlmaVoiceEngine {
     var speakerOn = true
     private(set) var callStartedAt: Date?
 
+    // ── Agent → owner in-app call (plan C2) ──
+    // Set by the CallKit answer hand-off BEFORE begin(). On live connect the brief
+    // is sent as the opening STATUS_NOTE so the agent SPEAKS FIRST with the reason
+    // it called; on end() the CallKit system call is closed alongside the session.
+    var activeAgentCallId: String?
+    var pendingAgentCallBrief: String?
+
     struct Card: Identifiable, Equatable {
         enum Kind { case tool, approval, ask, modelSwitch }
         let id: String
@@ -525,6 +532,15 @@ final class AlmaVoiceEngine {
             }
         }
         closed = true
+        // Agent call: closing the session must also close the CallKit system call
+        // (the CXEndCallAction it triggers posts 'completed' to the server).
+        if let agentCallId = activeAgentCallId {
+            activeAgentCallId = nil
+            pendingAgentCallBrief = nil
+            if #available(iOS 17.0, *), CallKitVoIP.shared.hasCall(callId: agentCallId) {
+                Task { _ = await CallKitVoIP.shared.requestEnd(callId: agentCallId, reason: "agent_call_done") }
+            }
+        }
         liveConnectTask?.cancel(); liveConnectTask = nil
         connectionGeneration += 1
         keepAliveStop()
@@ -1181,6 +1197,13 @@ final class AlmaVoiceEngine {
         wake.stop()
         state = .listening
         keepAliveStart()
+        if let brief = pendingAgentCallBrief {
+            pendingAgentCallBrief = nil
+            let reason = brief.isEmpty ? "Boss-এর সাথে জরুরি কথা আছে" : brief
+            live.sendTextTurn(
+                "STATUS_NOTE: তুমি নিজে Boss-কে কল করেছ (Boss এইমাত্র ধরেছেন)। কারণ: \(String(reason.prefix(800)))। " +
+                "সালাম দিয়ে শুরু করে কারণটা সংক্ষেপে নিজের ভাষায় বলো, তারপর Boss-এর কথা শোনো।")
+        }
     }
 
     func liveWillReconnect() {

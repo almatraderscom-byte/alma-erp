@@ -111,7 +111,9 @@ export function apnsJwt(): string | null {
 }
 
 export type VoipCallPayload = {
-  type: 'office_call'
+  /** 'office_call' = staff↔owner Agora call; 'agent_call' = the AI agent ringing
+   *  the owner's app (answered into a Gemini Live session, no Agora). */
+  type: 'office_call' | 'agent_call'
   broadcastId: string
   schemaVersion?: number
   callId?: string

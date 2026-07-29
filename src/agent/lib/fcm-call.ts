@@ -78,7 +78,8 @@ async function accessToken(creds: SaCreds): Promise<string | null> {
 }
 
 export type FcmCallPayload = {
-  type: 'office_call'
+  /** 'office_call' = staff↔owner Agora call; 'agent_call' = AI agent ringing the owner. */
+  type: 'office_call' | 'agent_call'
   broadcastId: string
   schemaVersion?: number
   callId?: string

@@ -1,0 +1,177 @@
+/**
+ * Agent → owner IN-APP two-way call (plan C1, docs/AGENT_APP_CALL_PLAN.md).
+ *
+ * The ring is an APNs VoIP push (+ FCM on Android) into the owner's own app —
+ * CallKit shows a WhatsApp-style full-screen incoming call anywhere in the
+ * world, including the UAE where WhatsApp calls are blocked. On answer the app
+ * opens a Gemini Live session carrying this call's `purpose` as the opening
+ * brief (C2). No Agora, no PSTN, no new vendor.
+ *
+ * Ring lifecycle: 'ringing' → app posts 'answered'/'declined' → 'completed'.
+ * There is no server timer — `getAgentAppCallStatus()` lazily marks a ring
+ * older than RING_WINDOW_MS as 'unanswered' and fires the cancel push, so the
+ * PA-2 ladder cron and the salah scheduler can poll it without extra infra.
+ *
+ * Kill switch: AGENT_APP_CALL_ENABLED === 'false' disables ringing (default ON —
+ * the owner asked for this path explicitly; flip the env to stop it).
+ */
+import { prisma } from '@/lib/prisma'
+import { getCallPushTargets } from '@/agent/lib/call-push'
+import { sendVoipCall, type VoipCallPayload } from '@/agent/lib/apns-voip'
+import { sendFcmCall, fcmCallConfigured } from '@/agent/lib/fcm-call'
+
+/** CallKit rings ~60s; small buffer so a just-answered call is not swept. */
+export const RING_WINDOW_MS = 75_000
+
+export type AgentAppCallSource = 'ladder' | 'salah' | 'manual'
+
+export type RingOwnerAppResult =
+  | { ok: true; callId: string; voipSent: number; fcmSent: number }
+  | { ok: false; error: 'disabled' | 'no_owner' | 'no_devices' | 'push_failed' | 'db_error' }
+
+export function agentAppCallEnabled(): boolean {
+  return process.env.AGENT_APP_CALL_ENABLED !== 'false'
+}
+
+/** Active SUPER_ADMIN users — the owner's ERP identities (device-token keys). */
+async function ownerUserIds(): Promise<string[]> {
+  const rows = await prisma.user.findMany({
+    where: { role: 'SUPER_ADMIN', active: true },
+    select: { id: true },
+  })
+  return rows.map((r) => r.id)
+}
+
+function ringPayload(callId: string, event: 'ring' | 'cancel'): VoipCallPayload {
+  return {
+    type: 'agent_call',
+    schemaVersion: 1,
+    broadcastId: callId,
+    callId,
+    callUUID: callId,
+    channel: `agent_${callId}`,
+    caller: 'ALMA',
+    expiresAt: new Date(Date.now() + RING_WINDOW_MS).toISOString(),
+    event,
+  }
+}
+
+/**
+ * Ring the owner's app. Creates the call row first (the app fetches the brief by
+ * id on answer), then fires VoIP + FCM pushes. Best-effort on the push layer but
+ * honest in the result: zero delivered pushes = ok:false so callers escalate.
+ */
+export async function ringOwnerApp(args: {
+  purpose: string
+  source: AgentAppCallSource
+}): Promise<RingOwnerAppResult> {
+  if (!agentAppCallEnabled()) return { ok: false, error: 'disabled' }
+
+  const owners = await ownerUserIds().catch(() => [])
+  if (owners.length === 0) return { ok: false, error: 'no_owner' }
+
+  const { voip, fcm } = await getCallPushTargets(owners).catch(() => ({ voip: [], fcm: [] }))
+  if (voip.length === 0 && fcm.length === 0) return { ok: false, error: 'no_devices' }
+
+  let callId: string
+  try {
+    const row = await prisma.agentAppCall.create({
+      data: { purpose: args.purpose.slice(0, 2000), source: args.source },
+      select: { id: true },
+    })
+    callId = row.id
+  } catch (err) {
+    console.warn('[agent-app-call] create failed:', (err as Error)?.message)
+    return { ok: false, error: 'db_error' }
+  }
+
+  const payload = ringPayload(callId, 'ring')
+  const [voipResults, fcmResults] = await Promise.all([
+    voip.length ? sendVoipCall(voip, payload) : Promise.resolve([]),
+    fcm.length && fcmCallConfigured() ? sendFcmCall(fcm, payload) : Promise.resolve([]),
+  ])
+  const voipSent = voipResults.filter((r) => r.ok).length
+  const fcmSent = fcmResults.filter((r) => r.ok).length
+
+  await prisma.agentAppCall.update({
+    where: { id: callId },
+    data: {
+      pushResult: {
+        voip: { attempted: voip.length, delivered: voipSent },
+        fcm: { attempted: fcm.length, delivered: fcmSent },
+      },
+      ...(voipSent + fcmSent === 0 ? { status: 'failed', endedAt: new Date() } : {}),
+    },
+  }).catch(() => {})
+
+  if (voipSent + fcmSent === 0) return { ok: false, error: 'push_failed' }
+  console.log(`[agent-app-call] ring ${callId} (${args.source}) voip=${voipSent} fcm=${fcmSent}`)
+  return { ok: true, callId, voipSent, fcmSent }
+}
+
+export type AgentAppCallStatus =
+  | 'ringing' | 'answered' | 'completed' | 'declined' | 'unanswered' | 'failed'
+
+/**
+ * Current status with lazy ring expiry: a still-'ringing' row older than the
+ * ring window becomes 'unanswered' and the devices get a cancel push so a
+ * delayed delivery cannot ring a phone for a call the ladder already escalated.
+ */
+export async function getAgentAppCallStatus(id: string): Promise<AgentAppCallStatus | null> {
+  const row = await prisma.agentAppCall.findUnique({
+    where: { id },
+    select: { status: true, createdAt: true },
+  })
+  if (!row) return null
+  if (row.status !== 'ringing') return row.status as AgentAppCallStatus
+  if (Date.now() - row.createdAt.getTime() <= RING_WINDOW_MS) return 'ringing'
+
+  const swept = await prisma.agentAppCall.updateMany({
+    where: { id, status: 'ringing' },
+    data: { status: 'unanswered', endedAt: new Date() },
+  })
+  if (swept.count === 1) {
+    void (async () => {
+      try {
+        const owners = await ownerUserIds()
+        const { voip, fcm } = await getCallPushTargets(owners)
+        const cancel = ringPayload(id, 'cancel')
+        await Promise.all([
+          voip.length ? sendVoipCall(voip, cancel) : Promise.resolve([]),
+          fcm.length && fcmCallConfigured() ? sendFcmCall(fcm, cancel) : Promise.resolve([]),
+        ])
+      } catch { /* cancel is best-effort */ }
+    })()
+  }
+  return 'unanswered'
+}
+
+/** App-side status update (answer/decline/hangup) — validated transition only. */
+export async function markAgentAppCall(
+  id: string,
+  status: 'answered' | 'declined' | 'completed',
+  summary?: string,
+): Promise<boolean> {
+  const now = new Date()
+  const where =
+    status === 'answered'
+      ? { id, status: 'ringing' }
+      : status === 'declined'
+        ? { id, status: { in: ['ringing', 'answered'] } }
+        : { id, status: { in: ['ringing', 'answered'] } }
+  const data =
+    status === 'answered'
+      ? { status, answeredAt: now }
+      : { status, endedAt: now, ...(summary ? { summary: summary.slice(0, 4000) } : {}) }
+  const res = await prisma.agentAppCall.updateMany({ where, data })
+  return res.count === 1
+}
+
+/** The call's brief for the live session (C2 — /api/assistant/live-session?callId=). */
+export async function getAgentAppCallBrief(id: string): Promise<{ purpose: string; source: string } | null> {
+  const row = await prisma.agentAppCall.findUnique({
+    where: { id },
+    select: { purpose: true, source: true },
+  })
+  return row ?? null
+}

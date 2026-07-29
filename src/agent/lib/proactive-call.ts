@@ -51,7 +51,10 @@ export async function salahDeferUntil(now = new Date()): Promise<Date | null> {
   }
 }
 
-export const ACTIVE_STATUSES = ['queued', 'awaiting_approval', 'wa_calling', 'pstn_calling'] as const
+export const ACTIVE_STATUSES = ['queued', 'awaiting_approval', 'app_ringing', 'wa_calling', 'pstn_calling'] as const
+
+/** Stage-0 app ring: CallKit rings ~60s; the 1-min cron re-checks after this. */
+const APP_RING_CHECK_MS = 90_000
 
 export interface ProactiveCallConfig {
   /** Autonomy: true → dial without asking. false (default) → approval card first. */
@@ -307,22 +310,67 @@ export async function startEscalationLadder(id: string, cfg?: ProactiveCallConfi
   // Claim so a racing cron tick / double tap can't double-dial.
   const claimed = await db.agentCallEscalation.updateMany({
     where: { id, status: { in: ['queued', 'awaiting_approval'] } },
-    data: { status: 'wa_calling', firstCallAt: new Date() },
+    data: { status: 'app_ringing', firstCallAt: new Date() },
   })
   if (claimed.count !== 1) return { ok: false, error: 'already_started' }
 
+  // Stage 0 (plan C3): ring the owner's own APP first — a WhatsApp-style CallKit
+  // ring that works anywhere with internet (incl. UAE where WhatsApp calls are
+  // blocked) and costs nothing. Phone legs only when the app can't be rung.
+  const { ringOwnerApp } = await import('@/agent/lib/agent-app-call')
+  const app = await ringOwnerApp({
+    purpose: `${row.title}। ${row.purpose}`,
+    source: 'ladder',
+  }).catch((err) => ({ ok: false as const, error: String(err?.message ?? err) as never }))
+  if (app.ok) {
+    await db.agentCallEscalation.update({
+      where: { id },
+      data: { appCallId: app.callId, nextCheckAt: new Date(Date.now() + APP_RING_CHECK_MS) },
+    })
+    return { ok: true, stage: 'app_ringing' }
+  }
+
+  return dialPhoneLegs(id, row, config, `app skipped: ${app.error ?? 'unknown'}`)
+}
+
+/**
+ * The legacy WhatsApp → PSTN legs (stage 1/2), shared by the start path (app
+ * ring unavailable) and the app-ring timeout path. When the owner-abroad
+ * toggle is ON these legs are pointless — his BD number is unreachable — so
+ * the ladder resolves straight to a push with an honest reason.
+ */
+async function dialPhoneLegs(
+  id: string,
+  row: { title: string; purpose: string },
+  config: ProactiveCallConfig,
+  note: string,
+): Promise<{ ok: boolean; stage?: string; error?: string }> {
+  const { isOwnerAbroadCallsOff } = await import('@/lib/owner-abroad')
+  if (await isOwnerAbroadCallsOff().catch(() => false)) {
+    await resolve(id, 'unreached', { note: `${note} | abroad: phone legs skipped`.slice(0, 500) })
+    await pushUnreachedSummary(row, 'আপনি দেশের বাইরে — ফোন কল বন্ধ, app-এও ধরা হয়নি')
+    return { ok: false, error: 'owner_abroad' }
+  }
+
   const nextCheckAt = new Date(Date.now() + config.stageWaitMin * 60_000)
-  const wa = await dialOwner(row, 'whatsapp').catch((err) => ({ ok: false as const, error: String(err?.message ?? err) }))
+  const wa = await dialOwner(row as { id: string; purpose: string; title: string }, 'whatsapp')
+    .catch((err) => ({ ok: false as const, error: String(err?.message ?? err) }))
   if (wa.ok) {
     await db.agentCallEscalation.update({
       where: { id },
-      data: { waCallId: (wa as { callRecordId?: string }).callRecordId ?? null, nextCheckAt },
+      data: {
+        status: 'wa_calling',
+        waCallId: (wa as { callRecordId?: string }).callRecordId ?? null,
+        nextCheckAt,
+        note: note.slice(0, 300),
+      },
     })
     return { ok: true, stage: 'wa_calling' }
   }
 
   // WhatsApp leg unavailable (kill switch, permission, config) → straight to PSTN.
-  const pstn = await dialOwner(row, 'phone').catch((err) => ({ ok: false as const, error: String(err?.message ?? err) }))
+  const pstn = await dialOwner(row as { id: string; purpose: string; title: string }, 'phone')
+    .catch((err) => ({ ok: false as const, error: String(err?.message ?? err) }))
   if (pstn.ok) {
     await db.agentCallEscalation.update({
       where: { id },
@@ -330,13 +378,13 @@ export async function startEscalationLadder(id: string, cfg?: ProactiveCallConfi
         status: 'pstn_calling',
         pstnCallId: (pstn as { callRecordId?: string }).callRecordId ?? null,
         nextCheckAt,
-        note: `wa skipped: ${wa.error ?? 'unknown'}`.slice(0, 300),
+        note: `${note} | wa skipped: ${wa.error ?? 'unknown'}`.slice(0, 300),
       },
     })
     return { ok: true, stage: 'pstn_calling' }
   }
 
-  await resolve(id, 'failed', { note: `wa: ${wa.error ?? '?'} | pstn: ${pstn.error ?? '?'}`.slice(0, 500) })
+  await resolve(id, 'failed', { note: `${note} | wa: ${wa.error ?? '?'} | pstn: ${pstn.error ?? '?'}`.slice(0, 500) })
   await pushUnreachedSummary(row, 'কল দেওয়াই যায়নি')
   return { ok: false, error: pstn.error ?? wa.error ?? 'dial failed' }
 }
@@ -489,6 +537,27 @@ async function stepEscalation(row: any, cfg: ProactiveCallConfig): Promise<strin
       data: { nextCheckAt: new Date(Date.now() + 5 * 60_000) },
     })
     return 'still_awaiting_approval'
+  }
+
+  // Stage-0 app ring: answered ends the ladder; unanswered falls to the phone
+  // legs (which themselves resolve to a push when the abroad toggle is on);
+  // an explicit DECLINE is the boss saying "not now" — report, don't chase.
+  if (row.status === 'app_ringing') {
+    const { getAgentAppCallStatus } = await import('@/agent/lib/agent-app-call')
+    const st = row.appCallId ? await getAgentAppCallStatus(row.appCallId) : 'failed'
+    if (st === 'answered' || st === 'completed') {
+      await resolve(row.id, 'answered')
+      return 'answered'
+    }
+    const timedOut = row.nextCheckAt && new Date(row.nextCheckAt).getTime() <= Date.now()
+    if (st === 'ringing' && !timedOut) return 'waiting_app'
+    if (st === 'declined') {
+      await resolve(row.id, 'declined')
+      await pushUnreachedSummary(row, 'app-কলটা কেটে দিয়েছেন — বিষয়টা এখানে')
+      return 'declined_app'
+    }
+    const legs = await dialPhoneLegs(row.id, row, cfg, `app ${st ?? 'missing'}`)
+    return legs.ok ? `escalated_to_${legs.stage}` : `unreached_after_app: ${legs.error}`
   }
 
   if (row.status === 'wa_calling' || row.status === 'pstn_calling') {
