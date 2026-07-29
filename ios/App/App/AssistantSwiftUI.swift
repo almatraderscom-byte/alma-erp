@@ -14899,11 +14899,6 @@ struct AssistantScreen: View {
             await vm.bootstrap()
             awakening.markReady(hasContent: !vm.messages.isEmpty)
             AlmaTurnLog.event("assistant.contentReady", "live count=\(vm.messages.count)")
-            // Agent call answered before this screen existed (cold launch from a
-            // CallKit answer): the bridge kept it — start the session now.
-            if let pending = AgentCallBridge.shared.consumePendingAnswer() {
-                startAgentCallSession(callId: pending.callId, purpose: pending.purpose)
-            }
         }
         .fullScreenCover(isPresented: $vm.showSidebar) {
             AgentSideDrawer(vm: vm, openWeb: openWeb)
@@ -14937,23 +14932,6 @@ struct AssistantScreen: View {
         // follows the owner to every tab; this view only answers its reopen tap.
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("almaVoiceReopenConsole"))) { _ in
             vm.showVoice = true
-        }
-        // Agent → owner in-app call (plan C2): CallKit answer hands off here. The
-        // engine begins immediately (works from a background answer — CallKit has
-        // already activated the audio session) and the console UI opens on top.
-        .onReceive(NotificationCenter.default.publisher(for: AgentCallBridge.answered)) { note in
-            let callId = (note.userInfo?["callId"] as? String) ?? ""
-            let purpose = (note.userInfo?["purpose"] as? String) ?? ""
-            _ = AgentCallBridge.shared.consumePendingAnswer()
-            startAgentCallSession(callId: callId, purpose: purpose)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: AgentCallBridge.ended)) { note in
-            let callId = (note.userInfo?["callId"] as? String) ?? ""
-            if vm.voiceEngine.activeAgentCallId == callId, vm.voiceEngine.isCallRunning {
-                vm.voiceEngine.activeAgentCallId = nil   // CallKit already told the server
-                vm.voiceEngine.end()
-                vm.showVoice = false
-            }
         }
         .fullScreenCover(item: $debugViewer) { PortalImageViewer(preview: $0, showsSave: true) }
         .sheet(item: $toolSheet) { tool in
@@ -15063,17 +15041,6 @@ struct AssistantScreen: View {
     /// One owner, one measured destination. The bounded VStack above keeps the
     /// complete visible window mounted, so no correction pass can pull the owner
     /// back after the bottom button lands.
-    /// Agent → owner in-app call (plan C2): start the Gemini Live session for an
-    /// answered CallKit agent call. begin() is idempotent (guarded on .idle), so
-    /// the console's own onAppear begin() cannot double-start the socket.
-    private func startAgentCallSession(callId: String, purpose: String) {
-        guard !callId.isEmpty else { return }
-        vm.voiceEngine.activeAgentCallId = callId
-        vm.voiceEngine.pendingAgentCallBrief = purpose
-        vm.voiceEngine.begin()
-        vm.showVoice = true
-    }
-
     private func scrollToBottom(proxy: ScrollViewProxy) {
         scrollDebounceTask?.cancel()
         nearBottom = true
