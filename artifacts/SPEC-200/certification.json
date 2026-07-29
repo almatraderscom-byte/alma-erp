@@ -1,12 +1,15 @@
 {
-  "certified": true,
-  "auditedCommit": "dfefc193092bf20694364115f3a2086f1c72b8c3",
+  "certified": false,
+  "auditedCommit": "01ccc882962016f69ad85e92163e113ac069b7be",
   "specCount": 200,
-  "reasonCodes": [],
+  "reasonCodes": [
+    "CHECKLIST_UNSATISFIED",
+    "GATE_STEP_FAILED"
+  ],
   "checklist": [
     {
       "id": "freeze-gate",
-      "satisfied": true
+      "satisfied": false
     },
     {
       "id": "spec-evidence-readable",
@@ -25,6 +28,6 @@
       "satisfied": true
     }
   ],
-  "digest": "1b4fad668417dae27562eeca12a7062394ecd00d4ae704f09f9b52104c5a49fd",
+  "digest": "fcb69d8f2dc247f8f1a600ac827b314e89de4a4c703b5f2693f97d6cf8d8cd71",
   "contract": "certification@1.0.0"
 }

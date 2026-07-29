@@ -406,6 +406,13 @@ async function pushUnreachedSummary(row: { title: string; purpose: string }, rea
 
 /** Ladder state machine — run every minute by /api/cron/call-escalations. */
 export async function processCallEscalations(limit = 10): Promise<Array<{ id: string; outcome: string }>> {
+  // Expire unanswered app rings nobody polls (salah fire-and-forget rings) —
+  // sends their cancel + missed-call pushes. Lives here, not in the cron route:
+  // the erp-api layer must not import agent libs (forbidden-imports gate).
+  try {
+    const { sweepStaleAgentAppCalls } = await import('@/agent/lib/agent-app-call')
+    await sweepStaleAgentAppCalls()
+  } catch { /* sweep is best-effort */ }
   const cfg = await getProactiveCallConfig()
   const now = new Date()
   const due = await db.agentCallEscalation.findMany({
