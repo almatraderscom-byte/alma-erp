@@ -153,6 +153,18 @@ final class AlmaVoiceEngine {
     var pendingAgentCallBrief: String?
     private var agentBriefSent = false
 
+    /// Agent call: CallKit owns the audio session, so the live session must not
+    /// configure/activate it itself (build 89: audio never started).
+    var callKitManaged = false {
+        didSet { live.callKitOwnsAudioSession = callKitManaged }
+    }
+
+    /// CXProviderDelegate didActivate → hand the activated session to the live
+    /// engine (starts, or retries, capture/playback).
+    func callKitAudioActivated() {
+        live.callKitAudioActivated()
+    }
+
     /// Brief may arrive AFTER the live socket connected (the CallKit answer never
     /// waits on the network). Send it as the opening note either way, once.
     func deliverAgentBrief(_ brief: String) {
@@ -1972,6 +1984,16 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private let audioQueue = DispatchQueue(label: "alma.voice.audio")
     private var inputMuted = false
     private var speakerEnabled = true
+    /// CallKit owns the AVAudioSession for an agent call (plan C2). The app must
+    /// NOT set the category or activate it — doing so threw on the owner's
+    /// device (build 89: "লাইভ অডিও চালু করা যায়নি", agent silent). CallKit has
+    /// already configured playAndRecord/voiceChat; if its activation has not
+    /// landed yet, audio setup is retried from callKitAudioActivated().
+    var callKitOwnsAudioSession = false
+    private var audioConfigPending = false
+    /// Bumped on every stop()/reconnect so a delayed audio retry belonging to a
+    /// dead attempt cannot touch the replacement session.
+    private var audioAttemptGeneration = 0
 
     func start() async throws {
         stopped = false
@@ -2070,17 +2092,82 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         try audioQueue.sync { try configureAudioOnQueue() }
     }
 
+    /// Socket is live AND audio is running — announce the connection once.
+    private func finishSetup() {
+        audioConfigPending = false
+        socketReady = true
+        reconnecting = false
+        reconnectAttempts = 0
+        DispatchQueue.main.async { [weak self] in self?.engine?.liveDidConnect() }
+        if !hasConnectedOnce {
+            hasConnectedOnce = true
+            sendTextTurn("OPENING_GREETING: Boss-কে সময় অনুযায়ী খুব সংক্ষিপ্ত বাংলায় অভিবাদন জানিয়ে বলুন, কী করতে হবে। কোনো tool চালাবেন না।")
+        }
+    }
+
+    /// CallKit activated the shared audio session (CXProviderDelegate didActivate).
+    /// Start (or retry) capture/playback now that the session is really ours.
+    func callKitAudioActivated() {
+        guard !stopped, callKitOwnsAudioSession, !configured else { return }
+        do {
+            try configureAudio()
+            // didActivate normally arrives BEFORE the socket's setupComplete.
+            // Only finish the session when setup was already waiting on audio —
+            // otherwise finishSetup() would announce a live call with ws == nil,
+            // cancel the in-flight connect task and lose the greeting/brief.
+            if audioConfigPending { finishSetup() }
+        } catch {
+            scheduleCallKitAudioRetry(attempt: 1)
+        }
+    }
+
+    /// CallKit still owns activation, so never self-activate (that is what broke
+    /// build 89). Just re-attempt the category + engine start a couple of times;
+    /// if audio truly cannot start, say so instead of holding a silent call.
+    private func scheduleCallKitAudioRetry(attempt: Int) {
+        guard attempt <= 3 else {
+            fail("লাইভ অডিও চালু করা যায়নি।")
+            return
+        }
+        let generation = audioAttemptGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self, !self.stopped, !self.configured,
+                  generation == self.audioAttemptGeneration else { return }
+            do {
+                try self.configureAudio()
+                if self.audioConfigPending { self.finishSetup() }
+            } catch {
+                self.scheduleCallKitAudioRetry(attempt: attempt + 1)
+            }
+        }
+    }
+
     private func configureAudioOnQueue() throws {
         guard !configured else { return }
+        // A previous PARTIAL attempt (engine.start threw after the tap went in)
+        // must not leave its tap behind: AVAudioEngine allows one tap per bus,
+        // so retrying with a stale tap raises an Objective-C exception and
+        // kills the app (review-bot P1 #3 on PR #653).
+        if tapInstalled {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
         let av = AVAudioSession.sharedInstance()
+        // Ownership split mirrors AgoraIntercom.configureAudioSession: the APP
+        // always owns the CATEGORY (a cold-launch answer leaves the session on
+        // its default category, which makes inputNode unavailable), and only
+        // ACTIVATION belongs to CallKit — calling setActive(true) there fought
+        // the framework and left the answered call silent (build 89).
         try av.setCategory(.playAndRecord, mode: .voiceChat,
                            options: [.allowBluetoothHFP, .defaultToSpeaker])
-        try av.setPreferredIOBufferDuration(0.02)
-        try av.setActive(true)
+        try? av.setPreferredIOBufferDuration(0.02)
+        if !callKitOwnsAudioSession {
+            try av.setActive(true)
+        }
         audioLock.lock()
         let useSpeaker = speakerEnabled
         audioLock.unlock()
-        try av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
+        try? av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
 
         let input = audioEngine.inputNode
         try input.setVoiceProcessingEnabled(true)
@@ -2113,7 +2200,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         tapInstalled = true
         audioEngine.prepare()
-        do { try audioEngine.start() } catch { throw AlmaLiveVoiceError.audioStart }
+        do { try audioEngine.start() } catch {
+            // Unwind the partial setup so the retry starts clean.
+            input.removeTap(onBus: 0)
+            tapInstalled = false
+            throw AlmaLiveVoiceError.audioStart
+        }
         // setVoiceProcessingEnabled RESETS the output route to the receiver, so
         // the override above is dead by now — first-call greeting played near-
         // silent into the earpiece (owner device 2026-07-24; reopening worked
@@ -2264,16 +2356,17 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         if root["setupComplete"] != nil {
             do {
                 try configureAudio()
-                socketReady = true
-                reconnecting = false
-                reconnectAttempts = 0
-                DispatchQueue.main.async { [weak self] in self?.engine?.liveDidConnect() }
-                if !hasConnectedOnce {
-                    hasConnectedOnce = true
-                    sendTextTurn("OPENING_GREETING: Boss-কে সময় অনুযায়ী খুব সংক্ষিপ্ত বাংলায় অভিবাদন জানিয়ে বলুন, কী করতে হবে। কোনো tool চালাবেন না।")
-                }
+                finishSetup()
             } catch {
-                fail("লাইভ অডিও চালু করা যায়নি।")
+                // Under CallKit the session may not be activated yet — keep the
+                // socket and retry from callKitAudioActivated() instead of
+                // failing the whole call (owner device, build 89).
+                if callKitOwnsAudioSession {
+                    audioConfigPending = true
+                    scheduleCallKitAudioRetry(attempt: 1)
+                } else {
+                    fail("লাইভ অডিও চালু করা যায়নি।")
+                }
             }
         }
         if let update = root["sessionResumptionUpdate"] as? [String: Any],
@@ -2765,6 +2858,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
         session?.invalidateAndCancel(); session = nil
         configured = false
+        // Must reset with the socket: a pending flag surviving into the next
+        // connect attempt let a late didActivate finish THAT session before its
+        // setupComplete (review-bot P1 #2 on PR #653).
+        audioConfigPending = false
+        audioAttemptGeneration += 1
         inputConverter = nil
         inputFormat = nil
         playbackFormat = nil

@@ -337,7 +337,7 @@ export const HEAD_CORE_TOOL_NAMES = new Set<string>([
   'get_daily_digest', 'manage_work_todos',
   // comms the owner uses daily (WhatsApp + phone-agent program + camera)
   'send_whatsapp', 'get_wa_inbox', 'outbound_phone_call', 'place_agent_call',
-  'call_boss_with_report', 'place_business_call', 'get_outbound_call_status',
+  'call_boss_with_report', 'call_me_in_app', 'place_business_call', 'get_outbound_call_status',
   'get_office_camera_snapshot', 'camera_speak',
   // salah (owner's most sensitive domain — never behind a discovery hop)
   'get_prayer_times', 'get_salah_status', 'mark_salah',

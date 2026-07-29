@@ -309,7 +309,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
                         // Skip CallKit (sim can't render its UI) — drive the answered
                         // hand-off directly: call screen + Gemini session + brief.
                         Task { @MainActor in
-                            AgentCallController.shared.start(callId: id, purpose: q("purpose"))
+                            AgentCallController.shared.start(
+                                callId: id, purpose: q("purpose"), callKitManaged: false)
                         }
                     } else {
                         CallKitVoIP.shared.debugSimulateAgentRing(callId: id)

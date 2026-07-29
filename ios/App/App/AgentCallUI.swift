@@ -40,12 +40,16 @@ final class AgentCallController: NSObject {
 
     /// CallKit answer → start talking NOW. Safe to call from a background
     /// answer: no UI is required; the window appears when the app foregrounds.
-    func start(callId: String, purpose: String) {
+    /// `callKitManaged` = a real CallKit call owns the audio session (device
+    /// path). The sim harness has no CallKit, so it must configure the session
+    /// itself — passing true there would wait forever for didActivate.
+    func start(callId: String, purpose: String, callKitManaged: Bool = true) {
         guard activeCallId == nil else { return }
         activeCallId = callId
         startedAt = Date()
         let eng = AlmaVoiceEngine()
         engine = eng
+        eng.callKitManaged = callKitManaged
         eng.activeAgentCallId = callId
         // Empty purpose = brief still in flight (deliverBrief will inject it,
         // pre- or post-connect). Never seed an empty note.
@@ -55,6 +59,12 @@ final class AgentCallController: NSObject {
         NotificationCenter.default.addObserver(
             self, selector: #selector(appDidBecomeActive),
             name: UIApplication.didBecomeActiveNotification, object: nil)
+    }
+
+    /// CallKit activated the shared audio session — the live engine can start
+    /// capture/playback now (it must never activate the session itself).
+    func audioSessionActivated() {
+        engine?.callKitAudioActivated()
     }
 
     /// The brief arrives AFTER start() (answer fulfills before any network call —

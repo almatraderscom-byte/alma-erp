@@ -366,6 +366,12 @@ async function placeSalahTwoWayCall({ supabase, today, waqt, name, phase, schedu
     console.log(`[salah] two-way app call placed for ${waqt} (${phase})`)
     return true
   }
+  // Boss is already ON an app call — no fallback, no extra ring; the 15-min
+  // slot simply passes (he is talking to the agent right now anyway).
+  if (ring.error === 'busy') {
+    console.log(`[salah] app ring skipped for ${waqt} — a call is already live`)
+    return false
+  }
   console.warn(`[salah] app ring failed for ${waqt}:`, ring.error)
 
   if (!(await isOwnerAbroadCallsOff())) {
