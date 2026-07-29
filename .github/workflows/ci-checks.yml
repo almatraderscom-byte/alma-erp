@@ -28,3 +28,12 @@ jobs:
         run: npx tsc --noEmit
       - name: Lint
         run: npx next lint --max-warnings=9999
+
+  # Branch protection requires the status context "CI Checks" — the workflow
+  # NAME is not a context, so this summary job reports it explicitly.
+  ci-checks:
+    name: CI Checks
+    needs: [checks]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "all checks green"

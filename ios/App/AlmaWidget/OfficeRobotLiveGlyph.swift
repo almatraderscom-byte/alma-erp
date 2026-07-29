@@ -179,13 +179,13 @@ struct OfficeRobotLiveGlyph: View {
         } ?? 0
         switch mode {
         case .overview:
-            return indexed([0, 1, 2, 3, 0], step: step)
+            return transitionThenLoop([0, 1, 2, 3, 0], loop: [0, 0, 0, 1, 0, 2, 3, 2, 0, 4, 5, 4], step: step, date: date)
         case .working, .orders:
-            return indexed([6, 7, 8, 9, 6], step: step)
+            return transitionThenLoop([6, 7, 8, 9, 6], loop: [6, 7, 8, 9, 8, 7], step: step, date: date)
         case .approval:
-            return indexed([0, 16, 1, 16, 16], step: step)
+            return transitionThenLoop([0, 16, 1, 16, 16], loop: [16, 0, 16, 1], step: step, date: date)
         case .urgent:
-            return indexed([0, 10, 1, 10, 10], step: step)
+            return transitionThenLoop([0, 10, 1, 10, 10], loop: [10, 0, 10, 1], step: step, date: date)
         case .stale:
             return 8
         case .offline:
@@ -228,6 +228,15 @@ struct OfficeRobotLiveGlyph: View {
     private func indexed(_ indices: [Int], step: Int) -> Int {
         guard !indices.isEmpty else { return staticFrameIndex }
         return indices[min(indices.count - 1, max(0, step))]
+    }
+
+    /// One-shot intro for the transition burst, then an AMBIENT LOOP — clamping
+    /// to the intro's last frame froze the Robot once the periodic tail kept
+    /// redrawing (review-bot P2 #2 on PR #651).
+    private func transitionThenLoop(_ intro: [Int], loop: [Int], step: Int, date: Date) -> Int {
+        guard !intro.isEmpty else { return staticFrameIndex }
+        if step < intro.count { return intro[max(0, step)] }
+        return sequence(loop, date: date)
     }
 
     private func clamped(_ index: Int) -> Int {
