@@ -84,8 +84,18 @@ struct OfficeRobotLiveGlyph: View {
         if now >= start.addingTimeInterval(2.05) {
             return nil
         }
-        let dates = (0...4).map {
+        var dates = (0...4).map {
             start.addingTimeInterval(Double($0) * 0.4)
+        }
+        // A finite explicit timeline stops producing updates after its last date,
+        // and nothing re-evaluates the branch until the next ActivityKit update —
+        // the Robot froze (review-bot P2 on PR #651). Append a periodic tail at
+        // the ambient cadence so the transition hands off seamlessly.
+        var t = start.addingTimeInterval(2.05)
+        let horizon = start.addingTimeInterval(120)
+        while t <= horizon {
+            dates.append(t)
+            t = t.addingTimeInterval(refreshInterval)
         }
         return dates.filter { $0 >= now.addingTimeInterval(-0.05) }
     }

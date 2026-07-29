@@ -567,8 +567,10 @@ final class GlobalOfficeRobotStore: ObservableObject {
             feedback.notificationOccurred(.warning)
             ApprovalRobotSound.shared.play(.reject)
         } else {
+            // Request FAILED (network/server) — no decision was committed, so no
+            // decision sound: the reject SFX here read as "owner rejected"
+            // (review-bot P2 on PR #651). Error haptic only.
             feedback.notificationOccurred(.error)
-            ApprovalRobotSound.shared.play(.reject)
         }
 
         if succeeded {

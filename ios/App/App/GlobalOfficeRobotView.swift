@@ -862,16 +862,22 @@ struct OfficeRobotPetButton: View {
         case .succeeded where reaction.decision == .approve:
             beats = Self.approvalSuccessBeats
             repeats = 2
-        case .succeeded, .failed:
+        case .succeeded:
             beats = Self.rejectBeats
+            repeats = 2
+        case .failed:
+            // Error ≠ rejection (review-bot P2 on PR #651): a failed request keeps
+            // the neutral processing motion; the red "কাজটি সম্পন্ন হয়নি" status
+            // line carries the error message.
+            beats = Self.processingBeats
             repeats = 2
         }
 
         guard motionAllowed else {
             switch reaction.phase {
-            case .processing: row = 7; column = 2
+            case .processing, .failed: row = 7; column = 2
             case .succeeded where reaction.decision == .approve: row = 3; column = 3
-            case .succeeded, .failed: row = 5; column = 3
+            case .succeeded: row = 5; column = 3
             }
             return
         }
