@@ -15,6 +15,7 @@ import { getPrayerTimes } from './times.mjs'
 import { getDhakaSchedule } from './dhaka-schedule.mjs'
 import { dhakaTodayYmd, dhakaNoonUtc, dhakaYesterdayYmd } from './dhaka-date.mjs'
 import { isFridayDhaka } from './dhaka-schedule.mjs'
+import { getSalahLocation, offsetTodayYmd, offsetYesterdayYmd } from './location.mjs'
 import {
   level1Message,
   level2Message,
@@ -37,6 +38,8 @@ import {
   getFollowupState,
   setFollowupState,
   clearFollowup,
+  getLastSalahCallAt,
+  markSalahCallPlaced,
 } from './snooze-state.mjs'
 
 
@@ -58,6 +61,8 @@ const FOLLOWUP_GRACE_MS = 2 * 60 * 1000
 const FOLLOWUP_CALL_REPEAT_MS = 2 * 60 * 1000
 /** Friday jummah follow-up ~60 min after 1:30 PM prayer */
 const JUMMAH_FOLLOWUP_MS = 60 * 60 * 1000
+/** Owner rules 2026-07-29: TWO-WAY app calls every 15 min until confirmed. */
+const SALAH_CALL_GAP_MS = 15 * 60 * 1000
 
 function isOwnerConfirmed(rec) {
   return SETTLED_STATUSES.has(rec.status) || Boolean(rec.confirmedAt)
@@ -268,7 +273,12 @@ async function sendTelegramSafe(bot, ownerChatId, text, extra = {}) {
   }
 }
 
-/** Telegram (buttons) + optional ntfy + voice + optional Twilio call — one distinct copy per channel. */
+/**
+ * Telegram (buttons) + native app push + voice note. Owner rules 2026-07-29:
+ * the CALL channel left this path entirely — calls are TWO-WAY app calls placed
+ * by placeSalahTwoWayCall() on their own 15-minute cadence. Tier is therefore
+ * capped at 2 so notify() never dials, and ntfy is retired inside notify().
+ */
 async function deliverSalahAlert({
   tier,
   title,
@@ -281,34 +291,8 @@ async function deliverSalahAlert({
   withVoice = true,
   ntfyMode = 'critical',
 }) {
-  let effectiveTier = tier
-  if (tier >= 3) {
-    const lock = await isOwnerCallLocked()
-    if (lock.locked) {
-      console.log(`[salah] tier-3 suppressed — owner call lock until ${lock.until?.toISOString()} (${lock.source})`)
-      effectiveTier = 2
-    } else if (await isOwnerAbroadCallsOff()) {
-      // Owner abroad — his BD number is unreachable, so no PSTN call. Instead
-      // ring his APP (in-app VoIP call, plan C4); Telegram + ntfy still go out
-      // at tier 2. Confirmed waqts never ring (same guard as the PSTN path).
-      console.log('[salah] tier-3 → app ring — owner abroad (owner_abroad_calls_off)')
-      effectiveTier = 2
-      if (!(salahDate && waqt && (await isSalahWaqtConfirmed(salahDate, waqt)))) {
-        const { ringOwnerAppViaWeb } = await import('../notify/agent-app-call.mjs')
-        const ring = await ringOwnerAppViaWeb(
-          `নামাজের সময় — ${title}। ${msgs.voice ?? msgs.ntfy ?? ''}`.slice(0, 1500),
-          'salah',
-        )
-        if (!ring.ok) console.warn('[salah] app ring failed:', ring.error)
-      }
-    } else if (salahDate && waqt && (await isSalahWaqtConfirmed(salahDate, waqt))) {
-      console.log(`[salah] tier-3 suppressed — ${waqt} already confirmed for ${salahDate}`)
-      effectiveTier = 2
-    }
-  }
-
   await notify({
-    tier: effectiveTier,
+    tier: Math.min(tier, 2),
     title,
     message: msgs.ntfy,
     category: 'salah',
@@ -327,6 +311,76 @@ async function deliverSalahAlert({
   )
 }
 
+// ── Two-way salah call (owner rules 2026-07-29) ──────────────────────────────
+
+/**
+ * The agent's spoken mission for one salah call. Delivered as the live-session
+ * brief, so the agent OPENS the call with this and then converses two-way.
+ */
+function buildSalahCallBrief({ phase, name, jamaatLabel, endLabel, toneLine }) {
+  const timing = [
+    jamaatLabel ? `জামাত ${jamaatLabel}` : null,
+    endLabel ? `ওয়াক্ত শেষ ${endLabel}` : null,
+  ].filter(Boolean).join(', ')
+  const opening = phase === 'pre'
+    ? `${name} নামাজের আর ১৫ মিনিট বাকি${timing ? ` (${timing})` : ''} — Boss-কে স্বাভাবিক, উষ্ণভাবে প্রস্তুতির কথা মনে করিয়ে দাও।`
+    : `${name}-এর ওয়াক্ত চলছে${timing ? ` (${timing})` : ''}, Boss এখনো নামাজ পড়া নিশ্চিত করেননি — নামাজের গুরুত্ব মনে করিয়ে দাও।`
+  return (
+    `এটা নামাজ-তাগাদার কল। ${opening} ` +
+    (toneLine ? `প্রাসঙ্গিক কথা: ${toneLine} ` : '') +
+    `নিয়ম: (১) Boss "পড়েছি/পড়ে নিয়েছি" বললে run_agent_turn দিয়ে ${name}-এর নামাজ mark করাও (mark_salah), tool-এর ফল দেখে তবেই আলহামদুলিল্লাহ বলে দোয়া করে কল শেষ করো। ` +
+    `(২) "পরে পড়ব" বললে ছোট্ট করে ইসলামিকভাবে (এক-দুই বাক্যে হাদিস/উৎসাহ) বুঝাও — চাপাচাপি নয়; Boss রাখতে বললে সালাম দিয়ে রেখে দাও (১৫ মিনিট পরে এমনিতেই আবার মনে করানো হবে, সেটা বলার দরকার নেই)। ` +
+    `(৩) Boss ফোন কেটে দিলে সেটাই স্বাভাবিক — কোনো অনুশোচনা বার্তা পাঠিও না।`
+  )
+}
+
+/**
+ * Place ONE two-way app call for a waqt, at most every 15 minutes.
+ * Single choke point used by the escalation tick AND the post-snooze loop:
+ *   confirmed → never; owner-call-lock/snooze → never; last call <15 min → skip.
+ * App ring failing (no devices/offline) falls back to the old one-way PSTN call
+ * ONLY when the owner is NOT abroad — the reminder must still reach him somehow.
+ */
+async function placeSalahTwoWayCall({ supabase, today, waqt, name, phase, schedule, toneLine }) {
+  if (!supabase) return false
+  if (await isSalahWaqtConfirmed(today, waqt)) return false
+  const lock = await isOwnerCallLocked()
+  if (lock.locked) return false
+
+  const last = await getLastSalahCallAt(supabase, today, waqt)
+  if (Date.now() - last < SALAH_CALL_GAP_MS) return false
+
+  const w = schedule?.[waqt]
+  const brief = buildSalahCallBrief({
+    phase,
+    name,
+    jamaatLabel: w?.prayerLabel ?? null,
+    endLabel: w?.label ?? null,
+    toneLine,
+  })
+
+  await markSalahCallPlaced(supabase, today, waqt)
+  const { ringOwnerAppViaWeb } = await import('../notify/agent-app-call.mjs')
+  const ring = await ringOwnerAppViaWeb(brief.slice(0, 1800), 'salah')
+  if (ring.ok) {
+    console.log(`[salah] two-way app call placed for ${waqt} (${phase})`)
+    return true
+  }
+  console.warn(`[salah] app ring failed for ${waqt}:`, ring.error)
+
+  if (!(await isOwnerAbroadCallsOff())) {
+    // Emergency fallback — the proven one-way PSTN reminder.
+    const msgs = salahChannelMessages({ tier: 3, waqt, waqtName: name, dateYmd: today, remindersSent: 4 })
+    const pstn = await makeTwilioCall(msgs.voice, {
+      force: true, salah: true, purpose: 'salah', skipAutoRetry: true,
+      salahDate: today, salahWaqt: waqt,
+    }).catch((err) => ({ ok: false, error: err.message }))
+    if (!pstn.ok) console.warn(`[salah] PSTN fallback failed for ${waqt}:`, pstn.error)
+    return pstn.ok
+  }
+  return false
+}
+
 // ── Escalation check (called on a schedule — e.g. every 5 min) ────────────────
 
 export async function checkAndEscalateSalah({ supabase, bot }) {
@@ -338,12 +392,22 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
   const griefEnabled    = settings.salah_grief_reminder_enabled === 'true'
   const griefContext    = griefEnabled ? (settings.salah_grief_context ?? '') : ''
 
-  const today       = dhakaTodayYmd()
+  // Owner rule ৪: everything below runs on the owner's CURRENT location clock.
+  const loc         = await getSalahLocation()
+  const today       = offsetTodayYmd(loc.offsetMin)
   let records       = await getSalahRecords(today)
   const now         = new Date()
-  const prayerTimes = await getPrayerTimes(dhakaNoonUtc(today))
-  const schedule    = await getDhakaSchedule(today)
+  const prayerTimes = await getPrayerTimes(now, loc.offsetMin)
+  const schedule    = await getDhakaSchedule(today, undefined, loc.offsetMin)
   const waqtName    = (waqt) => waqtDisplayName(waqt, prayerTimes)
+
+  // A location's day rolls over between the daily-init crons (e.g. Dubai
+  // midnight = 20:00 UTC, init cron = 18:00 UTC): first tick of a fresh local
+  // day has no records yet — create them now, idempotently.
+  if (records.length === 0) {
+    await initializeDailySalahRecords(supabase)
+    records = await getSalahRecords(today)
+  }
 
   // Heal rows where owner confirmed but status is still pending/missed (race with escalation).
   for (const raw of records) {
@@ -380,7 +444,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     const fajr = normalizeSalahRecord(fajrRecord)
     const msSinceFajr = now - fajr.windowStart
     if (fajr.status === 'pending' && msSinceFajr >= 0 && msSinceFajr < 6 * 60 * 1000 && fajr.remindersSent === 0) {
-      const yesterday = dhakaYesterdayYmd()
+      const yesterday = offsetYesterdayYmd(loc.offsetMin)
       const yRecords = await getSalahRecords(yesterday)
       for (const yr of yRecords) {
         const y = normalizeSalahRecord(yr)
@@ -484,9 +548,14 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         await sendTelegramSafe(
           bot,
           ownerChatId,
-          `🕌 *${name} — ১৫ মিনিট পর জামাত*\n\nSir, একটু পরেই ${name}-এর সময়। প্রস্তুতি নিন। এখন ব্যস্ত থাকলে "🕐 পরে পড়বো" চেপে সময় নিতে পারেন — নাহলে জামাতের সময় কল আসবে।`,
+          `🕌 *${name} — ১৫ মিনিট পর জামাত*\n\nBoss, একটু পরেই ${name}-এর সময়। প্রস্তুতি নিন। এখন ব্যস্ত থাকলে "🕐 পরে পড়বো" চেপে সময় নিতে পারেন।`,
           { parse_mode: 'Markdown', reply_markup: salahButtons(waqt, today) },
         )
+        // Owner rule ১: the ১৫-মিনিট-আগে reminder is ALSO one two-way app call.
+        await placeSalahTwoWayCall({
+          supabase, today, waqt, name, phase: 'pre', schedule,
+          toneLine: null,
+        })
         continue
       }
     }
@@ -499,6 +568,24 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     const prayerStart = new Date(waqtSchedule?.prayerStart ?? windowStart)
     const msSinceAzan = now - azanTime
     const msSincePrayerStart = now - prayerStart
+
+    // Owner rule ৩ (2026-07-29): from jamaat until the waqt ends, a TWO-WAY app
+    // call every 15 minutes until Boss confirms. Independent of the Telegram
+    // message ladder below; placeSalahTwoWayCall enforces the gap/lock/confirm.
+    if (msSincePrayerStart >= 0 && now < windowEnd) {
+      const tone = salahChannelMessages({
+        tier: remindersSent >= 3 ? 3 : 2,
+        waqt,
+        waqtName: waqtName(waqt),
+        dateYmd: today,
+        remindersSent,
+        griefContext,
+      })
+      await placeSalahTwoWayCall({
+        supabase, today, waqt, name: waqtName(waqt), phase: 'due', schedule,
+        toneLine: String(tone.voice ?? '').slice(0, 350),
+      })
+    }
 
     // Step 0: Azan — Quran/Hadith reminder
     if (msSinceAzan >= 0 && remindersSent === 0 && now < windowEnd) {
@@ -776,13 +863,14 @@ export async function runSalahSnoozeFollowup({ supabase, bot }) {
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
   if (!ownerChatId || !supabase) return { dutyStatus: 'skipped' }
 
-  const today = dhakaTodayYmd()
+  const loc = await getSalahLocation()
+  const today = offsetTodayYmd(loc.offsetMin)
   const waqts = await listFollowupWaqts(supabase, today)
   if (!waqts.length) return { dutyStatus: 'idle' }
 
   const now = new Date()
-  const schedule = await getDhakaSchedule(today)
-  const prayerTimes = await getPrayerTimes(dhakaNoonUtc(today))
+  const schedule = await getDhakaSchedule(today, undefined, loc.offsetMin)
+  const prayerTimes = await getPrayerTimes(now, loc.offsetMin)
   const settings = await getSettings(['salah_grief_reminder_enabled', 'salah_grief_context'])
   const griefEnabled = settings.salah_grief_reminder_enabled === 'true'
   const griefContext = griefEnabled ? (settings.salah_grief_context ?? '') : ''
@@ -797,9 +885,6 @@ export async function runSalahSnoozeFollowup({ supabase, bot }) {
 
     const confirmed = await isSalahWaqtConfirmed(today, waqt)
     const lock = await isOwnerCallLocked(now)
-    // Owner abroad: keep the follow-up cadence, but the 'call' action rings the
-    // APP (plan C4) instead of dialling the unreachable BD number.
-    const abroad = await isOwnerAbroadCallsOff()
     const { action, nextState } = decideFollowupAction({
       state, now, confirmed, locked: lock.locked, windowEnd,
     })
@@ -824,27 +909,18 @@ export async function runSalahSnoozeFollowup({ supabase, bot }) {
     }
 
     if (action === 'call') {
-      // Call due → place ONE salah call, re-arm the next (nonstop cadence).
-      const msgs = salahChannelMessages({
-        tier: 3, waqt, waqtName: name, dateYmd: today, remindersSent: 4, griefContext,
-      })
+      // Post-snooze call due → same TWO-WAY call, same single choke point.
+      // The 15-min gap inside placeSalahTwoWayCall is the cadence (owner rule ৩)
+      // — this loop's 2-min re-arm just keeps checking until a call is allowed.
       try {
-        if (abroad) {
-          // Abroad: BD number is dead — ring the app instead (plan C4).
-          const { ringOwnerAppViaWeb } = await import('../notify/agent-app-call.mjs')
-          const ring = await ringOwnerAppViaWeb(
-            `নামাজের তাগাদা — ${name}। ${msgs.voice}`.slice(0, 1500), 'salah')
-          if (!ring.ok) console.warn(`[salah/followup] app ring failed for ${waqt}:`, ring.error)
-        } else {
-          await makeTwilioCall(msgs.voice, {
-            force: true,
-            salah: true,
-            purpose: 'salah',
-            skipAutoRetry: true,
-            salahDate: today,
-            salahWaqt: waqt,
-          })
-        }
+        const msgs = salahChannelMessages({
+          tier: 3, waqt, waqtName: name, dateYmd: today, remindersSent: 4, griefContext,
+        })
+        await placeSalahTwoWayCall({
+          supabase, today, waqt, name, phase: 'due',
+          schedule,
+          toneLine: String(msgs.voice ?? '').slice(0, 350),
+        })
       } catch (err) {
         console.warn(`[salah/followup] call failed for ${waqt}:`, err.message)
       }
@@ -859,8 +935,9 @@ export async function runSalahSnoozeFollowup({ supabase, bot }) {
 // ── Initialize today's salah records at dawn ──────────────────────────────────
 
 export async function initializeDailySalahRecords(supabase) {
-  const today = dhakaTodayYmd()
-  const times = await getPrayerTimes(dhakaNoonUtc(today))
+  const loc = await getSalahLocation()
+  const today = offsetTodayYmd(loc.offsetMin)
+  const times = await getPrayerTimes(new Date(), loc.offsetMin)
 
   for (const waqt of WAQT_ORDER) {
     const prayerWindow = times[waqt]
@@ -907,7 +984,7 @@ export async function handleSalahCallback(ctx, action, waqt, status, dateYmd = n
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
   if (!ownerChatId || String(ctx.chat?.id) !== ownerChatId) return
 
-  const recordDate = dateYmd || dhakaTodayYmd()
+  const recordDate = dateYmd || offsetTodayYmd((await getSalahLocation()).offsetMin)
 
   if (action === 'salah_done') {
     const dayRecords = await getSalahRecords(recordDate)
@@ -975,7 +1052,7 @@ export async function handleSalahSnoozeCallback(ctx, waqt, minutes, dateYmd = nu
   const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
   if (!ownerChatId || String(ctx.chat?.id) !== ownerChatId) return
 
-  const recordDate = dateYmd || dhakaTodayYmd()
+  const recordDate = dateYmd || offsetTodayYmd((await getSalahLocation()).offsetMin)
   const mins = Number(minutes) === 30 ? 30 : 15
 
   let body = null
@@ -1028,7 +1105,7 @@ export async function handleSalahJamaatCallback(ctx, answer, waqt = null, dateYm
   if (!ownerChatId || String(ctx.chat?.id) !== ownerChatId) return
   if (answer !== 'jamaat' && answer !== 'alone') return
 
-  const recordDate = dateYmd || dhakaTodayYmd()
+  const recordDate = dateYmd || offsetTodayYmd((await getSalahLocation()).offsetMin)
   await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
 
   let reply = null
