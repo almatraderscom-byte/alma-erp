@@ -74,10 +74,12 @@ export async function ringOwnerApp(args: {
   const { voip, fcm } = await getCallPushTargets(owners).catch(() => ({ voip: [], fcm: [] }))
   if (voip.length === 0 && fcm.length === 0) return { ok: false, error: 'no_devices' }
 
-  // One call at a time (review-bot P2 on PR #653): CallKit is configured for a
-  // single call group, so a second ring while one is live/ringing would be
-  // rejected on-device while the server happily reported 'ringing'. A ring past
-  // its window and an answered call older than the 2h call cap don't count.
+  // One call at a time (review-bot P2s on PR #653): CallKit is configured for a
+  // single call group, so a second ring while ANY call is live/ringing would be
+  // rejected on-device while the server happily reported 'ringing'. That covers
+  // both our own agent calls AND staff/office calls (OfficeCallSession). This
+  // fast check is backed by a partial unique index on agent_app_calls (one
+  // active row) so two concurrent ringers cannot both pass check-then-create.
   const busy = await prisma.agentAppCall.findFirst({
     where: {
       OR: [
@@ -89,6 +91,16 @@ export async function ringOwnerApp(args: {
   }).catch(() => null)
   if (busy) return { ok: false, error: 'busy' }
 
+  const officeBusy = await prisma.officeCallSession.findFirst({
+    where: {
+      state: { in: ['RINGING', 'ANSWERED', 'CONNECTING', 'CONNECTED', 'RECONNECTING'] },
+      endedAt: null,
+      maxEndsAt: { gt: new Date() },
+    },
+    select: { id: true },
+  }).catch(() => null)
+  if (officeBusy) return { ok: false, error: 'busy' }
+
   let callId: string
   try {
     const row = await prisma.agentAppCall.create({
@@ -97,7 +109,15 @@ export async function ringOwnerApp(args: {
     })
     callId = row.id
   } catch (err) {
-    console.warn('[agent-app-call] create failed:', (err as Error)?.message)
+    // agent_app_calls_single_active (partial unique index): a concurrent ringer
+    // won the claim between our check and this insert — that is 'busy', not a
+    // database failure (review-bot P2: check-then-create must be atomic).
+    const msg = (err as Error)?.message ?? ''
+    const code = (err as { code?: string })?.code
+    if (code === 'P2002' || msg.includes('agent_app_calls_single_active')) {
+      return { ok: false, error: 'busy' }
+    }
+    console.warn('[agent-app-call] create failed:', msg)
     return { ok: false, error: 'db_error' }
   }
 
@@ -144,7 +164,16 @@ export async function sweepStaleAgentAppCalls(): Promise<number> {
     take: 20,
   })
   for (const row of stale) await getAgentAppCallStatus(row.id).catch(() => null)
-  return stale.length
+
+  // An 'answered' row whose end never arrived (app killed mid-call, network
+  // drop) would hold the single-active unique index FOREVER and block every
+  // future ring. Close anything past the 2h max-call policy.
+  const zombie = await prisma.agentAppCall.updateMany({
+    where: { status: 'answered', endedAt: null, answeredAt: { lt: new Date(Date.now() - 2 * 3600_000) } },
+    data: { status: 'completed', endedAt: new Date() },
+  }).catch(() => ({ count: 0 }))
+
+  return stale.length + zombie.count
 }
 
 export type AgentAppCallStatus =

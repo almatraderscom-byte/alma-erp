@@ -335,7 +335,9 @@ export async function startEscalationLadder(id: string, cfg?: ProactiveCallConfi
   if (app.error === 'busy') {
     await db.agentCallEscalation.update({
       where: { id },
-      data: { status: 'queued', nextCheckAt: new Date(Date.now() + 2 * 60_000) },
+      // firstCallAt back to null: nothing was dialed, so this deferral must not
+      // consume the daily cap and cancel the promised retry (review-bot P2).
+      data: { status: 'queued', firstCallAt: null, nextCheckAt: new Date(Date.now() + 2 * 60_000) },
     })
     return { ok: true, stage: 'deferred_busy' }
   }
