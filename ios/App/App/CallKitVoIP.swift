@@ -333,7 +333,18 @@ extension CallKitVoIP: PKPushRegistryDelegate {
                 Self.isoFractional.date(from: $0) ?? Self.isoPlain.date(from: $0)
             }
             if event == "cancel" {
-                if !broadcastId.isEmpty { finishReportedCall(callId: broadcastId, reason: .remoteEnded) }
+                // A cancel lands on EVERY device when one device answers
+                // (multi-device stop-ring). The device that answered keeps its
+                // live call — only un-answered rings are torn down.
+                if !broadcastId.isEmpty {
+                    let answeredHere = calls.contains {
+                        $0.value.broadcastId.caseInsensitiveCompare(broadcastId) == .orderedSame
+                        && $0.value.answered
+                    }
+                    if !answeredHere {
+                        finishReportedCall(callId: broadcastId, reason: .remoteEnded)
+                    }
+                }
                 reportPlaceholderAndEnd(caller: caller0, completion: completion)
                 return
             }
@@ -346,6 +357,18 @@ extension CallKitVoIP: PKPushRegistryDelegate {
             }
             reportIncoming(broadcastId: callId, channel: "agent_\(callId)",
                            caller: "ALMA", kind: .agent, completion: completion)
+            // Missed-call UX: if the ring window passes unanswered, close the
+            // system call as UNANSWERED (shows as a missed call, WhatsApp-style)
+            // instead of waiting for the server's cancel push to race in.
+            let deadline = expiresAt.timeIntervalSinceNow + 2
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(5, deadline)) { [weak self] in
+                guard let self,
+                      let (_, call) = self.calls.first(where: {
+                          $0.value.broadcastId.caseInsensitiveCompare(callId) == .orderedSame
+                      }),
+                      call.kind == .agent, !call.answered else { return }
+                self.finishReportedCall(callId: callId, reason: .unanswered)
+            }
             return
         }
 
@@ -411,14 +434,21 @@ extension CallKitVoIP: CXProviderDelegate {
         guard let call = calls[action.callUUID] else { action.fail(); return }
         if call.kind == .agent {
             calls[action.callUUID]?.answered = true
+            // Fulfill + start the engine IMMEDIATELY — CallKit must never wait on
+            // the network (review-bot P1: two sequential API calls on a weak
+            // abroad connection can exceed CallKit's answer timeout). The brief
+            // and the server 'answered' mark arrive in the background; the brief
+            // is injected even if the live socket connects first.
             Task { @MainActor in
-                // WhatsApp-parity (owner spec): talking starts NOW, screen or no
-                // screen. The controller runs its own engine headlessly and shows
-                // the dedicated call UI when the app is foreground.
+                AgentCallController.shared.start(callId: call.broadcastId, purpose: "")
+                action.fulfill()
+            }
+            Task { @MainActor in
                 await Self.postAgentCallStatus(call.broadcastId, status: "answered")
                 let purpose = await Self.fetchAgentCallPurpose(call.broadcastId)
-                AgentCallController.shared.start(callId: call.broadcastId, purpose: purpose)
-                action.fulfill()
+                if !purpose.isEmpty {
+                    AgentCallController.shared.deliverBrief(callId: call.broadcastId, purpose: purpose)
+                }
             }
             return
         }

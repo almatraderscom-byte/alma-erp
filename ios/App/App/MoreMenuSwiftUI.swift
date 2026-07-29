@@ -353,6 +353,7 @@ struct MoreMenuScreen: View {
         var agentItems: [MenuItem] = [
             MenuItem(title: "Agent Hub",       icon: "square.grid.2x2.fill",             path: "/agent/hub"),
             MenuItem(title: "Phone Companion", icon: "iphone.radiowaves.left.and.right", path: "native:companion"),
+            MenuItem(title: "কল হিস্টরি",       icon: "phone.badge.waveform.fill",        path: "native:agent-calls"),
         ]
         return [
         MenuGroup(header: "Agent", icon: "sparkles", items: agentItems),
@@ -550,6 +551,9 @@ struct MoreMenuScreen: View {
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
         if item.path == "native:companion" { openCompanion() }
         else if item.path == "native:spinner-preview" { openSpinnerPreview?() }
+        else if item.path == "native:agent-calls" {
+            pushNative?("কল হিস্টরি", AnyView(AgentCallHistoryScreen()))
+        }
         else { openPath(item.path, item.title) }
     }
 
