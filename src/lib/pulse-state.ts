@@ -343,6 +343,8 @@ export interface PulseContentState {
   items: PulseContentItem[]
   updatedAtEpoch: number
   staleAfterEpoch: number
+  /** Visual revision for one short ActivityKit transition per real update. */
+  robotAnimationEpoch?: number
 
   approvalId?: string
   approvalTitle?: string
@@ -420,6 +422,7 @@ export function toPulseContentState(
     ),
     updatedAtEpoch: epoch(snapshot.lastUpdatedAt),
     staleAfterEpoch: epoch(snapshot.staleAfter),
+    robotAnimationEpoch: epoch(snapshot.lastUpdatedAt),
 
     approvalId: snapshot.approval?.id,
     approvalTitle: snapshot.approval?.title,

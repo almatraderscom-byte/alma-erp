@@ -467,7 +467,6 @@ extension StaffMonitorControlsVM {
                     "POST", "/api/assistant/actions/\(id)/\(approve ? "approve" : "reject")", body: Empty())
             }
             ops.toast = (approve ? "✓ Approved" : "✗ Rejected", true)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
         } catch {
             // Web parity: 409/410 (already resolved elsewhere) reads as success.
             let msg = error.localizedDescription

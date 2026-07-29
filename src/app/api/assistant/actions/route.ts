@@ -40,12 +40,18 @@ export async function GET(req: NextRequest) {
   if (!verifyInternalToken(bearerToken)) {
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
     if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-    if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+    // Native Robot polls this owner-only queue app-wide. Authenticated staff
+    // must see an empty queue, not a 403 that the native session layer
+    // interprets as an expired login.
+    if (!isSystemOwner(token)) {
+      return Response.json({ count: 0, actions: [], nextCursor: null })
+    }
   }
 
   const { searchParams } = new URL(req.url)
   const status = (searchParams.get('status') ?? 'pending').toLowerCase()
   const limit = Math.min(Math.max(Number(searchParams.get('limit')) || 50, 1), 100)
+  const cursor = searchParams.get('cursor')?.trim() || undefined
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
@@ -53,8 +59,11 @@ export async function GET(req: NextRequest) {
   const rows = await db.agentPendingAction
     .findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      take: limit,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      // Fetch one extra row so the native clients can follow a truthful cursor
+      // instead of silently dropping approval #101 and onward.
+      take: limit + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       select: {
         id: true,
         type: true,
@@ -70,7 +79,8 @@ export async function GET(req: NextRequest) {
 
   // Flag transient cards that have aged past their TTL. Lifecycle-bound cards
   // like dispatch never expire — isPendingActionExpired handles that.
-  const actions = rows.map(
+  const pageRows = rows.slice(0, limit)
+  const actions = pageRows.map(
     (r: { status: string; type: string; createdAt: Date | string } & Record<string, unknown>) => ({
       ...r,
       expired: r.status === 'pending' && isPendingActionExpired(r.createdAt, r.type),
@@ -95,5 +105,9 @@ export async function GET(req: NextRequest) {
   }
 
   const visible = status === 'pending' ? actions.filter((a: { expired: boolean }) => !a.expired) : actions
-  return Response.json({ count: visible.length, actions: visible })
+  return Response.json({
+    count: visible.length,
+    actions: visible,
+    nextCursor: rows.length > limit ? pageRows.at(-1)?.id ?? null : null,
+  })
 }

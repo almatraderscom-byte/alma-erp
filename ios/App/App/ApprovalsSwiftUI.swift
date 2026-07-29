@@ -301,6 +301,26 @@ struct AlmaAgentAction: Decodable, Identifiable, Equatable {
         expired = try? c.decodeIfPresent(Bool.self, forKey: .expired)
     }
 
+    #if DEBUG
+    init(
+        id: String,
+        type: String?,
+        status: String?,
+        summary: String?,
+        costEstimate: Int?,
+        createdAt: String?,
+        expired: Bool?
+    ) {
+        self.id = id
+        self.type = type
+        self.status = status
+        self.summary = summary
+        self.costEstimate = costEstimate
+        self.createdAt = createdAt
+        self.expired = expired
+    }
+    #endif
+
     /// Same labels the web TYPE_LABELS table uses.
     var typeLabel: String {
         switch type {
@@ -323,11 +343,13 @@ struct AlmaAgentAction: Decodable, Identifiable, Equatable {
 
 struct AgentActionsResponse: Decodable {
     let actions: [AlmaAgentAction]
-    private enum Keys: String, CodingKey { case ok, data, actions }
+    let nextCursor: String?
+    private enum Keys: String, CodingKey { case ok, data, actions, nextCursor }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
         let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
         actions = (try? c.decode([AlmaAgentAction].self, forKey: .actions)) ?? []
+        nextCursor = try? c.decodeIfPresent(String.self, forKey: .nextCursor)
     }
 }
 
@@ -387,7 +409,6 @@ final class ApprovalsVM {
     var busyIds: Set<String> = []         // per-row spinners, never a global one
     var error: String? = nil
     var notice: String? = nil             // success/warning line (the web's toast)
-    var resultFx: ApprovalResultFx? = nil // approve/reject WOW medallion toast (owner design)
     var authExpired = false
 
     // Integrity monitor (web parity)
@@ -449,30 +470,13 @@ final class ApprovalsVM {
             if let transactionId, !transactionId.isEmpty { body["transactionId"] = transactionId }
             // EXPENSE_REIMBURSEMENT only: 'wallet' (credit staff wallet) | 'instant' (owner paid cash/bKash).
             if let payoutMode, !payoutMode.isEmpty { body["payoutMode"] = payoutMode }
-            let resp: ApprovalActionResponse = try await AlmaAPI.shared.send(
+            let _: ApprovalActionResponse = try await AlmaAPI.shared.send(
                 "PATCH", "/api/approvals/\(approval.id)", body: body)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-            // Result feedback = the owner-approved WOW medallion toast (green medal +
-            // self-drawing check + glint + confetti / red cross), replacing the old
-            // plain "Approval committed" strip (owner report 2026-07-12).
-            let approved = action == "APPROVE"
-            if resp.reconciled == true {
-                resultFx = ApprovalResultFx(
-                    approved: approved,
-                    title: approved ? "অনুমোদন সম্পন্ন" : "বাতিল করা হয়েছে",
-                    detail: resp.warning ?? "আগের সিদ্ধান্তের সাথে মিলিয়ে নেওয়া হয়েছে")
-            } else {
-                resultFx = ApprovalResultFx(
-                    approved: approved,
-                    title: approved ? "অনুমোদন সম্পন্ন" : "বাতিল করা হয়েছে",
-                    detail: resp.warning)
-            }
             withAnimation(.snappy) { approvals.removeAll { $0.id == approval.id } }
             totalPending = max(0, totalPending - 1)
             NotificationCenter.default.post(name: .almaApprovalsChanged, object: nil)
             await load()   // refresh counts/by-module, keep numbers honest
         } catch {
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
             self.error = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
         }
     }
@@ -522,10 +526,36 @@ final class ApprovalsVM {
         agentLoading = true
         agentError = nil
         defer { agentLoading = false }
+        #if DEBUG
+        if OfficeRobotDebugFixture.isEnabled {
+            agentActions = Self.debugFixtureActions(filter: agentFilter)
+            authExpired = false
+            return
+        }
+        #endif
         do {
-            let resp: AgentActionsResponse = try await AlmaAPI.shared.get(
-                "/api/assistant/actions", query: ["status": agentFilter, "limit": "50"])
-            agentActions = resp.actions
+            var cursor: String?
+            var all: [AlmaAgentAction] = []
+            var seenIds = Set<String>()
+            var seenCursors = Set<String>()
+            for _ in 0..<100 {
+                let resp: AgentActionsResponse = try await AlmaAPI.shared.get(
+                    "/api/assistant/actions",
+                    query: [
+                        "status": agentFilter,
+                        "limit": "100",
+                        "cursor": cursor,
+                    ])
+                for action in resp.actions where seenIds.insert(action.id).inserted {
+                    all.append(action)
+                }
+                guard let next = resp.nextCursor,
+                      !next.isEmpty,
+                      seenCursors.insert(next).inserted
+                else { break }
+                cursor = next
+            }
+            agentActions = all
             authExpired = false
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
@@ -539,11 +569,26 @@ final class ApprovalsVM {
         agentBusyId = action.id
         agentNotice = nil
         defer { agentBusyId = nil }
+        #if DEBUG
+        if OfficeRobotDebugFixture.isEnabled,
+           OfficeRobotDebugFixture.contains(actionId: action.id) {
+            let decision: GlobalOfficeRobotStore.ApprovalDecision =
+                kind == "approve" ? .approve : .reject
+            await GlobalOfficeRobotStore.shared.resolveDebugFixtureAction(
+                actionId: action.id,
+                decision: decision
+            )
+            agentNotice = kind == "approve"
+                ? "✓ Demo action অনুমোদিত হয়েছে।"
+                : "✓ Demo action বাতিল করা হয়েছে।"
+            agentActions = Self.debugFixtureActions(filter: agentFilter)
+            return
+        }
+        #endif
         do {
             struct Ok: Decodable {}
             let _: Ok = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/actions/\(action.id)/\(kind)", body: [String: String]())
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
             agentNotice = kind == "approve" ? "✓ অনুমোদিত হয়েছে।" : "✓ বাতিল করা হয়েছে।"
         } catch AlmaAPIError.http(let status, _) {
             // Same wording the web tab shows for these two server verdicts.
@@ -556,6 +601,31 @@ final class ApprovalsVM {
         NotificationCenter.default.post(name: .almaApprovalsChanged, object: nil)
         await loadAgent()
     }
+
+    #if DEBUG
+    private static func debugFixtureActions(filter: String) -> [AlmaAgentAction] {
+        let createdAt = ISO8601DateFormatter().string(from: Date())
+        return OfficeRobotDebugFixture.pendingDefinitions.compactMap { fixture in
+            let decision = OfficeRobotDebugFixture.decisions[fixture.actionId]
+            if filter == "pending", decision != nil { return nil }
+            let status: String
+            switch decision {
+            case .approve: status = "approved"
+            case .reject: status = "rejected"
+            case nil: status = "pending"
+            }
+            return AlmaAgentAction(
+                id: fixture.actionId,
+                type: fixture.type,
+                status: status,
+                summary: fixture.detail,
+                costEstimate: nil,
+                createdAt: createdAt,
+                expired: false
+            )
+        }
+    }
+    #endif
 
     /// The third option: the owner typed his opinion on a pending card. Hand it to
     /// the head, which re-edits THIS card in place and replies with a one-line
@@ -598,38 +668,67 @@ struct ApprovalsScreen: View {
     @State private var withdrawing: AlmaApproval? = nil  // WALLET_WITHDRAWAL → txn id first
     @State private var reimbursing: AlmaApproval? = nil  // EXPENSE_REIMBURSEMENT → payout choice
     @State private var revising: AlmaAgentAction? = nil  // agent card → "আমার মত" opinion
+    @State private var pendingAgentActionScrollId: String?
+    @State private var highlightedAgentActionId: String?
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 10) {
-                viewToggle
-                if vm.authExpired { authCard }
-                if let err = vm.error, view == "business" { noticeCard(err, tone: .error) }
-                if let ok = vm.notice, view == "business" { noticeCard(ok, tone: .success) }
-                if view == "business" { businessBody } else { agentBody }
-                Color.clear.frame(height: 8)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    viewToggle
+                    if vm.authExpired { authCard }
+                    if let err = vm.error, view == "business" { noticeCard(err, tone: .error) }
+                    if let ok = vm.notice, view == "business" { noticeCard(ok, tone: .success) }
+                    if view == "business" { businessBody } else { agentBody }
+                    Color.clear.frame(height: 8)
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 6)
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 6)
+            .onChange(of: pendingAgentActionScrollId) { _, actionId in
+                guard let actionId, !actionId.isEmpty else { return }
+                highlightedAgentActionId = actionId
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                    withAnimation(.easeOut(duration: 0.32)) {
+                        proxy.scrollTo("agent-action:\(actionId)", anchor: .center)
+                    }
+                    pendingAgentActionScrollId = nil
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
+                    guard highlightedAgentActionId == actionId else { return }
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        highlightedAgentActionId = nil
+                    }
+                }
+            }
         }
         .background(ApprovalsAurora())
         .claudeTopFade()
-        // Approve/reject result → WOW medallion toast drops over the list (owner
-        // design: green medal + self-drawing check + glint + confetti; red cross
-        // on reject). `.id(fx.id)` restarts the animation for back-to-back acts.
-        .overlay(alignment: .top) {
-            if let fx = vm.resultFx {
-                ApprovalResultToast(fx: fx) { vm.resultFx = nil }
-                    .id(fx.id)
-            }
-        }
         .refreshable {
             if view == "business" { await vm.load() } else { await vm.loadAgent() }
         }
         .task {
-            await vm.load()
+            if let actionId = AlmaApprovalNav.pendingAgentActionId, !actionId.isEmpty {
+                AlmaApprovalNav.pendingAgentActionId = nil
+                view = "agent"
+                await vm.loadAgent()
+                pendingAgentActionScrollId = actionId
+            } else {
+                await vm.load()
+            }
             restoreBkashPending()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .almaOpenAgentApproval)) { note in
+            guard let actionId = note.userInfo?["actionId"] as? String,
+                  !actionId.isEmpty
+            else { return }
+            AlmaApprovalNav.pendingAgentActionId = nil
+            view = "agent"
+            Task {
+                await vm.loadAgent()
+                pendingAgentActionScrollId = actionId
+            }
         }
         // Coming back from the bKash app (or a relaunch after iOS killed us there):
         // re-open the txn sheet for the half-done withdrawal so the owner can paste
@@ -712,8 +811,8 @@ struct ApprovalsScreen: View {
                 Task { await vm.loadAgent() }
             }
             Spacer()
-            if vm.totalPending > 0 {
-                Text("\(vm.totalPending)")
+            if activePendingCount > 0 {
+                Text("\(activePendingCount)")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(ApprovalPalette.accentText(colorScheme))
                     .padding(.horizontal, 9).padding(.vertical, 4)
@@ -722,6 +821,15 @@ struct ApprovalsScreen: View {
             }
         }
         .padding(.top, 4)
+    }
+
+    private var activePendingCount: Int {
+        if view == "agent" {
+            return vm.agentActions.filter {
+                $0.status == "pending" && $0.expired != true
+            }.count
+        }
+        return vm.totalPending
     }
 
     // ── Business view ──
@@ -921,9 +1029,11 @@ struct ApprovalsScreen: View {
             AgentActionCard(
                 action: action,
                 busy: vm.agentBusyId == action.id,
+                highlighted: highlightedAgentActionId == action.id,
                 onApprove: { Task { await vm.agentAct(action, kind: "approve") } },
                 onReject: { Task { await vm.agentAct(action, kind: "reject") } },
                 onOpinion: { revising = action })
+                .id("agent-action:\(action.id)")
         }
         if !vm.agentLoading && vm.agentActions.isEmpty && vm.agentError == nil {
             VStack(spacing: 6) {
@@ -1421,6 +1531,7 @@ private struct SalaryCorrectionDigest: View {
 private struct AgentActionCard: View {
     let action: AlmaAgentAction
     let busy: Bool
+    let highlighted: Bool
     let onApprove: () -> Void
     let onReject: () -> Void
     let onOpinion: () -> Void
@@ -1497,7 +1608,23 @@ private struct AgentActionCard: View {
         }
         .padding(14)
         .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .overlay(
+            RoundedRectangle(
+                cornerRadius: AlmaSwiftTheme.rCard,
+                style: .continuous
+            )
+            .strokeBorder(
+                highlighted ? ApprovalPalette.coral : Color.clear,
+                lineWidth: highlighted ? 2 : 0
+            )
+        )
+        .shadow(
+            color: highlighted ? ApprovalPalette.coral.opacity(0.42) : .clear,
+            radius: highlighted ? 12 : 0
+        )
+        .animation(.easeInOut(duration: 0.24), value: highlighted)
         .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        .accessibilityValue(highlighted ? "Robot থেকে নির্বাচিত action" : "")
     }
 
     /// Squircle icon badge — coral→violet gradient, one SF symbol per action type.

@@ -25,11 +25,16 @@ extension Notification.Name {
     /// path starting with "/", optionally carrying a query string.
     static let almaOpenPath = Notification.Name("almaOpenPath")
 
-    /// "Open this exact chat in the native agent." userInfo: ["conversationId": String].
+    /// "Open this exact chat in the native agent." userInfo:
+    /// ["conversationId": String, "actionId": String?].
     /// Posted alongside `.almaOpenPath /agent` (which switches to the Assistant tab).
     /// The already-mounted AssistantScreen observes this; a first-mount is covered by
     /// `AlmaAgentNav.pendingConversationId`, drained in its bootstrap.
     static let almaOpenAgentConversation = Notification.Name("almaOpenAgentConversation")
+
+    /// Open a conversation-less Agent approval in the native Approvals tab and
+    /// focus its exact actionable row. userInfo: ["actionId": String].
+    static let almaOpenAgentApproval = Notification.Name("almaOpenAgentApproval")
 }
 
 /// One-shot handoff for "open this chat natively" when the Assistant tab is not yet
@@ -37,6 +42,13 @@ extension Notification.Name {
 /// AssistantScreen drains it on first bootstrap. Main-actor only.
 enum AlmaAgentNav {
     @MainActor static var pendingConversationId: String?
+    @MainActor static var pendingActionId: String?
+}
+
+/// One-shot fallback for background-created approvals that are not attached to
+/// a chat. The Approvals screen drains it after loading the Agent action list.
+enum AlmaApprovalNav {
+    @MainActor static var pendingAgentActionId: String?
 }
 
 /// Durable handoff between OneSignal's earliest cold-start click callback and the

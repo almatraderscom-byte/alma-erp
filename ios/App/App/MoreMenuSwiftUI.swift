@@ -350,9 +350,10 @@ struct MoreMenuScreen: View {
         // NATIVE companion screen (openCompanion) instead of a web view.
         // Owner feedback 2026-07-17: NO duplicates — the Hub is the ONE agent
         // directory; the More menu keeps only the Hub + the native-sentinel row.
-        var agentItems: [MenuItem] = [
+        let agentItems: [MenuItem] = [
             MenuItem(title: "Agent Hub",       icon: "square.grid.2x2.fill",             path: "/agent/hub"),
             MenuItem(title: "Phone Companion", icon: "iphone.radiowaves.left.and.right", path: "native:companion"),
+            MenuItem(title: "Agent Loader",    icon: "sparkles.rectangle.stack.fill",    path: "native:spinner-preview"),
         ]
         return [
         MenuGroup(header: "Agent", icon: "sparkles", items: agentItems),
@@ -386,7 +387,6 @@ struct MoreMenuScreen: View {
             MenuItem(title: "Audit",     icon: "checklist", path: "/audit"),
         ]),
         MenuGroup(header: "Settings", icon: "gearshape", items: [
-            MenuItem(title: "Agent Loader",  icon: "sparkles",           path: "native:spinner-preview"),
             MenuItem(title: "Users",         icon: "person.3",           path: "/settings/users"),
             MenuItem(title: "Notifications", icon: "bell.badge",         path: "/settings/notifications"),
             MenuItem(title: "Branding",      icon: "paintpalette",       path: "/settings/branding"),

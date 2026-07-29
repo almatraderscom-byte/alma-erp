@@ -116,13 +116,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
                         let _: OkResp = try await AlmaAPI.shared.send(
                             "POST", "/api/assistant/actions/\(actionId)/\(approve ? "approve" : "reject")")
                     }
-                    UserDefaults.standard.removeObject(forKey: "alma.pulse.lastNativeSyncAt")
-                    if #available(iOS 16.1, *) { PulseNativeSync.syncNow(reason: "intent") }
+                    await MainActor.run {
+                        UserDefaults.standard.removeObject(
+                            forKey: "alma.pulse.lastNativeSyncAt")
+                        PulseNativeSync.syncNow(reason: "intent")
+                    }
                     return true
                 } catch {
-                    if #available(iOS 16.1, *) {
-                        LiveActivityBridgePlugin.breadcrumb("intent_failed")
-                    }
+                    LiveActivityBridgePlugin.breadcrumb("intent_failed")
                     return false
                 }
             }
@@ -266,6 +267,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
                 }
 
                 AlmaPerfLog.event("route.dynamicIslandRobot", path)
+                if path.hasPrefix("/agent"),
+                   let conversationId = targetURL.flatMap({
+                       URLComponents(url: $0, resolvingAgainstBaseURL: false)?
+                           .queryItems?
+                           .first(where: { $0.name == "conversationId" })?
+                           .value
+                   }),
+                   !conversationId.isEmpty {
+                    AlmaAgentNav.pendingConversationId = conversationId
+                    NotificationCenter.default.post(
+                        name: .almaOpenAgentConversation,
+                        object: nil,
+                        userInfo: ["conversationId": conversationId]
+                    )
+                    path = "/agent"
+                }
                 if #available(iOS 17.0, *) {
                     Task { @MainActor in
                         FloatingChatHead.shared.requestIslandEntryTransition()
