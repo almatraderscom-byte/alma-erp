@@ -355,7 +355,7 @@ async function placeSalahTwoWayCall({ supabase, today, waqt, name, phase, schedu
     phase,
     name,
     jamaatLabel: w?.prayerLabel ?? null,
-    endLabel: w?.label ?? null,
+    endLabel: null, // schedule carries no end-time label; waqt NAME here read as "ওয়াক্ত শেষ ইশা"
     toneLine,
   })
 
