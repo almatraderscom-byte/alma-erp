@@ -66,6 +66,7 @@ export async function ringOwnerApp(args: {
   source: AgentAppCallSource
 }): Promise<RingOwnerAppResult> {
   if (!agentAppCallEnabled()) return { ok: false, error: 'disabled' }
+  void sweepStaleAgentAppCalls().catch(() => 0)
 
   const owners = await ownerUserIds().catch(() => [])
   if (owners.length === 0) return { ok: false, error: 'no_owner' }
@@ -93,20 +94,42 @@ export async function ringOwnerApp(args: {
   const voipSent = voipResults.filter((r) => r.ok).length
   const fcmSent = fcmResults.filter((r) => r.ok).length
 
+  // Only iOS VoIP counts as a RING today: the Android service ignores
+  // 'agent_call' payloads until C5, so an FCM delivery must not make the
+  // ladder wait through a ring stage nothing actually rang (review-bot P2).
+  const rang = voipSent > 0
+
   await prisma.agentAppCall.update({
     where: { id: callId },
     data: {
       pushResult: {
         voip: { attempted: voip.length, delivered: voipSent },
-        fcm: { attempted: fcm.length, delivered: fcmSent },
+        fcm: { attempted: fcm.length, delivered: fcmSent, countsAsRing: false },
       },
-      ...(voipSent + fcmSent === 0 ? { status: 'failed', endedAt: new Date() } : {}),
+      ...(rang ? {} : { status: 'failed', endedAt: new Date() }),
     },
   }).catch(() => {})
 
-  if (voipSent + fcmSent === 0) return { ok: false, error: 'push_failed' }
+  if (!rang) return { ok: false, error: 'push_failed' }
   console.log(`[agent-app-call] ring ${callId} (${args.source}) voip=${voipSent} fcm=${fcmSent}`)
   return { ok: true, callId, voipSent, fcmSent }
+}
+
+/**
+ * Expire every stale ring (review-bot P1: salah rings are fire-and-forget —
+ * nobody polls them, so without this they stay 'ringing' forever and the
+ * cancel + missed-call pushes never fire). Runs from the 1-min call-escalations
+ * cron and opportunistically before each new ring.
+ */
+export async function sweepStaleAgentAppCalls(): Promise<number> {
+  const cutoff = new Date(Date.now() - RING_WINDOW_MS)
+  const stale = await prisma.agentAppCall.findMany({
+    where: { status: 'ringing', createdAt: { lt: cutoff } },
+    select: { id: true },
+    take: 20,
+  })
+  for (const row of stale) await getAgentAppCallStatus(row.id).catch(() => null)
+  return stale.length
 }
 
 export type AgentAppCallStatus =
@@ -141,6 +164,26 @@ export async function getAgentAppCallStatus(id: string): Promise<AgentAppCallSta
           fcm.length && fcmCallConfigured() ? sendFcmCall(fcm, cancel) : Promise.resolve([]),
         ])
       } catch { /* cancel is best-effort */ }
+      // Missed-call notification (owner request 2026-07-29) — WhatsApp parity.
+      // Salah rings are excluded: the salah ladder already notifies on its own
+      // cadence, and a missed push per escalation ring would spam every waqt.
+      try {
+        const row = await prisma.agentAppCall.findUnique({
+          where: { id },
+          select: { source: true, purpose: true },
+        })
+        if (row && row.source !== 'salah') {
+          const { pushNativeToOwner } = await import('@/agent/lib/native-owner-push')
+          await pushNativeToOwner({
+            tier: 1,
+            title: '📞 মিসড কল — ALMA',
+            message: `ALMA আপনাকে কল দিয়েছিল: ${row.purpose.slice(0, 160)}`,
+            category: 'urgent',
+            actionUrl: '/agent',
+            deliveryId: `agent-call-missed:${id}`,
+          })
+        }
+      } catch { /* missed push is best-effort */ }
     })()
   }
   return 'unanswered'
@@ -164,6 +207,23 @@ export async function markAgentAppCall(
       ? { status, answeredAt: now }
       : { status, endedAt: now, ...(summary ? { summary: summary.slice(0, 4000) } : {}) }
   const res = await prisma.agentAppCall.updateMany({ where, data })
+
+  // One device answered → stop the ring on the owner's OTHER devices
+  // (review-bot P2). The answering device ignores this cancel: its local call
+  // is already marked answered (CallKitVoIP skips cancels for answered calls).
+  if (res.count === 1 && status === 'answered') {
+    void (async () => {
+      try {
+        const owners = await ownerUserIds()
+        const { voip, fcm } = await getCallPushTargets(owners)
+        const cancel = ringPayload(id, 'cancel')
+        await Promise.all([
+          voip.length ? sendVoipCall(voip, cancel) : Promise.resolve([]),
+          fcm.length && fcmCallConfigured() ? sendFcmCall(fcm, cancel) : Promise.resolve([]),
+        ])
+      } catch { /* best-effort */ }
+    })()
+  }
   return res.count === 1
 }
 

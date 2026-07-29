@@ -47,12 +47,22 @@ final class AgentCallController: NSObject {
         let eng = AlmaVoiceEngine()
         engine = eng
         eng.activeAgentCallId = callId
-        eng.pendingAgentCallBrief = purpose
+        // Empty purpose = brief still in flight (deliverBrief will inject it,
+        // pre- or post-connect). Never seed an empty note.
+        if !purpose.isEmpty { eng.pendingAgentCallBrief = purpose }
         eng.begin()
         presentWindowIfForeground()
         NotificationCenter.default.addObserver(
             self, selector: #selector(appDidBecomeActive),
             name: UIApplication.didBecomeActiveNotification, object: nil)
+    }
+
+    /// The brief arrives AFTER start() (answer fulfills before any network call —
+    /// review-bot P1). The engine injects it now if the live socket is already
+    /// connected, else on connect.
+    func deliverBrief(callId: String, purpose: String) {
+        guard activeCallId?.caseInsensitiveCompare(callId) == .orderedSame else { return }
+        engine?.deliverAgentBrief(purpose)
     }
 
     /// End from OUR UI (red button) — engine.end() closes the CallKit call too,
@@ -258,5 +268,137 @@ struct AgentCallScreen: View {
                     .foregroundStyle(.white.opacity(0.7))
             }
         }
+    }
+}
+
+// MARK: - Call history (WhatsApp-style call log — owner request 2026-07-29)
+
+@available(iOS 17.0, *)
+struct AgentCallHistoryScreen: View {
+    struct CallRow: Decodable, Identifiable {
+        let id: String
+        let purpose: String
+        let source: String
+        let status: String
+        let createdAt: String
+        let answeredAt: String?
+        let endedAt: String?
+    }
+    private struct Resp: Decodable { let calls: [CallRow] }
+
+    @State private var calls: [CallRow] = []
+    @State private var loading = true
+    @State private var error: String?
+
+    var body: some View {
+        Group {
+            if loading {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error {
+                VStack(spacing: 10) {
+                    Text("হিস্টরি আনা যায়নি").font(.headline)
+                    Text(error).font(.caption).foregroundStyle(.secondary)
+                    Button("আবার চেষ্টা") { Task { await load() } }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if calls.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "phone.badge.waveform.fill")
+                        .font(.system(size: 42))
+                        .foregroundStyle(Color(red: 0.88, green: 0.48, blue: 0.37))
+                    Text("এখনো কোনো কল নেই")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("ALMA আপনাকে কল দিলে এখানে দেখা যাবে।")
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(calls) { row in callRow(row) }
+                    .listStyle(.insetGrouped)
+                    .refreshable { await load() }
+            }
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        loading = calls.isEmpty
+        error = nil
+        do {
+            let r: Resp = try await AlmaAPI.shared.send("GET", "/api/assistant/agent-call/history")
+            calls = r.calls
+        } catch {
+            self.error = "নেটওয়ার্ক সমস্যা — একটু পরে দেখুন।"
+        }
+        loading = false
+    }
+
+    @ViewBuilder
+    private func callRow(_ row: CallRow) -> some View {
+        let missed = row.status == "unanswered" || row.status == "failed"
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(missed ? Color.red.opacity(0.12) : Color(red: 0.88, green: 0.48, blue: 0.37).opacity(0.14))
+                    .frame(width: 42, height: 42)
+                Image(systemName: missed
+                      ? "phone.arrow.down.left.fill"
+                      : row.status == "declined" ? "phone.down.fill" : "phone.fill.arrow.up.right")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(missed ? Color.red : Color(red: 0.82, green: 0.42, blue: 0.32))
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.purpose.isEmpty ? "ALMA কল" : row.purpose)
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(2)
+                HStack(spacing: 6) {
+                    Text(statusLabel(row))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(missed ? Color.red : .secondary)
+                    Text(timeLabel(row.createdAt))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func statusLabel(_ row: CallRow) -> String {
+        switch row.status {
+        case "completed": return "কথা হয়েছে" + durationSuffix(row)
+        case "answered": return "চলছিল"
+        case "declined": return "কেটে দিয়েছেন"
+        case "unanswered": return "মিসড কল"
+        case "failed": return "যায়নি"
+        case "ringing": return "রিং হচ্ছে…"
+        default: return row.status
+        }
+    }
+
+    private func durationSuffix(_ row: CallRow) -> String {
+        guard let a = Self.parse(row.answeredAt), let e = Self.parse(row.endedAt) else { return "" }
+        let s = max(0, Int(e.timeIntervalSince(a)))
+        return String(format: " · %d:%02d", s / 60, s % 60)
+    }
+
+    private func timeLabel(_ iso: String) -> String {
+        guard let d = Self.parse(iso) else { return "" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "bn_BD")
+        if Calendar.current.isDateInToday(d) { f.dateFormat = "h:mm a" }
+        else { f.dateFormat = "d MMM, h:mm a" }
+        return f.string(from: d)
+    }
+
+    private static let isoFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let isoPlain = ISO8601DateFormatter()
+    private static func parse(_ s: String?) -> Date? {
+        guard let s else { return nil }
+        return isoFrac.date(from: s) ?? isoPlain.date(from: s)
     }
 }

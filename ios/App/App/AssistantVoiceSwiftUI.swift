@@ -151,6 +151,25 @@ final class AlmaVoiceEngine {
     // it called; on end() the CallKit system call is closed alongside the session.
     var activeAgentCallId: String?
     var pendingAgentCallBrief: String?
+    private var agentBriefSent = false
+
+    /// Brief may arrive AFTER the live socket connected (the CallKit answer never
+    /// waits on the network). Send it as the opening note either way, once.
+    func deliverAgentBrief(_ brief: String) {
+        guard activeAgentCallId != nil, !agentBriefSent, !brief.isEmpty else { return }
+        if liveActive {
+            agentBriefSent = true
+            sendAgentBriefNote(brief)
+        } else {
+            pendingAgentCallBrief = brief
+        }
+    }
+
+    private func sendAgentBriefNote(_ brief: String) {
+        live.sendTextTurn(
+            "STATUS_NOTE: তুমি নিজে Boss-কে কল করেছ (Boss এইমাত্র ধরেছেন)। কারণ: \(String(brief.prefix(800)))। " +
+            "সালাম দিয়ে শুরু করে কারণটা সংক্ষেপে নিজের ভাষায় বলো, তারপর Boss-এর কথা শোনো।")
+    }
 
     struct Card: Identifiable, Equatable {
         enum Kind { case tool, approval, ask, modelSwitch }
@@ -326,6 +345,7 @@ final class AlmaVoiceEngine {
         // a second socket here would duplicate audio and lose the live context.
         guard callConnection == .idle else { return }
         if #available(iOS 17.0, *) { AlmaCallBarBridge.shared.engine = self }
+        agentBriefSent = false
         closed = false
         callConnection = .connecting
         connectionFailureText = ""
@@ -1197,12 +1217,10 @@ final class AlmaVoiceEngine {
         wake.stop()
         state = .listening
         keepAliveStart()
-        if let brief = pendingAgentCallBrief {
+        if let brief = pendingAgentCallBrief, !agentBriefSent {
             pendingAgentCallBrief = nil
-            let reason = brief.isEmpty ? "Boss-এর সাথে জরুরি কথা আছে" : brief
-            live.sendTextTurn(
-                "STATUS_NOTE: তুমি নিজে Boss-কে কল করেছ (Boss এইমাত্র ধরেছেন)। কারণ: \(String(reason.prefix(800)))। " +
-                "সালাম দিয়ে শুরু করে কারণটা সংক্ষেপে নিজের ভাষায় বলো, তারপর Boss-এর কথা শোনো।")
+            agentBriefSent = true
+            sendAgentBriefNote(brief.isEmpty ? "Boss-এর সাথে জরুরি কথা আছে" : brief)
         }
     }
 
