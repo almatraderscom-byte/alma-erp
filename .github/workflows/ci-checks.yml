@@ -31,7 +31,9 @@ jobs:
           set -euo pipefail
           BASE="${{ github.event.pull_request.base.sha }}"
           HEAD="${{ github.event.pull_request.head.sha }}"
-          CHANGED=$(git diff --name-only "$BASE" "$HEAD")
+          # merge-base (...) so base-branch commits never defeat the fast path,
+          # and --no-renames so a code→docs rename still shows the code side.
+          CHANGED=$(git diff --no-renames --name-only "$BASE...$HEAD")
           echo "$CHANGED"
           DOCS_ONLY=true
           while IFS= read -r f; do
