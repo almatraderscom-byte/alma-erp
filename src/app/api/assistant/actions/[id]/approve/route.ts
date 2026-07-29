@@ -2606,6 +2606,10 @@ export async function POST(
     console.warn('[approve] continuation enqueue failed (approval unaffected):', err instanceof Error ? err.message : err)
     if (progress?.turnId) await finalizeTurnIfRunning(progress.turnId, 'done')
   }
+  if (res.status >= 200 && res.status < 300) {
+    const { pushCurrentPulseLiveActivity } = await import('@/agent/lib/pulse-live-update')
+    await pushCurrentPulseLiveActivity()
+  }
   return res
 }
 

@@ -41,6 +41,7 @@ private final class GlobalOfficeRobotHostState: ObservableObject {
     @Published var isSuppressed = false
     @Published var isDragging = false
     @Published var dragDirection: OfficeRobotDragDirection = .right
+    @Published var isDockedRight = true
 }
 
 /// The one app-wide SwiftUI robot surface. The task store is shared and
@@ -55,6 +56,9 @@ private struct GlobalOfficeRobotView: View {
 
     let onTap: () -> Void
     let onLongPress: () -> Void
+    let onDragChanged: (CGSize) -> Void
+    let onDragEnded: (CGSize, CGFloat) -> Void
+    let onOpenPendingItem: (GlobalOfficeRobotStore.TaskItem) -> Void
 
     var body: some View {
         OfficeRobotPetButton(
@@ -67,8 +71,15 @@ private struct GlobalOfficeRobotView: View {
             isVisible: !hostState.isSuppressed,
             isDragging: hostState.isDragging,
             dragDirection: hostState.dragDirection,
+            isDockedRight: hostState.isDockedRight,
+            pendingItems: store.items.filter { $0.status == "attention" },
+            transientHeadlineItem: store.transientHeadlineItem,
+            approvalReaction: store.approvalReaction,
             onTap: onTap,
-            onLongPress: onLongPress
+            onLongPress: onLongPress,
+            onDragChanged: onDragChanged,
+            onDragEnded: onDragEnded,
+            onOpenPendingItem: onOpenPendingItem
         )
     }
 }
@@ -95,6 +106,11 @@ final class FloatingChatHead {
     private var presentationHidesRobot = false
     private var islandEntryPending = false
     private var islandEntryAnimating = false
+    private var approvalReactionCancellable: AnyCancellable?
+    private var approvalReactionId: UUID?
+    private var approvalHomeCenter: CGPoint?
+    private var dragStartCenter: CGPoint?
+    private var lastDragTranslationX: CGFloat = 0
 
     /// Contextual native sheets own the full interaction plane. Hide the global
     /// chat head while one is presented so it cannot cover or intercept a row;
@@ -125,40 +141,37 @@ final class FloatingChatHead {
 
         let store = GlobalOfficeRobotStore.shared
         store.install()
+        approvalReactionCancellable = store.$approvalReaction
+            .receive(on: RunLoop.main)
+            .sink { [weak self] reaction in
+                self?.handleApprovalReaction(reaction)
+            }
         robotHostState.isCallActive = OfficeCallCoordinator.shared.hasActiveCall
         robotHostState.isSuppressed = !suppressionReasons.isEmpty
 
         let robot = GlobalOfficeRobotView(
             store: store,
             hostState: robotHostState,
-            onTap: { [weak self] in self?.openChat() },
-            onLongPress: { [weak self] in self?.openQuickActions() }
+            onTap: { [weak self] in self?.openTaskTray() },
+            onLongPress: { [weak self] in self?.openQuickActions() },
+            onDragChanged: { [weak self] translation in
+                self?.handleRobotDragChanged(translation)
+            },
+            onDragEnded: { [weak self] translation, predictedVelocityX in
+                self?.handleRobotDragEnded(
+                    translation,
+                    predictedVelocityX: predictedVelocityX
+                )
+            },
+            onOpenPendingItem: { [weak self] item in
+                self?.openAgentItem(item)
+            }
         )
         let host = UIHostingController(rootView: robot)
         host.view.backgroundColor = .clear
 
         let b = OfficeRobotPetContainerView(
             frame: CGRect(origin: .zero, size: petSize))
-        b.onDragChanged = { [weak self] center, velocityX in
-            guard let self else { return }
-            let previousX = self.button?.center.x ?? center.x
-            let deltaX = center.x - previousX
-            let directionSignal = abs(velocityX) >= 18 ? velocityX : deltaX
-            if abs(directionSignal) >= 0.5 {
-                self.updateDragDirection(
-                    velocityX: directionSignal,
-                    minimumMagnitude: 0.5
-                )
-                self.robotHostState.isDragging = true
-            }
-            self.button?.center = center
-        }
-        b.onDragEnded = { [weak self] center, velocityX in
-            guard let self else { return }
-            self.updateDragDirection(velocityX: velocityX)
-            self.robotHostState.isDragging = false
-            self.snap(to: center)
-        }
         root.addChild(host)
         host.view.frame = b.bounds
         host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -224,6 +237,15 @@ final class FloatingChatHead {
     }
 
     @objc private func appWillResignActiveForRobotEntry() {
+        if approvalReactionId != nil, let b = button {
+            b.layer.removeAllAnimations()
+            b.center = approvalHomeCenter ?? b.center
+            b.transform = .identity
+            b.alpha = 1
+            b.isUserInteractionEnabled = true
+            approvalReactionId = nil
+            approvalHomeCenter = nil
+        }
         guard islandEntryAnimating, let b = button else { return }
         b.layer.removeAllAnimations()
         b.transform = .identity
@@ -339,6 +361,94 @@ final class FloatingChatHead {
             RobotSelfTestTrace.mark("robotSelfTest.islandEntryCompleted")
         }
         #endif
+    }
+
+    private func handleApprovalReaction(
+        _ reaction: GlobalOfficeRobotStore.ApprovalReaction?
+    ) {
+        guard UIApplication.shared.applicationState == .active,
+              let w = overlay,
+              let b = button
+        else { return }
+
+        guard let reaction else {
+            guard approvalReactionId != nil else { return }
+            approvalReactionId = nil
+            let destination = approvalHomeCenter ?? b.center
+            approvalHomeCenter = nil
+            let animate = !AlmaOverlayCoordinator.shared.reduceMotion
+            UIView.animate(
+                withDuration: animate ? 0.56 : 0,
+                delay: 0,
+                usingSpringWithDamping: 0.72,
+                initialSpringVelocity: 0.55,
+                options: [.curveEaseInOut, .allowUserInteraction]
+            ) {
+                b.center = destination
+                b.transform = .identity
+                b.alpha = 1
+            } completion: { [weak b] _ in
+                b?.isUserInteractionEnabled = true
+            }
+            return
+        }
+
+        presentationHidesRobot = false
+        applyRobotVisibility()
+        b.isUserInteractionEnabled = false
+
+        if approvalReactionId != reaction.id {
+            if approvalReactionId == nil {
+                approvalHomeCenter = b.center
+            }
+            approvalReactionId = reaction.id
+            let start = b.center
+            let center = CGPoint(
+                x: w.bounds.midX,
+                y: max(w.safeAreaInsets.top + 190, w.bounds.height * 0.43)
+            )
+            let animate = !AlmaOverlayCoordinator.shared.reduceMotion
+            b.layer.removeAllAnimations()
+            b.center = start
+            b.transform = animate
+                ? CGAffineTransform(scaleX: 0.72, y: 0.72)
+                : CGAffineTransform(scaleX: 2.05, y: 2.05)
+            b.alpha = animate ? 0.72 : 1
+            UIView.animate(
+                withDuration: animate ? 0.68 : 0,
+                delay: 0,
+                usingSpringWithDamping: 0.62,
+                initialSpringVelocity: 0.72,
+                options: [.curveEaseInOut, .allowUserInteraction]
+            ) {
+                b.center = center
+                b.transform = CGAffineTransform(scaleX: 2.05, y: 2.05)
+                b.alpha = 1
+            }
+            return
+        }
+
+        guard reaction.phase != .processing,
+              !AlmaOverlayCoordinator.shared.reduceMotion
+        else { return }
+        UIView.animate(
+            withDuration: 0.20,
+            delay: 0,
+            options: [.curveEaseOut, .allowUserInteraction]
+        ) {
+            b.transform = CGAffineTransform(scaleX: 2.28, y: 2.28)
+        } completion: { [weak b] _ in
+            guard let b else { return }
+            UIView.animate(
+                withDuration: 0.34,
+                delay: 0,
+                usingSpringWithDamping: 0.58,
+                initialSpringVelocity: 0.7,
+                options: [.allowUserInteraction]
+            ) {
+                b.transform = CGAffineTransform(scaleX: 2.05, y: 2.05)
+            }
+        }
     }
 
     #if DEBUG
@@ -562,6 +672,8 @@ final class FloatingChatHead {
         let maxY = AlmaOverlayCoordinator.shared.maxCenterY(
             inWindow: w, overlayHeight: petSize.height)
         let y = savedY > 0 ? min(max(savedY, minY), max(minY, maxY)) : w.bounds.height * 0.60
+        onRight = true
+        robotHostState.isDockedRight = true
         b.center = CGPoint(x: w.bounds.width - margin - petSize.width / 2, y: y)
     }
 
@@ -569,6 +681,7 @@ final class FloatingChatHead {
         guard let w = overlay, let b = button else { return }
         let inset = w.safeAreaInsets
         onRight = center.x >= w.bounds.width / 2
+        robotHostState.isDockedRight = onRight
         let x = onRight
             ? w.bounds.width - margin - petSize.width / 2
             : margin + petSize.width / 2
@@ -593,6 +706,49 @@ final class FloatingChatHead {
         if robotHostState.dragDirection != direction {
             robotHostState.dragDirection = direction
         }
+    }
+
+    private func handleRobotDragChanged(_ translation: CGSize) {
+        guard let b = button else { return }
+        if dragStartCenter == nil {
+            dragStartCenter = b.center
+            lastDragTranslationX = 0
+        }
+        guard let start = dragStartCenter else { return }
+
+        let deltaX = translation.width - lastDragTranslationX
+        lastDragTranslationX = translation.width
+        if abs(deltaX) >= 0.5 {
+            updateDragDirection(velocityX: deltaX, minimumMagnitude: 0.5)
+        }
+        robotHostState.isDragging = true
+        b.center = CGPoint(
+            x: start.x + translation.width,
+            y: start.y + translation.height
+        )
+    }
+
+    private func handleRobotDragEnded(
+        _ translation: CGSize,
+        predictedVelocityX: CGFloat
+    ) {
+        guard let b = button else { return }
+        let start = dragStartCenter ?? b.center
+        let center = CGPoint(
+            x: start.x + translation.width,
+            y: start.y + translation.height
+        )
+        let directionSignal = abs(predictedVelocityX) >= 0.5
+            ? predictedVelocityX
+            : translation.width
+        updateDragDirection(
+            velocityX: directionSignal,
+            minimumMagnitude: 0.5
+        )
+        dragStartCenter = nil
+        lastDragTranslationX = 0
+        robotHostState.isDragging = false
+        snap(to: center)
     }
 
     private func present<Content: View>(
@@ -637,6 +793,75 @@ final class FloatingChatHead {
         }
     }
 
+    private func openTaskTray(completion: (() -> Void)? = nil) {
+        guard #available(iOS 17.0, *) else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        guard let root = overlay?.rootViewController else { return }
+        presentationHidesRobot = true
+        applyRobotVisibility()
+        let tray = OfficeRobotTaskTray(
+            store: GlobalOfficeRobotStore.shared,
+            onOpenItem: { [weak self] item in
+                root.dismiss(animated: true) {
+                    self?.openAgentItem(item)
+                }
+            },
+            onOfficeChat: { [weak self] in
+                root.dismiss(animated: true) { self?.openChat() }
+            },
+            onClose: {
+                root.dismiss(animated: true)
+            }
+        )
+        let host = ChatHostController(rootView: tray)
+        host.modalPresentationStyle = .pageSheet
+        host.onDisappear = { [weak self] in
+            if self?.overlay?.rootViewController?.presentedViewController == nil {
+                self?.presentationHidesRobot = false
+                self?.applyRobotVisibility()
+            }
+        }
+        root.present(host, animated: true, completion: completion)
+    }
+
+    private func openAgentItem(_ item: GlobalOfficeRobotStore.TaskItem) {
+        // A pending action is actionable in the native Agent Approvals list.
+        // Route there first even when it also belongs to a conversation, so a
+        // Robot-row tap never lands on a chat that cannot expose Approve/Reject.
+        if let actionId = item.actionId, !actionId.isEmpty {
+            AlmaApprovalNav.pendingAgentActionId = actionId
+            NotificationCenter.default.post(
+                name: .almaOpenPath,
+                object: nil,
+                userInfo: ["path": "/approvals"]
+            )
+            NotificationCenter.default.post(
+                name: .almaOpenAgentApproval,
+                object: nil,
+                userInfo: ["actionId": actionId]
+            )
+        } else if let conversationId = item.conversationId, !conversationId.isEmpty {
+            AlmaAgentNav.pendingConversationId = conversationId
+            AlmaAgentNav.pendingActionId = nil
+            NotificationCenter.default.post(
+                name: .almaOpenPath,
+                object: nil,
+                userInfo: ["path": "/agent"]
+            )
+            NotificationCenter.default.post(
+                name: .almaOpenAgentConversation,
+                object: nil,
+                userInfo: ["conversationId": conversationId]
+            )
+        } else {
+            NotificationCenter.default.post(
+                name: .almaOpenPath,
+                object: nil,
+                userInfo: ["path": "/agent"]
+            )
+        }
+    }
+
     private func openQuickActions(completion: (() -> Void)? = nil) {
         guard #available(iOS 17.0, *) else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -672,49 +897,16 @@ final class FloatingChatHead {
     }
 }
 
-/// UIKit drag shell around the tightly-sized SwiftUI robot. Tap and long-press
-/// remain inside `OfficeRobotPetButton`; this view owns only movement/snap.
+/// Tightly-sized UIKit shell around the SwiftUI Robot. SwiftUI owns the
+/// mutually-aware tap, long-press and drag gestures so one recognizer cannot
+/// starve another while deciding what the owner's touch means.
 @available(iOS 17.0, *)
 final class OfficeRobotPetContainerView: UIView {
-    var onDragChanged: ((CGPoint, CGFloat) -> Void)?
-    var onDragEnded: ((CGPoint, CGFloat) -> Void)?
-
-    private var grabOffset: CGSize = .zero
-
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = true
         clipsToBounds = false
-        addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(pan(_:))))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    @objc private func pan(_ g: UIPanGestureRecognizer) {
-        guard let parent = superview else { return }
-        let p = g.location(in: parent)
-        switch g.state {
-        case .began:
-            grabOffset = CGSize(width: center.x - p.x, height: center.y - p.y)
-            if !AlmaOverlayCoordinator.shared.reduceMotion {
-                UIView.animate(withDuration: 0.15) {
-                    self.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
-                }
-            }
-        case .changed:
-            onDragChanged?(
-                CGPoint(x: p.x + grabOffset.width, y: p.y + grabOffset.height),
-                g.velocity(in: parent).x
-            )
-        case .ended, .cancelled, .failed:
-            let duration = AlmaOverlayCoordinator.shared.reduceMotion ? 0 : 0.15
-            UIView.animate(withDuration: duration) { self.transform = .identity }
-            onDragEnded?(
-                CGPoint(x: p.x + grabOffset.width, y: p.y + grabOffset.height),
-                g.velocity(in: parent).x
-            )
-        default:
-            break
-        }
-    }
 }

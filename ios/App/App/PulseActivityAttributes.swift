@@ -117,6 +117,10 @@ struct PulseActivityAttributes: ActivityAttributes {
         var items: [PulseItem]?
         var updatedAtEpoch: Double?
         var staleAfterEpoch: Double?
+        /// Optional visual-only revision. Native foreground/background
+        /// hand-offs set this to start a fresh Robot transition without
+        /// pretending that the underlying business snapshot is newer.
+        var robotAnimationEpoch: Double?
 
         var approvalId: String?
         var approvalTitle: String?

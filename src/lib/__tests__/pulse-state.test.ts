@@ -237,6 +237,7 @@ describe('toPulseContentState — the canonical native projection', () => {
   it('encodes every date as epoch SECONDS, never an ISO string', () => {
     const cs = toPulseContentState(SNAPSHOT)
     expect(cs.updatedAtEpoch).toBe(Math.floor(Date.parse('2026-07-16T10:00:00Z') / 1000))
+    expect(cs.robotAnimationEpoch).toBe(cs.updatedAtEpoch)
     expect(cs.staleAfterEpoch).toBe(Math.floor(Date.parse('2026-07-16T10:15:00Z') / 1000))
     expect(cs.items[0].createdAtEpoch).toBe(Math.floor(Date.parse('2026-07-16T10:00:00Z') / 1000))
     expect(typeof cs.updatedAtEpoch).toBe('number')

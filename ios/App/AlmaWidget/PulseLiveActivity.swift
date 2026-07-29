@@ -767,16 +767,81 @@ struct PulseExpandedBody: View {
     }
 
     // ── Page 2: tasks + sentinel ────────────────────────────────────────────
+    private var pendingTaskItems: [PulseItem] {
+        Array(state.feedItems.filter { $0.kind == "pendingTask" }.prefix(2))
+    }
+
     @ViewBuilder private var tasksPage: some View {
-        deckCard(icon: "🗒️",
-                 title: "আজকের বাকি কাজ \(banglaDigits(state.pendingTaskCount ?? 0))টা",
-                 sub: state.displaySubtitle,
-                 trailing: banglaDigits(state.pendingTaskCount ?? 0), trailingPrivate: false)
-        // Second card blew the 160pt island budget — one honest line instead.
-        Text("🤖 ALMA পাহারায় — নতুন কিছু ঘটলেই island জানাবে")
-            .font(.system(size: 9.5))
-            .foregroundColor(PulsePalette.textSecondary)
-            .lineLimit(1)
+        if pendingTaskItems.isEmpty {
+            deckCard(icon: "🗒️",
+                     title: "আজকের বাকি কাজ \(banglaDigits(state.pendingTaskCount ?? 0))টা",
+                     sub: state.displaySubtitle,
+                     trailing: banglaDigits(state.pendingTaskCount ?? 0), trailingPrivate: false)
+            Text("🤖 ALMA পাহারায় — নতুন কিছু ঘটলেই island জানাবে")
+                .font(.system(size: 9.5))
+                .foregroundColor(PulsePalette.textSecondary)
+                .lineLimit(1)
+        } else {
+            HStack {
+                Text("AGENT TASKS")
+                    .font(.system(size: 8.5, weight: .heavy))
+                    .kerning(1.5)
+                    .foregroundColor(PulsePalette.textSecondary)
+                Spacer()
+                Text("\(banglaDigits(state.pendingTaskCount ?? 0)) বাকি")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundColor(PulsePalette.gold)
+            }
+
+            ForEach(pendingTaskItems) { item in
+                if let rawLink = item.link, let destination = URL(string: rawLink) {
+                    Link(destination: destination) {
+                        taskRow(item)
+                    }
+                } else {
+                    taskRow(item)
+                }
+            }
+        }
+    }
+
+    private func taskRow(_ item: PulseItem) -> some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(item.level == .attention
+                      ? PulsePalette.gold
+                      : PulsePalette.auroraBlue)
+                .frame(width: 6, height: 6)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(item.title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(PulsePalette.textPrimary)
+                    .lineLimit(1)
+                Text(item.subtitle ?? (item.valueText ?? "আপডেটের অপেক্ষায়"))
+                    .font(.system(size: 9.5))
+                    .foregroundColor(PulsePalette.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 3)
+            if let value = item.valueText {
+                Text(value)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(PulsePalette.gold)
+            }
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(PulsePalette.textSecondary)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.055))
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(item.title), \(item.subtitle ?? item.valueText ?? "আপডেটের অপেক্ষায়")"
+        )
     }
 
     // ── Shared card + footer ────────────────────────────────────────────────
@@ -905,7 +970,9 @@ struct PulseLiveActivity: Widget {
                 OfficeRobotLiveGlyph(
                     context: .pulse(
                         mode: mode,
-                        successAtEpoch: context.state.successAtEpoch
+                        successAtEpoch: context.state.successAtEpoch,
+                        updatedAtEpoch: context.state.robotAnimationEpoch
+                            ?? context.state.updatedAtEpoch
                     ),
                     size: 23
                 )
@@ -918,7 +985,9 @@ struct PulseLiveActivity: Widget {
                 OfficeRobotLiveGlyph(
                     context: .pulse(
                         mode: mode,
-                        successAtEpoch: context.state.successAtEpoch
+                        successAtEpoch: context.state.successAtEpoch,
+                        updatedAtEpoch: context.state.robotAnimationEpoch
+                            ?? context.state.updatedAtEpoch
                     ),
                     size: 20,
                     cadenceMultiplier: 1.30

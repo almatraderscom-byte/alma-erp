@@ -94,6 +94,8 @@ export async function POST(
     // ownerDecided: rejection is always his — nothing in this system auto-rejects.
     data: { status: 'rejected', resolvedAt: new Date(), ownerDecided: true },
   })
+  const { pushCurrentPulseLiveActivity } = await import('@/agent/lib/pulse-live-update')
+  await pushCurrentPulseLiveActivity()
 
   // Phase 4 sync: a rejected card cancels its canonical WorkflowRun and the
   // terminal transition auto-closes the linked open-task chips. Fail-open.

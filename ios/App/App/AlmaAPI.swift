@@ -18,6 +18,7 @@
 //
 
 import Foundation
+import UIKit
 import WebKit
 
 #if DEBUG
@@ -594,27 +595,104 @@ final class AlmaAPI: NSObject {
     /// One request with the auth-retry loop: stale-cookie check → attempt →
     /// on auth failure force a fresh cookie copy and try exactly once more.
     private func perform(request: URLRequest) async throws -> Data {
-        await syncCookiesIfStale()
-
-        let (data, response) = try await attempt(request)
-        if !Self.looksUnauthenticated(response) {
-            return try validated(data, response)
+        let decision = Self.approvalPetDecision(for: request)
+        let reactionId: UUID? = await MainActor.run {
+            guard let decision,
+                  UIApplication.shared.applicationState == .active
+            else { return nil }
+            return GlobalOfficeRobotStore.shared.beginApprovalReaction(decision)
         }
 
-        // First attempt bounced — the URLSession copy of the cookies may simply be
-        // older than the web session (Supabase rotates tokens). Re-copy and retry once.
-        invalidateCookieCache()
-        await syncCookies()
+        do {
+            await syncCookiesIfStale()
 
-        let (retryData, retryResponse) = try await attempt(request)
-        if Self.looksUnauthenticated(retryResponse) {
-            // Genuinely logged out — tell the UI layer so it can surface the login flow.
-            await MainActor.run {
-                NotificationCenter.default.post(name: Self.authExpiredNotification, object: nil)
+            let (data, response) = try await attempt(request)
+            if !Self.looksUnauthenticated(response) {
+                let accepted = try validated(data, response)
+                await finishApprovalPetReaction(
+                    reactionId,
+                    decision: decision,
+                    succeeded: true
+                )
+                return accepted
             }
-            throw AlmaAPIError.notAuthenticated
+
+            // First attempt bounced — the URLSession copy of the cookies may simply be
+            // older than the web session (Supabase rotates tokens). Re-copy and retry once.
+            invalidateCookieCache()
+            await syncCookies()
+
+            let (retryData, retryResponse) = try await attempt(request)
+            if Self.looksUnauthenticated(retryResponse) {
+                // Genuinely logged out — tell the UI layer so it can surface the login flow.
+                await MainActor.run {
+                    NotificationCenter.default.post(name: Self.authExpiredNotification, object: nil)
+                }
+                throw AlmaAPIError.notAuthenticated
+            }
+            let accepted = try validated(retryData, retryResponse)
+            await finishApprovalPetReaction(
+                reactionId,
+                decision: decision,
+                succeeded: true
+            )
+            return accepted
+        } catch {
+            await finishApprovalPetReaction(
+                reactionId,
+                decision: decision,
+                succeeded: false
+            )
+            throw error
         }
-        return try validated(retryData, retryResponse)
+    }
+
+    private func finishApprovalPetReaction(
+        _ id: UUID?,
+        decision: GlobalOfficeRobotStore.ApprovalDecision?,
+        succeeded: Bool
+    ) async {
+        guard let id, let decision else { return }
+        await MainActor.run {
+            GlobalOfficeRobotStore.shared.finishApprovalReaction(
+                id: id,
+                decision: decision,
+                succeeded: succeeded
+            )
+        }
+    }
+
+    /// Detects only explicit approval mutations. Ordinary writes must never make
+    /// the Robot celebrate. Native approval flows use either a semantic endpoint
+    /// suffix (`.../approve|reject`) or an explicit `action` / `decision` field.
+    /// Keeping the classifier here covers Agent cards, ERP approvals, attendance
+    /// reviews, payroll wallet requests, and future native approval screens that
+    /// follow the same contract without coupling the Robot to each feature view.
+    private static func approvalPetDecision(
+        for request: URLRequest
+    ) -> GlobalOfficeRobotStore.ApprovalDecision? {
+        let path = request.url?.path.lowercased() ?? ""
+        let method = request.httpMethod?.uppercased() ?? ""
+        let isMutation = method == "POST" || method == "PATCH" || method == "PUT"
+
+        if isMutation {
+            if path.hasSuffix("/approve") { return .approve }
+            if path.hasSuffix("/reject") { return .reject }
+        }
+
+        if isMutation,
+           let body = request.httpBody,
+           let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+            let explicitDecision = (json["action"] as? String)
+                ?? (json["decision"] as? String)
+            switch explicitDecision?.uppercased() {
+            case "APPROVE": return .approve
+            case "REJECT": return .reject
+            default: break
+            }
+        }
+
+        return nil
     }
 
     /// Single wire round-trip; transport errors wrapped, non-HTTP responses rejected.
