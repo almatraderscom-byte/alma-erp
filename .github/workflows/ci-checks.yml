@@ -34,6 +34,15 @@ jobs:
   ci-checks:
     name: CI Checks
     needs: [checks]
+    # always() + explicit result check: a SKIPPED required job reads as
+    # "Success" to branch protection (review-bot P1) — run unconditionally
+    # and fail unless the real checks job actually succeeded.
+    if: always()
     runs-on: ubuntu-latest
     steps:
-      - run: echo "all checks green"
+      - run: |
+          test "${{ needs.checks.result }}" = "success" || {
+            echo "checks job result: ${{ needs.checks.result }}" >&2
+            exit 1
+          }
+          echo "all checks green"
