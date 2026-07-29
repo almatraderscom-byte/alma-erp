@@ -21,6 +21,9 @@ export default function AgentSalahTimesSettings() {
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [ok, setOk] = useState(false)
+  const [abroadOff, setAbroadOff] = useState<boolean | null>(null)
+  const [abroadSaving, setAbroadSaving] = useState(false)
+  const [abroadErr, setAbroadErr] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -34,9 +37,43 @@ export default function AgentSalahTimesSettings() {
     }
   }, [])
 
+  const loadAbroad = useCallback(async () => {
+    try {
+      const res = await fetch('/api/assistant/salah/abroad-calls', { cache: 'no-store' })
+      if (!res.ok) throw new Error('load failed')
+      const data = await res.json() as { off: boolean }
+      setAbroadOff(data.off)
+      setAbroadErr(null)
+    } catch {
+      setAbroadErr('টগল লোড হয়নি')
+    }
+  }, [])
+
+  async function toggleAbroad() {
+    if (abroadOff === null || abroadSaving) return
+    const next = !abroadOff
+    setAbroadSaving(true)
+    setAbroadErr(null)
+    try {
+      const res = await fetch('/api/assistant/salah/abroad-calls', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ off: next }),
+      })
+      if (!res.ok) throw new Error('save failed')
+      const data = await res.json() as { off: boolean }
+      setAbroadOff(data.off)
+    } catch {
+      setAbroadErr('সেভ হয়নি — আবার চেষ্টা করুন')
+    } finally {
+      setAbroadSaving(false)
+    }
+  }
+
   useEffect(() => {
     if (open && !cfg) void load()
-  }, [open, cfg, load])
+    if (open && abroadOff === null) void loadAbroad()
+  }, [open, cfg, load, abroadOff, loadAbroad])
 
   function patch(waqt: WaqtKey, field: keyof SalahTimeConfig[WaqtKey], value: string) {
     if (!cfg) return
@@ -88,6 +125,36 @@ export default function AgentSalahTimesSettings() {
 
       {open && (
         <div className="border-t border-border-subtle px-4 py-4">
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-border-subtle bg-card/60 px-3 py-2.5">
+            <div>
+              <p className="text-xs font-semibold text-cream">🌍 দেশের বাইরে আছি — ফোন কলে দেবে না</p>
+              <p className="mt-0.5 text-[10px] text-muted">
+                চালু থাকলে এজেন্ট BD নম্বরে কোনো কল দেবে না (নামাজের কলসহ)। Telegram/notification আগের মতোই আসবে।
+              </p>
+              {abroadErr && <p className="mt-0.5 text-[10px] txt-neg">{abroadErr}</p>}
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={abroadOff === true}
+              aria-label="দেশের বাইরে — ফোন কল বন্ধ"
+              onClick={() => void toggleAbroad()}
+              disabled={abroadOff === null || abroadSaving}
+              className={cn(
+                'relative h-6 w-11 shrink-0 rounded-full transition-colors',
+                abroadOff ? 'bg-[#E07A5F]' : 'bg-white/10',
+                (abroadOff === null || abroadSaving) && 'opacity-50',
+              )}
+            >
+              <span
+                className={cn(
+                  'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all',
+                  abroadOff ? 'left-[22px]' : 'left-0.5',
+                )}
+              />
+            </button>
+          </div>
+
           <p className="mb-4 text-[10px] text-muted">
             আযান · জামাত · ওয়াক্ত শেষ — HH:MM (২৪ঘ) Dhaka। জুম্মায় যোহর আযান ১:০০ কোডে থাকে।
           </p>

@@ -19,8 +19,26 @@ import {
   buildTwimlSayOnlyUrl,
   getTwilioPublicBase,
 } from '../twilio-http.mjs'
-import { isOwnerCallLocked } from '../owner-call-lock.mjs'
+import { isOwnerCallLocked, isOwnerAbroadCallsOff } from '../owner-call-lock.mjs'
 import { isSalahCallBlocked } from '../salah-confirmed.mjs'
+
+/**
+ * Owner-abroad guard: is this call headed to the OWNER's number? Matches on the
+ * last 10 digits so +8801…, 8801… and 01… forms all compare equal. No explicit
+ * toNumber (the default destination) is always the owner.
+ */
+export function isOwnerDestinedCall(toNumber) {
+  if (!toNumber) return true
+  const tail = (n) => String(n).replace(/\D/g, '').slice(-10)
+  const target = tail(toNumber)
+  if (!target) return true
+  const ownerNumbers = [
+    process.env.TWILIO_TO_NUMBER,
+    process.env.NGS_TO,
+    ...(process.env.OWNER_PHONE_NUMBERS ?? '').split(','),
+  ]
+  return ownerNumbers.some((n) => n && tail(n) === target)
+}
 
 const CALL_TEXT_LIMIT = 200
 /** playOnce (message-delivery) calls: full message, pure safety bound only */
@@ -178,6 +196,11 @@ async function placeSayOnlyRetry({
   if (lock.locked) {
     console.log(`[twilio] retry blocked — owner call lock until ${lock.until?.toISOString()} (${lock.source})`)
     return { ok: false, error: 'owner_call_locked', skipped: true }
+  }
+
+  if (isOwnerDestinedCall(toNumber) && (await isOwnerAbroadCallsOff())) {
+    console.log('[twilio] retry skipped — owner abroad (owner_abroad_calls_off)')
+    return { ok: false, error: 'owner_abroad', skipped: true }
   }
 
   if (salahDate && salahWaqt) {
@@ -512,6 +535,13 @@ export async function makeTwilioCall(text, opts = {}) {
   if (lock.locked) {
     console.log(`[twilio] call blocked — owner call lock until ${lock.until?.toISOString()} (${lock.source})`)
     return { ok: false, error: 'owner_call_locked', skipped: true }
+  }
+
+  // Owner-abroad switch: never ring the owner's BD number while he is abroad.
+  // Only owner-destined calls skip — staff/contact calls still go out.
+  if (isOwnerDestinedCall(opts.toNumber) && (await isOwnerAbroadCallsOff())) {
+    console.log('[twilio] call skipped — owner abroad (owner_abroad_calls_off)')
+    return { ok: false, error: 'owner_abroad', skipped: true }
   }
 
   // One-way carrier switch (Phase 5): route non-salah message/alert calls over the BD

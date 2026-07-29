@@ -24,7 +24,7 @@ import {
 } from './reminder-messages.mjs'
 import { getAppUrl, getInternalToken } from '../env.mjs'
 import { notify } from '../notify/index.mjs'
-import { isOwnerCallLocked } from '../owner-call-lock.mjs'
+import { isOwnerCallLocked, isOwnerAbroadCallsOff } from '../owner-call-lock.mjs'
 import { isSalahWaqtConfirmed } from '../salah-confirmed.mjs'
 import { dutyWindowEnd, MORAL_WINDOW_BEFORE_MIN } from './duty-window.mjs'
 import { makeTwilioCall } from '../notify/twilio-call.mjs'
@@ -286,6 +286,11 @@ async function deliverSalahAlert({
     const lock = await isOwnerCallLocked()
     if (lock.locked) {
       console.log(`[salah] tier-3 suppressed — owner call lock until ${lock.until?.toISOString()} (${lock.source})`)
+      effectiveTier = 2
+    } else if (await isOwnerAbroadCallsOff()) {
+      // Owner abroad — his BD number is unreachable, so never place the call.
+      // Telegram + ntfy still go out at tier 2.
+      console.log('[salah] tier-3 suppressed — owner abroad (owner_abroad_calls_off)')
       effectiveTier = 2
     } else if (salahDate && waqt && (await isSalahWaqtConfirmed(salahDate, waqt))) {
       console.log(`[salah] tier-3 suppressed — ${waqt} already confirmed for ${salahDate}`)
@@ -783,8 +788,11 @@ export async function runSalahSnoozeFollowup({ supabase, bot }) {
 
     const confirmed = await isSalahWaqtConfirmed(today, waqt)
     const lock = await isOwnerCallLocked(now)
+    // Owner abroad counts as locked: the follow-up waits instead of dialling an
+    // unreachable BD number every 2 minutes.
+    const abroad = await isOwnerAbroadCallsOff()
     const { action, nextState } = decideFollowupAction({
-      state, now, confirmed, locked: lock.locked, windowEnd,
+      state, now, confirmed, locked: lock.locked || abroad, windowEnd,
     })
 
     if (action === 'clear') {
