@@ -65,5 +65,11 @@ export async function setSalahTimeConfig(cfg: SalahTimeConfig): Promise<SalahTim
     create: { key: KV_KEY, value: JSON.stringify(merged) },
     update: { value: JSON.stringify(merged) },
   })
+  // Any config write invalidates the worker's per-day init marker so the next
+  // 5-min tick re-initializes today's records with the CURRENT location offset
+  // (review-bot P1 #3 on PR #650 — same-day location/time changes must land).
+  await db.agentKvSetting.deleteMany({
+    where: { key: { startsWith: 'salah_records_offset:' } },
+  }).catch(() => {})
   return merged
 }

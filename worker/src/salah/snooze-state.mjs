@@ -22,6 +22,9 @@ export function followupKey(ymd, waqt) {
 export function pre15Key(ymd, waqt) {
   return `salah_pre15:${ymd}:${waqt}`
 }
+export function lastCallKey(ymd, waqt) {
+  return `salah_last_call:${ymd}:${waqt}`
+}
 
 async function getKv(supabase, key) {
   const { data } = await supabase
@@ -92,4 +95,15 @@ export async function isPre15Sent(supabase, ymd, waqt) {
 
 export async function markPre15Sent(supabase, ymd, waqt) {
   await setKv(supabase, pre15Key(ymd, waqt), '1')
+}
+
+/** When was the last two-way salah call placed for this waqt (ms epoch, 0 = never)? */
+export async function getLastSalahCallAt(supabase, ymd, waqt) {
+  const v = await getKv(supabase, lastCallKey(ymd, waqt))
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+export async function markSalahCallPlaced(supabase, ymd, waqt, at = Date.now()) {
+  await setKv(supabase, lastCallKey(ymd, waqt), String(at))
 }

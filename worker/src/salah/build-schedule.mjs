@@ -16,30 +16,45 @@ export function hmToBanglaLabel(hm) {
 }
 
 export function buildDhakaSchedule(ymd, cfg, friday, dhakaInstant) {
-  const fajrAzan = hmToInstant(ymd, cfg.fajr.azan)
-  const fajrEnd = hmToInstant(ymd, cfg.fajr.end)
+  // EVERY instant goes through the injected `dhakaInstant` (which carries the
+  // owner's location offset — review-bot P1 on PR #650: hmToInstant hard-codes
+  // +06 and must only be the Dhaka default at call sites, never in here).
+  const hm = (t) => {
+    const [h, m] = String(t).split(':').map(Number)
+    return dhakaInstant(ymd, h, m)
+  }
+  // A wall-clock end EARLIER than the azan means "past midnight" (AlAdhan's
+  // Isha end / Islamic midnight is 00:xx) — roll it into the next day so the
+  // window stays valid (review-bot P1 #2).
+  const endAfter = (azanDate, endHm) => {
+    const e = hm(endHm)
+    return e <= azanDate ? new Date(e.getTime() + 86_400_000) : e
+  }
 
-  const dhuhrAzan = friday ? dhakaInstant(ymd, 13, 0) : hmToInstant(ymd, cfg.dhuhr.azan)
-  const dhuhrPrayer = hmToInstant(ymd, cfg.dhuhr.prayer)
-  const dhuhrEnd = hmToInstant(ymd, cfg.dhuhr.end)
+  const fajrAzan = hm(cfg.fajr.azan)
+  const fajrEnd = endAfter(fajrAzan, cfg.fajr.end)
 
-  const asrAzan = hmToInstant(ymd, cfg.asr.azan)
-  const asrPrayer = hmToInstant(ymd, cfg.asr.prayer)
-  const asrEnd = hmToInstant(ymd, cfg.asr.end)
+  const dhuhrAzan = friday ? dhakaInstant(ymd, 13, 0) : hm(cfg.dhuhr.azan)
+  const dhuhrPrayer = hm(cfg.dhuhr.prayer)
+  const dhuhrEnd = endAfter(dhuhrAzan, cfg.dhuhr.end)
 
-  const maghribAzan = hmToInstant(ymd, cfg.maghrib.azan)
-  const maghribEnd = hmToInstant(ymd, cfg.maghrib.end)
+  const asrAzan = hm(cfg.asr.azan)
+  const asrPrayer = hm(cfg.asr.prayer)
+  const asrEnd = endAfter(asrAzan, cfg.asr.end)
 
-  const ishaAzan = hmToInstant(ymd, cfg.isha.azan)
-  const ishaPrayer = hmToInstant(ymd, cfg.isha.prayer)
-  const ishaEnd = hmToInstant(ymd, cfg.isha.end)
+  const maghribAzan = hm(cfg.maghrib.azan)
+  const maghribEnd = endAfter(maghribAzan, cfg.maghrib.end)
+
+  const ishaAzan = hm(cfg.isha.azan)
+  const ishaPrayer = hm(cfg.isha.prayer)
+  const ishaEnd = endAfter(ishaAzan, cfg.isha.end)
 
   return {
     fajr: {
       start: fajrAzan,
       end: fajrEnd,
       azan: fajrAzan,
-      prayerStart: hmToInstant(ymd, cfg.fajr.prayer),
+      prayerStart: hm(cfg.fajr.prayer),
       label: 'ফজর',
       azanLabel: hmToBanglaLabel(cfg.fajr.azan),
     },
@@ -65,7 +80,7 @@ export function buildDhakaSchedule(ymd, cfg, friday, dhakaInstant) {
       start: maghribAzan,
       end: maghribEnd,
       azan: maghribAzan,
-      prayerStart: hmToInstant(ymd, cfg.maghrib.prayer),
+      prayerStart: hm(cfg.maghrib.prayer),
       label: 'মাগরিব',
       azanLabel: hmToBanglaLabel(cfg.maghrib.azan),
     },

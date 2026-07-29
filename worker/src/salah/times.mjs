@@ -6,11 +6,14 @@ import { dhakaTodayYmd } from './dhaka-date.mjs'
 import { getDhakaSchedule } from './dhaka-schedule.mjs'
 
 /**
- * @param {Date} date — anchor instant; calendar day taken in Asia/Dhaka
+ * @param {Date} date — anchor instant; calendar day taken at the salah location
+ * @param {number} [offsetMin] UTC offset minutes (owner rule ৪); default Dhaka
  */
-export async function getPrayerTimes(date = new Date()) {
-  const ymd = dhakaTodayYmd(date)
-  const schedule = await getDhakaSchedule(ymd)
+export async function getPrayerTimes(date = new Date(), offsetMin = 360) {
+  const ymd = offsetMin === 360
+    ? dhakaTodayYmd(date)
+    : new Date(date.getTime() + offsetMin * 60_000).toISOString().slice(0, 10)
+  const schedule = await getDhakaSchedule(ymd, undefined, offsetMin)
   const out = {}
   for (const [waqt, w] of Object.entries(schedule)) {
     out[waqt] = {

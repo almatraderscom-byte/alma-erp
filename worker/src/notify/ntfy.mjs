@@ -30,6 +30,12 @@ function ntfyTitleHeader(title) {
  * @returns {Promise<{ok:boolean, error?:string}>}
  */
 export async function sendNtfy(topic, title, message, category) {
+  // Owner-facing ntfy RETIRED (owner rule 2026-07-29) — the native app push +
+  // Telegram cover it; triple delivery was noise. NTFY_ENABLED='true' revives.
+  // Staff topics (sendNtfyToTopic) are unaffected — staff have no owner app.
+  if (process.env.NTFY_ENABLED !== 'true') {
+    return { ok: false, error: 'ntfy_disabled' }
+  }
   const server = (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, '')
   const topicName = topic === 'critical'
     ? (process.env.NTFY_TOPIC_CRITICAL ?? 'alma-agent-crit')
