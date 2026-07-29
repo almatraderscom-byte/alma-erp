@@ -1991,6 +1991,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// landed yet, audio setup is retried from callKitAudioActivated().
     var callKitOwnsAudioSession = false
     private var audioConfigPending = false
+    /// Bumped on every stop()/reconnect so a delayed audio retry belonging to a
+    /// dead attempt cannot touch the replacement session.
+    private var audioAttemptGeneration = 0
 
     func start() async throws {
         stopped = false
@@ -2126,8 +2129,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             fail("লাইভ অডিও চালু করা যায়নি।")
             return
         }
+        let generation = audioAttemptGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-            guard let self, !self.stopped, !self.configured else { return }
+            guard let self, !self.stopped, !self.configured,
+                  generation == self.audioAttemptGeneration else { return }
             do {
                 try self.configureAudio()
                 if self.audioConfigPending { self.finishSetup() }
@@ -2840,6 +2845,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
         session?.invalidateAndCancel(); session = nil
         configured = false
+        // Must reset with the socket: a pending flag surviving into the next
+        // connect attempt let a late didActivate finish THAT session before its
+        // setupComplete (review-bot P1 #2 on PR #653).
+        audioConfigPending = false
+        audioAttemptGeneration += 1
         inputConverter = nil
         inputFormat = nil
         playbackFormat = nil
