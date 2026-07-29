@@ -204,6 +204,9 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   place_agent_call: stage('calls', 'high'),
   // Boss-requested callback — dials the OWNER only; consent is the boss's own ask.
   call_boss_with_report: write('calls', 'medium'),
+  // In-app ring to the OWNER's own app — he asked for it, no third party, no
+  // telco spend; same consent shape as call_boss_with_report.
+  call_me_in_app: write('calls', 'medium'),
   // Order-aware customer call — same staging semantics as place_agent_call.
   place_business_call: stage('calls', 'high'),
 
