@@ -2108,24 +2108,31 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         guard !stopped, callKitOwnsAudioSession, !configured else { return }
         do {
             try configureAudio()
-            if audioConfigPending || !socketReady { finishSetup() }
+            // didActivate normally arrives BEFORE the socket's setupComplete.
+            // Only finish the session when setup was already waiting on audio —
+            // otherwise finishSetup() would announce a live call with ws == nil,
+            // cancel the in-flight connect task and lose the greeting/brief.
+            if audioConfigPending { finishSetup() }
         } catch {
-            scheduleCallKitAudioFallback()
+            scheduleCallKitAudioRetry(attempt: 1)
         }
     }
 
-    /// Last resort: if CallKit's activation never lands (or its session still
-    /// refuses us), configure the session ourselves rather than sit on a silent
-    /// call — a category conflict is recoverable, silence is not.
-    private func scheduleCallKitAudioFallback() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+    /// CallKit still owns activation, so never self-activate (that is what broke
+    /// build 89). Just re-attempt the category + engine start a couple of times;
+    /// if audio truly cannot start, say so instead of holding a silent call.
+    private func scheduleCallKitAudioRetry(attempt: Int) {
+        guard attempt <= 3 else {
+            fail("লাইভ অডিও চালু করা যায়নি।")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let self, !self.stopped, !self.configured else { return }
-            self.callKitOwnsAudioSession = false
             do {
                 try self.configureAudio()
-                self.finishSetup()
+                if self.audioConfigPending { self.finishSetup() }
             } catch {
-                self.fail("লাইভ অডিও চালু করা যায়নি।")
+                self.scheduleCallKitAudioRetry(attempt: attempt + 1)
             }
         }
     }
@@ -2133,14 +2140,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private func configureAudioOnQueue() throws {
         guard !configured else { return }
         let av = AVAudioSession.sharedInstance()
-        if callKitOwnsAudioSession {
-            // CallKit configured + activated the session; touching the category
-            // or calling setActive here throws and kills the call's audio.
-            try? av.setPreferredIOBufferDuration(0.02)
-        } else {
-            try av.setCategory(.playAndRecord, mode: .voiceChat,
-                               options: [.allowBluetoothHFP, .defaultToSpeaker])
-            try av.setPreferredIOBufferDuration(0.02)
+        // Ownership split mirrors AgoraIntercom.configureAudioSession: the APP
+        // always owns the CATEGORY (a cold-launch answer leaves the session on
+        // its default category, which makes inputNode unavailable), and only
+        // ACTIVATION belongs to CallKit — calling setActive(true) there fought
+        // the framework and left the answered call silent (build 89).
+        try av.setCategory(.playAndRecord, mode: .voiceChat,
+                           options: [.allowBluetoothHFP, .defaultToSpeaker])
+        try? av.setPreferredIOBufferDuration(0.02)
+        if !callKitOwnsAudioSession {
             try av.setActive(true)
         }
         audioLock.lock()
@@ -2337,7 +2345,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 // failing the whole call (owner device, build 89).
                 if callKitOwnsAudioSession {
                     audioConfigPending = true
-                    scheduleCallKitAudioFallback()
+                    scheduleCallKitAudioRetry(attempt: 1)
                 } else {
                     fail("লাইভ অডিও চালু করা যায়নি।")
                 }
