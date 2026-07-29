@@ -153,6 +153,18 @@ final class AlmaVoiceEngine {
     var pendingAgentCallBrief: String?
     private var agentBriefSent = false
 
+    /// Agent call: CallKit owns the audio session, so the live session must not
+    /// configure/activate it itself (build 89: audio never started).
+    var callKitManaged = false {
+        didSet { live.callKitOwnsAudioSession = callKitManaged }
+    }
+
+    /// CXProviderDelegate didActivate → hand the activated session to the live
+    /// engine (starts, or retries, capture/playback).
+    func callKitAudioActivated() {
+        live.callKitAudioActivated()
+    }
+
     /// Brief may arrive AFTER the live socket connected (the CallKit answer never
     /// waits on the network). Send it as the opening note either way, once.
     func deliverAgentBrief(_ brief: String) {
@@ -1972,6 +1984,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private let audioQueue = DispatchQueue(label: "alma.voice.audio")
     private var inputMuted = false
     private var speakerEnabled = true
+    /// CallKit owns the AVAudioSession for an agent call (plan C2). The app must
+    /// NOT set the category or activate it — doing so threw on the owner's
+    /// device (build 89: "লাইভ অডিও চালু করা যায়নি", agent silent). CallKit has
+    /// already configured playAndRecord/voiceChat; if its activation has not
+    /// landed yet, audio setup is retried from callKitAudioActivated().
+    var callKitOwnsAudioSession = false
+    private var audioConfigPending = false
 
     func start() async throws {
         stopped = false
@@ -2070,17 +2089,64 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         try audioQueue.sync { try configureAudioOnQueue() }
     }
 
+    /// Socket is live AND audio is running — announce the connection once.
+    private func finishSetup() {
+        audioConfigPending = false
+        socketReady = true
+        reconnecting = false
+        reconnectAttempts = 0
+        DispatchQueue.main.async { [weak self] in self?.engine?.liveDidConnect() }
+        if !hasConnectedOnce {
+            hasConnectedOnce = true
+            sendTextTurn("OPENING_GREETING: Boss-কে সময় অনুযায়ী খুব সংক্ষিপ্ত বাংলায় অভিবাদন জানিয়ে বলুন, কী করতে হবে। কোনো tool চালাবেন না।")
+        }
+    }
+
+    /// CallKit activated the shared audio session (CXProviderDelegate didActivate).
+    /// Start (or retry) capture/playback now that the session is really ours.
+    func callKitAudioActivated() {
+        guard !stopped, callKitOwnsAudioSession, !configured else { return }
+        do {
+            try configureAudio()
+            if audioConfigPending || !socketReady { finishSetup() }
+        } catch {
+            scheduleCallKitAudioFallback()
+        }
+    }
+
+    /// Last resort: if CallKit's activation never lands (or its session still
+    /// refuses us), configure the session ourselves rather than sit on a silent
+    /// call — a category conflict is recoverable, silence is not.
+    private func scheduleCallKitAudioFallback() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self, !self.stopped, !self.configured else { return }
+            self.callKitOwnsAudioSession = false
+            do {
+                try self.configureAudio()
+                self.finishSetup()
+            } catch {
+                self.fail("লাইভ অডিও চালু করা যায়নি।")
+            }
+        }
+    }
+
     private func configureAudioOnQueue() throws {
         guard !configured else { return }
         let av = AVAudioSession.sharedInstance()
-        try av.setCategory(.playAndRecord, mode: .voiceChat,
-                           options: [.allowBluetoothHFP, .defaultToSpeaker])
-        try av.setPreferredIOBufferDuration(0.02)
-        try av.setActive(true)
+        if callKitOwnsAudioSession {
+            // CallKit configured + activated the session; touching the category
+            // or calling setActive here throws and kills the call's audio.
+            try? av.setPreferredIOBufferDuration(0.02)
+        } else {
+            try av.setCategory(.playAndRecord, mode: .voiceChat,
+                               options: [.allowBluetoothHFP, .defaultToSpeaker])
+            try av.setPreferredIOBufferDuration(0.02)
+            try av.setActive(true)
+        }
         audioLock.lock()
         let useSpeaker = speakerEnabled
         audioLock.unlock()
-        try av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
+        try? av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
 
         let input = audioEngine.inputNode
         try input.setVoiceProcessingEnabled(true)
@@ -2264,16 +2330,17 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         if root["setupComplete"] != nil {
             do {
                 try configureAudio()
-                socketReady = true
-                reconnecting = false
-                reconnectAttempts = 0
-                DispatchQueue.main.async { [weak self] in self?.engine?.liveDidConnect() }
-                if !hasConnectedOnce {
-                    hasConnectedOnce = true
-                    sendTextTurn("OPENING_GREETING: Boss-কে সময় অনুযায়ী খুব সংক্ষিপ্ত বাংলায় অভিবাদন জানিয়ে বলুন, কী করতে হবে। কোনো tool চালাবেন না।")
-                }
+                finishSetup()
             } catch {
-                fail("লাইভ অডিও চালু করা যায়নি।")
+                // Under CallKit the session may not be activated yet — keep the
+                // socket and retry from callKitAudioActivated() instead of
+                // failing the whole call (owner device, build 89).
+                if callKitOwnsAudioSession {
+                    audioConfigPending = true
+                    scheduleCallKitAudioFallback()
+                } else {
+                    fail("লাইভ অডিও চালু করা যায়নি।")
+                }
             }
         }
         if let update = root["sessionResumptionUpdate"] as? [String: Any],

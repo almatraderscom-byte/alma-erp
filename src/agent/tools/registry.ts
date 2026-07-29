@@ -45,7 +45,7 @@ import { GBP_TOOLS } from './gbp-tools'
 import { GROWTH_TOOLS } from './growth-tools'
 import { COMPETITOR_TOOLS } from './competitor-tools'
 import { ADVISOR_TOOLS } from './advisor-tools'
-import { FAMILY_TOOLS, place_agent_call, call_boss_with_report } from './personal-tools'
+import { FAMILY_TOOLS, place_agent_call, call_boss_with_report, call_me_in_app } from './personal-tools'
 import { place_business_call } from './business-call-tools'
 import { PERSONAL_OS_TOOLS } from './personal-os-tools'
 import { BUSINESS_OS_TOOLS } from './business-os-tools'
@@ -563,6 +563,8 @@ export const TOOLS: AgentTool[] = [
   // tool-group, so it must also be executable from the ALMA_LIFESTYLE pool
   // (otherwise the head sees it but a call returns "Unknown tool").
   place_agent_call,
+  // In-app live call to Boss (plan C1/C2) — the default when Boss says "কল দাও".
+  call_me_in_app,
   // PA-5R human-PA callback — boss-requested completion call, no card.
   call_boss_with_report,
   // Human-PA point 2 — order-aware customer call (delegates dialing to place_agent_call).

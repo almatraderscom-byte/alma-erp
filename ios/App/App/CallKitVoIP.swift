@@ -81,7 +81,10 @@ final class CallKitVoIP: NSObject {
         config.maximumCallsPerCallGroup = 1
         config.maximumCallGroups = 1
         config.supportedHandleTypes = [.generic]
-        // Ringtone: system default (a bundled .caf could be set here later).
+        // Distinct ALMA ring instead of the system default (owner device, build
+        // 89: the incoming agent call arrived with no audible ring). The device's
+        // ringer switch / Focus still silences CallKit rings — that is iOS policy.
+        config.ringtoneSound = "alma_urgent.caf"
         provider = CXProvider(configuration: config)
         super.init()
         provider.setDelegate(self, queue: nil)
@@ -523,8 +526,16 @@ extension CallKitVoIP: CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-        // CallKit activated the shared session — hand it to Agora (it won't re-activate).
-        Task { @MainActor in OfficeCallCoordinator.shared.audioSessionActivated() }
+        // CallKit activated the shared session — hand it to whoever owns the call
+        // (Agora for office calls, the live voice engine for agent calls). Neither
+        // may activate the session itself.
+        Task { @MainActor in
+            if AgentCallController.shared.isActive {
+                AgentCallController.shared.audioSessionActivated()
+            } else {
+                OfficeCallCoordinator.shared.audioSessionActivated()
+            }
+        }
     }
 
     func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
