@@ -86,6 +86,7 @@
 - Use a sub-agent ONLY when genuinely needed, and then prefer the read-only **Explore** agent for broad codebase searches (locating files/symbols/usages across many places) where you only need the conclusion, not a hand-off of the work.
 - Never delegate edits, implementation, or verification to sub-agents — the main session does the work and owns the browser/sim proof.
 
+- **Codex review-bot comments are part of every PR (owner rule 2026-07-29):** after pushing any PR, check the PR for review comments from the Codex bot (`chatgpt-codex-connector`), triage them yourself, fix the real findings in the same branch, and reply on the PR with what was fixed/why anything was skipped — WITHOUT waiting to be asked. Do this before (or immediately after) merge.
 - When a bug is reported: honest root-cause diagnosis FIRST, no code change. Fix only after owner approval.
 - Architectural fixes > patches. Confirm before any costly/destructive action.
 - Pre-flight checks before code in each phase; if any check fails, STOP and report.
