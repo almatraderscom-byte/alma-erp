@@ -403,9 +403,26 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
 
   // A location's day rolls over between the daily-init crons (e.g. Dubai
   // midnight = 20:00 UTC, init cron = 18:00 UTC): first tick of a fresh local
-  // day has no records yet — create them now, idempotently.
-  if (records.length === 0) {
+  // day has no records yet — create them now, idempotently. And when the owner
+  // SWITCHES location mid-day (review-bot P1 #3), the persisted windows still
+  // carry the old offset — re-init rewrites them (resetDay preserves confirms).
+  const offsetMarkerKey = `salah_records_offset:${today}`
+  let recordsOffset = null
+  try {
+    const { data } = await supabase
+      .from('agent_kv_settings').select('value').eq('key', offsetMarkerKey).maybeSingle()
+    recordsOffset = data?.value ?? null
+  } catch { /* fail-open */ }
+  if (records.length === 0 || recordsOffset !== String(loc.offsetMin)) {
+    if (records.length > 0) {
+      console.log(`[salah] location offset changed (${recordsOffset} → ${loc.offsetMin}) — re-initializing ${today}`)
+    }
     await initializeDailySalahRecords(supabase)
+    try {
+      await supabase.from('agent_kv_settings').upsert({
+        key: offsetMarkerKey, value: String(loc.offsetMin), updated_at: new Date().toISOString(),
+      })
+    } catch { /* fail-open */ }
     records = await getSalahRecords(today)
   }
 

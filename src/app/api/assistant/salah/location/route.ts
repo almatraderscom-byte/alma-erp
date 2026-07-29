@@ -127,6 +127,11 @@ export async function POST(req: NextRequest) {
       update: { value: label },
     })
   }
+  // Invalidate the worker's per-day init marker: the next 5-min tick rebuilds
+  // today's records on the NEW offset even without a time-config write.
+  await prisma.agentKvSetting.deleteMany({
+    where: { key: { startsWith: 'salah_records_offset:' } },
+  }).catch(() => {})
 
   let config: SalahTimeConfig | null = null
   if (body.autofill && typeof body.autofill.city === 'string' && typeof body.autofill.country === 'string') {
