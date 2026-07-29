@@ -93,6 +93,10 @@ jobs:
         run: npx prisma generate
 
       - name: Calling release tests and typecheck
+        env:
+          # tsc over this repo aborts (SIGABRT, heap) on the smaller macOS
+          # runner with node's default old-space — build-89 run 30482784326.
+          NODE_OPTIONS: --max-old-space-size=6144
         run: |
           npx vitest run src/agent/lib/__tests__/office-call*.test.ts
           npm run type-check
