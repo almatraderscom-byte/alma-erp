@@ -1,6 +1,6 @@
 {
   "certified": true,
-  "auditedCommit": "4b6919510b0c81e4f2c84345078b7eff635ac701",
+  "auditedCommit": "2b508a4879285b7200ecd4ce9d2d93cad610c3f7",
   "specCount": 200,
   "reasonCodes": [],
   "checklist": [
@@ -25,6 +25,6 @@
       "satisfied": true
     }
   ],
-  "digest": "a9776e4e42d54e496ce2094d60e78b491bb1d3e9e928a4cb686338e610f68a86",
+  "digest": "98287ba21042e71671045d5a53b65ff83244b45295b5a9b93d6a8418d328c703",
   "contract": "certification@1.0.0"
 }

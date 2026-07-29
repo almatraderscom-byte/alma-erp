@@ -27,7 +27,7 @@ export type AgentAppCallSource = 'ladder' | 'salah' | 'manual'
 
 export type RingOwnerAppResult =
   | { ok: true; callId: string; voipSent: number; fcmSent: number }
-  | { ok: false; error: 'disabled' | 'no_owner' | 'no_devices' | 'push_failed' | 'db_error' }
+  | { ok: false; error: 'disabled' | 'no_owner' | 'no_devices' | 'push_failed' | 'db_error' | 'busy' }
 
 export function agentAppCallEnabled(): boolean {
   return process.env.AGENT_APP_CALL_ENABLED !== 'false'
@@ -73,6 +73,21 @@ export async function ringOwnerApp(args: {
 
   const { voip, fcm } = await getCallPushTargets(owners).catch(() => ({ voip: [], fcm: [] }))
   if (voip.length === 0 && fcm.length === 0) return { ok: false, error: 'no_devices' }
+
+  // One call at a time (review-bot P2 on PR #653): CallKit is configured for a
+  // single call group, so a second ring while one is live/ringing would be
+  // rejected on-device while the server happily reported 'ringing'. A ring past
+  // its window and an answered call older than the 2h call cap don't count.
+  const busy = await prisma.agentAppCall.findFirst({
+    where: {
+      OR: [
+        { status: 'ringing', createdAt: { gt: new Date(Date.now() - RING_WINDOW_MS) } },
+        { status: 'answered', endedAt: null, answeredAt: { gt: new Date(Date.now() - 2 * 3600_000) } },
+      ],
+    },
+    select: { id: true },
+  }).catch(() => null)
+  if (busy) return { ok: false, error: 'busy' }
 
   let callId: string
   try {

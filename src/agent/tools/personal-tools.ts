@@ -449,6 +449,7 @@ export const call_me_in_app: AgentTool = {
           no_devices: 'আপনার ফোনে app-টি এখনো কল-টোকেন রেজিস্টার করেনি — একবার app খুলে আবার বলুন।',
           push_failed: 'রিং পাঠানো যায়নি (ফোনে push পৌঁছায়নি)।',
           db_error: 'কল রেকর্ড তৈরি করা যায়নি।',
+          busy: 'একটা app-কল এই মুহূর্তেই চলছে/বাজছে — সেটা শেষ হলে আবার বলুন; নতুন করে কল দিলাম না।',
         }
         return { success: false, error: why[res.error] ?? res.error }
       }

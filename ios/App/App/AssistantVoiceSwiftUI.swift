@@ -2144,6 +2144,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     private func configureAudioOnQueue() throws {
         guard !configured else { return }
+        // A previous PARTIAL attempt (engine.start threw after the tap went in)
+        // must not leave its tap behind: AVAudioEngine allows one tap per bus,
+        // so retrying with a stale tap raises an Objective-C exception and
+        // kills the app (review-bot P1 #3 on PR #653).
+        if tapInstalled {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
         let av = AVAudioSession.sharedInstance()
         // Ownership split mirrors AgoraIntercom.configureAudioSession: the APP
         // always owns the CATEGORY (a cold-launch answer leaves the session on
@@ -2192,7 +2200,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         tapInstalled = true
         audioEngine.prepare()
-        do { try audioEngine.start() } catch { throw AlmaLiveVoiceError.audioStart }
+        do { try audioEngine.start() } catch {
+            // Unwind the partial setup so the retry starts clean.
+            input.removeTap(onBus: 0)
+            tapInstalled = false
+            throw AlmaLiveVoiceError.audioStart
+        }
         // setVoiceProcessingEnabled RESETS the output route to the receiver, so
         // the override above is dead by now — first-call greeting played near-
         // silent into the earpiece (owner device 2026-07-24; reopening worked
