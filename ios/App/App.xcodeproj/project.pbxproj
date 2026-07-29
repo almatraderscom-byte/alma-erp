@@ -70,6 +70,8 @@
 		E1AA9900000000000000B001 /* alma_approval.caf in Resources */ = {isa = PBXBuildFile; fileRef = E1AA9900000000000000A001 /* alma_approval.caf */; };
 		E1AA9900000000000000B002 /* alma_urgent.caf in Resources */ = {isa = PBXBuildFile; fileRef = E1AA9900000000000000A002 /* alma_urgent.caf */; };
 		E1AA9900000000000000B003 /* alma_reminder.caf in Resources */ = {isa = PBXBuildFile; fileRef = E1AA9900000000000000A003 /* alma_reminder.caf */; };
+		E1AA9900000000000000B004 /* RobotApproveSFX.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = E1AA9900000000000000A004 /* RobotApproveSFX.mp3 */; };
+		E1AA9900000000000000B005 /* RobotRejectSFX.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = E1AA9900000000000000A005 /* RobotRejectSFX.mp3 */; };
 		E2AA7700000000000000B001 /* AlmaNavBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2AA7700000000000000A001 /* AlmaNavBridge.swift */; };
 		E989B990E9C1E99742CD7724 /* cs_sample_7.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 8A25C75E224B4CF47FA32650 /* cs_sample_7.jpg */; };
 		EF0CA1B4340D6D66FF679402 /* cs_sample_8.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 3E78CDE7CC98B69EE283C2EF /* cs_sample_8.jpg */; };
@@ -264,6 +266,8 @@
 		E1AA9900000000000000A001 /* alma_approval.caf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = alma_approval.caf; sourceTree = "<group>"; };
 		E1AA9900000000000000A002 /* alma_urgent.caf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = alma_urgent.caf; sourceTree = "<group>"; };
 		E1AA9900000000000000A003 /* alma_reminder.caf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = alma_reminder.caf; sourceTree = "<group>"; };
+		E1AA9900000000000000A004 /* RobotApproveSFX.mp3 */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = audio.mp3; path = RobotApproveSFX.mp3; sourceTree = "<group>"; };
+		E1AA9900000000000000A005 /* RobotRejectSFX.mp3 */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = audio.mp3; path = RobotRejectSFX.mp3; sourceTree = "<group>"; };
 		E2AA7700000000000000A001 /* AlmaNavBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaNavBridge.swift; sourceTree = "<group>"; };
 		E4D7D31FF1297D19D3B7C7F2 /* CreativeStudioSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CreativeStudioSwiftUI.swift; sourceTree = "<group>"; };
 		F1AA6600000000000000A001 /* AlmaEntities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaEntities.swift; sourceTree = "<group>"; };
@@ -607,6 +611,8 @@
 				E1AA9900000000000000A001 /* alma_approval.caf */,
 				E1AA9900000000000000A002 /* alma_urgent.caf */,
 				E1AA9900000000000000A003 /* alma_reminder.caf */,
+				E1AA9900000000000000A004 /* RobotApproveSFX.mp3 */,
+				E1AA9900000000000000A005 /* RobotRejectSFX.mp3 */,
 			);
 			path = Sounds;
 			sourceTree = "<group>";
@@ -745,6 +751,8 @@
 				E1AA9900000000000000B001 /* alma_approval.caf in Resources */,
 				E1AA9900000000000000B002 /* alma_urgent.caf in Resources */,
 				E1AA9900000000000000B003 /* alma_reminder.caf in Resources */,
+				E1AA9900000000000000B004 /* RobotApproveSFX.mp3 in Resources */,
+				E1AA9900000000000000B005 /* RobotRejectSFX.mp3 in Resources */,
 				504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */,
 				50B271D11FEDC1A000F3C39B /* public in Resources */,
 				504EC30F1FED79650016851F /* Assets.xcassets in Resources */,

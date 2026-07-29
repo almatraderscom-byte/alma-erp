@@ -15,6 +15,7 @@ function emptyPetStatus() {
   return {
     runningCount: 0,
     attentionCount: 0,
+    items: [],
     latestCompletion: null,
     updatedAt: new Date().toISOString(),
   }

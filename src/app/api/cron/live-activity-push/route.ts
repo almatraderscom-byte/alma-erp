@@ -99,7 +99,7 @@ function materialHash(s: {
   approvalCount: number
   runningOrderCount: number
   orderProgress?: number
-  items: { id: string; title: string; valueText?: string }[]
+  items: { id: string; title: string; subtitle: string; valueText?: string }[]
 }): string {
   const shape = JSON.stringify({
     mode: s.mode,
@@ -110,7 +110,11 @@ function materialHash(s: {
     r: s.runningOrderCount,
     // Round progress so a 1% drift doesn't count as news.
     g: s.orderProgress === undefined ? null : Math.round(s.orderProgress * 20),
-    i: s.items.map((i) => [i.id, i.title, i.valueText ?? '']),
+    // Subtitle carries the current task step. A step change is meaningful even
+    // when the task id/title/count stay identical, so it must trigger a silent
+    // ActivityKit update instead of waiting for the recovery cron to notice a
+    // count change.
+    i: s.items.map((i) => [i.id, i.title, i.subtitle, i.valueText ?? '']),
   })
   return createHash('sha1').update(shape).digest('hex')
 }

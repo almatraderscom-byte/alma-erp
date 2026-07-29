@@ -63,17 +63,17 @@ enum PulseRestore {
         note("debug_reset")
     }
 
-    /// Sim-testing hook (DEBUG only): launching with ALMA_PULSE_DEMO=approval starts a
-    /// FRESH, ACTIONABLE approval Live Activity (a real `erp:` id) so the lock card AND
-    /// the expanded Dynamic Island show the অনুমোদন/বাতিল buttons — owner verify
-    /// 2026-07-17. In real use those buttons appear whenever there is a *featured*
-    /// pending approval (pulse-snapshot sends `erp:<id>`); the sim's cached snapshot
-    /// usually has none ("০টা অনুরোধ"), which is why the island shows only text there.
+    /// Sim-testing hook (DEBUG only): `ALMA_PULSE_DEMO=approval` starts an
+    /// actionable approval; `working` starts a line-by-line Agent task panel.
+    /// Both carry a fresh update epoch so the Robot's explicit ≤2s transition
+    /// can be recorded without pretending that arbitrary background timers are
+    /// reliable. Release receives these epochs from the real snapshot/push.
     /// Returns true when it started the demo, so launch skips the cache restore/sync.
     @available(iOS 16.2, *)
     static func debugStartDemoApprovalIfRequested() async -> Bool {
         #if canImport(ActivityKit)
-        guard ProcessInfo.processInfo.environment["ALMA_PULSE_DEMO"] == "approval" else { return false }
+        guard let demo = ProcessInfo.processInfo.environment["ALMA_PULSE_DEMO"],
+              demo == "approval" || demo == "working" else { return false }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             if ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" {
                 RobotSelfTestTrace.mark("robotSelfTest.dynamicIslandDisabled")
@@ -84,9 +84,17 @@ enum PulseRestore {
         for activity in Activity<PulseActivityAttributes>.activities {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
-        let json = #"""
-        {"ordersToday":1,"statusLine":"১টা অনুমোদন অপেক্ষায়","mode":"approval","headline":"আপনার অনুমোদন দরকার","subtitle":"১টা অনুরোধ অপেক্ষায় · এখনই সিদ্ধান্ত দিন","pendingTaskCount":40,"approvalCount":1,"runningOrderCount":1,"orderProgress":0.5,"pendingApprovals":1,"openTasks":40,"approvalId":"erp:demo-approval-000","approvalTitle":"ওয়ালেট উত্তোলন — টেস্ট","approvalCounterparty":"PAYROLL · এখন","approvalAmountText":"৳৭,৪০০"}
-        """#
+        let now = Date().timeIntervalSince1970
+        let json: String
+        if demo == "working" {
+            json = #"""
+            {"ordersToday":1,"statusLine":"২টি Agent কাজ চলছে","mode":"working","headline":"২টি Agent কাজ চলছে","subtitle":"Meta campaign audit · Ads data যাচাই করছে","pendingTaskCount":2,"approvalCount":0,"runningOrderCount":0,"pendingApprovals":0,"openTasks":2,"updatedAtEpoch":\#(now),"staleAfterEpoch":\#(now + 900),"items":[{"id":"agent-task:demo-meta","kind":"pendingTask","title":"Meta campaign audit","subtitle":"Ads data যাচাই করছে","valueText":"চলছে","severity":"attention","createdAtEpoch":\#(now),"link":"almaerp://agent?conversationId=demo-meta"},{"id":"agent-task:demo-stock","kind":"pendingTask","title":"Inventory update","subtitle":"Stock adjustment প্রস্তুত করছে","valueText":"চলছে","severity":"normal","createdAtEpoch":\#(now),"link":"almaerp://agent?conversationId=demo-stock"}]}
+            """#
+        } else {
+            json = #"""
+            {"ordersToday":1,"statusLine":"১টা অনুমোদন অপেক্ষায়","mode":"approval","headline":"আপনার অনুমোদন দরকার","subtitle":"১টা অনুরোধ অপেক্ষায় · এখনই সিদ্ধান্ত দিন","pendingTaskCount":2,"approvalCount":1,"runningOrderCount":1,"orderProgress":0.5,"pendingApprovals":1,"openTasks":2,"updatedAtEpoch":\#(now),"staleAfterEpoch":\#(now + 900),"approvalId":"erp:demo-approval-000","approvalTitle":"ওয়ালেট উত্তোলন — টেস্ট","approvalCounterparty":"PAYROLL · এখন","approvalAmountText":"৳৭,৪০০"}
+            """#
+        }
         guard let data = json.data(using: .utf8),
               let state = try? JSONDecoder().decode(PulseActivityAttributes.ContentState.self, from: data) else {
             if ProcessInfo.processInfo.environment["ALMA_ROBOT_SELFTEST"] == "1" {
@@ -136,6 +144,10 @@ enum PulseRestore {
         // dependent) web sync — live-hit 2026-07-16 while shipping the
         // approvals-first island. Silent by contract: no AlertConfiguration.
         if let live = Activity<PulseActivityAttributes>.activities.first {
+            // App termination also terminates the previous token observer.
+            // Re-observe (deduped inside the bridge) so an activity that
+            // survived the process can register its current APNs token again.
+            LiveActivityBridgePlugin.observePushToken(of: live)
             if let cached = readCache() {
                 let staleDate = cached.state.staleAfterDate.flatMap { $0 > Date() ? $0 : nil }
                 Task {
@@ -166,22 +178,15 @@ enum PulseRestore {
 
         let attributes = PulseActivityAttributes(title: cached.title)
         do {
-            let activity: Activity<PulseActivityAttributes>
-            if #available(iOS 16.2, *) {
-                activity = try Activity.request(
-                    attributes: attributes,
-                    content: ActivityContent(state: cached.state, staleDate: staleDate),
-                    pushType: .token
-                )
-            } else {
-                activity = try Activity.request(
-                    attributes: attributes,
-                    contentState: cached.state,
-                    pushType: .token
-                )
+            let request = try LiveActivityBridgePlugin.requestPulseActivity(
+                attributes: attributes,
+                state: cached.state,
+                staleDate: staleDate
+            )
+            if request.pushBacked {
+                LiveActivityBridgePlugin.observePushToken(of: request.activity)
             }
-            LiveActivityBridgePlugin.observePushToken(of: activity)
-            note("restored")
+            note(request.pushBacked ? "restored" : "restored_local")
         } catch {
             note("request_failed: \(error.localizedDescription)")
         }

@@ -836,14 +836,12 @@ final class PayrollVM {
             }
             let _: PayrollOkResponse = try await AlmaAPI.shared.send(
                 "PATCH", "/api/payroll/wallet/requests/\(request.id)", body: body)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
             notice = action == "APPROVE"
                 ? "অনুমোদিত — ওয়ালেট লেজার আপডেট হয়েছে"
                 : "রিকোয়েস্ট বাতিল করা হয়েছে"
             withAnimation(.snappy) { pendingRequests.removeAll { $0.id == request.id } }
             await load(fresh: true)
         } catch {
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
             self.error = error.localizedDescription
         }
     }

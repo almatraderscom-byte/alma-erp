@@ -14,6 +14,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
+import { pushCurrentPulseLiveActivity } from '@/agent/lib/pulse-live-update'
 
 export type OpenTaskKind = 'chat_followup' | 'approval_pending' | 'checkpoint_failed' | 'checkpoint_waiting'
 export type OpenTaskStatus = 'open' | 'running' | 'done' | 'cancelled'
@@ -87,6 +88,7 @@ export async function createOpenTask(input: {
         where: { id: dup.id },
         data: { resumeNote: input.resumeNote.trim() },
       })
+      await pushCurrentPulseLiveActivity()
       return toView(updated)
     }
   }
@@ -105,6 +107,7 @@ export async function createOpenTask(input: {
       nudgedCount: 0,
     },
   })
+  await pushCurrentPulseLiveActivity()
   return toView(row)
 }
 
@@ -162,6 +165,7 @@ export async function markRunning(id: string): Promise<OpenTaskView | null> {
     where: { id },
     data: { status: 'running', nudgeDueAt: null },
   }).catch(() => null)
+  if (row) await pushCurrentPulseLiveActivity()
   return row ? toView(row) : null
 }
 
@@ -171,6 +175,7 @@ export async function resolveOpenTask(id: string, status: 'done' | 'cancelled'):
     where: { id },
     data: { status, completedAt: new Date(), nudgeDueAt: null },
   }).catch(() => null)
+  if (row) await pushCurrentPulseLiveActivity()
   return row ? toView(row) : null
 }
 

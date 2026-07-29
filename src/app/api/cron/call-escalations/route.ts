@@ -7,7 +7,6 @@
 import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { scanEscalationTriggers, processCallEscalations } from '@/agent/lib/proactive-call'
-import { sweepStaleAgentAppCalls } from '@/agent/lib/agent-app-call'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -24,8 +23,5 @@ export async function GET(req: NextRequest) {
 
   const scan = await scanEscalationTriggers()
   const steps = await processCallEscalations(10)
-  // Expire unanswered app rings nobody polls (salah fire-and-forget rings) —
-  // sends their cancel + missed-call pushes.
-  const sweptRings = await sweepStaleAgentAppCalls().catch(() => 0)
-  return Response.json({ ok: true, queued: scan.queued, processed: steps.length, sweptRings, steps })
+  return Response.json({ ok: true, queued: scan.queued, processed: steps.length, steps })
 }

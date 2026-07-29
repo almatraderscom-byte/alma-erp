@@ -16,7 +16,11 @@ import SwiftUI
 
 @available(iOS 16.1, *)
 enum OfficeRobotLiveContext {
-    case pulse(mode: PulseMode, successAtEpoch: Double?)
+    case pulse(
+        mode: PulseMode,
+        successAtEpoch: Double?,
+        updatedAtEpoch: Double?
+    )
     case voice(phase: String)
 }
 
@@ -34,7 +38,7 @@ struct OfficeRobotLiveGlyph: View {
     var body: some View {
         Group {
             if motionAllowed {
-                if let dates = successTimelineDates {
+                if let dates = pulseTimelineDates {
                     if dates.isEmpty {
                         frame(index: staticFrameIndex)
                     } else {
@@ -62,22 +66,36 @@ struct OfficeRobotLiveGlyph: View {
     }
 
     private var isOffline: Bool {
-        if case .pulse(let mode, _) = context { return mode == .offline }
+        if case .pulse(let mode, _, _) = context { return mode == .offline }
         return false
     }
 
-    /// Success is the only sub-second Pulse animation. An explicit schedule
-    /// ends after 3.9 seconds, so a success state that remains live for minutes
-    /// settles without continuing to request redraws.
-    private var successTimelineDates: [Date]? {
-        guard case .pulse(let mode, let successAtEpoch) = context,
-              mode == .success else { return nil }
-        guard let successAtEpoch else { return [] }
-
-        let start = Date(timeIntervalSince1970: successAtEpoch)
+    /// Every server/local state update gets one explicit, sub-two-second
+    /// transition. Afterwards the view requests the same periodic local redraw
+    /// style used by Voice. This does not spend ActivityKit update budget;
+    /// iOS may still coalesce ambient frames when power policy requires it.
+    private var pulseTimelineDates: [Date]? {
+        guard case .pulse(let mode, let successAtEpoch, let updatedAtEpoch) = context
+        else { return nil }
+        let anchor = mode == .success ? successAtEpoch : updatedAtEpoch
+        guard let anchor else { return [] }
+        let start = Date(timeIntervalSince1970: anchor)
         let now = Date()
-        let dates = (0...6).map {
-            start.addingTimeInterval(Double($0) * 0.65)
+        if now >= start.addingTimeInterval(2.05) {
+            return nil
+        }
+        var dates = (0...4).map {
+            start.addingTimeInterval(Double($0) * 0.4)
+        }
+        // A finite explicit timeline stops producing updates after its last date,
+        // and nothing re-evaluates the branch until the next ActivityKit update —
+        // the Robot froze (review-bot P2 on PR #651). Append a periodic tail at
+        // the ambient cadence so the transition hands off seamlessly.
+        var t = start.addingTimeInterval(2.05)
+        let horizon = start.addingTimeInterval(120)
+        while t <= horizon {
+            dates.append(t)
+            t = t.addingTimeInterval(refreshInterval)
         }
         return dates.filter { $0 >= now.addingTimeInterval(-0.05) }
     }
@@ -89,7 +107,7 @@ struct OfficeRobotLiveGlyph: View {
         switch context {
         case .voice:
             return 0.7 * cadenceMultiplier
-        case .pulse(let mode, _):
+        case .pulse(let mode, _, _):
             switch mode {
             case .success: return 0.65 * cadenceMultiplier
             case .urgent: return 1.15 * cadenceMultiplier
@@ -114,7 +132,7 @@ struct OfficeRobotLiveGlyph: View {
 
     private var staticFrameIndex: Int {
         switch context {
-        case .pulse(let mode, _):
+        case .pulse(let mode, _, _):
             switch mode {
             case .urgent: return 10
             case .approval: return 16
@@ -137,8 +155,13 @@ struct OfficeRobotLiveGlyph: View {
 
     private func frameIndex(at date: Date) -> Int {
         switch context {
-        case .pulse(let mode, let successAtEpoch):
-            return pulseFrame(mode: mode, successAtEpoch: successAtEpoch, date: date)
+        case .pulse(let mode, let successAtEpoch, let updatedAtEpoch):
+            return pulseFrame(
+                mode: mode,
+                successAtEpoch: successAtEpoch,
+                updatedAtEpoch: updatedAtEpoch,
+                date: date
+            )
         case .voice(let phase):
             return voiceFrame(phase: phase, date: date)
         }
@@ -147,32 +170,34 @@ struct OfficeRobotLiveGlyph: View {
     private func pulseFrame(
         mode: PulseMode,
         successAtEpoch: Double?,
+        updatedAtEpoch: Double?,
         date: Date
     ) -> Int {
+        let anchor = mode == .success ? successAtEpoch : updatedAtEpoch
+        let step = anchor.map {
+            max(0, Int((date.timeIntervalSince1970 - $0) / 0.4))
+        } ?? 0
         switch mode {
         case .overview:
-            return sequence(
-                [0, 1, 0, 2, 3, 2, 0, 4, 5, 4, 0],
-                date: date
-            )
+            return transitionThenLoop([0, 1, 2, 3, 0], loop: [0, 0, 0, 1, 0, 2, 3, 2, 0, 4, 5, 4], step: step, date: date)
         case .working, .orders:
-            return sequence([6, 7, 8, 9, 8, 7, 6, 1], date: date)
+            return transitionThenLoop([6, 7, 8, 9, 6], loop: [6, 7, 8, 9, 8, 7], step: step, date: date)
         case .approval:
-            return sequence([0, 16, 1, 0, 4, 5, 4, 0], date: date)
+            return transitionThenLoop([0, 16, 1, 16, 16], loop: [16, 0, 16, 1], step: step, date: date)
         case .urgent:
-            return sequence([0, 10, 1, 11], date: date)
+            return transitionThenLoop([0, 10, 1, 10, 10], loop: [10, 0, 10, 1], step: step, date: date)
         case .stale:
-            return sequence([8, 8, 1, 8], date: date)
+            return 8
         case .offline:
             return 11
         case .success:
             if let successAtEpoch {
                 let age = date.timeIntervalSince1970 - successAtEpoch
-                if age >= 0, age < 3.9 {
-                    let celebration = [12, 13, 14, 15, 14, 13]
+                if age >= 0, age < 2 {
+                    let celebration = [12, 13, 14, 15, 13]
                     let index = min(
                         celebration.count - 1,
-                        max(0, Int(age / refreshInterval))
+                        max(0, Int(age / 0.4))
                     )
                     return celebration[index]
                 }
@@ -198,6 +223,20 @@ struct OfficeRobotLiveGlyph: View {
         guard !indices.isEmpty else { return staticFrameIndex }
         let tick = Int(floor(date.timeIntervalSince1970 / refreshInterval))
         return indices[abs(tick) % indices.count]
+    }
+
+    private func indexed(_ indices: [Int], step: Int) -> Int {
+        guard !indices.isEmpty else { return staticFrameIndex }
+        return indices[min(indices.count - 1, max(0, step))]
+    }
+
+    /// One-shot intro for the transition burst, then an AMBIENT LOOP — clamping
+    /// to the intro's last frame froze the Robot once the periodic tail kept
+    /// redrawing (review-bot P2 #2 on PR #651).
+    private func transitionThenLoop(_ intro: [Int], loop: [Int], step: Int, date: Date) -> Int {
+        guard !intro.isEmpty else { return staticFrameIndex }
+        if step < intro.count { return intro[max(0, step)] }
+        return sequence(loop, date: date)
     }
 
     private func clamped(_ index: Int) -> Int {

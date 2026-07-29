@@ -13,6 +13,7 @@ describe('projectGlobalOfficePetStatus', () => {
     })).toEqual({
       runningCount: 0,
       attentionCount: 0,
+      items: [],
       latestCompletion: null,
       updatedAt: now.toISOString(),
     })
@@ -33,6 +34,7 @@ describe('projectGlobalOfficePetStatus', () => {
     })).toEqual({
       runningCount: 2,
       attentionCount: 1,
+      items: [],
       latestCompletion: {
         turnId: 'turn-42',
         conversationId: 'conversation-7',
@@ -41,5 +43,25 @@ describe('projectGlobalOfficePetStatus', () => {
       },
       updatedAt: now.toISOString(),
     })
+  })
+
+  it('preserves the ordered, explainable companion items', () => {
+    const items = [{
+      id: 'turn:turn-42',
+      turnId: 'turn-42',
+      conversationId: 'conversation-7',
+      status: 'running' as const,
+      title: 'Inventory audit',
+      detail: 'Stock data যাচাই করছে',
+      updatedAt: now.toISOString(),
+      dismissible: false,
+    }]
+    expect(projectGlobalOfficePetStatus({
+      runningCount: 1,
+      attentionCount: 0,
+      latestCompletion: null,
+      items,
+      now,
+    }).items).toEqual(items)
   })
 })

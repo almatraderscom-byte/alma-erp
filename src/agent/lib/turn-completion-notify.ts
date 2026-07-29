@@ -8,6 +8,7 @@
 import { prisma } from '@/lib/prisma'
 import { isOwnerAppActive } from '@/agent/lib/owner-presence'
 import { pushNativeToOwner } from '@/agent/lib/native-owner-push'
+import { pushCurrentPulseLiveActivity } from '@/agent/lib/pulse-live-update'
 
 const LEASE_MS = 60_000
 const MAX_ATTEMPTS = 8
@@ -25,6 +26,16 @@ const RETRY_DELAYS_MS = [
 function cleanPreview(value: string | null | undefined): string {
   const compact = (value ?? '').replace(/\s+/g, ' ').trim()
   return (compact || 'আপনার কাজ শেষ হয়েছে Boss।').slice(0, 220)
+}
+
+async function pushCompletionToLiveActivity(preview: string | null): Promise<void> {
+  await pushCurrentPulseLiveActivity({
+    success: {
+      title: 'Agent কাজ শেষ',
+      detail: cleanPreview(preview),
+      completedAt: new Date().toISOString(),
+    },
+  })
 }
 
 export async function enqueueTurnCompletionNotification(input: {
@@ -116,15 +127,21 @@ export async function deliverTurnCompletionNotification(deliveryId?: string): Pr
       return true
     }
 
-    const result = await pushNativeToOwner({
-      tier: 2,
-      title: 'ALMA Agent — কাজ শেষ',
-      message: cleanPreview(row.preview),
-      category: 'task',
-      actionUrl: '/agent',
-      notificationKind: 'completion',
-      deliveryId: row.turnId,
-    })
+    // One real terminal event drives both owner surfaces. This is the missing
+    // event-driven ActivityKit path: it does not wait for the two-minute
+    // reconciliation cron, and its Robot transition is tied to this update.
+    const [result] = await Promise.all([
+      pushNativeToOwner({
+        tier: 2,
+        title: 'ALMA Agent — কাজ শেষ',
+        message: cleanPreview(row.preview),
+        category: 'task',
+        actionUrl: `/agent?conversationId=${encodeURIComponent(row.conversationId)}`,
+        notificationKind: 'completion',
+        deliveryId: row.turnId,
+      }),
+      pushCompletionToLiveActivity(row.preview),
+    ])
 
     if (result.ok) {
       await finishDelivery(row.id, 'delivered', undefined, row.attempts)
