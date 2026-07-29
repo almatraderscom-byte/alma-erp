@@ -290,9 +290,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
                 if #available(iOS 17.0, *), !id.isEmpty {
                     if q("answer") == "1" {
                         // Skip CallKit (sim can't render its UI) — drive the answered
-                        // hand-off directly: console opens + Gemini session + brief.
+                        // hand-off directly: call screen + Gemini session + brief.
                         Task { @MainActor in
-                            AgentCallBridge.shared.deliverAnswer(callId: id, purpose: q("purpose"))
+                            AgentCallController.shared.start(callId: id, purpose: q("purpose"))
                         }
                     } else {
                         CallKitVoIP.shared.debugSimulateAgentRing(callId: id)

@@ -27,33 +27,9 @@ import CallKit
 import AVFoundation
 import UIKit
 
-/// Agent → owner in-app call (plan C2): hand-off between the CallKit answer and
-/// the Gemini Live voice console. Notifications are fire-and-forget, so the
-/// bridge ALSO stores the pending answer — the assistant screen picks it up on
-/// appear when the answer happened before its observers existed (cold launch).
-@available(iOS 17.0, *)
-@MainActor
-final class AgentCallBridge {
-    static let shared = AgentCallBridge()
-    static let answered = Notification.Name("almaAgentCallAnswered")
-    static let ended = Notification.Name("almaAgentCallEnded")
-
-    struct PendingAnswer { let callId: String; let purpose: String }
-    private(set) var pendingAnswer: PendingAnswer?
-
-    func deliverAnswer(callId: String, purpose: String) {
-        pendingAnswer = PendingAnswer(callId: callId, purpose: purpose)
-        NotificationCenter.default.post(
-            name: Self.answered, object: nil,
-            userInfo: ["callId": callId, "purpose": purpose])
-    }
-
-    /// The assistant screen consumed the pending answer (started the session).
-    func consumePendingAnswer() -> PendingAnswer? {
-        defer { pendingAnswer = nil }
-        return pendingAnswer
-    }
-}
+// Agent-call answer hand-off lives in AgentCallController (AgentCallUI.swift) —
+// a screen-independent controller with its own engine, per the owner's
+// WhatsApp-parity spec: talk starts on answer, no app section is opened.
 
 @available(iOS 17.0, *)
 final class CallKitVoIP: NSObject {
@@ -436,11 +412,12 @@ extension CallKitVoIP: CXProviderDelegate {
         if call.kind == .agent {
             calls[action.callUUID]?.answered = true
             Task { @MainActor in
-                // Tell the server, fetch the brief, and hand off to the voice
-                // console (the assistant screen starts the Gemini Live session).
+                // WhatsApp-parity (owner spec): talking starts NOW, screen or no
+                // screen. The controller runs its own engine headlessly and shows
+                // the dedicated call UI when the app is foreground.
                 await Self.postAgentCallStatus(call.broadcastId, status: "answered")
                 let purpose = await Self.fetchAgentCallPurpose(call.broadcastId)
-                AgentCallBridge.shared.deliverAnswer(callId: call.broadcastId, purpose: purpose)
+                AgentCallController.shared.start(callId: call.broadcastId, purpose: purpose)
                 action.fulfill()
             }
             return
@@ -468,9 +445,7 @@ extension CallKitVoIP: CXProviderDelegate {
                 // Ring-stage end = decline; answered end = hang-up/complete.
                 await Self.postAgentCallStatus(
                     call.broadcastId, status: call.answered ? "completed" : "declined")
-                NotificationCenter.default.post(
-                    name: AgentCallBridge.ended, object: nil,
-                    userInfo: ["callId": call.broadcastId])
+                AgentCallController.shared.callKitEnded(callId: call.broadcastId)
                 action.fulfill()
             }
             return
