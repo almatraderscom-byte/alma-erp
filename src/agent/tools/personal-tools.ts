@@ -334,8 +334,8 @@ export const call_boss_with_report: AgentTool = {
   description:
     'Boss-কে ফোন কল করে কাজের রিপোর্ট শোনায় (human-PA callback)। ব্যবহার করো ঠিক তখনই ' +
     'যখন Boss নিজে বলেছিলেন কাজ শেষে জানাতে/কল করতে ("শেষ হলে জানাবে", "কল করে জানিও", ' +
-    '"confirm দিবে") — এবং কাজটা এইমাত্র সত্যিই শেষ হয়েছে (tool-verified)। WhatsApp লাইভ কল ' +
-    'যায় আগে, না ধরলে সরাসরি নম্বরে, তাও না ধরলে report push হয়। কোনো card লাগে না — Boss-এর ' +
+    '"confirm দিবে") — এবং কাজটা এইমাত্র সত্যিই শেষ হয়েছে (tool-verified)। আগে Boss-এর নিজের ' +
+    'app-এ রিং যায় (বিদেশেও কাজ করে), না ধরলে WhatsApp, তারপর সরাসরি নম্বরে, তাও না ধরলে report push হয়। কোনো card লাগে না — Boss-এর ' +
     'অনুরোধটাই অনুমতি। report হবে ২-৪ বাক্যের পরিষ্কার বাংলা — কী করা হলো, ফলাফল কী, পরের ধাপ কী।',
   input_schema: {
     type: 'object' as const,
@@ -397,8 +397,8 @@ export const call_boss_with_report: AgentTool = {
           status: 'callback_queued',
           escalationId: id,
           message: delayMinutes > 0
-            ? `${delayMinutes} মিনিট পরে Boss-কে কল যাবে (WhatsApp আগে, না ধরলে সরাসরি নম্বরে; তাও না ধরলে report push)।`
-            : 'Boss-কে কল যাচ্ছে (WhatsApp আগে, না ধরলে সরাসরি নম্বরে; তাও না ধরলে report push)।',
+            ? `${delayMinutes} মিনিট পরে Boss-কে কল যাবে (আগে app-এ রিং, না ধরলে WhatsApp → সরাসরি নম্বর; তাও না ধরলে report push)।`
+            : 'Boss-কে কল যাচ্ছে (আগে app-এ রিং, না ধরলে WhatsApp → সরাসরি নম্বর; তাও না ধরলে report push)।',
         },
       }
     } catch (err) {

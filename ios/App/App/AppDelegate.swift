@@ -280,6 +280,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
             }
 
             #if DEBUG
+            // Sim harness (plan C2): VoIP pushes can't reach the simulator, so
+            // almaerp://agent-call-test?id=<uuid> drives the same incoming-ring
+            // path CallKit takes on a real device.
+            if url.host == "agent-call-test" {
+                let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "id" })?.value ?? ""
+                if #available(iOS 17.0, *), !id.isEmpty {
+                    CallKitVoIP.shared.debugSimulateAgentRing(callId: id)
+                }
+                return true
+            }
+            #endif
+
+            #if DEBUG
             // Headless voice-conversation test hook (simulator only): inject a
             // "spoken" user turn into a live AI call. simctl openurl
             // almaerp://voice-say?text=<percent-encoded>. Never in Release.

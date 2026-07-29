@@ -288,10 +288,19 @@ async function deliverSalahAlert({
       console.log(`[salah] tier-3 suppressed — owner call lock until ${lock.until?.toISOString()} (${lock.source})`)
       effectiveTier = 2
     } else if (await isOwnerAbroadCallsOff()) {
-      // Owner abroad — his BD number is unreachable, so never place the call.
-      // Telegram + ntfy still go out at tier 2.
-      console.log('[salah] tier-3 suppressed — owner abroad (owner_abroad_calls_off)')
+      // Owner abroad — his BD number is unreachable, so no PSTN call. Instead
+      // ring his APP (in-app VoIP call, plan C4); Telegram + ntfy still go out
+      // at tier 2. Confirmed waqts never ring (same guard as the PSTN path).
+      console.log('[salah] tier-3 → app ring — owner abroad (owner_abroad_calls_off)')
       effectiveTier = 2
+      if (!(salahDate && waqt && (await isSalahWaqtConfirmed(salahDate, waqt)))) {
+        const { ringOwnerAppViaWeb } = await import('../notify/agent-app-call.mjs')
+        const ring = await ringOwnerAppViaWeb(
+          `নামাজের সময় — ${title}। ${msgs.voice ?? msgs.ntfy ?? ''}`.slice(0, 1500),
+          'salah',
+        )
+        if (!ring.ok) console.warn('[salah] app ring failed:', ring.error)
+      }
     } else if (salahDate && waqt && (await isSalahWaqtConfirmed(salahDate, waqt))) {
       console.log(`[salah] tier-3 suppressed — ${waqt} already confirmed for ${salahDate}`)
       effectiveTier = 2
@@ -788,11 +797,11 @@ export async function runSalahSnoozeFollowup({ supabase, bot }) {
 
     const confirmed = await isSalahWaqtConfirmed(today, waqt)
     const lock = await isOwnerCallLocked(now)
-    // Owner abroad counts as locked: the follow-up waits instead of dialling an
-    // unreachable BD number every 2 minutes.
+    // Owner abroad: keep the follow-up cadence, but the 'call' action rings the
+    // APP (plan C4) instead of dialling the unreachable BD number.
     const abroad = await isOwnerAbroadCallsOff()
     const { action, nextState } = decideFollowupAction({
-      state, now, confirmed, locked: lock.locked || abroad, windowEnd,
+      state, now, confirmed, locked: lock.locked, windowEnd,
     })
 
     if (action === 'clear') {
@@ -820,14 +829,22 @@ export async function runSalahSnoozeFollowup({ supabase, bot }) {
         tier: 3, waqt, waqtName: name, dateYmd: today, remindersSent: 4, griefContext,
       })
       try {
-        await makeTwilioCall(msgs.voice, {
-          force: true,
-          salah: true,
-          purpose: 'salah',
-          skipAutoRetry: true,
-          salahDate: today,
-          salahWaqt: waqt,
-        })
+        if (abroad) {
+          // Abroad: BD number is dead — ring the app instead (plan C4).
+          const { ringOwnerAppViaWeb } = await import('../notify/agent-app-call.mjs')
+          const ring = await ringOwnerAppViaWeb(
+            `নামাজের তাগাদা — ${name}। ${msgs.voice}`.slice(0, 1500), 'salah')
+          if (!ring.ok) console.warn(`[salah/followup] app ring failed for ${waqt}:`, ring.error)
+        } else {
+          await makeTwilioCall(msgs.voice, {
+            force: true,
+            salah: true,
+            purpose: 'salah',
+            skipAutoRetry: true,
+            salahDate: today,
+            salahWaqt: waqt,
+          })
+        }
       } catch (err) {
         console.warn(`[salah/followup] call failed for ${waqt}:`, err.message)
       }
