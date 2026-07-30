@@ -771,6 +771,53 @@ export async function runRegisteredTool(
     }
   }
 
+  // PM-5 — the permission mode, ENFORCED here rather than only recorded.
+  //
+  // The head applies the mode before it calls a tool, so for a head turn this is
+  // a second look that changes nothing. A delegated specialist has no such step:
+  // forwarding the mode string would leave a worker free to write under Plan and
+  // to change things silently under Careful, which is the bypass PM-5 exists to
+  // close. Only the two verdicts the head would never reach are blocked, so this
+  // cannot narrow existing head behaviour:
+  //   • plan   → anything above a pure read is absent, not merely gated
+  //   • careful→ an ordinary R1/R2 write belongs on a card, and only the head
+  //              can stage one, so the worker must hand it back.
+  if (ctx.permissionMode) {
+    try {
+      const { modeVerdict, normalizePermissionMode } = await import('@/agent/lib/permission-mode')
+      const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
+      const mode = normalizePermissionMode(ctx.permissionMode)
+      const task = taskClassForTool(tool.name, cap)
+      const verdict = modeVerdict({ mode, tier: task.tier, taskClass: task.taskClass, now: Date.now() })
+      const blockedByMode =
+        verdict === 'blocked'
+        || (verdict === 'card' && mode === 'careful' && cap.mode === 'write')
+      if (blockedByMode) {
+        void logToolEvent({
+          ...baseEvent,
+          success: false,
+          errorClass: 'permission_mode',
+          errorCode: 'permission_mode_blocked',
+          latencyMs: Date.now() - started,
+          detail: { ...capDetail, tier: task.tier, taskClass: task.taskClass, verdict, execution: 'rejected' },
+        })
+        return {
+          success: false,
+          error:
+            mode === 'plan'
+              ? `প্ল্যান মোড চলছে — এই মোডে কিছুই বদলানো যাবে না, তাই ${tool.name} চালানো হয়নি। পড়ার কাজ করো, আর কী করতে চাও সেটা লিখে দাও।`
+              : `সতর্ক মোড চলছে — ${tool.name} নিজে চালানো যাবে না, Boss-এর approval কার্ডে যেতে হবে। কাজটা head-কে ফেরত দাও, ও কার্ড বানাবে।`,
+          errorCode: 'permission_mode_blocked',
+          retryable: false,
+        }
+      }
+    } catch (err) {
+      // A mode we cannot resolve must not break the call — the guard below and
+      // the head's own check still apply.
+      console.warn('[registry] permission-mode check failed open:', err instanceof Error ? err.message : err)
+    }
+  }
+
   // Streamed tool args that failed JSON.parse arrive as the `{ _raw }` marker.
   // Short-circuit with a self-repair error that ECHOES the broken text back, so
   // the model fixes its own emission — instead of the misleading schema error

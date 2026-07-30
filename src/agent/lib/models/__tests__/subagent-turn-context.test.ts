@@ -93,3 +93,56 @@ describe('the registry packs it, so a delegating tool can forward it', () => {
     })
   })
 })
+
+/**
+ * Codex round-1 P1s on #659 — forwarding the mode is not the same as obeying it,
+ * and the approval-gated delegation path never reached the forwarding code.
+ */
+describe('the mode is enforced, not merely recorded', () => {
+  const effectTool = {
+    name: 'publish_product',
+    description: 'test double',
+    input_schema: { type: 'object' as const, properties: {} },
+    handler: async () => ({ success: true, data: {} }),
+  }
+
+  it('plan mode blocks an effect tool at the registry, wherever it was called from', async () => {
+    const { runRegisteredTool } = await import('@/agent/tools/registry')
+    let ran = false
+    const res = await runRegisteredTool(
+      { ...effectTool, handler: async () => { ran = true; return { success: true, data: {} } } },
+      {},
+      {},
+      { conversationId: 'c1', businessId: 'ALMA_LIFESTYLE', permissionMode: 'plan' },
+    )
+    expect(ran).toBe(false)
+    expect(res.success).toBe(false)
+    expect(res.errorCode).toBe('permission_mode_blocked')
+  })
+
+  it('standard mode leaves the same call alone', async () => {
+    const { runRegisteredTool } = await import('@/agent/tools/registry')
+    const res = await runRegisteredTool(effectTool, {}, {}, {
+      conversationId: 'c1',
+      businessId: 'ALMA_LIFESTYLE',
+      permissionMode: 'standard',
+    })
+    expect(res.errorCode).not.toBe('permission_mode_blocked')
+  })
+
+  it('a read is never blocked by a mode', async () => {
+    const { runRegisteredTool } = await import('@/agent/tools/registry')
+    const read = {
+      name: 'get_website_catalog',
+      description: 'test double',
+      input_schema: { type: 'object' as const, properties: {} },
+      handler: async () => ({ success: true, data: {} }),
+    }
+    const res = await runRegisteredTool(read, {}, {}, {
+      conversationId: 'c1',
+      businessId: 'ALMA_LIFESTYLE',
+      permissionMode: 'plan',
+    })
+    expect(res.success).toBe(true)
+  })
+})

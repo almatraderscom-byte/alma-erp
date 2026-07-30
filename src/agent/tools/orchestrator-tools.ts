@@ -88,7 +88,18 @@ const delegate_to_specialist: AgentTool = {
           conversationId: conversationId ?? null,
           businessId,
           type: 'delegation',
-          payload: { role, task, businessId, conversationId, modelId },
+          // PM-5: the approval-gated path is the COMMON one for researcher /
+          // analyst / ops / seo, and it runs the worker minutes later from an
+          // API route that never saw this turn. Without the parent context
+          // stored here, that path keeps the exact bypass this fix closes.
+          payload: {
+            role,
+            task,
+            businessId,
+            conversationId,
+            modelId,
+            parentToolContext: (await import('@/agent/lib/models/subagent')).delegatedToolContextFrom(input),
+          },
           summary: `${roleLabel} (${modelLabel}) কে এই কাজ দিয়ে করাব?\n\n${task}`,
         },
       })

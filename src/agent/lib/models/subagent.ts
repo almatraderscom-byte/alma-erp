@@ -338,6 +338,22 @@ async function runWithModel(
   const system = buildSystemPrompt(def)
   let rawTools = assembleRoleTools(def)
   if (params.readOnly) rawTools = filterToolsReadOnly(rawTools)
+  // PM-5: the mode shapes the worker's toolbox the same way it shapes the
+  // head's. Under Plan an effect tool must be ABSENT, not merely refused — a
+  // worker that can see it will try it, spend a round, and report a failure the
+  // owner never needed to hear. The registry blocks it too; this is what stops
+  // it from being attempted at all.
+  if (params.toolContext?.permissionMode) {
+    const { filterToolsForPermissionMode, normalizePermissionMode } = await import(
+      '@/agent/lib/permission-mode'
+    )
+    const { getCapability } = await import('@/agent/tools/capability-manifest')
+    rawTools = filterToolsForPermissionMode(
+      normalizePermissionMode(params.toolContext.permissionMode),
+      rawTools,
+      (name) => getCapability(name)?.mode === 'read',
+    ).tools
+  }
 
   if (model.provider === 'anthropic') {
     // The native sub-agent loop sends no cache_control breakpoint, so its cache
