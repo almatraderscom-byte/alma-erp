@@ -1250,6 +1250,24 @@ final class AlmaVoiceEngine {
         wake.stop()
         state = .listening
         keepAliveStart()
+        // Agent call route diagnostics (owner device 2026-07-31): if the OS has
+        // parked the audio on the receiver 2s after connect, nudge it back AND
+        // record it on the call row so the next silent call is readable from
+        // the DB instead of guessed at.
+        if let callId = activeAgentCallId {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                guard let self, self.liveActive else { return }
+                let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+                    .map { $0.portType.rawValue }.joined(separator: "+")
+                if outputs.contains("Receiver") {
+                    self.live.nudgeSpeakerRoute()
+                    if #available(iOS 17.0, *) {
+                        Task { await CallKitVoIP.postAgentCallStatus(callId, status: nil,
+                                                                     note: "route was \(outputs) 2s after connect — nudged to speaker") }
+                    }
+                }
+            }
+        }
         if let brief = pendingAgentCallBrief, !agentBriefSent {
             pendingAgentCallBrief = nil
             agentBriefSent = true
@@ -2099,6 +2117,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var reconnecting = false
     private var pingTimer: DispatchSourceTimer?
     private var awaitingPong = false
+    private var routeObserver: NSObjectProtocol?
     /// One serial home for keepalive state + reconnect entry (Codex P2 round 4):
     /// the timer, ping completions, and receive-failure recovery all funnel here
     /// so two callbacks can never both pass recoverConnection's guards and
@@ -2324,7 +2343,21 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// CallKit activated the shared audio session (CXProviderDelegate didActivate).
     /// Start (or retry) capture/playback now that the session is really ours.
     func callKitAudioActivated() {
-        guard !stopped, callKitOwnsAudioSession, !configured else { return }
+        guard !stopped, callKitOwnsAudioSession else { return }
+        if configured {
+            // Activation landed AFTER audio setup. CallKit's activation resets
+            // the output route (first call ends up on the RECEIVER — near
+            // silent on a table) and a background-started engine may have died
+            // — previously this path did NOTHING and the only recovery was the
+            // app-foreground hook, which is exactly why the call only spoke
+            // once the calling screen appeared (owner device 2026-07-31).
+            nudgeSpeakerRoute()
+            audioQueue.async { [weak self] in
+                guard let self, !self.stopped else { return }
+                if !self.audioEngine.isRunning { try? self.audioEngine.start() }
+            }
+            return
+        }
         do {
             try configureAudio()
             // didActivate normally arrives BEFORE the socket's setupComplete.
@@ -2334,6 +2367,24 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             if audioConfigPending { finishSetup() }
         } catch {
             scheduleCallKitAudioRetry(attempt: 1, lastError: error)
+        }
+    }
+
+    /// Put the call back on the speaker if the OS quietly re-routed it to the
+    /// receiver (VP init and CallKit activation both do this). Safe to call any
+    /// time; no-op when the owner deliberately turned the speaker off.
+    func nudgeSpeakerRoute() {
+        guard configured, !stopped else { return }
+        audioLock.lock()
+        let wantSpeaker = speakerEnabled
+        audioLock.unlock()
+        guard wantSpeaker else { return }
+        let av = AVAudioSession.sharedInstance()
+        if av.currentRoute.outputs.contains(where: { $0.portType == .builtInReceiver }) {
+            try? av.overrideOutputAudioPort(.speaker)
+            #if DEBUG
+            NSLog("ALMA-VOICE route nudged receiver → speaker")
+            #endif
         }
     }
 
@@ -2449,6 +2500,22 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         // VP + engine start so call one is as loud as call two.
         try? av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
         configured = true
+        // On a REAL device the VP route reset can land asynchronously AFTER the
+        // line above (owner 2026-07-31: first call silent until a manual
+        // speaker toggle, second call fine — sim can't reproduce: no receiver
+        // port and VP is skipped there). Two guards: a watchdog that re-asserts
+        // the speaker whenever the OS re-routes to the receiver, plus one
+        // delayed belt-and-braces nudge.
+        if routeObserver == nil {
+            routeObserver = NotificationCenter.default.addObserver(
+                forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.nudgeSpeakerRoute()
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.nudgeSpeakerRoute()
+        }
     }
 
     private func capture(_ buffer: AVAudioPCMBuffer, nativeFormat: AVAudioFormat) {
@@ -3292,6 +3359,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     func stop() {
         stopped = true
         stopKeepalive()
+        if let ob = routeObserver {
+            NotificationCenter.default.removeObserver(ob)
+            routeObserver = nil
+        }
         let hadTap = tapInstalled
         tapInstalled = false
         audioQueue.async { [weak self] in
@@ -5355,11 +5426,49 @@ struct AlmaStarfieldView: View {
 // Plus: breathing bloom, spinning conic accent ring, 5 orbiting energy motes,
 // 3 thinking satellites, and the v2 floor reflection.
 
+/// ChatGPT-voice-mode LIVING SCALE (owner video analysis 2026-07-31, frame
+/// measurements): the reference orb keeps a PERFECT circular silhouette — its
+/// life comes from the whole sphere breathing with the conversation. Baseline
+/// while idle; it RECEDES ~10% while Boss speaks (attentive, trembling gently
+/// with his real voice envelope) and SWELLS ~13% while the agent speaks
+/// (pulsing with the real speech envelope). Reference-type scratchpad mutated
+/// from the TimelineView tick — nothing here is observed state.
+@available(iOS 17.0, *)
+private final class AlmaOrbLife {
+    var lastT: Double = 0
+    var mic: Double = 0        // smoothed real mic envelope
+    var tts: Double = 0        // smoothed real speech envelope
+    var userP: Double = 0      // "Boss is talking" presence 0…1
+    var agentP: Double = 0     // "agent is talking" presence 0…1
+
+    func step(t: Double, state: AlmaVoiceState, micIn: Double, ttsIn: Double) {
+        if lastT == 0 { lastT = t }
+        let dt = min(0.1, max(0, t - lastT))
+        lastT = t
+        // Envelope followers — instant attack, musical release.
+        mic += (micIn - mic) * min(1, dt * (micIn > mic ? 14 : 3.2))
+        tts += (ttsIn - tts) * min(1, dt * (ttsIn > tts ? 16 : 2.8))
+        // Presences ease in fast, linger briefly (no flicker between words).
+        let userTarget: Double = (state == .listening && mic > 0.05) ? 1 : 0
+        userP += (userTarget - userP) * min(1, dt * (userTarget > userP ? 5.0 : 1.4))
+        let agentTarget: Double = state == .speaking ? 1 : 0
+        agentP += (agentTarget - agentP) * min(1, dt * (agentTarget > agentP ? 5.0 : 1.6))
+    }
+
+    /// The living scale for the sphere cluster.
+    var scale: Double {
+        1 - userP * (0.10 - min(0.045, mic * 0.09))     // recede, tremble with Boss
+        + agentP * (0.09 + min(0.07, tts * 0.11))       // swell, pulse with speech
+    }
+}
+
 @available(iOS 17.0, *)
 struct AlmaFluidOrbView: View {
     let state: AlmaVoiceState
     let micLevel: Double
     let ttsLevel: Double
+
+    @State private var life = AlmaOrbLife()
 
     private var breathe: Double {
         switch state {
@@ -5388,9 +5497,10 @@ struct AlmaFluidOrbView: View {
             let h = state.hue
             TimelineView(.animation(minimumInterval: 1.0 / 30)) { tl in
                 let t = tl.date.timeIntervalSinceReferenceDate
+                let _ = life.step(t: t, state: state, micIn: micLevel, ttsIn: ttsLevel)
                 let level = state == .speaking ? ttsLevel : micLevel
                 let act = activity(t: t, level: level)
-                let scale = 1 + 0.028 * (1 - cos(2 * .pi * t / breathe))
+                let scale = (1 + 0.028 * (1 - cos(2 * .pi * t / breathe))) * life.scale
                 ZStack {
                     // breathing bloom (web .orb-bloom)
                     Circle()
@@ -5474,6 +5584,9 @@ struct AlmaFluidOrbView: View {
                     if AlmaOrbRenderer.shared != nil {
                         AlmaMetalOrbView(hue: h, stateKey: state.rawValue, level: level)
                             .frame(width: side * 1.24, height: side * 1.24)
+                            // The living conversation scale (video-matched):
+                            // recede while Boss talks, swell while ALMA talks.
+                            .scaleEffect(life.scale)
                             .allowsHitTesting(false)
                     } else {
                         fallbackSphere(side: side, h: h, t: t)
