@@ -44,7 +44,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const auth = await requireOwner(req)
   if ('error' in auth && auth.error) return auth.error
 
-  let body: { status?: unknown; summary?: unknown }
+  let body: { status?: unknown; summary?: unknown; note?: unknown }
   try {
     body = await req.json()
   } catch {
@@ -54,7 +54,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (status !== 'answered' && status !== 'declined' && status !== 'completed') {
     return Response.json({ error: 'status must be answered|declined|completed' }, { status: 400 })
   }
-  const summary = typeof body.summary === 'string' ? body.summary : undefined
+  // `note` carries an on-device diagnostic (e.g. why live audio never started).
+  // TestFlight builds have no console access, so without this a device-only
+  // failure is invisible on the server and can only be guessed at — which is
+  // exactly what cost the owner two broken builds (89, 90).
+  const note = typeof body.note === 'string' ? body.note.slice(0, 500) : undefined
+  const summary = typeof body.summary === 'string'
+    ? body.summary
+    : note
+      ? `[device] ${note}`
+      : undefined
+  if (note) console.warn('[agent-call] device note', params.id, note)
   const ok = await markAgentAppCall(params.id, status, summary)
   if (!ok) {
     // Not an error worth failing the app over — the row may already be swept.

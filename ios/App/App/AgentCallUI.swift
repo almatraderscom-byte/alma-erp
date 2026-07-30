@@ -67,6 +67,13 @@ final class AgentCallController: NSObject {
         engine?.callKitAudioActivated()
     }
 
+    /// Live voice could not start on THIS device — record why on the call row so
+    /// the failure is diagnosable without a console (owner builds 89/90).
+    func reportLiveFailure(_ reason: String) {
+        guard let callId = activeCallId else { return }
+        Task { await CallKitVoIP.postAgentCallStatus(callId, status: "answered", note: reason) }
+    }
+
     /// The brief arrives AFTER start() (answer fulfills before any network call —
     /// review-bot P1). The engine injects it now if the live socket is already
     /// connected, else on connect.

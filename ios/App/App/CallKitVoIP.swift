@@ -495,13 +495,16 @@ extension CallKitVoIP: CXProviderDelegate {
 
     // MARK: - Agent-call server leg
 
-    private struct AgentCallStatusBody: Encodable { let status: String }
+    private struct AgentCallStatusBody: Encodable { let status: String; let note: String? }
     private struct AgentCallStatusResp: Decodable { let ok: Bool?; let status: String?; let purpose: String? }
 
-    static func postAgentCallStatus(_ callId: String, status: String) async {
+    /// `note` is an on-device diagnostic (TestFlight has no console): it lands in
+    /// the call row so a device-only failure is visible on the server instead of
+    /// being guessed at.
+    static func postAgentCallStatus(_ callId: String, status: String, note: String? = nil) async {
         let _: AgentCallStatusResp? = try? await AlmaAPI.shared.send(
             "POST", "/api/assistant/agent-call/\(callId)/status",
-            body: AgentCallStatusBody(status: status))
+            body: AgentCallStatusBody(status: status, note: note))
     }
 
     private static func fetchAgentCallPurpose(_ callId: String) async -> String {
