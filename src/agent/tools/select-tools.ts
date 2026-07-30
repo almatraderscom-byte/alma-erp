@@ -266,6 +266,11 @@ const HEAD_KEPT_GROWTH_TOOLS = [
   // hop and nothing else — and the owner would still approve exactly once.
   // Appended last so the existing cached-prefix bytes never shift.
   'edit_storefront_product',
+  // update_order is the ERP's first write and it lands on the head as one plain
+  // sentence — "oi order ta shipped kore dao". Same staging shape as
+  // edit_storefront_product above; a delegation hop would buy nothing.
+  // Appended last so the existing cached-prefix bytes never shift.
+  'update_order',
 ] as const
 
 // Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work

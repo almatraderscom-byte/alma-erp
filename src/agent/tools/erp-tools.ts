@@ -1107,9 +1107,163 @@ const get_marketing_intel: AgentTool = {
   },
 }
 
+// ── update_order (B1 — the first ERP write) ────────────────────────────────
+
+/** Statuses the ERP itself accepts, in the words the owner uses for them. */
+const ORDER_STATUSES = [
+  'pending', 'confirmed', 'processing', 'shipped', 'delivered',
+  'cancelled', 'returned', 'returned_paid', 'returned_unpaid',
+] as const
+
+/** What a status word means for stock — said on the card, because it is easy to miss. */
+const STOCK_EFFECT: Record<string, string> = {
+  cancelled: 'স্টক ফেরত যাবে',
+  returned: 'স্টক ফেরত যাবে',
+  returned_paid: 'স্টক ফেরত যাবে',
+  returned_unpaid: 'স্টক ফেরত যাবে',
+}
+
+async function findOrderByNumber(orderNumber: string) {
+  const key = orderNumber.trim()
+  if (!key) return null
+  const digits = key.replace(/\D/g, '')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = prisma as any
+  const exact = await db.lifestyleOrder.findFirst({
+    where: { OR: [{ id: key }, { invoiceNum: key }] },
+  })
+  if (exact) return exact
+  if (digits.length < 3) return null
+  return db.lifestyleOrder.findFirst({
+    where: { OR: [{ id: { contains: digits } }, { invoiceNum: { contains: digits } }] },
+    orderBy: { date: 'desc' },
+  })
+}
+
+const update_order: AgentTool = {
+  name: 'update_order',
+  description:
+    'Change an existing ERP order — status, courier, tracking id, or the note on it — in ONE approval card '
+    + 'with before → after per field. Use for "order ta shipped kore dao", "tracking boshiye dao", '
+    + '"oi order ta cancel koro". Send only what changes. Cancel/return statuses restore stock, and the card says so. '
+    + 'After approval the order is read back from the ERP and the live values are reported — never claim it landed on your own. '
+    + 'Money fields (price, discount, COGS) are NOT editable here.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      orderNumber: { type: 'string', description: 'Order/invoice number as Boss says it (e.g. "1234", "#ALM-1234"), or the order id.' },
+      status: { type: 'string', enum: [...ORDER_STATUSES], description: 'New status.' },
+      courier: { type: 'string', description: 'Courier name (Steadfast, Pathao, RedX …).' },
+      trackingId: { type: 'string', description: 'Courier tracking id.' },
+      notes: { type: 'string', description: 'Note on the order — replaces the existing note.' },
+      reason: { type: 'string', description: 'Why, in one line — stored with cancel/return, and shown on the card.' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
+    },
+    required: ['orderNumber'],
+  },
+  handler: async (input) => {
+    try {
+      const orderNumber = String(input.orderNumber ?? '').trim()
+      if (!orderNumber) return { success: false, error: 'কোন order, সেটা বলুন (order/invoice number)।' }
+
+      const order = await findOrderByNumber(orderNumber)
+      if (!order) {
+        return {
+          success: false,
+          error: `order পাওয়া যায়নি: ${orderNumber} — get_orders দিয়ে নম্বরটা মিলিয়ে নিন।`,
+        }
+      }
+
+      const changes: Record<string, { before: unknown; after: unknown }> = {}
+      const fields: Record<string, string> = {}
+      const unchanged: string[] = []
+
+      if (input.status != null) {
+        const want = String(input.status).trim().toLowerCase()
+        if (!ORDER_STATUSES.includes(want as (typeof ORDER_STATUSES)[number])) {
+          return { success: false, error: `status "${want}" চেনা গেল না — ${ORDER_STATUSES.join(', ')}-এর একটা দিন।` }
+        }
+        if (want === String(order.status ?? '').trim().toLowerCase()) unchanged.push('status')
+        else changes.status = { before: order.status, after: want }
+      }
+
+      for (const [key, current] of [
+        ['courier', order.courier],
+        ['trackingId', order.trackingId],
+        ['notes', order.notes],
+      ] as const) {
+        const raw = input[key]
+        if (raw == null) continue
+        const next = String(raw).trim()
+        if (next === String(current ?? '').trim()) unchanged.push(key)
+        else {
+          changes[key] = { before: current, after: next }
+          fields[key] = next
+        }
+      }
+
+      if (!Object.keys(changes).length) {
+        const already = unchanged.length ? ` (${unchanged.join(', ')} আগে থেকেই এমনই আছে)` : ''
+        return { success: false, error: `বদলানোর মতো কিছু নেই${already}।` }
+      }
+
+      const reason = input.reason ? String(input.reason).trim().slice(0, 200) : null
+      const statusAfter = changes.status ? String(changes.status.after) : null
+      const stockLine = statusAfter && STOCK_EFFECT[statusAfter] ? `⚠️ ${STOCK_EFFECT[statusAfter]}।\n` : ''
+
+      const summary =
+        `📦 অর্ডার আপডেট — ${order.invoiceNum || order.id}\n`
+        + `${order.customer} · ${order.product}\n`
+        + Object.entries(changes)
+          .map(([field, v]) => `• ${field}: ${v.before || '(খালি)'} → ${v.after}`)
+          .join('\n')
+        + '\n'
+        + (unchanged.length ? `(অপরিবর্তিত: ${unchanged.join(', ')})\n` : '')
+        + (reason ? `কারণ: ${reason}\n` : '')
+        + stockLine
+        + `\n✅ approve করলে সব একসাথে বসবে, তারপর ERP থেকে পড়ে মিলিয়ে দেখানো হবে।`
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const action = await (prisma as any).agentPendingAction.create({
+        data: {
+          conversationId: input.conversationId ? String(input.conversationId) : null,
+          businessId: 'ALMA_LIFESTYLE',
+          type: 'erp_order_update',
+          payload: {
+            orderId: order.id,
+            invoiceNum: order.invoiceNum,
+            status: statusAfter,
+            fields,
+            changes,
+            reason,
+            conversationId: input.conversationId ?? null,
+          },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+      })
+
+      return {
+        success: true,
+        data: {
+          pendingActionId: action.id as string,
+          orderId: order.id,
+          changedFields: Object.keys(changes),
+          unchangedFields: unchanged,
+          message: `${Object.keys(changes).length}টি পরিবর্তনের একটাই approval card পাঠানো হয়েছে।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
 export const ERP_TOOLS: AgentTool[] = [
   get_sales_summary,
   get_orders,
+  update_order,
   get_inventory_status,
   get_product,
   get_customer_summary,

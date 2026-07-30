@@ -94,6 +94,9 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   // ── ERP reads ──────────────────────────────────────────────────────────────
   get_sales_summary: read('erp'),
   get_orders: read('erp'),
+  // B1 — the ERP's first write. Staged like its website siblings: order status
+  // moves stock, so it is never a silent change.
+  update_order: stage('erp'),
   get_inventory_status: read('erp'),
   get_product: read('erp'),
   get_customer_summary: read('erp'),
