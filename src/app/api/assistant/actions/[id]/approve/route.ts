@@ -271,6 +271,14 @@ async function runApprove(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         businessId: businessId as any,
         conversationId,
+        // PM-5: restore the turn this delegation was staged from — its mode and
+        // its read-only authorization still bind the worker, even though the run
+        // happens later and from a different entry point. The origin is
+        // overridden last: this run exists because Boss pressed Approve.
+        toolContext: {
+          ...((payload.parentToolContext as Record<string, unknown> | undefined) ?? {}),
+          instructionOrigin: 'owner_direct',
+        },
       })
       const note = result.success
         ? `🤝 ${result.roleLabel} (${result.modelLabel}) সম্পন্ন করেছে:\n\n${result.summary}`

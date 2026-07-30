@@ -404,6 +404,9 @@ async function maybeRunSpecialistByRole(
     businessId: BUSINESS_ID,
     conversationId,
     modelId: conv?.modelId ?? undefined,
+    // PM-5: a shift step runs unattended, so its effects are standing policy —
+    // the ladder and the money cap must see it that way, not as owner-direct.
+    toolContext: { instructionOrigin: 'owner_policy' },
   })
 
   if (!result.success) {
