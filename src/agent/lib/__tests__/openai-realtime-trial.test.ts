@@ -5,6 +5,7 @@ import {
   OPENAI_REALTIME_TRIAL_MODEL,
   parseOpenAIRealtimeInputProfile,
   parseOpenAIRealtimeTrialVoice,
+  selectPreferredAudioInput,
 } from '@/agent/lib/openai-realtime-trial'
 
 describe('OpenAI Realtime voice trial', () => {
@@ -37,6 +38,18 @@ describe('OpenAI Realtime voice trial', () => {
     expect(parseOpenAIRealtimeInputProfile('far_field')).toBe('far_field')
     expect(parseOpenAIRealtimeInputProfile('invalid')).toBe('far_field')
     expect(parseOpenAIRealtimeInputProfile(null)).toBe('far_field')
+  })
+
+  it('replaces a silent-prone Continuity mic with the built-in Mac microphone', () => {
+    const devices = [
+      { kind: 'audioinput', label: 'iPhone Microphone', deviceId: 'iphone' },
+      { kind: 'audioinput', label: 'MacBook Pro Microphone', deviceId: 'macbook' },
+      { kind: 'videoinput', label: 'FaceTime Camera', deviceId: 'camera' },
+    ]
+
+    expect(selectPreferredAudioInput(devices, 'iPhone Microphone')).toBe('macbook')
+    expect(selectPreferredAudioInput(devices, 'MacBook Pro Microphone')).toBeNull()
+    expect(selectPreferredAudioInput(devices, 'AirPods Microphone')).toBeNull()
   })
 
   it('builds a Bangla speech-to-speech session with responsive VAD and diagnostics', () => {

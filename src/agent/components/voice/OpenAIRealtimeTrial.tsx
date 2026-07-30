@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   OPENAI_REALTIME_TRIAL_MODEL,
   OPENAI_REALTIME_TRIAL_SECONDS,
+  selectPreferredAudioInput,
   type OpenAIRealtimeTrialVoice,
 } from '@/agent/lib/openai-realtime-trial'
 import type { VoiceState } from '@/agent/lib/voice-types'
@@ -28,6 +29,13 @@ type RealtimeEvent = {
     status_details?: { error?: { message?: string } }
   }
 }
+
+const AUDIO_CONSTRAINTS = {
+  echoCancellation: true,
+  noiseSuppression: false,
+  autoGainControl: true,
+  channelCount: 1,
+} satisfies MediaTrackConstraints
 
 function inputProfileFor(label: string): InputProfile {
   return /airpods|headset|earbud|bluetooth|lavalier|lapel|boom/i.test(label)
@@ -254,20 +262,43 @@ export default function OpenAIRealtimeTrial() {
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('microphone unavailable')
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: false,
-          autoGainControl: true,
-          channelCount: 1,
-        },
-      })
-      micStreamRef.current = stream
-      const micTrack = stream.getAudioTracks()[0]
+      let stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS })
+      let micTrack = stream.getAudioTracks()[0]
       if (!micTrack) throw new Error('microphone track unavailable')
+
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const preferredDeviceId = selectPreferredAudioInput(devices, micTrack.label)
+      let automaticallySelected = false
+      if (preferredDeviceId) {
+        try {
+          const preferredStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              ...AUDIO_CONSTRAINTS,
+              deviceId: { exact: preferredDeviceId },
+            },
+          })
+          const preferredTrack = preferredStream.getAudioTracks()[0]
+          if (preferredTrack) {
+            stream.getTracks().forEach(track => track.stop())
+            stream = preferredStream
+            micTrack = preferredTrack
+            automaticallySelected = true
+          } else {
+            preferredStream.getTracks().forEach(track => track.stop())
+          }
+        } catch {
+          // Keep the browser-selected microphone if the built-in device is unavailable.
+        }
+      }
+
+      micStreamRef.current = stream
       const inputProfile = inputProfileFor(micTrack.label)
-      setMicLabel(micTrack.label || 'Default microphone')
-      setEventStage(inputProfile === 'near_field' ? 'Headset mic প্রস্তুত' : 'Laptop mic প্রস্তুত')
+      setMicLabel(`${micTrack.label || 'Default microphone'}${automaticallySelected ? ' · auto' : ''}`)
+      setEventStage(inputProfile === 'near_field'
+        ? 'Headset mic প্রস্তুত'
+        : /macbook|built-in|internal/i.test(micTrack.label)
+          ? 'Mac mic প্রস্তুত'
+          : 'Far-field mic প্রস্তুত')
       micTrack.addEventListener('ended', () => {
         if (!intentionalCloseRef.current) {
           setStatus('error')

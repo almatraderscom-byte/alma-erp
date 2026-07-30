@@ -6,6 +6,12 @@ export const OPENAI_REALTIME_INPUT_PROFILES = ['far_field', 'near_field'] as con
 export type OpenAIRealtimeTrialVoice = (typeof OPENAI_REALTIME_TRIAL_VOICES)[number]
 export type OpenAIRealtimeInputProfile = (typeof OPENAI_REALTIME_INPUT_PROFILES)[number]
 
+type AudioInputDescriptor = {
+  deviceId: string
+  kind: string
+  label: string
+}
+
 type TrialEnvironment = {
   NODE_ENV?: string
   VERCEL_ENV?: string
@@ -71,6 +77,21 @@ export function parseOpenAIRealtimeInputProfile(value: string | null): OpenAIRea
   return OPENAI_REALTIME_INPUT_PROFILES.includes(value as OpenAIRealtimeInputProfile)
     ? value as OpenAIRealtimeInputProfile
     : 'far_field'
+}
+
+export function selectPreferredAudioInput(
+  devices: readonly AudioInputDescriptor[],
+  currentLabel: string,
+): string | null {
+  if (!/iphone|ipad|continuity/i.test(currentLabel)) return null
+
+  const builtIn = devices.find(device => (
+    device.kind === 'audioinput'
+    && /macbook|built-in|internal microphone/i.test(device.label)
+    && !/iphone|ipad|continuity/i.test(device.label)
+  ))
+
+  return builtIn?.deviceId || null
 }
 
 export function buildOpenAIRealtimeTrialSession(
