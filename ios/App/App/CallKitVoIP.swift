@@ -81,10 +81,10 @@ final class CallKitVoIP: NSObject {
         config.maximumCallsPerCallGroup = 1
         config.maximumCallGroups = 1
         config.supportedHandleTypes = [.generic]
-        // Distinct ALMA ring instead of the system default (owner device, build
-        // 89: the incoming agent call arrived with no audible ring). The device's
-        // ringer switch / Focus still silences CallKit rings — that is iOS policy.
-        config.ringtoneSound = "alma_urgent.caf"
+        // System DEFAULT ringtone (owner 2026-07-30: "iOS default ring tone
+        // rakho" — the custom alma_urgent.caf is out). Leaving ringtoneSound
+        // unset makes CallKit play the user's own iOS ringtone. The ringer
+        // switch / Focus still silences CallKit rings — that is iOS policy.
         provider = CXProvider(configuration: config)
         super.init()
         provider.setDelegate(self, queue: nil)
