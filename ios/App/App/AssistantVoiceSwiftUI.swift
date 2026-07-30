@@ -458,6 +458,15 @@ final class AlmaVoiceEngine {
             try? await Task.sleep(nanoseconds: 12_000_000_000)
             guard !Task.isCancelled, !self.closed, generation == self.connectionGeneration,
                   !self.liveActive else { return }
+            // Socket setup DONE but audio still waiting on a late CallKit
+            // didActivate: the ~10s audio-retry ladder can outlive this 12s
+            // watchdog (Codex P2) — grant it one more full window before
+            // declaring the call dead.
+            if self.live.isAwaitingCallKitAudio {
+                try? await Task.sleep(nanoseconds: 12_000_000_000)
+                guard !Task.isCancelled, !self.closed, generation == self.connectionGeneration,
+                      !self.liveActive else { return }
+            }
             self.live.stop()
             self.liveConnectionFailed(
                 error: nil,
@@ -2051,6 +2060,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// landed yet, audio setup is retried from callKitAudioActivated().
     var callKitOwnsAudioSession = false
     private var audioConfigPending = false
+    /// Engine watchdog peek: socket setup finished but audio is still waiting on
+    /// CallKit's didActivate (the retry ladder is running).
+    var isAwaitingCallKitAudio: Bool { audioConfigPending }
     /// True when hardware echo cancellation could not be enabled (CallKit-owned
     /// session). The barge-in gate compensates with a higher echo floor.
     private(set) var voiceProcessingUnavailable = false
@@ -2427,6 +2439,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             }
             if !listenGateOpen, listenSpeechFrames >= 3 {
                 listenGateOpen = true
+                // Reset on BOTH transitions (Codex P2): a long utterance grows
+                // the counter far past the open threshold, and decrement-by-one
+                // silence would let the very next silent frame reopen the gate
+                // and flush overlapping pre-roll in an open/close flap.
+                listenSpeechFrames = 0
                 preRoll = listenPreRoll
                 listenPreRoll.removeAll(keepingCapacity: true)
                 #if DEBUG
@@ -2434,6 +2451,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 #endif
             } else if listenGateOpen, listenSilenceFrames >= 55 {
                 listenGateOpen = false
+                listenSpeechFrames = 0
                 #if DEBUG
                 NSLog("ALMA-VOICE listen gate closed")
                 #endif
