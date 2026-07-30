@@ -1960,9 +1960,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         defer { prewarmLock.unlock() }
         guard let candidate = prewarmed else { return nil }
         prewarmed = nil
-        // A ring can last 75 s and answering can lag — accept up to 2 minutes,
-        // far inside the token's 30-minute expiry.
-        guard Date().timeIntervalSince(candidate.at) < 120 else { return nil }
+        // Bounded by the token's SERVER-SIDE newSessionExpireTime (120 s, raised
+        // from 60 s alongside this feature — Codex P1): past that, Google will
+        // refuse to open a session no matter the 30-minute overall expiry. Keep
+        // a 30 s margin for the mint response + websocket setup.
+        guard Date().timeIntervalSince(candidate.at) < 90 else { return nil }
         return candidate
     }
 
@@ -3106,6 +3108,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         echoCalibrationFrames = 0
         echoFloorRMS = 0.008
         micPreRoll.removeAll(keepingCapacity: true)
+        // Listening-gate state must not leak into the next session (Codex P2):
+        // an open gate would stream background audio at call start, stale
+        // pre-roll would flush a previous call's PCM, and a noise floor learned
+        // in another room could suppress speech in the new one.
+        listenPreRoll.removeAll(keepingCapacity: true)
+        listenGateOpen = false
+        listenSpeechFrames = 0
+        listenSilenceFrames = 0
+        listenNoiseFloorRMS = 0.004
         audioLock.unlock()
     }
 
