@@ -1123,6 +1123,17 @@ const STOCK_EFFECT: Record<string, string> = {
   returned_unpaid: 'স্টক ফেরত যাবে',
 }
 
+/**
+ * A card is read by a person in a hurry. The first version of this printed an
+ * order's whole `ORDER_ITEMS_JSON` blob as a before-value — screens of JSON
+ * around the one line that mattered.
+ */
+function forOrderCard(value: unknown): string {
+  if (value == null || value === '') return '(খালি)'
+  const text = String(value).replace(/\s+/g, ' ').trim()
+  return text.length > 70 ? `${text.slice(0, 70)}…` : text
+}
+
 async function findOrderByNumber(orderNumber: string) {
   const key = orderNumber.trim()
   if (!key) return null
@@ -1155,7 +1166,12 @@ const update_order: AgentTool = {
       status: { type: 'string', enum: [...ORDER_STATUSES], description: 'New status.' },
       courier: { type: 'string', description: 'Courier name (Steadfast, Pathao, RedX …).' },
       trackingId: { type: 'string', description: 'Courier tracking id.' },
-      notes: { type: 'string', description: 'Note on the order — replaces the existing note.' },
+      notes: {
+        type: 'string',
+        description:
+          'A note to ADD to the order (appended — the existing note is never replaced). '
+          + 'Only send this when Boss asked for a note; do not narrate your own change here.',
+      },
       reason: { type: 'string', description: 'Why, in one line — stored with cancel/return, and shown on the card.' },
       conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
@@ -1190,7 +1206,6 @@ const update_order: AgentTool = {
       for (const [key, current] of [
         ['courier', order.courier],
         ['trackingId', order.trackingId],
-        ['notes', order.notes],
       ] as const) {
         const raw = input[key]
         if (raw == null) continue
@@ -1199,6 +1214,26 @@ const update_order: AgentTool = {
         else {
           changes[key] = { before: current, after: next }
           fields[key] = next
+        }
+      }
+
+      // The note is APPENDED, never replaced.
+      //
+      // Caught on the card, one click before it landed (2026-07-31): this ERP
+      // keeps a machine-readable `ORDER_ITEMS_JSON:{…}` payload — every line
+      // item, size, price and COGS of the order — in the very same `notes`
+      // column a human note goes in. Replacing the field would have deleted the
+      // order's items to write one sentence. A note is worth adding; nothing a
+      // note says is worth that.
+      if (input.notes != null) {
+        const note = String(input.notes).trim()
+        const existing = String(order.notes ?? '')
+        if (!note) unchanged.push('notes')
+        else if (existing.includes(note)) unchanged.push('notes')
+        else {
+          const merged = existing ? `${existing}\n${note}` : note
+          changes.notes = { before: existing ? '(আগের নোট অপরিবর্তিত থাকবে)' : '(খালি)', after: note }
+          fields.notes = merged
         }
       }
 
@@ -1215,7 +1250,7 @@ const update_order: AgentTool = {
         `📦 অর্ডার আপডেট — ${order.invoiceNum || order.id}\n`
         + `${order.customer} · ${order.product}\n`
         + Object.entries(changes)
-          .map(([field, v]) => `• ${field}: ${v.before || '(খালি)'} → ${v.after}`)
+          .map(([field, v]) => `• ${field}: ${forOrderCard(v.before)} → ${forOrderCard(v.after)}`)
           .join('\n')
         + '\n'
         + (unchanged.length ? `(অপরিবর্তিত: ${unchanged.join(', ')})\n` : '')

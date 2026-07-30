@@ -80,3 +80,25 @@ describe('the gates, before the owner is ever asked', () => {
     expect(orderNumber?.description).toMatch(/invoice number/i)
   })
 })
+
+/**
+ * Caught on the card, one click before it landed (2026-07-31).
+ *
+ * This ERP stores a machine-readable `ORDER_ITEMS_JSON:{…}` payload — every line
+ * item, size, price and COGS — in the same `notes` column a human note goes in.
+ * The first version replaced that field, so a one-sentence note would have
+ * deleted the order's items. The card is what made it visible; these keep it
+ * impossible.
+ */
+describe('the note is added, never substituted', () => {
+  it('says so in the schema, where the head reads it', () => {
+    const notes = (tool.input_schema.properties as Record<string, { description?: string }>).notes
+    expect(notes?.description).toMatch(/appended/i)
+    expect(notes?.description).toMatch(/never replaced/i)
+  })
+
+  it('tells the head not to narrate its own change into the order', () => {
+    const notes = (tool.input_schema.properties as Record<string, { description?: string }>).notes
+    expect(notes?.description).toMatch(/do not narrate/i)
+  })
+})
