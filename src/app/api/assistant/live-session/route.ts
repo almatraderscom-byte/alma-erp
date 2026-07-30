@@ -30,7 +30,12 @@ export async function POST(req: NextRequest) {
   const model = process.env.GEMINI_LIVE_APP_MODEL?.trim() || DEFAULT_LIVE_VOICE_MODEL
   const voice = process.env.GEMINI_LIVE_APP_VOICE?.trim() || DEFAULT_LIVE_VOICE_NAME
   const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString()
-  const newSessionExpiresAt = new Date(Date.now() + 60_000).toISOString()
+  // 120s (was 60s): the native app now prewarms this token when an agent call
+  // RINGS (ring window 75s) — the new-session window must outlive the whole
+  // ring plus answer/connect latency, or a late answer hands Google a token
+  // that can no longer open a session (Codex P1, PR #657). Single-use + the
+  // 30-minute hard expiry above still bound the exposure.
+  const newSessionExpiresAt = new Date(Date.now() + 120_000).toISOString()
 
   try {
     const client = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: 'v1alpha' } })

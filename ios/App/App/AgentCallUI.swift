@@ -137,6 +137,74 @@ final class AgentCallController: NSObject {
     }
 }
 
+// MARK: - Aurora backdrop (Agent-call-owned copy — parallel-session rule: page
+// files never import another page's helpers, so the shared look is duplicated
+// from the Orders/Assistant spec verbatim, pinned to its DARK-mode palette
+// because a call screen is always dark)
+
+@available(iOS 17.0, *)
+private struct AgentCallAurora: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
+
+    var body: some View {
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(0.60), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(0.55), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(0.50), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(0.55), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(0.45), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                Color(red: 0.078, green: 0.078, blue: 0.094)
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(0.22), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(0.28), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff instead of live blur — zero
+                        // gaussian passes (app-wide perf rule 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
+            }
+            .onAppear { updateDrift() }
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
+    }
+}
+
 // MARK: - The WhatsApp-style call screen
 
 @available(iOS 17.0, *)
@@ -147,16 +215,9 @@ struct AgentCallScreen: View {
 
     var body: some View {
         ZStack {
-            // ALMA aurora-dark call backdrop.
-            LinearGradient(
-                colors: [Color(red: 0.05, green: 0.09, blue: 0.09),
-                         Color(red: 0.03, green: 0.05, blue: 0.06)],
-                startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
-            RadialGradient(
-                colors: [Color(red: 0.88, green: 0.48, blue: 0.37).opacity(0.16), .clear],
-                center: .init(x: 0.5, y: 0.22), startRadius: 10, endRadius: 380)
-                .ignoresSafeArea()
+            // ALMA living aurora backdrop (owner 2026-07-30: call screen must use
+            // the design-system aurora in its dark-mode colors, not flat black).
+            AgentCallAurora()
 
             VStack(spacing: 0) {
                 Spacer().frame(height: 64)
