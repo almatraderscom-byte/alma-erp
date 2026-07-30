@@ -2352,9 +2352,16 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // app-foreground hook, which is exactly why the call only spoke
             // once the calling screen appeared (owner device 2026-07-31).
             nudgeSpeakerRoute()
+            // Mirror recoverAudio(): a mid-turn activation can stop the PLAYER
+            // even when the engine restarts — without play() the queued
+            // greeting stays silent until its watchdog expires (Codex P2).
+            audioLock.lock()
+            let shouldPlay = playbackStarted
+            audioLock.unlock()
             audioQueue.async { [weak self] in
                 guard let self, !self.stopped else { return }
                 if !self.audioEngine.isRunning { try? self.audioEngine.start() }
+                if shouldPlay, !self.player.isPlaying { self.player.play() }
             }
             return
         }
