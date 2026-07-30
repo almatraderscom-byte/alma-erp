@@ -71,7 +71,8 @@ final class AgentCallController: NSObject {
     /// the failure is diagnosable without a console (owner builds 89/90).
     func reportLiveFailure(_ reason: String) {
         guard let callId = activeCallId else { return }
-        Task { await CallKitVoIP.postAgentCallStatus(callId, status: "answered", note: reason) }
+        // Note-only: never replay a status transition just to carry a diagnostic.
+        Task { await CallKitVoIP.postAgentCallStatus(callId, status: nil, note: reason) }
     }
 
     /// The brief arrives AFTER start() (answer fulfills before any network call —
