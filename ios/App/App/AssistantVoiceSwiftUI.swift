@@ -2282,13 +2282,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 echoFloorRMS = max(echoFloorRMS, rms * 0.85)
                 bargeSpeechFrames = 0
             } else {
-                // Without hardware AEC the speaker bleeds into the mic, so the
-                // gate must sit well above the (higher) measured echo floor or
-                // the agent interrupts itself.
-                let floorGain = voiceProcessingUnavailable ? 3.2 : 2.35
-                let floorBias = voiceProcessingUnavailable ? 0.02 : 0.008
-                let minRMS = voiceProcessingUnavailable ? bargeInMinimumRMS * 1.8 : bargeInMinimumRMS
-                let threshold = max(minRMS, echoFloorRMS * floorGain + floorBias)
+                // LOCKED tuning for the normal (hardware-AEC) path — kept
+                // literally, contract-tested. Without AEC (CallKit-owned
+                // session) the speaker bleeds into the mic, so that path alone
+                // uses a higher gate or the agent interrupts itself.
+                let threshold = voiceProcessingUnavailable
+                    ? max(bargeInMinimumRMS * 1.8, echoFloorRMS * 3.2 + 0.02)
+                    : max(bargeInMinimumRMS, echoFloorRMS * 2.35 + 0.008)
                 if rms >= threshold {
                     bargeSpeechFrames += 1
                 } else {
