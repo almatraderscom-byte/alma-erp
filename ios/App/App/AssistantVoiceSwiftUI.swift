@@ -1290,7 +1290,29 @@ final class AlmaVoiceEngine {
             transcript = text
             feedUserLineId = feedUpsert(id: nil, kind: .user, text: text)
         }
+        // DETERMINISTIC hang-up (owner bug 2026-07-30, sim-reproduced even with
+        // the end_call tool present: Gemini says "আল্লাহ হাফেজ" but skips the
+        // tool). If Boss's own words ask to hang up, the call ends after the
+        // model's goodbye finishes — model cooperation not required.
+        if Self.hangupIntent(in: transcript) {
+            #if DEBUG
+            NSLog("ALMA-VOICE hang-up intent heard in input transcript")
+            #endif
+            scheduleModelRequestedEnd(hardFallback: 20)
+        }
         if state != .speaking { state = .listening }
+    }
+
+    /// Boss's spoken request to end the call. Kept deliberately narrow — every
+    /// phrase is a closing formula, not something said mid-conversation.
+    static func hangupIntent(in text: String) -> Bool {
+        let t = text.lowercased()
+        if t.contains("আল্লাহ হাফেজ") || t.contains("আল্লাহহাফেজ") { return true }
+        if t.contains("রেখে দাও") || t.contains("রেখে দেন") || t.contains("রেখে দে ") { return true }
+        if t.contains("কল কাটো") || t.contains("কল কাট ") || t.contains("কল রাখো") { return true }
+        if t.contains("ফোন রাখো") || t.contains("ফোন রাখ ") || t.contains("এখন রাখি") || t.contains("আচ্ছা রাখি") { return true }
+        if t.contains("hang up") || t.contains("খোদা হাফেজ") { return true }
+        return false
     }
 
     func liveOutputTranscript(_ text: String) {
@@ -1306,6 +1328,14 @@ final class AlmaVoiceEngine {
             state = .speaking
             feedFinalizeUser()          // Boss's sentence is done once ALMA starts answering
         } else {
+            // Model asked to hang up (end_call): the goodbye just finished
+            // playing — actually end the call now (owner bug 2026-07-30:
+            // "আল্লাহ হাফেজ বলার পরও রাখে না").
+            if modelEndPending {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                    self?.performModelRequestedEnd()
+                }
+            }
             feedFinalizeAgent()         // agent turn ended — next reply is a new line
             if liveActive { state = liveToolTurnPending ? .thinking : .listening }
             // A tool result that arrived MID-SPEECH was held back (Gemini drops
@@ -1419,6 +1449,42 @@ final class AlmaVoiceEngine {
         // nudge silently erased the pending flag (sim finding 2026-07-23).
         feedFinalizeAgent()
         state = liveToolTurnPending ? .thinking : .listening
+    }
+
+    /// Model called end_call (Boss asked to hang up): end the call for real once
+    /// the goodbye finishes playing. Fallbacks cover a goodbye that never
+    /// arrives (2.5s if nothing is playing, 8s hard) so the call can never
+    /// hang half-alive.
+    private var modelEndPending = false
+
+    func scheduleModelRequestedEnd(hardFallback: TimeInterval = 8) {
+        guard !modelEndPending, !closed else { return }
+        modelEndPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + hardFallback) { [weak self] in
+            self?.performModelRequestedEnd()
+        }
+        if state != .speaking, hardFallback <= 8 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                guard let self, self.modelEndPending, self.state != .speaking else { return }
+                self.performModelRequestedEnd()
+            }
+        }
+    }
+
+    private func performModelRequestedEnd() {
+        guard modelEndPending, !closed else { return }
+        // Mid-tool (e.g. "পড়েছি, রাখো" → mark_salah still running): let the tool
+        // reply first; the next playback-finish or the hard fallback ends it.
+        if liveToolTurnPending { return }
+        modelEndPending = false
+        // Agent call: go through the controller so its window tears down too
+        // (on-device the engine end also closes the CallKit call → 'completed').
+        if #available(iOS 17.0, *), AgentCallController.shared.isActive,
+           AgentCallController.shared.engine === self {
+            AgentCallController.shared.endFromUI()
+        } else {
+            end()
+        }
     }
 
     func liveDidFail(_ message: String) {
@@ -1991,6 +2057,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var reconnecting = false
     private var pingTimer: DispatchSourceTimer?
     private var awaitingPong = false
+    /// One serial home for keepalive state + reconnect entry (Codex P2 round 4):
+    /// the timer, ping completions, and receive-failure recovery all funnel here
+    /// so two callbacks can never both pass recoverConnection's guards and
+    /// tear down / replace the socket concurrently.
+    private let netQueue = DispatchQueue(label: "alma.voice.net")
     private var hasConnectedOnce = false
     private var mintedSession: SessionResponse?
     private var mintedAt = Date.distantPast
@@ -2040,6 +2111,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var listenSpeechFrames = 0
     private var listenSilenceFrames = 0
     private var listenNoiseFloorRMS = 0.004
+    private var listenCalibrationFrames = 0
     private let playbackPrebufferSeconds = 0.16
     private let bargeInMinimumRMS = 0.045
     private let bargeInRequiredFrames = 12       // ≈240ms at the 20ms input tap
@@ -2120,6 +2192,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         তুমি ALMA — Boss-এর ব্যক্তিগত AI সহকারী, এখন Boss-এর সাথে ফোন কলে। একজন স্বাভাবিক, উষ্ণ মানুষের মতো ঝরঝরে বাংলায় কথা বলবে।
         কখন নিজে উত্তর দেবে: সালাম, কুশল, হালকা গল্প, মতামত, সাধারণ জ্ঞান — সাথে সাথে নিজেই ছোট করে উত্তর দেবে; কোনো tool ডাকবে না, দেরি করবে না।
         কখন quick_erp_lookup: আজকের হাজিরা, বিক্রি, অর্ডার, স্টক, নামাজ, পেন্ডিং অনুমোদন — এমন সাধারণ তথ্য-প্রশ্নে সরাসরি quick_erp_lookup চালাবে (কয়েক সেকেন্ডে ফল আসে), আগে ছোট্ট ack বলবে। কখন run_agent_turn: ব্যবসার তথ্য, হিসাব, টাকা, staff, অর্ডার, রিপোর্ট, মেমরি, বা কোনো কাজ করার অনুরোধ — তখনই কেবল run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না — একমাত্র উৎস run_agent_turn-এর result। run_agent_turn-এর request সবসময় Boss-এর নিজের ভাষায় (বাংলা/বাংলিশ) হুবহু দেবে — ইংরেজিতে অনুবাদ করলে ভেতরের রাউটিং ভুল মডেলে যায়।
+        Boss কল রাখতে বললে ("রাখি", "রেখে দাও", "কল কাটো", বিদায়ী সালাম): এক ছোট্ট বাক্যে সালাম-বিদায় বলবে এবং সাথে সাথে end_call চালাবে — শুধু মুখে বিদায় বললে কল কাটে না।
         ভেতরের শব্দ মুখে আনবে না: tool, function, acknowledgement, STATUS_NOTE, system, agent — এগুলো কখনো উচ্চারণ করবে না।
         STATUS_NOTE লেখা বার্তা এলে সেটা Boss-এর কথা নয়; STATUS_NOTE-এর জবাবে run_agent_turn কখনোই ডাকবে না — শুধু তার ভাবটুকু নিজের ভাষায় এক ছোট স্বাভাবিক বাক্যে বলবে — প্রতিবার নতুনভাবে, একই বাক্য দুবার কখনো নয়।
         Boss-এর কথা সত্যিই অস্পষ্ট হলে কেবল তখনই ছোট প্রশ্নে পরিষ্কার করে নেবে; পরিষ্কার অনুরোধে পাল্টা নিশ্চিতকরণ প্রশ্ন করবে না — ছোট্ট এক কথা বলে সাথে সাথে run_agent_turn চালাবে। ack বলার পর tool চালানো কখনো ভুলবে না।
@@ -2165,6 +2238,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     ]],
                     "required": ["tool"],
                 ],
+            ], [
+                "name": "end_call",
+                "description": "কলটি সত্যিই কেটে দেয়। Boss 'রাখি/রেখে দাও/কল কাটো/আল্লাহ হাফেজ' বলে কল শেষ করতে চাইলে — ছোট্ট সালাম-বিদায় বলার সাথে সাথে এটা চালাবে। মুখে বিদায় বললে কল কাটে না; এই tool না চালালে Boss-কে নিজ হাতে কাটতে হয়।",
+                "parameters": ["type": "OBJECT", "properties": [:]],
             ], [
                 "name": "run_agent_turn",
                 "description": "Boss-এর অনুরোধ ALMA head agent-এ পাঠায় — শুধু কাজ করা, কিছু পাঠানো/পরিবর্তন, অনুমোদন, মেমরি বা জটিল বিশ্লেষণের জন্য। সাধারণ তথ্য দেখার জন্য এটা নয় — সেগুলোতে quick_erp_lookup ব্যবহার করবে (অনেক দ্রুত)। request-টি Boss-এর কথার হুবহু বাংলা/বাংলিশ রূপে দেবে — ইংরেজিতে অনুবাদ একদম নয়।",
@@ -2426,6 +2503,20 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // networks: idle uplink drops to zero.
             listenPreRoll.append(bytes)
             if listenPreRoll.count > 15 { listenPreRoll.removeFirst(listenPreRoll.count - 15) }
+            // Two ways the floor learns UPWARD even when noise starts above the
+            // threshold (Codex P2 round 4 — road/fan noise from frame one would
+            // otherwise always classify as speech and hold the gate open):
+            // a short unconditional calibration window at arm time, plus an
+            // always-on very slow tracker (0.2%/frame ≈ tens of seconds of
+            // CONTINUOUS sound become the floor; 2–3s speech barely moves it).
+            listenNoiseFloorRMS += (rms - listenNoiseFloorRMS) * 0.002
+            if listenCalibrationFrames < 10 {
+                listenCalibrationFrames += 1
+                listenNoiseFloorRMS = max(listenNoiseFloorRMS, rms * 0.85)
+                listenSpeechFrames = 0
+                audioLock.unlock()
+                return
+            }
             // Calibrated threshold, no hard 0.010 floor (Codex P2): a quiet or
             // distant speaker can sit below a fixed bound, and a closed gate
             // means their speech would never reach the server at all. The floor
@@ -2571,6 +2662,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     self?.engine?.runQuickLookup(tool: toolName, callId: id)
                 }
             }
+            for call in calls where call["name"] as? String == "end_call" {
+                let id = call["id"] as? String ?? UUID().uuidString
+                #if DEBUG
+                NSLog("ALMA-VOICE toolCall end_call — hanging up after goodbye")
+                #endif
+                sendToolResponse(callId: id, result: "ঠিক আছে — বিদায় বলা শেষ হলেই কল কেটে যাবে।")
+                DispatchQueue.main.async { [weak self] in self?.engine?.scheduleModelRequestedEnd() }
+            }
             for call in calls where call["name"] as? String == "run_agent_turn" {
                 let id = call["id"] as? String ?? UUID().uuidString
                 let args = call["args"] as? [String: Any]
@@ -2598,7 +2697,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     // recoverConnection(), so the resumed session is back in a few seconds.
     private func startKeepalive() {
         stopKeepalive()
-        let t = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        let t = DispatchSource.makeTimerSource(queue: netQueue)
         t.schedule(deadline: .now() + 5, repeating: 5)
         t.setEventHandler { [weak self] in self?.keepaliveTick() }
         t.resume()
@@ -2624,15 +2723,18 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         awaitingPong = true
         socket.sendPing { [weak self] error in
-            guard let self, self.ws === socket, !self.stopped else { return }
-            if error == nil {
-                self.awaitingPong = false
-            } else {
-                #if DEBUG
-                NSLog("ALMA-VOICE keepalive: ping failed — reconnecting (%@)", String(describing: error))
-                #endif
-                self.awaitingPong = false
-                self.recoverConnection()
+            // Hop back to netQueue — URLSession delivers this on its own queue.
+            self?.netQueue.async {
+                guard let self, self.ws === socket, !self.stopped else { return }
+                if error == nil {
+                    self.awaitingPong = false
+                } else {
+                    #if DEBUG
+                    NSLog("ALMA-VOICE keepalive: ping failed — reconnecting (%@)", String(describing: error))
+                    #endif
+                    self.awaitingPong = false
+                    self.recoverConnection()
+                }
             }
         }
     }
@@ -2645,6 +2747,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// AI call survives every rotation. Attempts are capped so a hard outage still
     /// fails loud instead of looping.
     private func recoverConnection(forceFreshToken: Bool = false, allowInitial: Bool = false) {
+        // Serialize on netQueue: receive failures (URLSession queue), goAway
+        // (delegate queue) and keepalive stalls (timer) may race — only one may
+        // pass the !reconnecting guard and replace the socket.
+        netQueue.async { [weak self] in
+            self?.recoverConnectionOnNetQueue(forceFreshToken: forceFreshToken, allowInitial: allowInitial)
+        }
+    }
+
+    private func recoverConnectionOnNetQueue(forceFreshToken: Bool, allowInitial: Bool) {
         guard !stopped, !reconnecting else { return }
         // Rejected INITIAL setups may arrive as a socket close (no error JSON).
         // If we asked for affective dialog, retry the very first connect once
@@ -3059,6 +3170,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         listenGateOpen = false
         listenSpeechFrames = 0
         listenSilenceFrames = 0
+        listenNoiseFloorRMS = 0.004
+        listenCalibrationFrames = 0
         audioLock.unlock()
     }
 
@@ -3148,6 +3261,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         listenSpeechFrames = 0
         listenSilenceFrames = 0
         listenNoiseFloorRMS = 0.004
+        listenCalibrationFrames = 0
         audioLock.unlock()
     }
 
