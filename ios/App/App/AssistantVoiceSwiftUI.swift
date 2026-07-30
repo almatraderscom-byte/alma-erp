@@ -2426,7 +2426,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // networks: idle uplink drops to zero.
             listenPreRoll.append(bytes)
             if listenPreRoll.count > 15 { listenPreRoll.removeFirst(listenPreRoll.count - 15) }
-            let gateThreshold = max(0.010, listenNoiseFloorRMS * 3)
+            // Calibrated threshold, no hard 0.010 floor (Codex P2): a quiet or
+            // distant speaker can sit below a fixed bound, and a closed gate
+            // means their speech would never reach the server at all. The floor
+            // EMA tracks the room, so 3× floor adapts down in quiet rooms; the
+            // tiny epsilon only guards digital-silence jitter.
+            let gateThreshold = max(0.003, listenNoiseFloorRMS * 3)
             if rms >= gateThreshold {
                 listenSpeechFrames += 1
                 listenSilenceFrames = 0
@@ -3046,6 +3051,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         bargeSpeechFrames = 0
         echoCalibrationFrames = 0
         echoFloorRMS = 0.008
+        // The listening gate must not carry audio or detector state across the
+        // mute boundary (Codex P2): retained pre-roll chunks would otherwise be
+        // flushed ahead of the first post-unmute utterance, and an open gate
+        // would resume as open.
+        listenPreRoll.removeAll(keepingCapacity: true)
+        listenGateOpen = false
+        listenSpeechFrames = 0
+        listenSilenceFrames = 0
         audioLock.unlock()
     }
 
