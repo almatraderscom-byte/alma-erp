@@ -103,8 +103,19 @@ const delegate_to_specialist: AgentTool = {
       }
     }
 
-    const { runSubAgent } = await import('@/agent/lib/models/subagent')
-    const result = await runSubAgent({ role, task, businessId, conversationId, modelId })
+    const { runSubAgent, delegatedToolContextFrom } = await import('@/agent/lib/models/subagent')
+    // PM-5: hand the specialist the turn it is running inside. Without this the
+    // worker escaped the same-turn duplicate guard, the conversation's
+    // permission mode and a read-only turn authorization — delegation became a
+    // way around the rules the head obeys.
+    const result = await runSubAgent({
+      role,
+      task,
+      businessId,
+      conversationId,
+      modelId,
+      toolContext: delegatedToolContextFrom(input),
+    })
 
     if (!result.success) {
       return { success: false, error: result.error ?? 'sub-agent failed' }

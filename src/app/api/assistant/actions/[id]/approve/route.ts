@@ -271,6 +271,9 @@ async function runApprove(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         businessId: businessId as any,
         conversationId,
+        // PM-5: this run exists because Boss pressed Approve, so its effects are
+        // owner-directed — not a worker acting on the model's own initiative.
+        toolContext: { instructionOrigin: 'owner_direct' },
       })
       const note = result.success
         ? `🤝 ${result.roleLabel} (${result.modelLabel}) সম্পন্ন করেছে:\n\n${result.summary}`

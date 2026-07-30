@@ -34,6 +34,8 @@ export async function runAdapterToolLoop(args: {
   maxIterations?: number
   conversationId?: string
   businessId: AgentBusinessId
+  /** PM-5 — the delegating turn's context, so a worker obeys the same rules. */
+  toolContext?: Record<string, unknown>
   signal?: AbortSignal
 }): Promise<AdapterTurnResult> {
   const maxIterations = args.maxIterations ?? 4
@@ -98,6 +100,7 @@ export async function runAdapterToolLoop(args: {
       const result = await executeTool(call.name, call.input, {
         conversationId: args.conversationId,
         businessId: args.businessId,
+        ...(args.toolContext ?? {}),
       })
       messages = [
         ...messages,

@@ -926,6 +926,18 @@ export async function runRegisteredTool(
     const handlerContext = { ...serverContext }
     delete handlerContext.turnAuthorization
 
+    // PM-5 — the turn's own rules, in one place a delegating tool can forward.
+    // `turnAuthorization` is stripped above so it never reaches a handler as a
+    // stray argument; a tool that spawns a sub-agent still has to pass it on, or
+    // the worker runs outside the read-only turn, the permission mode and the
+    // same-turn duplicate guard that bind the head.
+    handlerContext.delegatedToolContext = {
+      ...(ctx.turnId ? { turnId: ctx.turnId } : {}),
+      ...(ctx.permissionMode ? { permissionMode: ctx.permissionMode } : {}),
+      ...(ctx.turnAuthorization ? { turnAuthorization: ctx.turnAuthorization } : {}),
+      ...(ctx.instructionOrigin ? { instructionOrigin: ctx.instructionOrigin } : {}),
+    }
+
     // Phase 53/65: route direct write effects through the exactly-once effect
     // engine (durable run + append-only ledger; ledger failure BLOCKS the write
     // — there is NO direct-handler fallback). Phase 65 replaces the binary

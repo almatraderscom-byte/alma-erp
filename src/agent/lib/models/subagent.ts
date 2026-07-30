@@ -23,6 +23,7 @@ import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { SPECIALIST_ROLES, type SpecialistRole, type SpecialistRoleDef } from '@/agent/lib/models/specialist-roles'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
+import type { OwnerTurnAuthorization } from '@/agent/lib/turn-authorization'
 import {
   resolveSubagentModel,
   fallbackModelForTier,
@@ -84,11 +85,63 @@ function getClient(): Anthropic {
   return globalForSub.subAnthropic
 }
 
+/**
+ * PM-5 — the half of the turn a delegated specialist used to lose.
+ *
+ * A specialist ran `executeTool` with `{conversationId, businessId}` and nothing
+ * else, so everything scoped to the TURN simply did not exist for it: the
+ * same-turn duplicate guard had no turnId to key on (the head could stage a card
+ * and its worker could stage the same one again), the conversation's permission
+ * mode was absent (Plan withholds effects from the head and from nobody else),
+ * a read-only turn authorization did not reach it, and the instruction origin
+ * defaulted instead of inheriting.
+ *
+ * Delegation must not be a way around the turn's own rules. The head passes its
+ * context down; the specialist runs inside it.
+ */
+export interface DelegatedToolContext {
+  /** Same turn as the head — this is what makes the duplicate guard work. */
+  turnId?: string
+  /** PM-1/PM-2: the conversation's mode applies to delegated work too. */
+  permissionMode?: string
+  /** A read-only turn stays read-only through the hop. */
+  turnAuthorization?: OwnerTurnAuthorization
+  instructionOrigin?: 'owner_direct' | 'owner_policy' | 'model_initiative' | 'external_content'
+}
+
+/**
+ * Pick the inheritable fields out of a handler's merged server context.
+ *
+ * `delegatedToolContext` is what the registry assembles for exactly this hop —
+ * it is the only place `turnAuthorization` survives, because the raw field is
+ * stripped before a handler sees it. The flat fields are the fallback for
+ * callers that build their own context.
+ */
+export function delegatedToolContextFrom(source: Record<string, unknown>): DelegatedToolContext {
+  const packed = (source.delegatedToolContext as Record<string, unknown> | undefined) ?? {}
+  const pick = (key: string): unknown => packed[key] ?? source[key]
+  const origin = pick('instructionOrigin')
+  const turnId = pick('turnId')
+  const permissionMode = pick('permissionMode')
+  return {
+    turnId: typeof turnId === 'string' ? turnId : undefined,
+    permissionMode: typeof permissionMode === 'string' ? permissionMode : undefined,
+    turnAuthorization: (pick('turnAuthorization') as OwnerTurnAuthorization | undefined) ?? undefined,
+    instructionOrigin:
+      origin === 'owner_direct' || origin === 'owner_policy'
+        || origin === 'model_initiative' || origin === 'external_content'
+        ? origin
+        : undefined,
+  }
+}
+
 export interface RunSubAgentParams {
   role: SpecialistRole
   task: string
   businessId: AgentBusinessId
   conversationId?: string
+  /** The parent turn's context — see DelegatedToolContext. */
+  toolContext?: DelegatedToolContext
   /** Ignored for tier routing — critical roles always Claude. Head model kept for logs only. */
   modelId?: string | null
   signal?: AbortSignal
@@ -151,6 +204,7 @@ async function runAnthropicSubAgent(args: {
   role: SpecialistRole
   businessId: AgentBusinessId
   conversationId?: string
+  toolContext?: DelegatedToolContext
   signal?: AbortSignal
 }): Promise<{ summary: string; completed: boolean; toolsUsed: string[]; inputTokens: number; outputTokens: number }> {
   let messages: Anthropic.Messages.MessageParam[] = [{ role: 'user', content: args.task }]
@@ -204,6 +258,8 @@ async function runAnthropicSubAgent(args: {
       const result = await executeTool(tu.name, tu.input as Record<string, unknown>, {
         conversationId: args.conversationId,
         businessId: args.businessId,
+        // PM-5: the parent turn's rules travel with the delegation.
+        ...(args.toolContext ?? {}),
       })
       toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(annotateEmptyResult(result)) })
       if (tu.name === FIND_TOOL_NAME && result.success) {
@@ -294,6 +350,7 @@ async function runWithModel(
       role: params.role,
       businessId: params.businessId,
       conversationId: params.conversationId,
+      toolContext: params.toolContext,
       signal: params.signal,
     }).then((r) => ({ ...r, cacheRead: 0, cacheWrite: 0, actualCostUsd: null }))
   }
@@ -311,6 +368,7 @@ async function runWithModel(
     maxIterations: SUBAGENT_MAX_ITERATIONS,
     conversationId: params.conversationId,
     businessId: params.businessId,
+    toolContext: params.toolContext as Record<string, unknown> | undefined,
     signal: params.signal,
   }).then((r) => ({
     summary: r.text,
