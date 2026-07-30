@@ -5,6 +5,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import {
   buildOpenAIRealtimeTrialSession,
   isOpenAIRealtimeTrialEnabled,
+  parseOpenAIRealtimeInputProfile,
   parseOpenAIRealtimeTrialVoice,
 } from '@/agent/lib/openai-realtime-trial'
 import { isSystemOwner } from '@/lib/roles'
@@ -41,9 +42,10 @@ export async function POST(req: NextRequest) {
   }
 
   const voice = parseOpenAIRealtimeTrialVoice(req.nextUrl.searchParams.get('voice'))
+  const inputProfile = parseOpenAIRealtimeInputProfile(req.nextUrl.searchParams.get('input'))
   const form = new FormData()
   form.set('sdp', sdp)
-  form.set('session', JSON.stringify(buildOpenAIRealtimeTrialSession(voice)))
+  form.set('session', JSON.stringify(buildOpenAIRealtimeTrialSession(voice, inputProfile)))
 
   const safetyId = createHash('sha256').update(`alma-realtime-trial:${owner.sub}`).digest('hex')
   const controller = new AbortController()

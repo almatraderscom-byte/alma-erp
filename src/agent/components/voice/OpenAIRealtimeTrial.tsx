@@ -16,6 +16,25 @@ const VOICES: Array<{ id: OpenAIRealtimeTrialVoice; label: string; description: 
   { id: 'marin', label: 'Marin', description: 'স্বচ্ছ, প্রাণবন্ত' },
 ]
 
+type InputProfile = 'far_field' | 'near_field'
+
+type RealtimeEvent = {
+  type?: string
+  delta?: string
+  transcript?: string
+  error?: { message?: string }
+  response?: {
+    status?: string
+    status_details?: { error?: { message?: string } }
+  }
+}
+
+function inputProfileFor(label: string): InputProfile {
+  return /airpods|headset|earbud|bluetooth|lavalier|lapel|boom/i.test(label)
+    ? 'near_field'
+    : 'far_field'
+}
+
 function orbState(status: TrialStatus): VoiceState {
   if (status === 'connecting' || status === 'thinking') return 'thinking'
   if (status === 'listening') return 'listening'
@@ -49,23 +68,44 @@ function errorMessage(raw: string): string {
 }
 
 export default function OpenAIRealtimeTrial() {
-  const [voice, setVoice] = useState<OpenAIRealtimeTrialVoice>('cedar')
+  const [voice, setVoice] = useState<OpenAIRealtimeTrialVoice>('marin')
   const [status, setStatus] = useState<TrialStatus>('idle')
   const [remaining, setRemaining] = useState(OPENAI_REALTIME_TRIAL_SECONDS)
   const [muted, setMuted] = useState(false)
   const [notice, setNotice] = useState('এটি শুধু voice feel পরীক্ষা—ERP data বা action যুক্ত নয়।')
+  const [micLevel, setMicLevel] = useState(0)
+  const [micLabel, setMicLabel] = useState('মাইক্রোফোন এখনো চালু হয়নি')
+  const [uplinkBytes, setUplinkBytes] = useState(0)
+  const [eventStage, setEventStage] = useState('অপেক্ষমাণ')
+  const [inputTranscript, setInputTranscript] = useState('')
+  const [outputTranscript, setOutputTranscript] = useState('')
 
   const peerRef = useRef<RTCPeerConnection | null>(null)
   const channelRef = useRef<RTCDataChannel | null>(null)
   const micStreamRef = useRef<MediaStream | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const timerRef = useRef<number | null>(null)
+  const statsTimerRef = useRef<number | null>(null)
+  const meterFrameRef = useRef<number | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
   const intentionalCloseRef = useRef(false)
 
   const releaseResources = useCallback(() => {
     if (timerRef.current !== null) {
       window.clearInterval(timerRef.current)
       timerRef.current = null
+    }
+    if (statsTimerRef.current !== null) {
+      window.clearInterval(statsTimerRef.current)
+      statsTimerRef.current = null
+    }
+    if (meterFrameRef.current !== null) {
+      window.cancelAnimationFrame(meterFrameRef.current)
+      meterFrameRef.current = null
+    }
+    if (audioContextRef.current) {
+      void audioContextRef.current.close().catch(() => undefined)
+      audioContextRef.current = null
     }
     channelRef.current?.close()
     channelRef.current = null
@@ -82,6 +122,9 @@ export default function OpenAIRealtimeTrial() {
     setStatus('idle')
     setMuted(false)
     setRemaining(OPENAI_REALTIME_TRIAL_SECONDS)
+    setMicLevel(0)
+    setUplinkBytes(0)
+    setEventStage('বন্ধ')
     setNotice(reason === 'limit'
       ? '৩ মিনিটের নিরাপদ ট্রায়াল শেষ হয়েছে। চাইলে আবার শুরু করতে পারেন।'
       : 'ট্রায়াল বন্ধ হয়েছে। অন্য voice বেছে আবার তুলনা করতে পারেন।')
@@ -92,27 +135,98 @@ export default function OpenAIRealtimeTrial() {
     releaseResources()
   }, [releaseResources])
 
+  const startMicMeter = useCallback((stream: MediaStream) => {
+    const AudioContextCtor = window.AudioContext
+    const context = new AudioContextCtor()
+    audioContextRef.current = context
+    const analyser = context.createAnalyser()
+    analyser.fftSize = 512
+    analyser.smoothingTimeConstant = 0.72
+    context.createMediaStreamSource(stream).connect(analyser)
+    const samples = new Float32Array(analyser.fftSize)
+    let lastPaint = 0
+
+    void context.resume().catch(() => undefined)
+    const measure = (now: number) => {
+      if (now - lastPaint >= 80) {
+        analyser.getFloatTimeDomainData(samples)
+        let sum = 0
+        for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i]
+        const rms = Math.sqrt(sum / samples.length)
+        setMicLevel(Math.min(1, rms * 12))
+        lastPaint = now
+      }
+      meterFrameRef.current = window.requestAnimationFrame(measure)
+    }
+    meterFrameRef.current = window.requestAnimationFrame(measure)
+  }, [])
+
+  const startUplinkStats = useCallback((peer: RTCPeerConnection) => {
+    const update = async () => {
+      try {
+        const report = await peer.getStats()
+        let bytes = 0
+        report.forEach(item => {
+          const stat = item as RTCStats & {
+            kind?: string
+            mediaType?: string
+            bytesSent?: number
+          }
+          if (
+            stat.type === 'outbound-rtp'
+            && (stat.kind === 'audio' || stat.mediaType === 'audio')
+            && typeof stat.bytesSent === 'number'
+          ) {
+            bytes += stat.bytesSent
+          }
+        })
+        setUplinkBytes(bytes)
+      } catch {
+        // Connection state and transcript events remain the primary diagnostics.
+      }
+    }
+    void update()
+    statsTimerRef.current = window.setInterval(() => void update(), 1_000)
+  }, [])
+
   const handleRealtimeEvent = useCallback((event: MessageEvent<string>) => {
     try {
-      const payload = JSON.parse(event.data) as {
-        type?: string
-        error?: { message?: string }
-      }
+      const payload = JSON.parse(event.data) as RealtimeEvent
       const type = payload.type ?? ''
       if (type === 'session.created' || type === 'session.updated') {
         setStatus(current => current === 'connecting' ? 'listening' : current)
+        setEventStage('OpenAI session প্রস্তুত')
       } else if (type === 'input_audio_buffer.speech_started') {
         setStatus('listening')
+        setInputTranscript('শুনছি…')
+        setOutputTranscript('')
+        setEventStage('কণ্ঠ ধরা পড়েছে')
       } else if (type === 'input_audio_buffer.speech_stopped' || type === 'response.created') {
         setStatus('thinking')
+        setEventStage(type === 'response.created' ? 'উত্তর তৈরি হচ্ছে' : 'কথা শেষ—উত্তর অপেক্ষমাণ')
       } else if (type === 'response.output_audio.delta' || type === 'response.audio.delta') {
         setStatus('speaking')
+        setEventStage('অডিও উত্তর আসছে')
+      } else if (type === 'conversation.item.input_audio_transcription.delta' && payload.delta) {
+        setInputTranscript(current => current === 'শুনছি…' ? payload.delta! : current + payload.delta)
+      } else if (type === 'conversation.item.input_audio_transcription.completed') {
+        setInputTranscript(payload.transcript?.trim() || 'কথা ধরা পড়েছে, transcript খালি')
+        setEventStage('বাংলা transcript সম্পন্ন')
+      } else if (type === 'response.output_audio_transcript.delta' && payload.delta) {
+        setOutputTranscript(current => current + payload.delta)
+      } else if (type === 'response.output_audio_transcript.done' && payload.transcript) {
+        setOutputTranscript(payload.transcript.trim())
       } else if (type === 'response.done') {
         setStatus('listening')
+        const responseError = payload.response?.status_details?.error?.message
+        setEventStage(responseError ? 'উত্তর ব্যর্থ' : 'আবার শুনছি')
+        if (responseError) setNotice(`OpenAI: ${responseError.slice(0, 160)}`)
       } else if (type === 'error') {
         intentionalCloseRef.current = true
         releaseResources()
         setStatus('error')
+        setMicLevel(0)
+        setUplinkBytes(0)
         setNotice(payload.error?.message
           ? `OpenAI: ${payload.error.message.slice(0, 160)}`
           : 'Realtime session-এ একটি সমস্যা হয়েছে।')
@@ -130,6 +244,11 @@ export default function OpenAIRealtimeTrial() {
     setStatus('connecting')
     setMuted(false)
     setRemaining(OPENAI_REALTIME_TRIAL_SECONDS)
+    setMicLevel(0)
+    setUplinkBytes(0)
+    setInputTranscript('')
+    setOutputTranscript('')
+    setEventStage('মাইক্রোফোনের অনুমতি নিচ্ছে')
     setNotice(`${voice === 'cedar' ? 'Cedar' : 'Marin'} voice প্রস্তুত হচ্ছে…`)
 
     try {
@@ -138,15 +257,28 @@ export default function OpenAIRealtimeTrial() {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
-          noiseSuppression: true,
+          noiseSuppression: false,
           autoGainControl: true,
+          channelCount: 1,
         },
       })
       micStreamRef.current = stream
+      const micTrack = stream.getAudioTracks()[0]
+      if (!micTrack) throw new Error('microphone track unavailable')
+      const inputProfile = inputProfileFor(micTrack.label)
+      setMicLabel(micTrack.label || 'Default microphone')
+      setEventStage(inputProfile === 'near_field' ? 'Headset mic প্রস্তুত' : 'Laptop mic প্রস্তুত')
+      micTrack.addEventListener('ended', () => {
+        if (!intentionalCloseRef.current) {
+          setStatus('error')
+          setNotice('মাইক্রোফোন সংযোগ বন্ধ হয়ে গেছে। আবার trial শুরু করুন।')
+        }
+      })
+      startMicMeter(stream)
 
       const peer = new RTCPeerConnection()
       peerRef.current = peer
-      stream.getAudioTracks().forEach(track => peer.addTrack(track, stream))
+      peer.addTrack(micTrack)
 
       peer.ontrack = event => {
         if (!audioRef.current) return
@@ -154,9 +286,12 @@ export default function OpenAIRealtimeTrial() {
         void audioRef.current.play().catch(() => undefined)
       }
       peer.onconnectionstatechange = () => {
-        if (peer.connectionState === 'failed' && !intentionalCloseRef.current) {
+        setEventStage(`WebRTC: ${peer.connectionState}`)
+        if ((peer.connectionState === 'failed' || peer.connectionState === 'disconnected') && !intentionalCloseRef.current) {
           releaseResources()
           setStatus('error')
+          setMicLevel(0)
+          setUplinkBytes(0)
           setNotice('WebRTC সংযোগ বিচ্ছিন্ন হয়েছে। আবার চেষ্টা করুন।')
         }
       }
@@ -166,13 +301,22 @@ export default function OpenAIRealtimeTrial() {
       channel.addEventListener('message', handleRealtimeEvent)
       channel.addEventListener('open', () => {
         setStatus('listening')
+        setEventStage('বাংলায় বলুন')
         setNotice('স্বাভাবিকভাবে বাংলায় কথা বলুন—মাঝপথে বাধা দিয়েও দেখুন।')
         channel.send(JSON.stringify({
-          type: 'response.create',
-          response: {
-            output_modalities: ['audio'],
-            instructions: 'Boss-কে বাংলায় খুব সংক্ষিপ্ত, উষ্ণ অভিবাদন জানান এবং বলুন যে voice trial শুরু হয়েছে।',
+          type: 'conversation.item.create',
+          item: {
+            type: 'message',
+            role: 'user',
+            content: [{
+              type: 'input_text',
+              text: 'স্বাভাবিক বাংলাদেশি উচ্চারণে শুধু এই কথাটি বলো: "আসসালামু আলাইকুম Boss, আমি শুনছি—বলুন।"',
+            }],
           },
+        }))
+        channel.send(JSON.stringify({
+          type: 'response.create',
+          response: { output_modalities: ['audio'] },
         }))
 
         timerRef.current = window.setInterval(() => {
@@ -195,22 +339,36 @@ export default function OpenAIRealtimeTrial() {
 
       const offer = await peer.createOffer()
       await peer.setLocalDescription(offer)
-      const response = await fetch(`/api/assistant/openai-realtime-trial?voice=${voice}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/sdp' },
-        body: offer.sdp,
-      })
+      const response = await fetch(
+        `/api/assistant/openai-realtime-trial?voice=${voice}&input=${inputProfile}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/sdp' },
+          body: offer.sdp,
+        },
+      )
       const answer = await response.text()
       if (!response.ok) throw new Error(answer || `HTTP ${response.status}`)
 
       await peer.setRemoteDescription({ type: 'answer', sdp: answer })
+      startUplinkStats(peer)
     } catch (error) {
       intentionalCloseRef.current = true
       releaseResources()
       setStatus('error')
+      setMicLevel(0)
+      setUplinkBytes(0)
       setNotice(errorMessage(error instanceof Error ? `${error.name}: ${error.message}` : String(error)))
     }
-  }, [handleRealtimeEvent, releaseResources, status, stopSession, voice])
+  }, [
+    handleRealtimeEvent,
+    releaseResources,
+    startMicMeter,
+    startUplinkStats,
+    status,
+    stopSession,
+    voice,
+  ])
 
   const toggleMute = useCallback(() => {
     const track = micStreamRef.current?.getAudioTracks()[0]
@@ -250,6 +408,38 @@ export default function OpenAIRealtimeTrial() {
           <div className="status" aria-live="polite">
             <h2>{statusCopy(status)}</h2>
             <p>{notice}</p>
+          </div>
+
+          <div className="diagnostics" aria-label="Live microphone diagnostics">
+            <div className="diagnostic-head">
+              <span>MIC SIGNAL</span>
+              <strong>{Math.round(micLevel * 100)}%</strong>
+            </div>
+            <div className="mic-meter" aria-label={`Microphone level ${Math.round(micLevel * 100)} percent`}>
+              <i style={{ width: `${Math.max(2, micLevel * 100)}%` }} />
+            </div>
+            <div className="diagnostic-meta">
+              <span title={micLabel}>{micLabel}</span>
+              <span className={uplinkBytes > 0 ? 'path-ok' : ''}>
+                {active
+                  ? uplinkBytes > 0
+                    ? 'OpenAI-তে audio যাচ্ছে'
+                    : 'audio path যাচাই হচ্ছে'
+                  : 'session বন্ধ'}
+              </span>
+              <span>{eventStage}</span>
+            </div>
+          </div>
+
+          <div className="transcripts" aria-live="polite">
+            <div>
+              <span>আপনি যা বলেছেন</span>
+              <p>{inputTranscript || 'কথা বললে এখানে OpenAI-এর বাংলা transcript দেখা যাবে।'}</p>
+            </div>
+            <div>
+              <span>GPT যা বলছে</span>
+              <p>{outputTranscript || 'উত্তর এলে এখানে live transcript দেখা যাবে।'}</p>
+            </div>
           </div>
 
           <div className="voice-picker" aria-label="Voice selection">
@@ -407,6 +597,86 @@ export default function OpenAIRealtimeTrial() {
           font-size: 13px;
           line-height: 1.55;
         }
+        .diagnostics {
+          margin: 0 0 12px;
+          padding: 13px 14px;
+          border: 1px solid rgba(255, 255, 255, .08);
+          border-radius: 16px;
+          background: rgba(7, 9, 18, .28);
+          text-align: left;
+        }
+        .diagnostic-head, .diagnostic-meta {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .diagnostic-head {
+          margin-bottom: 8px;
+          color: rgba(248, 244, 236, .48);
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: .12em;
+        }
+        .diagnostic-head strong {
+          margin-left: auto;
+          color: rgba(248, 244, 236, .78);
+          font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+          letter-spacing: 0;
+        }
+        .mic-meter {
+          height: 7px;
+          overflow: hidden;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, .07);
+        }
+        .mic-meter i {
+          display: block;
+          height: 100%;
+          border-radius: inherit;
+          background: linear-gradient(90deg, #5d86ff, #9f75ff, #64d8bd);
+          box-shadow: 0 0 14px rgba(111, 143, 255, .6);
+          transition: width .08s linear;
+        }
+        .diagnostic-meta {
+          margin-top: 8px;
+          justify-content: space-between;
+          color: rgba(248, 244, 236, .42);
+          font-size: 9px;
+        }
+        .diagnostic-meta span {
+          min-width: 0;
+          max-width: 34%;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .diagnostic-meta .path-ok { color: #76dbc3; }
+        .transcripts {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+          margin-bottom: 12px;
+          text-align: left;
+        }
+        .transcripts div {
+          min-height: 78px;
+          padding: 11px 12px;
+          border: 1px solid rgba(255, 255, 255, .075);
+          border-radius: 14px;
+          background: rgba(255, 255, 255, .025);
+        }
+        .transcripts span {
+          color: #9eb8ff;
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: .04em;
+        }
+        .transcripts p {
+          margin: 6px 0 0;
+          color: rgba(248, 244, 236, .68);
+          font-size: 11px;
+          line-height: 1.5;
+        }
         .voice-picker {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -493,6 +763,9 @@ export default function OpenAIRealtimeTrial() {
           .voice-card { padding-top: 14px; border-radius: 25px; }
           .orb-wrap { transform: scale(.90); margin-top: -7px; margin-bottom: -16px; }
           .orb-speaking { transform: scale(.93); }
+          .diagnostic-meta { flex-wrap: wrap; }
+          .diagnostic-meta span { max-width: 100%; }
+          .transcripts { grid-template-columns: 1fr; }
           .boundary-card { grid-template-columns: 1fr; }
           .boundary-card p { grid-column: 1; }
         }
