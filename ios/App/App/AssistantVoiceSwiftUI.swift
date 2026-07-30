@@ -1294,6 +1294,7 @@ final class AlmaVoiceEngine {
         // the end_call tool present: Gemini says "আল্লাহ হাফেজ" but skips the
         // tool). If Boss's own words ask to hang up, the call ends after the
         // model's goodbye finishes — model cooperation not required.
+        if Self.hangupContext(in: transcript) { lastHangupContextAt = Date() }
         if Self.hangupIntent(in: transcript) {
             #if DEBUG
             NSLog("ALMA-VOICE hang-up intent heard in input transcript")
@@ -1303,15 +1304,41 @@ final class AlmaVoiceEngine {
         if state != .speaking { state = .listening }
     }
 
-    /// Boss's spoken request to end the call. Kept deliberately narrow — every
-    /// phrase is a closing formula, not something said mid-conversation.
-    static func hangupIntent(in text: String) -> Bool {
+    /// BROAD corroboration signal (weaker than hangupIntent): any word family a
+    /// genuine hang-up sentence would contain. The model's end_call is honored
+    /// only when Boss said something like this within the last 25 s.
+    static func hangupContext(in text: String) -> Bool {
         let t = text.lowercased()
-        if t.contains("আল্লাহ হাফেজ") || t.contains("আল্লাহহাফেজ") { return true }
-        if t.contains("রেখে দাও") || t.contains("রেখে দেন") || t.contains("রেখে দে ") { return true }
-        if t.contains("কল কাটো") || t.contains("কল কাট ") || t.contains("কল রাখো") { return true }
-        if t.contains("ফোন রাখো") || t.contains("ফোন রাখ ") || t.contains("এখন রাখি") || t.contains("আচ্ছা রাখি") { return true }
-        if t.contains("hang up") || t.contains("খোদা হাফেজ") { return true }
+        return t.contains("রাখ") || t.contains("রেখে") || t.contains("কাট") || t.contains("হাফেজ")
+            || t.contains("বিদায়") || t.contains("bye") || t.contains("hang up") || t.contains("শেষ কর")
+    }
+
+    private var lastHangupContextAt = Date.distantPast
+
+    /// end_call arrived from the model — approve only with recent corroboration
+    /// from Boss's own transcript, else refuse (spurious-trigger guard).
+    func approveModelRequestedEnd() -> Bool {
+        guard Date().timeIntervalSince(lastHangupContextAt) < 25 else { return false }
+        scheduleModelRequestedEnd()
+        return true
+    }
+
+    /// Boss's spoken request to end the call. Deliberately narrow (Codex P1
+    /// round 5: "এই কথাটা মনে রেখে দাও" is a MEMORY instruction, not a
+    /// hang-up): bare "রেখে দাও/রাখো" counts only as a short standalone closing
+    /// utterance; longer sentences need explicit call/phone context or a
+    /// salutation formula.
+    static func hangupIntent(in text: String) -> Bool {
+        let t = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        // Closing salutations.
+        if t.contains("আল্লাহ হাফেজ") || t.contains("আল্লাহহাফেজ") || t.contains("খোদা হাফেজ") { return true }
+        // Explicit call/phone context.
+        if t.contains("ফোন রাখ") || t.contains("ফোন রেখে") || t.contains("ফোনটা রাখ") { return true }
+        if t.contains("কল রাখ") || t.contains("কল রেখে") || t.contains("কল কাট") || t.contains("ফোন কাট") || t.contains("কলটা কাট") { return true }
+        if t.contains("hang up") { return true }
+        // Standalone closings.
+        if t.contains("এখন রাখি") || t.contains("আচ্ছা রাখি") || t.contains("তাহলে রাখি") || t.contains("রাখি তাহলে") { return true }
+        if t.count <= 12, t.contains("রেখে দাও") || t.contains("রেখে দেন") || t == "রাখো" || t == "রাখেন" || t == "রাখি" { return true }
         return false
     }
 
@@ -2112,6 +2139,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var listenSilenceFrames = 0
     private var listenNoiseFloorRMS = 0.004
     private var listenCalibrationFrames = 0
+    private var listenCalibMinRMS = Double.greatestFiniteMagnitude
+    private var listenContinuousLoudFrames = 0
     private let playbackPrebufferSeconds = 0.16
     private let bargeInMinimumRMS = 0.045
     private let bargeInRequiredFrames = 12       // ≈240ms at the 20ms input tap
@@ -2503,16 +2532,22 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // networks: idle uplink drops to zero.
             listenPreRoll.append(bytes)
             if listenPreRoll.count > 15 { listenPreRoll.removeFirst(listenPreRoll.count - 15) }
-            // Two ways the floor learns UPWARD even when noise starts above the
-            // threshold (Codex P2 round 4 — road/fan noise from frame one would
-            // otherwise always classify as speech and hold the gate open):
-            // a short unconditional calibration window at arm time, plus an
-            // always-on very slow tracker (0.2%/frame ≈ tens of seconds of
-            // CONTINUOUS sound become the floor; 2–3s speech barely moves it).
-            listenNoiseFloorRMS += (rms - listenNoiseFloorRMS) * 0.002
+            // Floor learns upward WITHOUT ever eating live speech (Codex rounds
+            // 4+5): the calibration window uses the MINIMUM rms it saw — steady
+            // noise has no quiet frames so its level is learned, while a voice
+            // that starts immediately still dips between syllables and only
+            // those dips become the floor (P2 round 5). No always-on tracker:
+            // that EMA overtook a steady utterance in ~1.8s and truncated it
+            // (P1 round 5) — mid-speech gaps already adapt the floor via the
+            // below-threshold EMA, and the gapless-noise failsafe below covers
+            // sound with no dips at all.
             if listenCalibrationFrames < 10 {
                 listenCalibrationFrames += 1
-                listenNoiseFloorRMS = max(listenNoiseFloorRMS, rms * 0.85)
+                listenCalibMinRMS = min(listenCalibMinRMS, rms)
+                if listenCalibrationFrames == 10 {
+                    listenNoiseFloorRMS = max(listenNoiseFloorRMS, listenCalibMinRMS * 0.85)
+                    listenCalibMinRMS = .greatestFiniteMagnitude
+                }
                 listenSpeechFrames = 0
                 audioLock.unlock()
                 return
@@ -2526,9 +2561,24 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             if rms >= gateThreshold {
                 listenSpeechFrames += 1
                 listenSilenceFrames = 0
+                // Gapless-noise failsafe: human speech always dips between
+                // words; 30s of continuously above-threshold signal is a noise
+                // source that started mid-call (road, fan) — promote it to the
+                // floor and close the gate instead of streaming it forever.
+                listenContinuousLoudFrames += 1
+                if listenContinuousLoudFrames >= 1500 {
+                    listenNoiseFloorRMS = max(listenNoiseFloorRMS, rms * 0.85)
+                    listenGateOpen = false
+                    listenSpeechFrames = 0
+                    listenContinuousLoudFrames = 0
+                    #if DEBUG
+                    NSLog("ALMA-VOICE listen gate closed — gapless noise promoted to floor")
+                    #endif
+                }
             } else {
                 listenSpeechFrames = max(0, listenSpeechFrames - 1)
                 listenSilenceFrames += 1
+                listenContinuousLoudFrames = 0
                 // Adapt the floor only on frames classified as background, so
                 // speech never raises its own threshold.
                 listenNoiseFloorRMS = listenNoiseFloorRMS * 0.97 + rms * 0.03
@@ -2664,11 +2714,24 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             }
             for call in calls where call["name"] as? String == "end_call" {
                 let id = call["id"] as? String ?? UUID().uuidString
-                #if DEBUG
-                NSLog("ALMA-VOICE toolCall end_call — hanging up after goodbye")
-                #endif
-                sendToolResponse(callId: id, result: "ঠিক আছে — বিদায় বলা শেষ হলেই কল কেটে যাবে।")
-                DispatchQueue.main.async { [weak self] in self?.engine?.scheduleModelRequestedEnd() }
+                // The model can fire this spuriously (sim 2026-07-30: a long
+                // overlapping utterance with no goodbye in it triggered
+                // end_call). Boss's OWN recent words must corroborate — the
+                // engine approves only when hang-up context was actually heard.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    if self.engine?.approveModelRequestedEnd() == true {
+                        #if DEBUG
+                        NSLog("ALMA-VOICE toolCall end_call approved — hanging up after goodbye")
+                        #endif
+                        self.sendToolResponse(callId: id, result: "ঠিক আছে — বিদায় বলা শেষ হলেই কল কেটে যাবে।")
+                    } else {
+                        #if DEBUG
+                        NSLog("ALMA-VOICE toolCall end_call REFUSED — no hang-up context from Boss")
+                        #endif
+                        self.sendToolResponse(callId: id, result: "Boss কল শেষ করতে বলেননি — কল কাটা হয়নি, স্বাভাবিকভাবে কথা চালিয়ে যাও।")
+                    }
+                }
             }
             for call in calls where call["name"] as? String == "run_agent_turn" {
                 let id = call["id"] as? String ?? UUID().uuidString
@@ -3172,6 +3235,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         listenSilenceFrames = 0
         listenNoiseFloorRMS = 0.004
         listenCalibrationFrames = 0
+        listenCalibMinRMS = .greatestFiniteMagnitude
+        listenContinuousLoudFrames = 0
         audioLock.unlock()
     }
 
@@ -3262,6 +3327,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         listenSilenceFrames = 0
         listenNoiseFloorRMS = 0.004
         listenCalibrationFrames = 0
+        listenCalibMinRMS = .greatestFiniteMagnitude
+        listenContinuousLoudFrames = 0
         audioLock.unlock()
     }
 
