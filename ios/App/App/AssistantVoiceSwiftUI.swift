@@ -359,6 +359,11 @@ final class AlmaVoiceEngine {
         if #available(iOS 17.0, *) { AlmaCallBarBridge.shared.engine = self }
         agentBriefSent = false
         closed = false
+        // A hang-up left half-scheduled on the previous call must not reject
+        // the next one's end request (Codex P2 round 6 — the console reuses
+        // this engine instance across calls).
+        modelEndPending = false
+        lastHangupContextAt = .distantPast
         callConnection = .connecting
         connectionFailureText = ""
         liveConnectAttempt = 0
@@ -1487,8 +1492,11 @@ final class AlmaVoiceEngine {
     func scheduleModelRequestedEnd(hardFallback: TimeInterval = 8) {
         guard !modelEndPending, !closed else { return }
         modelEndPending = true
+        // The hard deadline is a GUARANTEE (Codex P2 round 6): it forces the
+        // end even mid-tool, so a stalled head turn can never hold the call
+        // open forever after Boss asked to hang up.
         DispatchQueue.main.asyncAfter(deadline: .now() + hardFallback) { [weak self] in
-            self?.performModelRequestedEnd()
+            self?.performModelRequestedEnd(force: true)
         }
         if state != .speaking, hardFallback <= 8 {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
@@ -1498,11 +1506,12 @@ final class AlmaVoiceEngine {
         }
     }
 
-    private func performModelRequestedEnd() {
+    private func performModelRequestedEnd(force: Bool = false) {
         guard modelEndPending, !closed else { return }
         // Mid-tool (e.g. "পড়েছি, রাখো" → mark_salah still running): let the tool
-        // reply first; the next playback-finish or the hard fallback ends it.
-        if liveToolTurnPending { return }
+        // reply first; the next playback-finish ends it, and the hard-deadline
+        // path arrives with force to guarantee termination regardless.
+        if liveToolTurnPending, !force { return }
         modelEndPending = false
         // Agent call: go through the controller so its window tears down too
         // (on-device the engine end also closes the CallKit call → 'completed').
@@ -2724,12 +2733,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                         #if DEBUG
                         NSLog("ALMA-VOICE toolCall end_call approved — hanging up after goodbye")
                         #endif
-                        self.sendToolResponse(callId: id, result: "ঠিক আছে — বিদায় বলা শেষ হলেই কল কেটে যাবে।")
+                        self.sendToolResponse(callId: id, result: "ঠিক আছে — বিদায় বলা শেষ হলেই কল কেটে যাবে।", name: "end_call")
                     } else {
                         #if DEBUG
                         NSLog("ALMA-VOICE toolCall end_call REFUSED — no hang-up context from Boss")
                         #endif
-                        self.sendToolResponse(callId: id, result: "Boss কল শেষ করতে বলেননি — কল কাটা হয়নি, স্বাভাবিকভাবে কথা চালিয়ে যাও।")
+                        self.sendToolResponse(callId: id, result: "Boss কল শেষ করতে বলেননি — কল কাটা হয়নি, স্বাভাবিকভাবে কথা চালিয়ে যাও।", name: "end_call")
                     }
                 }
             }
@@ -3182,10 +3191,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    func sendToolResponse(callId: String, result: String) {
+    func sendToolResponse(callId: String, result: String, name: String = "run_agent_turn") {
         sendJSON(["toolResponse": ["functionResponses": [[
             "id": callId,
-            "name": "run_agent_turn",
+            // The response must carry the INVOKED function's name — answering
+            // end_call as run_agent_turn left the tool unresolved (Codex P2).
+            "name": name,
             "response": ["result": result],
         ]]]])
     }
