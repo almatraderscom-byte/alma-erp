@@ -501,6 +501,13 @@ final class AlmaVoiceEngine {
         errorToast = connectionFailureText
         callConnection = .failed
         state = .error
+        // Agent call on a real device: send the reason to the server so it is
+        // diagnosable without a console (TestFlight builds log nowhere).
+        if activeAgentCallId != nil {
+            let detail = String((error.map { String(describing: $0) } ?? message ?? "unknown").prefix(200))
+            AgentCallController.shared.reportLiveFailure(
+                "live failed: \(detail) | vpUnavailable=\(live.voiceProcessingUnavailable)")
+        }
     }
 
     func retryLiveConnection() {
@@ -1991,6 +1998,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// landed yet, audio setup is retried from callKitAudioActivated().
     var callKitOwnsAudioSession = false
     private var audioConfigPending = false
+    /// True when hardware echo cancellation could not be enabled (CallKit-owned
+    /// session). The barge-in gate compensates with a higher echo floor.
+    private(set) var voiceProcessingUnavailable = false
     /// Bumped on every stop()/reconnect so a delayed audio retry belonging to a
     /// dead attempt cannot touch the replacement session.
     private var audioAttemptGeneration = 0
@@ -2170,10 +2180,19 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         try? av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
 
         let input = audioEngine.inputNode
-        try input.setVoiceProcessingEnabled(true)
-        guard input.isVoiceProcessingEnabled,
-              audioEngine.outputNode.isVoiceProcessingEnabled else {
-            throw AlmaLiveVoiceError.audioStart
+        // Voice processing (echo cancellation) is BEST-EFFORT under CallKit: the
+        // framework already owns/configured the session, and on the owner's
+        // device enabling VP there failed — which used to abort the whole call
+        // ("ring হয় but কথা বলে না", builds 89/90). A call without hardware AEC
+        // still works (the barge-in gate calibrates its own echo floor), so only
+        // the non-CallKit path treats VP as mandatory.
+        do { try input.setVoiceProcessingEnabled(true) } catch {
+            if !callKitOwnsAudioSession { throw AlmaLiveVoiceError.audioStart }
+            voiceProcessingUnavailable = true
+        }
+        if !(input.isVoiceProcessingEnabled && audioEngine.outputNode.isVoiceProcessingEnabled) {
+            if !callKitOwnsAudioSession { throw AlmaLiveVoiceError.audioStart }
+            voiceProcessingUnavailable = true
         }
         let native = input.inputFormat(forBus: 0)
         guard native.sampleRate > 0, native.channelCount > 0 else { throw AlmaLiveVoiceError.noMic }
@@ -2263,7 +2282,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 echoFloorRMS = max(echoFloorRMS, rms * 0.85)
                 bargeSpeechFrames = 0
             } else {
-                let threshold = max(bargeInMinimumRMS, echoFloorRMS * 2.35 + 0.008)
+                // LOCKED tuning for the normal (hardware-AEC) path — kept
+                // literally, contract-tested. Without AEC (CallKit-owned
+                // session) the speaker bleeds into the mic, so that path alone
+                // uses a higher gate or the agent interrupts itself.
+                let threshold = voiceProcessingUnavailable
+                    ? max(bargeInMinimumRMS * 1.8, echoFloorRMS * 3.2 + 0.02)
+                    : max(bargeInMinimumRMS, echoFloorRMS * 2.35 + 0.008)
                 if rms >= threshold {
                     bargeSpeechFrames += 1
                 } else {
