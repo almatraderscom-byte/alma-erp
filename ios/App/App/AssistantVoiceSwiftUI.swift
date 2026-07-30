@@ -1921,12 +1921,49 @@ enum AlmaLiveVoiceError: Error { case badSession, badURL, noMic, noConverter, au
 final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     weak var engine: AlmaVoiceEngine?
 
-    private struct SessionResponse: Decodable {
+    struct SessionResponse: Decodable {
         let token: String
         let model: String
         let voice: String
         let expiresAt: String
         let websocketUrl: String
+    }
+
+    // MARK: Ring-time prewarm (plan C2 latency fix, 2026-07-30)
+    //
+    // On a weak abroad network the answer→greeting delay was dominated by the
+    // post-answer round trip to Vercel that mints the ephemeral Gemini token.
+    // The VoIP RING is the earliest signal a live session is about to be
+    // needed, so the incoming-push handler mints the token during the ~5–75 s
+    // the phone is ringing; answer then goes straight to the Google websocket.
+    // Tokens are single-use — a declined ring just lets the mint age out.
+    private static var prewarmed: (session: SessionResponse, at: Date)?
+    private static let prewarmLock = NSLock()
+
+    static func prewarm() {
+        Task.detached(priority: .userInitiated) {
+            await AlmaAPI.shared.syncCookies()
+            guard let raw = try? await AssistantNet.postJSONForData(path: "/api/assistant/live-session", body: [:]),
+                  let minted = try? JSONDecoder().decode(SessionResponse.self, from: raw),
+                  !minted.token.isEmpty else { return }
+            prewarmLock.lock()
+            prewarmed = (minted, Date())
+            prewarmLock.unlock()
+            #if DEBUG
+            NSLog("ALMA-VOICE prewarmed live-session token at ring")
+            #endif
+        }
+    }
+
+    private static func takePrewarmed() -> (session: SessionResponse, at: Date)? {
+        prewarmLock.lock()
+        defer { prewarmLock.unlock() }
+        guard let candidate = prewarmed else { return nil }
+        prewarmed = nil
+        // A ring can last 75 s and answering can lag — accept up to 2 minutes,
+        // far inside the token's 30-minute expiry.
+        guard Date().timeIntervalSince(candidate.at) < 120 else { return nil }
+        return candidate
     }
 
     private var session: URLSession?
@@ -1941,13 +1978,18 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var stopped = false
     private var socketReady = false
     private var reconnecting = false
+    private var pingTimer: DispatchSourceTimer?
+    private var awaitingPong = false
     private var hasConnectedOnce = false
     private var mintedSession: SessionResponse?
     private var mintedAt = Date.distantPast
     private var reconnectAttempts = 0
-    /// Kimi-parity prosody: request Gemini's affective dialog; if the server
-    /// (older token constraints) rejects the setup, retry once without it.
-    private var allowAffective = true
+    /// Affective dialog is OFF by default: our ephemeral-token constraints reject
+    /// the field, so requesting it made EVERY call burn its first connect on a
+    /// guaranteed 1007 close + retry (sim-proven 2026-07-30 — +1.4s on fast wifi,
+    /// several seconds + one reconnect attempt on a weak abroad network). The
+    /// downgrade path below stays for the day the token starts allowing it.
+    private var allowAffective = false
     private var pendingResumptionHandle: String?
     private var latestResumptionHandle: String?
     private var outputTranscript = ""
@@ -1964,6 +2006,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var estimatedPlaybackEnd = Date.distantPast
     private var playbackGeneration = 0
     private var modelAudioTurnOpen = false
+    #if DEBUG
+    private var micDebugFrameCount = 0
+    #endif
     private var modelGenerationCompleteReceived = false
     private var modelTurnCompleteReceived = false
     private var playbackStarted = false
@@ -1978,6 +2023,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var echoCalibrationFrames = 0
     private var echoFloorRMS = 0.008
     private var micPreRoll: [Data] = []
+    // Listening-path noise gate (protected by audioLock, see capture()).
+    private var listenPreRoll: [Data] = []
+    private var listenGateOpen = false
+    private var listenSpeechFrames = 0
+    private var listenSilenceFrames = 0
+    private var listenNoiseFloorRMS = 0.004
     private let playbackPrebufferSeconds = 0.16
     private let bargeInMinimumRMS = 0.045
     private let bargeInRequiredFrames = 12       // ≈240ms at the 20ms input tap
@@ -2007,8 +2058,24 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     func start() async throws {
         stopped = false
+        if let warm = Self.takePrewarmed() {
+            #if DEBUG
+            NSLog("ALMA-VOICE using prewarmed token (age %.1fs)", Date().timeIntervalSince(warm.at))
+            #endif
+            mintedSession = warm.session
+            mintedAt = warm.at
+            try connect(warm.session, resumptionHandle: nil)
+            return
+        }
         await AlmaAPI.shared.syncCookies()
+        #if DEBUG
+        let mintStart = Date()
+        NSLog("ALMA-VOICE mint begin")
+        #endif
         let raw = try await AssistantNet.postJSONForData(path: "/api/assistant/live-session", body: [:])
+        #if DEBUG
+        NSLog("ALMA-VOICE mint done in %.2fs", Date().timeIntervalSince(mintStart))
+        #endif
         guard let minted = try? JSONDecoder().decode(SessionResponse.self, from: raw),
               !minted.token.isEmpty else { throw AlmaLiveVoiceError.badSession }
         mintedSession = minted
@@ -2104,10 +2171,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     /// Socket is live AND audio is running — announce the connection once.
     private func finishSetup() {
+        #if DEBUG
+        NSLog("ALMA-VOICE setup finished — session LIVE (audio configured)")
+        #endif
         audioConfigPending = false
         socketReady = true
         reconnecting = false
         reconnectAttempts = 0
+        startKeepalive()
         DispatchQueue.main.async { [weak self] in self?.engine?.liveDidConnect() }
         if !hasConnectedOnce {
             hasConnectedOnce = true
@@ -2127,16 +2198,20 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // cancel the in-flight connect task and lose the greeting/brief.
             if audioConfigPending { finishSetup() }
         } catch {
-            scheduleCallKitAudioRetry(attempt: 1)
+            scheduleCallKitAudioRetry(attempt: 1, lastError: error)
         }
     }
 
     /// CallKit still owns activation, so never self-activate (that is what broke
-    /// build 89). Just re-attempt the category + engine start a couple of times;
-    /// if audio truly cannot start, say so instead of holding a silent call.
-    private func scheduleCallKitAudioRetry(attempt: Int) {
-        guard attempt <= 3 else {
-            fail("লাইভ অডিও চালু করা যায়নি।")
+    /// build 89). Re-attempt the category + engine start for ~10 s — a locked-
+    /// screen answer can deliver didActivate several seconds late, and giving up
+    /// at 3.6 s (3 tries) declared "audio failed" on calls that were about to
+    /// work. If audio truly cannot start, fail with the UNDERLYING error so the
+    /// device note finally says why (build 91's note was just the generic line).
+    private func scheduleCallKitAudioRetry(attempt: Int, lastError: Error? = nil) {
+        guard attempt <= 8 else {
+            let detail = lastError.map { String(String(describing: $0).prefix(140)) } ?? "no didActivate"
+            fail("লাইভ অডিও চালু করা যায়নি। [\(detail)]")
             return
         }
         let generation = audioAttemptGeneration
@@ -2147,7 +2222,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 try self.configureAudio()
                 if self.audioConfigPending { self.finishSetup() }
             } catch {
-                self.scheduleCallKitAudioRetry(attempt: attempt + 1)
+                self.scheduleCallKitAudioRetry(attempt: attempt + 1, lastError: error)
             }
         }
     }
@@ -2186,6 +2261,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         // ("ring হয় but কথা বলে না", builds 89/90). A call without hardware AEC
         // still works (the barge-in gate calibrates its own echo floor), so only
         // the non-CallKit path treats VP as mandatory.
+        #if targetEnvironment(simulator)
+        // Simulator VPIO delivers ZERO input frames (Mac mic never reaches the
+        // tap), which silently breaks the whole real-audio harness. Skip VP on
+        // the sim only — the barge-in gate already has the no-AEC compensation.
+        voiceProcessingUnavailable = true
+        #else
         do { try input.setVoiceProcessingEnabled(true) } catch {
             if !callKitOwnsAudioSession { throw AlmaLiveVoiceError.audioStart }
             voiceProcessingUnavailable = true
@@ -2194,6 +2275,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             if !callKitOwnsAudioSession { throw AlmaLiveVoiceError.audioStart }
             voiceProcessingUnavailable = true
         }
+        #endif
         let native = input.inputFormat(forBus: 0)
         guard native.sampleRate > 0, native.channelCount > 0 else { throw AlmaLiveVoiceError.noMic }
         guard let pcm16 = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000,
@@ -2249,6 +2331,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             rms = (sum / Double(frames)).squareRoot()
         }
         DispatchQueue.main.async { [weak self] in self?.engine?.micLevel = min(1, rms * 7) }
+        #if DEBUG
+        micDebugFrameCount += 1
+        if micDebugFrameCount % 100 == 0 {
+            NSLog("ALMA-VOICE mic alive frames=%d rms=%.4f socketReady=%d", micDebugFrameCount, rms, socketReady ? 1 : 0)
+        }
+        #endif
 
         let capacity = AVAudioFrameCount(Double(frames) * outFormat.sampleRate / nativeFormat.sampleRate + 32)
         guard let output = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else { return }
@@ -2269,6 +2357,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         var preRoll: [Data] = []
         audioLock.lock()
         if modelAudioTurnOpen && !bargeInPending {
+            // Re-arm the listening gate for the next turn.
+            listenGateOpen = false
+            listenSpeechFrames = 0
+            listenSilenceFrames = 0
+            listenPreRoll.removeAll(keepingCapacity: true)
             micPreRoll.append(bytes)
             if micPreRoll.count > bargeInPreRollChunks {
                 micPreRoll.removeFirst(micPreRoll.count - bargeInPreRollChunks)
@@ -2306,9 +2399,44 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 }
             }
         } else {
-            sendNormally = true
             micPreRoll.removeAll(keepingCapacity: true)
             bargeSpeechFrames = 0
+            // LISTENING noise gate (sim-proven 2026-07-30): streaming every idle
+            // frame let ambient noise trip the server VAD the instant a model
+            // turn opened — START_OF_ACTIVITY_INTERRUPTS then killed the turn
+            // ~90 ms in ("এজেন্ট একটু কথা বলেই থেমে যায়"). Only sustained
+            // above-floor signal opens the gate; a ~300 ms pre-roll preserves
+            // the speech onset, and the ~1.1 s hangover (55 frames) exceeds the
+            // server's 650 ms silenceDuration so endpointing still belongs to
+            // the server VAD, never to this gate. Bonus on weak abroad
+            // networks: idle uplink drops to zero.
+            listenPreRoll.append(bytes)
+            if listenPreRoll.count > 15 { listenPreRoll.removeFirst(listenPreRoll.count - 15) }
+            let gateThreshold = max(0.010, listenNoiseFloorRMS * 3)
+            if rms >= gateThreshold {
+                listenSpeechFrames += 1
+                listenSilenceFrames = 0
+            } else {
+                listenSpeechFrames = max(0, listenSpeechFrames - 1)
+                listenSilenceFrames += 1
+                // Adapt the floor only on frames classified as background, so
+                // speech never raises its own threshold.
+                listenNoiseFloorRMS = listenNoiseFloorRMS * 0.97 + rms * 0.03
+            }
+            if !listenGateOpen, listenSpeechFrames >= 3 {
+                listenGateOpen = true
+                preRoll = listenPreRoll
+                listenPreRoll.removeAll(keepingCapacity: true)
+                #if DEBUG
+                NSLog("ALMA-VOICE listen gate OPEN rms=%.4f floor=%.4f", rms, listenNoiseFloorRMS)
+                #endif
+            } else if listenGateOpen, listenSilenceFrames >= 55 {
+                listenGateOpen = false
+                #if DEBUG
+                NSLog("ALMA-VOICE listen gate closed")
+                #endif
+            }
+            sendNormally = listenGateOpen
         }
         audioLock.unlock()
 
@@ -2319,7 +2447,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             beginLocalBargeIn()
             for chunk in preRoll { sendRealtimeAudio(chunk) }
         } else if sendNormally {
-            sendRealtimeAudio(bytes)
+            if !preRoll.isEmpty {
+                // Listen gate just opened: the pre-roll already contains this
+                // frame — flush it instead of sending `bytes` twice.
+                for chunk in preRoll { sendRealtimeAudio(chunk) }
+            } else {
+                sendRealtimeAudio(bytes)
+            }
         }
     }
 
@@ -2388,9 +2522,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 // failing the whole call (owner device, build 89).
                 if callKitOwnsAudioSession {
                     audioConfigPending = true
-                    scheduleCallKitAudioRetry(attempt: 1)
+                    scheduleCallKitAudioRetry(attempt: 1, lastError: error)
                 } else {
-                    fail("লাইভ অডিও চালু করা যায়নি।")
+                    fail("লাইভ অডিও চালু করা যায়নি। [\(String(String(describing: error).prefix(140)))]")
                 }
             }
         }
@@ -2429,6 +2563,55 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    // MARK: WebSocket keepalive / stall detection
+    //
+    // Owner symptom (Dubai, builds 89–91): mid-call the agent goes silent for
+    // 15–20 s, then suddenly resumes. Root cause: a mobile network path change
+    // (NAT rebind, wifi↔cellular) kills the TCP flow SILENTLY — receive() just
+    // hangs, and nothing notices until the 60 s request timeout. A ping every
+    // 5 s with a one-tick pong deadline turns that dead air into a fast
+    // recoverConnection(), so the resumed session is back in a few seconds.
+    private func startKeepalive() {
+        stopKeepalive()
+        let t = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        t.schedule(deadline: .now() + 5, repeating: 5)
+        t.setEventHandler { [weak self] in self?.keepaliveTick() }
+        t.resume()
+        pingTimer = t
+    }
+
+    private func stopKeepalive() {
+        pingTimer?.cancel()
+        pingTimer = nil
+        awaitingPong = false
+    }
+
+    private func keepaliveTick() {
+        guard !stopped, !reconnecting, socketReady, let socket = ws else { return }
+        if awaitingPong {
+            // Previous ping got no pong within a full tick — the socket is stalled.
+            #if DEBUG
+            NSLog("ALMA-VOICE keepalive: pong missing — socket stalled, reconnecting")
+            #endif
+            awaitingPong = false
+            recoverConnection()
+            return
+        }
+        awaitingPong = true
+        socket.sendPing { [weak self] error in
+            guard let self, self.ws === socket, !self.stopped else { return }
+            if error == nil {
+                self.awaitingPong = false
+            } else {
+                #if DEBUG
+                NSLog("ALMA-VOICE keepalive: ping failed — reconnecting (%@)", String(describing: error))
+                #endif
+                self.awaitingPong = false
+                self.recoverConnection()
+            }
+        }
+    }
+
     /// Google rotates the physical websocket roughly every ten minutes. Resume with
     /// the latest handle, keeping the logical conversation and audio engine alive
     /// without replaying a greeting. The single-use ephemeral token stays valid for
@@ -2459,6 +2642,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         reconnectAttempts += 1
         reconnecting = true
         socketReady = false
+        stopKeepalive()
+        #if DEBUG
+        NSLog("ALMA-VOICE reconnect attempt %d (forceFreshToken=%d)", reconnectAttempts, forceFreshToken ? 1 : 0)
+        #endif
         // CRITICAL (device finding, build 82): a socket can drop mid model-turn,
         // losing generationComplete/turnComplete forever. Without this reset the
         // turn stays open, the UI sticks on "বলছি", and — because the mic is
@@ -2496,6 +2683,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     private func handleServerContent(_ content: [String: Any]) {
         if content["interrupted"] as? Bool == true {
+            #if DEBUG
+            NSLog("ALMA-VOICE server INTERRUPTED model turn")
+            #endif
             stopModelPlayback(interrupted: true)
             DispatchQueue.main.async { [weak self] in self?.engine?.liveWasInterrupted() }
         }
@@ -2553,6 +2743,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             return
         }
         if !modelAudioTurnOpen {
+            #if DEBUG
+            NSLog("ALMA-VOICE model turn OPEN (first audio chunk)")
+            #endif
             modelAudioTurnOpen = true
             modelGenerationCompleteReceived = false
             modelTurnCompleteReceived = false
@@ -2870,6 +3063,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     func stop() {
         stopped = true
+        stopKeepalive()
         let hadTap = tapInstalled
         tapInstalled = false
         audioQueue.async { [weak self] in
