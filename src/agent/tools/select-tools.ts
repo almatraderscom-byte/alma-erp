@@ -260,20 +260,9 @@ const HEAD_KEPT_GROWTH_TOOLS = [
   'get_gbp_reviews',
   'draft_gbp_reply',
   'draft_gbp_post',
-  // edit_storefront_product is what "এই পণ্যের দাম আর বর্ণনা ঠিক করো" needs, and
-  // that lands on the head as one owner-facing sentence. It stages a single card
-  // like draft_seo_fixes above, so keeping it off the head would buy a delegation
-  // hop and nothing else — and the owner would still approve exactly once.
-  // Appended last so the existing cached-prefix bytes never shift.
-  'edit_storefront_product',
-  // update_order is the ERP's first write and it lands on the head as one plain
-  // sentence — "oi order ta shipped kore dao". Same staging shape as
-  // edit_storefront_product above; a delegation hop would buy nothing.
-  // Appended last so the existing cached-prefix bytes never shift.
-  'update_order',
-  // B5: "ei tin ta order shipped kore dao" is one sentence to the head and must
-  // be one card back. Appended last so the existing cached-prefix bytes never shift.
-  'update_orders',
+
+
+
 ] as const
 
 // Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work
@@ -343,6 +332,13 @@ export const HEAD_CORE_TOOL_NAMES = new Set<string>([
   'set_reminder', 'list_reminders', 'cancel_reminder', 'snooze_reminder',
   'send_urgent_alert', 'add_owner_todo', 'list_owner_todos', 'update_owner_todo',
   'get_daily_digest', 'manage_work_todos',
+  // The owner-facing WRITES (A1/B1/B5). Each stages an approval card the head
+  // alone can surface, and each answers a plain sentence — "oi order ta shipped
+  // kore dao", "dam 1450 koro". They were appended to the growth-keeps list
+  // first, which the diet skips entirely: on 2026-07-31 the head could not see
+  // update_orders, said it had used it anyway, and only the ERP row proved
+  // otherwise. A tool the head cannot see is a tool the head will hallucinate.
+  'edit_storefront_product', 'update_order', 'update_orders',
   // comms the owner uses daily (WhatsApp + phone-agent program + camera)
   'send_whatsapp', 'get_wa_inbox', 'outbound_phone_call', 'place_agent_call',
   'call_boss_with_report', 'call_me_in_app', 'place_business_call', 'get_outbound_call_status',
