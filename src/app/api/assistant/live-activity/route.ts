@@ -1,0 +1,172 @@
+/**
+ * "What is the agent doing on my machines right now?" — one poll, every surface.
+ *
+ * The owner asked to watch the work from his phone the way Codex and the ChatGPT
+ * app show it: small inside the chat, expandable when he wants a proper look.
+ * That needs a single feed, because from his side there is no difference between
+ * "it is running a command on the Mac" and "it is clicking in Chrome" — it is
+ * all just the agent working.
+ *
+ * Read-only, owner-session only, and deliberately cheap: two indexed queries and
+ * whatever the newest screenshot happens to be. It is polled while work is live,
+ * so it must stay small.
+ */
+import { type NextRequest } from 'next/server'
+import { getToken } from 'next-auth/jwt'
+import { requireAgentEnabled } from '@/agent/lib/guards'
+import { isSystemOwner } from '@/lib/roles'
+import { prisma } from '@/lib/prisma'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+/** Anything older than this is history, not "right now". */
+const ACTIVE_WINDOW_MS = 10 * 60 * 1000
+const RECENT_STEPS = 12
+
+export type ActivitySurface = 'mac' | 'session' | 'browser'
+
+export interface ActivityStep {
+  id: string
+  surface: ActivitySurface
+  /** One short Bangla line the owner reads at a glance. */
+  labelBn: string
+  /** The literal command / action, for the expanded view. */
+  detail: string | null
+  status: 'queued' | 'running' | 'done' | 'failed' | string
+  /** green = ran by itself, amber = he approved it. Mac only. */
+  policy: string | null
+  at: string
+}
+
+function macLabel(action: string, command: string | null): string {
+  if (action === 'run_command') return command ? `💻 ${command}` : '💻 কমান্ড চালাচ্ছে'
+  if (action === 'screenshot') return '📸 স্ক্রিনশট নিচ্ছে'
+  if (action === 'power') return '☕ Mac জাগিয়ে রাখছে'
+  if (action === 'ping') return '📡 Mac-এর সাথে কথা বলছে'
+  if (action === 'session_open') return '🧠 Claude সেশন খুলছে'
+  if (action === 'session_send') return '📨 সেশনে কাজ পাঠাচ্ছে'
+  if (action === 'session_read') return '👀 সেশনের অগ্রগতি দেখছে'
+  if (action === 'session_stop') return '⏹️ সেশন বন্ধ করছে'
+  if (action === 'session_list') return '📋 চলমান সেশন দেখছে'
+  return `💻 ${action}`
+}
+
+const BROWSER_LABEL: Record<string, string> = {
+  navigate: '🌐 পেজ খুলছে',
+  read_text: '📖 পড়ছে',
+  read_dom: '👀 দেখছে',
+  click: '🖱️ ক্লিক করছে',
+  type: '⌨️ লিখছে',
+  press: '⏎ কী চাপছে',
+  select_option: '🔽 অপশন বাছছে',
+  hover: '🫳 হোভার',
+  scroll: '↕️ স্ক্রল করছে',
+  screenshot: '📸 স্ক্রিনশট',
+  go_back: '↩️ পিছনে যাচ্ছে',
+  switch_tab: '🗂️ ট্যাব বদলাচ্ছে',
+  wait: '⏳ অপেক্ষা করছে',
+}
+
+function normalizeStatus(raw: string): ActivityStep['status'] {
+  if (raw === 'delivered') return 'running'
+  if (raw === 'cancelled') return 'failed'
+  return raw
+}
+
+export async function GET(req: NextRequest) {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
+
+  const owner = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  if (!owner?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isSystemOwner(owner)) return Response.json({ error: 'forbidden' }, { status: 403 })
+
+  const since = new Date(Date.now() - ACTIVE_WINDOW_MS)
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = prisma as any
+  const [macRows, browserRows] = await Promise.all([
+    db.macAgentCommand
+      .findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { createdAt: 'desc' },
+        take: RECENT_STEPS,
+        select: {
+          id: true, action: true, params: true, status: true,
+          policyLevel: true, createdAt: true, stdout: true,
+        },
+      })
+      .catch(() => []),
+    db.liveBrowserCommand
+      .findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { createdAt: 'desc' },
+        take: RECENT_STEPS,
+        select: { id: true, action: true, params: true, status: true, createdAt: true, result: true },
+      })
+      .catch(() => []),
+  ])
+
+  const steps: ActivityStep[] = []
+  let screenshot: string | null = null
+  let screenshotAt: string | null = null
+
+  for (const r of macRows as Array<Record<string, unknown>>) {
+    const params = (r.params as Record<string, unknown> | null) ?? {}
+    const command = typeof params.command === 'string' ? params.command : null
+    const action = String(r.action)
+    steps.push({
+      id: String(r.id),
+      surface: action.startsWith('session_') ? 'session' : 'mac',
+      labelBn: macLabel(action, command),
+      detail: command,
+      status: normalizeStatus(String(r.status)),
+      policy: (r.policyLevel as string) ?? null,
+      at: (r.createdAt as Date).toISOString(),
+    })
+    // The Mac screenshot verb stores its data URI in stdout.
+    if (!screenshot && action === 'screenshot' && typeof r.stdout === 'string' && r.stdout.startsWith('data:image')) {
+      screenshot = r.stdout
+      screenshotAt = (r.createdAt as Date).toISOString()
+    }
+  }
+
+  for (const r of browserRows as Array<Record<string, unknown>>) {
+    const params = (r.params as Record<string, unknown> | null) ?? {}
+    const target = [params.url, params.selector, params.text].find((v) => typeof v === 'string' && v) as string | undefined
+    const action = String(r.action)
+    steps.push({
+      id: String(r.id),
+      surface: 'browser',
+      labelBn: BROWSER_LABEL[action] ?? `🌐 ${action}`,
+      detail: target ?? null,
+      status: normalizeStatus(String(r.status)),
+      policy: null,
+      at: (r.createdAt as Date).toISOString(),
+    })
+    const result = (r.result as Record<string, unknown> | null) ?? null
+    const shot = result && typeof result.screenshot === 'string' ? result.screenshot : null
+    if (!screenshot && shot?.startsWith('data:image')) {
+      screenshot = shot
+      screenshotAt = (r.createdAt as Date).toISOString()
+    }
+  }
+
+  steps.sort((a, b) => b.at.localeCompare(a.at))
+  const trimmed = steps.slice(0, RECENT_STEPS)
+  const running = trimmed.filter((s) => s.status === 'running' || s.status === 'queued')
+
+  return Response.json(
+    {
+      // The dock shows itself only while something is genuinely in flight — the
+      // owner should never have a player sitting on his chat doing nothing.
+      active: running.length > 0,
+      current: running[0] ?? trimmed[0] ?? null,
+      steps: trimmed,
+      screenshot,
+      screenshotAt,
+    },
+    { headers: { 'Cache-Control': 'private, no-store' } },
+  )
+}
