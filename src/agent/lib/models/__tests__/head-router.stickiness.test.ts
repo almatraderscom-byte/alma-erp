@@ -105,7 +105,7 @@ describe('resolveHeadModelId — Rule 1 thread stickiness', () => {
     expect(decision.via).not.toBe('sticky_followup')
     // Re-triages UP to the heavy head — now Grok 4.20 (owner command, 2026-07-18: Gemini off).
     expect(decision.tier).toBe('heavy')
-    expect(decision.modelId).toBe('xai-grok-4.20')
+    expect(decision.modelId).toBe('gpt-5.6-luna')
   })
 
   it('a money keyword still forces the heavy head even on a short cheap-thread follow-up', async () => {
@@ -120,7 +120,7 @@ describe('resolveHeadModelId — Rule 1 thread stickiness', () => {
     // Owner command (2026-07-18): heavy head is Grok 4.20 (Gemini off). Invariant
     // preserved: a money keyword never stays on the cheap DeepSeek head.
     expect(decision.tier).toBe('heavy')
-    expect(decision.modelId).toBe('xai-grok-4.20')
+    expect(decision.modelId).toBe('gpt-5.6-luna')
     expect(decision.via).toBe('deny_kw')
   })
 

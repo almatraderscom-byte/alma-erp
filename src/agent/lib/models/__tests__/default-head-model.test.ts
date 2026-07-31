@@ -3,15 +3,16 @@ import { ROUTING_DEFAULTS, DEFAULT_HEAD_MODEL_ID, getDefaultHeadModelId } from '
 import { getModel, isKnownModelId } from '@/agent/lib/models/registry'
 
 /**
- * Owner rule 2026-07-18: Gemini head OFF, the owner's selected model is the head and
- * does ALL the work; the default head is Grok 4.20. These lock the default + prove it
+ * Owner rule 2026-07-18: the owner's selected model is the head and does ALL the
+ * work. Owner rule 2026-07-31: the default head is GPT-5.6 Luna (replaced Grok
+ * 4.20 after OpenAI's 2026-07-30 80% price cut). These lock the default + prove it
  * is a real, head-pickable, tool-using model (a worker-only default would answer from
  * thin air instead of calling tools — the 2026-07-12 salah incident class).
  */
 describe('owner default head model', () => {
-  it('defaults to Grok 4.20', () => {
-    expect(DEFAULT_HEAD_MODEL_ID).toBe('xai-grok-4.20')
-    expect(ROUTING_DEFAULTS.defaultHeadModelId).toBe('xai-grok-4.20')
+  it('defaults to GPT-5.6 Luna', () => {
+    expect(DEFAULT_HEAD_MODEL_ID).toBe('gpt-5.6-luna')
+    expect(ROUTING_DEFAULTS.defaultHeadModelId).toBe('gpt-5.6-luna')
   })
 
   it('the default head is a known, tool-using, head-pickable model', () => {
@@ -21,9 +22,9 @@ describe('owner default head model', () => {
     expect(m.headPickable).not.toBe(false)
   })
 
-  it('getDefaultHeadModelId falls back to Grok when the KV store is unavailable (tests have no DB)', async () => {
+  it('getDefaultHeadModelId falls back to Luna when the KV store is unavailable (tests have no DB)', async () => {
     // prisma.agentKvSetting.findUnique throws (no DATABASE_URL) → the reader must
     // swallow it and return the default rather than crash the turn.
-    await expect(getDefaultHeadModelId()).resolves.toBe('xai-grok-4.20')
+    await expect(getDefaultHeadModelId()).resolves.toBe('gpt-5.6-luna')
   })
 })

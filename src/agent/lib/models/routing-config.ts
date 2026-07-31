@@ -63,8 +63,14 @@ const KEYS = {
   forceFullPrompt: 'model.routing.forceFullPrompt',
 } as const
 
-/** Fallback head when nothing is configured — owner rule 2026-07-18: Grok 4.20. */
-export const DEFAULT_HEAD_MODEL_ID = 'xai-grok-4.20'
+/**
+ * Fallback head when nothing is configured. Owner rule 2026-07-31: GPT-5.6 Luna
+ * replaces Grok 4.20 — OpenAI cut Luna 80% on 2026-07-30 ($0.20/$1.20 vs Grok's
+ * $1.25/$2.50), so it is now the cheapest head-grade model in the registry.
+ * NOTE: a KV-stored `model.routing.defaultHeadModelId` (Monitor page) or the
+ * HEAVY_HEAD_MODEL_ID env still wins over this code default.
+ */
+export const DEFAULT_HEAD_MODEL_ID = 'gpt-5.6-luna'
 
 /** A model id is usable as the owner's head only if it drives the full toolset. */
 function isValidHeadModelId(id: string | undefined | null): boolean {
